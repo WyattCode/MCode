@@ -317,19 +317,30 @@ function startResize(event: PointerEvent) {
   border-bottom: 1px solid var(--border-weak);
 }
 
+/*
+ * Measured off the reference's own terminal panel rather than reasoned about:
+ * 28 tall on a 6px radius, a symmetric 8px inline padding, 8px between the
+ * label and the close button, and its text at 14px/500 on a 21px line.
+ *
+ * The padding used to be 10px at the start and 8px at the end, on the argument
+ * that a label wants more room than a close button - a fair argument, and not
+ * what the reference does. The label was also inheriting the interface's
+ * 13px/440, a size and weight below the reference's.
+ */
 .tab {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   max-width: 180px;
   height: 28px;
   padding-block: 0;
-  /* Wider where the label begins than where the close button sits, which is
-     the same pair of edges whichever way the row is read. */
-  padding-inline: 10px 8px;
+  padding-inline: 8px;
   color: var(--text-weak);
   border-radius: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 21px;
 }
 
 .tab:hover {
