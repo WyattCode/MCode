@@ -1,0 +1,195 @@
+/**
+ * Checks the theme engine against the stylesheet it was reverse-engineered from.
+ *
+ * The app's own colours were written out by hand before the engine existed, and
+ * they were taken from the reference's OC-2 theme. So OC-2 run through the
+ * engine has to land on exactly those values - any drift means the port of the
+ * colour arithmetic is wrong, and every other theme is wrong with it.
+ */
+import fs from "node:fs"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
+import { themeTokens } from "../src/renderer/src/lib/theme-engine"
+import { THEMES, themeByID } from "../src/renderer/src/lib/theme-palettes"
+
+const here = path.dirname(fileURLToPath(import.meta.url))
+const css = fs.readFileSync(path.join(here, "../src/renderer/src/styles/tokens.css"), "utf8")
+
+/** Reads one theme block out of the stylesheet, as name -> value. */
+function block(selector: string) {
+  const start = css.indexOf(selector)
+  if (start === -1) throw new Error(`no ${selector} block in tokens.css`)
+  const open = css.indexOf("{", start)
+  let depth = 0
+  let end = open
+  for (let i = open; i < css.length; i += 1) {
+    if (css[i] === "{") depth += 1
+    else if (css[i] === "}") {
+      depth -= 1
+      if (depth === 0) {
+        end = i
+        break
+      }
+    }
+  }
+  const out: Record<string, string> = {}
+  for (const line of css.slice(open, end).split("\n")) {
+    const match = /^\s*(--[a-z0-9-]+):\s*(.+);\s*$/.exec(line)
+    if (match) out[match[1]] = match[2].trim()
+  }
+  return out
+}
+
+const problems: string[] = []
+const oc2 = themeByID("oc-2")
+
+for (const [scheme, selector] of [
+  ["dark", ':root[data-theme="dark"]'],
+  ["light", ":root {"],
+] as const) {
+  const written = block(selector)
+  const generated = themeTokens(oc2, scheme === "dark")
+  for (const [name, value] of Object.entries(generated)) {
+    const expected = written[name]
+    if (!expected) continue // a token the stylesheet leaves to the engine alone
+    if (expected.toLowerCase() !== value.toLowerCase()) {
+      problems.push(`${scheme} ${name}: engine ${value}, stylesheet ${expected}`)
+    }
+  }
+}
+
+// Every theme has to produce a usable colour for every token in both schemes:
+// a palette with a missing seed would otherwise surface as an undefined that
+// only shows up as an unstyled corner of the window.
+const hex = /^#[0-9a-f]{6}$/i
+const alpha = /^#[0-9a-f]{8}$/i
+for (const theme of THEMES) {
+  for (const isDark of [true, false]) {
+    const tokens = themeTokens(theme, isDark)
+    for (const [name, value] of Object.entries(tokens)) {
+      if (!hex.test(value) && !alpha.test(value)) {
+        problems.push(`${theme.id} ${isDark ? "dark" : "light"} ${name}: ${value}`)
+      }
+    }
+  }
+}
+
+/*
+ * A dialog that uses the overlay class without defining it.
+ *
+ * Scoped styles cannot be shared between components, so every dialog that marks
+ * its backdrop "scrim" has to carry the rule itself. One that does not still
+ * renders, still opens and still closes - it just stops being an overlay, and
+ * becomes a block sitting in the page wherever it happened to be mounted, with
+ * nothing dimmed behind it and nothing centred. Two shipped that way.
+ */
+const componentDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/renderer/src/components")
+for (const file of fs.readdirSync(componentDir).filter((name) => name.endsWith(".vue"))) {
+  const source = fs.readFileSync(path.join(componentDir, file), "utf8")
+  if (!source.includes('class="scrim"')) continue
+  const styles = source.slice(source.indexOf("<style"))
+  if (!/^\.scrim\s*[,{]/m.test(styles)) {
+    problems.push(`${file}: uses the scrim class but never defines it`)
+  }
+}
+
+/*
+ * Physical properties in an interface that mirrors.
+ *
+ * Arabic sets dir="rtl" on the document, and every rule written with padding-inline
+ * or inset-inline-start follows it. One written with padding-left does not: it
+ * stays where it was while everything around it swaps sides, which reads as one
+ * control having come loose rather than as a layout that has not been mirrored.
+ * The rule has been stated in every brief on this project and nothing enforced
+ * it - so it held only for as long as everyone remembered.
+ *
+ * `left` and `right` themselves are not listed. They are almost always used here
+ * to pin both edges of an absolutely positioned element, or with width: 100% to
+ * span it, and both of those are identical under mirroring. What is asymmetric
+ * by nature is padding, margin, border and text alignment.
+ */
+const PHYSICAL = /^\s*(padding-(?:left|right)|margin-(?:left|right)|border-(?:left|right)|text-align\s*:\s*(?:left|right))\b/
+
+/*
+ * The exceptions, each of which is physical on purpose.
+ *
+ * The title bar's are not the app's decision: Windows paints its caption buttons
+ * at one end and reports where, and macOS puts its traffic lights on the left
+ * whatever the language - so the room reserved for them has to be reserved on
+ * the side the platform actually used. The file panel's pair is a bidi trick,
+ * not a layout: a path is turned around so the ellipsis eats the front of it,
+ * and the alignment has to be turned back by hand.
+ */
+const PHYSICAL_ALLOWED = new Set([
+  "TitleBar.vue:margin-left",
+  "TitleBar.vue:margin-right",
+  "TitleBar.vue:padding-left",
+  "FilePanel.vue:text-align",
+])
+
+// parts/ as well as components/ - a message part is as mirrored as a dialog is.
+const styledFiles = [
+  ...fs.readdirSync(componentDir).filter((name) => name.endsWith(".vue")).map((name) => path.join(componentDir, name)),
+  ...fs
+    .readdirSync(path.join(componentDir, "parts"), { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".vue"))
+    .map((entry) => path.join(componentDir, "parts", entry.name)),
+]
+
+for (const full of styledFiles) {
+  const file = path.basename(full)
+  const source = fs.readFileSync(full, "utf8")
+  const styles = source.slice(source.indexOf("<style"))
+  if (!styles) continue
+  for (const line of styles.split("\n")) {
+    const found = PHYSICAL.exec(line)
+    if (!found) continue
+    const property = found[1].split(":")[0].trim()
+    if (PHYSICAL_ALLOWED.has(`${file}:${property}`)) continue
+    problems.push(`${file}: ${line.trim()} - use the logical property, the interface mirrors`)
+  }
+}
+
+/*
+ * The sixteen colours a program's own output is painted in.
+ *
+ * These are checked here rather than at runtime because the terminal is drawn
+ * on a canvas by a WebGL renderer: nothing about the colours reaches the DOM,
+ * and the Terminal instance is module-local in a production build, so there is
+ * no way to read back what xterm resolved. What can be asserted is that the
+ * table is complete and spelled the way xterm's ITheme expects - a misspelled
+ * key is not an error, it is silently ignored, which is exactly the failure
+ * that would leave a build tool's red looking like xterm's red instead of the
+ * reference's.
+ */
+const ANSI_SLOTS = [
+  "black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
+  "brightBlack", "brightRed", "brightGreen", "brightYellow",
+  "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
+]
+
+{
+  const source = fs.readFileSync(path.join(componentDir, "TerminalPane.vue"), "utf8")
+  const table = source.slice(source.indexOf("const ANSI = {"), source.indexOf("} as const"))
+  if (!table) {
+    problems.push("TerminalPane.vue: no ANSI table, so the terminal falls back to xterm's own colours")
+  } else {
+    for (const slot of ANSI_SLOTS) {
+      if (!new RegExp(`\\b${slot}:\\s*"#[0-9a-fA-F]{6}"`).test(table)) {
+        problems.push(`TerminalPane.vue: the ANSI table has no ${slot}, which xterm would fill from its own palette`)
+      }
+    }
+    // Handed to xterm, not merely declared.
+    if (!/\.\.\.ANSI,/.test(source)) {
+      problems.push("TerminalPane.vue: the ANSI table is never spread into the theme xterm is given")
+    }
+  }
+}
+
+console.log(`themes: ${THEMES.length}, tokens each: ${Object.keys(themeTokens(oc2, true)).length}`)
+if (problems.length) {
+  console.error(`FAILED with ${problems.length} problem(s):`)
+  for (const problem of problems.slice(0, 40)) console.error("  " + problem)
+  process.exit(1)
+}
+console.log("OC-2 regenerates tokens.css exactly, and every theme resolves.")

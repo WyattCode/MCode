@@ -1,0 +1,13 @@
+# Normalise to LF in the repository and check out whatever the platform wants.
+# Without this, git warned on 70 files at the first `add`, and a clone on
+# another machine would show every one of them as modified.
+* text=auto eol=lf
+
+# Binary, so git must not touch their bytes looking for line endings.
+*.png binary
+*.ico binary
+*.icns binary
+*.woff2 binary
+*.ttf binary
+*.mp4 binary
+*.node binary

@@ -1,0 +1,296 @@
+import type { QuestionAnswer, QuestionPrompt, QuestionRequest } from "@shared/protocol"
+import { Identifier } from "@shared/id"
+import type { Bus } from "../bus"
+import type { ToolDefinition } from "./types"
+import { ToolError } from "./types"
+
+/**
+ * The questions a turn is parked on.
+ *
+ * A transcription of the reference's `@opencode/Question` service
+ * (node-BBwF64dM.js @22136889): a map of request id to a deferred, `ask`
+ * publishing `Asked` and awaiting it, `reply` and `reject` settling it and
+ * publishing `Replied` / `Rejected`, and `list` handing back everything still
+ * parked. It is deliberately shaped like `Permissions` in this app, because it
+ * is the same problem twice - a tool that cannot finish until a person answers
+ * - and the two have to behave the same way when a window reloads or a turn is
+ * stopped.
+ *
+ * Nothing is written to disk. A question that outlived the process would be a
+ * question whose tool call is gone, so there would be nothing to answer.
+ */
+export class Questions {
+  private readonly pending = new Map<
+    string,
+    { request: QuestionRequest; resolve: (answers: QuestionAnswer[]) => void; reject: (reason: Error) => void }
+  >()
+
+  constructor(private readonly bus: Bus) {}
+
+  /**
+   * Parks the calling tool until the reader answers.
+   *
+   * The abort signal is taken because a turn can be stopped while the form is
+   * on screen. The reference gets this from its Effect fiber being interrupted;
+   * here it has to be wired by hand, and without it Stop would leave the
+   * promise unsettled and the session busy forever.
+   */
+  ask(input: {
+    sessionID: string
+    questions: QuestionPrompt[]
+    tool?: { messageID: string; callID: string }
+    signal?: AbortSignal
+  }): Promise<QuestionAnswer[]> {
+    const request: QuestionRequest = {
+      id: Identifier.request(),
+      sessionID: input.sessionID,
+      questions: input.questions,
+      tool: input.tool,
+    }
+
+    return new Promise<QuestionAnswer[]>((resolve, reject) => {
+      /*
+       * Asked after the turn was already stopped.
+       *
+       * An AbortSignal that has already fired does not fire again for a
+       * listener added afterwards, so the one below would never run and this
+       * promise would never settle - the turn would sit parked with a form on
+       * screen asking the reader to answer something they had just stopped.
+       * The window is real: runTool awaits a permission check before calling
+       * execute, and Stop can land inside it.
+       */
+      if (input.signal?.aborted) {
+        reject(new ToolError(DISMISSED))
+        return
+      }
+
+      const settle = () => {
+        this.pending.delete(request.id)
+        input.signal?.removeEventListener("abort", onAbort)
+      }
+      const onAbort = () => {
+        settle()
+        this.bus.publish({ type: "question.rejected", sessionID: request.sessionID, requestID: request.id })
+        reject(new ToolError(DISMISSED))
+      }
+      input.signal?.addEventListener("abort", onAbort, { once: true })
+
+      this.pending.set(request.id, {
+        request,
+        resolve: (answers) => {
+          settle()
+          resolve(answers)
+        },
+        reject: (reason) => {
+          settle()
+          reject(reason)
+        },
+      })
+      this.bus.publish({ type: "question.asked", request })
+    })
+  }
+
+  /**
+   * Answers a parked question, which lets its turn continue.
+   *
+   * Answers are copied rather than stored by reference - the reference does the
+   * same (`input.answers.map((a) => [...a])`) - because the array then travels
+   * both to the model and into the part's metadata, and one of those two
+   * mutating the other would be untraceable.
+   */
+  reply(requestID: string, answers: QuestionAnswer[]): boolean {
+    const parked = this.pending.get(requestID)
+    if (!parked) return false
+    const copied = answers.map((answer) => [...answer])
+    this.bus.publish({
+      type: "question.replied",
+      sessionID: parked.request.sessionID,
+      requestID,
+      answers: copied,
+    })
+    parked.resolve(copied)
+    return true
+  }
+
+  /** Dismisses a question. The turn sees the reference's own refusal message. */
+  reject(requestID: string): boolean {
+    const parked = this.pending.get(requestID)
+    if (!parked) return false
+    this.bus.publish({ type: "question.rejected", sessionID: parked.request.sessionID, requestID })
+    parked.reject(new ToolError(DISMISSED))
+    return true
+  }
+
+  /** Dismisses everything a session is parked on - used when a turn aborts. */
+  rejectAll(sessionID: string): void {
+    for (const [id, parked] of [...this.pending]) {
+      if (parked.request.sessionID !== sessionID) continue
+      this.reject(id)
+    }
+  }
+
+  /**
+   * Every question still waiting on an answer, across every session.
+   *
+   * `question.asked` goes out once. A window that reloaded, or one opened
+   * afterwards, has no other way to learn that a turn is parked - it would show
+   * a busy session with nothing on screen to explain it, exactly the defect
+   * `session.list` replaying `permissions.outstanding()` was written to fix.
+   * The reference's counterpart is `GET /question`, "Get all pending question
+   * requests across all sessions".
+   */
+  outstanding(): QuestionRequest[] {
+    return [...this.pending.values()].map((parked) => parked.request)
+  }
+}
+
+/**
+ * What a dismissed question tells the model.
+ *
+ * Verbatim from the reference's `RejectedError.message` (@22138500). It goes
+ * back as a tool error, which is this app's equivalent of the reference failing
+ * the deferred: the model reads it, sees the question was refused rather than
+ * answered, and carries on.
+ */
+const DISMISSED = "The user dismissed this question"
+
+/**
+ * The description handed to the model, verbatim.
+ *
+ * Copied character for character from `question_default`
+ * (node-BBwF64dM.js @22911725), including the CRLF line endings the reference
+ * actually sends - that is the copy the desktop tool registry loads
+ * (`question2 = yield* QuestionTool` @32844286). A second, byte-different copy
+ * of the same prose exists at @19448700 with LF endings and a permission
+ * assertion around it; that one belongs to the v2 tool registry, which the
+ * desktop builtin list does not use.
+ *
+ * The last three lines are the load-bearing part: they are what stops the model
+ * writing its own "Other" option, because the client adds one.
+ */
+const DESCRIPTION =
+  "Use this tool when you need to ask the user questions during execution. This allows you to:\r\n" +
+  "1. Gather user preferences or requirements\r\n" +
+  "2. Clarify ambiguous instructions\r\n" +
+  "3. Get decisions on implementation choices as you work\r\n" +
+  "4. Offer choices to the user about what direction to take.\r\n" +
+  "\r\n" +
+  "Usage notes:\r\n" +
+  "- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options\r\n" +
+  "- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one\r\n" +
+  '- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label\r\n'
+
+/** What the model may hand over, checked before anyone is shown it. */
+function readQuestions(raw: unknown): QuestionPrompt[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new ToolError("questions must be a non-empty array")
+  }
+  return raw.map((entry, index) => {
+    const item = entry as Partial<QuestionPrompt>
+    const question = typeof item?.question === "string" ? item.question.trim() : ""
+    if (!question) throw new ToolError(`questions[${index}].question is required`)
+    const options = Array.isArray(item.options) ? item.options : []
+    if (options.length === 0) throw new ToolError(`questions[${index}].options must not be empty`)
+    return {
+      question,
+      header: typeof item.header === "string" ? item.header : "",
+      options: options.map((option) => ({
+        label: String((option as { label?: unknown })?.label ?? ""),
+        description: String((option as { description?: unknown })?.description ?? ""),
+      })),
+      multiple: item.multiple === true,
+      custom: item.custom,
+    }
+  })
+}
+
+/**
+ * The tool the model calls to put a question to the reader.
+ *
+ * On by default, with no setting behind it: the reference's registry decides
+ * with `["app","cli","desktop"].includes(flags.client) || flags.enableQuestionTool`
+ * (@32848445), and the desktop client is in that list.
+ *
+ * It declares no permission bucket. The reference does assert one
+ * (`permission.assert({action:"question"})`), but ships no
+ * `settings.permissions.tool.question.title` or `.description` in any of its
+ * eighteen languages, so that row is not one a reader ever sees and a bucket
+ * here could only carry an invented name. See the report: this is a known
+ * behaviour gap, chosen over a made-up string.
+ */
+export const QuestionTool: ToolDefinition = {
+  name: "question",
+  description: DESCRIPTION,
+  parameters: {
+    type: "object",
+    properties: {
+      questions: {
+        type: "array",
+        // The reference's own annotation on the schema field.
+        description: "Questions to ask",
+        items: {
+          type: "object",
+          properties: {
+            question: { type: "string", description: "Complete question" },
+            header: { type: "string", description: "Very short label (max 30 chars)" },
+            options: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string", description: "Display text (1-5 words, concise)" },
+                  description: { type: "string", description: "Explanation of choice" },
+                },
+                required: ["label", "description"],
+                additionalProperties: false,
+              },
+            },
+            multiple: { type: "boolean", description: "Allow selecting multiple choices" },
+          },
+          required: ["question", "header", "options"],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ["questions"],
+    additionalProperties: false,
+  },
+  async execute(input, context) {
+    const questions = readQuestions(input.questions)
+    const answers = await context.questions.ask({
+      sessionID: context.sessionID,
+      questions,
+      /*
+       * Which call raised the question. The reference makes this optional
+       * because a plugin can drive the same service with no tool call behind
+       * it; a call from here always has one, and the client needs it to draw
+       * the form against the right card.
+       */
+      tool: { messageID: context.messageID, callID: context.callID },
+      signal: context.signal,
+    })
+
+    /*
+     * The model-facing wording is the reference's `toModelOutput5` verbatim
+     * (@19449900), down to the word `Unanswered` for a question the reader
+     * skipped and the trailing sentence that tells the model to carry on.
+     */
+    const formatted = questions
+      .map((entry, index) => {
+        const answer = answers[index]
+        return `"${entry.question}"="${answer?.length ? answer.join(", ") : "Unanswered"}"`
+      })
+      .join(", ")
+
+    return {
+      title: `Asked ${questions.length} question${questions.length > 1 ? "s" : ""}`,
+      output: `User has answered your questions: ${formatted}. You can now continue with the user's answers in mind.`,
+      /*
+       * Stored on the part, which is what lets an answered card redraw itself
+       * from the transcript with no live request behind it - the reference's
+       * renderer reads exactly `props.metadata.answers`.
+       */
+      metadata: { answers },
+    }
+  },
+}

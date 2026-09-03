@@ -1,0 +1,63 @@
+{
+  "name": "mcode",
+  "version": "0.1.0",
+  "description": "A keyboard-first, command-palette-driven AI coding agent.",
+  "author": "MCode",
+  "main": "./out/main/index.js",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
+    "package": "electron-vite build && electron-builder",
+    "package:win": "electron-vite build && electron-builder --win",
+    "package:mac": "electron-vite build && electron-builder --mac",
+    "smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/smoke.mjs --alias:@shared=./src/shared --packages=external && node out/smoke.mjs",
+    "icons": "esbuild scripts/gen-provider-icons.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/gen-icons.mjs --packages=external && node out/gen-icons.mjs",
+    "themecheck": "esbuild scripts/theme-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/theme-check.mjs --packages=external && node out/theme-check.mjs",
+    "mcpcheck": "esbuild scripts/mcp-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/mcp-check.mjs --packages=external && node out/mcp-check.mjs",
+    "i18ncheck": "esbuild scripts/i18n-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/i18n-check.mjs --packages=external && node out/i18n-check.mjs",
+    "mdcheck": "esbuild scripts/markdown-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/markdown-check.mjs --packages=external && node out/markdown-check.mjs",
+    "sessioncheck": "esbuild scripts/session-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/session-check.mjs --packages=external && node out/session-check.mjs",
+    "sandboxcheck": "esbuild scripts/sandbox-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/sandbox-check.mjs --packages=external && node out/sandbox-check.mjs",
+    "toolcheck": "esbuild scripts/tool-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/tool-check.mjs --packages=external && node out/tool-check.mjs",
+    "wiringcheck": "esbuild scripts/wiring-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/wiring-check.mjs --packages=external && node out/wiring-check.mjs",
+    "promptcheck": "esbuild scripts/prompt-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/prompt-check.mjs --packages=external && node out/prompt-check.mjs",
+    "shellcheck": "esbuild scripts/shell-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/shell-check.mjs --packages=external && node out/shell-check.mjs",
+    "providercheck": "esbuild scripts/provider-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/provider-check.mjs --packages=external && node out/provider-check.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.117.1",
+    "@lydell/node-pty": "^1.2.0-beta.12",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@lobehub/icons-static-svg": "^1.94.0",
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0",
+    "electron-vite": "^5.0.0",
+    "pinia": "^3.0.0",
+    "png-to-ico": "^3.0.2",
+    "sharp": "^0.35.3",
+    "simple-icons": "^16.28.0",
+    "typescript": "^5.8.0",
+    "vite": "^7.0.0",
+    "vue": "^3.5.0",
+    "vue-tsc": "^3.0.0"
+  },
+  "allowScripts": {
+    "electron@38.8.6": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  }
+}

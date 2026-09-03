@@ -1,0 +1,558 @@
+import fs from "node:fs/promises"
+import path from "node:path"
+import type { FileEntry, Request, ResponseMap } from "@shared/protocol"
+import type { Runtime } from "./index"
+import { IGNORED, resolveInside } from "./tool/fs-util"
+import { discoverModels } from "./provider/discover"
+import { workspaceInfo } from "./workspace"
+import { systemPrompt } from "./session/prompt"
+import * as git from "./git"
+import { listCommands } from "./command"
+import type { ShellOwner } from "./shell"
+
+type Handled<T extends Request["type"]> = ResponseMap[T]
+
+/**
+ * One switch mapping every request to its effect. Kept flat and exhaustive so
+ * the protocol and the implementation cannot drift: adding a request type
+ * without handling it is a type error.
+ */
+
+/**
+ * Keeps newly discovered models selectable.
+ *
+ * `enabledModels` is a curation list - empty means everything, and once it has
+ * entries anything missing is hidden. It cannot tell a model that was switched
+ * off from one that has never been seen, so the previous discovery is used as
+ * the record of what has been seen: an id that was not in it is new, and new
+ * models are offered rather than silently hidden.
+ *
+ * @param fresh true when the provider was just connected, which is an explicit
+ *   request to use it and so enables everything it serves.
+ */
+async function keepModelsSelectable(
+  runtime: Runtime,
+  provider: string,
+  before: string[],
+  fresh: boolean,
+): Promise<void> {
+  const chosen = runtime.config.get().enabledModels ?? []
+  // Nothing is curated yet, so everything already shows.
+  if (!chosen.length) return
+
+  const keys = runtime.config.models(provider).map((model) => `${provider}/${model.id}`)
+  const seen = new Set(before.map((id) => `${provider}/${id}`))
+  /*
+   * A connected provider with nothing enabled is not a state anyone chose - it
+   * is what happens when a provider is added after the list was curated - so
+   * that is repaired rather than preserved.
+   */
+  const none = !keys.some((key) => chosen.includes(key))
+
+  const added = keys.filter((key) => !chosen.includes(key) && (fresh || none || !seen.has(key)))
+  if (!added.length) return
+  await runtime.config.set({ enabledModels: [...chosen, ...added] })
+}
+
+export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
+  switch (request.type) {
+    case "session.list":
+      return {
+        sessions: await runtime.sessions.list(),
+        running: runtime.runner.busySessions(),
+        /*
+         * Replayed rather than merely broadcast. A permission request goes out
+         * as a one-shot event, so a window that was not listening at that
+         * moment - it reloaded, or it was opened afterwards - never sees the
+         * question, while the tool stays parked on the answer and the session
+         * keeps reporting itself busy. The only way out was Stop, which denies
+         * the request and throws the turn away with it.
+         */
+        permissions: runtime.permissions.outstanding(),
+      } satisfies Handled<"session.list">
+
+    case "session.create": {
+      const config = runtime.config.get()
+      const session = await runtime.sessions.create({
+        directory: request.directory ?? config.directory,
+        model: config.model,
+        // The last choice made is the starting point for the next session, the
+        // same way the model is.
+        agent: config.agent,
+        title: request.title,
+      })
+      return { session } satisfies Handled<"session.create">
+    }
+
+    case "session.get": {
+      const session = await runtime.sessions.require(request.sessionID)
+      const messages = await runtime.sessions.messages(request.sessionID)
+      return { session, messages } satisfies Handled<"session.get">
+    }
+
+    /*
+     * Built here rather than cached with the session: it reads the project's
+     * own instruction files and lists its top level, so the answer changes as
+     * the project does and a stored copy would go stale without saying so.
+     */
+    case "session.systemPrompt": {
+      const session = await runtime.sessions.require(request.sessionID)
+      return {
+        prompt: await systemPrompt({ directory: session.directory, agent: session.agent }),
+      } satisfies Handled<"session.systemPrompt">
+    }
+
+    case "session.revert": {
+      const { session, files } = await runtime.runner.revert(request.sessionID, request.messageID)
+      return {
+        session,
+        files,
+        history: await runtime.sessions.historyDepth(request.sessionID),
+      } satisfies Handled<"session.revert">
+    }
+
+    case "session.delete":
+      runtime.runner.abort(request.sessionID)
+      await runtime.sessions.delete(request.sessionID)
+      return {} satisfies Handled<"session.delete">
+
+    case "session.rename":
+      return { session: await runtime.sessions.update(request.sessionID, { title: request.title }) }
+
+    /*
+     * A second conversation that starts where this one was, rather than a blank
+     * one. The reference's own endpoint takes the same two arguments.
+     */
+    case "session.fork":
+      return {
+        session: await runtime.sessions.fork(request.sessionID, request.messageID),
+      } satisfies Handled<"session.fork">
+
+    case "session.model":
+      return { session: await runtime.sessions.update(request.sessionID, { model: request.model }) }
+
+    case "session.effort":
+      return { session: await runtime.sessions.update(request.sessionID, { effort: request.effort }) }
+
+    case "session.agent":
+      return { session: await runtime.sessions.update(request.sessionID, { agent: request.agent }) }
+
+    case "session.prompt": {
+      const messageID = await runtime.runner.prompt({
+        sessionID: request.sessionID,
+        text: request.text,
+        attachments: request.attachments,
+      })
+      return { messageID } satisfies Handled<"session.prompt">
+    }
+
+    case "session.abort":
+      runtime.runner.abort(request.sessionID)
+      return {} satisfies Handled<"session.abort">
+
+    case "permission.respond":
+      runtime.permissions.respond(request.requestID, request.response)
+      return {} satisfies Handled<"permission.respond">
+
+    /*
+     * The commands a slash can reach that this window did not define: the
+     * project's own, its MCP servers' prompts, and its skills. Built per
+     * directory because all three come from the project, and rebuilt when the
+     * config's `commands` change - the store watches for exactly that.
+     */
+    case "command.list":
+      return {
+        commands: await listCommands(runtime, request.directory),
+      } satisfies Handled<"command.list">
+
+    /*
+     * Replayed for exactly the reason `session.list` replays permissions:
+     * `question.asked` is published once, so a window that reloaded, or one
+     * opened after the model asked, would show a busy session with nothing on
+     * screen and no way out but Stop. The reference answers the same question
+     * with `GET /question`, "Get all pending question requests across all
+     * sessions".
+     */
+    case "question.list":
+      return { questions: runtime.runner.questions.outstanding() } satisfies Handled<"question.list">
+
+    /*
+     * A reply that names a request nobody is parked on is not an error worth
+     * raising: two windows can be showing the same question, and the slower
+     * one's click arrives after the faster one has already answered. Dropping
+     * it silently is what the reference does too - it logs a warning and
+     * returns a NotFound the desktop client never surfaces.
+     */
+    case "question.reply":
+      runtime.runner.questions.reply(request.requestID, request.answers)
+      return {} satisfies Handled<"question.reply">
+
+    case "question.reject":
+      runtime.runner.questions.reject(request.requestID)
+      return {} satisfies Handled<"question.reject">
+
+    case "config.get":
+      return { config: runtime.config.get() } satisfies Handled<"config.get">
+
+    case "config.set":
+      return { config: await runtime.config.set(request.patch) } satisfies Handled<"config.set">
+
+    case "provider.list":
+      return { providers: runtime.config.providers() } satisfies Handled<"provider.list">
+
+    case "provider.auth": {
+      const definition = runtime.config.definition(request.provider)
+      const local = definition?.authMethods?.includes("local") ?? false
+
+      /*
+       * Disconnecting takes back what the app is holding. When an environment
+       * variable is what connects a provider the app is holding nothing, so
+       * the only thing the removal could reach was the discovered model list -
+       * leaving the row insisting it was connected while offering no models to
+       * pick. The variable belongs to the user's shell and is theirs to unset,
+       * which is what this says. The reference does not offer the button in
+       * this state at all; refusing here is what keeps an older window, or any
+       * other caller, from reaching the same dead end.
+       */
+      if (!request.apiKey && definition) {
+        const variable = runtime.config.environmentKey(request.provider)
+        if (variable && !runtime.config.tokens(request.provider)) {
+          throw new Error(
+            `${definition.name} is connected by the ${variable} environment variable, not by a key stored in this app - there is nothing here to disconnect. Unset ${variable} in your shell and restart MCode.`,
+          )
+        }
+      }
+
+      /*
+       * A runtime on this machine is either answering right now or it is not,
+       * and the check costs a millisecond. Storing the connection anyway left a
+       * provider marked green with nothing behind it - and the app cheerfully
+       * announcing that its models were ready to use.
+       */
+      /*
+       * An empty key is a disconnection, and that has to work whatever the
+       * provider's state. Checking reachability here meant a local runtime that
+       * had stopped could not be disconnected at all - the check it failed was
+       * for connecting, and it was being applied to leaving.
+       */
+      if (local && definition && request.apiKey) {
+        const models = await discoverModels(definition, "local").catch((cause: Error) => {
+          throw new Error(`${definition.name} did not answer. Start it and try again - ${cause.message}`)
+        })
+        const wasConfigured = Boolean(runtime.config.apiKey(request.provider))
+        const before = runtime.config.models(request.provider).map((model) => model.id)
+        await runtime.config.setApiKey(request.provider, "local")
+        await runtime.config.setDiscovered(request.provider, models)
+        await keepModelsSelectable(runtime, request.provider, before, !wasConfigured)
+        return { providers: runtime.config.providers(), models: models.length } satisfies Handled<"provider.auth">
+      }
+
+      const wasConfigured = Boolean(runtime.config.apiKey(request.provider))
+      const seenBefore = runtime.config.models(request.provider).map((model) => model.id)
+      await runtime.config.setApiKey(request.provider, request.apiKey)
+      // A key is only useful once we know what it can drive, so discover the
+      // model list straight away for providers that expose one.
+      let found = 0
+      if (request.apiKey && definition?.kind === "openai-compatible") {
+        // Swallowed on purpose here: a key can be good while discovery is not,
+        // and refusing a valid key over that would be worse than a short list.
+        const models = await discoverModels(definition, request.apiKey).catch(() => [])
+        if (models.length) await runtime.config.setDiscovered(request.provider, models)
+        found = models.length
+      }
+      if (!found) found = runtime.config.models(request.provider).length
+      if (request.apiKey) {
+        await keepModelsSelectable(runtime, request.provider, seenBefore, !wasConfigured)
+      }
+      return { providers: runtime.config.providers(), models: found } satisfies Handled<"provider.auth">
+    }
+
+    case "provider.discover": {
+      const definition = runtime.config.definition(request.provider)
+      if (!definition) throw new Error(`Unknown provider: ${request.provider}`)
+      // A custom provider's models are the ones that were typed in, so there is
+      // nothing here to refresh and asking would replace them with whatever
+      // /models happened to return - or with nothing.
+      if (definition.handEntered) {
+        throw new Error(`${definition.name} lists the models you entered, so there is nothing to discover`)
+      }
+      const apiKey = runtime.config.apiKey(request.provider)
+      if (!apiKey) throw new Error(`${definition.name} has no API key configured`)
+      const before = runtime.config.models(request.provider).map((model) => model.id)
+      const models = await discoverModels(definition, apiKey)
+      await runtime.config.setDiscovered(request.provider, models)
+      // Refreshing is how a model that appeared after connecting gets found;
+      // discovering it and then hiding it would make the button pointless.
+      await keepModelsSelectable(runtime, request.provider, before, false)
+      return { providers: runtime.config.providers(), count: models.length }
+    }
+
+    case "provider.addCustom": {
+      /*
+       * The id is the user's, not a slug of the display name. It is what
+       * `provider/model` refs, the enabled-model list and the stored credential
+       * are all keyed by, so deriving it from a name meant renaming the
+       * provider silently orphaned all three.
+       */
+      const id = request.id.trim()
+      if (!/^[a-z0-9][a-z0-9-_]*$/.test(id)) {
+        throw new Error(`"${id}" is not a valid provider id`)
+      }
+      const config = runtime.config.get()
+      // Checked against every provider, not only the custom ones: taking a
+      // built-in's id would shadow it and there would be no way back.
+      if (runtime.config.definition(id)) {
+        throw new Error(`A provider with the id ${id} already exists`)
+      }
+      const models = request.models.map((model) => ({ id: model.id.trim(), name: model.name.trim() }))
+      if (!models.length) throw new Error("A custom provider needs at least one model")
+      /*
+       * `{env:MY_VAR}` in the key field names a variable rather than supplying
+       * a secret. The config records the name and nothing else is written, so
+       * the key never lands on disk - which is the reference's own reason for
+       * offering this at all.
+       */
+      const environment = /^\{env:([^}]+)\}$/.exec(request.apiKey.trim())?.[1]?.trim()
+      const headers = Object.fromEntries(
+        Object.entries(request.headers ?? {})
+          .map(([key, value]) => [key.trim(), value.trim()])
+          .filter(([key, value]) => key && value),
+      )
+      await runtime.config.set({
+        customProviders: [
+          ...config.customProviders,
+          {
+            id,
+            name: request.name.trim(),
+            baseURL: request.baseURL.trim(),
+            ...(Object.keys(headers).length ? { headers } : {}),
+            models,
+            ...(environment ? { environment } : {}),
+          },
+        ],
+      })
+      // A literal key is stored; an {env:...} indirection stores nothing.
+      await runtime.config.setApiKey(id, environment ? "" : request.apiKey.trim())
+      /*
+       * Adding a provider is an explicit request to use it, so its models are
+       * enabled the way a freshly connected provider's are. Without this a
+       * reader who has ever curated the picker adds a provider, types in its
+       * models, and finds none of them offered.
+       */
+      await keepModelsSelectable(runtime, id, [], true)
+      return { providers: runtime.config.providers() }
+    }
+
+    case "provider.removeCustom": {
+      const config = runtime.config.get()
+      await runtime.config.set({
+        customProviders: config.customProviders.filter((entry) => entry.id !== request.provider),
+      })
+      await runtime.config.setApiKey(request.provider, "")
+      return { providers: runtime.config.providers() }
+    }
+
+    case "auth.begin":
+      return (await runtime.auth.start(request.provider, request.method)) satisfies Handled<"auth.begin">
+
+    case "auth.cancel":
+      runtime.auth.cancel()
+      return {} satisfies Handled<"auth.cancel">
+
+    case "auth.signOut": {
+      await runtime.auth.signOut(request.provider)
+      return { providers: runtime.config.providers() } satisfies Handled<"auth.signOut">
+    }
+
+    case "session.undo": {
+      const files = await runtime.runner.undo(request.sessionID)
+      return {
+        files,
+        history: await runtime.sessions.historyDepth(request.sessionID),
+      } satisfies Handled<"session.undo">
+    }
+
+    case "session.redo": {
+      const files = await runtime.runner.redo(request.sessionID)
+      return {
+        files,
+        history: await runtime.sessions.historyDepth(request.sessionID),
+      } satisfies Handled<"session.redo">
+    }
+
+    case "session.history":
+      return {
+        history: await runtime.sessions.historyDepth(request.sessionID),
+      } satisfies Handled<"session.history">
+
+    case "session.compact": {
+      /*
+       * Summarising costs a model call, so it is worth refusing early when the
+       * session is still small enough not to need it.
+       */
+      const session = await runtime.sessions.require(request.sessionID)
+      return { session: await runtime.runner.compact(session.id) } satisfies Handled<"session.compact">
+    }
+
+    case "session.archive": {
+      // Archiving stops the work too: a turn writing into a session the user
+      // has just put away is not something they asked for.
+      if (request.archived) runtime.runner.abort(request.sessionID)
+      const session = await runtime.sessions.update(request.sessionID, { archived: request.archived })
+      return { session } satisfies Handled<"session.archive">
+    }
+
+    case "app.reset": {
+      // Stop everything before erasing anything. Aborting only signals a turn:
+      // it still writes its partial transcript afterwards, which would recreate
+      // a session directory that had already been deleted.
+      runtime.auth.cancel()
+      for (const session of await runtime.sessions.list()) runtime.runner.abort(session.id)
+      runtime.permissions.forget()
+      await waitForIdle(runtime)
+      await runtime.sessions.clear()
+      await runtime.config.reset()
+      return {
+        config: runtime.config.get(),
+        providers: runtime.config.providers(),
+      } satisfies Handled<"app.reset">
+    }
+
+    case "git.status":
+      return (await git.status(request.directory, request.scope)) satisfies Handled<"git.status">
+
+    case "git.init":
+      return (await git.init(request.directory)) satisfies Handled<"git.init">
+
+    case "git.diff":
+      return {
+        patch: await git.diff(request.directory, request.file, request.context, request.scope),
+      } satisfies Handled<"git.diff">
+
+    case "git.revert": {
+      await git.revert(request.directory, request.file)
+      return (await git.status(request.directory)) satisfies Handled<"git.revert">
+    }
+
+    case "workspace.info":
+      return (await workspaceInfo(request.directory)) satisfies Handled<"workspace.info">
+
+    case "file.list":
+      return { files: await listFiles(request.directory, request.query) } satisfies Handled<"file.list">
+
+    case "file.read": {
+      const resolved = path.resolve(request.path)
+      const content = await fs.readFile(resolved, "utf8")
+      const limit = 500_000
+      return {
+        path: resolved,
+        content: content.slice(0, limit),
+        truncated: content.length > limit,
+      } satisfies Handled<"file.read">
+    }
+
+    case "shell.open": {
+      const session = await runtime.sessions.require(request.sessionID)
+      const cwd = request.cwd ? resolveInside(session.directory, request.cwd) : session.directory
+      return {
+        /*
+         * The size travels with the open so the shell prints its first prompt
+         * against the real grid. A resize that arrives afterwards cannot undo
+         * a prompt that has already been wrapped at the wrong column.
+         */
+        shellID: runtime.shells.open(
+          request.sessionID,
+          cwd,
+          runtime.config.get().shell,
+          { cols: request.cols ?? 0, rows: request.rows ?? 0 },
+          /*
+           * Whoever asked owns it. A reload never unmounts the pane, so this
+           * is the only thing that will ever end the shell for them.
+           */
+          owner,
+        ),
+      } satisfies Handled<"shell.open">
+    }
+
+    case "shell.input":
+      runtime.shells.write(request.shellID, request.data)
+      return {} satisfies Handled<"shell.input">
+
+    case "shell.resize":
+      runtime.shells.resize(request.shellID, request.cols, request.rows)
+      return {} satisfies Handled<"shell.resize">
+
+    case "shell.list":
+      return { shells: runtime.shells.list(request.sessionID, owner) } satisfies Handled<"shell.list">
+
+    case "shell.attach": {
+      const found = runtime.shells.attach(request.shellID)
+      // A shell that is not there reads as an empty, finished one rather than
+      // an error: the drawer's job is to draw what is left, not to complain.
+      return (found ?? { data: "", alive: false }) satisfies Handled<"shell.attach">
+    }
+
+    case "shell.close":
+      runtime.shells.close(request.shellID)
+      return {} satisfies Handled<"shell.close">
+
+    case "workspace.list":
+      return { worktrees: await git.worktrees(request.directory) } satisfies Handled<"workspace.list">
+
+    case "workspace.create":
+      return (await git.addWorktree(request.directory, request.name)) satisfies Handled<"workspace.create">
+
+    case "workspace.remove":
+      await git.removeWorktree(request.directory, request.target)
+      return {} satisfies Handled<"workspace.remove">
+
+    case "mcp.list":
+      return { servers: runtime.mcp.list() } satisfies Handled<"mcp.list">
+
+    case "mcp.toggle": {
+      await runtime.mcp.toggle(request.name)
+      return { servers: runtime.mcp.list() } satisfies Handled<"mcp.toggle">
+    }
+  }
+}
+
+const MAX_FILES = 500
+
+/**
+ * Flat file listing for the file picker in the composer and the palette.
+ * Filtering happens here rather than in the renderer so a large project does
+ * not push thousands of paths across the socket on every keystroke.
+ */
+/** Waits briefly for aborted turns to finish their final write. */
+async function waitForIdle(runtime: Runtime, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!runtime.runner.idle && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+}
+
+async function listFiles(directory: string, query?: string): Promise<FileEntry[]> {
+  const root = path.resolve(directory)
+  const needle = query?.toLowerCase()
+  const results: FileEntry[] = []
+  const queue = [root]
+
+  while (queue.length && results.length < MAX_FILES) {
+    const dir = queue.shift()!
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
+      const absolute = path.join(dir, entry.name)
+      const rel = path.relative(root, absolute).split(path.sep).join("/")
+      if (entry.isDirectory()) {
+        queue.push(absolute)
+        continue
+      }
+      if (needle && !rel.toLowerCase().includes(needle)) continue
+      results.push({ path: rel, name: entry.name, directory: false })
+      if (results.length >= MAX_FILES) break
+    }
+  }
+
+  return results
+}

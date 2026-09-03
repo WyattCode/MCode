@@ -1,0 +1,2277 @@
+<script setup lang="ts">
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import type { Ref } from "vue"
+import type { Attachment, CommandInfo, Effort, ModelInfo } from "@shared/protocol"
+import { expandTemplate, splitCommandLine } from "@shared/command"
+import { preview, readFiles } from "../lib/attach"
+import type { Draft } from "../lib/draft"
+import { badgeStyle, fileBadge } from "../lib/filetype"
+import { findModel, isLatest, resolveVariant, withoutLatest } from "../lib/model"
+import {
+  absolutePath,
+  fileDirectory,
+  fileName,
+  mentionAttachment,
+  mentionSpan,
+  mentionedIn,
+  withMention,
+} from "../lib/mention"
+import { notify, notifyFailure } from "../lib/toast"
+import { useApp } from "../stores/app"
+import ModelTooltip from "./ModelTooltip.vue"
+import ProviderIcon from "./ProviderIcon.vue"
+import { t } from "../lib/i18n"
+
+const emit = defineEmits<{ "open-settings": []
+  connect: []
+  "manage-models": []
+  shell: [command: string]
+}>()
+
+/**
+ * The commands a slash can reach.
+ *
+ * Handed down rather than built here: App.vue owns the registry, and this is
+ * the same filtered list the palette shows, so an entry that cannot run where
+ * the user is standing is not offered.
+ */
+const props = defineProps<{ commands?: { id: string; title: string; hint?: string; run: () => void }[] }>()
+
+const app = useApp()
+const text = ref("")
+const input = ref<HTMLTextAreaElement>()
+/**
+ * Prompt history, newest last; -1 means "editing a fresh prompt".
+ *
+ * Read off the session rather than collected as you type: a local array only
+ * ever held what this window had sent, so pressing Up in a session reopened
+ * after a restart recalled nothing at all.
+ */
+const history = computed(() =>
+  app.messages.filter((message) => message.role === "user").map((message) => message.text),
+)
+const historyIndex = ref(-1)
+
+/**
+ * The picker lists display names, so the pill has to as well - showing the raw
+ * slug there made the same model read two different ways on one screen.
+ */
+const modelName = computed(() => {
+  const chosen = app.current?.model
+  if (!chosen) return "no model"
+  const provider = app.providers.find((entry) => entry.id === chosen.provider)
+  const found = provider?.models.find((entry) => entry.id === chosen.model)
+  // "(latest)" is a tag in the reference, not part of the name: its model store
+  // strips the word out once and hands the stripped name to everything.
+  return found ? withoutLatest(found.name) : chosen.model
+})
+
+function resize() {
+  const element = input.value
+  if (!element) return
+  element.style.height = "auto"
+  element.style.height = `${Math.min(element.scrollHeight, 260)}px`
+}
+
+/**
+ * A menu closed with Escape, until the next thing typed.
+ *
+ * Escape used to empty the box. That was survivable while the only menu was
+ * the slash one, where the whole draft is the command being typed; the @ menu
+ * opens in the middle of a long prompt, and throwing that away to close a list
+ * would be a disaster. Both now close and leave the words alone, which is also
+ * what Escape does in the reference.
+ */
+const dismissed = ref(false)
+
+/**
+ * Paths that were chosen from the @ menu rather than merely typed.
+ *
+ * Only these are read and carried with the message. Something that reads like
+ * a mention but names nothing - a half-typed path, an @handle - stays the
+ * words it is and reaches the model inside the sentence it was written in.
+ */
+const mentioned = ref(new Set<string>())
+
+watch(text, (value) => {
+  void nextTick(resize)
+  /*
+   * Whatever the box says now is what the menus answer to. A menu closed with
+   * Escape comes back as soon as anything is typed, which is the reference's
+   * rule and the only one that keeps Escape from being a trapdoor.
+   */
+  dismissed.value = false
+  // A mention edited out of the draft stops being a mention: the file must not
+  // travel with the message because its path was once typed here.
+  if (!mentioned.value.size) return
+  const present = new Set(mentionedIn(value))
+  const kept = [...mentioned.value].filter((path) => present.has(path))
+  if (kept.length !== mentioned.value.size) mentioned.value = new Set(kept)
+})
+
+/**
+ * Where the caret is, kept as state rather than read when someone asks.
+ *
+ * The @ menu is a question about the few characters before the caret, so it
+ * has to be asked again when the caret moves and not only when the text
+ * changes - clicking into the middle of a finished sentence is enough to be
+ * standing inside a mention, or to have just left one.
+ */
+const caret = ref(0)
+
+function syncCaret() {
+  caret.value = input.value?.selectionStart ?? text.value.length
+}
+
+/* ----------------------------------------------------------- attachments -- */
+
+const attachments = ref<Attachment[]>([])
+const picker = ref<HTMLInputElement>()
+const dragging = ref(false)
+
+async function take(files: readonly File[]) {
+  if (!files.length) return
+  const { attachments: taken, rejected } = await readFiles(files)
+  attachments.value = [...attachments.value, ...taken]
+  for (const item of rejected) {
+    notifyFailure(t(item.reason === "too-large" ? "attach.tooLarge" : "attach.unreadable"), item.name)
+  }
+}
+
+function pick() {
+  picker.value?.click()
+}
+
+async function onPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  await take([...(input.files ?? [])])
+  // Cleared so choosing the same file twice in a row still fires a change.
+  input.value = ""
+}
+
+async function onPaste(event: ClipboardEvent) {
+  const files = [...(event.clipboardData?.files ?? [])]
+  if (!files.length) return
+  // Only when the clipboard actually carries a file; plain text still pastes.
+  event.preventDefault()
+  await take(files)
+}
+
+/**
+ * Dropping a file anywhere in the window, not only on the box.
+ *
+ * The reference puts all three of these on `document`
+ * (main-Db9FY8Yb.js, `handleGlobalDragOver`/`DragLeave`/`Drop`), so a file
+ * dragged onto the transcript - which is most of the window, and the obvious
+ * place to aim - attaches. Bound to the composer element instead, as these were,
+ * everything outside that one strip silently did nothing.
+ *
+ * The depth counter went with them. It existed because dragenter and dragleave
+ * fire again for every child element crossed; at the document level the
+ * reference's test is simply whether the pointer left the window at all, which
+ * is what `relatedTarget` being null means.
+ */
+function dialogOpen(): boolean {
+  // Every dialog in the app lays a scrim, and the palette an overlay.
+  return Boolean(document.querySelector(".scrim, .overlay"))
+}
+
+function onDragOver(event: DragEvent) {
+  if (dialogOpen()) return
+  const types = event.dataTransfer?.types
+  if (!types?.includes("Files") && !types?.includes("text/plain")) return
+  // Without this the window navigates to the dropped file instead.
+  event.preventDefault()
+  dragging.value = true
+}
+
+function onDragLeave(event: DragEvent) {
+  if (dialogOpen()) return
+  if (!event.relatedTarget) dragging.value = false
+}
+
+async function onDrop(event: DragEvent) {
+  if (dialogOpen()) return
+  event.preventDefault()
+  dragging.value = false
+
+  /*
+   * A path dragged as text becomes a mention rather than a copy of the file:
+   * the reference reads `file:` off the plain text and inserts `@path`, which
+   * keeps a file that is already in the project referred to rather than sent.
+   */
+  const dropped = event.dataTransfer?.getData("text/plain") ?? ""
+  if (dropped.startsWith("file:")) {
+    const path = decodeURI(dropped.slice("file:".length).replace(/^\/{2,3}/, ""))
+    if (path) {
+      text.value = text.value ? `${text.value.replace(/\s+$/, "")} @${path} ` : `@${path} `
+      focus()
+      return
+    }
+  }
+
+  const files = [...(event.dataTransfer?.files ?? [])]
+  if (!files.length) return
+  await take(files)
+}
+
+/**
+ * Silent once something has been attached; the tiles say what is going.
+ *
+ * It no longer changes while the model is working. It used to read "Working -
+ * Esc to stop", which was the box telling you it would not take anything, and
+ * it will: a prompt sent now joins the turn that is running. Inviting the same
+ * thing it always invites is the truthful version, and it is also what the
+ * reference does - its placeholder does not know whether a turn is in flight.
+ */
+const placeholder = computed(() => {
+  if (mode.value === "shell") return t("composer.shellPlaceholder")
+  /*
+   * It names both triggers now that both exist. The reference's own placeholder
+   * has always said this, and MCode's could not: for a long time neither a
+   * slash nor an @ did anything, and a box that advertises keys it ignores is
+   * worse than one that says nothing.
+   */
+  return attachments.value.length ? "" : t("composer.placeholder", { slash: "/", at: "@" })
+})
+
+/** A drag can also end without a drop - cancelled, or dropped elsewhere. */
+function endDrag() {
+  dragging.value = false
+}
+
+function remove(at: number) {
+  attachments.value = attachments.value.filter((_, index) => index !== at)
+}
+
+/**
+ * What pressing Enter does: ask the model, or run a command.
+ *
+ * The reference keeps one box and switches its meaning rather than offering a
+ * second one, so the two modes share the history, the attachments and the
+ * keyboard - only the destination changes.
+ */
+const mode = ref<"normal" | "shell">("normal")
+
+/**
+ * Whether the button stops the turn rather than sending.
+ *
+ * The reference's own test is `working() && blank()`: a turn is running AND
+ * there is nothing waiting to go. Anything typed puts send back, so the box
+ * never becomes a dead end while the model works.
+ */
+const stopping = computed(() => app.busy && !text.value.trim() && !attachments.value.length)
+
+function setMode(next: "normal" | "shell") {
+  mode.value = next
+  focus()
+}
+
+async function submit() {
+  const value = text.value.trim()
+  if (mode.value === "shell") {
+    if (!value) return
+    text.value = ""
+    await nextTick(resize)
+    emit("shell", value)
+    return
+  }
+  /*
+   * An attachment on its own is a message; the model can be asked to look at
+   * it. There is deliberately no test for a turn being in flight: one that is
+   * running takes the message and answers it in the same turn, so refusing here
+   * would only force the user to stop the model and lose its work in order to
+   * say one more sentence.
+   */
+  if (!value && !attachments.value.length) return
+  historyIndex.value = -1
+  const sent = attachments.value
+  const carried = mentioned.value
+  /*
+   * Emptied before anything is awaited. The mentioned files still have to be
+   * read off disk, and leaving the draft on screen across that read would let
+   * a second Enter - a double tap, an impatient one - start a second send of
+   * the same sentence.
+   */
+  text.value = ""
+  attachments.value = []
+  mentioned.value = new Set()
+  await nextTick(resize)
+
+  const named = await mentionAttachments(value, carried)
+
+  // A rejected message should not cost the user what they typed, or gathered.
+  if (!(await app.send(outgoing(value), [...sent, ...named]))) {
+    text.value = value
+    attachments.value = sent
+    mentioned.value = carried
+    await nextTick(resize)
+  }
+}
+
+/**
+ * What actually goes to the model when the draft is a command line.
+ *
+ * The reference sends `session.command` and lets its server look the name up
+ * and fill the template in (main-8t-QUXax.js @4461049 into
+ * `SessionPrompt.command` @32957943); this app has no such request, so the
+ * template travels with the command list and is filled in here. The visible
+ * result is the same either way: the transcript shows the expanded prompt,
+ * because the reference's server puts the template's own parts on the user
+ * message rather than the slash line.
+ *
+ * NOT carried across, because `session.prompt` has nowhere to put them: a
+ * command's `agent`, `model` and `subtask`. The reference runs the turn as
+ * whichever agent and model the command names and can hand it to a subagent;
+ * here it runs as whatever the session is already set to. That is a real gap
+ * and it is reported rather than papered over.
+ */
+function outgoing(value: string): string {
+  const line = splitCommandLine(value)
+  const command = line && serverCommand(line.name)
+  if (!command) return value
+  const expanded = expandTemplate(command.template, line!.args)
+  // An MCP prompt whose fetch failed has no template. Sending nothing would be
+  // refused by the store and the draft would bounce back with no explanation,
+  // so the line goes as it was typed instead.
+  return expanded.trim() ? expanded : value
+}
+
+/**
+ * The mentioned files, read at the moment the message goes.
+ *
+ * Reading them when they were named would send what the file said several
+ * minutes and a few edits ago; what the model should be looking at is what is
+ * on disk when it is asked. A file that cannot be read is named out loud - the
+ * sentence still goes, mention and all, but the user has to know the file did
+ * not go with it.
+ */
+async function mentionAttachments(value: string, chosen: Set<string>): Promise<Attachment[]> {
+  const root = app.current?.directory
+  if (!root || !app.client || !chosen.size) return []
+  const out: Attachment[] = []
+  for (const path of mentionedIn(value)) {
+    if (!chosen.has(path)) continue
+    // The same file named twice is one file.
+    if (out.some((entry) => entry.path === path)) continue
+    try {
+      const result = await app.client.request({ type: "file.read", path: absolutePath(root, path) })
+      const attachment = mentionAttachment(path, result.content)
+      if (attachment) out.push(attachment)
+      else notifyFailure(t("attach.unreadable"), path)
+    } catch {
+      notifyFailure(t("attach.unreadable"), path)
+    }
+  }
+  return out
+}
+
+watch(
+  () => app.currentID,
+  () => {
+    historyIndex.value = -1
+    // What was gathered belonged to the conversation being left.
+    attachments.value = []
+    mentioned.value = new Set()
+    // And the file list belonged to the project that conversation was in.
+    files.value = []
+    listedFor.value = undefined
+  },
+)
+
+/* --------------------------------------------------------------- files -- */
+
+/**
+ * The project's files, fetched once and filtered here.
+ *
+ * The server caps the list and walks the tree to build it, so asking again on
+ * every keystroke would cost a directory crawl per letter. The palette settled
+ * the same question the same way.
+ */
+const files = ref<string[]>([])
+const listedFor = ref<string>()
+
+async function loadFiles() {
+  const directory = app.current?.directory
+  if (!directory || !app.client || listedFor.value === directory) return
+  listedFor.value = directory
+  try {
+    const result = await app.client.request({ type: "file.list", directory })
+    files.value = result.files.map((file) => file.path)
+  } catch {
+    // Nothing is said: the menu simply does not appear and the @ stays text.
+    // Cleared so the next @ tries again rather than being stuck on one failure.
+    listedFor.value = undefined
+  }
+}
+
+/** The mention the caret is standing in, if it is standing in one. */
+const atSpan = computed(() =>
+  mode.value === "shell" ? undefined : mentionSpan(text.value, caret.value),
+)
+
+// Nobody wants the file list until they have typed an @, so that is when it is
+// fetched - rather than on opening a session that may never mention a file.
+watch(atSpan, (span) => {
+  if (span) void loadFiles()
+})
+
+/**
+ * A hit in the file's own name beats one further up the path.
+ *
+ * Someone typing "conf" is nearly always after config.ts, not after the
+ * eighty files that happen to live under a directory called config.
+ */
+function nameFirst(path: string, needle: string): number {
+  if (!needle) return 0
+  return path.slice(path.lastIndexOf("/") + 1).toLowerCase().includes(needle) ? 0 : 1
+}
+
+const atMatches = computed(() => {
+  const span = atSpan.value
+  if (!span || dismissed.value) return []
+  const needle = span.query.toLowerCase()
+  const found = needle ? files.value.filter((path) => path.toLowerCase().includes(needle)) : files.value
+  return [...found]
+    .sort((a, b) => nameFirst(a, needle) - nameFirst(b, needle) || a.length - b.length)
+    // Enough to choose from without covering the conversation behind it.
+    .slice(0, 8)
+})
+
+/*
+ * An @ that matches nothing closes the menu rather than showing an empty one.
+ *
+ * The reference leaves it open on "No matching items", and while it is open it
+ * swallows Enter - so a prompt that mentions a name the project does not have
+ * cannot be sent at all until the menu is dismissed. The slash menu here has
+ * always closed instead, and closing is both the kinder answer and the one
+ * that keeps the two triggers behaving alike.
+ */
+const atOpen = computed(() => atMatches.value.length > 0)
+const atIndex = ref(0)
+
+watch(atMatches, (rows) => {
+  if (atIndex.value >= rows.length) atIndex.value = 0
+})
+
+/** Puts the chosen path into the draft, and remembers that it was chosen. */
+async function chooseMention(at: number) {
+  const span = atSpan.value
+  const path = atMatches.value[at]
+  if (!span || !path) return
+  const next = withMention(text.value, span, path)
+  mentioned.value = new Set(mentioned.value).add(path)
+  text.value = next.text
+  atIndex.value = 0
+  await nextTick()
+  resize()
+  input.value?.focus()
+  input.value?.setSelectionRange(next.cursor, next.cursor)
+  caret.value = next.cursor
+}
+
+/**
+ * Starts a mention from somewhere other than the @ key.
+ *
+ * The trigger is a rule about the text - an @ opening the draft or following a
+ * space - so opening the menu means writing an @ that satisfies that rule,
+ * rather than raising a flag the text would then contradict.
+ */
+function openContext() {
+  const draft = text.value
+  const opened = draft && !/\s$/.test(draft) ? `${draft} @` : `${draft}@`
+  text.value = opened
+  void loadFiles()
+  void nextTick(() => {
+    resize()
+    input.value?.focus()
+    input.value?.setSelectionRange(opened.length, opened.length)
+    caret.value = opened.length
+  })
+}
+
+/** A file chosen somewhere else in the app, written into the draft as a mention. */
+function mention(path: string) {
+  const draft = text.value
+  const opened = draft && !/\s$/.test(draft) ? `${draft} @` : `${draft}@`
+  const span = mentionSpan(opened, opened.length)
+  if (!span) return
+  const next = withMention(opened, span, path)
+  mentioned.value = new Set(mentioned.value).add(path)
+  text.value = next.text
+  void nextTick(() => {
+    resize()
+    input.value?.focus()
+    input.value?.setSelectionRange(next.cursor, next.cursor)
+    caret.value = next.cursor
+  })
+}
+
+/* ------------------------------------------------------------ commands -- */
+
+/**
+ * One row of the slash menu, from either of the two places a command lives.
+ *
+ * The reference keeps the same two apart and concatenates them custom-first
+ * (main-8t-QUXax.js @4533850): `[...custom, ...builtin]`, where `custom` comes
+ * off the server's command list and `builtin` is its own command registry
+ * filtered to the entries that declare a slash word. The two behave
+ * differently on Enter, which is why the flag is carried rather than inferred.
+ */
+interface SlashEntry {
+  id: string
+  /** The word typed after the slash. A UI command has none. */
+  trigger?: string
+  title: string
+  description?: string
+  hint?: string
+  /** The word the badge shows, or nothing when the reference draws no badge. */
+  badge?: string
+  /** The template a project command sends, absent for a UI command. */
+  template?: string
+  run: () => void
+}
+
+function serverCommand(name: string): CommandInfo | undefined {
+  return app.commands.find((entry) => entry.name === name)
+}
+
+/**
+ * The project's own commands, its MCP prompts and its skills.
+ *
+ * ONE BADGE, DELIBERATELY. The reference's badge reads
+ * `cmd.source === "skill" ? t("prompt.slash.badge.skill") : cmd.source ===
+ * "mcp" ? …mcp : …custom` (@4486037) - but neither of the two places that
+ * build its slash list passes `source` through. The first has the line
+ * commented out in the shipped bundle (`type: "custom" // source: cmd.source,`
+ * @4533850) and the second never had it (@4667943), so `cmd.source` is
+ * undefined for every row, `undefined !== "command"` is true and v1.18.25
+ * labels every server command "custom" whatever it actually is. That is what
+ * is copied here. `source` still travels on the wire, so if the reference ever
+ * reconnects its own field this becomes a one-line change.
+ */
+const serverEntries = computed<SlashEntry[]>(() =>
+  app.commands.map((entry) => ({
+    id: `custom.${entry.name}`,
+    trigger: entry.name,
+    title: entry.name,
+    description: entry.description,
+    badge: t("prompt.slash.badge.custom"),
+    template: entry.template,
+    run: () => {},
+  })),
+)
+
+const uiEntries = computed<SlashEntry[]>(() =>
+  (props.commands ?? []).map((entry) => ({
+    id: entry.id,
+    title: entry.title,
+    hint: entry.hint,
+    run: entry.run,
+  })),
+)
+
+/*
+ * A slash at the very start opens the list, and only there: a slash inside a
+ * sentence is a slash, and a path pasted into the box is not a command.
+ */
+const slashQuery = computed(() => {
+  if (mode.value === "shell") return undefined
+  const value = text.value
+  if (!value.startsWith("/") || value.includes("\n")) return undefined
+  /*
+   * Once the first word names a project command and a space has been typed,
+   * what follows is that command's arguments rather than a search. Without
+   * this the menu stayed up over `/deploy west`, and Enter - which a menu owns
+   * while it is open - would pick the row again and throw the arguments away.
+   * A UI command is exempt: those are matched on their titles, which contain
+   * spaces, and none of them takes an argument.
+   */
+  const line = splitCommandLine(value)
+  if (line && value.includes(" ") && serverCommand(line.name)) return undefined
+  return value.slice(1)
+})
+
+const slashMatches = computed(() => {
+  const query = slashQuery.value
+  if (query === undefined) return []
+  const needle = query.trim().toLowerCase()
+  const all = [...serverEntries.value, ...uiEntries.value]
+  // The reference filters on `["trigger", "title"]`; for its own commands the
+  // two are the slash word and the readable name, and matching only one of
+  // them makes half the menu unreachable by the thing it is called.
+  const found = needle
+    ? all.filter(
+        (entry) =>
+          entry.title.toLowerCase().includes(needle) ||
+          (entry.trigger?.toLowerCase().includes(needle) ?? false),
+      )
+    : all
+  // Enough to choose from without covering the conversation behind it.
+  return found.slice(0, 8)
+})
+
+/*
+ * Open whenever the draft is a command line, even with nothing matching: the
+ * reference keeps its popover up and puts `prompt.popover.emptyCommands` in it
+ * (@4482800) rather than vanishing, so a mistyped name says so instead of
+ * looking like the menu was never there.
+ */
+const slashOpen = computed(() => !dismissed.value && slashQuery.value !== undefined)
+const slashIndex = ref(0)
+
+// Typing narrows the list, which can leave the highlight past the end of it.
+watch(slashMatches, (rows) => {
+  if (slashIndex.value >= rows.length) slashIndex.value = 0
+})
+
+async function runSlash(at: number) {
+  const command = slashMatches.value[at]
+  if (!command) return
+  slashIndex.value = 0
+  if (command.trigger !== undefined) {
+    /*
+     * A project command is not run from the menu. The reference writes
+     * `/${trigger} ` into the editor, closes the popover and leaves the caret
+     * at the end (@4534200), because what comes next is the command's
+     * arguments - choosing the row is naming the command, not sending it.
+     */
+    text.value = `/${command.trigger} `
+    await nextTick(resize)
+    // After the tick, because the text watcher clears this on every change.
+    dismissed.value = true
+    const end = text.value.length
+    focus()
+    input.value?.setSelectionRange(end, end)
+    caret.value = end
+    return
+  }
+  text.value = ""
+  await nextTick(resize)
+  void command.run()
+}
+
+/**
+ * Arrow keys through an open menu. Shared by both of them: the two differing
+ * here would be a difference with nothing behind it.
+ *
+ * The reference also walks its list on Ctrl+N and Ctrl+P. Those are not taken
+ * here because this app already spends both - Ctrl+N starts a session and
+ * Ctrl+P opens the file palette - and a chord that means one thing everywhere
+ * except inside an open menu is worse than one meaning it always.
+ */
+function moveMenu(event: KeyboardEvent, count: number, index: Ref<number>): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false
+  const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0
+  if (!step || !count) return false
+  event.preventDefault()
+  index.value = (index.value + step + count) % count
+  return true
+}
+
+/** Enter and Tab both take the highlighted row, as they do in the reference. */
+function takesRow(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false
+  return event.key === "Enter" || event.key === "Tab"
+}
+
+function onKeydown(event: KeyboardEvent) {
+  /*
+   * While an IME is composing, Enter picks a candidate and the arrows move
+   * through the candidate list - none of it is meant for us. Without this the
+   * first Enter of every pinyin word sent a half-written message. Chromium
+   * reports keyCode 229 for the same state on some layouts.
+   */
+  if (event.isComposing || event.keyCode === 229) return
+
+  /*
+   * While a menu is up it owns the arrows, Enter and Tab, the way the palette
+   * does. Escape closes the menu and leaves the draft alone, so a trigger typed
+   * by accident costs one key and nothing that was written.
+   *
+   * The @ menu is asked first because its trigger is the more specific one: it
+   * is about the word the caret is in, where the slash menu is about the draft
+   * beginning with a slash, and both can be true at once.
+   */
+  if (atOpen.value) {
+    if (moveMenu(event, atMatches.value.length, atIndex)) return
+    if (takesRow(event)) {
+      event.preventDefault()
+      void chooseMention(atIndex.value)
+      return
+    }
+    if (event.key === "Escape") {
+      event.preventDefault()
+      dismissed.value = true
+      return
+    }
+  } else if (slashOpen.value) {
+    /*
+     * Only a menu with rows in it owns the arrows and Enter. The empty state
+     * is a message, not a list: Enter there has to send the sentence that was
+     * typed, the way it would if the menu had never opened. Escape still
+     * closes it either way, because it is on screen either way.
+     */
+    if (slashMatches.value.length) {
+      if (moveMenu(event, slashMatches.value.length, slashIndex)) return
+      if (takesRow(event)) {
+        event.preventDefault()
+        void runSlash(slashIndex.value)
+        return
+      }
+    }
+    if (event.key === "Escape") {
+      event.preventDefault()
+      dismissed.value = true
+      return
+    }
+  }
+
+  // Enter sends; Shift+Enter is a newline. This is a chat surface, not an editor.
+  if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
+    event.preventDefault()
+    // Held down, it sends once. The reference guards the same way, after its
+    // preventDefault so the repeats do not fall through and type newlines.
+    if (event.repeat) return
+    void submit()
+    return
+  }
+
+  /*
+   * Escape still stops the turn, but only from an empty box. Now that words can
+   * be typed while the model works, a draft in progress is exactly when Escape
+   * is most likely to be reached for by reflex, and stopping the turn would
+   * throw away everything it had done in order to do nothing. The Stop button
+   * is on the bar throughout, so nothing becomes unreachable.
+   */
+  if (event.key === "Escape" && app.busy && !text.value.trim()) {
+    event.preventDefault()
+    void app.abort()
+    return
+  }
+
+  // Arrow history, but only from the edges of the text so it never fights
+  // with normal cursor movement in a multi-line draft.
+  const element = input.value
+  if (!element) return
+
+  if (event.key === "ArrowUp" && element.selectionStart === 0 && history.value.length) {
+    event.preventDefault()
+    const next = historyIndex.value === -1 ? history.value.length - 1 : Math.max(0, historyIndex.value - 1)
+    historyIndex.value = next
+    text.value = history.value[next]
+  } else if (event.key === "ArrowDown" && element.selectionStart === text.value.length && historyIndex.value !== -1) {
+    event.preventDefault()
+    const next = historyIndex.value + 1
+    if (next >= history.value.length) {
+      historyIndex.value = -1
+      text.value = ""
+    } else {
+      historyIndex.value = next
+      text.value = history.value[next]
+    }
+  }
+}
+
+
+/** Which pill has its menu open, if any. */
+const menu = ref<"agent" | "model" | "effort">()
+const modelQuery = ref("")
+const pills = ref<HTMLElement>()
+
+const AGENTS = ["build", "plan"] as const
+
+/** What the session is running on, as the server describes it. */
+const currentModel = computed<ModelInfo | undefined>(() => findModel(app.providers, app.current?.model))
+
+/**
+ * The reasoning steps THIS model accepts, which is not the same list for all of
+ * them and is empty for most.
+ *
+ * The pill used to offer all five to everything, which meant asking a plain
+ * chat model to think harder and a Claude 4.6 for a level it has never had -
+ * both settings the provider drops on the floor. The reference decides it per
+ * model and hides the control outright when there is nothing to choose:
+ * main-8t-QUXax.js @4547992 is `const variants = createMemo(() => ["default",
+ * ...variant.list()])` beside `const showVariantControl = createMemo(() =>
+ * variant.list().length > 0)`, and its v2 composer draws the same control only
+ * `when(control.options().length > 1)` (@4603381) - the same rule counted from
+ * the other end.
+ *
+ * The list arrives on the wire as `ModelInfo.variants`, so an unloaded provider
+ * list yields an empty one and the pill stays away until the models are known,
+ * which is what the reference's `variantControlVisible: !model.loading` does.
+ */
+const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
+
+/** "Follow the app default" at the head, then this model's own levels. */
+const EFFORT_CHOICES = computed<(Effort | undefined)[]>(() => [undefined, ...variants.value])
+
+/**
+ * The session's step, if this model still takes it.
+ *
+ * The reference's `resolveModelVariant` (@2829318) returns nothing when the
+ * stored variant is absent from the model's list, and deliberately does not
+ * erase what was stored: switching to a model that lacks `xhigh` reads as
+ * Default, and switching back brings `xhigh` up again. Clearing it here would
+ * be tidier on the wire and lose the setting on every model change, so the
+ * resolution stays a reading of the state rather than a write to it.
+ */
+const effortLevel = computed<Effort | undefined>(() => resolveVariant(variants.value, app.current?.effort))
+
+async function chooseEffort(level?: Effort) {
+  menu.value = undefined
+  await app.setEffort(level)
+}
+
+/*
+ * The session's agent, not the stored default: the turn runs as whatever the
+ * session says, and an older session keeps the agent it was opened with. The
+ * model pill beside this one reads the session for the same reason.
+ */
+const agent = computed(() => app.current?.agent ?? app.config?.agent ?? "build")
+
+/**
+ * Models offered in the picker: every connected provider, minus anything the
+ * user switched off in Settings. An empty enabled list means "not curated",
+ * so everything shows rather than nothing.
+ */
+const groups = computed(() => {
+  const chosen = new Set(app.config?.enabledModels ?? [])
+  const needle = modelQuery.value.trim().toLowerCase()
+  return app.providers
+    .filter((provider) => provider.configured)
+    .map((provider) => ({
+      provider,
+      models: provider.models.filter((model) => {
+        if (chosen.size && !chosen.has(`${provider.id}/${model.id}`)) return false
+        if (!needle) return true
+        return model.name.toLowerCase().includes(needle) || model.id.toLowerCase().includes(needle)
+      }),
+    }))
+    .filter((group) => group.models.length > 0)
+})
+
+const MANAGE_KEY = "action:manage"
+const modelField = ref<HTMLInputElement>()
+const modelMenu = ref<HTMLElement>()
+const activeKey = ref("")
+
+/**
+ * The row the pointer is resting on, and where it is, for the readout beside it.
+ *
+ * Hover only, and with no delay, which is what the reference does: its picker
+ * rows carry a tooltip at `openDelay: 0` so the list can be read by running the
+ * pointer down it. The keyboard's own highlight does not raise it - moving the
+ * selection with the arrows does not open one there either.
+ */
+const hovered = ref<{ model: ModelInfo; provider: string; anchor: DOMRect }>()
+
+function hoverModel(key: string, model: ModelInfo, provider: string, event: MouseEvent) {
+  // The pointer moves the keyboard's highlight with it, which is what the row
+  // did before this and is why the two are set together rather than by two
+  // handlers racing on the same event.
+  activeKey.value = key
+  hovered.value = { model, provider, anchor: (event.currentTarget as HTMLElement).getBoundingClientRect() }
+}
+
+// The box is placed against a rectangle read once, so anything that moves the
+// row out from under it - closing the menu, scrolling the list - retires it.
+watch(menu, (which) => {
+  if (which !== "model") hovered.value = undefined
+})
+
+function modelKey(provider: string, model: string) {
+  return `${provider}:${model}`
+}
+
+const currentKey = computed(() =>
+  app.current ? modelKey(app.current.model.provider, app.current.model.model) : "",
+)
+
+/**
+ * Every row the arrow keys walk, in the order they are drawn.
+ *
+ * Manage models is the last of them rather than a separate control: the
+ * reference lets the keyboard reach it the same way it reaches a model, and
+ * arriving at the end of the list is how someone finds it.
+ */
+const modelKeys = computed(() => [
+  ...groups.value.flatMap((group) =>
+    group.models.map((model) => modelKey(group.provider.id, model.id)),
+  ),
+  MANAGE_KEY,
+])
+
+function scrollActiveIntoView() {
+  void nextTick(() => {
+    modelMenu.value
+      ?.querySelector(`[data-key="${CSS.escape(activeKey.value)}"]`)
+      ?.scrollIntoView({ block: "nearest" })
+  })
+}
+
+/*
+ * Typing re-aims the selection at the first row still showing, so that Enter
+ * takes the obvious match instead of a row the search has scrolled away.
+ */
+function setModelQuery(value: string) {
+  modelQuery.value = value
+  activeKey.value = modelKeys.value[0] ?? MANAGE_KEY
+}
+
+function moveActive(by: number) {
+  const keys = modelKeys.value
+  if (!keys.length) return
+  const index = keys.indexOf(activeKey.value)
+  const start = index === -1 ? 0 : index
+  activeKey.value = keys[(start + by + keys.length) % keys.length]
+  scrollActiveIntoView()
+}
+
+function openManage() {
+  menu.value = undefined
+  emit("manage-models")
+}
+
+function selectActive() {
+  if (activeKey.value === MANAGE_KEY) {
+    openManage()
+    return
+  }
+  for (const group of groups.value) {
+    for (const model of group.models) {
+      if (modelKey(group.provider.id, model.id) === activeKey.value) {
+        void chooseModel(group.provider.id, model.id)
+        return
+      }
+    }
+  }
+}
+
+/*
+ * The menu keeps these to itself. Escape has to stop here rather than reach the
+ * window, where it would close the panel behind the menu as well.
+ */
+function onModelKeys(event: KeyboardEvent) {
+  if (event.key === "Tab") return
+  event.stopPropagation()
+  if (event.key === "Escape") {
+    event.preventDefault()
+    menu.value = undefined
+    focus()
+    return
+  }
+  if (event.altKey || event.metaKey) return
+  if (event.key === "ArrowDown") {
+    event.preventDefault()
+    moveActive(1)
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault()
+    moveActive(-1)
+  } else if (event.key === "Enter" && !event.isComposing) {
+    event.preventDefault()
+    selectActive()
+  }
+}
+
+/**
+ * Opens the model menu, wherever the request came from.
+ *
+ * There is no separate model dialog: the shortcut opens this menu on its pill,
+ * which is the one place the app names the model, and having two surfaces for
+ * it meant the keyboard and the pointer disagreed about what the picker was.
+ */
+function openModelMenu() {
+  menu.value = "model"
+  modelQuery.value = ""
+  activeKey.value = currentKey.value || modelKeys.value[0] || MANAGE_KEY
+  void nextTick(() => {
+    modelField.value?.focus()
+    scrollActiveIntoView()
+  })
+}
+
+function toggle(which: "agent" | "model" | "effort") {
+  if (menu.value === which) {
+    menu.value = undefined
+    modelQuery.value = ""
+    return
+  }
+  if (which === "model") {
+    openModelMenu()
+    return
+  }
+  menu.value = which
+  modelQuery.value = ""
+}
+
+async function chooseAgent(next: (typeof AGENTS)[number]) {
+  menu.value = undefined
+  await app.setAgent(next)
+}
+
+async function chooseModel(provider: string, model: string) {
+  menu.value = undefined
+  await app.setModel({ provider, model })
+}
+
+function onPointerDown(event: MouseEvent) {
+  if (!pills.value?.contains(event.target as Node)) menu.value = undefined
+}
+
+onMounted(() => {
+  window.addEventListener("mousedown", onPointerDown, true)
+  window.addEventListener("dragend", endDrag)
+  document.addEventListener("dragover", onDragOver)
+  document.addEventListener("dragleave", onDragLeave)
+  document.addEventListener("drop", onDrop)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener("mousedown", onPointerDown, true)
+  window.removeEventListener("dragend", endDrag)
+  document.removeEventListener("dragover", onDragOver)
+  document.removeEventListener("dragleave", onDragLeave)
+  document.removeEventListener("drop", onDrop)
+})
+
+function focus() {
+  input.value?.focus()
+}
+
+/**
+ * Replaces the whole prompt - words, chips and mentions - with another one.
+ *
+ * A replacement rather than an append, which is the difference between this and
+ * `insert` below. The reference's `set` (main-8t-QUXax.js @2454253) assigns a
+ * fresh prompt array over the old one and asks nothing first: there is no
+ * confirm, no merge, and nothing reads whether a draft was in progress, so a
+ * revert while half a sentence is typed destroys that sentence. That is copied
+ * deliberately - the only rescue there is a failed request putting the previous
+ * prompt back, and here the server has already answered by the time this runs.
+ *
+ * Nothing is focused, also on purpose: `prompt.set(value)` is called with no
+ * cursor argument and no focus call, so the box fills in while the pointer is
+ * still wherever it was on the button that filled it.
+ */
+function set(next: Draft) {
+  text.value = next.text
+  attachments.value = next.attachments
+  mentioned.value = next.mentioned
+  historyIndex.value = -1
+  /*
+   * The caret is put at the end rather than left where the last draft had it:
+   * the @ menu is a question about the characters in front of it, and a caret
+   * still claiming to be halfway up a sentence that has been replaced would
+   * have the menu answering about text that is no longer there.
+   */
+  caret.value = next.text.length
+  void nextTick(resize)
+}
+
+/** Empties it, the way sending does - the reference's `prompt.reset()`. */
+function reset() {
+  text.value = ""
+  attachments.value = []
+  mentioned.value = new Set()
+  historyIndex.value = -1
+  caret.value = 0
+  void nextTick(resize)
+}
+
+/** Drops a fragment into the draft, so what was found elsewhere becomes prompt. */
+function insert(fragment: string) {
+  const draft = text.value
+  const next = draft && !draft.endsWith(" ") ? `${draft} ${fragment}` : `${draft}${fragment}`
+  text.value = next
+  void nextTick(() => {
+    resize()
+    input.value?.focus()
+    /*
+     * The caret is put at the end rather than left wherever it was, because
+     * the @ menu is a question about the characters in front of it: a caret
+     * that still claims to be halfway up the old draft would have the menu
+     * answering about text that has moved.
+     */
+    input.value?.setSelectionRange(next.length, next.length)
+    caret.value = next.length
+  })
+}
+
+defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, set, setMode })
+</script>
+
+<template>
+  <div class="composer">
+    <div class="shell">
+      <div
+        class="box"
+        :class="{ busy: app.busy, dropping: dragging, filled: attachments.length > 0 }"
+      >
+        <!--
+          What was gathered, above the text it belongs to.
+
+          One row that scrolls, not a block that wraps: the reference keeps its
+          attachments on a single line with a fade at whichever end still has
+          more (`prompt-attachments-fade-left/right`, driven by the row's own
+          scroll timeline). Wrapping made the box grow a row taller for every
+          four files and pushed the conversation up the screen.
+        -->
+        <div v-if="attachments.length" class="tiles-wrap">
+          <span class="tiles-fade start" aria-hidden="true" />
+          <span class="tiles-fade end" aria-hidden="true" />
+          <div class="tiles">
+            <div v-for="(item, at) in attachments" :key="at" class="tile" :class="{ picture: !!preview(item) }">
+              <img v-if="preview(item)" :src="preview(item)" class="tile-image" alt="" />
+              <svg v-else class="tile-mark" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M13.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9.5L13.5 3Z"
+                  stroke="currentColor"
+                  stroke-width="1.4"
+                  stroke-linejoin="round"
+                />
+                <path d="M13.4 3.2V9.6H19.8" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+              </svg>
+              <span class="tile-name" v-tip="{ label: item.path, placement: 'top' }">{{ item.path }}</span>
+              <button
+                class="tile-x"
+                v-tip="{ label: t('attach.remove'), placement: 'top' }"
+                @click="remove(at)"
+              >
+                <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <!--
+          The menu, above the text that is narrowing it. Drawn inside the box
+          so it moves with the composer rather than floating over the
+          conversation at a fixed place.
+
+          Two triggers share the one shape: an @ naming a file and a slash
+          naming a command are the same gesture with different subjects, so
+          they should not look like two different things. Only one is ever up -
+          the @ wins, because its trigger is about the word the caret is in
+          while the slash's is about the whole draft, and both can be true.
+        -->
+        <div v-if="atOpen" class="slash">
+          <div class="slash-head">{{ t("composer.context") }}</div>
+          <button
+            v-for="(path, at) in atMatches"
+            :key="path"
+            class="slash-row"
+            :class="{ on: at === atIndex }"
+            @mouseenter="atIndex = at"
+            @mousedown.prevent="chooseMention(at)"
+          >
+            <span class="badge" :style="badgeStyle(fileBadge(fileName(path)))">
+              {{ fileBadge(fileName(path)).label }}
+            </span>
+            <span class="slash-title">{{ fileName(path) }}</span>
+            <span v-if="fileDirectory(path)" class="slash-hint">{{ fileDirectory(path) }}</span>
+          </button>
+        </div>
+
+        <div v-else-if="slashOpen" class="slash">
+          <div class="slash-head">{{ t("composer.commands") }}</div>
+          <!--
+            Nothing matching is a row of its own, not an absent menu: the
+            reference keeps the popover up with `prompt.popover.emptyCommands`
+            in it, so a name typed wrong says so.
+          -->
+          <div v-if="!slashMatches.length" class="slash-empty">
+            {{ t("prompt.popover.emptyCommands") }}
+          </div>
+          <button
+            v-for="(command, at) in slashMatches"
+            :key="command.id"
+            class="slash-row"
+            :class="{ on: at === slashIndex }"
+            @mouseenter="slashIndex = at"
+            @mousedown.prevent="runSlash(at)"
+          >
+            <!--
+              A project command leads with the word that runs it, the way the
+              reference's row does - its template puts the trigger straight
+              after a literal "/". This app's own commands have no slash word
+              at all, so those keep the readable title they are known by in the
+              palette.
+            -->
+            <span class="slash-left">
+              <span class="slash-title">{{ command.trigger ? `/${command.trigger}` : command.title }}</span>
+              <span v-if="command.description" class="slash-desc">{{ command.description }}</span>
+            </span>
+            <span class="slash-right">
+              <span v-if="command.badge" class="slash-badge">{{ command.badge }}</span>
+              <span v-if="command.hint" class="slash-hint">{{ command.hint }}</span>
+            </span>
+          </button>
+        </div>
+
+        <textarea
+          ref="input"
+          v-model="text"
+          class="input"
+          rows="1"
+          spellcheck="false"
+          :placeholder="placeholder"
+          @keydown.escape="mode === 'shell' && setMode('normal')"
+          @keydown="onKeydown"
+          @keyup="syncCaret"
+          @click="syncCaret"
+          @select="syncCaret"
+          @input="syncCaret"
+          @paste="onPaste"
+        />
+
+        <!--
+          Attachments, agent, model and effort sit on one bar inside the box,
+          which is where the new design puts them - the controls belong to the
+          message being written, not to the page around it.
+        -->
+        <!--
+          Shell mode changes what Enter does, so it says so on the box rather
+          than only in the placeholder, which vanishes as soon as one types.
+        -->
+        <div v-if="mode === 'shell'" class="mode-note">
+          <span class="mode-tag">{{ t("composer.shellMode") }}</span>
+          <span class="mode-exit">{{ t("composer.shellExit") }}</span>
+        </div>
+
+        <div ref="pills" class="row">
+          <input ref="picker" class="picker" type="file" multiple @change="onPicked" />
+          <button class="attach" v-tip="{ label: t('composer.attach'), placement: 'top' }" @click="pick">
+            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+            </svg>
+          </button>
+
+          <!--
+            Hidden by setting, in which case the session simply runs as Build:
+            a picker with nothing to pick between is a control that only takes
+            up room.
+          -->
+          <div v-if="app.config?.showAgentPicker !== false" class="pill-wrap">
+            <button class="pill" :class="{ open: menu === 'agent' }" @click="toggle('agent')">
+              <span>{{ t(`agent.${agent}`) }}</span>
+              <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
+              </svg>
+            </button>
+            <div v-if="menu === 'agent'" class="menu">
+              <button
+                v-for="entry in AGENTS"
+                :key="entry"
+                class="item"
+                :class="{ on: entry === agent }"
+                @click="chooseAgent(entry)"
+              >
+                <span class="tick">
+                  <svg
+                    v-show="entry === agent"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
+                  </svg>
+                </span>
+                <span class="item-name">{{ t(`agent.${entry}`) }}</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="pill-wrap">
+            <button class="pill" :class="{ open: menu === 'model' }" @click="toggle('model')">
+              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <path d="M7 1.6 8.4 5.6 12.4 7 8.4 8.4 7 12.4 5.6 8.4 1.6 7 5.6 5.6z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" />
+              </svg>
+              <span>{{ modelName }}</span>
+              <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
+              </svg>
+            </button>
+
+            <div
+              v-if="menu === 'model'"
+              ref="modelMenu"
+              class="menu model-pop"
+              @keydown="onModelKeys"
+            >
+              <div class="pad">
+                <div class="model-search">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="7" cy="7" r="4.3" stroke="currentColor" stroke-width="1.2" />
+                    <path d="M10.2 10.2 14 14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                  </svg>
+                  <input
+                    ref="modelField"
+                    :value="modelQuery"
+                    @input="setModelQuery(($event.target as HTMLInputElement).value)"
+                    :placeholder="t('model.search')"
+                    spellcheck="false"
+                    autocomplete="off"
+                    autocorrect="off"
+                    autocapitalize="off"
+                  />
+                  <button
+                    v-if="modelQuery"
+                    class="model-clear"
+                    :aria-label="t('common.clear')"
+                    @mousedown.prevent
+                    @click="setModelQuery('')"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                      <path d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5" stroke="currentColor" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="rule" />
+
+              <div class="model-scroll" @scroll="hovered = undefined">
+                <div class="pad pad-top-0">
+                  <div v-if="groups.length === 0" class="model-empty">
+                    {{ app.providers.some((p) => p.configured) ? t("model.none") : t("model.needProvider") }}
+                  </div>
+                  <template v-for="group in groups" :key="group.provider.id">
+                    <div class="model-group">
+                      <span>{{ group.provider.name }}</span>
+                    </div>
+                    <button
+                      v-for="model in group.models"
+                      :key="model.id"
+                      class="item"
+                      :class="{
+                        hot: activeKey === modelKey(group.provider.id, model.id),
+                        on: currentKey === modelKey(group.provider.id, model.id),
+                      }"
+                      :data-key="modelKey(group.provider.id, model.id)"
+                      @mouseenter="hoverModel(modelKey(group.provider.id, model.id), model, group.provider.name, $event)"
+                      @mouseleave="hovered = undefined"
+                      @click="chooseModel(group.provider.id, model.id)"
+                    >
+                      <span class="tick">
+                        <svg
+                          v-show="currentKey === modelKey(group.provider.id, model.id)"
+                          width="12"
+                          height="12"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          aria-hidden="true"
+                        >
+                          <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
+                        </svg>
+                      </span>
+                      <span class="item-name">{{ withoutLatest(model.name) }}</span>
+                      <!--
+                        The reference tags the newest model of each family
+                        rather than saying so in the name, and takes the word
+                        out of the name to do it.
+                      -->
+                      <span v-if="isLatest(model.name)" class="tag">{{ t("model.tag.latest") }}</span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+
+              <div class="rule" />
+
+              <div class="pad">
+                <button
+                  class="item"
+                  :class="{ hot: activeKey === MANAGE_KEY }"
+                  :data-key="MANAGE_KEY"
+                  @mouseenter="activeKey = MANAGE_KEY"
+                  @click="openManage()"
+                >
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M2 5h3.2M8.8 5H14M2 11h6.2M11.8 11H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                    <circle cx="7" cy="5" r="1.7" stroke="currentColor" stroke-width="1.3" />
+                    <circle cx="10" cy="11" r="1.7" stroke="currentColor" stroke-width="1.3" />
+                  </svg>
+                  <span class="item-name">{{ t("model.manageRow") }}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!--
+            Only for a model that has steps to choose between. A model with no
+            reasoning control gets no pill at all rather than one whose every
+            setting the provider ignores, which is the reference's own rule.
+          -->
+          <div v-if="variants.length" class="pill-wrap">
+            <button
+              class="pill"
+              :class="{ open: menu === 'effort' }"
+              :aria-label="t('ui.promptInput.chooseVariant')"
+              @click="toggle('effort')"
+            >
+              <span v-if="effortLevel" class="level">{{ effortLevel }}</span>
+              <span v-else>{{ t("effort.default") }}</span>
+              <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
+              </svg>
+            </button>
+            <div v-if="menu === 'effort'" class="menu">
+              <button
+                v-for="entry in EFFORT_CHOICES"
+                :key="entry ?? 'default'"
+                class="item"
+                :class="{ on: entry === effortLevel }"
+                @click="chooseEffort(entry)"
+              >
+                <span class="tick">
+                  <svg
+                    v-show="entry === effortLevel"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
+                  </svg>
+                </span>
+                <span v-if="entry" class="item-name level">{{ entry }}</span>
+                <span v-else class="item-name">{{ t("effort.default") }}</span>
+              </button>
+            </div>
+          </div>
+
+          <span class="grow" />
+
+          <!--
+            One button, which is what the reference has. It stops the turn only
+            when there is nothing to send; type during a turn and it becomes
+            send again, because a message sent now joins the turn rather than
+            replacing it. That is the same capability the pair of buttons was
+            there to offer, without the pair - the reference never shows two.
+          -->
+          <button
+            class="send"
+            :disabled="!app.busy && !text.trim() && !attachments.length"
+            v-tip="{ label: stopping ? t('composer.stop') : t('composer.send'), placement: 'top' }"
+            @click="stopping ? app.abort() : submit()"
+          >
+            <!-- The reference's own shapes: a square with square corners, a
+                 solid arrow, and a turned arrow while the box runs commands. -->
+            <svg v-if="stopping" width="16" height="16" viewBox="0 0 20 20" aria-hidden="true">
+              <rect x="5" y="5" width="10" height="10" fill="currentColor" />
+            </svg>
+            <svg
+              v-else-if="mode === 'shell'"
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              aria-hidden="true"
+            >
+              <path
+                d="M4.08333 11.0859L1.75 8.7526L4.08333 6.41927M2.33333 8.7526L12.5417 8.7526L12.5417 3.21094L7 3.21094"
+                stroke="currentColor"
+                stroke-width="1"
+                stroke-linecap="square"
+              />
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 20 20" aria-hidden="true">
+              <path
+                fill-rule="evenodd"
+                clip-rule="evenodd"
+                d="M9.99991 2.24121L16.0921 8.33343L15.2083 9.21731L10.6249 4.63397V17.5001H9.37492V4.63398L4.7916 9.21731L3.90771 8.33343L9.99991 2.24121Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!--
+      Beside the picker rather than inside it: the list scrolls behind a clipped
+      edge, and a box drawn next to a row from in there is cut off at that edge.
+    -->
+    <Teleport to="body">
+      <ModelTooltip
+        v-if="hovered"
+        :model="hovered.model"
+        :provider="hovered.provider"
+        :anchor="hovered.anchor"
+      />
+    </Teleport>
+  </div>
+</template>
+
+<style scoped>
+/*
+ * Sits above the text, inside the box, so the two read as one control. Its own
+ * rule along the bottom separates it from what is being typed.
+ */
+.slash {
+  display: flex;
+  flex-direction: column;
+  max-height: 232px;
+  margin: -2px 0 6px;
+  padding-bottom: 4px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border-weaker);
+}
+
+.slash-head {
+  padding: 4px 6px 6px;
+  color: var(--text-weaker);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.slash-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 6px;
+  text-align: start;
+  border-radius: 5px;
+}
+
+.slash-row.on {
+  background: var(--surface-hover);
+}
+
+/*
+ * The type mark a file row leads with, the same one the palette and the tree
+ * use - a file should not read as a different kind of thing depending on which
+ * list it is being offered from.
+ */
+.badge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 15px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 530;
+}
+
+.slash-title {
+  /*
+   * Takes the middle of the row so the hint stays against the far edge whether
+   * the row has two things on it or three.
+   */
+  flex: 1;
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * What the reference says when a slash names nothing. Sized and coloured like
+ * the header above it rather than like a row, because it cannot be chosen.
+ */
+.slash-empty {
+  padding: 5px 6px;
+  color: var(--text-weaker);
+  font-size: 13px;
+}
+
+/*
+ * The two halves of a command row, exactly as the reference splits it: what it
+ * is called and what it does on the left (`flex items-center gap-2 min-w-0`),
+ * what kind of thing it is and how else to reach it on the right (`flex
+ * items-center gap-2 shrink-0`) - @4486900.
+ */
+.slash-left {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.slash-right {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Inside the left half the name is fixed and the sentence beside it yields. */
+.slash-left .slash-title {
+  flex: 0 0 auto;
+}
+
+/*
+ * The one line a command carries about itself. It gives way to the name it
+ * belongs to - a description can be a sentence, and it must never push the
+ * word that runs the command off the row.
+ */
+.slash-desc {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-weaker);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The badge the reference puts on a command that came from the server. Its own
+ * is `text-11-regular px-1.5 py-0.5 rounded bg-surface-base text-text-subtle`
+ * (@4486000), which is 11px on a filled pill in the muted colour.
+ */
+.slash-badge {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--text-weaker);
+  font-size: 11px;
+}
+
+.slash-hint {
+  /*
+   * A keyboard hint is short and must never be clipped; a directory can be
+   * half a screen wide, so it gets a ceiling and an ellipsis rather than the
+   * right to squeeze the name it belongs to off the row.
+   */
+  flex-shrink: 0;
+  max-width: 55%;
+  overflow: hidden;
+  color: var(--text-weaker);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: ltr;
+}
+
+.composer {
+  /*
+   * Never squeezed. The transcript above takes a flex basis of zero, so every
+   * pixel a short window is short by came out of this box instead of out of
+   * the scroller that can absorb it.
+   */
+  flex-shrink: 0;
+  /*
+   * The top gap is the point: the transcript is clipped exactly at this box's
+   * edge, so without it any line the scroll happens to stop on ends up pressed
+   * against the input. Padding on the scroller alone only helps at the very end
+   * of the conversation. The foot is not a mirror of it: that one belongs to
+   * the dock region as a whole rather than to the seam above this box, and an
+   * inset that only has to hold the window edge off wants less than one that
+   * has to keep two things apart.
+   */
+  padding: 18px 24px 12px;
+  /* The workspace plane runs behind the dock unbroken; only the box is lifted. */
+  background: var(--surface-raised);
+}
+
+/*
+ * With a permission dock overhead there is nothing left to stand off: the dock
+ * is already between the transcript and this box, and the reference stacks the
+ * two flush so the pair reads as one region rather than as two loose cards.
+ */
+.perm + .composer {
+  padding-top: 0;
+}
+
+.shell {
+  max-width: 776px;
+  margin: 0 auto;
+}
+
+/*
+ * A wider reading column on a wide screen.
+ *
+ * The reference carries `2xl:max-w-[1000px]` alongside its `md:max-w-200` on
+ * both the turn and the composer (main-Db9FY8Yb.js), so past 1536px the pair
+ * grows together and the transcript stops leaving two thirds of a large
+ * monitor empty. Without it the column stayed at 800 at every size.
+ */
+@media (min-width: 1536px) {
+  .shell {
+    /* 1000 less the twelve of padding each side, the way 776 comes off 800. */
+    max-width: 976px;
+  }
+}
+
+/*
+ * The same fill as the workspace behind it, lifted by a shadow rather than
+ * outlined by a border - which is what keeps the box from reading as a second
+ * panel stacked on the first.
+ */
+.box {
+  display: flex;
+  flex-direction: column;
+  /* No padding of its own - the writing area and the bar below each carry
+     their own insets, which is how the reference reaches 96px at rest. */
+  padding: 0;
+  background: var(--surface-raised);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  transition: box-shadow 0.12s;
+}
+
+/* The tiles are the room now; the writing area need not hold any of its own. */
+.box.filled .input {
+  min-height: 0;
+}
+
+.box:focus-within {
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--border-strong);
+}
+
+.box.busy {
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--primary);
+}
+
+.input {
+  /*
+   * Taller than the one line it starts with, so an empty composer reads as
+   * somewhere to write. Held here rather than in the box's padding, which would
+   * put half the room above the first line and centre the text in the box.
+   */
+  min-height: 60px;
+  max-height: 180px;
+  padding: 16px 16px 8px;
+  color: var(--text-strong);
+  resize: none;
+  outline: none;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.input::placeholder {
+  color: var(--text-weaker);
+}
+
+/* The bar the controls sit on, inside the box. */
+.row {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  height: 44px;
+  padding: 0 8px;
+}
+
+.grow {
+  flex: 1;
+}
+
+.picker {
+  display: none;
+}
+
+/* A dropped file has to look like it will land somewhere. */
+.box.dropping {
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--interactive);
+  background: color-mix(in srgb, var(--interactive) 6%, var(--surface-raised));
+}
+
+.tiles-wrap {
+  position: relative;
+  timeline-scope: --tiles-scroll;
+}
+
+.tiles {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  padding: 12px 16px 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-timeline: --tiles-scroll x;
+}
+
+.tiles::-webkit-scrollbar {
+  display: none;
+}
+
+/*
+ * A fade at whichever end still has more, over the box's own fill so the row
+ * runs out rather than being cut off. Hidden by default and shown by the
+ * scroll timeline, which is how the reference drives its pair: the near edge
+ * appears as soon as the row has moved at all, and the far one goes at the
+ * last pixel (`animation-range: 0 0.1px` and `calc(100% - 1.1px)`).
+ */
+.tiles-fade {
+  position: absolute;
+  top: 12px;
+  bottom: 0;
+  z-index: 1;
+  width: 24px;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.tiles-fade.start {
+  inset-inline-start: 0;
+  background: linear-gradient(to inline-end, var(--surface-raised), transparent);
+}
+
+.tiles-fade.end {
+  inset-inline-end: 0;
+  background: linear-gradient(to inline-start, var(--surface-raised), transparent);
+}
+
+@supports (animation-timeline: --tiles-scroll) and (timeline-scope: --tiles-scroll) {
+  .tiles-fade.start {
+    animation: tiles-fade-start linear both;
+    animation-timeline: --tiles-scroll;
+    animation-range: 0 0.1px;
+  }
+
+  .tiles-fade.end {
+    animation: tiles-fade-end linear both;
+    animation-timeline: --tiles-scroll;
+    animation-range: calc(100% - 1.1px) calc(100% - 1px);
+  }
+}
+
+@keyframes tiles-fade-start {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+
+@keyframes tiles-fade-end {
+  from {
+    visibility: visible;
+  }
+  to {
+    visibility: hidden;
+  }
+}
+
+/* A row that scrolls cannot let its tiles shrink to fit. */
+.tiles .tile {
+  flex: 0 0 auto;
+}
+
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 60px;
+  height: 60px;
+  padding: 6px;
+  color: var(--text-weaker);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+/* An image is its own label; the name rides over the foot of it. */
+.tile.picture {
+  padding: 0;
+}
+
+.tile-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.tile-mark {
+  flex-shrink: 0;
+}
+
+.tile-name {
+  position: relative;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-base);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.tile.picture .tile-name {
+  align-self: stretch;
+  margin-top: auto;
+  padding: 5px 3px 3px;
+  color: #fff;
+  text-align: start;
+  /*
+   * Only as much shading as the line of text needs. Sized by the padding above
+   * it, this reached the middle of the thumbnail and left the picture murky.
+   */
+  background: linear-gradient(to top, rgb(0 0 0 / 78%) 55%, transparent);
+}
+
+.tile-x {
+  position: absolute;
+  top: 3px;
+  inset-inline-end: 3px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: #fff;
+  background: rgb(0 0 0 / 55%);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.tile:hover .tile-x,
+.tile-x:focus-visible {
+  opacity: 1;
+}
+
+.tile-x:hover {
+  background: rgb(0 0 0 / 78%);
+}
+
+.mode-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 6px;
+}
+
+.mode-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 4px;
+  color: var(--text-base);
+  background: var(--surface-layer-02);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 530;
+  letter-spacing: 0.05px;
+}
+
+.mode-exit {
+  color: var(--text-weak);
+  font-size: 11px;
+  font-weight: 530;
+  letter-spacing: 0.05px;
+}
+
+.attach {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--icon-base);
+  border-radius: var(--radius-md);
+  transition: background 0.12s, color 0.12s;
+}
+
+.attach:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+/* The one bright element in the composer, and a rounded square rather than a
+   circle: six pixels, the same corner every other control on this bar carries. */
+.send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  color: var(--button-primary-text);
+  background: var(--button-primary);
+  border-radius: 6px;
+  transition: opacity 0.12s, filter 0.12s;
+}
+
+.send:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+/*
+ * Nothing to send yet: a grey button rather than a coloured one.
+ *
+ * The lift used to be a quarter of white laid over the panel, which was only
+ * ever a dark-scheme device. In the light scheme the panel is already #ffffff,
+ * so the overlay changed nothing and the disabled button came out exactly the
+ * colour of the box behind it - measured at rgb(255,255,255) against a
+ * rgb(255,255,255) box, invisible but for its glyph. Mixing the text colour in
+ * lifts in the dark scheme and darkens in the light one, which is what "the
+ * panel, but distinct from it" means in each.
+ */
+.send:disabled {
+  color: var(--text-weak);
+  background-color: color-mix(in srgb, var(--text-strong) 24%, var(--surface-raised));
+  cursor: default;
+}
+
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 9px;
+  color: var(--text-base);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.pill:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.caret {
+  color: var(--text-weaker);
+}
+.pill-wrap {
+  position: relative;
+}
+
+/*
+ * An effort level is drawn from its own id, capitalised by the stylesheet.
+ *
+ * This is the reference's answer to naming the steps and the reason it never
+ * translates them: the select carries `class: "capitalize"` and labels every
+ * option with its own id, reaching for a string only for the default entry
+ * (main-8t-QUXax.js @4574058), so what it shows is "Xhigh", not a hand-built
+ * "XHigh". Only the raw ids are dressed this way - the translated Default word
+ * is left exactly as its table wrote it, because capitalising a translation is
+ * a decision for the translator and not for a stylesheet.
+ */
+.level {
+  text-transform: capitalize;
+}
+
+.pill.open {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+/* Menus open upward: the pills sit at the bottom of the window. */
+.menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  /*
+   * Aligned to the edge the pill starts on, so the menu grows into the column
+   * rather than out of it. Anchored to the physical left it opened rightwards
+   * in a right-to-left document, where the pills sit at the right of the bar,
+   * and the wider menus were clipped by the workspace edge.
+   */
+  inset-inline-start: 0;
+  z-index: 20;
+  min-width: 160px;
+  padding: 2px;
+  background: var(--surface-menu);
+  border-radius: 6px;
+  box-shadow: var(--shadow-lg);
+}
+
+/*
+ * The model menu carries its own padding on each band - search, list, footer -
+ * so that the two rules between them can reach the menu's edges. Padding on
+ * the menu itself would inset the rules with everything else.
+ */
+.menu.model-pop {
+  width: 284px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.pad {
+  padding: 2px;
+}
+
+.pad-top-0 {
+  padding-top: 0;
+}
+
+.model-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  /* A shade more room ahead of the magnifier than behind the clear button,
+     so the icon does not sit tight against the corner of the field. */
+  padding-block: 0;
+  padding-inline: 12px 10px;
+  color: var(--icon-weak);
+  border-radius: 2px;
+}
+
+.model-search input {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  color: var(--text-strong);
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 20px;
+  letter-spacing: -0.04px;
+}
+
+.model-search input::placeholder {
+  color: var(--text-weak);
+}
+
+.model-clear {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--icon-weak);
+  border-radius: 2px;
+}
+
+.model-clear:hover {
+  color: var(--text-strong);
+}
+
+.model-scroll {
+  min-height: 0;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+/*
+ * Stays put while its own models scroll past, so the provider a row belongs to
+ * is always on screen. It needs the menu's own fill to cover what runs beneath.
+ */
+.model-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 12px;
+  background: var(--surface-menu);
+  color: var(--text-weak);
+  font-size: 11px;
+  font-weight: 530;
+  line-height: 1;
+  letter-spacing: 0.05px;
+}
+
+.model-empty {
+  display: flex;
+  align-items: center;
+  height: 48px;
+  padding: 0 12px;
+  color: var(--text-weak);
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 20px;
+  letter-spacing: -0.04px;
+}
+
+/* Bleeds past the two pixels of padding on the band above and below it. */
+.menu .rule {
+  height: 1px;
+  background: var(--border-muted);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 12px;
+  color: var(--text-strong);
+  text-align: start;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1;
+  letter-spacing: -0.04px;
+  cursor: default;
+}
+
+/* Drawn inside the row: it is as wide as the scroller, so a ring set outside
+   it is clipped away at both edges. */
+.item:focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
+}
+
+.item:hover,
+.item.hot {
+  background: var(--surface-hover);
+}
+
+/*
+ * The chosen model is named by weight and colour. A background would collide
+ * with the one the keyboard's position already uses, and the two have to stay
+ * tellable apart while arrowing over the row that is already selected.
+ */
+.item.on {
+  color: var(--text-accent);
+  font-weight: 530;
+}
+
+.item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 20px;
+}
+
+/*
+ * The Latest mark, which the reference draws as a small neutral chip after the
+ * name rather than as more name.
+ */
+.tag {
+  flex: none;
+  padding: 0 5px;
+  color: var(--text-weaker);
+  border: 1px solid var(--border-weaker);
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 15px;
+}
+
+/*
+ * Sixteen wide whether or not it holds a tick, so that every name in the list
+ * starts at the same place and the column does not shift as the model changes.
+ */
+.tick {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+</style>

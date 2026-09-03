@@ -1,0 +1,357 @@
+/*
+ * The terminal's face.
+ *
+ * The reference bundles this exact file - JetBrainsMonoNerdFontMono-Regular
+ * (out/renderer/assets/ in its own archive) - and makes it the default of its
+ * terminal font setting. It matters more than a preference: the Nerd Font
+ * patch is what covers the powerline separators (U+E0B0..) and Powerline Extra
+ * (U+F5D0..F60D) that build tools and shell prompts draw constantly. Without
+ * it those arrive as tofu, because no system monospace font carries them.
+ *
+ * JetBrains Mono is Apache-2.0; the Nerd Fonts patch keeps the upstream
+ * licence, so shipping it is allowed. `swap` so a cold start shows the
+ * fallback stack rather than nothing.
+ */
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: url("../assets/JetBrainsMonoNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 100 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * Design tokens, following opencode's own design system.
+ *
+ * The vocabulary is opencode's: surfaces step base -> raised -> raised-hover,
+ * text steps strong -> base -> weak -> weaker (note that *base*, not strong, is
+ * the default body colour - strong is reserved for emphasis), and borders come
+ * in weaker/weak/strong.
+ *
+ * Two accents with distinct jobs, which is the part worth getting right:
+ *   --interactive (blue) owns selection, focus, and input state.
+ *   --primary (apricot) is the brand mark, used sparingly - the streaming
+ *     indicator and little else. It is not a button fill.
+ * Primary buttons are a light neutral on dark, which is what gives opencode its
+ * characteristic look rather than a saturated call-to-action colour.
+ *
+ * Light is defined on bare :root so it is the fallback everywhere; dark layers
+ * on top for both the explicit choice and the system preference.
+ */
+
+:root {
+  /* Surfaces */
+  --surface-base: #fafafa;
+  --surface-raised: #ffffff;
+  --surface-raised-hover: #fafafa;
+  --surface-sunken: #f2f2f2;
+  /* The lifted surface a selected tab sits on, and the avatar behind an initial. */
+  --surface-layer: #f2f2f2;
+  /* background/bg-layer-01: what a floating menu is drawn on. */
+  --surface-menu: #fafafa;
+  --avatar-gray: #dbdbdb;
+  --surface-key: #eeeeee;
+  /* background/bg-layer-02: the fill behind a badge inside a menu. */
+  --surface-layer-02: #f2f2f2;
+  /* overlay/simple-overlay-* */
+  --surface-hover: #0000000a;
+  --surface-selected: #00000014;
+  --surface-success: #e7f9ea;
+  --surface-critical: #fceceb;
+
+  /* border/border-*, which are alphas so they hold over any layer. */
+  --border-weaker: #00000014;
+  --border-weak: #0000001a;
+  --border-muted: #00000014;
+  --border-strong: #00000033;
+  --border-selected: #00000040;
+
+  --text-strong: #161616;
+  --text-base: #5c5c5c;
+  --text-weak: #808080;
+  --text-weaker: #dbdbdb;
+  --text-accent: #3b5cf6;
+  --text-interactive: #3b5cf6;
+  --text-on-primary: #111111;
+
+  --icon-base: #3a3a3a;
+  /* icon/icon-muted, which is the same grey in both themes. */
+  --icon-weak: #808080;
+
+  --primary: #3b5cf6;
+  --accent: #9e99f7;
+  --interactive: #7698fd;
+  --success: #198b43;
+  --warning: #cb9f34;
+  --error: #b82d35;
+  --info: #2c47c8;
+
+  --text-success: #198b43;
+  --text-warning: #cb9f34;
+  --text-error: #b82d35;
+
+  --diff-add: #20a923;
+  --diff-delete: #e5351c;
+  /*
+   * The fill behind a changed line, which is a surface rather than a tint of
+   * the foreground: a translucent green laid over syntax colours muddies the
+   * code it is meant to be showing.
+   */
+  --surface-diff-add: #e0f3e0;
+  --surface-diff-delete: #fbe3df;
+
+  --button-primary: #111111;
+  --button-primary-text: #ffffff;
+  /*
+   * What a neutral button is filled with, which is deliberately not the page
+   * colour: a control drawn in --surface-base on a base-coloured pane has
+   * nothing but its ring left to say it is a control. In light the step is
+   * white; in dark it is a wash of light rather than a fixed grey, so the same
+   * button lifts correctly off the window fill and off a raised panel alike.
+   * Its edge is --shadow-input, the same elevation an input rests on.
+   */
+  --button-neutral: #ffffff;
+
+  /* elevation/button-neutral: an input's resting edge. */
+  --shadow-input: 0 1px 1.5px 0 #0000001a, 0 0 0 0.5px #00000024;
+  /*
+   * The edge a dock surface carries: a full-pixel ring with three very small
+   * drops hung off it, which reads as a card lying on the page rather than as
+   * the dialog-sized lift --shadow-lg gives. Only the ring changes with the
+   * scheme - the drops are the same warm black over either.
+   */
+  --shadow-xs-border:
+    0 0 0 1px #00000029, 0 1px 2px -1px #1310100a, 0 1px 2px 0 #1310100f, 0 1px 3px 0 #13101014;
+  --shadow-md:
+    0 6px 12px -2px hsl(0 0% 0% / 0.075), 0 4px 8px -2px hsl(0 0% 0% / 0.075), 0 1px 2px hsl(0 0% 0% / 0.1);
+  --shadow-lg:
+    0 8px 16px 0 #0000000a, 0 4px 8px 0 #00000014, 0 0 0 0.5px #0000001f;
+  --shadow-overlay:
+    0 16px 32px 0 #0000000a, 0 8px 16px 0 #00000014, 0 0 0 0.5px #0000001f;
+  /* overlay/simple-overlay-scrim: alpha-dark-40 */
+  --scrim: #00000066;
+
+  /*
+   * How the transcript's small motions move: counts rolling, a label's suffix
+   * arriving. One curve and one duration, so they read as one system.
+   */
+  --tool-motion-spring-ms: 0.56s;
+  --tool-motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --tool-motion-mask: 18%;
+  --tool-motion-fade-ms: 0.24s;
+  --tool-motion-blur: 2px;
+
+  /* opencode's scale: 4 / 6 / 8 / 10px */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  /*
+   * A step past the end of opencode's own named scale, which stops at xl. Its
+   * prompt dock writes twelve as a literal on both the shell and the tray that
+   * slides out from under it, and the two have to round together or the seam
+   * between them shows, so the number is worth a name of its own.
+   */
+  --radius-2xl: 0.75rem;
+
+  /*
+   * Named separately from --font-sans so a chosen face can sit in front of the
+   * stack rather than replace it: a font that turns out not to be installed
+   * then falls through to what was always there.
+   */
+  --font-sans-stack: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  --font-mono-stack: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  --font-sans: var(--font-sans-stack);
+  --font-mono: var(--font-mono-stack);
+  /*
+   * The reference's own terminal stack, verbatim: its bundled Nerd Font first,
+   * then exactly the generic list above. A reader who names a font in settings
+   * is prepended to this rather than replacing it.
+   */
+  --font-terminal: "JetBrainsMono Nerd Font Mono", var(--font-mono-stack);
+
+  /*
+   * Thirteen on twenty-four, measured off opencode's own body rule. This app
+   * was a point larger on a tighter leading, which is why the same paragraph
+   * filled a different number of lines than the reference did.
+   */
+  --font-size-small: 13px;
+  --font-size-base: 13px;
+  --font-size-large: 16px;
+  --line-height-normal: 130%;
+  --line-height-large: 24px;
+
+  --titlebar-height: 36px;
+  --sidebar-width: 252px;
+
+  /*
+   * The wordmark ships in two colourways rather than being tinted, because the
+   * mark is a shaded 3D render - a filter would flatten the highlights that
+   * give it its form. Both files share one canvas, so swapping causes no reflow.
+   */
+  --wordmark: url("../assets/wordmark-light.png");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --wordmark: url("../assets/wordmark-dark.png");
+    /* background/bg-* */
+    --surface-base: #080808;
+    --surface-raised: #161616;
+    --surface-raised-hover: #242424;
+    --surface-sunken: #050505;
+    --surface-layer: #2e2e2e;
+    /* background/bg-layer-01 */
+    --surface-menu: #242424;
+    --avatar-gray: #5c5c5c;
+    --surface-key: #3a3a3a;
+    /* background/bg-layer-02: the fill behind a badge inside a menu. */
+    --surface-layer-02: #2e2e2e;
+    /* overlay/simple-overlay-* */
+    --surface-hover: #ffffff0f;
+    --surface-selected: #ffffff1a;
+    --surface-success: #14361d;
+    --surface-critical: #461516;
+
+    /* border/border-* */
+    --border-weaker: #ffffff14;
+    --border-weak: #ffffff1a;
+    --border-muted: #ffffff14;
+    --border-strong: #ffffff33;
+    --border-selected: #ffffff40;
+
+    /* text/text-* */
+    --text-strong: #fafafa;
+    --text-base: #aeaeae;
+    --text-weak: #808080;
+    --text-weaker: #5c5c5c;
+    --text-accent: #a2bcff;
+    --text-interactive: #a2bcff;
+    --text-on-primary: #161616;
+
+    /* icon/icon-* */
+    --icon-base: #dbdbdb;
+    --icon-weak: #808080;
+
+    --primary: #3b5cf6;
+    --accent: #9e99f7;
+    --interactive: #7698fd;
+    --success: #6bd586;
+    --warning: #f2cf76;
+    --error: #f17471;
+    --info: #7698fd;
+
+    /* state/fg-* */
+    --text-success: #6bd586;
+    --text-warning: #f2cf76;
+    --text-error: #f17471;
+
+    --diff-add: #a3da9f;
+    --diff-delete: #ffb3a4;
+    /* surface/diff-add-base and surface/diff-delete-base */
+    --surface-diff-add: #2f392f;
+    --surface-diff-delete: #403230;
+
+    --button-primary: #fafafa;
+    --button-primary-text: #161616;
+    /* A wash of light, not a grey, so it lifts whatever surface it lands on. */
+    --button-neutral: #ffffff0f;
+
+    /* elevation/button-neutral: an input's resting edge. */
+    --shadow-input: 0 1px 2px 0 #0006, 0 0 0 0.5px #ffffff33, 0 -0.5px 0 0 #ffffff1a;
+    /* A dock surface's edge, whose ring is the one layer that turns over. */
+    --shadow-xs-border:
+      0 0 0 1px #ffffff32, 0 1px 2px -1px #1310100a, 0 1px 2px 0 #1310100f, 0 1px 3px 0 #13101014;
+    /* elevation/raised and elevation/floating */
+    --shadow-md:
+      0 2px 4px 0 #0000004d, 0 1px 2px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
+    --shadow-lg:
+      0 8px 16px 0 #0000004d, 0 4px 8px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
+    --shadow-overlay:
+      0 16px 32px 0 #0000004d, 0 8px 16px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
+    /* overlay/simple-overlay-scrim: alpha-dark-60 */
+    --scrim: #00000099;
+  }
+}
+
+:root[data-theme="dark"] {
+  --wordmark: url("../assets/wordmark-dark.png");
+  /* background/bg-* */
+  --surface-base: #080808;
+  --surface-raised: #161616;
+  --surface-raised-hover: #242424;
+  --surface-sunken: #050505;
+  --surface-layer: #2e2e2e;
+  /* background/bg-layer-01 */
+  --surface-menu: #242424;
+  --avatar-gray: #5c5c5c;
+  --surface-key: #3a3a3a;
+  /* background/bg-layer-02: the fill behind a badge inside a menu. */
+  --surface-layer-02: #2e2e2e;
+  /* overlay/simple-overlay-* */
+  --surface-hover: #ffffff0f;
+  --surface-selected: #ffffff1a;
+  --surface-success: #14361d;
+  --surface-critical: #461516;
+
+  /* border/border-* */
+  --border-weaker: #ffffff14;
+  --border-weak: #ffffff1a;
+  --border-muted: #ffffff14;
+  --border-strong: #ffffff33;
+  --border-selected: #ffffff40;
+
+  /* text/text-* */
+  --text-strong: #fafafa;
+  --text-base: #aeaeae;
+  --text-weak: #808080;
+  --text-weaker: #5c5c5c;
+  --text-accent: #a2bcff;
+  --text-interactive: #a2bcff;
+  --text-on-primary: #161616;
+
+  /* icon/icon-* */
+  --icon-base: #dbdbdb;
+  --icon-weak: #808080;
+
+  --primary: #3b5cf6;
+  --accent: #9e99f7;
+  --interactive: #7698fd;
+  --success: #6bd586;
+  --warning: #f2cf76;
+  --error: #f17471;
+  --info: #7698fd;
+
+  /* state/fg-* */
+  --text-success: #6bd586;
+  --text-warning: #f2cf76;
+  --text-error: #f17471;
+
+  --diff-add: #a3da9f;
+  --diff-delete: #ffb3a4;
+  /* surface/diff-add-base and surface/diff-delete-base */
+  --surface-diff-add: #2f392f;
+  --surface-diff-delete: #403230;
+
+  --button-primary: #fafafa;
+  --button-primary-text: #161616;
+  /* A wash of light, not a grey, so it lifts whatever surface it lands on. */
+  --button-neutral: #ffffff0f;
+
+  /* elevation/button-neutral: an input's resting edge. */
+  --shadow-input: 0 1px 2px 0 #0006, 0 0 0 0.5px #ffffff33, 0 -0.5px 0 0 #ffffff1a;
+  /* A dock surface's edge, whose ring is the one layer that turns over. */
+  --shadow-xs-border:
+    0 0 0 1px #ffffff32, 0 1px 2px -1px #1310100a, 0 1px 2px 0 #1310100f, 0 1px 3px 0 #13101014;
+  /* elevation/raised and elevation/floating */
+  --shadow-md:
+    0 2px 4px 0 #0000004d, 0 1px 2px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
+  --shadow-lg:
+    0 8px 16px 0 #0000004d, 0 4px 8px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
+  --shadow-overlay:
+    0 16px 32px 0 #0000004d, 0 8px 16px 0 #0000004d, 0 0 0 0.5px #ffffff29, 0 -0.5px 0 0 #ffffff0f;
+  /* overlay/simple-overlay-scrim: alpha-dark-60 */
+  --scrim: #00000099;
+}

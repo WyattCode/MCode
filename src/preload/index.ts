@@ -1,0 +1,149 @@
+import { contextBridge, ipcRenderer } from "electron"
+
+/**
+ * The only surface the renderer gets. Everything else - sessions, files, the
+ * agent - travels over the WebSocket, which keeps the privileged bridge small
+ * enough to audit at a glance.
+ */
+const api = {
+  bootstrap: (): Promise<{ port: number; platform: string; home: string; version: string }> =>
+    ipcRenderer.invoke("mcode:bootstrap"),
+
+  /** Every directory chosen, in order; empty when the dialog was dismissed. */
+  pickDirectory: (title: string, multiple = false): Promise<string[]> =>
+    ipcRenderer.invoke("mcode:pick-directory", title, multiple),
+  saveText: (suggested: string, text: string): Promise<string | undefined> =>
+    ipcRenderer.invoke("mcode:save-text", suggested, text),
+
+  /** Menu bar labels; the translations live here, the menu is built there. */
+  menuLabels: (labels: Record<string, string>): void => ipcRenderer.send("mcode:menu-labels", labels),
+
+  /** The clipboard as text, for surfaces that copy and paste it themselves. */
+  /** Raised by the main process, and only when the window is in the background. */
+  notify: (title: string, body: string, sessionID?: string): void =>
+    ipcRenderer.send("mcode:notify", title, body, sessionID),
+
+  /**
+   * The session a clicked notification came from, if it named one.
+   *
+   * The reference navigates to the session the banner is about rather than
+   * only raising the window, so a turn that finished in a session you are not
+   * looking at is one click away instead of a hunt through the tabs.
+   */
+  onNotificationClick: (handler: (sessionID: string) => void): (() => void) => {
+    const listener = (_event: unknown, sessionID: string) => handler(sessionID)
+    ipcRenderer.on("mcode:notify-click", listener)
+    return () => ipcRenderer.off("mcode:notify-click", listener)
+  },
+
+  clipboardText: (): Promise<string> => ipcRenderer.invoke("mcode:clipboard-text"),
+  setClipboardText: (text: string): void => ipcRenderer.send("mcode:clipboard-write", text),
+
+  /** Hands a link to the real browser. Only http and https survive the main process. */
+  openExternal: (url: string): void => ipcRenderer.send("mcode:open-external", url),
+
+  /** Editing commands, which act on whatever the renderer has focused. */
+  edit: (action: "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll"): void =>
+    ipcRenderer.send("mcode:edit", action),
+
+  /** Reload, devtools and full screen, which only the window itself can do. */
+  view: (action: "reload" | "devtools" | "fullscreen"): void => ipcRenderer.send("mcode:view", action),
+
+  /**
+   * Asks the main process to read the update feed.
+   *
+   * The window cannot fetch it: its content policy allows a socket to the local
+   * backend and nothing else.
+   */
+  checkUpdates: (feed: string): Promise<{ version: string; url: string }> =>
+    ipcRenderer.invoke("mcode:check-updates", feed),
+
+  /** A second window on the same backend. */
+  newWindow: (): void => ipcRenderer.send("mcode:new-window"),
+
+  /**
+   * Restarts the app.
+   *
+   * The renderer's error page has this as its only way out. Whatever broke the
+   * page is still broken after a reload, and a page that cannot draw cannot ask
+   * a person to quit and reopen it themselves. The main process closes the
+   * backend on the way through.
+   */
+  relaunch: (): void => ipcRenderer.send("mcode:relaunch"),
+
+  /** Both take a project root and a path relative to it; see the main process. */
+  revealFile: (directory: string, relative: string): Promise<void> =>
+    ipcRenderer.invoke("mcode:reveal-file", directory, relative),
+  /**
+   * `openWith` names the application to start, for the review panel's "Open in"
+   * menu; without it the path goes to whatever the OS opens it with, which is
+   * what every other caller wants.
+   *
+   * The name is forwarded rather than acted on. Which names exist, and whether
+   * this one is among them, is settled in the main process against
+   * @shared/open-app - the same rule `mcode:open-external` follows for schemes,
+   * and for the same reason: a renderer that can name an executable is a
+   * renderer that can start one.
+   */
+  openFile: (directory: string, relative: string, openWith?: string): Promise<string> =>
+    ipcRenderer.invoke("mcode:open-file", directory, relative, openWith),
+
+  /** Shows a file the save dialog wrote; other paths are refused by the main process. */
+  revealSaved: (target: string): Promise<void> => ipcRenderer.invoke("mcode:reveal-saved", target),
+  openSaved: (target: string): Promise<string> => ipcRenderer.invoke("mcode:open-saved", target),
+
+  window: (action: "minimize" | "maximize" | "close"): void => ipcRenderer.send("mcode:window", action),
+
+  zoom: (action: "in" | "out" | "reset"): void => ipcRenderer.send("mcode:zoom", action),
+
+  /*
+   * Which scheme the window is actually showing. The caption buttons are drawn
+   * by the OS, which knows only what the OS theme is - so a light window under
+   * a dark system would otherwise be given white glyphs on a white bar.
+   */
+  titlebarMode: (mode: "dark" | "light"): void => ipcRenderer.send("mcode:titlebar-mode", mode),
+
+
+
+  /** Menu accelerators the renderer turns into in-app commands. */
+  onMenu: (handler: (command: string) => void): (() => void) => {
+    /*
+     * Every channel the menu sends. A command missing from this list is not an
+     * error anywhere - the menu item builds, the accelerator binds, the click
+     * sends - it simply never arrives, so the item does nothing at all. The
+     * whole Go menu and Toggle File Tree were dead this way. Kept in step with
+     * src/main/menu.ts by the menu section of the theme check.
+     */
+    const commands = [
+      "new-session",
+      "open-project",
+      "settings",
+      "palette",
+      "terminal",
+      "sidebar",
+      "files",
+      "abort",
+      "model",
+      "delete-session",
+      "back",
+      "forward",
+      "prev-session",
+      "next-session",
+      "prev-project",
+      "next-project",
+      "shortcuts",
+      "check-updates",
+    ]
+    const listeners = commands.map((command) => {
+      const channel = `menu:${command}`
+      const listener = () => handler(command)
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.off(channel, listener)
+    })
+    return () => listeners.forEach((off) => off())
+  },
+}
+
+contextBridge.exposeInMainWorld("mcode", api)
+
+export type MCodeBridge = typeof api

@@ -1,0 +1,45 @@
+appId: dev.mcode.app
+productName: MCode
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+# The backend runs in the main process, so only its runtime deps ship.
+# node-pty is the one native dependency. Its .node binaries, and the
+# OpenConsole.exe that conpty launches, cannot be loaded from inside an asar,
+# so they have to sit beside it - a terminal that opens onto nothing is exactly
+# what shipping them inside would produce.
+asarUnpack:
+  - "**/node_modules/@lydell/node-pty*/**"
+
+win:
+  target:
+    - nsis
+  icon: build/icon.ico
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  # Shown in Add/Remove Programs.
+  installerHeaderIcon: build/icon.ico
+
+mac:
+  target:
+    - dmg
+  icon: build/icon.icns
+  category: public.app-category.developer-tools
+
+dmg:
+  icon: build/icon.icns
+
+linux:
+  target:
+    - AppImage
+  # electron-builder picks the size set out of this directory.
+  icon: build/icons
+  category: Development

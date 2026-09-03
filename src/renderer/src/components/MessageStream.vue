@@ -1,0 +1,915 @@
+<script setup lang="ts">
+import { computed, nextTick, onMounted, ref, watch } from "vue"
+import { useApp } from "../stores/app"
+import TextPart from "./parts/TextPart.vue"
+import ReasoningPart from "./parts/ReasoningPart.vue"
+import ToolPart from "./parts/ToolPart.vue"
+import ToolGroup from "./parts/ToolGroup.vue"
+import TextShimmer from "./parts/TextShimmer.vue"
+import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
+import { preview } from "../lib/attach"
+import { useRestoreDraft } from "../lib/draft"
+import { withoutLatest } from "../lib/model"
+import { t } from "../lib/i18n"
+import { notifyFailure } from "../lib/toast"
+
+/**
+ * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
+ *
+ * Its transcript goes through a virtualizer - `TimelineRowView` rows measured
+ * by `virtualizer.measureElement` (main-8t-QUXax.js @5068253) - and this one
+ * renders the lot. That is the largest structural difference left between the
+ * two, so it was measured rather than argued about, with a session written to
+ * the app's own on-disk format and opened by the real loader:
+ *
+ *     300 messages   8,000 DOM nodes    240ms to first paint
+ *   1,200 messages  32,000 DOM nodes    681ms to first paint
+ *
+ * and scrolling forty frames at 1,200 messages had a median frame of 5ms, a
+ * worst of 13ms, and not one frame over 32ms. A virtualizer buys nothing at any
+ * length a conversation reaches; it would cost the height measurement, the
+ * jump-to-latest arithmetic, and every sticky element in a row.
+ *
+ * The four strings opencode carries for paging a transcript - loading,
+ * loadEarlier, loadingEarlier, renderEarlier - are consumed zero times in its
+ * own renderer, which is the same conclusion reached from its side.
+ */
+
+const app = useApp()
+const scroller = ref<HTMLElement>()
+/** Handed down by App.vue, which is the only thing that can see the composer. */
+const restoreDraft = useRestoreDraft()
+
+type Row =
+  | { kind: "part"; id: string; part: AssistantPart }
+  /** A run of lookups plus whatever the model said between them. */
+  | { kind: "tools"; id: string; parts: AssistantPart[] }
+
+/**
+ * Collapses runs of finished tool calls into one row.
+ *
+ * Rendered one card each, a dozen ordinary lookups bury the two sentences that
+ * actually answer the question. Anything still running or failed stays on its
+ * own, because that is exactly what the reader needs to see.
+ */
+/**
+ * Calls that only look at things.
+ *
+ * Several of these in a row are one act of looking around, and collapse into a
+ * single line. Anything that acts - a command, an edit - keeps its own row:
+ * what the model did is worth a line each, what it read is not.
+ */
+const CONTEXT_TOOLS = new Set(["read", "glob", "grep", "list", "webfetch"])
+
+function rows(parts: AssistantPart[]): Row[] {
+  const out: Row[] = []
+  /** The current run, in order, including the notes written between calls. */
+  let run: AssistantPart[] = []
+  let tools = 0
+  /** Trailing reasoning: part of the run only if another lookup follows. */
+  let pending: AssistantPart[] = []
+
+  const flush = () => {
+    // Even one call collapses. Rendering the first as a card and folding it away
+    // once a second arrived made every step flash a box on and off.
+    if (tools >= 1) out.push({ kind: "tools", id: `g:${run[0].id}`, parts: run })
+    else for (const part of run) out.push({ kind: "part", id: part.id, part })
+    for (const part of pending) out.push({ kind: "part", id: part.id, part })
+    run = []
+    pending = []
+    tools = 0
+  }
+
+  for (const part of parts) {
+    // A reasoning part with nothing in it renders nothing, but an empty row
+    // still wraps it - a blank gap that appears and goes on every tool call.
+    if (part.type === "reasoning" && !part.text.trim()) continue
+
+    // Running calls belong in the group too: the count ticks up live, which is
+    // the progress report - a card that appears and then folds away reads as a
+    // glitch rather than as work happening.
+    // Pending counts too: a call waiting to start would otherwise appear as a
+    // card for an instant before the group swallowed it.
+    if (part.type === "tool" && part.status !== "error" && CONTEXT_TOOLS.has(part.name)) {
+      // Reasoning between two lookups does not end the run: the model narrates
+      // before every call, so treating that as a break meant nothing grouped.
+      // It is carried into the group rather than dropped - silently losing what
+      // the model said is worse than the wall of cards this replaced.
+      run.push(...pending, part)
+      pending = []
+      tools += 1
+      continue
+    }
+    if (part.type === "reasoning" && tools) {
+      pending.push(part)
+      continue
+    }
+    flush()
+    out.push({ kind: "part", id: part.id, part })
+  }
+  flush()
+  return out
+}
+
+interface Turn {
+  id: string
+  text?: string
+  attachments?: Attachment[]
+  /** When the user sent it, for the footer under their own message. */
+  asked?: number
+  parts: AssistantPart[]
+  last?: AssistantMessage
+  started?: number
+  completed?: number
+  error?: string
+  errorCode?: string
+  errorParams?: Record<string, string>
+  finish?: string
+}
+
+/**
+ * One exchange, however many messages it took.
+ *
+ * The agent loop writes a fresh assistant message per step, so a turn that
+ * calls six tools is six messages on the wire. Rendering those as six blocks
+ * was why grouping never fired in practice and why the footer repeated: the
+ * shape on screen has to be the turn, not the transport.
+ */
+const turns = computed<Turn[]>(() => {
+  const out: Turn[] = []
+  let current: Turn | undefined
+
+  /*
+   * The conversation as it now stands, which is not always the whole of what
+   * is held. A conversation rolled back to a message keeps everything after
+   * that message on disk so it can be put back, and the reader is told those
+   * turns are no longer part of the conversation - so this is where they stop
+   * being drawn.
+   */
+  for (const message of app.visible) {
+    if (message.role === "user") {
+      current = {
+        id: message.id,
+        text: message.text,
+        attachments: message.attachments,
+        asked: message.time.created,
+        parts: [],
+      }
+      out.push(current)
+      continue
+    }
+    if (!current) {
+      current = { id: message.id, parts: [] }
+      out.push(current)
+    }
+    current.parts.push(...message.parts)
+    current.last = message
+    current.started ??= message.time.created
+    current.completed = message.time.completed
+    current.error = message.error ?? current.error
+    current.errorCode = message.errorCode ?? current.errorCode
+    current.errorParams = message.errorParams ?? current.errorParams
+    current.finish = message.finish ?? current.finish
+  }
+
+  return out
+})
+
+/**
+ * Whether to say the model is working before it has said anything.
+ *
+ * A turn that has been sent but has produced no renderable part yet used to
+ * draw nothing at all - the transcript simply sat there, and the only sign the
+ * message had gone anywhere was the composer's stop button. The reference puts
+ * a shimmering "Thinking" at the end of the live turn instead, and drops it the
+ * moment the first part arrives.
+ *
+ * `rows()` rather than `parts.length` because a part can be present and render
+ * nothing - an empty reasoning part is the usual case, and counting it would
+ * clear this row while the screen was still blank.
+ */
+function thinking(turn: Turn, at: number): boolean {
+  if (at !== turns.value.length - 1) return false
+  return app.busy && !turn.error && rows(turn.parts).length === 0
+}
+
+/**
+ * Whether the model's context begins after this turn.
+ *
+ * The transcript keeps everything; the line just says where the summary took
+ * over, so a reply that seems not to remember something earlier has a visible
+ * reason.
+ */
+function compactedAfter(turn: Turn): boolean {
+  const mark = app.current?.compacted?.messageID
+  if (!mark) return false
+  return turn.last?.id === mark || turn.id === mark
+}
+
+/** The picker shows display names, so the footer has to agree with it. */
+/**
+ * The step a turn ran at, or nothing.
+ *
+ * Nothing only for turns recorded before this was stored - every turn run since
+ * carries a concrete step, because an unset session resolves to the app default
+ * before the request goes out.
+ */
+function effortName(message: AssistantMessage): string {
+  /*
+   * The raw id, capitalised by the stylesheet rather than by hand. The
+   * reference never translates a step and never spells one out either: it
+   * labels the option `x` and puts `capitalize` on the control
+   * (main-8t-QUXax.js @4574058), so its own reading is "Xhigh". The hand-built
+   * "XHigh" this replaces was the one word in the pair that was invented here.
+   */
+  return message.effort ?? ""
+}
+
+function modelName(message: AssistantMessage): string {
+  const provider = app.providers.find((entry) => entry.id === message.model.provider)
+  const found = provider?.models.find((entry) => entry.id === message.model.model)
+  // Stripped for the same reason the picker strips it: "(latest)" is a tag in
+  // the reference, and its model store hands out the name without the word.
+  return found ? withoutLatest(found.name) : message.model.model
+}
+
+/** Which copy button is showing its tick, keyed by turn and by which one. */
+const copied = ref<string>()
+
+/**
+ * Clock time rather than "5 minutes ago".
+ *
+ * A message carries one fixed moment, so a relative phrase would have to keep
+ * being recomputed to stay true, and reads oddly next to the model that
+ * answered it.
+ */
+function askedAt(turn: Turn): string | undefined {
+  if (turn.asked === undefined) return undefined
+  return new Date(turn.asked).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })
+}
+
+async function copyAsked(turn: Turn) {
+  if (!turn.text) return
+  await navigator.clipboard.writeText(turn.text)
+  copied.value = `${turn.id}:asked`
+  setTimeout(() => {
+    if (copied.value === `${turn.id}:asked`) copied.value = undefined
+  }, 1600)
+}
+
+/** The reply itself, without the tool traffic that produced it. */
+function replyText(turn: Turn): string {
+  return turn.parts
+    .filter((part) => part.type === "text")
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("\n\n")
+    .trim()
+}
+
+async function copyReply(turn: Turn) {
+  const text = replyText(turn)
+  if (!text) return
+  await navigator.clipboard.writeText(text)
+  copied.value = turn.id
+  setTimeout(() => {
+    if (copied.value === turn.id) copied.value = undefined
+  }, 1600)
+}
+
+function elapsed(turn: Turn): string | undefined {
+  if (!turn.started || !turn.completed) return undefined
+  const seconds = Math.max(1, Math.round((turn.completed - turn.started) / 1000))
+  if (seconds < 60) return t("stream.seconds", { n: seconds })
+  return t("stream.minutes", { m: Math.floor(seconds / 60), s: seconds % 60 })
+}
+/** Auto-follow is on until the user scrolls up, and resumes when they return. */
+const following = ref(true)
+
+function onScroll() {
+  const element = scroller.value
+  if (!element) return
+  const distance = element.scrollHeight - element.scrollTop - element.clientHeight
+  /*
+   * Ten, which is the reference's own `bottomThreshold` - it defaults to 10 in
+   * `createAutoScroll` and nothing ever passes another value. Sixty meant the
+   * view resumed following from six times further away than it should, so
+   * scrolling back to nearly-the-end silently re-armed the jump and took the
+   * reader the rest of the way on the next message.
+   */
+  following.value = distance < 10
+}
+
+function toBottom(smooth = false) {
+  const element = scroller.value
+  if (!element) return
+  element.scrollTo({ top: element.scrollHeight, behavior: smooth ? "smooth" : "auto" })
+}
+
+/*
+ * Opening a session starts at its end, and starts following again.
+ *
+ * This component is mounted once and reused for every session - App.vue gives
+ * it no key - so onMounted cannot do this, and a session opened after scrolling
+ * up in the previous one would land in the middle of itself.
+ */
+watch(
+  () => app.currentID,
+  async () => {
+    following.value = true
+    await nextTick()
+    toBottom()
+  },
+)
+
+/*
+ * A new message only moves the view if the reader is already at the end.
+ *
+ * This used to be unguarded, and shared a watcher with the session change. So
+ * scrolling up to read something during a turn lasted until the next message
+ * arrived, which yanked the view back down - and because the jump also put the
+ * scroller at the bottom, onScroll then set following back to true, so it could
+ * not even be escaped twice.
+ */
+watch(
+  () => app.messages.length,
+  async () => {
+    if (!following.value) return
+    await nextTick()
+    toBottom()
+  },
+)
+
+// Streaming grows the last message in place, which does not change the array
+// length - so follow the text itself.
+watch(
+  () => app.streaming?.parts.map((part) => ("text" in part ? part.text.length : part.status)).join(),
+  async () => {
+    if (!following.value) return
+    await nextTick()
+    toBottom()
+  },
+)
+
+onMounted(() => toBottom())
+
+/**
+ * Walks the conversation a turn at a time.
+ *
+ * "Where am I" is taken from whichever turn is closest to the top of the
+ * viewport rather than from a remembered index: the user scrolls freely
+ * between presses, and an index would send them somewhere they had left.
+ */
+/**
+ * Carries this conversation, as far as this message, into one of its own.
+ *
+ * The turn's id is the user message it began at, which is exactly the point
+ * the fork is made at.
+ */
+async function fork(turn: Turn) {
+  if (!turn.text?.trim()) return
+  await app.forkFrom(turn.id)
+}
+
+/** True while a rollback is in flight, so a second press cannot race the first. */
+const reverting = ref(false)
+
+/**
+ * Takes the conversation back to just before this message was sent.
+ *
+ * This message and everything after it leaves the transcript, and the project's
+ * files go back to how that moment found them. Nothing is destroyed: what goes
+ * out is listed in the dock above the composer until either it is put back or
+ * something new is sent, which is the point at which the branch is abandoned
+ * for good.
+ *
+ * And the sentence itself goes back in the box. That is the whole point of the
+ * feature in the reference - its revert mutation is `roll(...)` immediately
+ * followed by `prompt.set(draft(messageID))` (main-8t-QUXax.js @5578333) -
+ * without which reverting reads as "delete what I said" rather than "let me
+ * rephrase it", and the dock would be claiming the words are recoverable while
+ * the one place they are useful stayed empty.
+ *
+ * Set after the request rather than optimistically before it: the reference
+ * sets it early and puts the old prompt back in `runPromptRollbackMutation`'s
+ * catch, and this app has already awaited the server by here, so both reach the
+ * same end state in both outcomes. The difference is only visible to something
+ * watching the box during a request that is going to fail.
+ */
+async function revert(turn: Turn) {
+  const sessionID = app.currentID
+  if (!sessionID || reverting.value) return
+  reverting.value = true
+  try {
+    await app.revert(sessionID, turn.id)
+    const message = app.messages.find((entry) => entry.id === turn.id)
+    if (message?.role === "user") restoreDraft(message)
+  } catch (failure) {
+    /*
+     * The server refuses rather than moving the transcript on its own when the
+     * files cannot be made to follow - a turn still running, a snapshot that
+     * was never taken, a message older than the history reaches. The sentence
+     * it refuses with is the only explanation there is, so it is shown.
+     */
+    notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+  } finally {
+    reverting.value = false
+  }
+}
+
+function stepMessage(by: 1 | -1) {
+  const view = scroller.value
+  if (!view) return
+  const turns = [...view.querySelectorAll<HTMLElement>("[data-turn]")]
+  if (!turns.length) return
+
+  const top = view.getBoundingClientRect().top
+  let nearest = 0
+  let best = Infinity
+  turns.forEach((turn, index) => {
+    const distance = Math.abs(turn.getBoundingClientRect().top - top)
+    if (distance < best) {
+      best = distance
+      nearest = index
+    }
+  })
+
+  const target = turns[Math.max(0, Math.min(turns.length - 1, nearest + by))]
+  target?.scrollIntoView({ block: "start", behavior: "smooth" })
+}
+
+defineExpose({ stepMessage })
+</script>
+
+<template>
+  <div ref="scroller" class="stream" @scroll="onScroll">
+    <div class="inner">
+      <div v-for="(turn, at) in turns" :key="turn.id" class="turn" :data-turn="turn.id">
+        <div v-if="turn.text !== undefined || turn.attachments?.length" class="msg user">
+          <div v-if="turn.attachments?.length" class="sent">
+            <template v-for="(item, at) in turn.attachments" :key="at">
+              <span v-if="preview(item)" class="sent-tile picture">
+                <img :src="preview(item)" :alt="item.path" />
+              </span>
+              <span v-else class="sent-tile file" :title="item.path">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M13.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9.5L13.5 3Z"
+                    stroke="currentColor"
+                    stroke-width="1.4"
+                    stroke-linejoin="round"
+                  />
+                  <path d="M13.4 3.2V9.6H19.8" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
+                </svg>
+                <span class="sent-name">{{ item.path }}</span>
+              </span>
+            </template>
+          </div>
+          <div v-if="turn.text" class="user-bubble">{{ turn.text }}</div>
+
+          <!--
+            The same footer the reply gets. What was asked is worth being able
+            to copy back out, and which model picked it up belongs with the
+            question as much as with the answer.
+          -->
+          <div class="footer user-footer">
+            <template v-if="turn.last">
+              <span>{{ t(`agent.${turn.last.agent}`) }}</span>
+              <span class="dot">·</span>
+              <span>{{ modelName(turn.last) }}</span>
+              <template v-if="effortName(turn.last)">
+                <span class="dot">·</span>
+                <span class="level">{{ effortName(turn.last) }}</span>
+              </template>
+              <span class="dot">·</span>
+            </template>
+            <span>{{ askedAt(turn) }}</span>
+            <button
+              class="copy"
+              v-tip="{ label: t('stream.fork'), placement: 'top' }"
+              @click="fork(turn)"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="4" cy="3.4" r="1.6" stroke="currentColor" stroke-width="1" />
+                <circle cx="4" cy="12.6" r="1.6" stroke="currentColor" stroke-width="1" />
+                <circle cx="12" cy="8" r="1.6" stroke="currentColor" stroke-width="1" />
+                <path d="M4 5v6M5.6 8H10.4" stroke="currentColor" stroke-width="1" stroke-linecap="round" />
+              </svg>
+            </button>
+            <!--
+              Where the reference puts it: beside the other things that can be
+              done with what was asked, immediately before copying it.
+            -->
+            <button
+              class="copy"
+              :disabled="reverting"
+              :aria-label="t('stream.revert')"
+              v-tip="{ label: t('stream.revert'), placement: 'top' }"
+              @click="revert(turn)"
+            >
+              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path
+                  d="M5.83333 4.16406L2.5 7.4974L5.83333 10.8307M3.33333 7.4974H17.9167V15.4141H10"
+                  stroke="currentColor"
+                  stroke-width="1.2"
+                  stroke-linecap="square"
+                />
+              </svg>
+            </button>
+            <button class="copy" v-tip="{ label: t('stream.copyAsked'), placement: 'top' }" @click="copyAsked(turn)">
+              <svg v-if="copied === `${turn.id}:asked`" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1" />
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M4.14908 11.0081H1.76282V1.51758H9.1038V2.55588M14.2225 4.99681H6.75397V14.4873H14.2225V4.99681Z"
+                  stroke="currentColor"
+                  stroke-width="1"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="turn.parts.length || turn.error" class="msg assistant">
+          <div v-for="row in rows(turn.parts)" :key="row.id" class="part">
+            <ToolGroup v-if="row.kind === 'tools'" :parts="row.parts" />
+            <ReasoningPart v-else-if="row.part.type === 'reasoning'" :part="row.part" />
+            <ToolPart v-else-if="row.part.type === 'tool'" :part="row.part" />
+            <TextPart v-else :part="row.part" />
+          </div>
+
+          <!--
+            Held back until the reply is under the pointer. Who answered and how
+            long it took is worth having, but not worth a permanent grey line
+            under every message - and the copy button belongs with it.
+          -->
+          <div v-if="turn.finish && !turn.error && turn.last" class="footer">
+            <button class="copy" v-tip="{ label: t('stream.copy'), placement: 'top' }" @click="copyReply(turn)">
+              <svg v-if="copied === turn.id" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1" />
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M4.14908 11.0081H1.76282V1.51758H9.1038V2.55588M14.2225 4.99681H6.75397V14.4873H14.2225V4.99681Z"
+                  stroke="currentColor"
+                  stroke-width="1"
+                />
+              </svg>
+            </button>
+            <span>{{ t(`agent.${turn.last.agent}`) }}</span>
+            <span class="dot">·</span>
+            <span>{{ modelName(turn.last) }}</span>
+            <template v-if="effortName(turn.last)">
+              <span class="dot">·</span>
+              <span class="level">{{ effortName(turn.last) }}</span>
+            </template>
+            <template v-if="elapsed(turn)">
+              <span class="dot">·</span>
+              <span>{{ elapsed(turn) }}</span>
+            </template>
+          </div>
+
+          <div v-if="turn.error" class="err">{{ turn.errorCode ? t(turn.errorCode, turn.errorParams) : turn.error }}</div>
+          <div v-else-if="turn.finish === 'aborted'" class="note">{{ t("stream.stopped") }}</div>
+          <div v-else-if="turn.finish === 'max_tokens'" class="note">{{ t("stream.maxTokens") }}</div>
+        </div>
+
+        <div v-if="thinking(turn, at)" class="thinking">
+          <TextShimmer :text="t('stream.thinking')" :active="true" />
+        </div>
+
+        <div v-if="compactedAfter(turn)" class="compacted">
+          <span class="compacted-line" />
+          <span class="compacted-text">{{ t("stream.compacted") }}</span>
+          <span class="compacted-line" />
+        </div>
+      </div>
+
+      <div v-if="app.error" class="err banner">{{ app.error }}</div>
+    </div>
+
+    <button v-if="!following" class="jump" @click="toBottom(true)">{{ t("stream.jump") }}</button>
+  </div>
+</template>
+
+<style scoped>
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 0 2px;
+  color: var(--text-weak);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+/* focus-within so the copy button is reachable by keyboard, not just by mouse. */
+.msg.user:hover .footer,
+.msg.user:focus-within .footer,
+.msg.assistant:hover .footer,
+.msg.assistant:focus-within .footer {
+  opacity: 1;
+}
+
+.copy {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-inline-end: 2px;
+  color: var(--text-weaker);
+  border-radius: var(--radius-sm);
+}
+
+.copy:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.footer .dot {
+  opacity: 0.6;
+}
+
+/* The step a turn ran at, drawn from its own id. See effortName: the reference
+   capitalises the raw word in CSS rather than naming the steps anywhere. */
+.footer .level {
+  text-transform: capitalize;
+}
+
+/* Quiet: it marks a boundary, it is not an event in the conversation. */
+/* The reference's own `session-turn-thinking` rule, rather than a guess at it. */
+.thinking {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 20px;
+  margin-top: 12px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--text-weak);
+}
+
+.compacted {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  /* Its own breathing room rather than a margin, so two of them in a row do
+     not collapse into one gap. */
+  padding: 10px 0;
+}
+
+.compacted-line {
+  flex: auto;
+  height: 1px;
+  background: var(--border-weak);
+}
+
+.compacted-text {
+  flex: none;
+  color: var(--text-weaker);
+  font-size: 12px;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.stream {
+  position: relative;
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.inner {
+  /* The reference caps the reading column here, and the composer below
+     shares it - so a turn and the box you answer it in line up. */
+  max-width: 800px;
+  margin: 0 auto;
+  /*
+   * Twenty each side, not twenty-four: opencode's turn is 800 wide with its
+   * content at 760, and four pixels of difference is four pixels every line
+   * of every answer wraps at.
+   *
+   * Extra room at the true end of the transcript, past the standing gap the
+   * composer holds open below.
+   */
+  padding: 20px 20px 16px;
+}
+
+/*
+ * A wider reading column on a wide screen.
+ *
+ * The reference carries `2xl:max-w-[1000px]` alongside its `md:max-w-200` on
+ * both the turn and the composer (main-Db9FY8Yb.js), so past 1536px the pair
+ * grows together and the transcript stops leaving two thirds of a large
+ * monitor empty. Without it the column stayed at 800 at every size.
+ */
+@media (min-width: 1536px) {
+  .inner {
+    max-width: 1000px;
+  }
+}
+
+/*
+ * The reference's timeline is a flat list of rows with `gap: 24px` between
+ * them - the question, each part of the answer, the lot - and it drops a
+ * 24px-tall spacer row (`data-timeline-row=TurnGap`, `class=h-6`) between one
+ * turn and the next, so consecutive turns stand 72px apart while the rows
+ * inside a turn stand 24 apart. This was a flat 18 for both, which made a
+ * conversation read as one long column rather than as a series of exchanges.
+ */
+.msg {
+  margin-bottom: 24px;
+}
+
+/*
+ * The spacer itself rather than a margin, because a margin does not stack: the
+ * previous turn's 24 and a 48 here collapsed to 48, which is the larger of the
+ * two and not their sum. A box with height carries its own space, the way the
+ * reference's own spacer row does.
+ */
+.turn + .turn::before {
+  content: "";
+  display: block;
+  height: 24px;
+  margin-bottom: 24px;
+}
+
+.msg.user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+/* Trails the bubble it belongs to, which sits against the right edge. */
+.user-footer {
+  justify-content: flex-end;
+  margin: 6px 2px 2px;
+}
+
+/* Its buttons close the line rather than open it, so the gap changes sides. */
+.user-footer .copy {
+  margin-inline-end: 0;
+  margin-inline-start: 2px;
+}
+
+/*
+ * Ranged against the right, under the message they belong to, and never wider
+ * than the bubble itself.
+ */
+.sent {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  width: fit-content;
+  max-width: min(82%, 64ch);
+  margin-bottom: 8px;
+  margin-inline-start: auto;
+}
+
+/*
+ * Two shapes, not one.
+ *
+ * A picture is a small plate you recognise at a glance; a file is a name you
+ * have to read, so it gets a row wide enough to hold one. Sizing both as the
+ * same square made the pictures too small to recognise and the names too
+ * cramped to read.
+ */
+.sent-tile {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  background: var(--surface-layer);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 6px;
+  transition: border-color 0.15s;
+}
+
+.sent-tile:hover {
+  border-color: var(--border-strong);
+}
+
+.sent-tile.picture {
+  position: relative;
+  width: 58px;
+  height: 46px;
+  border: none;
+}
+
+/* The ring is drawn inside, so it does not grow the plate. */
+.sent-tile.picture::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 0.5px var(--border-weak);
+  pointer-events: none;
+  content: "";
+}
+
+.sent-tile.picture img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sent-tile.file {
+  flex-direction: row;
+  gap: 8px;
+  width: min(220px, 100%);
+  height: 48px;
+  padding: 0 10px;
+}
+
+.sent-tile.file svg {
+  flex: none;
+  color: var(--icon-weak);
+}
+
+.sent-name {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--text-base);
+  font-size: 13px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * A filled bubble with no outline: the fill already separates it from the page,
+ * and a border on top of it made what the user said look like a control rather
+ * than a remark.
+ */
+.user-bubble {
+  max-width: 100%;
+  padding: 8px 12px;
+  color: var(--text-strong);
+  background: var(--surface-raised-hover);
+  border-radius: 10px;
+  /*
+   * Prose is a point larger than the chrome around it. The app's own labels
+   * run at thirteen; what a person wrote, and what the model wrote back, are
+   * the thing being read and run at fourteen.
+   */
+  font-size: 14px;
+  line-height: 21px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.msg.assistant {
+  color: var(--text-strong);
+}
+
+.part + .part {
+  margin-top: 24px;
+}
+
+.err {
+  padding: 8px 12px;
+  /* These run to several sentences; the breaks between them are the structure. */
+  white-space: pre-line;
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--error) 32%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+}
+
+.err.banner {
+  margin-top: 8px;
+}
+
+.note {
+  margin-top: 6px;
+  color: var(--text-weak);
+  font-size: 11px;
+}
+
+.jump {
+  position: sticky;
+  bottom: 12px;
+  left: 50%;
+  padding: 5px 12px;
+  color: var(--text-strong);
+  background: var(--surface-raised-hover);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  box-shadow: var(--shadow-lg);
+  font-size: 11px;
+  transform: translateX(-50%);
+}
+</style>

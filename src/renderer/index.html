@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Sockets may go anywhere; nothing else may.
+
+      connect-src named ws://127.0.0.1:* alone, which meant the app could talk
+      only to a backend on that literal address. Not ws://localhost - the same
+      machine under its other name was refused - and no other machine at all, so
+      the Servers dialog, the saved-server list and the stored server address
+      were a feature that could not work, failing silently because a blocked
+      socket looks exactly like a server that is not answering.
+
+      Everything else stays shut. Scripts and styles are still 'self' only, so
+      no page content can bring in code, and http/https are still not reachable
+      from here - the one thing that needed them, the update feed, is fetched by
+      the main process instead.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:"
+    />
+    <title>MCode</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
