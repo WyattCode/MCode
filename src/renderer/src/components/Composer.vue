@@ -2026,16 +2026,24 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 
+/*
+ * The agent and model pills, measured off the reference's own button-v2 rather
+ * than guessed: 28 tall on a 6px radius with 11px of inline padding, its text
+ * 13px on a 20px line. These were 9px, 12.5px, and whatever line-height the
+ * app inherited - 24px - which made the pills read a size smaller than the
+ * reference's and sat their labels differently inside the same 28px box.
+ */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0 11px;
   color: var(--text-base);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: 13px;
+  line-height: 20px;
   transition: background 0.12s, color 0.12s;
 }
 

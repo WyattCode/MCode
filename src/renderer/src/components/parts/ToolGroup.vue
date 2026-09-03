@@ -141,12 +141,21 @@ const summary = computed(() =>
 }
 
 /*
- * The verb carries the weight; the counts trail it in the body colour. Five
- * hundred rather than the interface's 530: the reference sets its tool rows in
- * the older scale, and the summary line inherits from them.
+ * The whole summary line is one weight; only the colour separates the verb from
+ * the counts trailing it. Measured on the running reference: both its
+ * `tool-status-title` and its `tool-count-label` are 14px/500/21px. The counts
+ * here had no weight of their own and inherited the interface's 440, so the
+ * line read as two different types set beside each other.
+ *
+ * Five hundred rather than the interface's 530 because that is what the
+ * reference sets its tool rows in.
  */
 .verb {
   color: var(--text-strong);
+  font-weight: 500;
+}
+
+.counts {
   font-weight: 500;
 }
 
