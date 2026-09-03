@@ -660,10 +660,21 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
  * near, because a name that reflowed as the buttons arrived would make the
  * whole column twitch on the way past it.
  */
+/*
+ * The reference's home-project-row, measured: `0px 64px 0px 6px` of padding on
+ * an 8px gap. The trailing 64 was already here - it is the gutter the hover
+ * actions sit in - but the row began flush at its start edge, and the avatar
+ * and the name were separated only by the word-space the markup's newline
+ * happens to produce. Declaring the row a flex line makes that 8px deliberate
+ * rather than incidental.
+ */
 .project {
+  display: flex;
   flex: 1;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  padding-inline-end: 64px;
+  padding-inline: 6px 64px;
 }
 
 .project:hover,
@@ -871,7 +882,9 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   align-items: center;
   gap: 6px;
   height: 28px;
-  padding: 0 8px;
+  /* 11px, which is what the reference pads every button-v2 by - the composer's
+     agent and model pills included. */
+  padding: 0 11px;
   color: var(--text-base);
   border-radius: var(--radius-md);
   font-size: 13px;
