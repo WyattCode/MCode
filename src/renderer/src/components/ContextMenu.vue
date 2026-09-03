@@ -112,7 +112,14 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
    */
   background: var(--surface-menu);
   border-radius: 6px;
-  box-shadow: var(--shadow-md);
+  /*
+   * elevation/floating, not elevation/raised. The reference's own menu measures
+   * `0 8px 16px` over `0 4px 8px` - twice the throw of the shadow this had -
+   * which is the difference between a menu hovering over the window and a card
+   * lying on it. Everything else about the two menus already agreed: 36 fill,
+   * 6px radius, 2px padding, and 28-tall items on `0 12px` at a 4px radius.
+   */
+  box-shadow: var(--shadow-lg);
 }
 
 /* A group's name, the way opencode's DropdownMenu.GroupLabel reads. */
