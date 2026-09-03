@@ -592,7 +592,22 @@ defineExpose({ stepMessage })
       <div v-if="app.error" class="err banner">{{ app.error }}</div>
     </div>
 
-    <button v-if="!following" class="jump" @click="toBottom(true)">{{ t("stream.jump") }}</button>
+    <!--
+      Icon only, with the words left to the label. The reference's button is
+      26x22 around a 13px arrow and says nothing out loud; this said "jump to
+      latest" in full, which is four times the width for a control that appears
+      over the conversation it is covering.
+    -->
+    <button v-if="!following" class="jump" :aria-label="t('stream.jump')" @click="toBottom(true)">
+      <svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+        <path
+          d="M15.2083 11.6667L10 16.875L4.79167 11.6667M10 16.25V3.125"
+          stroke="currentColor"
+          stroke-width="1.25"
+          stroke-linecap="square"
+        />
+      </svg>
+    </button>
   </div>
 </template>
 
@@ -616,14 +631,20 @@ defineExpose({ stepMessage })
   opacity: 1;
 }
 
+/*
+ * 24 on a 6px radius in --text-weak, which is what the reference's own message
+ * actions measure - its undo, copy-message and copy-reply are all 24x24 around
+ * a 14px icon in rgb(128,128,128). These were 20x20 on a 4px radius in
+ * --avatar-gray, a size and two steps of colour below.
+ */
 .copy {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   margin-inline-end: 2px;
-  color: var(--text-weaker);
-  border-radius: var(--radius-sm);
+  color: var(--text-weak);
+  border-radius: 6px;
 }
 
 .copy:hover {
@@ -899,17 +920,25 @@ defineExpose({ stepMessage })
   font-size: 11px;
 }
 
+/*
+ * Measured on the reference: 26x22 on an 8px radius, filled with the page's own
+ * colour at 92% so the conversation shows faintly through it, and no border.
+ * This was an 80x35 fully-round pill with a hard fill, a border and a large
+ * shadow - a lozenge where the reference has a quiet square.
+ */
 .jump {
   position: sticky;
   bottom: 12px;
   left: 50%;
-  padding: 5px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 22px;
+  padding: 0;
   color: var(--text-strong);
-  background: var(--surface-raised-hover);
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  box-shadow: var(--shadow-lg);
-  font-size: 11px;
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  border-radius: 8px;
   transform: translateX(-50%);
 }
 </style>
