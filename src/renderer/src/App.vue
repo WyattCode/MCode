@@ -2894,15 +2894,45 @@ onBeforeUnmount(() => {
  * panels included - lives on this one plane, which is what leaves the window
  * reading as a frame around the work rather than as more of the same colour.
  */
+/*
+ * Two cards with a gutter between them, not one card with a divider in it.
+ *
+ * Measured on the reference with its review panel open: its conversation is a
+ * card at `8,44 600x861` and its panel another at `616,44 829x861` - both on a
+ * 10px radius over rgb(22,22,22), both inset 8 from the window, and 8 apart.
+ * This was a single card that the panel divided with a 1px line, so the two
+ * regions read as halves of one sheet rather than as two surfaces.
+ *
+ * The row itself now paints nothing; the fill and the corners belong to the
+ * regions inside it, which is what lets the gutter show through.
+ */
 .body {
   position: relative;
   display: flex;
   flex: 1;
+  gap: 8px;
   min-height: 0;
   margin: 8px;
+}
+
+/* Each region is its own card. */
+.body > .main,
+.body > .panel,
+.body > .panel-host {
   overflow: hidden;
   background: var(--surface-raised);
   border-radius: 10px;
+}
+
+/*
+ * Only the panel is raised, and its shadow is elevation/raised - measured layer
+ * for layer on the reference, whose conversation card computes `box-shadow:
+ * none` while its review panel carries the full four. The asymmetry is the part
+ * that could not have been guessed: the panel sits above the conversation
+ * rather than the two lying in the same plane.
+ */
+.body > .panel,
+.body > .panel-host {
   box-shadow: var(--shadow-md);
 }
 

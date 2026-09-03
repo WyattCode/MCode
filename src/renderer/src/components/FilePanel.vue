@@ -1530,11 +1530,10 @@ onBeforeUnmount(() => observer?.disconnect())
   /* The conversation still needs somewhere to be. */
   max-width: calc(100% - 450px);
   /*
-   * The workspace panel behind is the surface; only the divider is drawn. It
-   * belongs on the edge the conversation is on, which is the edge the reader's
-   * language starts from.
+   * No divider: the panel is its own card now, and the 8px gutter beside it is
+   * what separates it from the conversation. The reference's own panel measures
+   * `border-inline-start: 0px` for the same reason.
    */
-  border-inline-start: 1px solid var(--border-weaker);
 }
 
 /*
