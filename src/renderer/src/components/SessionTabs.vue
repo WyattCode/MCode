@@ -559,7 +559,12 @@ async function commitRename(id: string) {
   height: 100%;
   color: var(--text-weak);
   font-size: 13px;
-  font-weight: 530;
+  /*
+   * Five hundred, not the 530 the row titles take. The reference runs two
+   * weights and the difference is not noise: its tab-link and its tool rows
+   * measure 500, while its session rows and settings row titles measure 530.
+   */
+  font-weight: 500;
   /* A button centres its text; the title belongs against the avatar. */
   text-align: start;
 }
