@@ -721,6 +721,26 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   background: var(--surface-key);
 }
 
+/*
+ * And it still has to say when it has focus.
+ *
+ * `--surface-hover` is an overlay - `#0000000a` light, `#ffffff0f` dark, the
+ * same kind of value as opencode's `overlay-simple-overlay-hover` - so on an
+ * ordinary row it composes with the page. On the selected row it did not:
+ * `background` is one property, `.project.on` sets it to the key fill, and the
+ * two selectors weigh the same so the later one simply won. A selected row
+ * took focus and nothing at all changed, which for a keyboard reader is the
+ * row going silent exactly when they need it to speak.
+ *
+ * Layering it as a gradient over the key colour is the overlay actually
+ * overlaying, which is what the token was for.
+ */
+.project.on:focus-visible {
+  background:
+    linear-gradient(var(--surface-hover), var(--surface-hover)),
+    var(--surface-key);
+}
+
 /* Equivalent to a 4px gap on a wrapper: no space before the first row. */
 .project-row + .project-row {
   margin-top: 4px;
