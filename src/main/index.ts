@@ -6,7 +6,7 @@ import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeTheme, Not
 import { startBackend, type Backend } from "../server/index"
 import { setLabels } from "./labels"
 import { buildMenu } from "./menu"
-import { captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
+import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
 import { applyZoom } from "./zoom"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
@@ -16,6 +16,12 @@ import pkg from "../../package.json"
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 let backend: Backend | undefined
+
+/*
+ * Where the last downloaded installer went. Held here rather than passed back
+ * and forth, so installing can only ever run the file this process fetched.
+ */
+let installerPath: string | undefined
 const windows = new Set<BrowserWindow>()
 
 /** Files written through the save dialog, and so safe to show in the shell. */
@@ -287,6 +293,45 @@ app.whenReady().then(async () => {
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const payload = (await response.json()) as { version?: string; url?: string }
     return { version: payload.version?.trim() ?? "", url: payload.url?.trim() ?? "" }
+  })
+
+  /*
+   * The rest of an update: fetch the installer the feed named, then hand it to
+   * the shell and quit so it can replace the app that is running.
+   *
+   * The feed's own address had to be http; so does the installer's, and for the
+   * same reason - this starts a download, and a `file://` or `data:` here would
+   * be a page choosing a local path for it. The download lands in the OS
+   * temporary directory under a name taken from the version rather than from
+   * the URL, because a name that came over the network should not decide where
+   * a file is written.
+   */
+  ipcMain.handle("mcode:download-update", async (_event, url: string, version: string) => {
+    const address = String(url ?? "").trim()
+    if (!/^https?:\/\//.test(address)) throw new Error("the installer must be at an http address")
+    const response = await fetch(address, { cache: "no-store" })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const safe = String(version ?? "").replace(/[^0-9A-Za-z._-]/g, "") || "update"
+    const suffix = process.platform === "win32" ? ".exe" : process.platform === "darwin" ? ".dmg" : ".AppImage"
+    const target = path.join(app.getPath("temp"), `mcode-${safe}${suffix}`)
+    await fs.writeFile(target, Buffer.from(await response.arrayBuffer()))
+    installerPath = target
+    return target
+  })
+
+  /*
+   * Only what this process downloaded. The renderer names no path here - it
+   * asks to install "the one that was fetched" - so a window cannot talk the
+   * app into launching an arbitrary executable, which is the same rule the
+   * open-with table enforces for editors.
+   */
+  ipcMain.handle("mcode:install-update", async () => {
+    if (!installerPath) throw new Error("no update has been downloaded")
+    const failure = await shell.openPath(installerPath)
+    if (failure) throw new Error(failure)
+    beginIntentionalQuit()
+    app.quit()
+    return true
   })
 
   // The in-window menu's File > New Window. The native menu calls createWindow

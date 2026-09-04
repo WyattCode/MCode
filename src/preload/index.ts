@@ -58,6 +58,18 @@ const api = {
   checkUpdates: (feed: string): Promise<{ version: string; url: string }> =>
     ipcRenderer.invoke("mcode:check-updates", feed),
 
+  /** Fetches the installer the feed named, and answers where it was put. */
+  downloadUpdate: (url: string, version: string): Promise<string> =>
+    ipcRenderer.invoke("mcode:download-update", url, version),
+
+  /**
+   * Runs the installer that was fetched, and quits.
+   *
+   * Takes no path: the window asks to install what was downloaded, and the main
+   * process is the only thing that knows what that was.
+   */
+  installUpdate: (): Promise<boolean> => ipcRenderer.invoke("mcode:install-update"),
+
   /** A second window on the same backend. */
   newWindow: (): void => ipcRenderer.send("mcode:new-window"),
 

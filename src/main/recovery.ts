@@ -193,6 +193,18 @@ export function relaunch(): void {
   app.quit()
 }
 
+/**
+ * Says the quit about to happen was asked for.
+ *
+ * The recovery dialogs exist to notice a window that went away on its own, and
+ * they cannot tell that from one closed on purpose. Installing an update quits
+ * deliberately - and would otherwise be met, on the way out, by an offer to
+ * reopen the app that is being replaced.
+ */
+export function beginIntentionalQuit(): void {
+  quitting = true
+}
+
 /** What a recovery dialog offers. The order is the order they are shown in. */
 interface Action {
   id: "relaunch" | "export" | "wait" | "quit"

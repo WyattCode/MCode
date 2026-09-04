@@ -132,6 +132,36 @@ const panelTab = computed<"review" | "context">({
  * bring back - the setting is the answer, not a suggestion.
  */
 const showFileTree = computed(() => app.config?.showFileTree !== false)
+/*
+ * A version that has been fetched and is waiting to be run.
+ *
+ * The download starts as soon as the check finds one, without asking - which
+ * is what the reference does, and why the only thing it ever says out loud is
+ * that a new version "is now available to install". Asking first would put a
+ * question between the reader and an update they already asked for by running
+ * the check.
+ */
+const downloadedUpdate = ref<string>()
+
+async function fetchUpdate(url: string, version: string) {
+  try {
+    await window.mcode.downloadUpdate(url, version)
+    downloadedUpdate.value = version
+  } catch (err) {
+    notifyFailure(t("update.failed"), reasonOf(err))
+  }
+}
+
+async function installUpdate() {
+  try {
+    await window.mcode.installUpdate()
+  } catch (err) {
+    // The app is still here, so it can still say why.
+    notifyFailure(t("update.failed"), reasonOf(err))
+    downloadedUpdate.value = undefined
+  }
+}
+
 const terminalOpen = ref(false)
 
 /*
@@ -500,9 +530,20 @@ async function checkForUpdates() {
      * reach nothing else, so its own fetch of the feed never left the process -
      * the check reported "Failed to fetch" whatever the feed said.
      */
-    const { version } = await window.mcode.checkUpdates(feed)
+    const { version, url } = await window.mcode.checkUpdates(feed)
     if (!version) throw new Error("the feed named no version")
-    notify(version === app.version ? t("update.current") : t("update.available", { version }))
+    if (version === app.version) {
+      notify(t("update.current"))
+      return
+    }
+    notify(t("update.available", { version }))
+    /*
+     * A feed that names a version but no installer is as far as this goes -
+     * saying a newer one exists is still worth saying, and it is what this
+     * command did for every feed until now.
+     */
+    if (!url) return
+    void fetchUpdate(url, version)
   } catch (err) {
     /*
      * Electron wraps anything thrown in a handler as "Error invoking remote
@@ -2853,6 +2894,19 @@ onBeforeUnmount(() => {
 
   </div>
   <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
+
+  <!--
+    Fetched and ready. The reference offers exactly this, in these words, once
+    the download it started on its own has finished.
+  -->
+  <ConfirmDialog
+    v-if="downloadedUpdate"
+    :title="t('update.readyTitle')"
+    :body="t('update.readyBody', { version: downloadedUpdate })"
+    :confirm-label="t('update.installRestart')"
+    @confirm="installUpdate"
+    @close="downloadedUpdate = undefined"
+  />
 
   <ConfirmDialog
     v-if="deletingWorkspace"
