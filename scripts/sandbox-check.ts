@@ -133,13 +133,13 @@ async function main(): Promise<void> {
      * not, so the name is checked against the table on the way in. A page that
      * has been talked into asking for something else must get nothing.
      */
-    note("the five apps the table names may be started", isKnownOpenWith("code") && isKnownOpenWith("cursor") && isKnownOpenWith("zed") && isKnownOpenWith("powershell") && isKnownOpenWith("Sublime Text"))
+    note("the five apps the table names may be started", isKnownOpenWith("code", "win32") && isKnownOpenWith("cursor", "win32") && isKnownOpenWith("zed", "win32") && isKnownOpenWith("powershell", "win32") && isKnownOpenWith("Sublime Text", "win32"))
 
     // The default choice has no application at all - it goes to the desktop.
-    note("the file manager is not a name that can be started", !isKnownOpenWith(FILE_MANAGER_ID), FILE_MANAGER_ID)
+    note("the file manager is not a name that can be started", !isKnownOpenWith(FILE_MANAGER_ID, "win32"), FILE_MANAGER_ID)
 
     for (const asked of ["cmd", "notepad", "curl", "powershell.exe", "code.exe", "Code", "CURSOR"]) {
-      note(`a name outside the table is refused: ${asked}`, !isKnownOpenWith(asked))
+      note(`a name outside the table is refused: ${asked}`, !isKnownOpenWith(asked, "win32"))
     }
 
     // The shapes an attacker reaches for first, none of which is a string in
@@ -153,11 +153,11 @@ async function main(): Promise<void> {
       " code",
       "code ",
     ]) {
-      note(`nor a decorated one: ${JSON.stringify(asked)}`, !isKnownOpenWith(asked))
+      note(`nor a decorated one: ${JSON.stringify(asked)}`, !isKnownOpenWith(asked, "win32"))
     }
 
     for (const asked of [undefined, null, 0, 1, true, {}, [], { toString: () => "code" }]) {
-      note(`nor a non-string: ${JSON.stringify(asked) ?? String(asked)}`, !isKnownOpenWith(asked))
+      note(`nor a non-string: ${JSON.stringify(asked) ?? String(asked)}`, !isKnownOpenWith(asked, "win32"))
     }
 
     // Every label the table offers must be a real string key, or the menu draws
@@ -174,6 +174,19 @@ async function main(): Promise<void> {
      * two missing tables stayed missing.
      */
     note("windows offers the reference's five", openApps("win32").length === 5)
+
+    /*
+     * And one platform's names are not another's. The macOS table sends bundle
+     * names to `open -a`; away from macOS the same string goes to `execFile`
+     * as a command on PATH, so a window that asked Windows to start "Xcode"
+     * must be refused even though the name is in a table somewhere.
+     */
+    const elsewhere = ["Xcode", "Terminal", "Ghostty", "Visual Studio Code"]
+    for (const asked of elsewhere) {
+      note(`a macos-only name is refused on windows: ${asked}`, !isKnownOpenWith(asked, "win32"))
+      note(`and accepted on macos: ${asked}`, isKnownOpenWith(asked, "darwin"))
+    }
+    note("a windows-only name is refused on macos", !isKnownOpenWith("powershell", "darwin"))
     note("macos offers the reference's twelve", openApps("darwin").length === 12)
     note("linux offers the reference's four", openApps("linux").length === 4)
 

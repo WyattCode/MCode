@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import { execFile } from "node:child_process"
 import path from "node:path"
+import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeTheme, Notification, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
@@ -291,30 +292,76 @@ app.whenReady().then(async () => {
     if (!/^https?:\/\//.test(address)) throw new Error("the feed must be an http address")
     const response = await fetch(address, { cache: "no-store" })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const payload = (await response.json()) as { version?: string; url?: string }
-    return { version: payload.version?.trim() ?? "", url: payload.url?.trim() ?? "" }
+    const payload = (await response.json()) as { version?: string; url?: string; sha256?: string }
+    return {
+      version: payload.version?.trim() ?? "",
+      url: payload.url?.trim() ?? "",
+      // Optional, and checked only when the feed offers one.
+      sha256: payload.sha256?.trim() ?? "",
+    }
   })
 
   /*
    * The rest of an update: fetch the installer the feed named, then hand it to
    * the shell and quit so it can replace the app that is running.
    *
-   * The feed's own address had to be http; so does the installer's, and for the
-   * same reason - this starts a download, and a `file://` or `data:` here would
-   * be a page choosing a local path for it. The download lands in the OS
-   * temporary directory under a name taken from the version rather than from
-   * the URL, because a name that came over the network should not decide where
-   * a file is written.
+   * The download lands in the OS temporary directory under a name taken from
+   * the version rather than from the URL, because a name that came over the
+   * network should not decide where a file is written. What it will and will
+   * not fetch is argued at the checks themselves.
    */
-  ipcMain.handle("mcode:download-update", async (_event, url: string, version: string) => {
+  ipcMain.handle("mcode:download-update", async (_event, url: string, version: string, digest?: unknown) => {
     const address = String(url ?? "").trim()
-    if (!/^https?:\/\//.test(address)) throw new Error("the installer must be at an http address")
+    /*
+     * https, not http.
+     *
+     * The feed itself may be plain http - it is read, and a wrong answer there
+     * makes the app say the wrong version. This file is *run*. Fetching an
+     * executable over a connection anyone on the path can rewrite, and then
+     * launching it, is remote code execution with extra steps, so the one
+     * place that ends in `openPath` insists on a connection that cannot be
+     * rewritten.
+     */
+    if (!/^https:\/\//.test(address)) throw new Error("the installer must be at an https address")
+
     const response = await fetch(address, { cache: "no-store" })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+    /*
+     * A ceiling, checked before the body is in memory. `arrayBuffer()` on a
+     * feed that names a multi-gigabyte file would otherwise buy whatever it
+     * asked for. A server that declines to say how long the body is gets the
+     * same ceiling applied as the chunks arrive.
+     */
+    const MAX_INSTALLER = 400_000_000
+    const declared = Number(response.headers.get("content-length") ?? "")
+    if (Number.isFinite(declared) && declared > MAX_INSTALLER) throw new Error("the installer is too large")
+
+    const chunks: Buffer[] = []
+    let seen = 0
+    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+      seen += chunk.byteLength
+      if (seen > MAX_INSTALLER) throw new Error("the installer is too large")
+      chunks.push(Buffer.from(chunk))
+    }
+    const body = Buffer.concat(chunks)
+
+    /*
+     * And if the feed said what it should hash to, it has to. This is the only
+     * check that survives a feed being served correctly but pointing somewhere
+     * it should not; https alone says the bytes arrived unaltered from whoever
+     * answered, not that they are the right bytes.
+     */
+    const expected = typeof digest === "string" ? digest.trim().toLowerCase() : ""
+    if (expected) {
+      const actual = createHash("sha256").update(body).digest("hex")
+      if (actual !== expected) throw new Error("the installer does not match the checksum the feed gave")
+    }
+
     const safe = String(version ?? "").replace(/[^0-9A-Za-z._-]/g, "") || "update"
     const suffix = process.platform === "win32" ? ".exe" : process.platform === "darwin" ? ".dmg" : ".AppImage"
     const target = path.join(app.getPath("temp"), `mcode-${safe}${suffix}`)
-    await fs.writeFile(target, Buffer.from(await response.arrayBuffer()))
+    await fs.writeFile(target, body)
     installerPath = target
     return target
   })
@@ -397,7 +444,7 @@ app.whenReady().then(async () => {
      * run an arbitrary executable, which is the same reason the external-URL
      * channel checks the scheme instead of believing the caller checked it.
      */
-    if (!isKnownOpenWith(openWith)) return "unknown application"
+    if (!isKnownOpenWith(openWith, process.platform)) return "unknown application"
     const [command, args] =
       process.platform === "darwin" ? ["open", ["-a", openWith, target]] : [openWith, [target]]
     return await new Promise<string>((resolve) => {

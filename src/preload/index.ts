@@ -55,12 +55,12 @@ const api = {
    * The window cannot fetch it: its content policy allows a socket to the local
    * backend and nothing else.
    */
-  checkUpdates: (feed: string): Promise<{ version: string; url: string }> =>
+  checkUpdates: (feed: string): Promise<{ version: string; url: string; sha256: string }> =>
     ipcRenderer.invoke("mcode:check-updates", feed),
 
   /** Fetches the installer the feed named, and answers where it was put. */
-  downloadUpdate: (url: string, version: string): Promise<string> =>
-    ipcRenderer.invoke("mcode:download-update", url, version),
+  downloadUpdate: (url: string, version: string, sha256?: string): Promise<string> =>
+    ipcRenderer.invoke("mcode:download-update", url, version, sha256),
 
   /**
    * Runs the installer that was fetched, and quits.

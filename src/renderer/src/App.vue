@@ -143,9 +143,9 @@ const showFileTree = computed(() => app.config?.showFileTree !== false)
  */
 const downloadedUpdate = ref<string>()
 
-async function fetchUpdate(url: string, version: string) {
+async function fetchUpdate(url: string, version: string, sha256: string) {
   try {
-    await window.mcode.downloadUpdate(url, version)
+    await window.mcode.downloadUpdate(url, version, sha256)
     downloadedUpdate.value = version
   } catch (err) {
     notifyFailure(t("update.failed"), reasonOf(err))
@@ -530,7 +530,7 @@ async function checkForUpdates() {
      * reach nothing else, so its own fetch of the feed never left the process -
      * the check reported "Failed to fetch" whatever the feed said.
      */
-    const { version, url } = await window.mcode.checkUpdates(feed)
+    const { version, url, sha256 } = await window.mcode.checkUpdates(feed)
     if (!version) throw new Error("the feed named no version")
     if (version === app.version) {
       notify(t("update.current"))
@@ -543,7 +543,7 @@ async function checkForUpdates() {
      * command did for every feed until now.
      */
     if (!url) return
-    void fetchUpdate(url, version)
+    void fetchUpdate(url, version, sha256)
   } catch (err) {
     /*
      * Electron wraps anything thrown in a handler as "Error invoking remote

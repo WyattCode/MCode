@@ -105,20 +105,24 @@ export function openApps(platform: string): OpenApp[] {
 }
 
 /**
- * Whether a name may be launched at all.
+ * Whether a name may be launched on this platform.
  *
  * Asked in the main process, on the way in from the renderer. The reference
  * passes whatever the window sends straight to `execFile` because it treats
  * its own renderer as trusted; this app does not, for the same reason
  * `mcode:open-external` checks the scheme rather than believing the caller
- * checked it. Nothing outside these tables can be started, whatever the window
- * asks for.
+ * checked it.
  *
- * Every platform's table is consulted, not just this one's. The check is about
- * what may ever be run, and narrowing it to the running platform would only
- * mean a second place that has to be right about which list is in force.
+ * The platform is required rather than optional, and only its own table is
+ * consulted. An earlier version here read all three on the reasoning that the
+ * question was "what may ever be run" and that one table was one fewer thing
+ * to get wrong. That reasoning was about tidiness and it was answering the
+ * wrong question: away from macOS the name goes to `execFile` as a command on
+ * PATH, so accepting the macOS table on Windows would have let a compromised
+ * window ask for `Xcode`, `Terminal` or `Ghostty` by name. The guard should be
+ * as narrow as the truth allows, and the truth is one platform at a time.
  */
-export function isKnownOpenWith(value: unknown): value is string {
+export function isKnownOpenWith(value: unknown, platform: string): value is string {
   if (typeof value !== "string") return false
-  return [WINDOWS_APPS, MAC_APPS, LINUX_APPS].some((list) => list.some((app) => app.openWith === value))
+  return openApps(platform).some((app) => app.openWith === value)
 }
