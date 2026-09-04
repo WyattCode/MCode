@@ -683,6 +683,21 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   background: var(--surface-hover);
 }
 
+/*
+ * A row says it has focus by filling, not by drawing a ring around itself.
+ *
+ * This is opencode's treatment for anything row-shaped - its palette rows, its
+ * list items and its collapsible triggers all set `outline: none` and change
+ * their background instead, and it has no global focus rule at all. A 268px
+ * blue rectangle around the word "Settings" was the whole width of the column
+ * announcing something the fill says quietly.
+ */
+.util:focus-visible {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+  outline: none;
+}
+
 /* The project whose sessions are on show, marked the way opencode marks it. */
 .project.on,
 .project.on:hover {

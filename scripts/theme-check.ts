@@ -186,6 +186,76 @@ const ANSI_SLOTS = [
   }
 }
 
+/*
+ * A focus ring marks an element. It must not restyle it.
+ *
+ * The global `:focus-visible` rule used to set `border-radius`, which does not
+ * round the ring - an outline already follows whatever radius the element
+ * declares - it rounds the element, for as long as it has focus. Every one of
+ * the 27 focusable controls surveyed across this app had a radius other than
+ * the 4px that rule forced, so taking focus visibly reshaped all of them.
+ *
+ * The same trap is open to `:hover` and `:active`. Revealing a *child* on
+ * hover is a different thing and stays allowed - this looks only at rules
+ * whose own selector ends in the state, so `.row:hover .slot { width }` is not
+ * caught while `.row:hover { width }` is.
+ */
+{
+  const GEOMETRY = ["border-radius", "padding", "border-width", "font-size"]
+  const files: string[] = []
+  const walk = (relative: string) => {
+    for (const entry of fs.readdirSync(path.join(here, "..", relative), { withFileTypes: true })) {
+      const next = `${relative}/${entry.name}`
+      if (entry.isDirectory()) walk(next)
+      else if (next.endsWith(".vue") || next.endsWith(".css")) files.push(next)
+    }
+  }
+  walk("src/renderer/src")
+
+  const STATE = /:(hover|focus-visible|focus|active)\s*(,|\{|$)/
+  /*
+   * Plain string work, no regex. The first attempt built this with
+   * `new RegExp(\`^\s*...\`)` - inside a template literal the backslash is
+   * eaten, so the pattern became `^s*...` and required the line to start with
+   * a literal "s". It matched nothing, and the check passed on the defect it
+   * was written for. Twice.
+   */
+  const declares = (line: string) => {
+    const text = line.trim()
+    return GEOMETRY.find((property) => text.startsWith(property) && text.slice(property.length).trimStart().startsWith(":"))
+  }
+
+  /*
+   * Line by line rather than by matching `selector { body }`. A block regex has
+   * to assume no brace appears in a comment, and this file's comments do -
+   * which silently misaligned every block after the first and made the check
+   * pass on the very defect it was written for.
+   */
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(here, "..", file), "utf8").split(String.fromCharCode(10))
+    let selector: string | undefined
+    for (const line of lines) {
+      const text = line.trim()
+      if (text.endsWith("{")) {
+        const head = text.slice(0, -1).trim()
+        // Only the element carrying the state, not a descendant of it: a
+        // trailing state pseudo-class on one of the comma-separated parts.
+        selector = head.split(",").some((one) => STATE.test(one.trim() + "{")) ? head : undefined
+        continue
+      }
+      if (text.startsWith("}")) {
+        selector = undefined
+        continue
+      }
+      if (!selector) continue
+      const property = declares(line)
+      if (property) {
+        problems.push(`${file}: \`${selector}\` changes ${property}, which reshapes the element it is marking`)
+      }
+    }
+  }
+}
+
 console.log(`themes: ${THEMES.length}, tokens each: ${Object.keys(themeTokens(oc2, true)).length}`)
 if (problems.length) {
   console.error(`FAILED with ${problems.length} problem(s):`)

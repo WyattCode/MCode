@@ -39,8 +39,19 @@ body {
 :focus-visible {
   outline: 2px solid var(--interactive);
   outline-offset: 1px;
-  border-radius: var(--radius-sm);
 }
+
+/*
+ * No `border-radius` here, and that is the point.
+ *
+ * This rule used to set one, which does not round the ring - it rounds the
+ * element, for as long as the element is focused. Every control on the
+ * launcher is 6px and `--radius-sm` is 4px, so taking focus visibly squared
+ * off the corners of whatever had it. An outline already follows the border
+ * radius the element itself declares, so there was nothing to gain either.
+ *
+ * A focus ring marks an element. It must not restyle it.
+ */
 
 button {
   font: inherit;
