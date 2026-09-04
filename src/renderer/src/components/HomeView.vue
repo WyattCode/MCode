@@ -695,10 +695,23 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
  * blue rectangle around the word "Settings" was the whole width of the column
  * announcing something the fill says quietly.
  */
-.util:focus-visible {
+.util:focus-visible,
+.project:focus-visible,
+.session:focus-visible {
   color: var(--text-strong);
   background: var(--surface-hover);
   outline: none;
+}
+
+/*
+ * An icon button keeps its ring - opencode draws one on `icon-button-v2` - but
+ * at the offset it uses. 1px put the ring hard against a 28px button; 2.5px is
+ * what the reference measures, and it is the difference between a ring and a
+ * border.
+ */
+.head-ico:focus-visible,
+.ico:focus-visible {
+  outline-offset: 2.5px;
 }
 
 /* The project whose sessions are on show, marked the way opencode marks it. */

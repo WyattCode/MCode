@@ -411,8 +411,23 @@ async function commitRename(id: string) {
   content: "";
 }
 
+/*
+ * Four rules, which is what opencode has and this had half of.
+ *
+ * A divider belongs to the later of two tabs and is drawn in the gap between
+ * them, so a filled tab has to suppress the one on *both* of its sides: its
+ * own, and the one the tab after it draws. Only the first two were here, so
+ * the gap to the right of the active or hovered tab kept its divider - and
+ * with no tab active at all, which is what the launcher means, every gap drew
+ * one, including the gap before a tab that had nothing in it yet.
+ */
 .slot[data-active="true"]::before,
 .slot:hover::before {
+  display: none;
+}
+
+.slot[data-active="true"] + .slot::before,
+.slot:hover + .slot::before {
   display: none;
 }
 
