@@ -52,6 +52,19 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
       <div class="column">
         <div class="wordmark" role="img" :aria-label="t('hero.title')" />
 
+        <!--
+          Where the box goes while the session is empty.
+          
+          opencode puts the prompt inside this block rather than at the foot of
+          the window: measured, its wordmark ends at 329, the box runs 361 to
+          465, and the project row sits at 497 - one centred group with 32
+          between each part. The box is teleported in rather than rendered
+          here, so it is the same component either way and does not lose what
+          was typed into it, or its own shape, the moment a session stops being
+          empty.
+        -->
+        <div id="hero-dock" class="dock-slot" />
+
         <div class="foot">
           <button class="chip" v-tip="{ label: directory, placement: 'top' }">
             <span class="avatar" :style="{ '--h': hue }">
@@ -129,8 +142,17 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
  * to hold it, then shrinking with the padding. This was 800.
  */
 .column {
+  display: flex;
+  flex-direction: column;
+  /* 32 above the box and 32 below it, which is what the reference measures. */
+  gap: 32px;
   width: 100%;
   max-width: 720px;
+}
+
+.dock-slot {
+  display: flex;
+  flex-direction: column;
 }
 
 /*
@@ -154,7 +176,11 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   align-items: center;
   justify-content: center;
   min-height: 28px;
-  margin-top: 16px;
+  /*
+   * No margin of its own: the column's 32px gap is the whole distance, and this
+   * used to be added to it for 48. The reference measures 32 between the box
+   * and this row, the same as between the wordmark and the box.
+   */
   color: var(--text-weak);
   font-size: 13px;
 }

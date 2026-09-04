@@ -2773,14 +2773,26 @@ onBeforeUnmount(() => {
             lost - and no way to ask for it back.
           -->
           <RevertDock />
-          <Composer
-            ref="composer"
-            :commands="commands"
-            @open-settings="openSettings"
-            @connect="connectOpen = true"
-            @manage-models="manageModelsOpen = true"
-            @shell="runShellCommand"
-          />
+          <!--
+            While the session is empty the box belongs inside the hero, between
+            the wordmark and the project row, which is where opencode puts it.
+
+            Teleported rather than rendered in two places. `v-if`/`v-else`
+            would be two vnodes and so two component instances: the box would
+            be destroyed and rebuilt on the first message, losing a draft mid
+            sentence and any attachment gathered with it. Teleport moves the
+            same instance's DOM and leaves the instance alone.
+          -->
+          <Teleport to="#hero-dock" :disabled="!(empty && !app.error)">
+            <Composer
+              ref="composer"
+              :commands="commands"
+              @open-settings="openSettings"
+              @connect="connectOpen = true"
+              @manage-models="manageModelsOpen = true"
+              @shell="runShellCommand"
+            />
+          </Teleport>
         </template>
       </main>
 

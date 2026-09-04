@@ -1687,6 +1687,19 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding-top: 0;
 }
 
+/*
+ * Inside the hero the padding has nothing to do.
+ *
+ * It exists to hold this box off the transcript above and the window below;
+ * in an empty session there is no transcript, and the column it sits in owns
+ * the spacing - 32 above and 32 below, which is what opencode measures. Left
+ * in, it added to that gap instead of being replaced by it. Without it the box
+ * is 104 tall, which is the reference's number exactly.
+ */
+#hero-dock .composer {
+  padding: 0;
+}
+
 .shell {
   max-width: 776px;
   margin: 0 auto;
