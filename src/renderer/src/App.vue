@@ -165,7 +165,11 @@ const serverPanel = ref(false)
  * window.prompt to fall back on - it throws outright. Each is a flag rather
  * than a promise so the dialog stays declarative like every other overlay.
  */
-const renaming = ref(false)
+/*
+ * The header, so the rename command can start the title's own editor. Renaming
+ * is inline now - there is no dialog left for a flag to open.
+ */
+const header = ref<InstanceType<typeof SessionHeader>>()
 /** The project a new workspace is being branched from, while it is being named. */
 const namingWorkspace = ref<string>()
 const choosingServer = ref(false)
@@ -1386,7 +1390,7 @@ const bindableCommands = computed(() => {
       group: "key.groupSession",
       title: t("cmd.rename"),
       enabled: hasSession,
-      run: () => (renaming.value = true),
+      run: () => header.value?.begin(),
     },
     {
       id: "session.undo",
@@ -1915,7 +1919,6 @@ const modalOpen = computed(
   () =>
     settingsOpen.value ||
     mcpOpen.value ||
-    renaming.value ||
     choosingServer.value ||
     managingServers.value ||
     Boolean(namingWorkspace.value) ||
@@ -2621,8 +2624,9 @@ onBeforeUnmount(() => {
             before the first message used to vanish silently.
           -->
           <SessionHeader
+            ref="header"
             :context-open="contextShowing"
-            @rename="renaming = true"
+            @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
             @menu="(x, y) => (sessionMenu = { x, y })"
             @context="toggleContext"
           />
@@ -2737,18 +2741,6 @@ onBeforeUnmount(() => {
       placeholder="ws://host:port"
       @close="choosingServer = false"
       @submit="applyServer"
-    />
-
-    <RenameDialog
-      v-if="renaming && app.current"
-      :value="sessionTitle(app.current.title)"
-      @close="renaming = false"
-      @submit="
-        (title) => {
-          renaming = false
-          if (app.currentID) void app.rename(app.currentID, title)
-        }
-      "
     />
 
     <SettingsDialog

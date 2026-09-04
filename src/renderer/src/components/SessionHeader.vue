@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, nextTick, ref } from "vue"
 import { useApp } from "../stores/app"
 import ContextRing from "./ContextRing.vue"
 import { language, sessionTitle, t } from "../lib/i18n"
@@ -18,9 +18,44 @@ const app = useApp()
 /** Whether the Context view this header's ring opens is currently up. */
 defineProps<{ contextOpen?: boolean }>()
 
-const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; context: [] }>()
+const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; context: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
+
+/*
+ * Renaming happens here, in the title itself.
+ *
+ * The reference turns this exact box into a focused input - measured at
+ * `18,56 42x24` with `4px 8px` of padding and 13px/530 type, which is the
+ * static title's own geometry - so the name is edited where it is read. A modal
+ * used to open instead: a scrim, a heading and two buttons to change one word.
+ */
+const editing = ref(false)
+const draft = ref("")
+const field = ref<HTMLInputElement>()
+
+async function begin() {
+  if (!app.current) return
+  draft.value = title.value
+  editing.value = true
+  await nextTick()
+  field.value?.focus()
+  field.value?.select()
+}
+
+function commit() {
+  if (!editing.value) return
+  editing.value = false
+  const next = draft.value.trim()
+  // An empty name is a cancel: a session with no title cannot be found again.
+  if (next && next !== title.value) emit("rename", next)
+}
+
+function cancel() {
+  editing.value = false
+}
+
+defineExpose({ begin })
 
 /**
  * How full the model's context is.
@@ -94,7 +129,17 @@ function openMenu(event: MouseEvent) {
 <template>
   <div class="head">
     <div class="left">
-      <h1 class="title" :title="title" @click="emit('rename')">{{ title }}</h1>
+      <input
+        v-if="editing"
+        ref="field"
+        v-model="draft"
+        class="title title-field"
+        spellcheck="false"
+        @keydown.enter="commit"
+        @keydown.esc="cancel"
+        @blur="commit"
+      />
+      <h1 v-else class="title" :title="title" @click="begin">{{ title }}</h1>
     </div>
 
     <div class="right">
@@ -196,6 +241,24 @@ function openMenu(event: MouseEvent) {
   white-space: nowrap;
   cursor: pointer;
   transition: background 0.12s;
+}
+
+/*
+ * The same box, now typeable. The reference's editor measures identically to
+ * its static title - `42x24` on `4px 8px`, transparent, no ring - so the name
+ * is edited exactly where it sat rather than the line reflowing around a field.
+ *
+ * `field-sizing` is what keeps that true: an input is 20-odd characters wide by
+ * default, which would push the header's controls sideways the moment editing
+ * began.
+ */
+.title-field {
+  field-sizing: content;
+  min-width: 6ch;
+  background: transparent;
+  border: 0;
+  outline: none;
+  cursor: text;
 }
 
 .title:hover {
