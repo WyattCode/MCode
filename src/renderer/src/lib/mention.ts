@@ -108,9 +108,28 @@ function textual(content: string): boolean {
  * named in the sentence and how the providers wrap it - `<file path="...">` -
  * so the model reads the same path the person wrote.
  */
-export function mentionAttachment(path: string, content: string): Attachment | undefined {
-  if (!textual(content)) return undefined
-  return { path, mime: "text/plain", data: content }
+/**
+ * A mentioned file, as something a model can be given.
+ *
+ * A picture goes as a picture. This used to read every mention as text, so
+ * naming a PNG attached a few hundred kilobytes of replacement characters -
+ * or, once the `textual` guard was there, quietly attached nothing at all and
+ * said the file was unreadable. It was readable; it just was not prose.
+ *
+ * Audio and binaries still do not go. Nothing downstream would know what to do
+ * with them, and saying so is better than sending bytes that get dropped.
+ */
+export function mentionAttachment(
+  path: string,
+  file: { kind: "text" | "image" | "audio" | "binary"; content: string; mime?: string; data?: string },
+): Attachment | undefined {
+  if (file.kind === "image") {
+    if (!file.data || !file.mime) return undefined
+    return { path, mime: file.mime, data: file.data }
+  }
+  if (file.kind !== "text") return undefined
+  if (!textual(file.content)) return undefined
+  return { path, mime: "text/plain", data: file.content }
 }
 
 /**

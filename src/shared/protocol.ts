@@ -1119,7 +1119,26 @@ export interface ResponseMap {
   "git.diff": { patch: string }
   "git.revert": GitStatus
   "file.list": { files: FileEntry[] }
-  "file.read": { path: string; content: string; truncated: boolean }
+  /**
+   * One file, ready to show.
+   *
+   * `kind` decides which of the four the reader gets, the way opencode splits
+   * a preview: text carries `content`, an image or a sound carries `mime` and
+   * `data`, and a binary carries neither - there is nothing to show it as, and
+   * reading it would only spend the memory to say so.
+   *
+   * `data` is bare base64, not a data URL, because that is what an attachment
+   * already is on this side and the one place that renders one prefixes it
+   * itself.
+   */
+  "file.read": {
+    path: string
+    kind: "text" | "image" | "audio" | "binary"
+    content: string
+    truncated: boolean
+    mime?: string
+    data?: string
+  }
   "shell.open": { shellID: string }
   "shell.input": Record<string, never>
   "shell.resize": Record<string, never>

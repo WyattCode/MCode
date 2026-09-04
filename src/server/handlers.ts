@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { kindFor, mimeFor } from "./media"
 import type { FileEntry, Request, ResponseMap } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
@@ -442,10 +443,44 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "file.read": {
       const resolved = path.resolve(request.path)
-      const content = await fs.readFile(resolved, "utf8")
+      /*
+       * Read as bytes and decide what they are, rather than as utf8 and hope.
+       * `readFile(path, "utf8")` on a PNG succeeds - it just returns a string
+       * of replacement characters, which the panel then drew as the file.
+       */
+      const bytes = await fs.readFile(resolved)
+      const kind = kindFor(resolved, bytes.subarray(0, 4096))
+
+      if (kind === "image" || kind === "audio") {
+        const mime = mimeFor(resolved) ?? "application/octet-stream"
+        /*
+         * A cap, because this crosses the socket as text and base64 costs a
+         * third again on top. Past it the reader is told the preview is not
+         * available rather than made to wait for one.
+         */
+        const MEDIA_LIMIT = 8_000_000
+        if (bytes.byteLength > MEDIA_LIMIT) {
+          return { path: resolved, kind: "binary", content: "", truncated: false } satisfies Handled<"file.read">
+        }
+        return {
+          path: resolved,
+          kind,
+          content: "",
+          truncated: false,
+          mime,
+          data: bytes.toString("base64"),
+        } satisfies Handled<"file.read">
+      }
+
+      if (kind === "binary") {
+        return { path: resolved, kind, content: "", truncated: false } satisfies Handled<"file.read">
+      }
+
+      const content = bytes.toString("utf8")
       const limit = 500_000
       return {
         path: resolved,
+        kind,
         content: content.slice(0, limit),
         truncated: content.length > limit,
       } satisfies Handled<"file.read">

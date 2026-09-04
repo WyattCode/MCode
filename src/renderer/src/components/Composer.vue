@@ -356,7 +356,7 @@ async function mentionAttachments(value: string, chosen: Set<string>): Promise<A
     if (out.some((entry) => entry.path === path)) continue
     try {
       const result = await app.client.request({ type: "file.read", path: absolutePath(root, path) })
-      const attachment = mentionAttachment(path, result.content)
+      const attachment = mentionAttachment(path, result)
       if (attachment) out.push(attachment)
       else notifyFailure(t("attach.unreadable"), path)
     } catch {
