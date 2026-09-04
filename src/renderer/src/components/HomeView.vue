@@ -280,7 +280,6 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
                 class="project"
                 :class="{ on: selected === project.directory }"
                 :aria-current="selected === project.directory ? 'page' : undefined"
-                v-tip="{ label: project.directory, placement: 'right' }"
                 @click="picked = project.directory"
                 @dblclick="emit('open', project.directory)"
               >
@@ -378,9 +377,13 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
               class="session"
               @click="emit('session', session.id)"
             >
+              <!--
+                Just the avatar. This used to set a 2px bar outside it when the
+                session already had a tab - opencode's row has nothing of the
+                kind, and outside the row's padding it read as a stray mark
+                floating in the gutter rather than as a state.
+              -->
               <span class="mark">
-                <!-- Set beside the avatar when this session already has a tab. -->
-                <span v-if="app.tabs.includes(session.id)" class="open" aria-hidden="true" />
                 <span class="avatar" :style="{ '--h': hue(session.directory) }">
                   <img v-if="icon(session.directory)" :src="icon(session.directory)" alt="" />
                   <template v-else>{{ initial(session.directory) }}</template>
@@ -967,17 +970,6 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   flex-shrink: 0;
 }
 
-.open {
-  position: absolute;
-  top: 50%;
-  inset-inline-end: calc(100% + 4px);
-  width: 2px;
-  height: 12px;
-  background: var(--avatar-gray);
-  border-radius: 2px;
-  transform: translateY(-50%);
-  pointer-events: none;
-}
 
 .avatar {
   overflow: hidden;
