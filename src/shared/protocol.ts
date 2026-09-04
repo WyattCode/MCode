@@ -744,6 +744,15 @@ export interface AppConfig {
   /** Whether pinch and Ctrl+wheel resize the interface. */
   pinchZoom: boolean
 
+  /**
+   * Whether a new version says what changed in it.
+   *
+   * opencode's `releaseNotes`, and on by default the way its own
+   * `defaultSettings` has it. Its string: "Show What's New popups after
+   * updates".
+   */
+  releaseNotes: boolean
+
   /** Whether a session offers the review panel at all. */
   showFileTree: boolean
   /**

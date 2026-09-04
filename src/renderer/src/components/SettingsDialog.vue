@@ -1023,6 +1023,24 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
           <h3>{{ t("set.display") }}</h3>
           <div class="card">
+            <!--
+              Ahead of the zoom gesture, which is where opencode has it: after
+              the three notification rows and before the display ones.
+            -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.releaseNotes") }}</div>
+                <div class="line-sub">{{ t("set.releaseNotesSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.releaseNotes }"
+                @click="app.patchConfig({ releaseNotes: !app.config?.releaseNotes })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.pinchZoom") }}</div>

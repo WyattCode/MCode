@@ -138,6 +138,7 @@ function defaults(): AppConfig {
      * reader last chose.
      */
     pinchZoom: false,
+    releaseNotes: true,
     showFileTree: true,
     showNavigation: false,
     showTerminal: false,
