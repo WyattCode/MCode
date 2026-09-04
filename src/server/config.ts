@@ -130,7 +130,14 @@ function defaults(): AppConfig {
      * already on screen in the conversation the moment it happens.
      */
     notifyError: false,
-    pinchZoom: true,
+    /*
+     * Off, which is opencode's. Its own getter is
+     * `getStore().get(PINCH_ZOOM_ENABLED_KEY) === true`, so an unset store
+     * reads false - the gesture is opted into, not out of. Read from the main
+     * process rather than the settings UI, whose switch shows whatever the
+     * reader last chose.
+     */
+    pinchZoom: false,
     showFileTree: true,
     showNavigation: false,
     showTerminal: false,
