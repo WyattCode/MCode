@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process"
+import { execFileSync, spawn, type ChildProcess } from "node:child_process"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
@@ -6,6 +6,67 @@ import { resolvePath } from "./fs-util"
 const DEFAULT_TIMEOUT = 120_000
 const MAX_TIMEOUT = 600_000
 const MAX_OUTPUT = 60_000
+
+/**
+ * What the console writes text in, when it is not UTF-8.
+ *
+ * Asked of the system once rather than assumed: a Chinese Windows answers 936,
+ * a Japanese one 932. Guessing here would be trading one wrong decoding for
+ * another. Anything unrecognised, and the fallback is not used at all.
+ */
+const consoleEncoding = (() => {
+  let resolved: string | undefined
+  let asked = false
+  const CODEPAGES: Record<string, string> = {
+    "437": "windows-1252",
+    "932": "shift_jis",
+    "936": "gbk",
+    "949": "euc-kr",
+    "950": "big5",
+    "1250": "windows-1250",
+    "1251": "windows-1251",
+    "1252": "windows-1252",
+    "1253": "windows-1253",
+    "1254": "windows-1254",
+    "1255": "windows-1255",
+    "1256": "windows-1256",
+  }
+  return () => {
+    if (asked) return resolved
+    asked = true
+    if (process.platform !== "win32") return resolved
+    try {
+      const answer = execFileSync("chcp.com", { windowsHide: true }).toString("latin1")
+      const page = /(\d{3,5})/.exec(answer)?.[1]
+      resolved = page ? CODEPAGES[page] : undefined
+    } catch {
+      resolved = undefined
+    }
+    return resolved
+  }
+})()
+
+/**
+ * Text from a command's bytes.
+ *
+ * UTF-8 when the bytes are UTF-8, and the console's own encoding when they are
+ * not. The question is put strictly - a fatal decoder that throws - because
+ * asking loosely and looking for replacement characters cannot tell a stream
+ * that is not UTF-8 from one that is and legitimately contains U+FFFD.
+ */
+function decode(bytes: Buffer): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+  } catch {
+    const encoding = consoleEncoding()
+    if (!encoding) return bytes.toString("utf8")
+    try {
+      return new TextDecoder(encoding).decode(bytes)
+    } catch {
+      return bytes.toString("utf8")
+    }
+  }
+}
 
 /**
  * Commands whose whole purpose is to be hard to undo. These are refused
@@ -29,6 +90,18 @@ const REFUSED: { pattern: RegExp; reason: string }[] = [
  * back to the platform default rather than guessing at an argument form, since
  * getting that wrong runs the script as a filename.
  */
+/*
+ * Makes PowerShell write UTF-8.
+ *
+ * Windows PowerShell emits its own messages in the console's codepage - 936 on
+ * a Chinese install - and this app reads the pipe as UTF-8, so every error it
+ * raised arrived as replacement characters. That is worse than ugly: the model
+ * reading the output cannot see what went wrong, so it does not fix the script,
+ * it flails. Measured on the real failure: as bytes it is GBK, and the same
+ * command with this prefix comes back as UTF-8 the first time.
+ */
+const POWERSHELL_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
+
 function shell(chosen?: string): { command: string; args: (script: string) => string[] } {
   const name = (chosen ?? "").trim()
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? ""
@@ -37,7 +110,10 @@ function shell(chosen?: string): { command: string; args: (script: string) => st
     return { command: name, args: (script) => ["/d", "/s", "/c", script] }
   }
   if (base === "powershell.exe" || base === "pwsh.exe" || base === "pwsh" || base === "powershell") {
-    return { command: name, args: (script) => ["-NoProfile", "-NonInteractive", "-Command", script] }
+    return {
+      command: name,
+      args: (script) => ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
+    }
   }
   if (base && base !== "") {
     // bash, zsh, sh, fish and git-bash all take -lc.
@@ -47,7 +123,10 @@ function shell(chosen?: string): { command: string; args: (script: string) => st
   }
 
   if (process.platform === "win32") {
-    return { command: "powershell.exe", args: (script) => ["-NoProfile", "-NonInteractive", "-Command", script] }
+    return {
+      command: "powershell.exe",
+      args: (script) => ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
+    }
   }
   return { command: process.env.SHELL || "/bin/bash", args: (script) => ["-lc", script] }
 }
@@ -137,19 +216,34 @@ export const BashTool: ToolDefinition = {
         detached: process.platform !== "win32",
       })
 
+      /*
+       * Bytes first, text at the end.
+       *
+       * `chunk.toString("utf8")` was wrong twice over. A character split across
+       * two chunks decodes as two broken halves, which is a matter of timing
+       * and so appears at random. And a command that does not write UTF-8 -
+       * every native tool on a Chinese Windows writes the console codepage -
+       * decodes to replacement characters throughout. Holding the bytes lets
+       * the encoding be decided once, when all of them are in hand.
+       *
+       * The whole buffer is decoded again on each chunk rather than appended
+       * to, which is what keeps a split character from ever being visible -
+       * including while the command is still running.
+       */
+      const chunks: Buffer[] = []
+      let seen = 0
       let output = ""
       let truncated = false
       let settled = false
 
       const append = (chunk: Buffer) => {
         if (truncated) return
-        const text = chunk.toString("utf8")
-        if (output.length + text.length > MAX_OUTPUT) {
-          output += text.slice(0, MAX_OUTPUT - output.length)
-          truncated = true
-        } else {
-          output += text
-        }
+        const room = MAX_OUTPUT - seen
+        const kept = chunk.byteLength > room ? chunk.subarray(0, room) : chunk
+        chunks.push(kept)
+        seen += kept.byteLength
+        if (kept.byteLength < chunk.byteLength) truncated = true
+        output = decode(Buffer.concat(chunks))
         context.progress(output)
       }
 
@@ -187,7 +281,7 @@ export const BashTool: ToolDefinition = {
         context.signal.removeEventListener("abort", onAbort)
 
         const body = output.trim() || "(no output)"
-        const suffix = truncated ? `\n\n(output truncated at ${MAX_OUTPUT} characters)` : ""
+        const suffix = truncated ? `\n\n(output truncated at ${MAX_OUTPUT} bytes)` : ""
         resolve({
           // A non-zero exit is information for the model, not a tool failure -
           // it needs to see the output to decide what to do next.
