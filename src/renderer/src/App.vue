@@ -72,7 +72,12 @@ const rightPanel = ref(false)
  * gives it its own shortcut: Ctrl+Shift+R shows or hides the panel, Ctrl+\\
  * folds the column away inside it.
  */
-const fileTreeOpen = ref(true)
+/*
+ * Collapsed. This is the tree inside the review panel, and opencode's own
+ * `showFileTree` default is false - a diff opens using the panel's whole
+ * width, and the list is unfolded when someone wants to navigate by file.
+ */
+const fileTreeOpen = ref(false)
 
 /*
  * How wide the review panel is, once someone has dragged the edge. Held here

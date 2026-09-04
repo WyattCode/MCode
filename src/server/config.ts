@@ -109,7 +109,12 @@ function defaults(): AppConfig {
     agent: "build",
     openTabs: [],
     onboarded: false,
-    showReasoning: true,
+    /*
+     * Off, which is opencode's own default: `defaultSettings` in v1.18.27 has
+     * `showReasoningSummaries: false`. A reasoning summary is something a
+     * reader asks for, not something every turn opens with.
+     */
+    showReasoning: false,
     expandShell: false,
     expandEdits: false,
     showServerButton: false,
@@ -119,7 +124,12 @@ function defaults(): AppConfig {
     terminalFont: "",
     notifyAgent: true,
     notifyPermission: true,
-    notifyError: true,
+    /*
+     * Off, matching opencode's `notifications.errors: false` - the one
+     * notification of the three it does not raise by default. An error is
+     * already on screen in the conversation the moment it happens.
+     */
+    notifyError: false,
     pinchZoom: true,
     showFileTree: true,
     showNavigation: false,
