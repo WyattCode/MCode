@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { ReasoningPart } from "@shared/protocol"
+import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 
 /**
@@ -11,6 +12,19 @@ import { t } from "../../lib/i18n"
  * between every tool call turned the transcript into scaffolding.
  */
 const props = defineProps<{ part: ReasoningPart }>()
+const app = useApp()
+
+/*
+ * Off unless asked for, which is what the setting has said all along and what
+ * nothing was reading.
+ *
+ * `showReasoning` had a row in settings and a default in the config and no
+ * consumer anywhere - so a reader who turned it off went on being shown three
+ * paragraphs of the model talking to itself between every tool call. The
+ * reference shows none of it: while a turn is running it says "thinking", and
+ * when the turn is done that line goes away.
+ */
+const shown = computed(() => app.config?.showReasoning === true)
 
 const LIMIT = 160
 
@@ -47,7 +61,7 @@ const open = ref(false)
     here appeared and vanished on every single tool call - a flicker under the
     summary line that said nothing the progress bar was not already saying.
   -->
-  <div v-if="line" class="reasoning" :class="{ open }">
+  <div v-if="shown && line" class="reasoning" :class="{ open }">
     <button v-if="more" class="text more" :title="t('stream.reasoningMore')" @click="open = !open">
       <span>{{ open ? full : line }}</span>
       <svg class="caret" :class="{ up: open }" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">

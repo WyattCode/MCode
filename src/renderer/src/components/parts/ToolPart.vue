@@ -103,17 +103,21 @@ const subject = computed(() => {
     if (answers.value?.length) return t("ui.question.subtitle.answered", { count })
     return String(count)
   }
-  if (part.title) return part.title
+  /*
+   * A shell row is the command, not a description of it.
+   *
+   * The model supplies a `title` for most calls and it is the better label
+   * nearly everywhere - but for a shell call the reference prints the command
+   * itself, truncated, and that is the thing a reader actually wants to check.
+   * "Read nbattle.txt, ls2data.dat, announce.txt" is a summary of something
+   * only the command can say exactly.
+   */
   const input = part.input
-  return String(input.path ?? input.pattern ?? input.command ?? input.url ?? "")
+  if (typeof input.command === "string" && input.command.trim()) return input.command.trim()
+  if (part.title) return part.title
+  return String(input.path ?? input.pattern ?? input.url ?? "")
 })
 
-const duration = computed(() => {
-  const { started, completed } = props.part.time
-  if (!started || !completed) return undefined
-  const ms = completed - started
-  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
-})
 </script>
 
 <template>
@@ -123,7 +127,6 @@ const duration = computed(() => {
         <TextShimmer :text="label" :active="part.status === 'running'" />
       </span>
       <span class="subject">{{ subject }}</span>
-      <span v-if="duration" class="dur">{{ duration }}</span>
       <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
       </svg>
@@ -233,13 +236,6 @@ const duration = computed(() => {
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.dur {
-  flex-shrink: 0;
-  color: var(--text-weak);
-  font-family: var(--font-mono);
-  font-size: 10px;
 }
 
 .caret {

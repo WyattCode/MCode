@@ -418,6 +418,50 @@ console.log("context ring and review guard: checked")
     problems.push(`the backend answers ${name} and nothing in the interface sends it`)
   }
   console.log(`backend requests: ${declared.length}, all reachable from the interface`)
+
+  /*
+   * A setting nothing reads.
+   *
+   * `showReasoning` had a switch in settings, a default in the config and a
+   * field in the protocol - and no reader anywhere, so turning it off did
+   * nothing at all and changing its default did nothing either. The switch
+   * still moved, which is what made it invisible: it looked like a working
+   * setting from every side except the one that mattered.
+   *
+   * A setting is read when something other than the settings dialog and the
+   * defaults mentions it. Writing it back does not count as reading it, so the
+   * dialog's own `patchConfig({ x: !config?.x })` is excluded along with the
+   * dialog itself.
+   */
+  const config = read("src/shared/protocol.ts")
+  const block = config.slice(config.indexOf("export interface AppConfig"))
+  const END = String.fromCharCode(10) + "}"
+  const fields = [...block.slice(0, block.indexOf(END)).matchAll(/^\s{2}(\w+)[?]?:/gm)].map((m) => m[1])
+  /*
+   * The backend counts as a reader. A permission or a shell setting is acted on
+   * where the work happens, not in the window - `autoApprove` is read only in
+   * `src/server/config.ts`, and scanning the renderer alone reported it dead.
+   */
+  const backend: string[] = []
+  for (const area of ["src/server", "src/main"]) {
+    const collect = (relative: string) => {
+      for (const entry of fs.readdirSync(path.join(root, relative), { withFileTypes: true })) {
+        const next = `${relative}/${entry.name}`
+        if (entry.isDirectory()) collect(next)
+        else if (next.endsWith(".ts")) backend.push(next)
+      }
+    }
+    collect(area)
+  }
+  const readers = [...files.filter((file) => !file.endsWith("SettingsDialog.vue")), ...backend]
+    .map((file) => read(file))
+    .join(String.fromCharCode(10))
+  const WORD = String.fromCharCode(92) + "b"
+  const unread = fields.filter((field) => !new RegExp(WORD + field + WORD).test(readers))
+  for (const field of unread) {
+    problems.push(`the config carries ${field} and nothing outside settings reads it`)
+  }
+  console.log(`config fields: ${fields.length}, each read somewhere other than the settings dialog`)
 }
 
 if (problems.length) {
