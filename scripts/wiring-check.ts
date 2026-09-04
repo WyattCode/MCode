@@ -453,9 +453,28 @@ console.log("context ring and review guard: checked")
     }
     collect(area)
   }
-  const readers = [...files.filter((file) => !file.endsWith("SettingsDialog.vue")), ...backend]
-    .map((file) => read(file))
-    .join(String.fromCharCode(10))
+  /*
+   * Declaring a default is not reading one either.
+   *
+   * Counting the backend as a reader is right - a permission is acted on where
+   * the work happens - but `defaults()` lives in the backend too, and every
+   * field is named there exactly once, by definition. Left in, it satisfied
+   * every field and the check could not fail for any of them. It did not fail
+   * for a field whose renderer-side reader had been deleted, which is how this
+   * was found: by deleting one and watching the check pass anyway.
+   */
+  const defaultsBody = (source: string) => {
+    const start = source.indexOf("function defaults(): AppConfig {")
+    if (start === -1) return ""
+    const end = source.indexOf(String.fromCharCode(10) + "}", start)
+    return end === -1 ? source.slice(start) : source.slice(start, end)
+  }
+  const texts = [...files.filter((file) => !file.endsWith("SettingsDialog.vue")), ...backend].map((file) => {
+    const source = read(file)
+    const body = defaultsBody(source)
+    return body ? source.split(body).join("") : source
+  })
+  const readers = texts.join(String.fromCharCode(10))
   const WORD = String.fromCharCode(92) + "b"
   const unread = fields.filter((field) => !new RegExp(WORD + field + WORD).test(readers))
   for (const field of unread) {

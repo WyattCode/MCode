@@ -15,14 +15,15 @@ const props = defineProps<{ part: ReasoningPart }>()
 const app = useApp()
 
 /*
- * Off unless asked for, which is what the setting has said all along and what
- * nothing was reading.
+ * Off unless asked for.
  *
- * `showReasoning` had a row in settings and a default in the config and no
- * consumer anywhere - so a reader who turned it off went on being shown three
- * paragraphs of the model talking to itself between every tool call. The
- * reference shows none of it: while a turn is running it says "thinking", and
- * when the turn is done that line goes away.
+ * The setting was already doing most of its job: the backend passes it to the
+ * provider, which is what decides whether the model is asked for reasoning
+ * summaries at all ("summarized" against "omitted"). What it did not reach was
+ * this - so parts that had already arrived went on being drawn after it was
+ * switched off, and a session begun with it on kept showing them for its whole
+ * length. The reference draws none of this: while a turn runs it says
+ * "thinking", and when the turn is done that line goes away.
  */
 const shown = computed(() => app.config?.showReasoning === true)
 

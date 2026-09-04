@@ -109,13 +109,20 @@ const subject = computed(() => {
    * The model supplies a `title` for most calls and it is the better label
    * nearly everywhere - but for a shell call the reference prints the command
    * itself, truncated, and that is the thing a reader actually wants to check.
-   * "Read nbattle.txt, ls2data.dat, announce.txt" is a summary of something
-   * only the command can say exactly.
+   * "Read nbattle.txt, ls2data.dat, announce.txt" is a summary of the one thing
+   * only the command can state exactly.
+   *
+   * Named rather than inferred from the presence of a `command` input. `bash`
+   * is the only tool that carries one today, so the two are the same test now -
+   * but they would stop being the same the moment another tool took a command,
+   * and then this would have quietly changed that tool's label too.
    */
   const input = part.input
-  if (typeof input.command === "string" && input.command.trim()) return input.command.trim()
+  if (part.name === "bash" && typeof input.command === "string" && input.command.trim()) {
+    return input.command.trim()
+  }
   if (part.title) return part.title
-  return String(input.path ?? input.pattern ?? input.url ?? "")
+  return String(input.path ?? input.pattern ?? input.command ?? input.url ?? "")
 })
 
 </script>
