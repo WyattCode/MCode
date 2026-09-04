@@ -122,9 +122,15 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   padding-bottom: 120px;
 }
 
+/*
+ * 720, which is what opencode's is - measured rather than read, because its
+ * hero's width is not a literal anywhere in the bundle. At three window widths
+ * its column comes back 720, 720 and 686: fixed until the window is too narrow
+ * to hold it, then shrinking with the padding. This was 800.
+ */
 .column {
   width: 100%;
-  max-width: 800px;
+  max-width: 720px;
 }
 
 /*
