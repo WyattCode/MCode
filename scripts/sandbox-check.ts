@@ -162,11 +162,27 @@ async function main(): Promise<void> {
 
     // Every label the table offers must be a real string key, or the menu draws
     // a raw identifier where opencode draws an application's name.
-    const missing = openApps("win32").filter((entry) => !entry.label.startsWith("session.header.open.app."))
+    const everywhere = [...openApps("win32"), ...openApps("darwin"), ...openApps("linux")]
+    const missing = everywhere.filter((entry) => !entry.label.startsWith("session.header.open.app."))
     note("every app carries a reference string key", missing.length === 0, missing.map((entry) => entry.id).join(", "))
 
-    // Nothing is offered on a platform whose applications were never listed.
-    note("a platform with no table offers nothing", openApps("linux").length === 0)
+    /*
+     * The three tables are the reference's three, at the sizes it lists them.
+     * This used to assert that a platform other than Windows offered nothing,
+     * which recorded a shortfall rather than a rule - the reference has always
+     * had all three, and the assertion would have gone on passing while the
+     * two missing tables stayed missing.
+     */
+    note("windows offers the reference's five", openApps("win32").length === 5)
+    note("macos offers the reference's twelve", openApps("darwin").length === 12)
+    note("linux offers the reference's four", openApps("linux").length === 4)
+
+    /*
+     * And an unrecognised platform falls to the Linux list, which is what the
+     * reference does: its `apps()` tests for macos, then windows, then returns
+     * LINUX_APPS for everything else rather than an empty list.
+     */
+    note("an unknown platform falls to linux", openApps("freebsd").length === openApps("linux").length)
   }
 
   if (findings.length) {

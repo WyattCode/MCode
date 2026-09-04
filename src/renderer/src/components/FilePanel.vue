@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { GitChange, GitStatus } from "@shared/protocol"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
-import { FILE_MANAGER_ID, openApps, type OpenApp } from "@shared/open-app"
+import { FILE_MANAGER_ID, fileManagerLabel, openApps, type OpenApp } from "@shared/open-app"
 import ContextRing from "./ContextRing.vue"
 import ContextView from "./ContextView.vue"
 import { useApp } from "../stores/app"
@@ -284,13 +284,19 @@ function storedOpenWith(): string {
 }
 
 const apps = computed<OpenApp[]>(() => openApps(app.platform))
+/*
+ * What the shell option is called here. It was "File Explorer" outright, which
+ * is only true on Windows - the reference names it Finder on a Mac and File
+ * Manager elsewhere, and that is the only part of the option the OS changes.
+ */
+const managerLabel = computed(() => t(fileManagerLabel(app.platform)))
 const openWith = ref(FILE_MANAGER_ID)
 onMounted(() => (openWith.value = storedOpenWith()))
 
 const chosenApp = computed(() => apps.value.find((entry) => entry.id === openWith.value))
 /** What the button says it will do, which is the whole point of remembering. */
 const openLabel = computed(() =>
-  chosenApp.value ? t(chosenApp.value.label) : t("session.header.open.fileExplorer"),
+  chosenApp.value ? t(chosenApp.value.label) : managerLabel.value,
 )
 
 const appMenu = ref<{ x: number; y: number }>()
@@ -306,7 +312,7 @@ const appMenuItems = computed<MenuItem[]>(() => [
   { key: "heading", label: t("session.header.openIn"), heading: true },
   {
     key: `app.${FILE_MANAGER_ID}`,
-    label: t("session.header.open.fileExplorer"),
+    label: managerLabel.value,
     checked: openWith.value === FILE_MANAGER_ID,
   },
   ...apps.value.map((entry) => ({

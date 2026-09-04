@@ -7,11 +7,10 @@
  * launched, so the two lists have to be the same list rather than two lists
  * that agree today.
  *
- * The entries are the reference's own, verbatim from `WINDOWS_APPS` at
- * main-8t-QUXax.js @4011989: the id it stores the remembered choice under, the
- * i18n key it labels the row with, and the `openWith` name it hands the
- * platform. It also ships a `MAC_APPS` of twelve and a `LINUX_APPS` of four -
- * see the note at the bottom of this file for why neither is here.
+ * The entries are the reference's own, verbatim from its `WINDOWS_APPS`,
+ * `MAC_APPS` and `LINUX_APPS`: the id it stores the remembered choice under,
+ * the i18n key it labels the row with, and the `openWith` name it hands the
+ * platform.
  */
 export interface OpenApp {
   /** Stored as the remembered choice, and the value the menu radio carries. */
@@ -47,38 +46,79 @@ export const WINDOWS_APPS: OpenApp[] = [
 ]
 
 /**
+ * macOS, exactly as the reference lists it.
+ *
+ * Twelve, and the longest of the three because a Mac is where the editors and
+ * the terminals both live. `openWith` here is a bundle name for `open -a`, not
+ * a command on PATH - "Visual Studio Code", not "code" - which is the same
+ * split the reference draws.
+ *
+ * Unlike the other two this list is filtered before it is drawn: the
+ * reference's `checkAppExists` does real work only on macOS, where it looks
+ * for the bundle under /Applications, and shows a row only for what is there.
+ */
+export const MAC_APPS: OpenApp[] = [
+  { id: "vscode", label: "session.header.open.app.vscode", openWith: "Visual Studio Code" },
+  { id: "cursor", label: "session.header.open.app.cursor", openWith: "Cursor" },
+  { id: "zed", label: "session.header.open.app.zed", openWith: "Zed" },
+  { id: "textmate", label: "session.header.open.app.textmate", openWith: "TextMate" },
+  { id: "antigravity", label: "session.header.open.app.antigravity", openWith: "Antigravity" },
+  { id: "terminal", label: "session.header.open.app.terminal", openWith: "Terminal" },
+  { id: "iterm2", label: "session.header.open.app.iterm2", openWith: "iTerm" },
+  { id: "ghostty", label: "session.header.open.app.ghostty", openWith: "Ghostty" },
+  { id: "warp", label: "session.header.open.app.warp", openWith: "Warp" },
+  { id: "xcode", label: "session.header.open.app.xcode", openWith: "Xcode" },
+  { id: "android-studio", label: "session.header.open.app.androidStudio", openWith: "Android Studio" },
+  { id: "sublime-text", label: "session.header.open.app.sublimeText", openWith: "Sublime Text" },
+]
+
+/** Linux, exactly as the reference lists it: the four that ship a CLI. */
+export const LINUX_APPS: OpenApp[] = [
+  { id: "vscode", label: "session.header.open.app.vscode", openWith: "code" },
+  { id: "cursor", label: "session.header.open.app.cursor", openWith: "cursor" },
+  { id: "zed", label: "session.header.open.app.zed", openWith: "zed" },
+  { id: "sublime-text", label: "session.header.open.app.sublimeText", openWith: "Sublime Text" },
+]
+
+/**
  * The file manager, which is the default choice and has no `openWith`.
  *
  * The reference calls this option "finder" on every platform - that is the id
- * its remembered choice starts at - and only its label changes with the OS
- * (`fileManagerApp`, main-8t-QUXax.js @3986107). Having no `openWith` is what
- * makes it the plain "hand it to the shell" path rather than a launch.
+ * its remembered choice starts at - and only its label changes with the OS.
+ * Having no `openWith` is what makes it the plain "hand it to the shell" path
+ * rather than a launch.
  */
 export const FILE_MANAGER_ID = "finder"
 
-/**
- * Which apps this platform offers.
- *
- * Empty away from Windows, and that is a shortfall rather than a decision: the
- * reference has twelve macOS entries and four Linux ones, but MCode's string
- * tables carry only the Windows five plus "File Explorer". A row cannot be
- * drawn without a label, and inventing one is the one thing this project does
- * not do, so those platforms keep the single shell button they have today.
- */
+/** What to call that option here, which is the only part the OS changes. */
+export function fileManagerLabel(platform: string) {
+  if (platform === "darwin") return "session.header.open.finder"
+  if (platform === "win32") return "session.header.open.fileExplorer"
+  return "session.header.open.fileManager"
+}
+
+/** Which apps this platform offers. */
 export function openApps(platform: string): OpenApp[] {
-  return platform === "win32" ? WINDOWS_APPS : []
+  if (platform === "win32") return WINDOWS_APPS
+  if (platform === "darwin") return MAC_APPS
+  return LINUX_APPS
 }
 
 /**
  * Whether a name may be launched at all.
  *
  * Asked in the main process, on the way in from the renderer. The reference
- * passes whatever the window sends straight to `execFile` (its "open-path"
- * handler, out/main/index.js @89250) because it treats its own renderer as
- * trusted; this app does not, for the same reason `mcode:open-external` checks
- * the scheme rather than believing the caller checked it. Nothing outside this
- * table can be started, whatever the window asks for.
+ * passes whatever the window sends straight to `execFile` because it treats
+ * its own renderer as trusted; this app does not, for the same reason
+ * `mcode:open-external` checks the scheme rather than believing the caller
+ * checked it. Nothing outside these tables can be started, whatever the window
+ * asks for.
+ *
+ * Every platform's table is consulted, not just this one's. The check is about
+ * what may ever be run, and narrowing it to the running platform would only
+ * mean a second place that has to be right about which list is in force.
  */
 export function isKnownOpenWith(value: unknown): value is string {
-  return typeof value === "string" && WINDOWS_APPS.some((app) => app.openWith === value)
+  if (typeof value !== "string") return false
+  return [WINDOWS_APPS, MAC_APPS, LINUX_APPS].some((list) => list.some((app) => app.openWith === value))
 }
