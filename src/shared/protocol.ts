@@ -752,6 +752,15 @@ export interface AppConfig {
    * updates".
    */
   releaseNotes: boolean
+  /**
+   * One-time migrations already applied to this document, by name.
+   *
+   * A migration that just overwrote the value every load would make the setting
+   * unchangeable; one with no record at all would run again on the next launch
+   * and undo a deliberate choice made in between. The name goes in here the
+   * first time it runs and the migration never looks at that field again.
+   */
+  migrations: string[]
 
   /** Whether a session offers the review panel at all. */
   showFileTree: boolean

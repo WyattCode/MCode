@@ -139,6 +139,7 @@ function defaults(): AppConfig {
      */
     pinchZoom: false,
     releaseNotes: true,
+    migrations: [],
     showFileTree: true,
     showNavigation: false,
     showTerminal: false,
@@ -292,10 +293,45 @@ export class Config {
     private readonly credentialFile: string,
   ) {}
 
+  /**
+   * Changes to a document that this build makes once and then leaves alone.
+   *
+   * Answers whether anything moved, so a document already migrated is not
+   * rewritten on every launch. Each entry runs only if its name is absent, and
+   * the name is recorded whether or not the value needed changing - a
+   * migration that did nothing this time still must not run again, or it would
+   * undo a choice made after it.
+   */
+  private migrate(): boolean {
+    const done = new Set(this.current.migrations ?? [])
+    let moved = false
+    const once = (name: string, apply: () => void) => {
+      if (done.has(name)) return
+      apply()
+      done.add(name)
+      moved = true
+    }
+
+    /*
+     * Reasoning summaries were on by default here and are off in opencode.
+     * Changing the default only reached new documents, so anyone who had ever
+     * run this app kept the old behaviour with no sign of why. This turns it
+     * off once; turning it back on afterwards sticks, because the name is
+     * recorded either way.
+     */
+    once("reasoning-off", () => {
+      this.current.showReasoning = false
+    })
+
+    if (moved) this.current.migrations = [...done]
+    return moved
+  }
+
   async load(): Promise<void> {
     const stored = await this.storage.read<Partial<AppConfig>>("config")
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     this.current.autoApprove = allowed(this.current.permissions)
+    if (this.migrate()) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
