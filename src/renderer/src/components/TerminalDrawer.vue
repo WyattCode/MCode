@@ -8,7 +8,12 @@ const emit = defineEmits<{ close: [] }>()
 const app = useApp()
 
 const root = ref<HTMLElement>()
-const height = ref(260)
+
+/*
+ * What the reference gives it under an open review panel: measured at `831x280`
+ * against that panel's `831x575`, in a column 863 tall.
+ */
+const height = ref(280)
 
 /*
  * The drawer holds a list of shells rather than one. Each entry keeps its own
@@ -284,12 +289,18 @@ function startResize(event: PointerEvent) {
 </template>
 
 <style scoped>
+/*
+ * A card in the right column, not a strip across the foot of the window. The
+ * seam it used to draw along its top belonged to the old shape - butted against
+ * the conversation, it needed a line to say where one ended; separated from the
+ * panel above it by the column's own gutter, the line only doubled the edge.
+ */
 .drawer {
   position: relative;
   display: flex;
   flex-direction: column;
+  min-height: 0;
   background: var(--surface-raised);
-  border-top: 1px solid var(--border-weak);
 }
 
 .resize {

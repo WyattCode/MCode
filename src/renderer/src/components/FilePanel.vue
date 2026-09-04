@@ -585,6 +585,16 @@ const REVIEW_MIN = 480
 const REVIEW_MIN_SPLIT = 800
 
 const root = ref<HTMLElement>()
+
+/*
+ * The row the panel's column sits in. Widths are shares of the row, and the
+ * panel is no longer its direct child - it stacks with the terminal inside a
+ * column - so this asks for the row by name instead of walking up a fixed
+ * number of levels, which would go wrong again the next time either nests.
+ */
+function row() {
+  return root.value?.closest(".body") as HTMLElement | null
+}
 const splitting = ref(false)
 
 /** The width the panel would take if nothing had been dragged. */
@@ -598,7 +608,7 @@ function clampWidth(want: number, available: number) {
 
 function beginSplit(event: PointerEvent) {
   const element = root.value
-  const parent = element?.parentElement
+  const parent = row()
   if (!element || !parent) return
   const startX = event.clientX
   const startWidth = element.getBoundingClientRect().width
@@ -630,7 +640,7 @@ function beginSplit(event: PointerEvent) {
 
 /** Back to the share it starts at, which is what a double-click means here. */
 function resetSplit() {
-  const parent = root.value?.parentElement
+  const parent = row()
   if (!parent) return
   emit("update:width", clampWidth(parent.getBoundingClientRect().width * DEFAULT_SHARE, parent.getBoundingClientRect().width))
 }
@@ -641,7 +651,7 @@ function resetSplit() {
  * columns squeeze.
  */
 watch(diffStyle, () => {
-  const parent = root.value?.parentElement
+  const parent = row()
   if (!parent || props.width === undefined) return
   const available = parent.getBoundingClientRect().width
   const fixed = clampWidth(props.width, available)
@@ -905,7 +915,6 @@ onBeforeUnmount(() => observer?.disconnect())
     ref="root"
     class="panel"
     :class="{ splitting }"
-    :style="width ? { width: `${width}px` } : undefined"
     tabindex="-1"
     @keydown="onKey"
   >
@@ -1491,44 +1500,14 @@ onBeforeUnmount(() => observer?.disconnect())
 .panel {
   display: flex;
   flex-direction: column;
-  /*
-   * Measured off opencode at two window sizes: 800px at 1279 and 839 at 1343,
-   * which is 62.5% of the window both times - of the window, note, not of the
-   * inset panel this sits in, which is why the unit is vw.
-   */
   position: relative;
   /*
    * So the list below can answer to the panel's real width rather than to the
    * window's. The two stop agreeing as soon as the panel hits either bound.
    */
   container-type: inline-size;
-  width: 62.5vw;
-  /*
-   * A floor, because the panel's own contents have one.
-   *
-   * This was 0, on the reasoning that a third minimum in the row could exceed
-   * the window. It could - but squeezing below this does not shrink what is
-   * inside: the file list is a fixed 240 and the diff needs room beside it, so
-   * the panel went on drawing its full width inside a narrower box and `.body`
-   * clipped the overhang. Measured at 900x700 with the workspace panel also up,
-   * 16 controls ended up outside the window with no way to scroll to them.
-   *
-   * 360 is the file list's 240 plus somewhere for the diff to start. opencode
-   * gives the same list a 200 minimum and 480 maximum. The row not fitting is
-   * handled where the row is, in App.vue, by dropping the workspace panel.
-   *
-   * The floor yields once even it will not fit, because a floor that cannot be
-   * honoured is not a floor - min-width beats max-width in CSS, so an
-   * unconditional 360 here does not hold the panel open, it pushes the panel's
-   * trailing edge off the window. Measured at the 721px minimum window: the
-   * panel ended 87px past the right edge with the open-in-app button out
-   * there with it, unreachable and unscrollable. opencode never meets this
-   * because its review panel is `width: auto` with `flex-1` and has no floor
-   * at all. Below this point the file list gives way instead - see .side-root.
-   */
-  min-width: min(360px, calc(100% - 450px));
-  /* The conversation still needs somewhere to be. */
-  max-width: calc(100% - 450px);
+  /* The column sets the width; the panel takes all of it. */
+  width: 100%;
   /*
    * No divider: the panel is its own card now, and the 8px gutter beside it is
    * what separates it from the conversation. The reference's own panel measures

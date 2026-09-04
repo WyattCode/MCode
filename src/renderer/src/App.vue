@@ -649,6 +649,12 @@ const reviewPanelUp = computed(
 )
 
 /*
+ * The terminal shares the right column with the panel, so it is subject to the
+ * same two conditions: the launcher has no column, and neither does onboarding.
+ */
+const terminalUp = computed(() => terminalOpen.value && !isHome.value && !onboarding.value)
+
+/*
  * Which tab is actually up, as against the one last picked.
  *
  * Opencode resolves this the same way and in the same order: honour the active
@@ -2680,6 +2686,20 @@ onBeforeUnmount(() => {
         reappear, and nothing on screen said the two were the same panel or
         which of them was being read.
       -->
+      <!--
+        The right column: the panel and the terminal, stacked.
+
+        Measured on the reference with both up - review at `616,44 831x575` and
+        the terminal directly beneath it at `616,627 831x280`, the same left
+        edge and the same width, 8 apart. They are not alternatives to each
+        other; closing the review lets the terminal take the whole column
+        (`616,44 831x863`), which is why the column exists rather than the two
+        taking turns in the row.
+
+        The column owns the width, so dragging the panel's edge and dragging it
+        with only a terminal open move the same thing.
+      -->
+      <div v-if="reviewPanelUp || terminalUp" class="column" :style="reviewWidth ? { width: `${reviewWidth}px` } : undefined">
       <FilePanel
         v-if="reviewPanelUp"
         v-model:tree-open="fileTreeOpen"
@@ -2691,9 +2711,9 @@ onBeforeUnmount(() => {
         @notes="sendNotes"
         @export="exportSessionData"
       />
+      <TerminalDrawer v-if="terminalUp" ref="drawer" @close="terminalOpen = false" />
+      </div>
     </div>
-
-    <TerminalDrawer v-if="terminalOpen && !isHome" ref="drawer" @close="terminalOpen = false" />
 
     <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
 
@@ -2907,9 +2927,55 @@ onBeforeUnmount(() => {
   margin: 8px;
 }
 
+/*
+ * The right column. It carries the width; what is in it fills that width and
+ * shares the height, 8 apart - the gutter the reference leaves between its
+ * review and its terminal, and the same one this row leaves beside them.
+ */
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  /*
+   * Until it is dragged. Measured off opencode at two window sizes: 800px at
+   * 1279 and 839 at 1343, which is 62.5% of the window both times - of the
+   * window, note, not of the inset row this sits in, which is why the unit is
+   * vw. This lived on the panel before the terminal joined it in the column.
+   */
+  width: 62.5vw;
+  /*
+   * A floor, because the panel's own contents have one.
+   *
+   * This was 0, on the reasoning that a third minimum in the row could exceed
+   * the window. It could - but squeezing below this does not shrink what is
+   * inside: the file list is a fixed 240 and the diff needs room beside it, so
+   * the column went on drawing its full width inside a narrower box and `.body`
+   * clipped the overhang. Measured at 900x700 with the workspace panel also up,
+   * 16 controls ended up outside the window with no way to scroll to them.
+   *
+   * 360 is the file list's 240 plus somewhere for the diff to start. opencode
+   * gives the same list a 200 minimum and 480 maximum. The row not fitting is
+   * handled where the row is, in App.vue, by dropping the workspace panel.
+   *
+   * The floor yields once even it will not fit, because a floor that cannot be
+   * honoured is not a floor - min-width beats max-width in CSS, so an
+   * unconditional 360 here does not hold the panel open, it pushes the column's
+   * trailing edge off the window. Measured at the 721px minimum window: the
+   * panel ended 87px past the right edge with the open-in-app button out
+   * there with it, unreachable and unscrollable. opencode never meets this
+   * because its review panel is `width: auto` with `flex-1` and has no floor
+   * at all. Below this point the file list inside gives way instead.
+   */
+  min-width: min(360px, calc(100% - 450px));
+  /* The conversation still needs somewhere to be. */
+  max-width: calc(100% - 450px);
+}
+
 /* Each region is its own card. */
 .body > .main,
-.body > .panel,
+.column > .panel,
+.column > .drawer,
 .body > .panel-host {
   overflow: hidden;
   background: var(--surface-raised);
@@ -2923,9 +2989,35 @@ onBeforeUnmount(() => {
  * that could not have been guessed: the panel sits above the conversation
  * rather than the two lying in the same plane.
  */
-.body > .panel,
+.column > .panel,
+.column > .drawer,
 .body > .panel-host {
   box-shadow: var(--shadow-md);
+}
+
+/*
+ * The panel takes what the terminal leaves. With no terminal it is the whole
+ * column; with one it is the column less the terminal's own height, which is
+ * the reader's to drag and so is left fixed here.
+ */
+.column > .panel {
+  flex: 1;
+  width: auto;
+  min-height: 0;
+}
+
+.column > .drawer {
+  flex: none;
+}
+
+/*
+ * With the review closed the terminal has the column to itself, which is what
+ * the reference does: its terminal goes from `831x280` under the review to
+ * `831x863` without it. `flex-basis` beats the dragged height here, so the
+ * height the reader chose is kept for when the review comes back.
+ */
+.column > .drawer:only-child {
+  flex: 1;
 }
 
 /*
