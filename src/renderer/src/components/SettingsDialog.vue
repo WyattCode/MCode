@@ -1761,53 +1761,53 @@ h3 {
  * the control reads as a switch that has moved rather than as a dot sliding
  * inside a capsule.
  */
+/*
+ * opencode's v2 switch, measured on the running app rather than read from its
+ * stylesheet - the stylesheet still carries the v1 rules (28x16, a border,
+ * radius 3, a 14px thumb travelling 12) and those are what this was built
+ * from. The live control is `24x16`, no border, radius 4, on bg-layer-04
+ * (grey-700 dark / grey-400 light, which is exactly `--avatar-gray` in both
+ * schemes here); the thumb is `12x12`, radius 2, sitting 2 in from the left
+ * and travelling 8. Checked, the track is bg-accent (blue-600, `--primary`)
+ * under a 0-to-10% white gradient, and the thumb is grey-300 under a
+ * white-to-clear depth gradient. grey-300 is #eee in both schemes and no
+ * token here is, so it is written out.
+ */
 .switch {
   position: relative;
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  width: 28px;
+  width: 24px;
   height: 16px;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: 3px;
-  transition: background-color 0.15s, border-color 0.15s;
+  background: var(--avatar-gray);
+  border: 0;
+  border-radius: 4px;
+  transition: background-color 0.15s;
 }
-
 .switch:hover {
-  background-color: var(--surface-hover);
-  border-color: var(--border-strong);
+  background:
+    linear-gradient(0deg, var(--surface-hover), var(--surface-hover)),
+    linear-gradient(180deg, #fff0 0%, #fff3 100%),
+    var(--avatar-gray);
 }
-
 .switch.on {
-  box-sizing: border-box;
-  background-color: var(--icon-base);
-  border-color: var(--icon-base);
+  background: linear-gradient(180deg, #fff0 0%, #ffffff1a 100%), var(--primary);
 }
-
-/*
- * Off is the end the track begins at and on is the end it finishes at, so the
- * knob travels the way the setting is read rather than always rightwards.
- */
 .knob {
   position: absolute;
-  top: 0;
-  box-sizing: content-box;
-  width: 14px;
-  height: 14px;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  background: #eeeeee;
+  border: 0;
   border-radius: 2px;
-  /* Sat over the track's own border, so the two edges read as one. */
-  inset-inline-start: -1px;
+  inset-inline-start: 2px;
   transition: inset-inline-start 0.15s, background-color 0.15s;
-  box-shadow: 0 1px 2px -1px #1310100a, 0 1px 2px #1310100f, 0 1px 3px #1310100f;
 }
-
 .switch.on .knob {
-  background-color: var(--surface-base);
-  border: none;
-  inset-inline-start: 12px;
+  background: linear-gradient(180deg, #fff 0%, #fff0 100%), #eeeeee;
+  inset-inline-start: 10px;
 }
 
 .ctl-btn {
