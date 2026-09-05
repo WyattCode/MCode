@@ -158,8 +158,8 @@ onBeforeUnmount(() => {
   <div ref="root" class="select" :style="{ width: width ? `${width}px` : undefined }">
     <button class="trigger" :class="{ open }" @click="toggle">
       <span class="label">{{ label }}</span>
-      <svg class="caret" :class="{ up: open }" width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-        <path d="M2.4 3.8 5 6.4l2.6-2.6" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" />
+      <svg class="caret" :class="{ up: open }" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
       </svg>
     </button>
 
@@ -171,7 +171,6 @@ onBeforeUnmount(() => {
         :style="{
           left: `${box.left}px`,
           top: `${box.top}px`,
-          width: `${box.width}px`,
           maxHeight: `${box.maxHeight}px`,
         }"
       >
@@ -194,10 +193,18 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/*
+ * Sized by what it says. opencode's select-v2 trigger measures 84x24 for a
+ * value like "深色" - it is a ghost control that fits its text - and its
+ * popup is sized separately (min 160, max 23rem, content between). This root
+ * used to hold a 130px floor and callers passed 150-180px on top of it, so
+ * every trigger was a wide box whatever it held.
+ */
 .select {
   position: relative;
   flex-shrink: 0;
-  min-width: 130px;
+  width: fit-content;
+  min-width: 0;
 }
 
 /*
@@ -205,26 +212,35 @@ onBeforeUnmount(() => {
  * box you put a value in. Focus colours an outline that is always present, so
  * opening the menu does not nudge the label inside it.
  */
+/*
+ * Measured on opencode's settings page: `height: 24px; padding: 4px 4px 4px
+ * 8px; gap: 4px; border-radius: 4px`, transparent, no border, no shadow. The
+ * value inside is 13px/530/16px and the chevron a 16-box. This was 28 tall on
+ * `--surface-base` with a 1px border and radius 6 - a bordered field where the
+ * reference draws a ghost button.
+ */
 .trigger {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  height: 28px;
-  /* Tighter behind the caret than ahead of the label: the caret's own artwork
-     carries whitespace the label does not. */
-  padding-block: 0;
-  padding-inline: 8px 6px;
+  gap: 4px;
+  height: 24px;
+  padding: 4px 4px 4px 8px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
   outline: 1px solid transparent;
   outline-offset: 0;
   font-size: 13px;
   transition: outline-color 0.12s, background 0.12s;
+}
+
+/* A ghost shows itself on hover and while open, with the same overlay every
+   other ghost control here uses. */
+.trigger:hover,
+.trigger.open {
+  background: var(--surface-hover);
 }
 
 .trigger:hover:not(.open) {
@@ -241,6 +257,8 @@ onBeforeUnmount(() => {
 
 .label {
   overflow: hidden;
+  font-weight: 530;
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -262,6 +280,12 @@ onBeforeUnmount(() => {
  * would not reach it. Sits above the settings dialog (z-index 120).
  */
 .select-pop {
+  /* opencode's menu-v2-content: min-width 160px, max-width 23rem, content
+     between. It used to be pinned to the trigger's width, which no longer
+     says anything about how wide the options are. */
+  width: max-content;
+  min-width: 160px;
+  max-width: 23rem;
   position: fixed;
   z-index: 200;
   /* A select's listbox keeps four; the surface around it is the 2px one. */
@@ -311,8 +335,13 @@ onBeforeUnmount(() => {
  * background is what hover uses, and the two have to stay tellable apart when
  * the pointer is resting on the row that is already selected.
  */
+/*
+ * The chosen option is marked by its fill and nothing else: opencode's
+ * selected option measures the same `13px/440` and `rgb(250, 250, 250)` as its
+ * neighbours, on `rgba(255, 255, 255, 0.06)` - the hover overlay. This used to
+ * go bold and take the accent colour, which no option in the reference does.
+ */
 .select-pop .item.on {
-  color: var(--text-accent);
-  font-weight: 530;
+  background: var(--surface-hover);
 }
 </style>

@@ -729,7 +729,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <SelectMenu
                 :model-value="language"
                 :options="languageOptions"
-                :width="150"
                 @update:model-value="app.patchConfig({ language: $event as Language })"
               />
             </div>
@@ -752,7 +751,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <SelectMenu
                 :model-value="app.config?.shell ?? ''"
                 :options="shellOptions"
-                :width="170"
                 @update:model-value="app.patchConfig({ shell: $event })"
               />
             </div>
@@ -815,7 +813,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <SelectMenu
                 :model-value="app.config?.effort ?? 'high'"
                 :options="effortOptions"
-                :width="130"
                 @update:model-value="app.patchConfig({ effort: $event as 'high' })"
               />
             </div>
@@ -831,7 +828,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <SelectMenu
                 :model-value="app.config?.theme ?? 'system'"
                 :options="themeOptions"
-                :width="150"
                 @update:model-value="app.patchConfig({ theme: $event as 'dark' })"
               />
             </div>
@@ -844,7 +840,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <SelectMenu
                 :model-value="app.config?.themeID ?? DEFAULT_THEME"
                 :options="paletteOptions"
-                :width="180"
                 @update:model-value="app.patchConfig({ themeID: $event })"
               />
             </div>
