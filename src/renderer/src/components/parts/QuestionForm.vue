@@ -418,7 +418,6 @@ watch(
   flex-direction: column;
   gap: 6px;
   min-height: 0;
-  margin-top: -4px;
   padding: 1px 1px 16px;
 }
 
