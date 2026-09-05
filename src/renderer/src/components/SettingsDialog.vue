@@ -1223,7 +1223,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
           <template v-for="group in SHORTCUTS" :key="group.group">
             <h3>{{ t(group.group) }}</h3>
-            <div class="card">
+            <div class="card keys-card">
               <div v-for="shortcut in group.items" :key="shortcut.id" class="line">
                 <div class="line-title">{{ shortcut.title }}</div>
                 <div class="confirm">
@@ -2021,11 +2021,18 @@ h3 {
   background: color-mix(in srgb, var(--warning) 14%, transparent);
 }
 
+/*
+ * opencode's `settings-v2-keybind-button`, measured: `46x23` for "Ctrl+,",
+ * `padding: 6px 8px`, radius 2, transparent, no border, the chord at
+ * `11px/530/11px` with `0.05px` of tracking in text-weak, set in the UI
+ * face rather than the mono one. This was a 0.5px-bordered pill at
+ * `2px 6px`, radius 4, in 13px text-base.
+ */
 .keys.editable {
   cursor: pointer;
-  border: 0.5px solid var(--border-weak);
-  border-radius: 4px;
-  padding: 2px 6px;
+  border: 0;
+  border-radius: 2px;
+  padding: 6px 8px;
 }
 
 .keys.editable:hover {
@@ -2039,9 +2046,45 @@ h3 {
 }
 
 /* Full width, above the groups it narrows, with the same gap the cards use. */
+/*
+ * The keybinds page, measured on opencode's. Its search field is full width
+ * on the page's own surface with the value in text-strong; its rows are
+ * `padding: 0 0 16px` inside a list padded 20 all round, stacked with no gap,
+ * and their titles are `13px/440` - regular, where the general page's are
+ * 530. The general `.line` and `.line-title` are right where they are used;
+ * this page has its own rhythm.
+ */
 .key-search {
   width: 100%;
   margin-bottom: 4px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  letter-spacing: -0.04px;
+}
+
+.key-search::placeholder {
+  color: var(--text-weak);
+}
+
+.keys-card {
+  padding: 20px;
+}
+
+/*
+ * 29 tall: the reference's row is the height of its title line plus the 16
+ * below, and the 23px chord sits centred on it and overflows by five each
+ * way - which is what puts consecutive chords 22 apart. Letting the chord
+ * size the row made it 40 and the chords 17 apart.
+ */
+.keys-card .line {
+  box-sizing: border-box;
+  height: 29px;
+  padding: 0 0 16px;
+  overflow: visible;
+}
+
+.keys-card .line-title {
+  font-weight: 440;
 }
 
 .reset-all {
@@ -2050,8 +2093,12 @@ h3 {
 
 .keys {
   flex-shrink: 0;
-  color: var(--text-base);
-  font-size: 13px;
+  color: var(--text-weak);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-weight: 530;
+  line-height: 11px;
+  letter-spacing: 0.05px;
 }
 
 .status {
