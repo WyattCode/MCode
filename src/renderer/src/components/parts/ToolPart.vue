@@ -302,22 +302,27 @@ const subject = computed(() => {
   font-size: 11px;
 }
 
+/*
+ * opencode's `question-answers`: items 12 apart inside `8px 0`, each a
+ * question in text-weak over its answer in text-base, both 13px and 2 apart.
+ */
 .answers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   margin: 0;
-  padding: 8px 10px;
+  padding: 8px 0;
+  font-size: 13px;
+  line-height: 150%;
 }
 
 .answers dt {
   color: var(--text-weak);
-  font-size: 11px;
-  line-height: 1.5;
 }
 
 .answers dd {
-  margin: 0 0 6px;
+  margin: 0 0 10px;
   color: var(--text-base);
-  font-size: 12.5px;
-  line-height: 1.5;
 }
 
 .answers dd:last-child {

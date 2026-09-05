@@ -274,7 +274,7 @@ watch(
             <textarea
               ref="field"
               rows="1"
-              class="field"
+              class="custom-field"
               :value="custom[tab] ?? ''"
               :placeholder="t('ui.question.custom.placeholder')"
               :disabled="sending"
@@ -303,49 +303,84 @@ watch(
 </template>
 
 <style scoped>
+/*
+ * opencode's question dock (`dock-prompt[data-kind="question"]`), from its
+ * stylesheet: the body is a column at gap 16 padded `8 8 0`, every text block
+ * sits `0 10px` in from that, options are `8 8 8 10` at gap 6 on the layer
+ * fill, and everything reads 14/150% with the hint at 13. Its font tokens
+ * resolve to 530 for medium and 440 for regular, the weights the rest of
+ * MCode already measured off it. This was 10/12 padding, gap 8, 6/8 options
+ * at gap 4 and 11-13px type - the same card at three quarters scale.
+ */
 .question {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 16px;
+  min-height: 0;
+  padding: 8px 8px 0;
 }
 
 .head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
 }
 
 .summary {
-  color: var(--text-weak);
-  font-size: 11.5px;
+  min-width: 0;
+  color: var(--text-base);
+  font-size: 14px;
+  font-weight: 530;
+  line-height: 150%;
 }
 
+/* `question-progress`: 16x2 bars in 16x16 buttons, 8 apart. */
 .dots {
   display: flex;
-  flex: 1;
-  gap: 4px;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
 }
 
 .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border-weak);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border-radius: 999px;
 }
 
-.dot.done {
-  background: var(--text-weak);
+.dot::after {
+  content: "";
+  width: 16px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--text-weaker);
+  transition: background-color 0.2s;
 }
 
-.dot.active {
-  background: var(--interactive);
+.dot.done::after {
+  background: var(--primary);
+}
+
+.dot.active::after {
+  background: var(--text-strong);
 }
 
 .chevron {
+  flex-shrink: 0;
   margin-inline-start: auto;
-  color: var(--text-weaker);
+  color: var(--text-weak);
   transition: transform 0.12s;
+}
+
+.dots + .chevron {
+  margin-inline-start: 0;
 }
 
 .chevron.up {
@@ -353,131 +388,231 @@ watch(
 }
 
 .prompt {
+  flex-shrink: 0;
   margin: 0;
-  color: var(--text-strong);
-  font-size: 13px;
-  line-height: 1.5;
+  padding: 0 10px;
+  color: var(--text-base);
+  font-size: 14px;
+  font-weight: 530;
+  line-height: 150%;
+  user-select: text;
+}
+
+/* `question-content` is gap 4 between the question and its hint. */
+.prompt + .hint {
+  margin-top: -12px;
 }
 
 .hint {
+  flex-shrink: 0;
   margin: 0;
+  padding: 0 10px;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 150%;
 }
 
 .options {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
+  min-height: 0;
+  margin-top: -4px;
+  padding: 1px 1px 16px;
 }
 
 .option {
   display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: flex-start;
   width: 100%;
-  padding: 6px 8px;
+  padding: 8px 8px 8px 10px;
+  background: var(--surface-menu);
   border: 0.5px solid var(--border-weak);
   border-radius: 6px;
   text-align: start;
+  transition: background-color 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.option:hover:not([data-picked="true"]):not(:disabled) {
+  background: var(--surface-raised);
 }
 
 .option[data-picked="true"] {
-  border-color: var(--interactive);
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  border-color: transparent;
+  box-shadow: 0 0 0 0.5px var(--border-strong);
 }
 
+/* `question-option-box`: 16x16, half-pixel ring, radio round, check square. */
 .mark {
+  display: inline-flex;
   flex-shrink: 0;
-  width: 12px;
-  height: 12px;
-  margin-top: 3px;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 2px;
+  border: 0.5px solid var(--border-weak);
+  border-radius: 999px;
+  transform: translateY(2px);
+  transition: background-color 0.15s, border-color 0.15s;
 }
 
 .mark.multi {
-  border-radius: 3px;
+  border-radius: 4px;
+}
+
+.mark::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--surface-menu);
+  opacity: 0;
 }
 
 .mark.on {
-  border-color: var(--interactive);
-  background: var(--interactive);
+  border-color: var(--primary);
+}
+
+.mark.on:not(.multi) {
+  background: var(--primary);
+}
+
+.mark.on:not(.multi)::after {
+  opacity: 1;
+}
+
+.mark.on.multi {
+  background: var(--primary);
+}
+
+.mark.on.multi::after {
+  width: 8px;
+  height: 4px;
+  border-radius: 0;
+  border-inline-start: 1.5px solid var(--text-on-primary);
+  border-bottom: 1.5px solid var(--text-on-primary);
+  background: transparent;
+  transform: translateY(-1px) rotate(-45deg);
+  opacity: 1;
 }
 
 .mark-button {
   padding: 0;
+  line-height: 0;
 }
 
 .text {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  flex: 1;
 }
 
 .label {
-  color: var(--text-strong);
-  font-size: 12.5px;
+  color: var(--text-base);
+  font-size: 14px;
+  font-weight: 530;
+  line-height: 150%;
 }
 
 .desc {
+  min-width: 0;
   color: var(--text-weak);
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: 14px;
+  font-weight: 440;
+  line-height: 150%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* `question-custom`: gap 8, the field indented 36 under its own label. */
+.custom .text {
+  gap: 8px;
+}
+
+.custom-field {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-base);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 440;
+  line-height: 150%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  resize: none;
+  field-sizing: content;
+  border-radius: 2px;
+}
+
+.custom-field::placeholder {
+  color: var(--text-weak);
+}
+
+.custom-field:focus-visible {
+  outline: 1px solid var(--primary);
+  outline-offset: 2px;
 }
 
 /*
- * Grows with what is typed rather than scrolling inside two lines: an answer
- * the reader cannot see all of is one they cannot check before sending.
+ * `question-footer`: pulled 24 up under the options' 16 bottom padding and
+ * padded 32 on top, so the buttons sit 8 under the last option while the
+ * options list scrolls beneath them when it overflows.
  */
-.field {
-  width: 100%;
-  padding: 2px 0;
-  border: none;
-  background: transparent;
-  color: var(--text-base);
-  font: inherit;
-  font-size: 12px;
-  resize: none;
-  field-sizing: content;
-}
-
-.field:focus {
-  outline: none;
-}
-
 .foot {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
+  margin-top: -24px;
+  padding: 32px 8px 8px;
 }
 
 .spacer {
   flex: 1;
 }
 
+/* `button-v2`: 28 tall, `0 11px`, 13/530/20, ghost and primary. */
 .ghost,
 .primary {
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 11px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 20px;
+  letter-spacing: -0.04px;
 }
 
 .ghost {
-  color: var(--text-weak);
-}
-
-.ghost:hover:not(:disabled) {
   color: var(--text-base);
 }
 
+.ghost:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
 .primary {
-  background: var(--interactive);
+  background: var(--primary);
   color: var(--text-on-primary);
 }
 
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 </style>

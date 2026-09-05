@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onMounted, ref, watch, onBeforeUnmount } from "vue"
 import { useApp } from "../stores/app"
 import TextPart from "./parts/TextPart.vue"
 import ReasoningPart from "./parts/ReasoningPart.vue"
@@ -354,7 +354,27 @@ watch(
   },
 )
 
-onMounted(() => toBottom())
+/*
+ * Neither watcher above sees a part that grows without changing its text or
+ * status: a question tool arrives as one part and then unfolds into its
+ * options, a tool row expands, an image finishes loading. Following the
+ * content's own height catches every one of those, which is also how the
+ * reference's `createAutoScroll` does it - it observes the content element
+ * and re-pins while the reader is at the bottom.
+ */
+const inner = ref<HTMLElement | null>(null)
+let sizer: ResizeObserver | undefined
+
+onMounted(() => {
+  toBottom()
+  if (typeof ResizeObserver === "undefined" || !inner.value) return
+  sizer = new ResizeObserver(() => {
+    if (following.value) toBottom()
+  })
+  sizer.observe(inner.value)
+})
+
+onBeforeUnmount(() => sizer?.disconnect())
 
 /**
  * Walks the conversation a turn at a time.
@@ -446,7 +466,7 @@ defineExpose({ stepMessage })
 
 <template>
   <div ref="scroller" class="stream" @scroll="onScroll">
-    <div class="inner">
+    <div ref="inner" class="inner">
       <div v-for="(turn, at) in turns" :key="turn.id" class="turn" :data-turn="turn.id">
         <div v-if="turn.text !== undefined || turn.attachments?.length" class="msg user">
           <div v-if="turn.attachments?.length" class="sent">
