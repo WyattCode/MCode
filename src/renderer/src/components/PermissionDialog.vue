@@ -198,7 +198,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
   color: var(--text-base);
   font-family: var(--font-mono);
   font-size: 14px;
-  line-height: 1.6;
+  /*
+   * The same leading as the title above it. opencode gives both
+   * `line-height: var(--line-height-large)`, which is 150% there - so its title
+   * and its hint sit on one rhythm. This was 1.6, making the hint 22.4 against
+   * the title's 21 and the two lines fractionally out of step.
+   */
+  line-height: 150%;
   overflow-wrap: anywhere;
 }
 
