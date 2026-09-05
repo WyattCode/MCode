@@ -74,8 +74,14 @@ import { t } from "../lib/i18n"
 .toast {
   display: flex;
   align-items: flex-start;
-  gap: 20px;
-  width: min(400px, calc(100vw - 64px));
+  /*
+   * 12 between the icon and the text, and 320 wide - both opencode's:
+   * `[data-slot="toast-v2-header"] { gap: 12px }` and
+   * `.toast-v2-region { max-width: min(320px, calc(100vw - 64px)) }`. This was
+   * 20 and 400, which made a one-line toast a wide, loosely-spaced band.
+   */
+  gap: 12px;
+  width: min(320px, calc(100vw - 64px));
   padding: 16px 20px;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
@@ -103,9 +109,18 @@ import { t } from "../lib/i18n"
   border-color: var(--border-strong);
 }
 
+/*
+ * `16x20`, not 16 square: opencode's `[data-slot="toast-v2-icon"]` is 16 wide
+ * and 20 tall, which is the text's line box, so the glyph centres against the
+ * first line instead of being nudged down by a margin.
+ */
 .mark {
+  display: flex;
   flex-shrink: 0;
-  margin-top: 1px;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
   color: var(--success);
 }
 
@@ -118,17 +133,32 @@ import { t } from "../lib/i18n"
   min-width: 0;
 }
 
+/*
+ * Both lines are 13/20 with the same tracking, and only the weight and the
+ * colour separate them - which is what opencode's own rules say:
+ *
+ *   [data-slot="toast-v2-title"]       { 13px / 530 / 20px; -0.04px; text-base }
+ *   [data-slot="toast-v2-description"] { 13px / 440 / 20px; -0.04px; text-muted }
+ *
+ * These were 13.5/1.45 and 12.5/1.55, two sizes and two leadings that met
+ * nothing else in the app.
+ */
 .title {
   color: var(--text-strong);
-  font-size: 13.5px;
-  line-height: 1.45;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 20px;
+  letter-spacing: -0.04px;
 }
 
 .body {
-  margin-top: 3px;
-  color: var(--text-weaker);
-  font-size: 12.5px;
-  line-height: 1.55;
+  /* 4 between them, from `[data-slot="toast-v2-content"] { gap: 4px }`. */
+  margin-top: 4px;
+  color: var(--text-base);
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 20px;
+  letter-spacing: -0.04px;
 }
 
 .close {
