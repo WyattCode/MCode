@@ -1,3 +1,4 @@
+import pkg from "../../package.json"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
@@ -136,7 +137,7 @@ class Connection {
       const greeting = (await this.request("initialize", {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: "MCode", version: "0.1.0" },
+        clientInfo: { name: "MCode", version: pkg.version },
       })) as { capabilities?: Record<string, unknown> }
       this.capabilities = greeting?.capabilities ?? {}
       // The spec wants this after initialize, and servers that follow it will

@@ -1,3 +1,4 @@
+import pkg from "../../../package.json"
 import { createHash, randomBytes } from "node:crypto"
 import { createServer, type Server } from "node:http"
 
@@ -69,7 +70,7 @@ export const CHATGPT: OAuthProvider = {
 export const OAUTH_PROVIDERS: Record<string, OAuthProvider> = { chatgpt: CHATGPT }
 
 /** Identifies this client to the vendor, as its own CLI does. */
-export const USER_AGENT = "mcode/0.1.0"
+export const USER_AGENT = `mcode/${pkg.version}`
 
 // ---------------------------------------------------------------------------
 // PKCE
