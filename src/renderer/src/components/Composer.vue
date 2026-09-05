@@ -1746,10 +1746,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   box-shadow: var(--shadow-md), 0 0 0 1px var(--border-strong);
 }
 
-.box.busy {
-  box-shadow: var(--shadow-md), 0 0 0 1px var(--primary);
-}
-
 .input {
   /*
    * Taller than the one line it starts with, so an empty composer reads as
