@@ -359,12 +359,26 @@ onMounted(() => {
   padding-top: 12vh;
 }
 
+/*
+ * The palette is not painted like a menu.
+ *
+ * `.dialog` gives every overlay `--surface-menu` (bg-layer-01, #242424) and
+ * `--shadow-overlay` (16/32). Measured on opencode, its palette card is
+ * `640x280` on `rgb(22, 22, 22)` - bg-base, which is `--surface-raised` here -
+ * under `0 8px 16px`, which is `--shadow-lg`. One step down on both.
+ *
+ * Set on the palette rather than on the shared token: five dialogs read that
+ * token, and I have no sound measurement of opencode's menus to say the others
+ * are wrong too. An attempt at one picked up the prompt box instead.
+ */
 .palette {
   display: flex;
   flex-direction: column;
   width: min(640px, 92vw);
   max-height: 66vh;
+  background: var(--surface-raised);
   border-radius: 12px;
+  box-shadow: var(--shadow-lg);
 }
 
 .search {
@@ -380,7 +394,8 @@ onMounted(() => {
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-lg);
   outline: none;
-  font-size: 14px;
+  /* 13, which is what opencode's palette field measures - and what its rows use. */
+  font-size: 13px;
 }
 
 .search-in::placeholder {
