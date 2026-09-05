@@ -375,8 +375,31 @@ function startResize(event: PointerEvent) {
   overflow: hidden;
   font-size: 13px;
   font-weight: 440;
+  /*
+   * Its own, rather than the tab's 21. The tab element is 14px/500/21 and the
+   * label inside it is 13px/440/16 - two different rules, which is easy to miss
+   * because measuring the tab answers for the tab. Inheriting 21 made the label
+   * box 21 tall where the reference's is 16.
+   */
+  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * 24, not the 26 every other icon button in the app is. The reference's new
+ * terminal button measures `24x24`; scoped here rather than changed on
+ * `.icon-btn`, which is shared and whose size is right where it is used.
+ */
+.head .icon-btn {
+  /*
+   * `flex-shrink` matters here: the head is a row, and without it the button
+   * was squeezed two pixels narrower than whatever it was given - which is why
+   * a 26px button measured 24, and setting 24 measured 22.
+   */
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
 }
 
 /*
