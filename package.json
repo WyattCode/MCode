@@ -1,6 +1,6 @@
 {
   "name": "mcode",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "A keyboard-first, command-palette-driven AI coding agent.",
   "author": "MCode",
   "main": "./out/main/index.js",
