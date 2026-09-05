@@ -1473,9 +1473,25 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </template>
 
 <style scoped>
+/*
+ * The settings page's inputs, measured on opencode's font rows: `220x28`,
+ * radius 6, resting on the page's own surface (`rgb(22, 22, 22)`, which is
+ * `--surface-raised` here) with no ring or shadow, the value in text-strong
+ * at `13px/440` and `-0.04px`, the placeholder in text-weak. The shared
+ * `.field` underneath sits on `--surface-base` with an elevation, which is
+ * right where it is used and wrong here.
+ */
 .font-field {
   width: 220px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  box-shadow: none;
+  letter-spacing: -0.04px;
   text-align: start;
+}
+
+.font-field::placeholder {
+  color: var(--text-weak);
 }
 
 /* Splits the two kinds of undo on this page without turning them into tabs. */
@@ -1546,7 +1562,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   flex-direction: column;
   /* 240 and 740 are what the reference splits its 980 into, and this dialog is
      already 980 wide. */
-  gap: 4px;
+  /* 6 between rows, which is what the reference measures between its tab
+     wrappers and between a section title and its first tab. */
+  gap: 6px;
   width: 240px;
   min-width: 240px;
   padding: 12px;
@@ -1561,29 +1579,54 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
  * rather than the step below it, 13px, medium weight, and indented less than
  * the rows under it (its 4px against the trigger's 12px).
  */
+/*
+ * A section title in the navigation, measured on opencode's: 24 tall,
+ * `padding: 0 0 0 4px`, `12px/500/24px` in text-base. The rhythm around it
+ * is 6 from the title to its first tab, 6 between tabs, and 12 from a
+ * section's last tab to the next title. This was 13px in text-weak with
+ * ten of top padding and ten of right, which put the label a size larger and
+ * a shade fainter than the reference's, and its groups on a different beat.
+ */
 .nav-group {
-  padding: 10px 10px 2px 2px;
-  color: var(--text-weak);
-  font-size: 13px;
+  height: 24px;
+  padding: 0 0 0 4px;
+  color: var(--text-base);
+  font-size: 12px;
   font-weight: 500;
+  line-height: 24px;
+}
+
+/* 12 from the last tab of one section to the next title: the 6 the list
+   already puts between rows, and 6 more. */
+.nav-item + .nav-group {
+  margin-top: 6px;
 }
 
 .nav-group:first-child {
   padding-top: 0;
 }
 
+/*
+ * opencode 1.18.29's tab: the wrapper is `215x28` on a 4px radius, the trigger
+ * inside it `padding: 0 6px` at `13px/440`, and the selected one fills with
+ * `rgb(58, 58, 58)` - which is `--surface-key` here, the same fill the
+ * selected project row uses. The numbers this carried before (32 tall, radius
+ * 8, `0 10px`, 13.5px) were measured on 1.18.27; the reference moved.
+ */
 .nav-item {
   display: flex;
+  /* The navigation is a flex column; without this the row measured 27 for a
+     declared 28 - the same squeeze the terminal's new-tab button had. */
+  flex-shrink: 0;
   align-items: center;
   gap: 10px;
   width: 100%;
-  /* opencode's trigger wrapper: 32px tall on an 8px radius. */
-  height: 32px;
-  padding: 0 10px;
+  height: 28px;
+  padding: 0 6px;
   color: var(--text-base);
   text-align: start;
-  border-radius: 8px;
-  font-size: 13.5px;
+  border-radius: 4px;
+  font-size: 13px;
   transition: background 0.12s, color 0.12s;
 }
 
@@ -1617,7 +1660,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
  */
 .nav-item.on {
   color: var(--text-strong);
-  background: var(--surface-selected);
+  background: var(--surface-key);
 }
 
 /* settings-v2-nav-footer: 11px on line-height 1, inset 4px from the column. */
