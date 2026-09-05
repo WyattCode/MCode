@@ -1299,16 +1299,23 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <!-- Server -->
         <template v-else-if="section === 'server'">
           <h2>{{ t("set.server") }}</h2>
-          <div class="card">
+          <!--
+            opencode's server row, measured: one 20px line inside a list
+            padded 20, a 6px dot and then the name 10 after it, and a 20px
+            action at the end. No description under the name and no
+            "connected" label - the dot is the whole status.
+          -->
+          <div class="card server-card">
             <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.localServer") }}</div>
-                <div class="line-sub">{{ t("set.localServerSub") }}</div>
-              </div>
-              <span class="status" :class="{ ok: app.connected }">
+              <span
+                class="status"
+                :class="{ ok: app.connected }"
+                :aria-label="app.connected ? t('set.connected') : t('set.disconnected')"
+                v-tip="{ label: app.connected ? t('set.connected') : t('set.disconnected'), placement: 'top' }"
+              >
                 <span class="led" />
-                {{ app.connected ? t("set.connected") : t("set.disconnected") }}
               </span>
+              <div class="line-title">{{ t("set.localServer") }}</div>
             </div>
           </div>
         </template>
@@ -1404,7 +1411,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <div class="ptext">
                 <div class="pname">
                   {{ group.name }}
-                  <span v-if="group.recommended" class="tag accent">{{ t("provider.recommended") }}</span>
+                  <span v-if="group.recommended" class="tag">{{ t("provider.recommended") }}</span>
                 </div>
                 <div class="pdesc">{{ groupDescription(group) }}</div>
               </div>
@@ -2066,6 +2073,36 @@ h3 {
   color: var(--text-weak);
 }
 
+/*
+ * The servers list: padded 20 all round, its single row 20 tall with no
+ * padding of its own, the dot 6x6 and 10 ahead of the name. Measured on
+ * opencode's 服务器 tab.
+ */
+.server-card {
+  padding: 20px;
+}
+
+.server-card .line {
+  gap: 10px;
+  min-height: 20px;
+  padding: 0;
+  border-bottom: 0;
+}
+
+.server-card .line-title {
+  font-weight: 440;
+}
+
+.server-card .status {
+  gap: 0;
+}
+
+.server-card .led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
 .keys-card {
   padding: 20px;
 }
@@ -2133,19 +2170,38 @@ h3 {
   justify-content: space-between;
 }
 
+/*
+ * opencode's `tag`, measured: `31x16` for 推荐 and `42x16` for 自定义 -
+ * `padding: 0 4px`, radius 2, on bg-layer-02 (`--surface-layer`) with a
+ * half-pixel ring, `11px/530/11px` at `0.05px` in text-base, 8 after the name
+ * it follows. This was a 999px pill at `1px 7px` in text-weak on the hover
+ * fill, with the accent variant drawn in blue text on a blue tint.
+ */
 .tag {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
   margin-inline-start: 8px;
-  padding: 1px 7px;
-  color: var(--text-weak);
-  background: var(--surface-raised-hover);
-  border-radius: 999px;
+  padding: 0 4px;
+  color: var(--text-base);
+  background: var(--surface-layer);
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 0.5px var(--border-weak);
   font-size: 11px;
+  font-weight: 530;
+  line-height: 11px;
+  letter-spacing: 0.05px;
   vertical-align: middle;
 }
 
+/*
+ * The accented tag is the one opencode's general page wears for 新: solid
+ * `--primary` under white text, no ring - `19x16`, `0 4px`, radius 2.
+ */
 .tag.accent {
-  color: var(--primary);
-  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: #ffffff;
+  background: var(--primary);
+  box-shadow: none;
 }
 
 .notice {
@@ -2250,6 +2306,12 @@ h3 {
   white-space: nowrap;
 }
 
+/*
+ * opencode's `button-v2` ghost variant, measured on its providers page:
+ * `74x28` for 断开连接, `padding: 0 11px`, gap 6, radius 6, transparent,
+ * `13px/530/20px` at `-0.04px` in text-base. This was `0 12px` on a 6% fill
+ * in text-strong at 440 - a filled pill where the reference draws a ghost.
+ */
 .pbtn {
   display: inline-flex;
   flex-shrink: 0;
@@ -2257,20 +2319,20 @@ h3 {
   justify-content: center;
   gap: 6px;
   height: 28px;
-  padding: 0 12px;
-  color: var(--text-strong);
-  background: rgb(255 255 255 / 0.06);
+  padding: 0 11px;
+  color: var(--text-base);
+  background: transparent;
   border-radius: 6px;
   font-size: 13px;
-  transition: background 0.12s;
+  font-weight: 530;
+  line-height: 20px;
+  letter-spacing: -0.04px;
+  transition: background 0.12s, color 0.12s;
 }
 
 .pbtn:hover {
-  background: rgb(255 255 255 / 0.1);
-}
-
-.pbtn:hover:not(:disabled) {
-  border-color: var(--border-strong);
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 .pbtn:disabled {
