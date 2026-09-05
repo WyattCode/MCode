@@ -534,6 +534,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 /* --- browse ------------------------------------------------------------- */
 
 .search {
+  /*
+   * No border. opencode's shared `text-input-v2` is a 60% fill of bg-layer-02
+   * that goes solid on focus, at radius 6 - `--surface-layer` and
+   * `--radius-md` here. Focus used to move a border colour that no longer
+   * exists.
+   */
   display: flex;
   align-items: center;
   gap: 9px;
@@ -542,13 +548,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   height: 36px;
   flex-shrink: 0;
   color: var(--text-weaker);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
   border-radius: var(--radius-md);
 }
 
 .search:focus-within {
-  border-color: var(--border-strong);
+  background: var(--surface-layer);
 }
 
 .search-in {
@@ -707,8 +713,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   height: 38px;
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
   font-size: 13px;
@@ -716,7 +722,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 }
 
 .field:focus {
-  border-color: var(--border-strong);
+  background: var(--surface-layer);
 }
 
 .actions {

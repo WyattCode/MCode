@@ -221,17 +221,23 @@ h2 {
 }
 
 .field {
+  /*
+   * No border. opencode's shared `text-input-v2` is a 60% fill of bg-layer-02
+   * that goes solid on focus, at radius 6 - `--surface-layer` and
+   * `--radius-md` here. Focus used to move a border colour that no longer
+   * exists.
+   */
   height: 36px;
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
   border-radius: var(--radius-md);
   font-size: 14px;
 }
 
 .field:focus {
-  border-color: var(--interactive);
+  background: var(--surface-layer);
   outline: none;
 }
 

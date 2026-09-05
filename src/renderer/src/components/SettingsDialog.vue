@@ -2073,20 +2073,26 @@ h3 {
 }
 
 .search-in {
+  /*
+   * No border. opencode's shared `text-input-v2` is a 60% fill of bg-layer-02
+   * that goes solid on focus, at radius 6 - `--surface-layer` and
+   * `--radius-md` here. Focus used to move a border colour that no longer
+   * exists.
+   */
   width: 100%;
   height: 34px;
   margin-bottom: 6px;
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
   border-radius: var(--radius-md);
   font-size: 13px;
   outline: none;
 }
 
 .search-in:focus {
-  border-color: var(--border-strong);
+  background: var(--surface-layer);
 }
 
 .empty-note {
