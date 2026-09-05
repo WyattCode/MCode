@@ -883,6 +883,17 @@ async function browse() {
   for (const directory of directories) await openProject(directory)
 }
 
+/**
+ * A tab from the strip. Sets the view as well as the session, because the tab
+ * that is already current opens nothing and would otherwise leave the click
+ * with no effect at all while the launcher is up.
+ */
+async function selectTab(id: string) {
+  if (app.currentID !== id) await app.open(id)
+  view.value = "session"
+  push({ view: "session", sessionID: id })
+}
+
 async function newSession() {
   await app.create(app.current?.directory)
   view.value = "session"
@@ -2671,6 +2682,7 @@ onBeforeUnmount(() => {
       @forward="forward"
       @terminal="terminalOpen = !terminalOpen"
       @close-tab="app.closeTab($event)"
+      @select-tab="selectTab"
     />
 
     <div

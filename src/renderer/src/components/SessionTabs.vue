@@ -14,7 +14,14 @@ import { projectHue, projectName } from "../lib/project"
  */
 const app = useApp()
 
-const emit = defineEmits<{ close: [id: string] }>()
+/*
+ * `select` rather than calling `app.open` from here: opening the session that
+ * is already current changes nothing in the store, and the only thing that
+ * takes the app off the launcher is a watcher on that id. Clicking the active
+ * tab from the launcher therefore did nothing at all - it looked selected and
+ * would not open. App answers this by opening and setting the view.
+ */
+const emit = defineEmits<{ close: [id: string]; select: [id: string] }>()
 
 const strip = ref<HTMLElement>()
 
@@ -286,7 +293,7 @@ async function commitRename(id: string) {
           <button
             v-if="editing !== session.id"
             class="link"
-            @click="app.open(session.id)"
+            @click="emit('select', session.id)"
             @dblclick.stop="beginRename(session)"
             @auxclick="onAuxiliary($event, session.id)"
           >

@@ -21,6 +21,7 @@ const emit = defineEmits<{
   "toggle-right": []
   "new-session": []
   "close-tab": [id: string]
+  "select-tab": [id: string]
 }>()
 
 const app = useApp()
@@ -77,7 +78,7 @@ function openMenu(event: MouseEvent) {
         way back into it, and hiding the row there would make the home button
         a one-way trip.
       -->
-      <SessionTabs @close="emit('close-tab', $event)" />
+      <SessionTabs @close="emit('close-tab', $event)" @select="emit('select-tab', $event)" />
 
       <button
         v-if="!home"
