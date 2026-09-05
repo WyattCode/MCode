@@ -593,9 +593,9 @@ onMounted(() => {
   opacity: 0.5;
 }
 
+/* This dialog's button has no border of its own to colour any more. */
 .btn.primary {
   color: var(--text-strong);
-  border-color: var(--border-base);
 }
 
 .add {

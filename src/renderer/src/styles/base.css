@@ -190,10 +190,16 @@ kbd {
  * at all - every button inherited whatever its surroundings used, so the same
  * control read differently in a dialog and in the composer.
  *
- * The border stays. opencode's neutral variant carries
- * `box-shadow: var(--v2-elevation-button-neutral)` instead, and that token is
- * not in the stylesheet this was read from - so there is no value to copy, and
- * a guess would be worse than the border that is there.
+ * Its edge is an elevation, not a border. opencode's neutral variant is
+ * `background-color: var(--v2-background-bg-button-neutral); box-shadow:
+ * var(--v2-elevation-button-neutral)` with no border at all. That second token
+ * is `--shadow-input` here - its comment has said "elevation/button-neutral"
+ * all along, which I missed once and then wrote down as absent.
+ *
+ * The fill needs no change: bg-button-neutral is `alpha-light-6` in the dark
+ * scheme, and 6% white over bg-base (#161616) composites to #242424, which is
+ * exactly what `--surface-raised-hover` already is. In the light scheme it is
+ * grey-50, which is what that token already is there too.
  */
 .btn {
   display: inline-flex;
@@ -208,28 +214,44 @@ kbd {
   line-height: 20px;
   letter-spacing: -0.04px;
   background: var(--surface-raised-hover);
-  border: 1px solid var(--border-weak);
+  border: 0;
   border-radius: var(--radius-sm);
-  transition: background 0.12s, border-color 0.12s;
+  box-shadow: var(--shadow-input);
+  transition: background 0.12s, box-shadow 0.12s;
 }
 
+/*
+ * Hover lifts the fill rather than the edge. opencode defines no hover for the
+ * neutral variant in the stylesheet this was read from - only for `ghost` -
+ * so this is the app's own answer to a question the reference does not put,
+ * and it is a step of the same overlay the rest of the interface hovers with.
+ */
 .btn:hover {
-  border-color: var(--border-strong);
+  background: var(--surface-layer);
 }
 
+/*
+ * A filled button carries no neutral edge: the elevation belongs to the
+ * unfilled one, and under a solid colour it only muddies the corner.
+ */
 .btn.primary {
   color: var(--button-primary-text);
   background: var(--button-primary);
-  border-color: transparent;
+  box-shadow: none;
 }
 
 .btn.primary:hover {
   filter: brightness(1.08);
 }
 
+/*
+ * Danger is the neutral button with danger text, which is what opencode makes
+ * it: `background-color: var(--v2-background-bg-button-neutral); color:
+ * var(--v2-state-fg-danger); box-shadow: var(--v2-elevation-button-neutral)`.
+ * It used to draw a red border, which the reference does not.
+ */
 .btn.danger {
   color: var(--error);
-  border-color: color-mix(in srgb, var(--error) 40%, transparent);
 }
 
 /*
