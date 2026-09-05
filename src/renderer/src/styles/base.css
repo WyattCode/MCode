@@ -281,11 +281,26 @@ kbd {
   backdrop-filter: blur(2px);
 }
 
+/*
+ * A dialog is not painted like a menu, and this drew both the same.
+ *
+ * opencode separates them. Its menu is
+ * `[data-component="menu-v2-content"] { background: var(--v2-background-bg-layer-01);
+ * border-radius: 6px; box-shadow: var(--v2-elevation-floating) }` - which is
+ * what `--surface-menu` and `--shadow-lg` are here, and what this app's menus
+ * already use. Its dialog is `[data-component="dialog-v2"] [data-slot="dialog-container"]
+ * { background: var(--v2-background-bg-base) }` - one step darker. Both sit
+ * under elevation/floating, which is `0 8px 16px`; `--shadow-overlay` is 16/32
+ * and corresponds to nothing the reference puts on either.
+ *
+ * Ten components read this class and five read `.menu`, so the two now say
+ * different things rather than the same thing twice.
+ */
 .dialog {
-  background: var(--surface-menu);
+  background: var(--surface-raised);
   border: 0;
   border-radius: 6px;
-  box-shadow: var(--shadow-overlay);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
 }
 
