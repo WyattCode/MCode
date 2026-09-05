@@ -1309,6 +1309,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             <div class="line">
               <span
                 class="status"
+                role="status"
                 :class="{ ok: app.connected }"
                 :aria-label="app.connected ? t('set.connected') : t('set.disconnected')"
                 v-tip="{ label: app.connected ? t('set.connected') : t('set.disconnected'), placement: 'top' }"
@@ -2330,7 +2331,7 @@ h3 {
   transition: background 0.12s, color 0.12s;
 }
 
-.pbtn:hover {
+.pbtn:hover:not(:disabled) {
   color: var(--text-strong);
   background: var(--surface-hover);
 }
