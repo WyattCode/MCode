@@ -377,12 +377,24 @@ onMounted(() => {
   height: 36px;
   padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-lg);
+  /*
+   * A fill, not a box. opencode's `text-input-v2` draws no border at all:
+   * `background: color-mix(in srgb, var(--v2-background-bg-layer-02) 60%, transparent)`
+   * at rest and the same colour solid once it has focus, `border-radius: 6px`,
+   * `outline: 0`. bg-layer-02 is `--surface-layer` here. This was a 1px border
+   * over `--surface-base` at `--radius-lg`, which is 8.
+   */
+  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
+  border: 0;
+  border-radius: 6px;
   outline: none;
+  transition: background-color 0.12s ease-in-out;
   /* 13, which is what opencode's palette field measures - and what its rows use. */
   font-size: 13px;
+}
+
+.search-in:focus {
+  background: var(--surface-layer);
 }
 
 .search-in::placeholder {
