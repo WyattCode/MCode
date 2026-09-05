@@ -2783,7 +2783,21 @@ onBeforeUnmount(() => {
             sentence and any attachment gathered with it. Teleport moves the
             same instance's DOM and leaves the instance alone.
           -->
-          <Teleport to="#hero-dock" :disabled="!(empty && !app.error)">
+          <!--
+            The target is switched, not disabled. Vue resolves a Teleport's
+            target once, at mount, and a later `disabled` flip only moves the
+            content to that cached node. A session opened with messages in it
+            mounted this with no hero on screen, so the cached target was null,
+            and the first new session then moved the composer into nothing -
+            the hero came up with no input box under it. Changing `to` is the
+            one thing that makes Vue resolve again, and SessionHero is drawn
+            above this in the same parent, so `#hero-dock` exists by the time
+            the Teleport is patched. `#main-dock` is a `display: contents`
+            placeholder at the composer's ordinary position, so the layout of
+            `main` is what it was when the box rendered here in place.
+          -->
+          <div id="main-dock" class="main-dock" />
+          <Teleport :to="empty && !app.error ? '#hero-dock' : '#main-dock'">
             <Composer
               ref="composer"
               :commands="commands"
@@ -3200,5 +3214,10 @@ onBeforeUnmount(() => {
    * the thing that should.
    */
   min-width: min(440px, 100%);
+}
+
+/* The composer's ordinary dock; `contents` keeps it out of the layout. */
+.main-dock {
+  display: contents;
 }
 </style>
