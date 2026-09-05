@@ -261,10 +261,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
   gap: 8px;
 }
 
+/*
+ * Only what differs from the shared button: its lift. The size, padding and
+ * type now come from `.btn` itself, which carries opencode's - they were
+ * repeated here as 12px and 500 and had drifted from it.
+ */
 .btn {
-  height: 28px;
-  padding: 0 12px;
-  font-weight: 500;
   color: var(--text-strong);
   /*
    * Lifted off the tray rather than level with it. Both read --surface-base
@@ -282,7 +284,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-xs-border);
-  font-size: 13px;
 }
 
 .btn:hover {

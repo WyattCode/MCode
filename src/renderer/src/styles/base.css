@@ -183,13 +183,30 @@ kbd {
   color: var(--text-strong);
 }
 
+/*
+ * opencode's `button-v2` at its normal size: `height: 28px; padding: 0 11px`,
+ * over a base of `13px / 530 / 20px` at `-0.04px` with `min-height: 24px`.
+ * The height was already right; the padding was 12, and the type was not set
+ * at all - every button inherited whatever its surroundings used, so the same
+ * control read differently in a dialog and in the composer.
+ *
+ * The border stays. opencode's neutral variant carries
+ * `box-shadow: var(--v2-elevation-button-neutral)` instead, and that token is
+ * not in the stylesheet this was read from - so there is no value to copy, and
+ * a guess would be worse than the border that is there.
+ */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 24px;
   height: 28px;
-  padding: 0 12px;
+  padding: 0 11px;
   color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 20px;
+  letter-spacing: -0.04px;
   background: var(--surface-raised-hover);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-sm);

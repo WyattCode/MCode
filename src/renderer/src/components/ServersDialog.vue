@@ -576,13 +576,13 @@ onMounted(() => {
   margin-top: 6px;
 }
 
+/*
+ * Nothing of its own. This carried `5px 10px`, 12px type and a 5px radius -
+ * three numbers that match neither the shared button nor opencode's, so the
+ * same control was a different size in this dialog than in every other.
+ */
 .btn {
-  padding: 5px 10px;
   color: var(--text-base);
-  font-size: 12px;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: 5px;
 }
 
 .btn:hover:not(:disabled) {
