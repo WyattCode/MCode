@@ -152,6 +152,8 @@ app.whenReady().then(async () => {
   // The renderer has no Node access; this is how it learns where to connect.
   ipcMain.handle("mcode:bootstrap", () => ({
     port: backend!.port,
+    // The socket refuses anything that cannot present this; see startBackend.
+    token: backend!.token,
     platform: process.platform,
     home: app.getPath("home"),
     // app.getVersion() reports Electron's version until the app is packaged,

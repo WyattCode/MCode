@@ -6,7 +6,7 @@ import { contextBridge, ipcRenderer } from "electron"
  * enough to audit at a glance.
  */
 const api = {
-  bootstrap: (): Promise<{ port: number; platform: string; home: string; version: string }> =>
+  bootstrap: (): Promise<{ port: number; token: string; platform: string; home: string; version: string }> =>
     ipcRenderer.invoke("mcode:bootstrap"),
 
   /** Every directory chosen, in order; empty when the dialog was dismissed. */

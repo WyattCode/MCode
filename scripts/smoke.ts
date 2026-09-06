@@ -79,7 +79,31 @@ async function main() {
   const backend = await startBackend(dataDirectory)
   check("backend picked a port", backend.port > 0, backend.port)
 
-  const socket = new WebSocket(`ws://127.0.0.1:${backend.port}`)
+  // The socket refuses anything that cannot present the launch token, so the
+  // test connects the way the renderer does.
+  const anonymousResult = await new Promise<string>((resolve) => {
+    const anonymous = new WebSocket(`ws://127.0.0.1:${backend.port}`)
+    anonymous.once("open", () => {
+      anonymous.close()
+      resolve("connected")
+    })
+    anonymous.once("error", (error: Error) => resolve(error.message))
+  })
+  check("a connection with no token is refused", anonymousResult.includes("401"), anonymousResult)
+
+  const browserish = await new Promise<string>((resolve) => {
+    const page = new WebSocket(`ws://127.0.0.1:${backend.port}`, backend.token, {
+      headers: { Origin: "https://evil.example" },
+    })
+    page.once("open", () => {
+      page.close()
+      resolve("connected")
+    })
+    page.once("error", (error: Error) => resolve(error.message))
+  })
+  check("a web page origin is refused even with the token", browserish.includes("403"), browserish)
+
+  const socket = new WebSocket(`ws://127.0.0.1:${backend.port}`, backend.token)
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve)
     socket.once("error", reject)
