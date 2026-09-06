@@ -6,6 +6,10 @@ import { contextBridge, ipcRenderer } from "electron"
  * enough to audit at a glance.
  */
 const api = {
+  /** For a drop that carried a link rather than a file; see the main process. */
+  fetchDrop: (url: string): Promise<{ name: string; mime: string; data: string } | { error: string }> =>
+    ipcRenderer.invoke("mcode:fetch-drop", url),
+
   bootstrap: (): Promise<{ port: number; token: string; platform: string; home: string; version: string }> =>
     ipcRenderer.invoke("mcode:bootstrap"),
 

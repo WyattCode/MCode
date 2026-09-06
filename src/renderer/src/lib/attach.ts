@@ -97,3 +97,65 @@ export function preview(attachment: Attachment): string | undefined {
   previews.set(attachment, url)
   return url
 }
+
+/**
+ * Splits a data: URL into its type and its bytes.
+ *
+ * Decoded rather than fetched: a page's connect-src governs fetch, and this app
+ * allows data: as an image source but not as something to connect to - so
+ * fetching the URL an image dragged out of its own transcript hands over comes
+ * back as a bare "Failed to fetch". The bytes are in the string already.
+ */
+export function fromDataURL(link: string): { mime: string; bytes: Uint8Array<ArrayBuffer> } | undefined {
+  if (!link.startsWith("data:")) return undefined
+  const comma = link.indexOf(",")
+  if (comma < 0) return undefined
+
+  const header = link.slice("data:".length, comma)
+  const payload = link.slice(comma + 1)
+  const base64 = /;base64$/i.test(header)
+  const mime = header.replace(/;base64$/i, "").split(";")[0] || "text/plain"
+
+  try {
+    const text = base64 ? atob(payload) : decodeURIComponent(payload)
+    return { mime, bytes: Uint8Array.from(text, (character) => character.charCodeAt(0)) }
+  } catch {
+    // A truncated or mangled payload; the caller says so rather than throwing.
+    return undefined
+  }
+}
+
+/** The URL a drop is pointing at, whichever flavour the source offered. */
+export function linkFrom(transfer: DataTransfer): string | undefined {
+  // A uri-list may hold several lines and comments; the first URL is the one.
+  const fromList = transfer
+    .getData("text/uri-list")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line && !line.startsWith("#"))
+  if (fromList) return fromList
+
+  // Chat windows and editors often hand over the markup instead.
+  const src = /<img[^>]+src\s*=\s*["\']([^"\']+)["\']/i.exec(transfer.getData("text/html"))?.[1]
+  if (src) return src
+
+  const plain = transfer.getData("text/plain").trim()
+  return /^(https?:|data:|blob:)/i.test(plain) ? plain : undefined
+}
+
+/** Keeps an extension on the name, so the type can still be told from it. */
+const EXTENSIONS: Record<string, string> = {
+  "text/plain": "txt",
+  "text/markdown": "md",
+  "text/html": "html",
+  "text/csv": "csv",
+  "image/jpeg": "jpg",
+  "image/svg+xml": "svg",
+  "application/json": "json",
+}
+
+export function nameFor(name: string, mime: string): string {
+  if (name.includes(".")) return name
+  const extension = EXTENSIONS[mime] ?? mime.split("/")[1]?.split("+")[0]
+  return extension ? `${name}.${extension}` : name
+}

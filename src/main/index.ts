@@ -162,6 +162,72 @@ app.whenReady().then(async () => {
   backend = await startBackend(app.getPath("userData"))
 
   // The renderer has no Node access; this is how it learns where to connect.
+  /**
+   * Fetches something the user dragged in that arrived as a link.
+   *
+   * Dragging an image out of a chat window or a web page hands over a URL, not
+   * a copy of the file - so there is nothing in the drop for the renderer to
+   * read. It cannot go and get it either: a page cannot fetch across origins,
+   * and it has no filesystem. Here there is no such limit, which is exactly why
+   * this is narrow - http, https and file only, and never more than the cap.
+   */
+  ipcMain.handle("mcode:fetch-drop", async (_event, raw: string) => {
+    /*
+     * Everything in here answers with an error rather than throwing. A rejected
+     * invoke surfaces in the renderer as a promise nobody catches, which is to
+     * say as nothing at all - and "nothing at all" is precisely the symptom
+     * this whole path exists to stop producing.
+     */
+    try {
+      return await fetchDrop(raw)
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  async function fetchDrop(raw: string) {
+    const LIMIT = 10 * 1024 * 1024
+    let url: URL
+    try {
+      url = new URL(raw)
+    } catch {
+      return { error: `Not a URL: ${raw.slice(0, 120)}` }
+    }
+
+    const name = decodeURIComponent(url.pathname.split("/").filter(Boolean).pop() ?? "") || "dropped"
+
+    if (url.protocol === "file:") {
+      const target = fileURLToPath(url)
+      const stats = await fs.stat(target).catch(() => undefined)
+      if (!stats?.isFile()) return { error: `Not a file: ${target}` }
+      if (stats.size > LIMIT) return { error: `That file is larger than ${LIMIT / 1024 / 1024} MB` }
+      const bytes = await fs.readFile(target).catch((cause: Error) => cause)
+      if (bytes instanceof Error) return { error: bytes.message }
+      return { name: path.basename(target), mime: "", data: bytes.toString("base64") }
+    }
+
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return { error: `Cannot open a ${url.protocol} link` }
+    }
+
+    const response = await fetch(url, { signal: AbortSignal.timeout(20_000) }).catch(
+      (cause: Error) => cause,
+    )
+    if (response instanceof Error) return { error: response.message }
+    if (!response.ok) return { error: `HTTP ${response.status} from ${url.host}` }
+
+    const length = Number(response.headers.get("content-length") ?? 0)
+    if (length > LIMIT) return { error: `That file is larger than ${LIMIT / 1024 / 1024} MB` }
+    const buffer = Buffer.from(await response.arrayBuffer())
+    if (buffer.byteLength > LIMIT) return { error: `That file is larger than ${LIMIT / 1024 / 1024} MB` }
+
+    return {
+      name,
+      mime: (response.headers.get("content-type") ?? "").split(";")[0].trim(),
+      data: buffer.toString("base64"),
+    }
+  }
+
   ipcMain.handle("mcode:bootstrap", () => ({
     port: backend!.port,
     // The socket refuses anything that cannot present this; see startBackend.

@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, Effort, ModelInfo } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { preview, readFiles } from "../lib/attach"
+import { fromDataURL, linkFrom, nameFor, preview, readFiles } from "../lib/attach"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 import { findModel, isLatest, resolveVariant, withoutLatest } from "../lib/model"
@@ -179,7 +179,8 @@ function dialogOpen(): boolean {
 function onDragOver(event: DragEvent) {
   if (dialogOpen()) return
   const types = event.dataTransfer?.types
-  if (!types?.includes("Files") && !types?.includes("text/plain")) return
+  const carriesLink = types?.includes("text/uri-list") || types?.includes("text/html")
+  if (!types?.includes("Files") && !types?.includes("text/plain") && !carriesLink) return
   // Without this the window navigates to the dropped file instead.
   event.preventDefault()
   dragging.value = true
@@ -211,8 +212,64 @@ async function onDrop(event: DragEvent) {
   }
 
   const files = [...(event.dataTransfer?.files ?? [])]
-  if (!files.length) return
-  await take(files)
+  if (files.length) {
+    await take(files)
+    return
+  }
+
+  /*
+   * A drag out of a chat window or a web page carries a link, not a copy of the
+   * file - dataTransfer.files is empty and the picture lives at the other end
+   * of a URL. Returning here was indistinguishable from the feature being
+   * broken: the box highlighted, the drop landed, and nothing happened.
+   */
+  const link = event.dataTransfer ? linkFrom(event.dataTransfer) : undefined
+  if (link) {
+    await takeLink(link)
+    return
+  }
+
+  const carried = [...(event.dataTransfer?.types ?? [])].join(", ")
+  notifyFailure(t("attach.noFiles"), carried || undefined)
+}
+
+/**
+ * Turns a dropped link into a file the composer can hold.
+ *
+ * data: is already here and is read in the page - the page's own policy allows
+ * it as an image source but not as something to connect to, so fetching one
+ * fails. Anything else is fetched by the main process: a page cannot read
+ * across origins, and it has no filesystem to open a file:// link with.
+ */
+async function takeLink(link: string): Promise<void> {
+  if (link.startsWith("data:")) {
+    const decoded = fromDataURL(link)
+    if (!decoded) {
+      notifyFailure(t("attach.unreadable"), link.slice(0, 80))
+      return
+    }
+    await take([new File([decoded.bytes], nameFor("pasted", decoded.mime), { type: decoded.mime })])
+    return
+  }
+
+  /*
+   * A blob: URL belongs to the page that made it, and this app makes none - so
+   * one arriving in a drop always names something inside another application,
+   * which nothing here can reach. Said plainly rather than attempted: fetching
+   * it would fail anyway, and connect-src forbids the attempt.
+   */
+  if (link.startsWith("blob:")) {
+    notifyFailure(t("attach.blobLink"), link.slice(0, 80))
+    return
+  }
+
+  const result = await window.mcode.fetchDrop(link).catch((cause: Error) => ({ error: cause.message }))
+  if ("error" in result) {
+    notifyFailure(t("attach.unreadable"), `${result.error} - ${link.slice(0, 80)}`)
+    return
+  }
+  const bytes = Uint8Array.from(atob(result.data), (character) => character.charCodeAt(0))
+  await take([new File([bytes], nameFor(result.name || "dropped", result.mime), { type: result.mime })])
 }
 
 /**

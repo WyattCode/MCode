@@ -9,6 +9,7 @@
 import { nameFromId } from "../src/server/provider/model-name"
 import { discoverModels } from "../src/server/provider/discover"
 import { OpenAICompatible, toMessages } from "../src/server/provider/openai"
+import { fromDataURL, linkFrom, nameFor } from "../src/renderer/src/lib/attach"
 import { modelVariants } from "../src/server/provider/variants"
 import { ProviderError } from "../src/server/provider/types"
 import { createHash } from "node:crypto"
@@ -1317,6 +1318,41 @@ async function main() {
 
   section("Attachments")
   {
+    /*
+     * An image dragged out of the app's own transcript arrives as a data: URL,
+     * and the page's connect-src forbids fetching one - so it is read here
+     * instead of being fetched.
+     */
+    const dot = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    )
+    const embedded = fromDataURL(`data:image/png;base64,${dot.toString("base64")}`)
+    check("a data URL yields its type", embedded?.mime === "image/png", embedded?.mime)
+    check("and its exact bytes", Buffer.from(embedded!.bytes).equals(dot))
+    check(
+      "an unencoded data URL decodes too",
+      Buffer.from(fromDataURL("data:text/plain,hello%20there")!.bytes).toString() === "hello there",
+    )
+    check("a mangled payload is refused, not thrown", fromDataURL("data:image/png;base64,!!!!") === undefined)
+    check("something that is not a data URL is refused", fromDataURL("https://example.com/a.png") === undefined)
+
+    // The flavours a chat window or a browser actually offers on a drag.
+    const transfer = (entries: Record<string, string>) =>
+      ({ getData: (type: string) => entries[type] ?? "" }) as unknown as DataTransfer
+    check(
+      "a uri-list drop yields its first url",
+      linkFrom(transfer({ "text/uri-list": "# comment\nhttps://example.com/cat.png" })) ===
+        "https://example.com/cat.png",
+    )
+    check(
+      "an html drop yields the image source",
+      linkFrom(transfer({ "text/html": '<meta><img src="data:image/png;base64,AAA" alt="x">' })) ===
+        "data:image/png;base64,AAA",
+    )
+    check("plain prose is not a link", linkFrom(transfer({ "text/plain": "just some words" })) === undefined)
+    check("a name keeps a usable extension", nameFor("pasted", "text/plain") === "pasted.txt", nameFor("pasted", "text/plain"))
+
     /*
      * Both of these adapters filtered images out and sent only the text files,
      * so a picture reached the transcript and stopped there - the model was
