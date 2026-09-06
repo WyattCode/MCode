@@ -78,6 +78,43 @@ function htmlToText(html: string): string {
     .trim()
 }
 
+/**
+ * Reads at most `limit` bytes and drops the connection.
+ *
+ * response.text() buys the whole body first and only then truncates, so a URL
+ * that streams without end - or simply serves something enormous - is read into
+ * memory in full before a single byte is discarded.
+ */
+async function readCapped(response: Response, limit: number): Promise<{ body: string; truncated: boolean }> {
+  const stream = response.body
+  if (!stream) return { body: "", truncated: false }
+
+  const reader = stream.getReader()
+  const decoder = new TextDecoder()
+  let body = ""
+  let read = 0
+  let truncated = false
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      read += value.byteLength
+      if (read >= limit) {
+        const keep = value.subarray(0, value.byteLength - (read - limit))
+        body += decoder.decode(keep)
+        truncated = true
+        break
+      }
+      body += decoder.decode(value, { stream: true })
+    }
+  } finally {
+    await reader.cancel().catch(() => {})
+  }
+
+  return { body: truncated ? body : body + decoder.decode(), truncated }
+}
+
 export const WebFetchTool: ToolDefinition = {
   name: "webfetch",
   description:
@@ -128,12 +165,11 @@ export const WebFetchTool: ToolDefinition = {
     if (!response.ok) throw new ToolError(`HTTP ${response.status} ${response.statusText} from ${url.host}`)
 
     const contentType = response.headers.get("content-type") ?? ""
-    const body = await response.text()
-    const clipped = body.length > MAX_FETCH_BYTES ? body.slice(0, MAX_FETCH_BYTES) : body
-    const text = input.format === "raw" || !contentType.includes("html") ? clipped : htmlToText(clipped)
+    const { body, truncated } = await readCapped(response, MAX_FETCH_BYTES)
+    const text = input.format === "raw" || !contentType.includes("html") ? body : htmlToText(body)
 
     return {
-      output: text + (body.length > clipped.length ? "\n\n(truncated)" : ""),
+      output: text + (truncated ? "\n\n(truncated)" : ""),
       title: url.host + url.pathname,
       metadata: { url: url.toString(), status: response.status, contentType },
     }
