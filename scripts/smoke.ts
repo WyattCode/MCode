@@ -25,6 +25,7 @@ import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
 import { ToolError } from "../src/server/tool/types"
+import { runSearch } from "../src/server/tool/search-run"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { Bus } from "../src/server/bus"
 import { unifiedDiff } from "../src/server/diff"
@@ -181,6 +182,26 @@ async function main() {
     // The suite exercises tools directly; recording is the runner's job.
     snapshot: async () => {},
   })
+
+  /*
+   * A regex the model wrote, that will not finish.
+   *
+   * Nested quantifiers backtrack exponentially, and no timer can interrupt a
+   * match in progress - the event loop is the thing it is holding. Searching in
+   * a worker is what makes the deadline enforceable, and the backend shares its
+   * thread with the window, so the alternative is a frozen app.
+   */
+  await fs.writeFile(path.join(project, "bait.txt"), "a".repeat(60) + "!\n")
+  const started = Date.now()
+  const runaway = await runSearch(
+    { kind: "grep", root: project, directory: project, pattern: "(a+)+$", ignoreCase: false },
+    new AbortController().signal,
+    600,
+  ).then(() => undefined, (error: unknown) => error)
+  const elapsed = Date.now() - started
+  check("a catastrophic regex is stopped, not waited on", runaway instanceof ToolError, runaway)
+  check("and it is stopped at the deadline", elapsed < 5000, `${elapsed}ms`)
+  await fs.rm(path.join(project, "bait.txt"))
 
   const read = await findTool("read")!.execute({ path: "hello.ts" }, context("c1"))
   check("read numbers lines", read.output.includes("1\texport const greeting"), read.output.slice(0, 60))
