@@ -3,67 +3,14 @@ import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { IGNORED, relative, resolvePath } from "./fs-util"
+import { MAX_RESULTS, globToRegExp, type GlobResult, type GrepResult } from "./search-core"
+import { runSearch } from "./search-run"
 
-const MAX_RESULTS = 200
-const MAX_FILE_BYTES = 2_000_000
-
-/** Translates a glob into a regex. Supports *, **, ?, and {a,b} alternation. */
-export function globToRegExp(pattern: string): RegExp {
-  let out = ""
-  for (let i = 0; i < pattern.length; i++) {
-    const char = pattern[i]
-    if (char === "*") {
-      if (pattern[i + 1] === "*") {
-        // ** spans directory separators; **/ also matches zero directories.
-        i++
-        if (pattern[i + 1] === "/") {
-          i++
-          out += "(?:.*/)?"
-        } else {
-          out += ".*"
-        }
-      } else {
-        out += "[^/]*"
-      }
-    } else if (char === "?") out += "[^/]"
-    else if (char === "{") {
-      const close = pattern.indexOf("}", i)
-      if (close === -1) out += "\\{"
-      else {
-        const options = pattern.slice(i + 1, close).split(",")
-        out += `(?:${options.map((option) => option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`
-        i = close
-      }
-    } else out += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  }
-  return new RegExp(`^${out}$`)
-}
-
-async function walk(root: string, onFile: (absolute: string) => void | Promise<void>, signal: AbortSignal) {
-  const queue = [root]
-  while (queue.length) {
-    if (signal.aborted) return
-    const dir = queue.shift()!
-    let entries
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith(".") && entry.name !== ".env.example") {
-        if (entry.isDirectory()) continue
-      }
-      const absolute = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (IGNORED.has(entry.name)) continue
-        queue.push(absolute)
-      } else if (entry.isFile()) {
-        await onFile(absolute)
-      }
-    }
-  }
-}
+/**
+ * The searching itself lives in search-core, and runs in a worker so that a
+ * model-supplied regex cannot wedge the app; see search-run.
+ */
+export { globToRegExp }
 
 export const GlobTool: ToolDefinition = {
   name: "glob",
@@ -83,21 +30,12 @@ export const GlobTool: ToolDefinition = {
     const root = input.directory
       ? await resolvePath(context, String(input.directory))
       : path.resolve(context.directory)
-    const regex = globToRegExp(String(input.pattern))
-    const found: { path: string; mtime: number }[] = []
 
-    await walk(
-      root,
-      async (absolute) => {
-        const rel = relative(context.directory, absolute)
-        if (!regex.test(rel)) return
-        const stat = await fs.stat(absolute).catch(() => undefined)
-        found.push({ path: rel, mtime: stat?.mtimeMs ?? 0 })
-      },
+    const { found } = (await runSearch(
+      { kind: "glob", root, directory: context.directory, pattern: String(input.pattern) },
       context.signal,
-    )
+    )) as GlobResult
 
-    found.sort((a, b) => b.mtime - a.mtime)
     const shown = found.slice(0, MAX_RESULTS)
     if (shown.length === 0) return { output: "No files matched.", title: String(input.pattern) }
 
@@ -131,37 +69,25 @@ export const GrepTool: ToolDefinition = {
       ? await resolvePath(context, String(input.directory))
       : path.resolve(context.directory)
 
-    let regex: RegExp
+    // Compiled here as well as in the worker: a malformed pattern should read as
+    // a tool error the model can fix, not as a worker that died.
     try {
-      regex = new RegExp(String(input.pattern), input.ignoreCase ? "i" : "")
+      new RegExp(String(input.pattern), input.ignoreCase ? "i" : "")
     } catch (err) {
       throw new ToolError(`Invalid regular expression: ${(err as Error).message}`)
     }
-    const include = input.include ? globToRegExp(String(input.include)) : undefined
 
-    const matches: { path: string; line: number; text: string }[] = []
-    let files = 0
-
-    await walk(
-      root,
-      async (absolute) => {
-        if (matches.length >= MAX_RESULTS) return
-        const rel = relative(context.directory, absolute)
-        if (include && !include.test(rel)) return
-        const stat = await fs.stat(absolute).catch(() => undefined)
-        if (!stat || stat.size > MAX_FILE_BYTES) return
-        const content = await fs.readFile(absolute, "utf8").catch(() => undefined)
-        if (content === undefined || content.includes("\0")) return
-        files++
-        const lines = content.split("\n")
-        for (let i = 0; i < lines.length && matches.length < MAX_RESULTS; i++) {
-          if (regex.test(lines[i])) {
-            matches.push({ path: rel, line: i + 1, text: lines[i].slice(0, 400) })
-          }
-        }
+    const { matches, files } = (await runSearch(
+      {
+        kind: "grep",
+        root,
+        directory: context.directory,
+        pattern: String(input.pattern),
+        ignoreCase: Boolean(input.ignoreCase),
+        include: input.include ? String(input.include) : undefined,
       },
       context.signal,
-    )
+    )) as GrepResult
 
     if (matches.length === 0) return { output: `No matches in ${files} files.`, title: String(input.pattern) }
 
