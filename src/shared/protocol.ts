@@ -1048,7 +1048,7 @@ export type Request =
     }
   | { type: "git.revert"; directory: string; file: string }
   | { type: "file.list"; directory: string; query?: string }
-  | { type: "file.read"; path: string }
+  | { type: "file.read"; path: string; directory: string }
   | { type: "shell.open"; sessionID: string; cwd?: string; cols?: number; rows?: number }
   | { type: "shell.input"; shellID: string; data: string }
   | { type: "shell.resize"; shellID: string; cols: number; rows: number }

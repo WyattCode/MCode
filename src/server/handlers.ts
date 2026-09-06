@@ -443,7 +443,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { files: await listFiles(request.directory, request.query) } satisfies Handled<"file.list">
 
     case "file.read": {
-      const resolved = path.resolve(request.path)
+      /*
+       * Confined to the project it names. This reads whatever path it is given
+       * and hands the contents straight back, so without a root it was a way to
+       * read any file on the machine - the one thing the tool sandbox exists to
+       * prevent, reachable over the same socket.
+       */
+      const resolved = resolveInside(request.directory, request.path)
       /*
        * Read as bytes and decide what they are, rather than as utf8 and hope.
        * `readFile(path, "utf8")` on a PNG succeeds - it just returns a string
