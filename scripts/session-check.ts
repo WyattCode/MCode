@@ -440,6 +440,65 @@ async function main(): Promise<void> {
   }
 
   /*
+   * Outside a repository nothing is recorded, because staging a folder that
+   * git knows nothing about means hashing every byte in it (see
+   * `scripts/snapshot-check.ts`). What must survive that is undo of ordinary
+   * edits: the tools say which file they wrote and the history is built from
+   * what they said, with no comparison of the project needed. Only a turn
+   * that also ran something opaque loses the ability, and says so.
+   */
+  console.log("undo in a folder that is not a repository")
+  {
+    const loose = path.join(root, "loose")
+    await fs.mkdir(loose, { recursive: true })
+    const edited = path.join(loose, "edited.txt")
+    await fs.writeFile(edited, "the first line\n", "utf8")
+
+    const plain = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
+    script = [[{ name: "edit", input: { path: edited, oldString: "the first line", newString: "a different line" } }]]
+    const edits = idle(plain.id)
+    await runner.prompt({ sessionID: plain.id, text: "edit it" })
+    await edits
+
+    check("the edit landed", (await fs.readFile(edited, "utf8")).startsWith("a different line"))
+    let refusal: string | undefined
+    let restored = -1
+    try {
+      restored = await runner.undo(plain.id)
+    } catch (failure) {
+      refusal = (failure as Error).message
+    }
+    check("an edit-only turn is still undoable without git", refusal === undefined, String(refusal))
+    check("and the file came back", (await fs.readFile(edited, "utf8")) === "the first line\n", String(restored))
+
+    // The same folder, a turn that also ran a shell command: that one cannot.
+    await fs.writeFile(edited, "the first line\n", "utf8")
+    const opaque = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
+    script = [
+      [
+        { name: "edit", input: { path: edited, oldString: "the first line", newString: "changed again" } },
+        { name: "bash", input: rewrite },
+      ],
+    ]
+    const both = idle(opaque.id)
+    await runner.prompt({ sessionID: opaque.id, text: "edit it and shell something" })
+    await both
+
+    let told: string | undefined
+    try {
+      await runner.undo(opaque.id)
+    } catch (failure) {
+      told = (failure as Error).message
+    }
+    check("a turn with a shell command in it is refused instead", Boolean(told), String(told))
+    check(
+      "and the refusal says the project was never recorded",
+      (told ?? "").includes("not a git repository"),
+      String(told),
+    )
+  }
+
+  /*
    * Two ways a restore can hand back something other than what it took.
    *
    * A project carrying "* text=auto" tells git to store text with LF endings,
