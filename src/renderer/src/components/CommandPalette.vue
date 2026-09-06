@@ -260,6 +260,16 @@ async function choose(index: number) {
 }
 
 function onKeydown(event: KeyboardEvent) {
+  /*
+   * The same guard the composer carries, and for the same reason: this dialog
+   * has a text field, and while an IME is composing, Enter picks a candidate
+   * and the arrows walk the candidate list. Without it the first Enter of every
+   * pinyin word ran whichever row happened to be highlighted, and Escape closed
+   * the palette instead of cancelling the composition. Chromium reports keyCode
+   * 229 for the same state on some layouts.
+   */
+  if (event.isComposing || event.keyCode === 229) return
+
   if (event.key === "Escape") {
     event.preventDefault()
     emit("close")

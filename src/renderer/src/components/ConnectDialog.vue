@@ -368,7 +368,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             type="password"
             :placeholder="t('auth.apiKey')"
             spellcheck="false"
-            @keydown.enter="submitKey"
+            v-enter="submitKey"
           />
           <div class="actions">
             <button class="go" :disabled="!key.trim() || busy" @click="submitKey">{{ t("connect.submit") }}</button>
@@ -389,7 +389,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             spellcheck="false"
             autocomplete="off"
             @input="endpoint = ($event.target as HTMLInputElement).value"
-            @keydown.enter="connectLocal"
+            v-enter="connectLocal"
           />
           <p class="lead soft">{{ t("onboard.endpointHint") }}</p>
           <div class="actions">

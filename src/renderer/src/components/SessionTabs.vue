@@ -338,7 +338,7 @@ async function commitRename(id: string) {
             class="rename"
             :value="sessionTitle(session.title)"
             spellcheck="false"
-            @keydown.enter.prevent="commitRename(session.id)"
+            v-enter="() => commitRename(session.id)"
             @keydown.esc.prevent="editing = undefined"
             @blur="commitRename(session.id)"
           />

@@ -66,6 +66,7 @@ const menu = ref<{ x: number; y: number }>()
 const shellID = ref<string>()
 let terminal: Terminal | undefined
 let fit: FitAddon | undefined
+let offResize: (() => void) | undefined
 let offEvents: (() => void) | undefined
 let offTheme: (() => void) | undefined
 let blinkOn: (() => void) | undefined
@@ -285,6 +286,7 @@ onMounted(async () => {
   }
 
   fit.fit()
+  offResize = watchBox(host.value)
 
   /*
    * A cursor blinking in a pane nobody is typing into reads as activity that
@@ -445,6 +447,7 @@ function watchTheme() {
 onBeforeUnmount(() => {
   offTheme?.()
   offEvents?.()
+  offResize?.()
   const textarea = terminal?.textarea
   if (textarea && blinkOn && blinkOff) {
     textarea.removeEventListener("focus", blinkOn)
@@ -490,6 +493,31 @@ watch(
     })
   },
 )
+
+/**
+ * Refits whenever the pane's box changes, whatever changed it.
+ *
+ * Height and visibility only cover the drawer's own handle and tab switching.
+ * Resizing the window, going full screen, or opening either side panel all
+ * change the width instead, and xterm kept the column count it was given at
+ * open - so output wrapped against a terminal that was no longer the shape it
+ * was drawn at. Batched into a frame because a resize delivers a stream.
+ */
+function watchBox(element: HTMLElement) {
+  let queued = false
+  const observer = new ResizeObserver(() => {
+    if (queued) return
+    queued = true
+    requestAnimationFrame(() => {
+      queued = false
+      // Zero on the frame the pane is being hidden, where fitting is both
+      // meaningless and liable to throw.
+      if (element.clientWidth > 0 && element.clientHeight > 0) fit?.fit()
+    })
+  })
+  observer.observe(element)
+  return () => observer.disconnect()
+}
 </script>
 
 <template>

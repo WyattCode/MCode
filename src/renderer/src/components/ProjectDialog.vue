@@ -116,7 +116,7 @@ async function save() {
         v-model="name"
         class="field"
         spellcheck="false"
-        @keydown.enter="save"
+        v-enter="save"
       />
 
       <label class="label">{{ t("proj.icon") }}</label>
