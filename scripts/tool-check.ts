@@ -193,7 +193,12 @@ async function main(): Promise<void> {
       }
       const near = await miss("near/net")
       check("a near miss lists its neighbours", near.includes("Did you mean one of these?"), near)
-      check("the list holds the three that match, in directory order", near.endsWith("near/net.c\nnear/NET.C.bak\nnear/net.o"), near)
+      const listed = near.split("Did you mean one of these?")[1]?.trim().split(/\r?\n/) ?? []
+    check(
+      "the list holds exactly the three that match, whatever order the directory hands them out in",
+      listed.length === 3 && ["near/net.c", "near/NET.C.bak", "near/net.o"].every((name) => listed.includes(name)),
+      near,
+    )
       check("and the file that does not match is left out", !near.includes("other.c"), near)
       const far = await miss("near/nothing-like-it.txt")
       check("a miss with no neighbours is the bare message", far === "File not found: near/nothing-like-it.txt", far)
