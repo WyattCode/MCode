@@ -441,7 +441,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { files: await listFiles(request.directory, request.query) } satisfies Handled<"file.list">
 
     case "file.read": {
-      const resolved = path.resolve(request.path)
+      /*
+       * Confined to the project it names. This reads whatever path it is given
+       * and hands the text straight back, so without a root it was a way to
+       * read any file on the machine - the one thing the tool sandbox exists to
+       * prevent, reachable over the same socket.
+       */
+      const resolved = resolveInside(request.directory, request.path)
       const content = await fs.readFile(resolved, "utf8")
       const limit = 500_000
       return {

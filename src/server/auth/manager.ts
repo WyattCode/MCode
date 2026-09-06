@@ -1,4 +1,4 @@
-import { exec } from "node:child_process"
+import { execFile } from "node:child_process"
 import type { AuthMethodKind } from "@shared/protocol"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
@@ -16,12 +16,26 @@ import {
   type Pending,
 } from "./oauth"
 
-/** Opens the system browser without pulling Electron into the server layer. */
+/**
+ * Opens the system browser without pulling Electron into the server layer.
+ *
+ * The URL is passed as an argument rather than pasted into a command line.
+ * Quoting it was not enough: a shell still expands $(...) and backticks inside
+ * double quotes, so any URL that ever came from configuration rather than from
+ * the constants in this file would have been a command waiting to run.
+ */
 function openExternal(url: string): void {
-  const quoted = url.replace(/"/g, '%22')
-  if (process.platform === "win32") exec(`start "" "${quoted}"`)
-  else if (process.platform === "darwin") exec(`open "${quoted}"`)
-  else exec(`xdg-open "${quoted}"`)
+  // Rejected outright rather than escaped - nothing here has any business
+  // opening a file:// or a custom scheme.
+  if (!/^https?:\/\//i.test(url)) return
+  if (process.platform === "win32") {
+    // cmd's start takes a window title first, and only it needs a shell.
+    execFile("cmd", ["/c", "start", "", url], { windowsHide: true })
+  } else if (process.platform === "darwin") {
+    execFile("open", [url])
+  } else {
+    execFile("xdg-open", [url])
+  }
 }
 
 /**

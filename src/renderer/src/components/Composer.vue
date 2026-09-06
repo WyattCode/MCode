@@ -355,7 +355,11 @@ async function mentionAttachments(value: string, chosen: Set<string>): Promise<A
     // The same file named twice is one file.
     if (out.some((entry) => entry.path === path)) continue
     try {
-      const result = await app.client.request({ type: "file.read", path: absolutePath(root, path) })
+      const result = await app.client.request({
+        type: "file.read",
+        path: absolutePath(root, path),
+        directory: root,
+      })
       const attachment = mentionAttachment(path, result.content)
       if (attachment) out.push(attachment)
       else notifyFailure(t("attach.unreadable"), path)
