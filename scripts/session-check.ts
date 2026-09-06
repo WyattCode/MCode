@@ -14,6 +14,7 @@
  * real ones.
  */
 import http from "node:http"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
@@ -144,6 +145,12 @@ async function main(): Promise<void> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-session-check-"))
   const project = path.join(root, "project")
   await fs.mkdir(project, { recursive: true })
+  /*
+   * A repository, because undoing a shell command means comparing the project
+   * against itself, and that is only recorded inside git - see
+   * `scripts/snapshot-check.ts` for why it is not done anywhere else.
+   */
+  execFileSync("git", ["init", "-q"], { cwd: project })
 
   const storage = new Storage(path.join(root, "storage"))
   const bus = new Bus()
@@ -449,6 +456,7 @@ async function main(): Promise<void> {
   {
     const awkward = path.join(root, "awkward")
     await fs.mkdir(awkward, { recursive: true })
+    execFileSync("git", ["init", "-q"], { cwd: awkward })
     await fs.writeFile(path.join(awkward, ".gitattributes"), "* text=auto\n", "utf8")
 
     const crlf = path.join(awkward, "windows.txt")
@@ -533,6 +541,7 @@ async function main(): Promise<void> {
   console.log("rolling a conversation back to a message")
   const rollback = path.join(root, "rollback")
   await fs.mkdir(rollback, { recursive: true })
+  execFileSync("git", ["init", "-q"], { cwd: rollback })
   const marker = path.join(root, "mark.js")
   await fs.writeFile(
     marker,

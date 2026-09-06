@@ -21,6 +21,7 @@
     "i18ncheck": "esbuild scripts/i18n-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/i18n-check.mjs --packages=external && node out/i18n-check.mjs",
     "mdcheck": "esbuild scripts/markdown-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/markdown-check.mjs --packages=external && node out/markdown-check.mjs",
     "sessioncheck": "esbuild scripts/session-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/session-check.mjs --packages=external && node out/session-check.mjs",
+    "snapshotcheck": "esbuild scripts/snapshot-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --alias:@server=./src/server --outfile=out/snapshot-check.mjs --packages=external && node out/snapshot-check.mjs",
     "sandboxcheck": "esbuild scripts/sandbox-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/sandbox-check.mjs --packages=external && node out/sandbox-check.mjs",
     "toolcheck": "esbuild scripts/tool-check.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --outfile=out/tool-check.mjs --packages=external && node out/tool-check.mjs",
     "wiringcheck": "esbuild scripts/wiring-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/wiring-check.mjs --packages=external && node out/wiring-check.mjs",

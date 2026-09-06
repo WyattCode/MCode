@@ -450,6 +450,31 @@ export class Snapshots {
     if (!stat?.isDirectory()) throw new Error(`${directory} is not a directory`)
 
     /*
+     * Only a project that is itself under git is recorded, which is what the
+     * reference does - its snapshot service starts with `if (vcs !== "git")
+     * return false`, so a folder that is not a repository is never touched.
+     *
+     * The reason is not tidiness. `git add -A` hashes and stores a copy of
+     * every file it can see, and outside a repository there is no .gitignore
+     * to stop it: build output, archives, logs and binaries all go in, every
+     * turn. Two of this machine's own projects showed what that costs - a
+     * 182 MB C server with no .gitignore took 7.9s per turn to stage, and
+     * another folder's undo store had reached 44 GB, 1.4 GB blobs of game
+     * data stored over and over for turns that `MAX_BYTES` then refused to
+     * restore anyway. The work was pure waste in both cases.
+     *
+     * A turn of ordinary edits is still undoable without this: the tools
+     * report what they wrote, and `commitSnapshot` builds the history out of
+     * those reports. Only a turn that also ran a shell command or an MCP tool
+     * - which leave no account of themselves - loses the ability to be taken
+     * back, and it says so.
+     */
+    const inside = await exec(["rev-parse", "--is-inside-work-tree"], directory)
+    if (inside.code !== 0 || inside.stdout.toString("utf8").trim() !== "true") {
+      throw new Error("the project is not a git repository, so it cannot be compared against itself")
+    }
+
+    /*
      * Named for the project rather than for the session: every session open on
      * the same directory shares one index, which is what keeps the scan a stat
      * walk rather than a full read.
