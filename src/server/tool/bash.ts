@@ -29,6 +29,11 @@ const REFUSED: { pattern: RegExp; reason: string }[] = [
  * back to the platform default rather than guessing at an argument form, since
  * getting that wrong runs the script as a filename.
  */
+/** macOS has defaulted to zsh since Catalina; every other unix still ships bash. */
+function defaultShell(): string {
+  return process.platform === "darwin" ? "/bin/zsh" : "/bin/bash"
+}
+
 function shell(chosen?: string): { command: string; args: (script: string) => string[] } {
   const name = (chosen ?? "").trim()
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? ""
@@ -49,7 +54,10 @@ function shell(chosen?: string): { command: string; args: (script: string) => st
   if (process.platform === "win32") {
     return { command: "powershell.exe", args: (script) => ["-NoProfile", "-NonInteractive", "-Command", script] }
   }
-  return { command: process.env.SHELL || "/bin/bash", args: (script) => ["-lc", script] }
+  // -l so a GUI-launched app still sees the user's PATH: macOS hands a bundle
+  // launched from Finder only /usr/bin:/bin:/usr/sbin:/sbin, so anything under
+  // /opt/homebrew or a version manager is invisible until the profile is read.
+  return { command: process.env.SHELL || defaultShell(), args: (script) => ["-lc", script] }
 }
 
 /**

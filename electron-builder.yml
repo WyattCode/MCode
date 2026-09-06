@@ -4,7 +4,11 @@ directories:
   output: dist
   buildResources: build
 files:
-  - out/**/*
+  # Named one by one: out/ also collects the test and tooling bundles, and
+  # out/**/* shipped the whole check suite inside the app.
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
   - package.json
 # The backend runs in the main process, so only its runtime deps ship.
 # node-pty is the one native dependency. Its .node binaries, and the
@@ -30,9 +34,30 @@ nsis:
 
 mac:
   target:
-    - dmg
+    - target: dmg
+      arch: [arm64, x64]
   icon: build/icon.icns
   category: public.app-category.developer-tools
+  # Without this the x64 disk image is named without its arch, so the two builds
+  # read as "the dmg" and "the arm64 one" rather than as a matched pair.
+  artifactName: ${productName}-${version}-${arch}.${ext}
+  # Electron 38 drops support for anything older, and saying so keeps the
+  # Finder error honest instead of letting the app launch and crash.
+  minimumSystemVersion: "12.0"
+  hardenedRuntime: true
+  # Local builds are unsigned; Gatekeeper assessment would only fail the build.
+  gatekeeperAssess: false
+  # The reasons macOS shows in its own permission prompts. An agent that reads
+  # and edits a project will sooner or later be pointed at a folder TCC guards,
+  # and a prompt with no explanation is one people deny by reflex.
+  extendInfo:
+    NSDocumentsFolderUsageDescription: MCode reads and edits the projects you open from your Documents folder.
+    NSDesktopFolderUsageDescription: MCode reads and edits the projects you open from your Desktop.
+    NSDownloadsFolderUsageDescription: MCode reads and edits the projects you open from your Downloads folder.
+    NSRemovableVolumeUsageDescription: MCode reads and edits projects you open from external drives.
+    # Loopback is exempt, so this is only about a model runtime on another
+    # machine - the case where the prompt would otherwise be unexplained.
+    NSLocalNetworkUsageDescription: MCode needs this only to reach a model runtime you host on another machine on your network, such as Ollama or LM Studio. Its own connections stay on this Mac.
 
 dmg:
   icon: build/icon.icns
