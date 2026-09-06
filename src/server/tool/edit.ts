@@ -28,6 +28,7 @@ export const WriteTool: ToolDefinition = {
     const diff = unifiedDiff(display, previous ?? "", content)
 
     await context.permissions.ask({
+      signal: context.signal,
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,
@@ -96,6 +97,7 @@ export const EditTool: ToolDefinition = {
     const diff = unifiedDiff(display, original, updated)
 
     await context.permissions.ask({
+      signal: context.signal,
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,

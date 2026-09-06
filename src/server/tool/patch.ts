@@ -416,6 +416,7 @@ export const ApplyPatchTool: ToolDefinition = {
     const diff = changes.map((change) => change.diff).join("\n")
 
     await context.permissions.ask({
+      signal: context.signal,
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,

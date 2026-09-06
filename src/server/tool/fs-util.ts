@@ -108,6 +108,7 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   const scope = stats?.isDirectory() ? real : path.dirname(real)
 
   await context.permissions.ask({
+    signal: context.signal,
     sessionID: context.sessionID,
     messageID: context.messageID,
     callID: context.callID,

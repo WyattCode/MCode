@@ -144,6 +144,7 @@ export const WebFetchTool: ToolDefinition = {
     // Fetching is an outbound request on the user's network, so it is gated
     // like any other side effect.
     await context.permissions.ask({
+      signal: context.signal,
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,

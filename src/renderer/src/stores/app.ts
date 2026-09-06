@@ -87,10 +87,25 @@ export const useApp = defineStore("app", () => {
    * conversation blocked on approval used to be invisible, which looked like
    * the model had simply stopped.
    */
-  const pendingPermissions = ref(new Map<string, PermissionRequest>())
+  /*
+   * A queue per session, not one request per session.
+   *
+   * A turn runs its tools together, so two of them can ask at the same moment -
+   * two edits in one turn is the ordinary case. Holding a single request meant
+   * the second prompt replaced the first on screen, and the tool behind the
+   * first waited for an answer the user could no longer give.
+   */
+  const pendingPermissions = ref(new Map<string, PermissionRequest[]>())
   const permission = computed(() =>
-    currentID.value ? pendingPermissions.value.get(currentID.value) : undefined,
+    currentID.value ? pendingPermissions.value.get(currentID.value)?.[0] : undefined,
   )
+
+  /** Groups a replayed list into the same shape, oldest first. */
+  function bySession(requests: PermissionRequest[]): Map<string, PermissionRequest[]> {
+    const out = new Map<string, PermissionRequest[]>()
+    for (const request of requests) out.set(request.sessionID, [...(out.get(request.sessionID) ?? []), request])
+    return out
+  }
 
   /**
    * Sessions that finished a turn while the user was looking elsewhere.
@@ -130,11 +145,14 @@ export const useApp = defineStore("app", () => {
   }
 
   /** Drops a session's pending request, wherever the answer came from. */
-  function clearPermission(sessionID?: string) {
+  /** Drops one request, or the whole session's queue when none is named. */
+  function clearPermission(sessionID?: string, requestID?: string) {
     const target = sessionID ?? currentID.value
     if (!target || !pendingPermissions.value.has(target)) return
     const next = new Map(pendingPermissions.value)
-    next.delete(target)
+    const queue = (next.get(target) ?? []).filter((entry) => requestID && entry.id !== requestID)
+    if (queue.length) next.set(target, queue)
+    else next.delete(target)
     pendingPermissions.value = next
   }
 
@@ -436,10 +454,16 @@ export const useApp = defineStore("app", () => {
         // all of them, so the sidebar can mark the ones that went wrong.
         if (event.sessionID === currentID.value) error.value = event.error
         break
-      case "permission.requested":
-        pendingPermissions.value.set(event.request.sessionID, event.request)
-        pendingPermissions.value = new Map(pendingPermissions.value)
+      case "permission.requested": {
+        // Replayed to every window that connects, so the same request can
+        // arrive twice - once live, once on reconnect.
+        const queue = pendingPermissions.value.get(event.request.sessionID) ?? []
+        if (queue.some((entry) => entry.id === event.request.id)) break
+        const next = new Map(pendingPermissions.value)
+        next.set(event.request.sessionID, [...queue, event.request])
+        pendingPermissions.value = next
         break
+      }
       /*
        * MCP health, kept here rather than in whichever panel asked for it.
        *
@@ -466,10 +490,9 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "permission.resolved": {
-        for (const [sessionID, request] of pendingPermissions.value) {
-          if (request.id !== event.requestID) continue
-          pendingPermissions.value.delete(sessionID)
-          pendingPermissions.value = new Map(pendingPermissions.value)
+        for (const [sessionID, queue] of pendingPermissions.value) {
+          if (!queue.some((entry) => entry.id === event.requestID)) continue
+          clearPermission(sessionID, event.requestID)
           break
         }
         break
@@ -604,7 +627,7 @@ export const useApp = defineStore("app", () => {
      * which denies the question and kills the turn. The list answers with them
      * for the same reason it answers with which sessions are running.
      */
-    pendingPermissions.value = new Map(listed.permissions.map((request) => [request.sessionID, request]))
+    pendingPermissions.value = bySession(listed.permissions)
     restoreTabs()
     booted = true
     /*
@@ -713,7 +736,7 @@ export const useApp = defineStore("app", () => {
       summarising.value = new Set(listed.compacting)
       // The same replay as on boot: a socket that dropped missed anything
       // published while it was down, a permission request included.
-      pendingPermissions.value = new Map(listed.permissions.map((request) => [request.sessionID, request]))
+      pendingPermissions.value = bySession(listed.permissions)
       if (currentID.value) await open(currentID.value)
     } catch {
       // A socket that dropped again; the next open will bring another attempt.
@@ -987,7 +1010,7 @@ export const useApp = defineStore("app", () => {
     responding.value = request.id
     try {
       await api().request({ type: "permission.respond", requestID: request.id, response })
-      clearPermission(request.sessionID)
+      clearPermission(request.sessionID, request.id)
     } catch (err) {
       // The request stays up: the tool is still waiting on an answer, and
       // clearing it here would strand the turn with nothing on screen.

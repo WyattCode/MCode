@@ -191,6 +191,7 @@ export const BashTool: ToolDefinition = {
     const timeout = Math.min(MAX_TIMEOUT, Number(input.timeout ?? DEFAULT_TIMEOUT))
 
     await context.permissions.ask({
+      signal: context.signal,
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,
