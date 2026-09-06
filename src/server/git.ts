@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import fs from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
 
@@ -42,6 +43,30 @@ export interface GitStatus {
 async function toplevel(directory: string): Promise<string> {
   const out = await git(directory, ["rev-parse", "--show-toplevel"])
   return out.trim()
+}
+
+/**
+ * The project directory as the filesystem really spells it.
+ *
+ * macOS keeps /var, /tmp and /etc as symlinks into /private, and git always
+ * answers with the resolved path. Comparing git's answer against the path the
+ * app was handed then makes every file in the repository look like it sits
+ * outside it - the review pane listed nothing, and diff and discard failed with
+ * "outside repository". Both sides are resolved before they are ever compared.
+ */
+async function realDirectory(directory: string): Promise<string> {
+  return fs.realpath(directory).catch(() => path.resolve(directory))
+}
+
+/**
+ * A project-relative or absolute path, spelled the way git will spell it.
+ *
+ * The file itself may not exist yet, so only its parent is resolved.
+ */
+async function locate(directory: string, file: string): Promise<string> {
+  const absolute = path.resolve(directory, file)
+  const parent = await fs.realpath(path.dirname(absolute)).catch(() => path.dirname(absolute))
+  return path.join(parent, path.basename(absolute))
 }
 
 async function git(directory: string, args: string[]): Promise<string> {
@@ -103,15 +128,17 @@ export async function status(directory: string, scope: StatusScope = "worktree")
     return { installed: false, repo: false, changed: [], entries: [] }
   }
 
-  const inside = await git(directory, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")
+  const dir = await realDirectory(directory)
+
+  const inside = await git(dir, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")
   if (inside.trim() !== "true") return { installed: true, repo: false, changed: [], entries: [] }
 
   // A fresh repository has no HEAD yet, so the branch lookup is allowed to fail.
-  const branch = (await git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim()
+  const branch = (await git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim()
 
-  const root = await toplevel(directory).catch(() => directory)
+  const root = await toplevel(dir).catch(() => dir)
 
-  const porcelain = await git(directory, ["status", "--porcelain=v1", "-uall"]).catch(() => "")
+  const porcelain = await git(dir, ["status", "--porcelain=v1", "-uall"]).catch(() => "")
   const entries = porcelain
     .split("\n")
     .filter((line) => line.trim())
@@ -127,7 +154,7 @@ export async function status(directory: string, scope: StatusScope = "worktree")
       const raw = (rest.includes(" -> ") ? rest.split(" -> ")[1] : rest).replace(/^"|"$/g, "")
       // Reported relative to the root; the rest of the app speaks in paths
       // relative to the project, and so does the tool metadata it is matched to.
-      const relative = path.relative(directory, path.resolve(root, raw)).split(path.sep).join("/")
+      const relative = path.relative(dir, path.resolve(root, raw)).split(path.sep).join("/")
       return { path: relative, kind: classify(codes) }
     })
     .filter((entry) => entry.path && !entry.path.startsWith(".."))
@@ -144,7 +171,7 @@ export async function status(directory: string, scope: StatusScope = "worktree")
       const seen = new Set(entries.map((entry) => entry.path))
       all = [
         ...entries,
-        ...(await committed(root, directory, base)).filter((entry) => !seen.has(entry.path)),
+        ...(await committed(root, dir, base)).filter((entry) => !seen.has(entry.path)),
       ].sort((a, b) => a.path.localeCompare(b.path))
     }
   }
@@ -191,8 +218,9 @@ export async function diff(
   // Clamped rather than trusted: this number reaches a command line.
   const lines = Math.max(0, Math.min(100_000, Math.round(context ?? 3)))
   const unified = `-U${lines}`
-  const absolute = path.resolve(directory, file)
-  const root = await toplevel(directory).catch(() => directory)
+  const dir = await realDirectory(directory)
+  const absolute = await locate(dir, file)
+  const root = await toplevel(dir).catch(() => dir)
   const inRepo = path.relative(root, absolute).split(path.sep).join("/")
 
   const tracked = await git(root, ["ls-files", "--error-unmatch", "--", inRepo])
@@ -250,12 +278,13 @@ export async function diff(
 
 /** Throws away every uncommitted change to one file. */
 export async function revert(directory: string, file: string): Promise<void> {
-  const absolute = path.resolve(directory, file)
-  const root = await toplevel(directory).catch(() => directory)
+  const dir = await realDirectory(directory)
+  const absolute = await locate(dir, file)
+  const root = await toplevel(dir).catch(() => dir)
   const inRepo = path.relative(root, absolute).split(path.sep).join("/")
 
   // Refuse to touch anything outside the project, however the path was spelled.
-  const inProject = path.relative(path.resolve(directory), absolute)
+  const inProject = path.relative(dir, absolute)
   if (inProject.startsWith("..") || path.isAbsolute(inProject)) {
     throw new Error(`Refusing to revert outside the project: ${file}`)
   }
