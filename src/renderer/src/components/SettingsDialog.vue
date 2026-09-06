@@ -1363,7 +1363,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   :placeholder="t('set.baseURL')"
                   spellcheck="false"
                   @input="endpoints[provider.id] = ($event.target as HTMLInputElement).value"
-                  @keydown.enter="saveEndpoint(provider.id)"
+                  v-enter="() => saveEndpoint(provider.id)"
                 />
                 <button
                   class="ctl-btn"

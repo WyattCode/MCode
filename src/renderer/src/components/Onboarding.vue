@@ -321,7 +321,7 @@ function openKeyPage() {
           type="password"
           :placeholder="t('set.pasteKey')"
           spellcheck="false"
-          @keydown.enter="connect"
+          v-enter="connect"
         />
         <template v-else>
           <div class="hint">{{ t("onboard.keyless") }}</div>
@@ -334,7 +334,7 @@ function openKeyPage() {
             spellcheck="false"
             autocomplete="off"
             @input="endpoint = ($event.target as HTMLInputElement).value"
-            @keydown.enter="connect"
+            v-enter="connect"
           />
           <div class="hint">{{ t("onboard.endpointHint") }}</div>
         </template>
