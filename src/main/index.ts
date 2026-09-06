@@ -139,10 +139,6 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  // Before the first window, so the permission is settled while the user is
-  // still setting up rather than halfway through connecting a provider.
-  askForLocalNetwork()
-
   /*
    * Both before the backend starts, so that whatever it says on the way up -
    * and a failure to come up at all - is already being kept by the time it
@@ -152,9 +148,25 @@ app.whenReady().then(async () => {
   captureConsole()
   wireProcessRecovery()
 
+  // Before the first window, so the permission is settled while the user is
+  // still setting up rather than halfway through connecting a provider - and
+  // after the recorders, so anything it says on the way is kept.
+  askForLocalNetwork()
+
   backend = await startBackend(app.getPath("userData"))
 
   // The renderer has no Node access; this is how it learns where to connect.
+  ipcMain.handle("mcode:bootstrap", () => ({
+    port: backend!.port,
+    // The socket refuses anything that cannot present this; see startBackend.
+    token: backend!.token,
+    platform: process.platform,
+    home: app.getPath("home"),
+    // app.getVersion() reports Electron's version until the app is packaged,
+    // so take the real one from package.json - the bundler inlines it.
+    version: pkg.version,
+  }))
+
   /**
    * Fetches something the user dragged in that arrived as a link.
    *
@@ -220,17 +232,6 @@ app.whenReady().then(async () => {
       data: buffer.toString("base64"),
     }
   }
-
-  ipcMain.handle("mcode:bootstrap", () => ({
-    port: backend!.port,
-    // The socket refuses anything that cannot present this; see startBackend.
-    token: backend!.token,
-    platform: process.platform,
-    home: app.getPath("home"),
-    // app.getVersion() reports Electron's version until the app is packaged,
-    // so take the real one from package.json - the bundler inlines it.
-    version: pkg.version,
-  }))
 
   /*
    * The title arrives from the renderer because only the renderer knows the
