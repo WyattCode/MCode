@@ -1,4 +1,5 @@
 import path from "node:path"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 import { WebSocketServer, type WebSocket } from "ws"
 import type { ClientFrame, ServerFrame } from "@shared/protocol"
 import { Storage } from "./storage"
@@ -27,7 +28,36 @@ export interface Runtime {
 export interface Backend {
   runtime: Runtime
   port: number
+  /** Handed to the renderer over the preload bridge; see the note on auth below. */
+  token: string
   close(): Promise<void>
+}
+
+/** Constant-time compare, so the token cannot be recovered a character at a time. */
+function sameToken(offered: string, expected: string): boolean {
+  const a = Buffer.from(offered)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/**
+ * Whether an Origin header could only have come from a web page.
+ *
+ * The renderer loads over file:// (or the dev server in development), so an
+ * http(s) origin that is not the dev server is a page in a browser. The token
+ * already stops it; this refuses the handshake before it is even considered.
+ */
+function foreignOrigin(origin: string | undefined): boolean {
+  if (!origin || origin === "null" || origin.startsWith("file://")) return false
+  const dev = process.env.ELECTRON_RENDERER_URL
+  if (dev) {
+    try {
+      if (origin === new URL(dev).origin) return false
+    } catch {
+      // A malformed dev URL is not a reason to admit the origin.
+    }
+  }
+  return true
 }
 
 /**
@@ -61,7 +91,32 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
    */
   void mcp.sync()
 
-  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 })
+  /*
+   * Loopback is not, on its own, a boundary. A browser may open a WebSocket to
+   * any origin without a preflight, and a page that guesses the port can reach
+   * everything behind this socket - reading files, opening a shell, running
+   * commands. So every connection must present a secret this process generates
+   * at startup and only ever hands to its own renderer. It travels as a
+   * subprotocol rather than in the URL: browsers cannot set request headers on
+   * a WebSocket, and a query string ends up in logs and error reports.
+   */
+  const token = randomBytes(32).toString("hex")
+
+  const server = new WebSocketServer({
+    host: "127.0.0.1",
+    port: 0,
+    verifyClient: ({ origin, req }, done) => {
+      if (foreignOrigin(origin)) return done(false, 403, "Forbidden")
+      const offered = String(req.headers["sec-websocket-protocol"] ?? "")
+        .split(",")
+        .map((entry) => entry.trim())
+      if (!offered.some((entry) => sameToken(entry, token))) return done(false, 401, "Unauthorized")
+      done(true)
+    },
+    // Echoed back so the browser's handshake completes; the client already
+    // knows it, so returning it tells an attacker nothing.
+    handleProtocols: (protocols) => (protocols.has(token) ? token : false),
+  })
   const clients = new Set<WebSocket>()
 
   bus.subscribe((event) => {
@@ -84,6 +139,17 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
        */
       shells.closeOwnedBy(socket)
     })
+
+    /*
+     * A permission request outlives the window that was asked. Closing a window
+     * mid-prompt used to strand the tool on a promise nothing could settle: the
+     * session stayed busy for the life of the process and refused every later
+     * message. Replaying what is still parked lets a reopened window answer it.
+     */
+    for (const request of permissions.outstanding()) {
+      const frame: ServerFrame = { kind: "event", event: { type: "permission.requested", request } }
+      socket.send(JSON.stringify(frame))
+    }
 
     socket.on("message", async (raw) => {
       let frame: ClientFrame
@@ -119,6 +185,7 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   return {
     runtime,
     port,
+    token,
     async close() {
       shells.closeAll()
       mcp.close()

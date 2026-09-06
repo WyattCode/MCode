@@ -529,7 +529,7 @@ export const useApp = defineStore("app", () => {
     // reconnecting in the background, racing the new one for the same events.
     client.value?.close()
 
-    const instance = new Client(bootstrap.port)
+    const instance = new Client(bootstrap.port, bootstrap.token)
     client.value = instance
     instance.on(apply)
     /*

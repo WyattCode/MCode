@@ -42,8 +42,17 @@ export class Client {
    */
   private address: string
 
-  constructor(private readonly port: number) {
+  constructor(
+    private readonly port: number,
+    /** Proves this is the app's own renderer rather than a page in a browser. */
+    private readonly token: string,
+  ) {
     this.address = `ws://127.0.0.1:${port}`
+  }
+
+  /** Only this app's own backend is given the token; see connect(). */
+  private get isLocal(): boolean {
+    return this.address === `ws://127.0.0.1:${this.port}`
   }
 
   /** Points at another server, and reconnects there. */
@@ -59,7 +68,13 @@ export class Client {
 
   connect(): void {
     if (this.closed) return
-    const socket = new WebSocket(this.address)
+    /*
+     * Sent as a subprotocol: a WebSocket cannot carry custom headers, and a
+     * query string would put the secret in logs and error reports. Only to the
+     * local backend - the token is this process's own, and a server the user
+     * names has no business being handed it.
+     */
+    const socket = this.isLocal ? new WebSocket(this.address, this.token) : new WebSocket(this.address)
     this.socket = socket
 
     socket.addEventListener("open", () => {
