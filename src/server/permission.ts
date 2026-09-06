@@ -142,6 +142,12 @@ export class Permissions {
      * whole bucket, which is far too broad for a directory outside the project.
      */
     scope?: string
+    /**
+     * The turn's abort signal. A prompt that is still parked when the turn is
+     * stopped has nobody left to answer it, and waiting on it forever kept the
+     * session marked busy for the life of the process.
+     */
+    signal?: AbortSignal
   }): Promise<void> {
     const action = this.action(input.kind)
     /*
@@ -167,10 +173,27 @@ export class Permissions {
       time: Date.now(),
     }
 
+    if (input.signal?.aborted) throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
+
+    /*
+     * The listener is taken off again once the prompt settles. A turn runs many
+     * steps and every prompt would otherwise leave one behind on the same
+     * signal, which the abort would then walk through - and hold in memory
+     * until the turn ended.
+     */
+    let settle: ((response: PermissionResponse) => void) | undefined
+    const stop = () => {
+      if (!this.pending.delete(request.id)) return
+      this.bus.publish({ type: "permission.resolved", requestID: request.id })
+      settle?.("reject")
+    }
+
     const response = await new Promise<PermissionResponse>((resolve) => {
+      settle = resolve
       this.pending.set(request.id, { request, resolve })
+      input.signal?.addEventListener("abort", stop, { once: true })
       this.bus.publish({ type: "permission.requested", request })
-    })
+    }).finally(() => input.signal?.removeEventListener("abort", stop))
 
     if (response === "always") {
       if (input.scope) this.allowOutside(input.sessionID, input.scope)

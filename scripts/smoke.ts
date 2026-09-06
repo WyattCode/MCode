@@ -248,6 +248,61 @@ async function main() {
   check("no second prompt was raised", permissions.outstanding().length === 0)
 
   /*
+   * A prompt nobody is left to answer.
+   *
+   * Closing the window mid-prompt left the tool parked on a promise that only
+   * the UI could settle: the session stayed busy for the life of the process
+   * and refused every later message. The turn's abort signal now settles it.
+   */
+  const stopping = new AbortController()
+  const stranded = permissions
+    .ask({
+      sessionID,
+      messageID: "msg_test",
+      callID: "c-abort",
+      kind: "bash",
+      title: "Run command",
+      subject: "sleep 1",
+      signal: stopping.signal,
+    })
+    .then(() => undefined, (error: unknown) => error)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  check("the prompt is parked before the abort", permissions.outstanding().length === 1)
+  stopping.abort()
+  check("aborting a turn settles its parked prompt", (await stranded) instanceof PermissionDenied, await stranded)
+  check("and leaves nothing outstanding", permissions.outstanding().length === 0)
+
+  /*
+   * Two tools in one turn can be waiting at once - the runner starts them
+   * together, and two edits in a turn is the ordinary case. The interface used
+   * to hold a single request, so the second prompt replaced the first and the
+   * tool behind it waited for an answer nobody could give any more.
+   */
+  const bothAsked = [
+    permissions.ask({ sessionID, messageID: "msg_test", callID: "c-q1", kind: "edit", title: "Edit file", subject: "one.ts" }),
+    permissions.ask({ sessionID, messageID: "msg_test", callID: "c-q2", kind: "edit", title: "Edit file", subject: "two.ts" }),
+  ].map((promise) => promise.then(() => "allowed", () => "denied"))
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const queued = permissions.outstanding()
+  check("two prompts can be outstanding at the same time", queued.length === 2, queued.map((entry) => entry.subject))
+  for (const entry of queued) permissions.respond(entry.id, "once")
+  check("and each is answered on its own", (await Promise.all(bothAsked)).join(",") === "allowed,allowed")
+
+  // Asking under a signal that has already fired must not raise a prompt at all.
+  const already = await permissions
+    .ask({
+      sessionID,
+      messageID: "msg_test",
+      callID: "c-abort2",
+      kind: "bash",
+      title: "Run command",
+      subject: "sleep 1",
+      signal: AbortSignal.abort(),
+    })
+    .then(() => undefined, (error: unknown) => error)
+  check("an already-aborted turn never asks", already instanceof PermissionDenied && permissions.outstanding().length === 0)
+
+  /*
    * The switch labelled "permission requests will be approved automatically".
    * It offered nine kinds; five belonged to tools that never ask, and the one
    * that guards reaching outside the project was not among them - so with the

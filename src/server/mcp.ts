@@ -518,6 +518,7 @@ export class McpServers {
              * user is actually making.
              */
             await context.permissions.ask({
+              signal: context.signal,
               sessionID: context.sessionID,
               messageID: context.messageID,
               callID: context.callID,
