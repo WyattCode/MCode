@@ -10,6 +10,13 @@ const MAX_LINE_LENGTH = 2000
 /** Files the model gains nothing from reading as text. */
 const BINARY = /\.(png|jpe?g|gif|webp|ico|bmp|tiff|pdf|zip|gz|tar|7z|rar|exe|dll|so|dylib|woff2?|ttf|eot|mp[34]|mov|avi|wasm|class|jar|bin)$/i
 
+function count(value: unknown, fallback: number, name: string): number {
+  if (value === undefined || value === null) return fallback
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) throw new ToolError(`${name} must be a number, got ${JSON.stringify(value)}`)
+  return parsed
+}
+
 export const ReadTool: ToolDefinition = {
   name: "read",
   description:
@@ -41,8 +48,11 @@ export const ReadTool: ToolDefinition = {
 
     const raw = await fs.readFile(target, "utf8")
     const lines = raw.split("\n")
-    const offset = Math.max(1, Number(input.offset ?? 1))
-    const limit = Math.max(1, Number(input.limit ?? MAX_LINES))
+    // Number("x") is NaN, Math.max(1, NaN) is NaN, and slice(NaN) reads from the
+    // start - so a malformed offset used to return the whole file as if it had
+    // been asked for.
+    const offset = Math.max(1, Math.trunc(count(input.offset, 1, "offset")))
+    const limit = Math.max(1, Math.trunc(count(input.limit, MAX_LINES, "limit")))
     const slice = lines.slice(offset - 1, offset - 1 + limit)
 
     const numbered = slice

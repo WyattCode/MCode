@@ -26,7 +26,65 @@ function lcsMatrix(a: string[], b: string[]): Uint32Array {
   return table
 }
 
+/**
+ * How large an LCS table this is willing to build, in cells.
+ *
+ * The table is quadratic in the number of lines, which is fine for the edits
+ * this actually sees and ruinous for the ones it does not: appending a line to
+ * a 60k-line file asked for a 13 GB allocation and eighty seconds of arithmetic
+ * - with the backend living in the main process, that is the whole app frozen.
+ * Four million cells is sixteen megabytes and a few tens of milliseconds.
+ */
+const MAX_CELLS = 4_000_000
+
+/**
+ * The changed region, once the matching head and tail are set aside.
+ *
+ * Nearly every edit leaves long identical runs at both ends, and they cost the
+ * same as changed lines inside the table. Trimming them first is what keeps the
+ * common case - a few lines changed in a big file - exact and instant.
+ */
+function trimmed(a: string[], b: string[]): { head: number; tail: number } {
+  let head = 0
+  while (head < a.length && head < b.length && a[head] === b[head]) head++
+  let tail = 0
+  while (
+    tail < a.length - head &&
+    tail < b.length - head &&
+    a[a.length - 1 - tail] === b[b.length - 1 - tail]
+  ) {
+    tail++
+  }
+  return { head, tail }
+}
+
 function diffLines(a: string[], b: string[]): Op[] {
+  const { head, tail } = trimmed(a, b)
+  const middleA = a.slice(head, a.length - tail)
+  const middleB = b.slice(head, b.length - tail)
+
+  const ops: Op[] = []
+  for (let i = 0; i < head; i++) ops.push({ kind: "equal", line: a[i] })
+  for (const op of changed(middleA, middleB)) ops.push(op)
+  for (let i = a.length - tail; i < a.length; i++) ops.push({ kind: "equal", line: a[i] })
+  return ops
+}
+
+/**
+ * Whatever is left in the middle.
+ *
+ * Past the size limit the region is reported as a wholesale replacement rather
+ * than a minimal edit script. That is a coarser diff, not a wrong one, and it
+ * is what a diff of two files with nothing in common looks like anyway.
+ */
+function changed(a: string[], b: string[]): Op[] {
+  if (!a.length || !b.length || (a.length + 1) * (b.length + 1) > MAX_CELLS) {
+    return [
+      ...a.map((line): Op => ({ kind: "delete", line })),
+      ...b.map((line): Op => ({ kind: "insert", line })),
+    ]
+  }
+
   const width = b.length + 1
   const table = lcsMatrix(a, b)
   const ops: Op[] = []

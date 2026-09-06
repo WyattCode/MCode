@@ -10,9 +10,23 @@ import { randomBytes } from "node:crypto"
 const counters = new Map<string, { time: number; seq: number }>()
 
 export function id(prefix: string): string {
-  const now = Date.now()
   const state = counters.get(prefix)
+  /*
+   * The clock is allowed to jump backwards - an NTP correction is enough - and
+   * an id stamped with the earlier time would sort in front of ids already
+   * written, which is how a transcript ends up out of order. Time only ever
+   * moves forward here.
+   */
+  let now = Math.max(Date.now(), state?.time ?? 0)
   if (!state || state.time !== now) {
+    counters.set(prefix, { time: now, seq: 0 })
+  } else if (state.seq >= 0xffff) {
+    /*
+     * The counter is four hex digits wide, and a fifth would sort in front of
+     * every id already written rather than after them. Borrowing a millisecond
+     * keeps the width fixed and the order intact.
+     */
+    now += 1
     counters.set(prefix, { time: now, seq: 0 })
   } else {
     state.seq++
