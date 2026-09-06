@@ -167,6 +167,38 @@ async function main(): Promise<void> {
    */
   console.log("asking the reader a question")
   {
+    /*
+     * A read of a path that is not there names its neighbours, the way the
+     * reference's ReadTool.miss does: up to three entries of the same directory
+     * whose name contains the requested one or is contained by it, without
+     * case. A model that asked for `net` beside `net.c` is told; one that asked
+     * for something unlike anything there gets the bare message, not a list of
+     * everything in the folder.
+     */
+    console.log("read tells a miss what is nearby")
+    {
+      const read = findTool("read")
+      if (!read) throw new Error("the registry is missing the read tool")
+      const nest = path.join(project, "near")
+      await fs.mkdir(nest, { recursive: true })
+      for (const name of ["net.c", "net.o", "NET.C.bak", "other.c"]) await fs.writeFile(path.join(nest, name), "x", "utf8")
+      const controller = new AbortController()
+      const miss = async (rel: string) => {
+        try {
+          await read.execute({ path: rel }, context(controller.signal))
+          return "(no error)"
+        } catch (failure) {
+          return (failure as Error).message
+        }
+      }
+      const near = await miss("near/net")
+      check("a near miss lists its neighbours", near.includes("Did you mean one of these?"), near)
+      check("the list holds the three that match, in directory order", near.endsWith("near/net.c\nnear/NET.C.bak\nnear/net.o"), near)
+      check("and the file that does not match is left out", !near.includes("other.c"), near)
+      const far = await miss("near/nothing-like-it.txt")
+      check("a miss with no neighbours is the bare message", far === "File not found: near/nothing-like-it.txt", far)
+    }
+
     const question = findTool("question")
     if (!question) throw new Error("the registry is missing the question tool")
 

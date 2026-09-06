@@ -1,4 +1,5 @@
 import fs from "node:fs/promises"
+import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
@@ -34,7 +35,7 @@ export const ReadTool: ToolDefinition = {
     try {
       stat = await fs.stat(target)
     } catch {
-      throw new ToolError(`File not found: ${display}`)
+      throw new ToolError(await missing(context.directory, target, display))
     }
     if (stat.isDirectory()) throw new ToolError(`${display} is a directory - use the list tool instead`)
 
@@ -60,4 +61,24 @@ export const ReadTool: ToolDefinition = {
       metadata: { path: display, lines: lines.length, shown: slice.length },
     }
   },
+}
+
+/*
+ * The reference's `ReadTool.miss`: a path that is not there is answered with
+ * up to three names from the same directory that contain the requested name
+ * or are contained by it, compared without case. So `net` is answered with
+ * `net.c` and `net.o`, and `Config.ts` with `config.ts` - but `net.h` beside
+ * only `net.c` gets nothing, because neither name contains the other. That
+ * is the reference's rule as it stands, kept as it stands.
+ */
+async function missing(root: string, target: string, display: string): Promise<string> {
+  const dir = path.dirname(target)
+  const base = path.basename(target).toLowerCase()
+  const entries = await fs.readdir(dir).catch(() => [] as string[])
+  const near = entries
+    .filter((name) => name.toLowerCase().includes(base) || base.includes(name.toLowerCase()))
+    .slice(0, 3)
+    .map((name) => relative(root, path.join(dir, name)))
+  if (near.length === 0) return `File not found: ${display}`
+  return `File not found: ${display}\nDid you mean one of these?\n${near.join("\n")}`
 }
