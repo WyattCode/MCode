@@ -150,7 +150,9 @@ export const useApp = defineStore("app", () => {
     const target = sessionID ?? currentID.value
     if (!target || !pendingPermissions.value.has(target)) return
     const next = new Map(pendingPermissions.value)
-    const queue = (next.get(target) ?? []).filter((entry) => requestID && entry.id !== requestID)
+    // No id means the whole session's queue goes, which is what closing or
+    // deleting a session wants.
+    const queue = requestID ? (next.get(target) ?? []).filter((entry) => entry.id !== requestID) : []
     if (queue.length) next.set(target, queue)
     else next.delete(target)
     pendingPermissions.value = next
