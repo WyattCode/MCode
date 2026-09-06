@@ -12,6 +12,7 @@ import { isKnownOpenWith } from "@shared/open-app"
 import { applyZoom } from "./zoom"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { cascade, restore, track } from "./window-state"
+import { askForLocalNetwork } from "./local-network"
 import pkg from "../../package.json"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -145,6 +146,10 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
+  // Before the first window, so the permission is settled while the user is
+  // still setting up rather than halfway through connecting a provider.
+  askForLocalNetwork()
+
   /*
    * Both before the backend starts, so that whatever it says on the way up -
    * and a failure to come up at all - is already being kept by the time it

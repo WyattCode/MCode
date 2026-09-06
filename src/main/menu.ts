@@ -66,8 +66,15 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
               { type: "separator" },
               { label: L("menu.settings", "Settings..."), accelerator: "Cmd+,", click: send("menu:settings") },
               { type: "separator" },
+              // Services is not decoration: it is how a macOS app takes part in
+              // the system-wide text actions other apps contribute. Neither it
+              // nor Show All carries an accelerator, so neither can take a key
+              // this app has already spent.
+              { role: "services", label: L("menu.services", "Services") },
+              { type: "separator" },
               { role: "hide", label: L("menu.hide", "Hide MCode") },
               { role: "hideOthers", label: L("menu.hideOthers", "Hide Others") },
+              { role: "unhide", label: L("menu.showAll", "Show All") },
               { type: "separator" },
               { role: "quit", label: L("menu.quit", "Quit") },
             ],
@@ -187,6 +194,17 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
         { label: L("menu.minimize", "Minimize"), click: () => BrowserWindow.getFocusedWindow()?.minimize() },
         { label: L("menu.zoom", "Zoom"), click: toggleMaximize },
         { label: L("menu.close", "Close"), click: () => BrowserWindow.getFocusedWindow()?.close() },
+        /*
+         * The one role that belongs here: bringing every window forward is an
+         * OS behaviour with no in-app equivalent, and it carries no accelerator
+         * of its own, so it takes nothing from the keys above.
+         */
+        ...(isMac
+          ? ([
+              { type: "separator" },
+              { role: "front", label: L("menu.front", "Bring All to Front") },
+            ] as MenuItemConstructorOptions[])
+          : []),
       ],
     },
     {

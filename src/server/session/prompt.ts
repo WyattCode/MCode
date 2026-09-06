@@ -87,7 +87,7 @@ async function environment(directory: string): Promise<string> {
 
 Project directory: ${directory}
 Platform: ${process.platform} (${os.release()})
-Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || "/bin/bash"}
+Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || (process.platform === "darwin" ? "/bin/zsh" : "/bin/bash")}
 Today: ${new Date().toISOString().slice(0, 10)}
 
 Top level of the project: ${entries}`

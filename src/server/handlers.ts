@@ -239,7 +239,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        */
       if (local && definition && request.apiKey) {
         const models = await discoverModels(definition, "local").catch((cause: Error) => {
-          throw new Error(`${definition.name} did not answer. Start it and try again - ${cause.message}`)
+          throw new Error(
+            `${definition.name} did not answer. Start it and try again${localNetworkHint(definition.baseURL)} - ${cause.message}`,
+          )
         })
         const wasConfigured = Boolean(runtime.config.apiKey(request.provider))
         const before = runtime.config.models(request.provider).map((model) => model.id)
@@ -559,6 +561,28 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 }
 
 const MAX_FILES = 500
+
+/**
+ * The other reason a runtime on the network goes quiet on macOS.
+ *
+ * "Start it and try again" is the right advice for a runtime that is not
+ * running, and the wrong advice for one that is: a denied Local Network
+ * permission fails the request the same way, and sends the user off to debug a
+ * process that was working the whole time. Loopback is exempt, so this is only
+ * worth saying when the runtime lives on another machine.
+ */
+function localNetworkHint(baseURL: string | undefined): string {
+  if (process.platform !== "darwin" || !baseURL) return ""
+  let host: string
+  try {
+    host = new URL(baseURL).hostname
+  } catch {
+    return ""
+  }
+  const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")
+  if (loopback) return ""
+  return ", and check that MCode is allowed under Privacy & Security > Local Network in System Settings"
+}
 
 /**
  * Flat file listing for the file picker in the composer and the palette.

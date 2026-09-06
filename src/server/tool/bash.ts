@@ -102,6 +102,11 @@ const REFUSED: { pattern: RegExp; reason: string }[] = [
  */
 const POWERSHELL_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
 
+/** macOS has defaulted to zsh since Catalina; every other unix still ships bash. */
+function defaultShell(): string {
+  return process.platform === "darwin" ? "/bin/zsh" : "/bin/bash"
+}
+
 function shell(chosen?: string): { command: string; args: (script: string) => string[] } {
   const name = (chosen ?? "").trim()
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? ""
@@ -128,7 +133,10 @@ function shell(chosen?: string): { command: string; args: (script: string) => st
       args: (script) => ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
     }
   }
-  return { command: process.env.SHELL || "/bin/bash", args: (script) => ["-lc", script] }
+  // -l so a GUI-launched app still sees the user's PATH: macOS hands a bundle
+  // launched from Finder only /usr/bin:/bin:/usr/sbin:/sbin, so anything under
+  // /opt/homebrew or a version manager is invisible until the profile is read.
+  return { command: process.env.SHELL || defaultShell(), args: (script) => ["-lc", script] }
 }
 
 /**

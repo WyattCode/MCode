@@ -326,6 +326,8 @@ function shellCommand(chosen?: string): { command: string; args: string[] } {
  * that a reader is likely to have configured a prompt in.
  */
 function preferred(): string {
+  // macOS has defaulted to zsh since Catalina; the bash it ships is 3.2.
+  if (process.platform === "darwin") return process.env.SHELL || "/bin/zsh"
   if (process.platform !== "win32") return process.env.SHELL || "/bin/bash"
   return which("pwsh") ?? which("powershell") ?? gitBash() ?? process.env.COMSPEC ?? "cmd.exe"
 }
