@@ -40,6 +40,16 @@ const api = {
     return () => ipcRenderer.off("mcode:notify-click", listener)
   },
 
+  /** The state at startup; the event below carries every change after it. */
+  isFullScreen: (): Promise<boolean> => ipcRenderer.invoke("mcode:is-full-screen"),
+
+  /** Whether this window is full screen; see the main process for why. */
+  onFullScreen: (handler: (fullScreen: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, fullScreen: boolean) => handler(fullScreen)
+    ipcRenderer.on("mcode:full-screen", listener)
+    return () => ipcRenderer.off("mcode:full-screen", listener)
+  },
+
   clipboardText: (): Promise<string> => ipcRenderer.invoke("mcode:clipboard-text"),
   setClipboardText: (text: string): void => ipcRenderer.send("mcode:clipboard-write", text),
 

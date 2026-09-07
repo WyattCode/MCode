@@ -142,6 +142,18 @@ function createWindow(): BrowserWindow {
   window.webContents.on("did-finish-load", () => refreshTitlebar(window))
 
   window.once("ready-to-show", () => window.show())
+
+  /*
+   * Full screen takes the traffic lights away, and the room reserved for them
+   * has to go with them - otherwise the row starts ninety pixels in with
+   * nothing beside it. The page cannot see this for itself: the lights are the
+   * system's, drawn outside the web contents.
+   */
+  const tellFullScreen = () => {
+    if (!window.isDestroyed()) window.webContents.send("mcode:full-screen", window.isFullScreen())
+  }
+  window.on("enter-full-screen", tellFullScreen)
+  window.on("leave-full-screen", tellFullScreen)
   window.on("closed", () => windows.delete(window))
 
   // Anything the page tries to open externally goes to the real browser, never
@@ -177,6 +189,15 @@ app.whenReady().then(async () => {
   backend = await startBackend(app.getPath("userData"))
 
   // The renderer has no Node access; this is how it learns where to connect.
+  /*
+   * Asked for rather than only pushed. A window restored into full screen is
+   * already in it before the page exists, and a state sent on did-finish-load
+   * would race the component that subscribes in its own mount.
+   */
+  ipcMain.handle("mcode:is-full-screen", (event) =>
+    Boolean(BrowserWindow.fromWebContents(event.sender)?.isFullScreen()),
+  )
+
   ipcMain.handle("mcode:bootstrap", () => ({
     port: backend!.port,
     // The socket refuses anything that cannot present this; see startBackend.
