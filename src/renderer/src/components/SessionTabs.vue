@@ -560,11 +560,14 @@ async function commitRename(id: string) {
   color: var(--text-weak);
   font-size: 13px;
   /*
-   * Five hundred, not the 530 the row titles take. The reference runs two
-   * weights and the difference is not noise: its tab-link and its tool rows
-   * measure 500, while its session rows and settings row titles measure 530.
+   * The lighter of the two weights this interface runs, not the 500 measured
+   * off the reference. That measurement was taken on Latin text, where 500
+   * reads as medium; the same weight on Chinese glyphs, which carry far more
+   * strokes in the same box, reads as bold. 440 is what the rest of the
+   * interface already uses for text at this level, so the tab stops being a
+   * third value as well as stopping being heavy.
    */
-  font-weight: 500;
+  font-weight: 440;
   /* A button centres its text; the title belongs against the avatar. */
   text-align: start;
 }
