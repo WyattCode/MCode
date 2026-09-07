@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import SessionTabs from "./SessionTabs.vue"
@@ -27,6 +27,23 @@ const app = useApp()
 const mac = computed(() => app.platform === "darwin")
 
 /**
+ * Full screen, told to the page by the window that is in it.
+ *
+ * The lights are the system's and are drawn outside the web contents, so their
+ * absence is not something the page can see - and the room reserved for them
+ * has to go when they do, or the row starts ninety pixels in beside nothing.
+ */
+const fullScreen = ref(false)
+let offFullScreen: (() => void) | undefined
+onMounted(async () => {
+  offFullScreen = window.mcode.onFullScreen((value) => (fullScreen.value = value))
+  // The window may already be in it: restoring one that was left full screen
+  // puts it there before this page exists to be told.
+  fullScreen.value = await window.mcode.isFullScreen()
+})
+onBeforeUnmount(() => offFullScreen?.())
+
+/**
  * The menu hangs from the edge its button begins at, just under the bar. A
  * rectangle is measured from the viewport's left whichever way the text runs,
  * so in a mirrored layout the distance the menu wants is the one back from the
@@ -41,7 +58,7 @@ function openMenu(event: MouseEvent) {
 </script>
 
 <template>
-  <header class="titlebar" :class="{ mac }">
+  <header class="titlebar" :class="{ mac, 'full-screen': fullScreen }">
     <div class="bar">
       <button
         class="ico"
@@ -264,6 +281,11 @@ function openMenu(event: MouseEvent) {
  */
 .titlebar.mac .bar {
   padding-left: 90px;
+}
+
+/* No lights to leave room for; the row takes its ordinary lead-in back. */
+.titlebar.mac.full-screen .bar {
+  padding-left: 20px;
 }
 
 /* Only the controls themselves opt out of dragging - marking their containers
