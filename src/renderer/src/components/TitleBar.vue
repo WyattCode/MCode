@@ -252,12 +252,18 @@ function openMenu(event: MouseEvent) {
 
 /*
  * Room for the traffic lights, and physical for the same reason the Windows
- * offset above is: macOS draws them where its own settings say, not where this
- * app's text happens to begin, so the reservation has to stay on the left even
- * when the row itself is read the other way.
+ * offset above is: they sit on the left whatever direction the row is read in,
+ * so the reservation has to stay on the left even when the row mirrors.
+ *
+ * The number is derived, not guessed: the window places the group at x=20 (see
+ * trafficLightPosition in the main process) and the group measures 60px, so it
+ * ends at 80. A control is 28px around a 12px glyph, so starting the row at 90
+ * leaves 18px of clear space between the last light and the first glyph -
+ * measured off the system's own toolbars, where the gap runs about one and a
+ * third times a light's width.
  */
 .titlebar.mac .bar {
-  padding-left: 78px;
+  padding-left: 90px;
 }
 
 /* Only the controls themselves opt out of dragging - marking their containers
