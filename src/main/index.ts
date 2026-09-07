@@ -72,6 +72,20 @@ function createWindow(): BrowserWindow {
     // dark chrome instead of the OS default.
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     /*
+     * The lights are placed rather than left where hiddenInset puts them.
+     *
+     * Where that is has moved: measured on this system they run to x=82.5,
+     * past the 78px the bar reserves, so the first button sat under the green
+     * one. And hiddenInset centres them at y=17.8 while the bar's controls -
+     * held 8px down so the tabs meet the page below - centre at 22, leaving
+     * the row four pixels adrift of the lights it sits beside.
+     *
+     * Naming both numbers fixes both: y=16 puts a 12px light's centre at 22,
+     * level with the controls, and x=20 keeps the group where macOS itself
+     * starts it. The bar's reservation is derived from these; see TitleBar.vue.
+     */
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 20, y: 16 } } : {}),
+    /*
      * Windows keeps its own caption buttons, drawn into the bar as an overlay.
      *
      * A hand-drawn set looks close but is not the same control: it misses the
