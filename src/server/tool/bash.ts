@@ -205,15 +205,16 @@ export const BashTool: ToolDefinition = {
     return await new Promise((resolve, reject) => {
       /*
        * No stdin, as the reference spawns it (`stdin: "ignore"`). The command
-       * arrives as an argument, so the shell never reads stdin - but a pipe left
-       * open here is inherited by everything the command starts, and PowerShell
-       * 5.1 with a redirected stdin reads it to EOF before it will exit. Under
-       * Electron, whose main process has no console, a `powershell -Command`
-       * nested inside the command printed its output and then sat until the
-       * timeout killed it: 30,018ms for a Get-Command that takes 192ms unnested,
-       * 120s on the user's screen. The same probe in a terminal returned in
-       * 326ms, because there the pipe traced back to a console. `ignore` hands
-       * the child a closed handle, so there is nothing to wait for.
+       * arrives as an argument, so the shell never reads stdin itself - but an
+       * open pipe here is inherited by everything the command starts, and a
+       * PowerShell in that tree that hits a cmdlet missing a mandatory parameter
+       * prompts for it on stdin. The user's screen had exactly that: a nested
+       * `powershell -Command "... Test-Path $_ ..."`, whose `$_` the outer shell
+       * expanded to nothing inside the double quotes, so the inner one asked for
+       * a Path and waited the whole 120s for an answer that could not come. With
+       * a closed handle the prompt fails at once and the command reports its
+       * error. Measured under Electron in scripts/tool-check-nested-electron.cjs:
+       * 8,035ms to the timeout with a pipe, 379ms without one.
        */
       const child = spawn(bin, args(command), {
         cwd,
