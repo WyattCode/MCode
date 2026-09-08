@@ -21,8 +21,14 @@ body {
   font-size: var(--font-size-base);
   /*
    * Four-forty, not four hundred. opencode sets Inter's variable axis to 440
-   * for body text and 530 for emphasis; at 400 every label in this app read a
-   * shade lighter than the same label in the reference, everywhere at once.
+   * for body text; at 400 every label in this app read a shade lighter than the
+   * same label in the reference, everywhere at once.
+   *
+   * Its emphasis axis is 530, and that one this app does not follow. The
+   * reference is a Latin interface, where a variable face renders 530 as asked.
+   * Chinese is set in PingFang, which is not variable and carries three static
+   * weights - so 530 resolves to Semibold and every emphasised label came out a
+   * full step heavier than the design. 500 lands on Medium in both scripts.
    */
   font-weight: 440;
   line-height: var(--line-height-large);
@@ -306,7 +312,7 @@ kbd {
   margin: 0;
   color: var(--text-strong);
   font-size: 15px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.13px;
   user-select: none;
@@ -436,7 +442,7 @@ kbd {
   background: var(--surface-key);
   border-radius: 2px;
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   letter-spacing: 0.05px;
   /* opencode sets its caps in capitals however the binding was written. */
   text-transform: uppercase;

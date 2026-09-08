@@ -1620,7 +1620,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 8.5px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .slash-title {
@@ -2024,14 +2024,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border: 0.5px solid var(--border-weak);
   border-radius: 2px;
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   letter-spacing: 0.05px;
 }
 
 .mode-exit {
   color: var(--text-weak);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   letter-spacing: 0.05px;
 }
 
@@ -2246,7 +2246,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-menu);
   color: var(--text-weak);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: 0.05px;
 }
@@ -2305,7 +2305,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  */
 .item.on {
   color: var(--text-accent);
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .item-name {

@@ -156,7 +156,7 @@ function initial(name: string): string {
   border: 2px solid transparent;
   border-radius: var(--radius-lg);
   font-size: 14px;
-  font-weight: 530;
+  font-weight: 500;
   transition: border-color 0.12s, transform 0.12s;
 }
 

@@ -1850,7 +1850,7 @@ onBeforeUnmount(() => observer?.disconnect())
   padding-inline-start: 8px;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .side-filter {
@@ -2037,7 +2037,7 @@ onBeforeUnmount(() => observer?.disconnect())
   width: 16px;
   height: 16px;
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.04px;
   font-variant-numeric: tabular-nums lining-nums;
@@ -2166,7 +2166,7 @@ onBeforeUnmount(() => observer?.disconnect())
   min-width: 0;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2257,7 +2257,7 @@ onBeforeUnmount(() => observer?.disconnect())
   flex: none;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.04px;
   white-space: nowrap;
@@ -2333,7 +2333,7 @@ onBeforeUnmount(() => observer?.disconnect())
   margin-top: -8px;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.04px;
 }
@@ -2399,7 +2399,7 @@ onBeforeUnmount(() => observer?.disconnect())
 .init-title {
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .init-sub {
@@ -2433,7 +2433,7 @@ onBeforeUnmount(() => observer?.disconnect())
   color: var(--text-strong);
   border-radius: var(--radius-md);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   transition: background 0.12s;
 }
 
@@ -2513,7 +2513,7 @@ onBeforeUnmount(() => observer?.disconnect())
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 8.5px;
-  font-weight: 530;
+  font-weight: 500;
   letter-spacing: -0.02em;
 }
 

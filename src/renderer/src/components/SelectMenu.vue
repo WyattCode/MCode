@@ -313,6 +313,6 @@ onBeforeUnmount(() => {
  */
 .select-pop .item.on {
   color: var(--text-accent);
-  font-weight: 530;
+  font-weight: 500;
 }
 </style>

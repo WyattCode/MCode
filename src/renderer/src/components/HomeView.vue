@@ -607,7 +607,7 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
 }
 
 .head-label.strong {
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .head-ico {
@@ -888,7 +888,7 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   color: var(--text-base);
   border-radius: var(--radius-md);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.04px;
   transition: background 0.12s, color 0.12s;
@@ -936,7 +936,7 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   flex: 1 1 auto;
   min-width: 0;
   color: var(--text-strong);
-  font-weight: 530;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -983,7 +983,7 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   background: hsl(var(--h) 42% 46%);
   border-radius: var(--radius-sm);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
 }
 
@@ -1011,7 +1011,7 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   flex-shrink: 0;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 13px;
   letter-spacing: -0.04px;
 }
@@ -1040,7 +1040,7 @@ const utilities: { label: string; paths: string[]; linecap?: "square"; open: () 
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-input);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.04px;
 }

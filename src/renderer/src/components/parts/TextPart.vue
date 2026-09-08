@@ -186,7 +186,7 @@ const html = computed(() => renderMarkdown(props.part.text))
   color: var(--text-base);
   background: color-mix(in oklch, var(--text-base) 8%, transparent);
   border-radius: 4px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .text .md-code {

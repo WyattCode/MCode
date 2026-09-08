@@ -147,8 +147,9 @@ const summary = computed(() =>
  * here had no weight of their own and inherited the interface's 440, so the
  * line read as two different types set beside each other.
  *
- * Five hundred rather than the interface's 530 because that is what the
- * reference sets its tool rows in.
+ * Five hundred, which is what the reference sets its tool rows in - and now
+ * also what the interface uses for emphasis everywhere, so this no longer
+ * differs from it.
  */
 .verb {
   color: var(--text-strong);

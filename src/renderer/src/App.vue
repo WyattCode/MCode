@@ -1064,7 +1064,7 @@ async function shareSession() {
     "main{max-width:760px;margin:0 auto;padding:40px 20px}",
     "h1{font-size:17px;font-weight:600;margin:0 0 24px}",
     ".turn{margin:0 0 24px}",
-    ".who{font-size:11px;font-weight:530;letter-spacing:.05px;color:gray;margin:0 0 6px}",
+    ".who{font-size:11px;font-weight:500;letter-spacing:.05px;color:gray;margin:0 0 6px}",
     ".said{overflow-wrap:anywhere}",
     ".said p{margin:0 0 12px}.said p:last-child{margin:0}",
     ".said pre{background:#161616;border-radius:6px;padding:10px 12px;overflow-x:auto}",
