@@ -7,9 +7,11 @@
  * Neither is visible from the interface and neither is a type error.
  */
 import fs from "node:fs/promises"
+import { createRequire } from "node:module"
+import { pathToFileURL } from "node:url"
 import path from "node:path"
 import os from "node:os"
-import { execSync } from "node:child_process"
+import { execSync, spawn } from "node:child_process"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
@@ -202,6 +204,42 @@ async function main(): Promise<void> {
       check("and the file that does not match is left out", !near.includes("other.c"), near)
       const far = await miss("near/nothing-like-it.txt")
       check("a miss with no neighbours is the bare message", far === "File not found: near/nothing-like-it.txt", far)
+    }
+
+    /*
+     * A command that starts another PowerShell must still finish. The tool
+     * hands its child no stdin, as the reference does (`stdin: "ignore"`),
+     * because a pipe left open is inherited by whatever the command starts, and
+     * PowerShell 5.1 with a redirected stdin reads it to EOF before it exits.
+     * Under Electron, whose main process has no console, that was a 120s
+     * timeout for a Get-Command. It cannot be seen from node.exe at all - a
+     * console-subsystem parent gives every child some console, and the nested
+     * shell returns in 300ms with or without the fix - so the case runs under
+     * Electron itself, in scripts/tool-check-nested-electron.cjs. Verified to
+     * report the full timeout with the fix reverted.
+     */
+    if (process.platform === "win32") {
+      console.log("a nested PowerShell exits when the tool's child has no stdin (under Electron)")
+      const bundle = path.resolve("out", "tool-check-nested.mjs")
+      const verdict = path.join(root, "nested-verdict.txt")
+      execSync(
+        `npx esbuild scripts/tool-check-nested.ts --bundle --platform=node --format=esm --target=node22 --alias:@shared=./src/shared --packages=external --outfile=${JSON.stringify(bundle)}`,
+        { stdio: "ignore" },
+      )
+      const electron = createRequire(import.meta.url)("electron") as unknown as string
+      const child = spawn(electron, [path.resolve("scripts", "tool-check-nested-electron.cjs"), bundle, verdict, project], {
+        // Electron gets an open pipe for stdin that this side never closes -
+        // the shape it has when launched from a terminal with `&`, which is how
+        // the hang was hit. With "ignore" here it cannot be reproduced at all.
+        stdio: ["pipe", "ignore", "ignore"],
+        windowsHide: true,
+      })
+      const code = await new Promise<number>((resolve) => child.on("close", (c) => resolve(c ?? 1)))
+      const said = await fs.readFile(verdict, "utf8").catch(() => "")
+      const elapsed = Number(/^(?:done|failed) (\d+)/.exec(said)?.[1] ?? -1)
+      check("the nested shell came back", said.startsWith("done"), said.trim().slice(0, 300))
+      check("and well inside its timeout", elapsed >= 0 && elapsed < 4000, `${elapsed}ms`)
+      check("electron exited cleanly", code === 0, String(code))
     }
 
     const question = findTool("question")
