@@ -276,7 +276,7 @@ h1 {
   margin: 0;
   color: var(--text-strong);
   font-size: 18px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 24px;
 }
 

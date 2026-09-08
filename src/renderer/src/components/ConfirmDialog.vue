@@ -65,7 +65,7 @@ h2 {
   margin: 0;
   color: var(--text-strong);
   font-size: 15px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.13px;
 }

@@ -403,7 +403,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   color: var(--text-strong);
   font-size: 19px;
-  font-weight: 530;
+  font-weight: 500;
   letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;

@@ -466,7 +466,7 @@ onMounted(() => {
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 8.5px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .title {

@@ -234,7 +234,7 @@ function openMenu(event: MouseEvent) {
   color: var(--text-strong);
   border-radius: 6px;
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 16px;
   letter-spacing: -0.04px;
   text-overflow: ellipsis;
@@ -317,7 +317,7 @@ function openMenu(event: MouseEvent) {
  * never wraps and so cannot hold a column of name-and-value rows.
  *
  * The box itself is the reference's, measured: 5px by 6px of padding, a 4px
- * radius, 11px type at weight 530 on a 12px line, and the whole thing 120px
+ * radius, 11px type at the emphasis weight on a 12px line, and the whole 120px
  * wide with 8px between rows. That is also all but exactly what v-tip draws,
  * so the two do not read as coming from different applications.
  *
@@ -343,7 +343,7 @@ function openMenu(event: MouseEvent) {
   border-radius: 4px;
   box-shadow: var(--shadow-lg);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 12px;
   letter-spacing: 0.05px;
   /* Figures that change as a turn runs, so the columns must not shift under

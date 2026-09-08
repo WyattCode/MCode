@@ -665,7 +665,7 @@ function cancel() {
 .note-footer-meta {
   color: var(--text-weaker);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: 0.05px;
 }
@@ -709,7 +709,7 @@ function cancel() {
   width: 100%;
   color: var(--text-base);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.04px;
   user-select: none;

@@ -386,7 +386,7 @@ h1 {
   margin: 0;
   color: var(--text-strong);
   font-size: 24px;
-  font-weight: 530;
+  font-weight: 500;
   letter-spacing: -0.01em;
 }
 
@@ -463,7 +463,7 @@ h1 {
   background: var(--surface-base);
   border-radius: var(--radius-sm);
   font-size: 11.5px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .choice.on .mono-mark {

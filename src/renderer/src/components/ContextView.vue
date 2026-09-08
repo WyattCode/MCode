@@ -430,7 +430,7 @@ const rendered = computed(() => {
   overflow: hidden;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1.5;
   /* Figures that change as a turn runs, so the columns must not shift under
      them as digits swap. */
@@ -612,7 +612,7 @@ const rendered = computed(() => {
 .row-who {
   flex-shrink: 0;
   color: var(--text-strong);
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .row-dot {

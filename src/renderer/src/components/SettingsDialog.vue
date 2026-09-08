@@ -1784,7 +1784,7 @@ h3 {
 .line-title {
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.04px;
 }
@@ -1919,7 +1919,7 @@ h3 {
   margin: 0;
   color: var(--error);
   font-size: 12.5px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .danger-btn:disabled {
@@ -2272,7 +2272,7 @@ h3 {
   background: var(--surface-raised-hover);
   border-radius: var(--radius-md);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .pmark.on {
@@ -2291,7 +2291,7 @@ h3 {
   gap: 8px;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
   letter-spacing: -0.04px;
 }

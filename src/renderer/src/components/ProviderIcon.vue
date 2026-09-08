@@ -49,7 +49,7 @@ const color = computed(() => providerColor(props.id))
   font-family: var(--font-mono);
   /* Sized to sit level with a drawn mark rather than to fit the box. */
   font-size: 15px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
 }
 

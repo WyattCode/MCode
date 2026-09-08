@@ -227,7 +227,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   background: hsl(var(--h) 42% 46%);
   border-radius: var(--radius-sm);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
 }
 

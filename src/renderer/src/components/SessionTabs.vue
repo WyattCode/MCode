@@ -497,7 +497,7 @@ async function commitRename(id: string) {
 .tab-card-title {
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1.5;
   letter-spacing: -0.04px;
   overflow-wrap: anywhere;
@@ -648,7 +648,7 @@ async function commitRename(id: string) {
   background: hsl(var(--h) 42% 46%);
   border-radius: var(--radius-sm);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 1;
 }
 
@@ -678,7 +678,7 @@ async function commitRename(id: string) {
   border: none;
   outline: none;
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 16px;
 }
 

@@ -253,7 +253,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   padding: 0 12px;
   color: var(--text-weak);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
 }
 
 .row {
