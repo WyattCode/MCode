@@ -615,6 +615,38 @@ async function main(): Promise<void> {
    * original error - exactly what the user's screen showed. The summary has
    * to ask for less than the answer did.
    */
+  /*
+   * A turn that keeps calling tools. Unlimited by default, as the reference
+   * has it - it used to stop at sixty and end in red, which on a long
+   * refactor throws away everything the model had worked out. With a limit
+   * configured, the step at the limit goes out with no tools and an
+   * instruction to summarise, and the turn ends in words.
+   */
+  console.log("a turn at its step limit answers in words")
+  {
+    await config.set({ maxSteps: 1 })
+    const capped = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const before = requests.length
+    // One tool step, then whatever the limit allows.
+    script = [[{ name: "bash", input: { command: "node -e \"0\"", description: "A step" } }]]
+    const done = idle(capped.id)
+    await runner.prompt({ sessionID: capped.id, text: "keep going" })
+    await done
+
+    const sent = requests.slice(before).map((body) => JSON.parse(body) as { tools?: unknown[]; messages?: { role?: string; content?: unknown }[] })
+    const last = sent[sent.length - 1]
+    check("it took the step, then one more", sent.length === 2, String(sent.length))
+    check("the last request carried no tools", !last?.tools || last.tools.length === 0, JSON.stringify(last?.tools?.length ?? 0))
+    check(
+      "and told the model to answer in words",
+      (last?.messages ?? []).some((m) => typeof m.content === "string" && m.content.includes("MAXIMUM STEPS REACHED")),
+    )
+    const messages = await sessions.messages(capped.id)
+    const reply = messages.filter((message) => message.role === "assistant").at(-1)
+    check("the turn ended without an error", !reply?.error && reply?.finish === "end_turn", String(reply?.error ?? reply?.finish))
+    await config.set({ maxSteps: undefined })
+  }
+
   console.log("the summary fits where the answer did not")
   {
     const compactionEvents: boolean[] = []

@@ -53,8 +53,31 @@ const COMPACT_SYSTEM = [
   "Write it as notes to yourself, not as a report to the user.",
 ].join(" ")
 
-/** Guard against a model that keeps calling tools forever. */
-const MAX_STEPS = 60
+/**
+ * What the model is told on the step that has to be the last one.
+ *
+ * The reference's `MAX_STEPS_PROMPT`, kept as it stands. It goes in as an
+ * assistant message beside a request carrying no tools at all, so the only
+ * thing left to do is write.
+ */
+const MAX_STEPS_PROMPT = [
+  "CRITICAL - MAXIMUM STEPS REACHED",
+  "",
+  "The maximum number of steps allowed for this task has been reached. Tools are disabled until next user input. Respond with text only.",
+  "",
+  "STRICT REQUIREMENTS:",
+  "1. Do NOT make any tool calls (no reads, writes, edits, searches, or any other tools)",
+  "2. MUST provide a text response summarizing work done so far",
+  "3. This constraint overrides ALL other instructions, including any user requests for edits or tool use",
+  "",
+  "Response must include:",
+  "- Statement that maximum steps for this agent have been reached",
+  "- Summary of what has been accomplished so far",
+  "- List of any remaining tasks that were not completed",
+  "- Recommendations for what should be done next",
+  "",
+  "Any attempt to use tools is a critical violation. Respond with text ONLY.",
+].join("\n")
 
 /**
  * Drives one session's conversation.
@@ -896,8 +919,17 @@ export class SessionRunner {
      * as the reference does; refused again, the error stands.
      */
     let rescued = -1
-    for (let step = 0; step < MAX_STEPS; step++) {
+    /*
+     * No limit unless one is configured, which is the reference's default -
+     * `agent.steps ?? Infinity`. Stop is what ends a turn that will not end
+     * itself; a count that cuts in mid-refactor loses everything the model had
+     * worked out, and says so in red.
+     */
+    const limit = config.maxSteps && config.maxSteps > 0 ? config.maxSteps : undefined
+    for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
+      // The reference's `isLastStep`: no tools, and an instruction to write.
+      const lastStep = limit !== undefined && step >= limit
 
       /*
        * Anything typed while the last step ran has to be on disk before the
@@ -931,8 +963,21 @@ export class SessionRunner {
         apiKey: tokens?.access ?? apiKey,
         model: session.model,
         system,
-        history,
-        tools: this.tools(session.agent, session.model.model),
+        history: lastStep
+          ? [
+              ...history,
+              {
+                id: `${assistant.id}:steps`,
+                sessionID,
+                role: "assistant" as const,
+                model: session.model,
+                agent: session.agent,
+                parts: [{ id: `${assistant.id}:steps-text`, type: "text" as const, text: MAX_STEPS_PROMPT }],
+                time: { created: Date.now(), completed: Date.now() },
+              },
+            ]
+          : history,
+        tools: lastStep ? [] : this.tools(session.agent, session.model.model),
         effort,
         showReasoning: config.showReasoning,
         signal: controller.signal,
@@ -1071,12 +1116,6 @@ export class SessionRunner {
       // the model is asked again.
       if (overflowing) session = await this.compactNow(session, controller.signal)
     }
-
-    this.bus.publish({
-      type: "session.error",
-      sessionID,
-      error: `Stopped after ${MAX_STEPS} tool steps without finishing. Ask a narrower question, or tell it what to do next.`,
-    })
   }
 
   /**

@@ -583,6 +583,19 @@ export interface AppConfig {
    */
   keybinds: Record<string, string>
   /**
+   * How many tool steps a turn may take before it has to answer in words.
+   *
+   * Unset means no limit, which is the reference's default (`agent.steps ??
+   * Infinity`). MCode used to stop at sixty and end the turn in red, which on
+   * a long refactor arrives in the middle of the work with everything the
+   * model had learned thrown away.
+   *
+   * With a number, the step at the limit goes out with no tools and an
+   * instruction to summarise instead - the reference's own behaviour, and the
+   * reason its setting is described as "before forcing text-only response".
+   */
+  maxSteps?: number
+  /**
    * A server to talk to instead of the one this app started.
    *
    * Empty means the local backend. The protocol is identical, so a remote
