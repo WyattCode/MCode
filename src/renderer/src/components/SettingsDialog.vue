@@ -2134,7 +2134,7 @@ h3 {
   color: var(--text-weak);
   font-family: var(--font-sans);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 11px;
   letter-spacing: 0.05px;
 }
@@ -2189,7 +2189,7 @@ h3 {
   border-radius: 2px;
   box-shadow: inset 0 0 0 0.5px var(--border-weak);
   font-size: 11px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 11px;
   letter-spacing: 0.05px;
   vertical-align: middle;
@@ -2325,7 +2325,7 @@ h3 {
   background: transparent;
   border-radius: 6px;
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.04px;
   transition: background 0.12s, color 0.12s;

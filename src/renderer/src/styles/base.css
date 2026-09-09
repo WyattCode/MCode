@@ -216,7 +216,7 @@ kbd {
   padding: 0 11px;
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.04px;
   background: var(--surface-raised-hover);

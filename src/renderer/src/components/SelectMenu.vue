@@ -257,7 +257,7 @@ onBeforeUnmount(() => {
 
 .label {
   overflow: hidden;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;

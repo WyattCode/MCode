@@ -332,7 +332,7 @@ watch(
   min-width: 0;
   color: var(--text-base);
   font-size: 14px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 150%;
 }
 
@@ -393,7 +393,7 @@ watch(
   padding: 0 10px;
   color: var(--text-base);
   font-size: 14px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 150%;
   user-select: text;
 }
@@ -515,7 +515,7 @@ watch(
 .label {
   color: var(--text-base);
   font-size: 14px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 150%;
 }
 
@@ -591,7 +591,7 @@ watch(
   padding: 0 11px;
   border-radius: 6px;
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.04px;
 }

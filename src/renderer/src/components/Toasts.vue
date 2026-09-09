@@ -146,7 +146,7 @@ import { t } from "../lib/i18n"
 .title {
   color: var(--text-strong);
   font-size: 13px;
-  font-weight: 530;
+  font-weight: 500;
   line-height: 20px;
   letter-spacing: -0.04px;
 }
