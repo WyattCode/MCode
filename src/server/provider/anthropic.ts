@@ -194,11 +194,17 @@ export function reasoningRequest(
 export const AnthropicAdapter: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const client = createClient(request.apiKey)
+    /*
+     * The reference's maxOutputTokens applies to every provider: the model's
+     * own ceiling when known and smaller, else 32k. The thinking budgets below
+     * are cut from the same number, so they stay under it.
+     */
+    const maxTokens = Math.min(MAX_TOKENS, request.maxOutput ?? MAX_TOKENS)
 
     const stream = client.messages.stream(
       {
         model: request.model.model,
-        max_tokens: MAX_TOKENS,
+        max_tokens: maxTokens,
         system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
         tools: toolSchemas(request.tools),
         messages: toProviderMessages(request.history),
@@ -207,7 +213,7 @@ export const AnthropicAdapter: ProviderAdapter = {
           request.effort,
           request.variants,
           request.showReasoning,
-          MAX_TOKENS,
+          maxTokens,
         ),
       },
       { signal: request.signal },
