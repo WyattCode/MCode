@@ -637,10 +637,18 @@ async function main(): Promise<void> {
     const last = sent[sent.length - 1]
     check("it took the step, then one more", sent.length === 2, String(sent.length))
     check("the last request carried no tools", !last?.tools || last.tools.length === 0, JSON.stringify(last?.tools?.length ?? 0))
+    const closing = (last?.messages ?? []).at(-1)
     check(
       "and told the model to answer in words",
-      (last?.messages ?? []).some((m) => typeof m.content === "string" && m.content.includes("MAXIMUM STEPS REACHED")),
+      typeof closing?.content === "string" && closing.content.includes("MAXIMUM STEPS REACHED"),
+      JSON.stringify(closing?.content ?? "").slice(0, 60),
     )
+    /*
+     * As the user, not the assistant. A trailing assistant message is a
+     * prefill to Anthropic and cannot be sent alongside extended thinking,
+     * which is on by default here.
+     */
+    check("as a user turn, so a prefill is never sent", closing?.role === "user", String(closing?.role))
     const messages = await sessions.messages(capped.id)
     const reply = messages.filter((message) => message.role === "assistant").at(-1)
     check("the turn ended without an error", !reply?.error && reply?.finish === "end_turn", String(reply?.error ?? reply?.finish))

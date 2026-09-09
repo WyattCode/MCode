@@ -966,14 +966,23 @@ export class SessionRunner {
         history: lastStep
           ? [
               ...history,
+              /*
+                * Sent as the user, where the reference sends it as the
+                * assistant. A trailing assistant message is a prefill to
+                * Anthropic - the model continues that text rather than
+                * answering it - and a prefill cannot be combined with extended
+                * thinking, which MCode asks for by default. Copying the role
+                * would import a 400 on every Anthropic turn that reached the
+                * limit. Nothing changes for an OpenAI-compatible provider,
+                * where either role is an ordinary message.
+                */
               {
                 id: `${assistant.id}:steps`,
                 sessionID,
-                role: "assistant" as const,
-                model: session.model,
-                agent: session.agent,
-                parts: [{ id: `${assistant.id}:steps-text`, type: "text" as const, text: MAX_STEPS_PROMPT }],
-                time: { created: Date.now(), completed: Date.now() },
+                role: "user" as const,
+                text: MAX_STEPS_PROMPT,
+                attachments: [],
+                time: { created: Date.now() },
               },
             ]
           : history,
