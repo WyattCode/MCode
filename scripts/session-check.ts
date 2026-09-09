@@ -61,6 +61,14 @@ let script: { name: string; input: Record<string, unknown> }[][] = []
  * the shape of a provider whose context the conversation has outgrown.
  */
 let refuseNext: string | undefined
+/**
+ * When set, the fake counts input tokens in proportion to the request it is
+ * given - the first one it sees is `tokens` - and refuses any request whose
+ * input plus its `max_tokens` would exceed `window`, in the words the user's
+ * own server used. That is the arithmetic that defeated the first attempt at
+ * a rescue: 230,145 + 32,000 is one token over 262,144.
+ */
+let enforceWindow: { window: number; tokens: number; baseline?: number } | undefined
 /** Tool calls need ids that pair a call with its result, and no two may match. */
 let callNumber = 0
 
@@ -86,6 +94,30 @@ const server = http.createServer((request, response) => {
 
     requests.push(body)
     onRequest?.(requests.length)
+    if (enforceWindow) {
+      const asked = JSON.parse(body || "{}") as { max_tokens?: number; messages?: { role?: string }[] }
+      /*
+       * The conversation only, never the system prompt. A turn's system
+       * prompt is long and a compaction's is one paragraph, so counting it
+       * would make every summary request look light enough to fit and the
+       * case would pass whatever ceiling the summary asked for.
+       */
+      const weight = JSON.stringify((asked.messages ?? []).filter((message) => message.role !== "system")).length
+      enforceWindow.baseline ??= weight
+      const input = Math.round((enforceWindow.tokens * weight) / (enforceWindow.baseline || weight))
+      const output = asked.max_tokens ?? 0
+      if (input + output > enforceWindow.window) {
+        response.writeHead(400, { "content-type": "application/json" })
+        response.end(
+          JSON.stringify({
+            error: {
+              message: `This model's maximum context length is ${enforceWindow.window} tokens. However, you requested ${output} output tokens and your prompt contains at least ${input} input tokens, for a total of at least ${input + output} tokens. Please reduce the length of the input prompt or the number of requested output tokens.`,
+            },
+          }),
+        )
+        return
+      }
+    }
     if (refuseNext !== undefined) {
       const refusal = refuseNext
       refuseNext = undefined
@@ -572,6 +604,39 @@ async function main(): Promise<void> {
     )
     check("a model with no known ceiling asks for the reference's 32k", retry.max_tokens === 32000, String(retry.max_tokens))
     refuseNext = undefined
+  }
+
+  /*
+   * The same thing against a provider that enforces its window rather than
+   * refusing to order. This is the case the first rescue got wrong: it
+   * compacted by sending the whole transcript again and asking for the usual
+   * 32,000 output, which is over the same window the request had just been
+   * refused for, so the summary was refused too and the turn ended on the
+   * original error - exactly what the user's screen showed. The summary has
+   * to ask for less than the answer did.
+   */
+  console.log("the summary fits where the answer did not")
+  {
+    const tight = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    script = []
+    const settle = idle(tight.id)
+    await runner.prompt({ sessionID: tight.id, text: "fill the window" })
+    await settle
+
+    // 230,145 of transcript against a 262,144 window: a 32,000 answer is one
+    // token too many, a 4,096 summary is not.
+    enforceWindow = { window: 262144, tokens: 230145 }
+    script = []
+    const second = idle(tight.id)
+    await runner.prompt({ sessionID: tight.id, text: "and one more" })
+    await second
+    enforceWindow = undefined
+
+    const after = await sessions.get(tight.id)
+    const messages = await sessions.messages(tight.id)
+    const last = messages.filter((message) => message.role === "assistant").at(-1)
+    check("the session was compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
+    check("and the turn finished after it", last?.finish === "end_turn" && !last.error, String(last?.finish ?? last?.error))
   }
 
   console.log("a model with a known window is compacted by count")
