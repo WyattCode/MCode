@@ -593,6 +593,7 @@ export const useApp = defineStore("app", () => {
     const listed = await instance.request({ type: "session.list" })
     sessions.value = listed.sessions
     running.value = new Set(listed.running)
+    summarising.value = new Set(listed.compacting)
     /*
      * Questions a tool is still parked on.
      *
@@ -709,6 +710,7 @@ export const useApp = defineStore("app", () => {
       const listed = await api().request({ type: "session.list" })
       sessions.value = listed.sessions
       running.value = new Set(listed.running)
+      summarising.value = new Set(listed.compacting)
       // The same replay as on boot: a socket that dropped missed anything
       // published while it was down, a permission request included.
       pendingPermissions.value = new Map(listed.permissions.map((request) => [request.sessionID, request]))

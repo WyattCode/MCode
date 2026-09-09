@@ -61,6 +61,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {
         sessions: await runtime.sessions.list(),
         running: runtime.runner.busySessions(),
+        compacting: runtime.runner.compactingSessions(),
         /*
          * Replayed rather than merely broadcast. A permission request goes out
          * as a one-shot event, so a window that was not listening at that

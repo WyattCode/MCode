@@ -618,8 +618,14 @@ async function main(): Promise<void> {
   console.log("the summary fits where the answer did not")
   {
     const compactionEvents: boolean[] = []
+    let sawListedWhileCompacting: boolean | undefined
     const stopWatching = bus.subscribe((event) => {
-      if (event.type === "session.compacting") compactionEvents.push(event.active)
+      if (event.type !== "session.compacting") return
+      compactionEvents.push(event.active)
+      if (!event.active) return
+      // Asked while the summary is in flight, which is the only moment the
+      // answer can be wrong.
+      sawListedWhileCompacting = runner.compactingSessions().includes(event.sessionID)
     })
     const tight = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     script = []
@@ -647,6 +653,17 @@ async function main(): Promise<void> {
      * how the working version of this was read the first time.
      */
     check("it said a compaction had started", compactionEvents.includes(true), JSON.stringify(compactionEvents))
+    /*
+     * And a window that reconnects while the summary is still streaming is
+     * told, rather than keeping whatever it last heard - the event that ends a
+     * compaction goes out once, so a socket that was down for it would show
+     * the session summarising until the app was restarted.
+     */
+    check(
+      "session.list reports a session compacting mid-summary",
+      sawListedWhileCompacting === true,
+      String(sawListedWhileCompacting),
+    )
     check("and that it had finished", compactionEvents.at(-1) === false, JSON.stringify(compactionEvents))
     const last = messages.filter((message) => message.role === "assistant").at(-1)
     check("the session was compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))

@@ -1077,7 +1077,13 @@ export interface ResponseMap {
    * opens after the question was asked, has no other way to learn about it -
    * and until it is answered the turn cannot move.
    */
-  "session.list": { sessions: SessionInfo[]; running: string[]; permissions: PermissionRequest[] }
+  "session.list": {
+    sessions: SessionInfo[]
+    running: string[]
+    /** Sessions being summarised, so a window that reconnects mid-summary is right. */
+    compacting: string[]
+    permissions: PermissionRequest[]
+  }
   "session.create": { session: SessionInfo }
   "session.get": { session: SessionInfo; messages: Message[] }
   "session.systemPrompt": { prompt: string }

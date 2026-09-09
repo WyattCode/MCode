@@ -93,6 +93,8 @@ export class SessionRunner {
 
   /** Where the per-project shadow repositories that back undo are kept. */
   private readonly snapshots: Snapshots
+  /** Sessions with a summary in flight; see `compactingSessions`. */
+  private readonly summarising = new Set<string>()
 
   /**
    * The questions tools are parked on.
@@ -144,6 +146,18 @@ export class SessionRunner {
   }
 
   /** Every session mid-turn, for a client that has just (re)connected. */
+  /**
+   * Sessions whose transcript is being summarised.
+   *
+   * Reported alongside the busy ones so a window that reconnects mid-summary
+   * learns the truth rather than keeping whatever it last heard. A socket that
+   * dropped during a compaction would otherwise show it running forever - the
+   * event that ends it went out while nothing was listening.
+   */
+  compactingSessions(): string[] {
+    return [...this.summarising]
+  }
+
   busySessions(): string[] {
     return [...this.running.keys()]
   }
@@ -576,6 +590,7 @@ export class SessionRunner {
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
 
     let summary = ""
+    this.summarising.add(session.id)
     this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
     try {
       await adapter.stream(
@@ -606,6 +621,7 @@ export class SessionRunner {
         },
       )
     } finally {
+      this.summarising.delete(session.id)
       this.bus.publish({ type: "session.compacting", sessionID: session.id, active: false })
     }
     summary = summary.trim()
