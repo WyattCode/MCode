@@ -47,7 +47,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         class="field"
         spellcheck="false"
         :placeholder="placeholder"
-        @keydown.enter="submit"
+        v-enter="submit"
       />
       <footer>
         <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>

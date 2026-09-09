@@ -135,7 +135,7 @@ function openMenu(event: MouseEvent) {
         v-model="draft"
         class="title title-field"
         spellcheck="false"
-        @keydown.enter="commit"
+        v-enter="commit"
         @keydown.esc="cancel"
         @blur="commit"
       />
