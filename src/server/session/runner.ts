@@ -576,33 +576,38 @@ export class SessionRunner {
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
 
     let summary = ""
-    await adapter.stream(
-      {
-        apiKey: tokens?.access ?? apiKey,
-        model: session.model,
-        system: COMPACT_SYSTEM,
-        history: messages,
-        tools: [],
-        effort: "low",
-        showReasoning: false,
-        signal,
-        baseURL: definition.baseURL,
-        headers: definition.headers,
-        accountId: tokens?.accountId,
-        /*
-         * A summary is short, and asking for the usual 32k is what stopped
-         * this from working the first time: a transcript that had just been
-         * refused at 230,145 tokens plus a 32,000 answer is one token over
-         * the same window, so the summary was refused too. The reference asks
-         * for 4,096 here (its SUMMARY_OUTPUT_TOKENS), which leaves the room
-         * a summary of an overlong conversation needs.
-         */
-        maxOutput: Math.min(maxOutputTokens(this.config.modelEntry(session.model)), SUMMARY_OUTPUT_TOKENS),
-      },
-      (event) => {
-        if (event.type === "text.delta") summary += event.text
-      },
-    )
+    this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
+    try {
+      await adapter.stream(
+        {
+          apiKey: tokens?.access ?? apiKey,
+          model: session.model,
+          system: COMPACT_SYSTEM,
+          history: messages,
+          tools: [],
+          effort: "low",
+          showReasoning: false,
+          signal,
+          baseURL: definition.baseURL,
+          headers: definition.headers,
+          accountId: tokens?.accountId,
+          /*
+           * A summary is short, and asking for the usual 32k is what stopped
+           * this from working the first time: a transcript that had just been
+           * refused at 230,145 tokens plus a 32,000 answer is one token over
+           * the same window, so the summary was refused too. The reference asks
+           * for 4,096 here (its SUMMARY_OUTPUT_TOKENS), which leaves the room
+           * a summary of an overlong conversation needs.
+           */
+          maxOutput: Math.min(maxOutputTokens(this.config.modelEntry(session.model)), SUMMARY_OUTPUT_TOKENS),
+        },
+        (event) => {
+          if (event.type === "text.delta") summary += event.text
+        },
+      )
+    } finally {
+      this.bus.publish({ type: "session.compacting", sessionID: session.id, active: false })
+    }
     summary = summary.trim()
     if (!summary) throw new Error("The model returned an empty summary")
     return this.store.update(session.id, {

@@ -52,9 +52,17 @@ export const useApp = defineStore("app", () => {
    */
   const running = ref(new Set<string>())
   const busy = computed(() => (currentID.value ? running.value.has(currentID.value) : false))
+  /** Sessions whose transcript is being summarised right now. */
+  const summarising = ref(new Set<string>())
+  /**
+   * Whether this session is being summarised.
+   *
+   * Its own flag rather than part of `busy`, because the transcript has to
+   * say something during a compaction that follows a refusal - and a
+   * refusal is exactly when it would otherwise say nothing at all.
+   */
+  const compacting = computed(() => (currentID.value ? summarising.value.has(currentID.value) : false))
   const error = ref<string>()
-  /** A compaction is a model call, so it needs the same busy treatment. */
-  const compacting = ref(false)
 
   const config = ref<AppConfig>()
   const providers = ref<ProviderStatus[]>([])
@@ -402,6 +410,14 @@ export const useApp = defineStore("app", () => {
         if (message?.role !== "assistant") break
         const part = message.parts[location.index]
         if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+        break
+      }
+      case "session.compacting": {
+        // A new Set each time, so the computed that reads it actually changes.
+        const next = new Set(summarising.value)
+        if (event.active) next.add(event.sessionID)
+        else next.delete(event.sessionID)
+        summarising.value = next
         break
       }
       case "session.idle":
@@ -868,15 +884,12 @@ export const useApp = defineStore("app", () => {
   }
 
   async function compact(sessionID: string) {
-    compacting.value = true
-    try {
-      const { session } = await api().request({ type: "session.compact", sessionID })
-      const at = sessions.value.findIndex((entry) => entry.id === session.id)
-      if (at >= 0) sessions.value[at] = session
-      return session
-    } finally {
-      compacting.value = false
-    }
+    // No flag of its own: the server says when a summary starts and stops, for
+    // this and for the automatic one alike, and the button reads that.
+    const { session } = await api().request({ type: "session.compact", sessionID })
+    const at = sessions.value.findIndex((entry) => entry.id === session.id)
+    if (at >= 0) sessions.value[at] = session
+    return session
   }
 
   /**
@@ -1221,6 +1234,7 @@ export const useApp = defineStore("app", () => {
     clearNotes,
     messages,
     busy,
+    compacting,
     error,
     config,
     providers,
@@ -1254,7 +1268,6 @@ export const useApp = defineStore("app", () => {
     rolledBack,
     visible,
     systemPrompt,
-    compacting,
     send,
     abort,
     respond,

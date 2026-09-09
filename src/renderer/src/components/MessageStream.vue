@@ -190,6 +190,14 @@ const turns = computed<Turn[]>(() => {
  */
 function thinking(turn: Turn, at: number): boolean {
   if (at !== turns.value.length - 1) return false
+  /*
+   * A compaction shows it too, and it is the one case where the turn above
+   * has an error: a request the provider refused for length is answered by
+   * summarising the conversation and asking again, and that summary can take
+   * minutes on a long transcript. Without this the refusal is the last thing
+   * on screen for all of them, and the app looks like it stopped.
+   */
+  if (app.compacting) return true
   return app.busy && !turn.error && rows(turn.parts).length === 0
 }
 

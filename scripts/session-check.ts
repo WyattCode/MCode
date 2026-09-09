@@ -617,6 +617,10 @@ async function main(): Promise<void> {
    */
   console.log("the summary fits where the answer did not")
   {
+    const compactionEvents: boolean[] = []
+    const stopWatching = bus.subscribe((event) => {
+      if (event.type === "session.compacting") compactionEvents.push(event.active)
+    })
     const tight = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     script = []
     const settle = idle(tight.id)
@@ -631,9 +635,19 @@ async function main(): Promise<void> {
     await runner.prompt({ sessionID: tight.id, text: "and one more" })
     await second
     enforceWindow = undefined
+    stopWatching()
 
     const after = await sessions.get(tight.id)
     const messages = await sessions.messages(tight.id)
+    /*
+     * A summary of a long transcript takes minutes on a local model - five,
+     * measured - and the last thing on screen before it starts is the
+     * provider's refusal, in red. So the app says a compaction is under way
+     * and says when it stops; without that it looks like it gave up, which is
+     * how the working version of this was read the first time.
+     */
+    check("it said a compaction had started", compactionEvents.includes(true), JSON.stringify(compactionEvents))
+    check("and that it had finished", compactionEvents.at(-1) === false, JSON.stringify(compactionEvents))
     const last = messages.filter((message) => message.role === "assistant").at(-1)
     check("the session was compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
     check("and the turn finished after it", last?.finish === "end_turn" && !last.error, String(last?.finish ?? last?.error))

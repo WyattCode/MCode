@@ -1169,6 +1169,16 @@ export type ServerEvent =
   | { type: "session.updated"; session: SessionInfo }
   | { type: "session.deleted"; sessionID: string }
   | { type: "session.idle"; sessionID: string }
+  /**
+   * A compaction is running for this session.
+   *
+   * Sent because an automatic one can take minutes on a long
+   * conversation - five, measured on a 230k transcript against a local
+   * model - and the last thing on screen before it starts is the
+   * provider's refusal, in red. Without this the app looks like it gave
+   * up, which is how the first working version of the rescue was read.
+   */
+  | { type: "session.compacting"; sessionID: string; active: boolean }
   | { type: "session.error"; sessionID: string; error: string }
   | { type: "message.updated"; message: Message }
   /**
