@@ -31,6 +31,7 @@ import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
+import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
 import { systemPrompt, titleFrom } from "./prompt"
 
 /**
@@ -522,32 +523,37 @@ export class SessionRunner {
    * Asked of the session's own model, with no tools: this is a reading task,
    * and a model that could act here might decide to.
    */
+  /**
+   * Compacts on request: the transcript so far becomes one summary, and the
+   * model's view from then on begins with it.
+   *
+   * Refused while a turn is running, and holds the running slot itself while
+   * the summary streams - so a prompt sent during a compaction is refused the
+   * same way, and Stop cancels the summary like any other request.
+   */
   async compact(sessionID: string): Promise<SessionInfo> {
-    /*
-     * A turn in flight is still writing messages and files. Summarising over it
-     * would mark a boundary against a message that is not finished, and undoing
-     * it would fight the tool that is mid-write.
-     */
     if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
     const session = await this.store.require(sessionID)
-    const stored = await this.store.messages(sessionID)
+    const controller = new AbortController()
+    this.running.set(sessionID, controller)
+    try {
+      return await this.compactNow(session, controller.signal)
+    } finally {
+      this.running.delete(sessionID)
+      this.bus.publish({ type: "session.idle", sessionID })
+    }
+  }
+
+  /**
+   * The compaction itself, for the button above and for a turn that has
+   * outgrown its model (see `run`). Streams a summary of everything the model
+   * currently sees and records it as the new starting point.
+   */
+  private async compactNow(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+    const stored = await this.store.messages(session.id)
     const messages = this.contextFor(session, stored)
     const last = messages[messages.length - 1]
     if (!last) throw new Error("Nothing to compact yet")
-
-    /*
-     * The boundary is decided now, against the last message this summary will
-     * actually be given - not against whatever is last once it returns. Reading
-     * it afterwards meant a turn that arrived during the call fell inside a
-     * summary that never saw it.
-     *
-     * It has to come from the stored list rather than from `messages`, because
-     * after a previous compaction the model's view begins with a synthetic
-     * summary message that was never written down - but from the live part of
-     * it, because a mark placed on a rolled back message would put the whole
-     * abandoned branch behind the summary and hide the conversation that is
-     * actually on screen.
-     */
     const live = this.liveMessages(session, stored)
     const mark = live[live.length - 1]
     if (!mark) throw new Error("Nothing to compact yet")
@@ -564,50 +570,30 @@ export class SessionRunner {
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
 
     let summary = ""
-    const controller = new AbortController()
-    /*
-     * Registered like any other turn. Without this the session reported itself
-     * idle for the whole call, so the composer stayed enabled and a prompt sent
-     * during a compaction was accepted. It also makes Stop cancel a summary,
-     * which previously ran to completion whatever the user did.
-     */
-    this.running.set(sessionID, controller)
-    try {
-      await adapter.stream(
-        {
-          apiKey: tokens?.access ?? apiKey,
-          model: session.model,
-          system: COMPACT_SYSTEM,
-          history: messages,
-          tools: [],
-          effort: "low",
-          showReasoning: false,
-          signal: controller.signal,
-          baseURL: definition.baseURL,
-          /*
-           * Compaction talks to the same provider as a turn does, so it needs
-           * the same custom headers. No `variants` here: the effort is pinned
-           * to "low" just above, not chosen by the user.
-           */
-          headers: definition.headers,
-          accountId: tokens?.accountId,
-        },
-        (event) => {
-          if (event.type === "text.delta") summary += event.text
-        },
-      )
-    } finally {
-      this.running.delete(sessionID)
-      this.bus.publish({ type: "session.idle", sessionID })
-    }
-
+    await adapter.stream(
+      {
+        apiKey: tokens?.access ?? apiKey,
+        model: session.model,
+        system: COMPACT_SYSTEM,
+        history: messages,
+        tools: [],
+        effort: "low",
+        showReasoning: false,
+        signal,
+        baseURL: definition.baseURL,
+        headers: definition.headers,
+        accountId: tokens?.accountId,
+        maxOutput: maxOutputTokens(this.config.modelEntry(session.model)),
+      },
+      (event) => {
+        if (event.type === "text.delta") summary += event.text
+      },
+    )
     summary = summary.trim()
     if (!summary) throw new Error("The model returned an empty summary")
-
-    const updated = await this.store.update(sessionID, {
+    return this.store.update(session.id, {
       compacted: { messageID: mark.id, summary, at: Date.now() },
     })
-    return updated
   }
 
   async prompt(input: { sessionID: string; text: string; attachments?: Attachment[] }): Promise<string> {
@@ -855,7 +841,7 @@ export class SessionRunner {
   }
 
   private async run(sessionID: string, apiKey: string, controller: AbortController): Promise<void> {
-    const session = await this.store.require(sessionID)
+    let session = await this.store.require(sessionID)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
     const adapter: ProviderAdapter =
@@ -869,6 +855,12 @@ export class SessionRunner {
     const system = await systemPrompt({ directory: session.directory, agent: session.agent })
     const config = this.config.get()
 
+    /*
+     * The step that was last rescued by a compaction. A request the provider
+     * refuses as too long is retried once against the compacted transcript,
+     * as the reference does; refused again, the error stands.
+     */
+    let rescued = -1
     for (let step = 0; step < MAX_STEPS; step++) {
       if (controller.signal.aborted) return
 
@@ -898,7 +890,9 @@ export class SessionRunner {
       }
       await this.store.saveMessage(assistant)
 
-      const outcome = await this.stream(adapter, assistant, {
+      let outcome: Awaited<ReturnType<SessionRunner["stream"]>>
+      try {
+        outcome = await this.stream(adapter, assistant, {
         apiKey: tokens?.access ?? apiKey,
         model: session.model,
         system,
@@ -923,8 +917,33 @@ export class SessionRunner {
          */
         variants: this.config.variants(session.model),
         accountId: tokens?.accountId,
+        maxOutput: maxOutputTokens(this.config.modelEntry(session.model)),
       })
-
+      } catch (failure) {
+        /*
+         * A provider that refuses the request as too long is answered the way
+         * the reference answers it: the transcript is compacted and the step
+         * runs again. The refusal is already on the transcript, in red, from
+         * `stream`; what follows it is the summary and the continuation.
+         * Only one rescue per step - a summary that is itself too long is a
+         * real failure, and it is left to stand.
+         */
+        const reason = failure instanceof Shown ? failure.reason : failure
+        if (rescued !== step && !controller.signal.aborted && isContextOverflow(describe(reason))) {
+          rescued = step
+          try {
+            session = await this.compactNow(session, controller.signal)
+          } catch {
+            // The summary failed too - the same refusal, usually. The one
+            // already on the message stands; a second notice would say
+            // nothing the first did not.
+            throw failure
+          }
+          step -= 1
+          continue
+        }
+        throw failure
+      }
       if (outcome === undefined) {
         // Aborted mid-stream. Persist whatever arrived so the transcript is honest.
         assistant.finish = "aborted"
@@ -946,6 +965,14 @@ export class SessionRunner {
       }
       assistant.usage = usage
       await this.store.addUsage(sessionID, usage)
+      /*
+       * The reference's other trigger: once the tokens the provider reports
+       * reach the window less the room an answer needs, the transcript is
+       * compacted before the model is asked again. Nothing for a model whose
+       * window is not known - a discovered model reports 0 - which then has
+       * only the refusal above to fall back on.
+       */
+      const overflowing = isOverflowByCount(usage, this.config.modelEntry(session.model))
 
       if (outcome.stop === "refusal") {
         assistant.finish = "refusal"
@@ -966,6 +993,11 @@ export class SessionRunner {
          * message arriving from this instant onwards is the release's business
          * and cannot fall between the two.
          */
+        if (overflowing) {
+          // Compacted at the end of the turn, so the next one starts inside
+          // the window instead of being refused on its first request.
+          session = await this.compactNow(session, controller.signal)
+        }
         if (!this.steered(sessionID)) return
         continue
       }
@@ -993,6 +1025,9 @@ export class SessionRunner {
       await this.store.saveMessage(assistant)
 
       if (controller.signal.aborted) return
+      // The reference compacts after the step that crossed the line, before
+      // the model is asked again.
+      if (overflowing) session = await this.compactNow(session, controller.signal)
     }
 
     this.bus.publish({

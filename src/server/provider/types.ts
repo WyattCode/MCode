@@ -60,6 +60,12 @@ export interface TurnRequest {
   variants?: readonly string[]
   /** Workspace the subscription login belongs to; required by the Codex backend. */
   accountId?: string
+  /**
+   * Output tokens to ask for. The reference's maxOutputTokens: the model's
+   * own ceiling when known and smaller, else 32k. Unset means the adapter's
+   * default, which is that same 32k.
+   */
+  maxOutput?: number
 }
 
 /**

@@ -154,7 +154,7 @@ export const OpenAICompatible: ProviderAdapter = {
         model: request.model.model,
         stream: true,
         stream_options: { include_usage: true },
-        max_tokens: MAX_TOKENS,
+        max_tokens: request.maxOutput ?? MAX_TOKENS,
         messages: toMessages(request.system, request.history),
         /*
          * The field the effort control has always meant and never sent.

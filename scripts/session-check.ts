@@ -56,6 +56,11 @@ let onRequest: ((n: number) => void) | undefined
  * the real runner call a tool is for a provider to ask for one.
  */
 let script: { name: string; input: Record<string, unknown> }[][] = []
+/**
+ * When set, the next chat request is refused with this body and status 400 -
+ * the shape of a provider whose context the conversation has outgrown.
+ */
+let refuseNext: string | undefined
 /** Tool calls need ids that pair a call with its result, and no two may match. */
 let callNumber = 0
 
@@ -81,6 +86,13 @@ const server = http.createServer((request, response) => {
 
     requests.push(body)
     onRequest?.(requests.length)
+    if (refuseNext !== undefined) {
+      const refusal = refuseNext
+      refuseNext = undefined
+      response.writeHead(400, { "content-type": "application/json" })
+      response.end(refusal)
+      return
+    }
 
     const asked = script.shift()
     if (asked) {
@@ -496,6 +508,78 @@ async function main(): Promise<void> {
       (told ?? "").includes("not a git repository"),
       String(told),
     )
+  }
+
+  /*
+   * A conversation that has outgrown its model. The reference answers it two
+   * ways and MCode now does the same: a provider that refuses the request as
+   * too long has the transcript compacted and the step retried once; and a
+   * model whose window is known is compacted as soon as the tokens it reports
+   * reach that window less the room an answer needs. The screen this came
+   * from was the first kind - a discovered vLLM model, window unknown to
+   * MCode, answering 400 with "maximum context length is 262144 tokens" after
+   * 230k of transcript went out with a 32k answer requested on top, and the
+   * turn ending in red.
+   */
+  console.log("a request refused as too long is compacted and retried")
+  {
+    const refused = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    script = []
+    const first = idle(refused.id)
+    await runner.prompt({ sessionID: refused.id, text: "something to have a transcript" })
+    await first
+
+    const before = requests.length
+    refuseNext = JSON.stringify({
+      error: {
+        message:
+          "This model's maximum context length is 262144 tokens. However, you requested 32000 output tokens and your prompt contains at least 230145 input tokens.",
+      },
+    })
+    script = []
+    const second = idle(refused.id)
+    await runner.prompt({ sessionID: refused.id, text: "and again" })
+    await second
+
+    const after = await sessions.get(refused.id)
+    const transcript = await sessions.messages(refused.id)
+    const assistants = transcript.filter((message) => message.role === "assistant")
+    const errored = assistants.find((message) => message.error)
+    const last = assistants[assistants.length - 1]
+    check("the refusal is on the transcript", Boolean(errored), errored?.error ?? "(none)")
+    check("the session was compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
+    check("with the summary the model gave", after?.compacted?.summary === "a summary", after?.compacted?.summary)
+    check("and the step was retried and finished", last?.finish === "end_turn" && !last.error, String(last?.finish))
+    // refusal, then the summary request, then the retry
+    check("three requests: refusal, summary, retry", requests.length - before === 3, String(requests.length - before))
+    const retry = JSON.parse(requests[requests.length - 1] ?? "{}") as { messages?: { content?: unknown }[]; max_tokens?: number }
+    check(
+      "the retry went out from the summary",
+      (retry.messages ?? []).some((m) => typeof m.content === "string" && m.content.includes("a summary")),
+    )
+    check("a model with no known ceiling asks for the reference's 32k", retry.max_tokens === 32000, String(retry.max_tokens))
+    refuseNext = undefined
+  }
+
+  console.log("a model with a known window is compacted by count")
+  {
+    // The fake reports prompt_tokens 10 + completion_tokens 5 per turn. A
+    // window of 20 with a 10-token ceiling leaves 10 usable: 15 crosses it.
+    await config.setDiscovered("fake", [
+      { id: "m", name: "M", contextWindow: 20, maxOutput: 10, input: 0, output: 0 },
+    ])
+    const counted = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    const before = requests.length
+    script = []
+    const turn = idle(counted.id)
+    await runner.prompt({ sessionID: counted.id, text: "hello" })
+    await turn
+    const after = await sessions.get(counted.id)
+    check("the turn ended compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
+    check("in two requests: the answer, then the summary", requests.length - before === 2, String(requests.length - before))
+    const answer = JSON.parse(requests[before] ?? "{}") as { max_tokens?: number }
+    check("and the request asked for the model's own ceiling", answer.max_tokens === 10, String(answer.max_tokens))
+    await config.setDiscovered("fake", [])
   }
 
   /*
