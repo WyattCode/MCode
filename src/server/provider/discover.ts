@@ -26,6 +26,12 @@ interface ModelRow {
   id?: string
   context_length?: number
   context_window?: number
+  /**
+   * vLLM's and SGLang's name for the same number, and the only one they send.
+   * A local server that reported 262,144 here was read as having no window at
+   * all, so nothing could be compacted before it refused a request.
+   */
+  max_model_len?: number
   max_output_length?: number
   supported_features?: string[]
   supported_parameters?: string[]
@@ -192,7 +198,8 @@ export async function discoverModels(
         // Cased here too, so a list is presentable even before the merge sees it.
         name: nameFromId(id),
         // Providers disagree on the field name, and many omit it entirely.
-        contextWindow: row?.context_length ?? row?.context_window ?? native.get(id) ?? 0,
+        contextWindow:
+          row?.context_length ?? row?.context_window ?? row?.max_model_len ?? native.get(id) ?? 0,
         input: 0,
         output: 0,
         ...capabilities(row, template),

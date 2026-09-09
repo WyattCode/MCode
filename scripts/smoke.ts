@@ -585,7 +585,8 @@ async function main() {
     const served = [
       { id: "qwen/qwen3.8-27b" },
       { id: "text-embedding-nomic-embed-text-v1.5" },
-      { id: "mimo-v2.5" },
+      // vLLM and SGLang send the window under this name and no other.
+      { id: "mimo-v2.5", max_model_len: 262144 },
       { id: "mimo-v2-tts" },
       { id: "bge-reranker-v2-m3" },
       { id: "whisper-large-v3" },
@@ -608,6 +609,14 @@ async function main() {
     // Looked up by id: the list comes back sorted, so position proves nothing.
     const qwen = found.find((entry) => entry.id === "qwen/qwen3.8-27b")
     check("discovery still names them", qwen?.name === "qwen/Qwen3.8-27B", qwen?.name)
+    /*
+     * vLLM and SGLang send the window under their own name and no other, so a
+     * local server reporting 262,144 was read as having no window at all - and
+     * a model with no window is never compacted by count, which is how a
+     * conversation reached 230k of transcript and was refused outright.
+     */
+    const local = found.find((entry) => entry.id === "mimo-v2.5")
+    check("a window sent as max_model_len is read", local?.contextWindow === 262144, String(local?.contextWindow))
 
     fake.close()
   }

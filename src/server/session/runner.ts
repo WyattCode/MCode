@@ -31,7 +31,13 @@ import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
-import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
+import {
+  SUMMARY_OUTPUT_TOKENS,
+  isContextOverflow,
+  isOverflowByCount,
+  maxOutputTokens,
+  summaryWouldFit,
+} from "./overflow"
 import { systemPrompt, titleFrom } from "./prompt"
 
 /**
@@ -583,7 +589,15 @@ export class SessionRunner {
         baseURL: definition.baseURL,
         headers: definition.headers,
         accountId: tokens?.accountId,
-        maxOutput: maxOutputTokens(this.config.modelEntry(session.model)),
+        /*
+         * A summary is short, and asking for the usual 32k is what stopped
+         * this from working the first time: a transcript that had just been
+         * refused at 230,145 tokens plus a 32,000 answer is one token over
+         * the same window, so the summary was refused too. The reference asks
+         * for 4,096 here (its SUMMARY_OUTPUT_TOKENS), which leaves the room
+         * a summary of an overlong conversation needs.
+         */
+        maxOutput: Math.min(maxOutputTokens(this.config.modelEntry(session.model)), SUMMARY_OUTPUT_TOKENS),
       },
       (event) => {
         if (event.type === "text.delta") summary += event.text
@@ -929,7 +943,14 @@ export class SessionRunner {
          * real failure, and it is left to stand.
          */
         const reason = failure instanceof Shown ? failure.reason : failure
-        if (rescued !== step && !controller.signal.aborted && isContextOverflow(describe(reason))) {
+        if (
+          rescued !== step &&
+          !controller.signal.aborted &&
+          isContextOverflow(describe(reason)) &&
+          // The reference measures before it asks: a summary request it can
+          // see will not fit is not sent, and the refusal stands as it is.
+          summaryWouldFit(historyChars(history), this.config.modelEntry(session.model)?.contextWindow ?? 0)
+        ) {
           rescued = step
           try {
             session = await this.compactNow(session, controller.signal)
@@ -1325,6 +1346,22 @@ class Shown extends Error {
     super("already reported")
     this.name = "Shown"
   }
+}
+
+/** Roughly what a request carrying these messages would weigh, in characters. */
+function historyChars(messages: Message[]): number {
+  let total = 0
+  for (const message of messages) {
+    if (message.role === "user") {
+      total += message.text.length
+      continue
+    }
+    for (const part of message.parts) {
+      if (part.type === "text") total += part.text.length
+      else if (part.type === "tool") total += (part.output ?? "").length + JSON.stringify(part.input ?? {}).length
+    }
+  }
+  return total
 }
 
 function describe(err: unknown): string {

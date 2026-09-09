@@ -26,6 +26,38 @@ export const OUTPUT_TOKEN_MAX = 32_000
 export const COMPACTION_BUFFER = 20_000
 
 /**
+ * What a summary may cost, from the reference's `SUMMARY_OUTPUT_TOKENS`.
+ *
+ * A summary is short, and asking for the full 32k is what stopped the first
+ * attempt at this from working: a transcript of 230,145 tokens plus a 32,000
+ * answer is 262,145, one token over the model that had just refused it, so
+ * the summary was refused as well and the turn ended on the original error.
+ * The reference asks for 4,096.
+ */
+export const SUMMARY_OUTPUT_TOKENS = 4_096
+
+/** The reference's `CHARS_PER_TOKEN`. */
+const CHARS_PER_TOKEN = 4
+
+/** The reference's `Token.estimate`, over however many characters go out. */
+export function estimateTokens(chars: number): number {
+  return Math.max(0, Math.round(chars / CHARS_PER_TOKEN))
+}
+
+/**
+ * Whether a summary of this much text could be asked for at all.
+ *
+ * The reference's guard in `compactAfterOverflow`: it gives up rather than
+ * send a request it can see will not fit. A model whose window is unknown
+ * cannot be measured, so it is allowed through - the provider's own refusal
+ * is then the answer, which is where this started.
+ */
+export function summaryWouldFit(chars: number, contextWindow: number): boolean {
+  if (contextWindow <= 0) return true
+  return estimateTokens(chars) <= contextWindow - SUMMARY_OUTPUT_TOKENS
+}
+
+/**
  * How many output tokens a request asks for: the model's own ceiling if it is
  * known and smaller, otherwise the reference's 32k. `maxOutputTokens` in the
  * reference's ProviderTransform, including its `|| OUTPUT_TOKEN_MAX` for a

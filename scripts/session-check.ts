@@ -553,6 +553,19 @@ async function main(): Promise<void> {
     // refusal, then the summary request, then the retry
     check("three requests: refusal, summary, retry", requests.length - before === 3, String(requests.length - before))
     const retry = JSON.parse(requests[requests.length - 1] ?? "{}") as { messages?: { content?: unknown }[]; max_tokens?: number }
+    /*
+     * The summary is what makes the rescue possible, so it has to fit where
+     * the request that was just refused did not. Asking for the usual 32,000
+     * is exactly what broke the first attempt: 230,145 tokens of transcript
+     * plus 32,000 is one token over the window that had refused it, so the
+     * summary was refused as well and the turn ended on the original error.
+     */
+    const summaryRequest = JSON.parse(requests[requests.length - 2] ?? "{}") as { max_tokens?: number }
+    check(
+      "the summary asked for the summary ceiling, not the usual one",
+      summaryRequest.max_tokens === 4096,
+      String(summaryRequest.max_tokens),
+    )
     check(
       "the retry went out from the summary",
       (retry.messages ?? []).some((m) => typeof m.content === "string" && m.content.includes("a summary")),
