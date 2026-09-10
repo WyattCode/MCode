@@ -50,7 +50,7 @@ import { closeTab, openTab, readStrip, stripKey, writeStrip } from "./lib/sessio
 import { notify, notifyFailure } from "./lib/toast"
 import { projectName } from "./lib/project"
 import { renderMarkdown } from "./lib/markdown"
-import { chordOf } from "./lib/keys"
+import { IS_MAC, canonicalChord, chordOf } from "./lib/keys"
 import FindBar from "./components/FindBar.vue"
 import { createFind, openFind, stepFind } from "./lib/find"
 import { play } from "./lib/sound"
@@ -558,7 +558,8 @@ async function checkForUpdates() {
 const rebound = computed(() => {
   const out = new Map<string, string>()
   for (const [id, chord] of Object.entries(app.config?.keybinds ?? {})) {
-    if (chord) out.set(chord, id)
+    // A binding stored before Mod existed is read as Mod, which is what it meant.
+    if (chord) out.set(canonicalChord(chord), id)
   }
   return out
 })
@@ -576,10 +577,10 @@ const rebound = computed(() => {
  */
 const retiredChords = computed(() => {
   const binds = app.config?.keybinds ?? {}
-  const claimed = new Set(Object.values(binds).filter(Boolean))
+  const claimed = new Set(Object.values(binds).filter(Boolean).map(canonicalChord))
   const out = new Set<string>()
   for (const command of bindableCommands.value) {
-    const custom = binds[command.id]
+    const custom = binds[command.id] ? canonicalChord(binds[command.id]) : ""
     if (!custom || !command.hint || custom === command.hint) continue
     if (claimed.has(command.hint)) continue
     out.add(command.hint)
@@ -1491,12 +1492,12 @@ const bindableCommands = computed(() => {
 
   const all = [
     // Session
-    { id: "session.new", group: "key.groupGeneral", title: t("cmd.newSession"), hint: "Ctrl+T", run: newSession },
+    { id: "session.new", group: "key.groupGeneral", title: t("cmd.newSession"), hint: "Mod+T", run: newSession },
     {
       id: "view.model",
       group: "key.groupModels",
       title: t("cmd.switchModel"),
-      hint: "Ctrl+'",
+      hint: "Mod+'",
       // The picker hangs off the composer's model pill, and the composer is
       // only mounted inside a project - so on the home screen this command had
       // nothing to open, and both menus offered it anyway.
@@ -1605,14 +1606,14 @@ const bindableCommands = computed(() => {
       id: "permissions.autoaccept",
       group: "key.groupSession",
       title: autoAcceptAll() ? t("cmd.autoAcceptOff") : t("cmd.autoAcceptOn"),
-      hint: "Ctrl+Shift+A",
+      hint: "Mod+Shift+A",
       run: () => void toggleAutoAccept(),
     },
     {
       id: "session.archive",
       group: "key.groupSession",
       title: t("cmd.archive"),
-      hint: "Ctrl+Shift+Backspace",
+      hint: "Mod+Shift+Backspace",
       enabled: hasSession,
       run: async () => {
         if (app.currentID) await app.archive(app.currentID, true)
@@ -1630,7 +1631,7 @@ const bindableCommands = computed(() => {
     },
 
     // Project
-    { id: "project.open", group: "key.groupGeneral", title: t("cmd.openProject"), hint: "Ctrl+O", run: browse },
+    { id: "project.open", group: "key.groupGeneral", title: t("cmd.openProject"), hint: "Mod+O", run: browse },
     { id: "view.home", group: "key.groupGeneral", title: t("cmd.goHome"), enabled: inWorkspace, run: goHome },
 
     // View
@@ -1638,7 +1639,7 @@ const bindableCommands = computed(() => {
       id: "view.left",
       group: "key.groupGeneral",
       title: leftPanel.value ? t("cmd.hideSessions") : t("cmd.showSessions"),
-      hint: "Ctrl+B",
+      hint: "Mod+B",
       enabled: hasSession,
       run: () => (leftPanel.value = !leftPanel.value),
     },
@@ -1653,7 +1654,7 @@ const bindableCommands = computed(() => {
       id: "view.right",
       group: "key.groupSession",
       title: reviewPanelUp.value ? t("cmd.hideFiles") : t("cmd.showFiles"),
-      hint: "Ctrl+Shift+R",
+      hint: "Mod+Shift+R",
       enabled: inWorkspace,
       run: toggleReviewPanel,
     },
@@ -1661,7 +1662,7 @@ const bindableCommands = computed(() => {
       id: "view.terminal",
       group: "key.groupTerminal",
       title: terminalOpen.value ? t("cmd.hideTerminal") : t("cmd.showTerminal"),
-      hint: "Ctrl+`",
+      hint: "Mod+`",
       enabled: inWorkspace,
       run: () => (terminalOpen.value = !terminalOpen.value),
     },
@@ -1669,7 +1670,7 @@ const bindableCommands = computed(() => {
       id: "terminal.new",
       group: "key.groupTerminal",
       title: t("key.newTerminal"),
-      hint: "Ctrl+Alt+T",
+      hint: "Mod+Alt+T",
       enabled: inWorkspace,
       run: () => void newTerminal(),
     },
@@ -1727,7 +1728,7 @@ const bindableCommands = computed(() => {
       id: "workspace.new",
       group: "key.groupGeneral",
       title: t("workspace.new"),
-      hint: "Ctrl+Shift+W",
+      hint: "Mod+Shift+W",
       enabled: hasSession,
       run: () => void newWorkspace(),
     },
@@ -1742,7 +1743,7 @@ const bindableCommands = computed(() => {
       id: "composer.promptMode",
       group: "key.groupPrompt",
       title: t("cmd.promptMode"),
-      hint: "Ctrl+Shift+E",
+      hint: "Mod+Shift+E",
       enabled: hasSession,
       run: () => composer.value?.setMode("normal"),
     },
@@ -1750,7 +1751,7 @@ const bindableCommands = computed(() => {
       id: "composer.shellMode",
       group: "key.groupPrompt",
       title: t("cmd.shellMode"),
-      hint: "Ctrl+Shift+X",
+      hint: "Mod+Shift+X",
       enabled: hasSession,
       run: () => composer.value?.setMode("shell"),
     },
@@ -1758,7 +1759,7 @@ const bindableCommands = computed(() => {
       id: "app.openFile",
       group: "key.groupNavigation",
       title: t("cmd.openFile"),
-      hint: "Ctrl+P",
+      hint: "Mod+P",
       /*
        * There is nothing to list without a project open. The palette's file
        * mode reads the current session's directory, so on the launcher this
@@ -1771,7 +1772,7 @@ const bindableCommands = computed(() => {
       id: "app.attachFile",
       group: "key.groupNavigation",
       title: t("cmd.attachFile"),
-      hint: "Ctrl+U",
+      hint: "Mod+U",
       enabled: hasSession,
       run: () => composer.value?.pick(),
     },
@@ -1791,7 +1792,7 @@ const bindableCommands = computed(() => {
       id: "app.addSelection",
       group: "key.groupGeneral",
       title: t("cmd.addSelection"),
-      hint: "Ctrl+Shift+L",
+      hint: "Mod+Shift+L",
       enabled: hasSession,
       run: () => addSelection(),
     },
@@ -1799,14 +1800,14 @@ const bindableCommands = computed(() => {
       id: "app.searchSessions",
       group: "key.groupGeneral",
       title: t("cmd.searchSessions"),
-      hint: "Ctrl+F",
+      hint: "Mod+F",
       run: () => openPalette("sessions"),
     },
     {
       id: "app.searchProjects",
       group: "key.groupGeneral",
       title: t("cmd.searchProjects"),
-      hint: "Ctrl+Shift+O",
+      hint: "Mod+Shift+O",
       run: () => openPalette("projects"),
     },
     {
@@ -1840,28 +1841,28 @@ const bindableCommands = computed(() => {
       id: "session.prevMessage",
       group: "key.groupSession",
       title: t("cmd.prevMessage"),
-      hint: "Ctrl+Alt+[",
+      hint: "Mod+Alt+[",
       run: () => stream.value?.stepMessage(-1),
     },
     {
       id: "session.nextMessage",
       group: "key.groupSession",
       title: t("cmd.nextMessage"),
-      hint: "Ctrl+Alt+]",
+      hint: "Mod+Alt+]",
       run: () => stream.value?.stepMessage(1),
     },
     {
       id: "session.reopenTab",
       group: "key.groupGeneral",
       title: t("cmd.reopenTab"),
-      hint: "Ctrl+Shift+T",
+      hint: "Mod+Shift+T",
       run: () => void app.reopenTab(),
     },
     {
       id: "app.mcp",
       group: "key.groupModels",
       title: t("cmd.mcp"),
-      hint: "Ctrl+;",
+      hint: "Mod+;",
       run: () => (mcpOpen.value = true),
     },
     {
@@ -1882,7 +1883,7 @@ const bindableCommands = computed(() => {
       id: "agent.cycle",
       group: "key.groupModels",
       title: t("key.cycleAgent"),
-      hint: "Ctrl+.",
+      hint: "Mod+.",
       enabled: hasSession,
       run: () => void cycleAgent(1),
     },
@@ -1890,7 +1891,7 @@ const bindableCommands = computed(() => {
       id: "agent.cycle.reverse",
       group: "key.groupModels",
       title: t("key.cycleAgentBack"),
-      hint: "Ctrl+Shift+.",
+      hint: "Mod+Shift+.",
       enabled: hasSession,
       run: () => void cycleAgent(-1),
     },
@@ -1898,28 +1899,28 @@ const bindableCommands = computed(() => {
       id: "model.variant.cycle",
       group: "key.groupModels",
       title: t("key.cycleEffort"),
-      hint: "Ctrl+Shift+D",
+      hint: "Mod+Shift+D",
       run: () => void cycleEffort(),
     },
     {
       id: "project.previous",
       group: "key.groupGeneral",
       title: t("key.prevProject"),
-      hint: "Ctrl+Alt+↑",
+      hint: "Mod+Alt+↑",
       run: () => void stepProject(-1),
     },
     {
       id: "project.next",
       group: "key.groupGeneral",
       title: t("key.nextProject"),
-      hint: "Ctrl+Alt+↓",
+      hint: "Mod+Alt+↓",
       run: () => void stepProject(1),
     },
     {
       id: "fileTree.toggle",
       group: "key.groupNavigation",
       title: t("key.toggleTree"),
-      hint: "Ctrl+\\",
+      hint: "Mod+\\",
       enabled: inWorkspace,
       run: () => (fileTreeOpen.value = !fileTreeOpen.value),
     },
@@ -1927,21 +1928,21 @@ const bindableCommands = computed(() => {
       id: "theme.cycle",
       group: "key.groupGeneral",
       title: t("cmd.cycleTheme"),
-      hint: "Ctrl+Shift+T",
+      hint: "Mod+Shift+T",
       run: () => void cycleTheme(),
     },
     {
       id: "theme.scheme.cycle",
       group: "key.groupGeneral",
       title: t("cmd.cycleScheme"),
-      hint: "Ctrl+Shift+S",
+      hint: "Mod+Shift+S",
       run: () => void cycleScheme(),
     },
     {
       id: "input.focus",
       group: "key.groupGeneral",
       title: t("key.focusInput"),
-      hint: "Ctrl+L",
+      hint: "Mod+L",
       enabled: hasSession,
       run: () => composer.value?.focus(),
     },
@@ -1949,14 +1950,14 @@ const bindableCommands = computed(() => {
       id: "tab.close",
       group: "key.groupGeneral",
       title: t("key.closeTab"),
-      hint: "Ctrl+W",
+      hint: "Mod+W",
       enabled: hasSession,
       run: () => {
         if (app.currentID) app.closeTab(app.currentID)
       },
     },
-    { id: "app.back", group: "key.groupGeneral", title: t("key.back"), hint: "Ctrl+[", run: () => void back() },
-    { id: "app.forward", group: "key.groupGeneral", title: t("key.forward"), hint: "Ctrl+]", run: () => void forward() },
+    { id: "app.back", group: "key.groupGeneral", title: t("key.back"), hint: "Mod+[", run: () => void back() },
+    { id: "app.forward", group: "key.groupGeneral", title: t("key.forward"), hint: "Mod+]", run: () => void forward() },
     {
       // Hidden the way the reference hides it: opening the palette from inside
       // the palette is not an offer worth making, but the chord is still worth
@@ -1964,7 +1965,7 @@ const bindableCommands = computed(() => {
       id: "command.palette",
       group: "key.groupGeneral",
       title: t("key.palette"),
-      hint: "Ctrl+K",
+      hint: "Mod+K",
       hidden: true,
       run: () => openPalette("all"),
     },
@@ -1972,7 +1973,7 @@ const bindableCommands = computed(() => {
       id: "terminal.close",
       group: "key.groupTerminal",
       title: t("key.closeTerminal"),
-      hint: "Ctrl+W",
+      hint: "Mod+W",
       enabled: terminalOpen.value,
       run: () => drawer.value?.closeActive(),
     },
@@ -1980,21 +1981,21 @@ const bindableCommands = computed(() => {
       id: "zoom.in",
       group: "key.groupDisplay",
       title: t("key.zoomIn"),
-      hint: "Ctrl+=",
+      hint: "Mod+=",
       run: () => window.mcode.zoom("in"),
     },
     {
       id: "zoom.out",
       group: "key.groupDisplay",
       title: t("key.zoomOut"),
-      hint: "Ctrl+-",
+      hint: "Mod+-",
       run: () => window.mcode.zoom("out"),
     },
     {
       id: "zoom.reset",
       group: "key.groupDisplay",
       title: t("key.zoomReset"),
-      hint: "Ctrl+0",
+      hint: "Mod+0",
       run: () => window.mcode.zoom("reset"),
     },
     /*
@@ -2023,7 +2024,7 @@ const bindableCommands = computed(() => {
       title: t("connect.title"),
       run: () => (connectOpen.value = true),
     },
-    { id: "app.settings", group: "key.groupGeneral", title: t("cmd.settings"), hint: "Ctrl+,", run: openSettings },
+    { id: "app.settings", group: "key.groupGeneral", title: t("cmd.settings"), hint: "Mod+,", run: openSettings },
   ]
 
   return all
@@ -2096,7 +2097,14 @@ function swallowDrop(event: DragEvent) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  const mod = event.ctrlKey || event.metaKey
+  /*
+   * Command on macOS, Control elsewhere - and on macOS the two are not
+   * interchangeable. Control there belongs to the system's text editing, which
+   * every field inherits: ^K deletes to the end of the line, ^A and ^E jump to
+   * its ends, ^F and ^B step a character. Answering to both meant this app took
+   * all of them, and it took them inside its own composer.
+   */
+  const mod = IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey || event.metaKey
   if (event.isComposing || event.keyCode === 229) return
 
   /*

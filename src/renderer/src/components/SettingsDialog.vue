@@ -19,7 +19,7 @@ import {
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
-import { chordOf, isBindable } from "../lib/keys"
+import { canonicalChord, chordLabel, chordOf, isBindable } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
 
@@ -123,7 +123,8 @@ const capturing = ref<string>()
 
 /** The chord a row answers to: the user's if they set one, else the built-in. */
 function boundKeys(shortcut: { id: string; hint?: string }) {
-  return app.config?.keybinds?.[shortcut.id] || shortcut.hint || ""
+  // Bindings stored before Mod existed are read as Mod, which is what they meant.
+  return canonicalChord(app.config?.keybinds?.[shortcut.id] || shortcut.hint || "")
 }
 
 function beginCapture(command: string) {
@@ -149,7 +150,7 @@ function beginCapture(command: string) {
     if (clash.length) {
       notifyFailure(
         t("key.conflict"),
-        t("key.conflictBody", { keybind: chord, titles: clash.map((entry) => entry.title).join(", ") }),
+        t("key.conflictBody", { keybind: chordLabel(chord), titles: clash.map((entry) => entry.title).join(", ") }),
       )
       return finish()
     }
@@ -1235,7 +1236,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     {{
                       capturing === shortcut.id
                         ? t("set.pressKeys")
-                        : boundKeys(shortcut) || t("key.unassigned")
+                        : chordLabel(boundKeys(shortcut)) || t("key.unassigned")
                     }}
                   </button>
                   <button

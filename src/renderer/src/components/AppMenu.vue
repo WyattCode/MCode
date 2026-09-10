@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, nextTick, ref } from "vue"
+import { chordLabel } from "../lib/keys"
 import { t } from "../lib/i18n"
 
 /**
@@ -37,10 +38,10 @@ const groups = computed<Group[]>(() => [
     key: "file",
     label: t("menu.file"),
     items: [
-      { key: "new-session", label: t("menu.newSession"), hint: "Ctrl+N" },
-      { key: "open-project", label: t("menu.openProject"), hint: "Ctrl+O" },
-      { key: "settings", label: t("menu.settings"), hint: "Ctrl+," },
-      { key: "new-window", label: t("menu.newWindow"), hint: "Ctrl+Shift+N" },
+      { key: "new-session", label: t("menu.newSession"), hint: "Mod+N" },
+      { key: "open-project", label: t("menu.openProject"), hint: "Mod+O" },
+      { key: "settings", label: t("menu.settings"), hint: "Mod+," },
+      { key: "new-window", label: t("menu.newWindow"), hint: "Mod+Shift+N" },
       { key: "close", label: t("menu.close"), divided: true },
       { key: "quit", label: t("menu.quit") },
     ],
@@ -49,28 +50,28 @@ const groups = computed<Group[]>(() => [
     key: "edit",
     label: t("menu.edit"),
     items: [
-      { key: "undo", label: t("menu.undo"), hint: "Ctrl+Z" },
-      { key: "redo", label: t("menu.redo"), hint: "Ctrl+Y" },
-      { key: "cut", label: t("edit.cut"), hint: "Ctrl+X", divided: true },
-      { key: "copy", label: t("edit.copy"), hint: "Ctrl+C" },
-      { key: "paste", label: t("edit.paste"), hint: "Ctrl+V" },
+      { key: "undo", label: t("menu.undo"), hint: "Mod+Z" },
+      { key: "redo", label: t("menu.redo"), hint: "Mod+Y" },
+      { key: "cut", label: t("edit.cut"), hint: "Mod+X", divided: true },
+      { key: "copy", label: t("edit.copy"), hint: "Mod+C" },
+      { key: "paste", label: t("edit.paste"), hint: "Mod+V" },
       { key: "delete", label: t("edit.delete") },
-      { key: "selectAll", label: t("edit.selectAll"), hint: "Ctrl+A" },
+      { key: "selectAll", label: t("edit.selectAll"), hint: "Mod+A" },
     ],
   },
   {
     key: "view",
     label: t("menu.view"),
     items: [
-      { key: "palette", label: t("menu.palette"), hint: "Ctrl+K" },
-      { key: "sidebar", label: t("menu.sidebar"), hint: "Ctrl+B", divided: true },
-      { key: "terminal", label: t("menu.terminal"), hint: "Ctrl+`" },
-      { key: "files", label: t("menu.files"), hint: "Ctrl+\\" },
+      { key: "palette", label: t("menu.palette"), hint: "Mod+K" },
+      { key: "sidebar", label: t("menu.sidebar"), hint: "Mod+B", divided: true },
+      { key: "terminal", label: t("menu.terminal"), hint: "Mod+`" },
+      { key: "files", label: t("menu.files"), hint: "Mod+\\" },
       { key: "reload", label: t("menu.reload"), divided: true },
       { key: "devtools", label: t("menu.devTools") },
-      { key: "zoom-reset", label: t("menu.resetZoom"), hint: "Ctrl+0", divided: true },
-      { key: "zoom-in", label: t("menu.zoomIn"), hint: "Ctrl+=" },
-      { key: "zoom-out", label: t("menu.zoomOut"), hint: "Ctrl+-" },
+      { key: "zoom-reset", label: t("menu.resetZoom"), hint: "Mod+0", divided: true },
+      { key: "zoom-in", label: t("menu.zoomIn"), hint: "Mod+=" },
+      { key: "zoom-out", label: t("menu.zoomOut"), hint: "Mod+-" },
       { key: "fullscreen", label: t("menu.fullscreen"), divided: true },
     ],
   },
@@ -78,8 +79,8 @@ const groups = computed<Group[]>(() => [
     key: "session",
     label: t("menu.session"),
     items: [
-      { key: "abort", label: t("menu.stop"), hint: "Ctrl+." },
-      { key: "model", label: t("menu.switchModel"), hint: "Ctrl+M" },
+      { key: "abort", label: t("menu.stop"), hint: "Mod+." },
+      { key: "model", label: t("menu.switchModel"), hint: "Mod+M" },
       { key: "delete-session", label: t("menu.deleteSession"), divided: true },
     ],
   },
@@ -87,12 +88,12 @@ const groups = computed<Group[]>(() => [
     key: "go",
     label: t("menu.go"),
     items: [
-      { key: "back", label: t("menu.back"), hint: "Ctrl+[" },
-      { key: "forward", label: t("menu.forward"), hint: "Ctrl+]" },
+      { key: "back", label: t("menu.back"), hint: "Mod+[" },
+      { key: "forward", label: t("menu.forward"), hint: "Mod+]" },
       { key: "prev-session", label: t("menu.prevSession"), hint: "Alt+Up", divided: true },
       { key: "next-session", label: t("menu.nextSession"), hint: "Alt+Down" },
-      { key: "prev-project", label: t("menu.prevProject"), hint: "Ctrl+Alt+Up", divided: true },
-      { key: "next-project", label: t("menu.nextProject"), hint: "Ctrl+Alt+Down" },
+      { key: "prev-project", label: t("menu.prevProject"), hint: "Mod+Alt+Up", divided: true },
+      { key: "next-project", label: t("menu.nextProject"), hint: "Mod+Alt+Down" },
     ],
   },
   {
@@ -220,7 +221,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
         <div v-if="item.divided" class="rule" />
         <button class="item" :disabled="props.disabled?.has(item.key)" @click="pick(item)">
           <span class="item-label">{{ item.label }}</span>
-          <span v-if="item.hint" class="keys">{{ item.hint }}</span>
+          <span v-if="item.hint" class="keys">{{ chordLabel(item.hint) }}</span>
         </button>
       </template>
     </div>

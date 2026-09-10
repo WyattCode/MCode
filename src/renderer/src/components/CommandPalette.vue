@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from "vue"
+import { chordLabel } from "../lib/keys"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
 import { projectName } from "../lib/project"
@@ -332,7 +333,7 @@ onMounted(() => {
 
             <template v-else-if="row.kind === 'command'">
               <span class="title">{{ row.command.title }}</span>
-              <span v-if="row.command.hint" class="hint">{{ row.command.hint }}</span>
+              <span v-if="row.command.hint" class="hint">{{ chordLabel(row.command.hint) }}</span>
             </template>
 
             <template v-else-if="row.kind === 'session'">

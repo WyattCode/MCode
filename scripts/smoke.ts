@@ -10,6 +10,7 @@ import { nameFromId } from "../src/server/provider/model-name"
 import { discoverModels } from "../src/server/provider/discover"
 import { OpenAICompatible, toMessages } from "../src/server/provider/openai"
 import { fromDataURL, linkFrom, nameFor } from "../src/renderer/src/lib/attach"
+import { MOD, canonicalChord, isBindable } from "../src/renderer/src/lib/keys"
 import { modelVariants } from "../src/server/provider/variants"
 import { ProviderError } from "../src/server/provider/types"
 import { createHash } from "node:crypto"
@@ -1393,6 +1394,28 @@ async function main() {
       typeof plain.find((entry) => entry.role === "user")?.content === "string",
       plain.find((entry) => entry.role === "user")?.content,
     )
+  }
+
+  // ------------------------------------------------------------ shortcuts
+  section("Shortcuts")
+  {
+    /*
+     * Control on macOS is not an application modifier: it is the text-editing
+     * one every field inherits, where ^K deletes to the end of the line and ^A
+     * and ^E jump to its ends. Writing both it and Command as "Ctrl" meant the
+     * app answered to ^K too, inside its own composer.
+     *
+     * The library reads the platform off navigator, which node has not got, so
+     * both spellings are exercised through the label and the migration - the
+     * parts that are pure string work either way.
+     */
+    check("a chord written for the app carries Mod, not a physical key", MOD === "Mod")
+    check("an old Ctrl binding is read as Mod, which is what it meant", canonicalChord("Ctrl+J") === "Mod+J", canonicalChord("Ctrl+J"))
+    check("a chord already written with Mod is left alone", canonicalChord("Mod+J") === "Mod+J")
+    check("a real Control chord on macOS is not the app's chord", canonicalChord("Mod+K") !== "Ctrl+K")
+    check("an empty binding stays empty", canonicalChord("") === "")
+    check("Mod is bindable", isBindable("Mod+K"))
+    check("a bare letter is not, or it would swallow typing", !isBindable("K"))
   }
 
   section("Model names")
