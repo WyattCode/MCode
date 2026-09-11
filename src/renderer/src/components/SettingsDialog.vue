@@ -66,6 +66,35 @@ interface Bindable {
 const props = defineProps<{ section?: Section; commands: Bindable[] }>()
 const section = ref<Section>(props.section ?? "general")
 
+/*
+ * The column's search, after MiMo's: narrows the entries to those whose name
+ * matches, and Enter opens the first of them. Being the first text field in
+ * the dialog it is also where focus lands on opening - before it, that was the
+ * first text box on the General page, the UI font, and opening settings
+ * scrolled the page halfway down to show it.
+ */
+const navQuery = ref("")
+const NAV_LABELS: Record<Section, string> = {
+  general: "set.general",
+  keys: "set.keyboard",
+  archive: "set.archive",
+  server: "set.server",
+  providers: "set.providers",
+  models: "set.models",
+}
+
+function navShows(entry: Section): boolean {
+  const needle = navQuery.value.trim().toLocaleLowerCase()
+  return !needle || t(NAV_LABELS[entry]).toLocaleLowerCase().includes(needle)
+}
+
+const navMatches = computed(() => (Object.keys(NAV_LABELS) as Section[]).filter(navShows))
+
+function openFirstMatch() {
+  const first = navMatches.value[0]
+  if (first) section.value = first
+}
+
 const saved = ref<string>()
 
 /*
@@ -625,8 +654,25 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 <template>
   <div class="overlay" @mousedown.self="emit('close')">
     <div v-modal class="dialog">
+      <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
+           and the scrim, which a pointer-only reader otherwise has to find. -->
+      <button class="close" :aria-label="t('common.close')" @click="emit('close')">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+        </svg>
+      </button>
       <nav class="nav">
-        <div class="nav-group">{{ t("set.groupDesktop") }}</div>
+        <div class="nav-title">{{ t("rail.settings") }}</div>
+        <input
+          v-model="navQuery"
+          class="nav-search"
+          :placeholder="t('set.search')"
+          :aria-label="t('set.search')"
+          spellcheck="false"
+          autocomplete="off"
+          @keydown.enter="openFirstMatch"
+        />
+        <div v-show="navShows('general') || navShows('keys') || navShows('archive')" class="nav-group">{{ t("set.groupDesktop") }}</div>
 
         <!--
           Every glyph below is the reference's own, lifted from its icon sprite
@@ -635,7 +681,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           and round caps, which is why the column read heavier and rounder than
           opencode's beside it.
         -->
-        <button class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
+        <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
               d="M3.625 6.25H10.9375M16.375 13.75H10.5625M3.625 13.75H4.9375M11.125 6.25C11.125 4.79969 12.2997 3.625 13.75 3.625C15.2003 3.625 16.375 4.79969 16.375 6.25C16.375 7.70031 15.2003 8.875 13.75 8.875C12.2997 8.875 11.125 7.70031 11.125 6.25ZM10.375 13.75C10.375 15.2003 9.20031 16.375 7.75 16.375C6.29969 16.375 5.125 15.2003 5.125 13.75C5.125 12.2997 6.29969 11.125 7.75 11.125C9.20031 11.125 10.375 12.2997 10.375 13.75Z"
@@ -646,7 +692,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           {{ t("set.general") }}
         </button>
 
-        <button class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
+        <button v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
               d="M5.125 7.375V4.375H14.875V2.875M8.3125 13.9375H11.6875M8.125 13.9375H11.875M2.125 7.375H17.875V17.125H2.125V7.375ZM5.5 10.375H5.125V10.75H5.5V10.375ZM8.5 10.375H8.125V10.75H8.5V10.375ZM11.875 10.375H11.5V10.75H11.875V10.375ZM14.875 10.375H14.5V10.75H14.875V10.375ZM14.875 13.75H14.5V14.125H14.875V13.75ZM5.5 13.75H5.125V14.125H5.5V13.75Z"
@@ -665,7 +711,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           again. This row is kept because removing it would strand whatever is
           already archived, and it uses opencode's own archive glyph.
         -->
-        <button class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
+        <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
               d="M16.8747 6.24935H17.3747V5.74935H16.8747V6.24935ZM16.8747 16.8743V17.3743H17.3747V16.8743H16.8747ZM3.12467 16.8743H2.62467V17.3743H3.12467V16.8743ZM3.12467 6.24935V5.74935H2.62467V6.24935H3.12467ZM2.08301 2.91602V2.41602H1.58301V2.91602H2.08301ZM17.9163 2.91602H18.4163V2.41602H17.9163V2.91602ZM17.9163 6.24935V6.74935H18.4163V6.24935H17.9163ZM2.08301 6.24935H1.58301V6.74935H2.08301V6.24935ZM8.33301 9.08268H7.83301V10.0827H8.33301V9.58268V9.08268ZM11.6663 10.0827H12.1663V9.08268H11.6663V9.58268V10.0827ZM16.8747 6.24935H16.3747V16.8743H16.8747H17.3747V6.24935H16.8747ZM16.8747 16.8743V16.3743H3.12467V16.8743V17.3743H16.8747V16.8743ZM3.12467 16.8743H3.62467V6.24935H3.12467H2.62467V16.8743H3.12467ZM3.12467 6.24935V6.74935H16.8747V6.24935V5.74935H3.12467V6.24935ZM2.08301 2.91602V3.41602H17.9163V2.91602V2.41602H2.08301V2.91602ZM17.9163 2.91602H17.4163V6.24935H17.9163H18.4163V2.91602H17.9163ZM17.9163 6.24935V5.74935H2.08301V6.24935V6.74935H17.9163V6.24935ZM2.08301 6.24935H2.58301V2.91602H2.08301H1.58301V6.24935H2.08301ZM8.33301 9.58268V10.0827H11.6663V9.58268V9.08268H8.33301V9.58268Z"
@@ -675,9 +721,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           {{ t("set.archive") }}
         </button>
 
-        <div class="nav-group">{{ t("set.groupServer") }}</div>
+        <div v-show="navShows('server') || navShows('providers') || navShows('models')" class="nav-group">{{ t("set.groupServer") }}</div>
 
-        <button class="nav-item" :class="{ on: section === 'server' }" @click="section = 'server'">
+        <button v-show="navShows('server')" class="nav-item" :class="{ on: section === 'server' }" @click="section = 'server'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <rect x="3.35547" y="1.92969" width="13.2857" height="16.1429" stroke="currentColor" />
             <rect x="3.35547" y="11.9297" width="13.2857" height="6.14286" stroke="currentColor" />
@@ -687,7 +733,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           {{ t("set.server") }}
         </button>
 
-        <button class="nav-item" :class="{ on: section === 'providers' }" @click="section = 'providers'">
+        <button v-show="navShows('providers')" class="nav-item" :class="{ on: section === 'providers' }" @click="section = 'providers'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
               d="M10.0001 4.37562V2.875M13 4.37793V2.87793M7.00014 4.37793V2.875M10 17.1279V15.6279M13 17.1279V15.6279M7 17.1279V15.6279M15.625 13.0029H17.125M15.625 7.00293H17.125M15.625 10.0029H17.125M2.875 10.0029H4.375M2.875 13.0029H4.375M2.875 7.00293H4.375M4.375 4.37793H15.625V15.6279H4.375V4.37793ZM12.6241 10.0022C12.6241 11.4519 11.4488 12.6272 9.99908 12.6272C8.54934 12.6272 7.37408 11.4519 7.37408 10.0022C7.37408 8.55245 8.54934 7.3772 9.99908 7.3772C11.4488 7.3772 12.6241 8.55245 12.6241 10.0022Z"
@@ -698,7 +744,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           {{ t("set.providers") }}
         </button>
 
-        <button class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
+        <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
               fill-rule="evenodd"
@@ -709,6 +755,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           </svg>
           {{ t("set.models") }}
         </button>
+
+        <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
 
         <div class="nav-foot">
           MCode Desktop<br />
@@ -2398,5 +2446,255 @@ h3 {
 .cpanel {
   padding: 4px 16px 16px;
   border-bottom: 1px solid var(--border-weaker);
+}
+
+/*
+ * 2.0: Xiaomi MiMo's settings dialog, measured with it open.
+ *
+ * 960 by 660 on the workspace fill behind a light scrim, a 20px corner and a
+ * one-pixel rule a shade up from the fill. A 241 column of 36px rows at 14/500
+ * under a 15/600 title, grouped by 12px grey labels; the page beside it on the
+ * menu surface with 44 by 40 of padding, a 24/400 title, 14/500 section
+ * labels, and cards a step lighter again with a 16px corner. Rows are a 14/500
+ * name over a 12/500 line in the base text colour, 16 above and below.
+ */
+.overlay {
+  background: rgb(0 0 0 / 0.24);
+}
+
+.dialog {
+  position: relative;
+  width: min(960px, 92vw);
+  height: min(660px, 86vh);
+  background: var(--surface-raised);
+  border: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--surface-raised));
+  border-radius: 20px;
+}
+
+.close {
+  position: absolute;
+  top: 18px;
+  inset-inline-end: 18px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-base);
+  border-radius: 8px;
+}
+
+.close:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.nav {
+  gap: 2px;
+  width: 241px;
+  min-width: 241px;
+  padding: 19px 11px 12px;
+  background: var(--surface-raised);
+  border-inline-end: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-raised));
+}
+
+.nav-title {
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 11px;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 36px;
+}
+
+.nav-group {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 35px;
+  padding: 0 11px;
+  color: var(--text-weak);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 19.2px;
+}
+
+.nav-title + .nav-group,
+.nav-item + .nav-group {
+  margin-top: 6px;
+}
+
+.nav-item {
+  gap: 10px;
+  height: 36px;
+  padding: 0 11px;
+  color: var(--text-strong);
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.nav-ico {
+  width: 18px;
+  height: 18px;
+  color: var(--text-base);
+}
+
+.nav-item:hover {
+  background: color-mix(in srgb, var(--text-strong) 5%, var(--surface-raised));
+}
+
+.nav-item.on {
+  background: color-mix(in srgb, var(--text-strong) 8%, var(--surface-raised));
+}
+
+.nav-foot {
+  padding: 4px 11px;
+}
+
+.content {
+  padding: 44px 40px;
+  background: var(--surface-menu);
+}
+
+h2 {
+  margin: 0 0 27px;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 38.4px;
+}
+
+h3 {
+  margin: 27px 0 4px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22.4px;
+}
+
+.card {
+  padding: 0 17px;
+  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
+  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+.card + .card {
+  margin-top: 16px;
+}
+
+.line {
+  padding: 16px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+}
+
+.line-text {
+  gap: 3px;
+}
+
+.line-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22.4px;
+  letter-spacing: 0;
+}
+
+.line-sub {
+  margin-block: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18.6px;
+}
+
+/* A round 32 by 20 switch: light track with a dark knob when on. */
+.switch {
+  width: 32px;
+  height: 20px;
+  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-menu));
+  border-radius: 999px;
+}
+
+/* Hover changes the fill only; the shape is the switch's, not the pointer's. */
+.switch:hover {
+  background: color-mix(in srgb, var(--text-strong) 28%, var(--surface-menu));
+}
+
+.switch.on,
+.switch.on:hover {
+  background: #ececec;
+}
+
+.knob,
+.switch.on .knob {
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  background: #ececec;
+  border-radius: 50%;
+}
+
+.switch.on .knob {
+  background: #141414;
+  inset-inline-start: 14px;
+}
+
+.ctl-btn {
+  height: 28px;
+  padding: 0 10px;
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  border: 0;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+/* The pickers in a row: a filled 28px chip, the way MiMo's language picker is. */
+.content :deep(.trigger) {
+  height: 28px;
+  padding: 0 8px 0 10px;
+  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.content :deep(.trigger .label) {
+  font-weight: 500;
+  line-height: 20px;
+}
+
+/* The column's search field: MiMo's 36 tall with an 8px corner and a quiet rule. */
+.nav-search {
+  flex-shrink: 0;
+  height: 36px;
+  margin-top: 6px;
+  padding: 0 14px;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--surface-raised));
+  border-radius: 8px;
+  outline: none;
+  font-size: 14px;
+  line-height: 22.4px;
+}
+
+.nav-search::placeholder {
+  color: var(--text-weak);
+}
+
+.nav-search:focus {
+  border-color: color-mix(in srgb, var(--text-strong) 32%, var(--surface-raised));
+}
+
+.nav-search + .nav-group {
+  margin-top: 7px;
+}
+
+.nav-empty {
+  padding: 8px 11px;
+  color: var(--text-weak);
+  font-size: 13px;
 }
 </style>
