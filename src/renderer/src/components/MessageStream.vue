@@ -980,6 +980,12 @@ defineExpose({ stepMessage })
   padding: 12px 28px 16px;
 }
 
+/* A gutter on both edges, as MiMo keeps: the column then centres on the same
+   line as the composer under it instead of half a scrollbar to one side. */
+.stream {
+  scrollbar-gutter: stable both-edges;
+}
+
 @media (min-width: 1536px) {
   .inner {
     max-width: 764px;

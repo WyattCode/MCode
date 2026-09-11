@@ -15,10 +15,13 @@ import { readContext } from "./session-context"
  */
 const app = useApp()
 
-/** Whether the Context view this header's ring opens is currently up. */
-defineProps<{ contextOpen?: boolean }>()
+/**
+ * Whether the Context view this header's ring opens is currently up, and
+ * whether the info card beside the conversation is.
+ */
+defineProps<{ contextOpen?: boolean; infoOpen?: boolean }>()
 
-const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; context: [] }>()
+const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; context: []; info: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
 
@@ -143,6 +146,19 @@ function openMenu(event: MouseEvent) {
     </div>
 
     <div class="right">
+      <!-- The info card beside the conversation; lit while it is up, as MiMo's toggle is. -->
+      <button
+        class="ico"
+        :aria-pressed="Boolean(infoOpen)"
+        v-tip="{ label: t('info.toggle'), placement: 'bottom' }"
+        @click="emit('info')"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.2" />
+          <path d="M10 2.5v11" stroke="currentColor" stroke-width="1.2" />
+        </svg>
+      </button>
+
       <!--
         A control again, and this time one with somewhere to go.
 
@@ -450,6 +466,12 @@ function openMenu(event: MouseEvent) {
   width: 26px;
   height: 26px;
   border-radius: 7px;
+}
+
+/* A toggle that is on stays lit, the way the readout does while its view is up. */
+.ico[aria-pressed="true"] {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 .left > *,

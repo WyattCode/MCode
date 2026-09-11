@@ -12,6 +12,7 @@ import AppMenu from "./components/AppMenu.vue"
 import MessageStream from "./components/MessageStream.vue"
 import Composer from "./components/Composer.vue"
 import TodoDock from "./components/TodoDock.vue"
+import InfoPanel from "./components/InfoPanel.vue"
 import RevertDock from "./components/RevertDock.vue"
 import FilePanel from "./components/FilePanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
@@ -69,6 +70,36 @@ const leftPanel = ref(true)
  * said only that there were none.
  */
 const rightPanel = ref(false)
+
+/*
+ * The info card beside a conversation (2.0, after Xiaomi MiMo's): the plan,
+ * what the session produced and what it read. Open unless the reader put it
+ * away, and remembered per machine - it is a way of reading, not a property
+ * of any one session. Storage can be missing or refuse (a locked-down
+ * profile), in which case the card simply starts open every time.
+ */
+const INFO_KEY = "mcode.infoPanel"
+const infoOpen = ref(readInfoOpen())
+
+function readInfoOpen(): boolean {
+  try {
+    return localStorage.getItem(INFO_KEY) !== "0"
+  } catch {
+    return true
+  }
+}
+
+function toggleInfo() {
+  infoOpen.value = !infoOpen.value
+  try {
+    localStorage.setItem(INFO_KEY, infoOpen.value ? "1" : "0")
+  } catch {
+    // Remembered for this run only.
+  }
+}
+
+/* Only beside a conversation: the home screen and an empty session have nothing to list. */
+const infoShowing = computed(() => infoOpen.value && !isHome.value && !empty.value)
 
 /*
  * The file column inside the review panel. Its own thing, because opencode
@@ -2699,7 +2730,7 @@ onBeforeUnmount(() => {
         @settings="openSettings"
       />
 
-      <main ref="mainPane" class="main">
+      <main ref="mainPane" class="main" :class="{ 'info-open': infoShowing }">
         <!-- A turn can run for minutes; the bar is the only thing that says so
              without the user watching the transcript for movement. -->
         <div v-if="app.busy && !onboarding" class="progress"><span /></div>
@@ -2738,6 +2769,8 @@ onBeforeUnmount(() => {
           <SessionHeader
             ref="header"
             :context-open="contextShowing"
+            :info-open="infoShowing"
+            @info="toggleInfo"
             @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
             @menu="(x, y) => (sessionMenu = { x, y })"
             @context="toggleContext"
@@ -2745,6 +2778,7 @@ onBeforeUnmount(() => {
 
           <SessionHero v-if="empty && !app.error" />
           <MessageStream v-else ref="stream" />
+          <InfoPanel v-if="infoShowing" />
 
           <!--
             The dock, which is the same region in every state a session can be
@@ -2763,7 +2797,7 @@ onBeforeUnmount(() => {
             when a turn has recorded one, so an ordinary conversation is not
             given a strip of empty chrome.
           -->
-          <TodoDock />
+          <TodoDock v-if="!infoShowing" />
           <!--
             What a rollback took out, and the way back. Drawn only while a
             rollback stands, because otherwise there is nothing on screen at all
@@ -3239,5 +3273,19 @@ onBeforeUnmount(() => {
   border-inline-start: 1px solid var(--border-weaker);
   border-radius: 0;
   box-shadow: none;
+}
+
+/*
+ * With the info card up the conversation makes room for it the way MiMo's
+ * does: 262 held clear at the inline end of the transcript and of the dock,
+ * so the reading column and the composer centre in what is left and line up
+ * with each other rather than with the window.
+ */
+.main.info-open :deep(.stream) {
+  padding-inline-end: 262px;
+}
+
+.main.info-open :deep(.composer) {
+  padding-inline-end: calc(24px + 262px);
 }
 </style>

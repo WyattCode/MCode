@@ -2,6 +2,7 @@
 import { computed, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { latestTodos, type Todo } from "../lib/session-info"
 
 /**
  * The plan, kept where it can be seen.
@@ -16,32 +17,8 @@ import { t } from "../lib/i18n"
  */
 const app = useApp()
 
-interface Todo {
-  id: string
-  content: string
-  status: string
-}
-
-/**
- * The most recent plan in this conversation.
- *
- * Read from the transcript rather than asked for, because the tool's own result
- * carries it and the newest call is by definition the current plan - an earlier
- * one is a plan that has since been rewritten.
- */
-const todos = computed<Todo[]>(() => {
-  for (let index = app.messages.length - 1; index >= 0; index -= 1) {
-    const message = app.messages[index]
-    // Only an assistant turn runs tools; a user message has no parts at all.
-    if (message?.role !== "assistant") continue
-    const parts = message.parts
-    for (let at = parts.length - 1; at >= 0; at -= 1) {
-      const found = (parts[at] as { metadata?: { todos?: Todo[] } }).metadata?.todos
-      if (found?.length) return found
-    }
-  }
-  return []
-})
+/** The most recent plan in this conversation - the same one the info card shows. */
+const todos = computed<Todo[]>(() => latestTodos(app.messages))
 
 const done = computed(() => todos.value.filter((todo) => todo.status === "completed").length)
 
