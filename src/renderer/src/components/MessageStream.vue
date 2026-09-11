@@ -986,6 +986,18 @@ defineExpose({ stepMessage })
   scrollbar-gutter: stable both-edges;
 }
 
+/* What the user wrote, as MiMo sets it: a filled bubble with a 16px corner,
+   14/500 on a 20 line, and never wider than 78% of the column. */
+.user-bubble {
+  max-width: 78%;
+  padding: 9px 13px;
+  color: color-mix(in srgb, var(--text-strong) 95%, transparent);
+  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  border-radius: 16px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
 @media (min-width: 1536px) {
   .inner {
     max-width: 764px;
