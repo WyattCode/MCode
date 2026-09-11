@@ -667,6 +667,25 @@ async function main() {
       check("the template as written is one", isSummary("## Objective\n- audit\n\n## Next Move\n1. (none)"))
     }
 
+    /*
+     * The header line of a Windows notification is whatever the system can
+     * match this process's AppUserModelID to. The installer writes appId onto
+     * the Start Menu shortcut; a process claiming any other id is not matched,
+     * and the toast is headed by the raw id - "electron.app.MCode" - with no
+     * name and no icon. So the two have to be the same string.
+     */
+    {
+      const builder = await fs.readFile("electron-builder.yml", "utf8")
+      const main = await fs.readFile("src/main/index.ts", "utf8")
+      const declared = /^appId:\s*(\S+)/m.exec(builder)?.[1]
+      const claimed = /setAppUserModelId\("([^"]+)"\)/.exec(main)?.[1]
+      check(
+        "the process claims the id the installer gives its shortcut",
+        Boolean(declared) && declared === claimed,
+        `${claimed} vs ${declared}`,
+      )
+    }
+
     fake.close()
   }
 

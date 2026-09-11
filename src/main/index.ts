@@ -14,6 +14,19 @@ import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { cascade, restore, track } from "./window-state"
 import pkg from "../../package.json"
 
+/*
+ * The id Windows files this process's notifications under.
+ *
+ * It has to be the appId electron-builder writes onto the Start Menu shortcut
+ * (electron-builder.yml), because that is how a toast finds a name and an icon
+ * to show. Left at Electron's default, "electron.app.MCode", it matched nothing
+ * the installer registered, and every notification was headed by that raw
+ * string with a blank where the icon goes. The reference sets its own first
+ * thing, the same way (`app.setAppUserModelId(appId)`). smoke holds this id
+ * and the installer's to each other.
+ */
+app.setAppUserModelId("dev.mcode.app")
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 let backend: Backend | undefined
