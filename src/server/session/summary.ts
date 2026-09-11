@@ -119,7 +119,17 @@ export function selectForSummary(
     split = at
   }
 
-  if (split === 0) {
+  /*
+   * Either end means there is no split to make. `split === 0` is a
+   * conversation that fits inside the kept end entirely; `split` still at the
+   * length is one whose last message alone is over it - a long reasoning
+   * block or a pasted file does that, since only tool output is cut - so
+   * nothing can be kept. Both summarise everything and mark the last message.
+   * Reading `rendered[split]` in the second case is what crashed here: the
+   * reference only ever slices at the split, and slicing past the end is
+   * harmless where indexing is not.
+   */
+  if (split === 0 || split === rendered.length) {
     return {
       head: rendered.map((entry) => entry.text).join("\n\n"),
       recent: "",
@@ -169,7 +179,14 @@ export function buildSummaryPrompt(input: { previousSummary?: string; context: s
  * to say the context is gone. The template's first heading is the cheapest
  * sign the instruction was followed; a reply without it is refused, and the
  * provider's own rejection of the original request stands instead.
+ *
+ * Three or more second-level headings count as well. Measured on the user's
+ * own Qwen with a Chinese conversation, the template's English headings came
+ * back as written; but a model that translates them - "## 目标" - would
+ * otherwise have a real summary refused and the turn left on a 400, and a
+ * one-sentence continuation has no headings at all, so it is still refused.
  */
 export function isSummary(text: string): boolean {
-  return /^\s*##\s*Objective\b/m.test(text)
+  if (/^\s*##\s*Objective\b/m.test(text)) return true
+  return (text.match(/^\s*##\s+\S/gm) ?? []).length >= 3
 }
