@@ -969,4 +969,20 @@ defineExpose({ stepMessage })
   border-radius: 8px;
   transform: translateX(-50%);
 }
+
+/*
+ * 2.0: MiMo's reading column - 764 wide with 28 each side, so its text runs
+ * 708 wide, and it keeps that width on a large screen rather than growing.
+ * The composer's 712 sits under it two pixels proud on either side.
+ */
+.inner {
+  max-width: 764px;
+  padding: 12px 28px 16px;
+}
+
+@media (min-width: 1536px) {
+  .inner {
+    max-width: 764px;
+  }
+}
 </style>

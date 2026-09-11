@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, Effort, ModelInfo } from "@shared/protocol"
+import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles } from "../lib/attach"
 import type { Draft } from "../lib/draft"
@@ -775,9 +776,54 @@ function onKeydown(event: KeyboardEvent) {
 
 
 /** Which pill has its menu open, if any. */
-const menu = ref<"agent" | "model" | "effort">()
+const menu = ref<"agent" | "model" | "effort" | "access">()
 const modelQuery = ref("")
 const pills = ref<HTMLElement>()
+
+/**
+ * The access chip's two positions. "full" is what is left once nothing asks -
+ * a map with a deny in it still counts, since a deny never prompts either.
+ */
+const ACCESS_CHOICES = ["ask", "full"] as const
+type Access = (typeof ACCESS_CHOICES)[number]
+
+const access = computed<Access>(() => {
+  const map = app.config?.permissions
+  if (!map) return "ask"
+  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
+})
+
+/**
+ * Full turns every bucket that is not denied to allow, and keeps the map it
+ * replaced; back from full puts that map back, so answers the user gave in
+ * settings - the shell allowed, say - survive a trip through the chip. With
+ * nothing kept (a config written elsewhere) each bucket goes to its default,
+ * not to "ask": reading the project never asked, and a chip that made it
+ * start would be a regression dressed up as a safety setting. A deny is never
+ * touched in either direction.
+ */
+async function chooseAccess(next: Access) {
+  menu.value = undefined
+  const map = app.config?.permissions
+  if (!map || next === access.value) return
+  const kept = app.config?.accessBefore ?? {}
+  const permissions = { ...map }
+  for (const kind of PERMISSION_KINDS) {
+    if (permissions[kind] === "deny") continue
+    const restored = kept[kind]
+    permissions[kind] =
+      next === "full"
+        ? "allow"
+        : restored && (PERMISSION_ACTIONS as readonly string[]).includes(restored)
+          ? restored
+          : DEFAULT_PERMISSIONS[kind]
+  }
+  try {
+    await app.patchConfig({ permissions, accessBefore: next === "full" ? { ...map } : undefined })
+  } catch (err) {
+    notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+  }
+}
 
 const AGENTS = ["build", "plan"] as const
 
@@ -992,7 +1038,7 @@ function openModelMenu() {
   })
 }
 
-function toggle(which: "agent" | "model" | "effort") {
+function toggle(which: "agent" | "model" | "effort" | "access") {
   if (menu.value === which) {
     menu.value = undefined
     modelQuery.value = ""
@@ -1249,6 +1295,58 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </button>
 
           <!--
+            The permission map in one control: every bucket that asks turned to
+            allow, or put back to its default. Deny is left alone either way - it
+            is a deliberate "never", and a shortcut has no business undoing it.
+          -->
+          <div class="pill-wrap">
+            <button
+              class="pill access"
+              :class="{ open: menu === 'access', full: access === 'full' }"
+              @click="toggle('access')"
+            >
+              <svg v-if="access === 'full'" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2" />
+                <path d="M8 4.6v4.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+                <circle cx="8" cy="11.1" r="0.8" fill="currentColor" />
+              </svg>
+              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 1.8 13 3.7v4c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5v-4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              </svg>
+              <span>{{ t(`composer.access.${access}`) }}</span>
+              <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
+              </svg>
+            </button>
+            <div v-if="menu === 'access'" class="menu access-menu">
+              <button
+                v-for="entry in ACCESS_CHOICES"
+                :key="entry"
+                class="item access-item"
+                :class="{ on: entry === access }"
+                @click="chooseAccess(entry)"
+              >
+                <span class="tick">
+                  <svg
+                    v-show="entry === access"
+                    width="12"
+                    height="12"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    aria-hidden="true"
+                  >
+                    <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
+                  </svg>
+                </span>
+                <span class="access-text">
+                  <span class="item-name">{{ t(`composer.access.${entry}`) }}</span>
+                  <span class="access-hint">{{ t(`composer.access.${entry}Hint`) }}</span>
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <!--
             Hidden by setting, in which case the session simply runs as Build:
             a picker with nothing to pick between is a control that only takes
             up room.
@@ -1284,6 +1382,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               </button>
             </div>
           </div>
+
+          <span class="grow" />
 
           <div class="pill-wrap">
             <button class="pill" :class="{ open: menu === 'model' }" @click="toggle('model')">
@@ -1444,8 +1544,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               </button>
             </div>
           </div>
-
-          <span class="grow" />
 
           <!--
             One button, which is what the reference has. It stops the turn only
@@ -2290,5 +2388,154 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   justify-content: center;
   width: 16px;
   height: 16px;
+}
+
+/*
+ * 2.0: Xiaomi MiMo's composer, measured under one of its conversations.
+ *
+ * A 712 card on the menu surface with a half-pixel rule, a 20px corner and
+ * eight of padding all round; the writing area inside it at 14/400 on a 21
+ * line, and a 32px bar of round buttons and flat chips under that. The card
+ * is 103 tall at rest, which is what the 55 of writing area makes of it.
+ */
+.composer {
+  padding: 4px 24px 24px;
+}
+
+.shell {
+  max-width: 712px;
+}
+
+@media (min-width: 1536px) {
+  .shell {
+    max-width: 712px;
+  }
+}
+
+.box {
+  padding: 8px;
+  background: var(--surface-menu);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 20px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+}
+
+.box:focus-within {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 0.5px var(--border-strong);
+}
+
+.box.dropping {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 1px var(--interactive);
+}
+
+.input {
+  min-height: 52px;
+  padding: 5px 5px 8px;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 21px;
+}
+
+.input::placeholder {
+  color: var(--text-weak);
+}
+
+.tiles {
+  padding: 4px 5px 0;
+}
+
+.tiles-fade {
+  top: 4px;
+}
+
+.tiles-fade.start {
+  background: linear-gradient(to inline-end, var(--surface-menu), transparent);
+}
+
+.tiles-fade.end {
+  background: linear-gradient(to inline-start, var(--surface-menu), transparent);
+}
+
+/* Measured in MiMo: the first and last buttons twelve in from the card's
+   edge, and the bar three clear of its padding at the foot. */
+.row {
+  gap: 4px;
+  height: 32px;
+  margin-bottom: 3px;
+  padding: 0 4px;
+}
+
+/* The controls' grey: the base text colour let most of the way through. */
+.attach,
+.pill {
+  color: color-mix(in srgb, var(--text-base) 87%, transparent);
+}
+
+.attach {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.pill {
+  gap: 4px;
+  height: 32px;
+  padding: 7px 6px;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 18px;
+}
+
+/* Full access is the one setting on this bar worth noticing, so it is coloured. */
+.pill.access.full,
+.pill.access.full:hover {
+  color: #fb8147;
+}
+
+.send {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.send:disabled {
+  color: var(--surface-base);
+  background-color: color-mix(in srgb, var(--text-strong) 26%, var(--surface-menu));
+}
+
+/* The pills past the spacer sit at the card's far edge; their menus open inwards. */
+.grow ~ .pill-wrap .menu {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+
+.access-menu {
+  min-width: 248px;
+}
+
+.access-item {
+  align-items: flex-start;
+  height: auto;
+  padding: 7px 12px;
+}
+
+.access-item .tick {
+  margin-top: 1px;
+}
+
+.access-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.access-hint {
+  color: var(--text-weak);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: normal;
 }
 </style>

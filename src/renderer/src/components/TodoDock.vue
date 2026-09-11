@@ -91,17 +91,20 @@ const open = ref(false)
    * as a panel with a box under it.
    *
    * "The same width" is not `width: 100%`: the composer holds a 24px inset of
-   * its own and then caps its contents at 776px, and a dock that does neither
-   * ends up wider than the box on every window size. Measured at 8..517 against
-   * a box of 32..493 while this said 100%, which read as a step in the stack
-   * once a second dock landed beside it.
+   * its own and then caps its contents at 712px (2.0, MiMo's card), and a dock
+   * that does neither ends up wider than the box on every window size.
+   * Measured at 8..517 against a box of 32..493 while this said 100%, which
+   * read as a step in the stack once a second dock landed beside it.
+   *
+   * On the card's own surface and rule, with a corner between the card's 20
+   * and a row's 8, since it is one line tall where the card is three.
    */
   width: calc(100% - 48px);
-  max-width: 776px;
+  max-width: 712px;
   margin: 0 auto 6px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weaker);
-  border-radius: 10px;
+  background: var(--surface-menu);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 14px;
   overflow: hidden;
 }
 

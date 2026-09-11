@@ -211,4 +211,92 @@ const html = computed(() => renderMarkdown(props.part.text))
   font-family: var(--font-mono);
   font-size: 11px;
 }
+
+/*
+ * 2.0: an answer set the way Xiaomi MiMo sets one, measured off its own
+ * conversation view - the same system face at 14/500 on a 1.7 line, a 14px
+ * step between paragraphs, 6px between list items, headings that are sized
+ * like headings, and code chips that are a filled box rather than a tint.
+ */
+.text {
+  color: color-mix(in srgb, var(--text-strong) 95%, transparent);
+  font-weight: 500;
+  line-height: 23.8px;
+}
+
+.text .md-p {
+  margin: 0 0 14px;
+}
+
+.text .md-h {
+  line-height: 1.4;
+}
+
+.text .md-h[data-level="1"] {
+  margin: 20px 0 12px;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.text .md-h[data-level="2"] {
+  margin: 18px 0 10px;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.text .md-h[data-level="3"] {
+  margin: 16px 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.text .md-h[data-level="4"] {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.text .md-list {
+  margin: 0 0 14px;
+  padding-inline-start: 22px;
+}
+
+.text ol.md-list {
+  padding-inline-start: 28px;
+}
+
+.text .md-list li,
+.text .md-list li:last-child {
+  margin: 6px 0;
+}
+
+.text code {
+  padding: 1.5px 5px;
+  color: color-mix(in srgb, var(--text-strong) 90%, transparent);
+  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.text .md-code {
+  padding: 10px 12px;
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.text .md-table {
+  font-size: 14px;
+}
+
+.text .md-table th {
+  padding: 8px 24px 8px 0;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.text .md-table td {
+  max-width: 480px;
+  padding: 10px 24px 10px 0;
+}
 </style>

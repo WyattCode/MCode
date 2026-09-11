@@ -653,6 +653,12 @@ export interface AppConfig {
    * bar's auto-accept toggle still speaks it.
    */
   autoApprove: PermissionKind[]
+  /**
+   * The map as it stood when the composer's access chip was turned to full,
+   * so turning it back puts the user's own answers back rather than the
+   * factory ones. Absent whenever the chip is not holding one.
+   */
+  accessBefore?: Partial<Record<PermissionKind, PermissionAction>>
   /** Working directory for new sessions. */
   directory: string
   /**

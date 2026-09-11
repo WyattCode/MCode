@@ -429,8 +429,27 @@ function openMenu(event: MouseEvent) {
  * where they do not.
  */
 .head {
+  /* MiMo's header: 46 tall with its row pushed four down, so the title sits
+     on the same line as the side column's buttons. */
+  height: 46px;
+  padding-block: 4px 0;
   padding-inline-end: calc(20px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   -webkit-app-region: drag;
+}
+
+/* 14 on regular weight, and the same 26px box the 4/8 padding makes of it. */
+.title {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 18px;
+  letter-spacing: 0;
+}
+
+.ico,
+.readout {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
 }
 
 .left > *,
