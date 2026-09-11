@@ -661,6 +661,32 @@ async function main(): Promise<void> {
    * configured, the step at the limit goes out with no tools and an
    * instruction to summarise, and the turn ends in words.
    */
+  /*
+   * 2.0's theme reaches documents that already exist. Every document carries
+   * a themeID, since the default is written in with the rest, so changing
+   * the default alone would leave everyone who never chose a theme looking at
+   * 0.x. The untouched default moves once; a theme picked on purpose stays,
+   * and going back to OC-2 afterwards sticks.
+   */
+  console.log("the 2.0 theme reaches documents that already exist")
+  {
+    const load = async (stored: Record<string, unknown>) => {
+      const dir = path.join(root, `migrate-${Math.random().toString(36).slice(2)}`)
+      const store = new Storage(dir)
+      await store.write("config", stored)
+      const loaded = new Config(store, new Bus(), path.join(dir, "credentials.json"))
+      await loaded.load()
+      return loaded.get()
+    }
+    const untouched = await load({ themeID: "oc-2" })
+    check("an untouched default moves to MCode 2.0", untouched.themeID === "mcode-2", String(untouched.themeID))
+    check("and the move is recorded", (untouched.migrations ?? []).includes("theme-mcode-2"))
+    const chosen = await load({ themeID: "dracula" })
+    check("a theme chosen on purpose stays", chosen.themeID === "dracula", String(chosen.themeID))
+    const back = await load({ themeID: "oc-2", migrations: ["theme-mcode-2"] })
+    check("OC-2 picked again after the move sticks", back.themeID === "oc-2", String(back.themeID))
+  }
+
   console.log("a turn at its step limit answers in words")
   {
     await config.set({ maxSteps: 1 })
