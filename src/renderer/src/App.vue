@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { AGENT_NAMES, DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "@shared/protocol"
 import type { Worktree } from "@shared/protocol"
 import { useApp } from "./stores/app"
-import TitleBar from "./components/TitleBar.vue"
-import HomeView from "./components/HomeView.vue"
+import Sidebar from "./components/Sidebar.vue"
+import HomeHero from "./components/HomeHero.vue"
 import SessionHero from "./components/SessionHero.vue"
 import SessionHeader from "./components/SessionHeader.vue"
 import ContextMenu from "./components/ContextMenu.vue"
@@ -23,7 +23,6 @@ import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
 import TerminalDrawer from "./components/TerminalDrawer.vue"
-import ProjectPanel from "./components/ProjectPanel.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
 import ConnectDialog from "./components/ConnectDialog.vue"
@@ -61,7 +60,8 @@ const app = useApp()
 
 /** "home" is the launcher; "session" is a project workspace. */
 const view = ref<"home" | "session">("home")
-const leftPanel = ref(false)
+/** The 2.0 side column; up unless it has been put away. */
+const leftPanel = ref(true)
 /*
  * Shut to begin with, as opencode's is: a session opens on the conversation
  * alone and the review is asked for. This used to start open, so every new
@@ -892,6 +892,12 @@ async function selectTab(id: string) {
   if (app.currentID !== id) await app.open(id)
   view.value = "session"
   push({ view: "session", sessionID: id })
+}
+
+/** Starts a task from the 2.0 home screen, in the project picked there. */
+async function startTask(directory: string | undefined) {
+  if (directory) await newSessionIn(directory)
+  else await newSession()
 }
 
 async function newSession() {
@@ -2669,21 +2675,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
-    <TitleBar
-      :right-panel="reviewPanelUp"
-      :home="isHome"
-      @menu="(x, y) => (appMenu = { x, y })"
-      @go-home="goHome"
-      @toggle-right="toggleReviewPanel"
-      @palette="paletteOpen = true"
-      @server="serverPanel = !serverPanel"
-      @new-session="newSession"
-      @back="back"
-      @forward="forward"
-      @terminal="terminalOpen = !terminalOpen"
-      @close-tab="app.closeTab($event)"
-      @select-tab="selectTab"
-    />
 
     <div
       class="body"
@@ -2694,14 +2685,18 @@ onBeforeUnmount(() => {
         'with-review': reviewPanelUp,
       }"
     >
-      <ProjectPanel
-        v-if="leftPanel && app.current && !onboarding"
-        mode="docked"
-        :directory="app.current.directory"
+      <Sidebar
+        v-if="leftPanel && !onboarding"
+        @newTask="newSession"
+        @plugins="mcpOpen = true"
+        @search="paletteOpen = true"
+        @back="back"
+        @forward="forward"
+        @toggle="leftPanel = false"
+        @browse="browse"
         @open="app.open($event)"
-        @create="newSessionIn"
-        @edit="(dir) => (editingProject = dir)"
-        @closed="leaveProject"
+        @createIn="newSessionIn"
+        @settings="openSettings"
       />
 
       <main ref="mainPane" class="main">
@@ -2724,16 +2719,7 @@ onBeforeUnmount(() => {
 
         <Onboarding v-else-if="onboarding" @done="app.patchConfig({ onboarded: true })" />
 
-        <HomeView
-          v-else-if="isHome"
-          @open="openProject"
-          @browse="browse"
-          @session="app.open($event)"
-          @create="newSessionIn"
-          @edit="(dir) => (editingProject = dir)"
-          @settings="openSettings"
-          @help="paletteOpen = true"
-        />
+        <HomeHero v-else-if="isHome" @start="startTask" />
 
         <template v-else-if="!onboarding">
           <!--
@@ -3231,5 +3217,27 @@ onBeforeUnmount(() => {
 /* The composer's ordinary dock; `contents` keeps it out of the layout. */
 .main-dock {
   display: contents;
+}
+
+/*
+ * 2.0 shell. Xiaomi MiMo's window has no title strip and no inset panel: the
+ * side column runs the full height on the deepest surface and the main plane
+ * sits flush beside it, one hairline between them.
+ */
+.body {
+  gap: 0;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The same selector the inset panel was drawn with, so this one wins. */
+.body > .main {
+  margin: 0;
+  background: var(--surface-raised);
+  border: 0;
+  border-inline-start: 1px solid var(--border-weaker);
+  border-radius: 0;
+  box-shadow: none;
 }
 </style>

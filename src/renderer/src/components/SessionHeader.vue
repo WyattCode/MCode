@@ -418,4 +418,23 @@ function openMenu(event: MouseEvent) {
   line-height: 1.35;
   text-align: start;
 }
+
+/*
+ * 2.0 has no title strip, so the conversation's own header is what drags the
+ * window, and it has to stay clear of the caption buttons Windows draws over
+ * its top-right corner. env(titlebar-area-*) describes exactly that band when
+ * the overlay is present - the width it leaves for content - and is absent on
+ * macOS, where the traffic lights sit over the side column instead; so the
+ * reserve below is the caption buttons' width where they exist and nothing
+ * where they do not.
+ */
+.head {
+  padding-inline-end: calc(20px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  -webkit-app-region: drag;
+}
+
+.left > *,
+.right {
+  -webkit-app-region: no-drag;
+}
 </style>

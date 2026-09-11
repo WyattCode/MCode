@@ -73,6 +73,18 @@ export const language = ref<Language>("zh-CN")
 type Table = Record<string, string>
 
 const zhCN: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "新建任务",
+  "side.plugins": "插件",
+  "side.projects": "项目",
+  "side.recent": "最近",
+  "side.noTasks": "暂无任务",
+  "side.newProject": "新建项目",
+  "side.toggle": "切换侧栏",
+  "side.search": "搜索",
+  "home.slogan": "今天想做点什么？",
+  "home.describe": "描述任务…",
+  "home.enterProject": "进入项目工作",
   // Title bar
   "title.menu": "菜单",
   "title.newSession": "新建会话",
@@ -1014,6 +1026,18 @@ const zhCN: Table = {
 }
 
 const zhTW: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "新建任務",
+  "side.plugins": "外掛程式",
+  "side.projects": "專案",
+  "side.recent": "最近",
+  "side.noTasks": "暫無任務",
+  "side.newProject": "新建專案",
+  "side.toggle": "切換側欄",
+  "side.search": "搜尋",
+  "home.slogan": "今天想做點什麼？",
+  "home.describe": "描述任務…",
+  "home.enterProject": "進入專案工作",
   "title.menu": "選單",
   "title.newSession": "新增工作階段",
   "tabs.close": "關閉分頁",
@@ -1933,6 +1957,18 @@ const zhTW: Table = {
 }
 
 const en: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "New task",
+  "side.plugins": "Plugins",
+  "side.projects": "Projects",
+  "side.recent": "Recent",
+  "side.noTasks": "No tasks yet",
+  "side.newProject": "New project",
+  "side.toggle": "Toggle sidebar",
+  "side.search": "Search",
+  "home.slogan": "What shall we build today?",
+  "home.describe": "Describe a task…",
+  "home.enterProject": "Work in a project",
   "title.menu": "Menu",
   "title.newSession": "New Session",
   "tabs.close": "Close tab",
@@ -2856,6 +2892,18 @@ const en: Table = {
 
 // --- generated language tables ---
 const ar: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "مهمة جديدة",
+  "side.plugins": "الإضافات",
+  "side.projects": "المشاريع",
+  "side.recent": "الأخيرة",
+  "side.noTasks": "لا توجد مهام بعد",
+  "side.newProject": "مشروع جديد",
+  "side.toggle": "تبديل الشريط الجانبي",
+  "side.search": "بحث",
+  "home.slogan": "ماذا سنبني اليوم؟",
+  "home.describe": "صف مهمة…",
+  "home.enterProject": "العمل في مشروع",
   "title.menu": "القائمة",
   "title.newSession": "جلسة جديدة",
   "tabs.close": "إغلاق علامة التبويب",
@@ -3736,6 +3784,18 @@ const ar: Table = {
 }
 
 const bs: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Novi zadatak",
+  "side.plugins": "Dodaci",
+  "side.projects": "Projekti",
+  "side.recent": "Nedavno",
+  "side.noTasks": "Još nema zadataka",
+  "side.newProject": "Novi projekat",
+  "side.toggle": "Prikaži/sakrij bočnu traku",
+  "side.search": "Pretraga",
+  "home.slogan": "Šta ćemo danas napraviti?",
+  "home.describe": "Opišite zadatak…",
+  "home.enterProject": "Rad u projektu",
   "title.menu": "Meni",
   "title.newSession": "Nova sesija",
   "tabs.close": "Zatvori karticu",
@@ -4616,6 +4676,18 @@ const bs: Table = {
 }
 
 const da: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Ny opgave",
+  "side.plugins": "Plugins",
+  "side.projects": "Projekter",
+  "side.recent": "Seneste",
+  "side.noTasks": "Ingen opgaver endnu",
+  "side.newProject": "Nyt projekt",
+  "side.toggle": "Vis/skjul sidepanel",
+  "side.search": "Søg",
+  "home.slogan": "Hvad skal vi bygge i dag?",
+  "home.describe": "Beskriv en opgave…",
+  "home.enterProject": "Arbejd i et projekt",
   "title.menu": "Menu",
   "title.newSession": "Ny session",
   "tabs.close": "Luk fane",
@@ -5496,6 +5568,18 @@ const da: Table = {
 }
 
 const de: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Neue Aufgabe",
+  "side.plugins": "Plugins",
+  "side.projects": "Projekte",
+  "side.recent": "Zuletzt",
+  "side.noTasks": "Noch keine Aufgaben",
+  "side.newProject": "Neues Projekt",
+  "side.toggle": "Seitenleiste umschalten",
+  "side.search": "Suchen",
+  "home.slogan": "Was bauen wir heute?",
+  "home.describe": "Beschreiben Sie eine Aufgabe…",
+  "home.enterProject": "In einem Projekt arbeiten",
   "title.menu": "Menü",
   "title.newSession": "Neue Sitzung",
   "tabs.close": "Tab schließen",
@@ -6376,6 +6460,18 @@ const de: Table = {
 }
 
 const es: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Nueva tarea",
+  "side.plugins": "Complementos",
+  "side.projects": "Proyectos",
+  "side.recent": "Recientes",
+  "side.noTasks": "Aún no hay tareas",
+  "side.newProject": "Nuevo proyecto",
+  "side.toggle": "Alternar barra lateral",
+  "side.search": "Buscar",
+  "home.slogan": "¿Qué construimos hoy?",
+  "home.describe": "Describe una tarea…",
+  "home.enterProject": "Trabajar en un proyecto",
   "title.menu": "Menú",
   "title.newSession": "Nueva sesión",
   "tabs.close": "Cerrar pestaña",
@@ -7256,6 +7352,18 @@ const es: Table = {
 }
 
 const fr: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Nouvelle tâche",
+  "side.plugins": "Plugins",
+  "side.projects": "Projets",
+  "side.recent": "Récents",
+  "side.noTasks": "Aucune tâche pour l'instant",
+  "side.newProject": "Nouveau projet",
+  "side.toggle": "Afficher/masquer la barre latérale",
+  "side.search": "Rechercher",
+  "home.slogan": "Que construisons-nous aujourd'hui ?",
+  "home.describe": "Décrivez une tâche…",
+  "home.enterProject": "Travailler dans un projet",
   "title.menu": "Menu",
   "title.newSession": "Nouvelle session",
   "tabs.close": "Fermer l'onglet",
@@ -8136,6 +8244,18 @@ const fr: Table = {
 }
 
 const ja: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "新しいタスク",
+  "side.plugins": "プラグイン",
+  "side.projects": "プロジェクト",
+  "side.recent": "最近",
+  "side.noTasks": "タスクはまだありません",
+  "side.newProject": "新しいプロジェクト",
+  "side.toggle": "サイドバーの切り替え",
+  "side.search": "検索",
+  "home.slogan": "今日は何を作りましょう？",
+  "home.describe": "タスクを説明…",
+  "home.enterProject": "プロジェクトで作業",
   "title.menu": "メニュー",
   "title.newSession": "新しいセッション",
   "tabs.close": "タブを閉じる",
@@ -9016,6 +9136,18 @@ const ja: Table = {
 }
 
 const ko: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "새 작업",
+  "side.plugins": "플러그인",
+  "side.projects": "프로젝트",
+  "side.recent": "최근",
+  "side.noTasks": "아직 작업이 없습니다",
+  "side.newProject": "새 프로젝트",
+  "side.toggle": "사이드바 전환",
+  "side.search": "검색",
+  "home.slogan": "오늘은 무엇을 만들까요?",
+  "home.describe": "작업을 설명하세요…",
+  "home.enterProject": "프로젝트에서 작업",
   "title.menu": "메뉴",
   "title.newSession": "새 세션",
   "tabs.close": "탭 닫기",
@@ -9896,6 +10028,18 @@ const ko: Table = {
 }
 
 const nb: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Ny oppgave",
+  "side.plugins": "Programtillegg",
+  "side.projects": "Prosjekter",
+  "side.recent": "Nylige",
+  "side.noTasks": "Ingen oppgaver ennå",
+  "side.newProject": "Nytt prosjekt",
+  "side.toggle": "Vis/skjul sidepanel",
+  "side.search": "Søk",
+  "home.slogan": "Hva skal vi lage i dag?",
+  "home.describe": "Beskriv en oppgave…",
+  "home.enterProject": "Arbeid i et prosjekt",
   "title.menu": "Meny",
   "title.newSession": "Ny sesjon",
   "tabs.close": "Lukk fane",
@@ -10776,6 +10920,18 @@ const nb: Table = {
 }
 
 const pl: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Nowe zadanie",
+  "side.plugins": "Wtyczki",
+  "side.projects": "Projekty",
+  "side.recent": "Ostatnie",
+  "side.noTasks": "Brak zadań",
+  "side.newProject": "Nowy projekt",
+  "side.toggle": "Przełącz pasek boczny",
+  "side.search": "Szukaj",
+  "home.slogan": "Co dziś zbudujemy?",
+  "home.describe": "Opisz zadanie…",
+  "home.enterProject": "Pracuj w projekcie",
   "title.menu": "Menu",
   "title.newSession": "Nowa sesja",
   "tabs.close": "Zamknij kartę",
@@ -11656,6 +11812,18 @@ const pl: Table = {
 }
 
 const ptBR: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Nova tarefa",
+  "side.plugins": "Plugins",
+  "side.projects": "Projetos",
+  "side.recent": "Recentes",
+  "side.noTasks": "Nenhuma tarefa ainda",
+  "side.newProject": "Novo projeto",
+  "side.toggle": "Alternar barra lateral",
+  "side.search": "Pesquisar",
+  "home.slogan": "O que vamos construir hoje?",
+  "home.describe": "Descreva uma tarefa…",
+  "home.enterProject": "Trabalhar em um projeto",
   "title.menu": "Menu",
   "title.newSession": "Nova sessão",
   "tabs.close": "Fechar aba",
@@ -12536,6 +12704,18 @@ const ptBR: Table = {
 }
 
 const ru: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Новая задача",
+  "side.plugins": "Плагины",
+  "side.projects": "Проекты",
+  "side.recent": "Недавние",
+  "side.noTasks": "Задач пока нет",
+  "side.newProject": "Новый проект",
+  "side.toggle": "Показать/скрыть боковую панель",
+  "side.search": "Поиск",
+  "home.slogan": "Что будем делать сегодня?",
+  "home.describe": "Опишите задачу…",
+  "home.enterProject": "Работать в проекте",
   "title.menu": "Меню",
   "title.newSession": "Новая сессия",
   "tabs.close": "Закрыть вкладку",
@@ -13416,6 +13596,18 @@ const ru: Table = {
 }
 
 const th: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "งานใหม่",
+  "side.plugins": "ปลั๊กอิน",
+  "side.projects": "โปรเจกต์",
+  "side.recent": "ล่าสุด",
+  "side.noTasks": "ยังไม่มีงาน",
+  "side.newProject": "โปรเจกต์ใหม่",
+  "side.toggle": "สลับแถบด้านข้าง",
+  "side.search": "ค้นหา",
+  "home.slogan": "วันนี้จะสร้างอะไรดี?",
+  "home.describe": "อธิบายงาน…",
+  "home.enterProject": "ทำงานในโปรเจกต์",
   "title.menu": "เมนู",
   "title.newSession": "เซสชันใหม่",
   "tabs.close": "ปิดแท็บ",
@@ -14296,6 +14488,18 @@ const th: Table = {
 }
 
 const tr: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Yeni görev",
+  "side.plugins": "Eklentiler",
+  "side.projects": "Projeler",
+  "side.recent": "Son kullanılanlar",
+  "side.noTasks": "Henüz görev yok",
+  "side.newProject": "Yeni proje",
+  "side.toggle": "Kenar çubuğunu aç/kapat",
+  "side.search": "Ara",
+  "home.slogan": "Bugün ne yapalım?",
+  "home.describe": "Bir görev tanımlayın…",
+  "home.enterProject": "Bir projede çalış",
   "title.menu": "Menü",
   "title.newSession": "Yeni oturum",
   "tabs.close": "Sekmeyi kapat",
@@ -15176,6 +15380,18 @@ const tr: Table = {
 }
 
 const uk: Table = {
+  // 2.0 shell - the sidebar and the home screen
+  "side.newTask": "Нове завдання",
+  "side.plugins": "Плагіни",
+  "side.projects": "Проєкти",
+  "side.recent": "Нещодавні",
+  "side.noTasks": "Завдань поки немає",
+  "side.newProject": "Новий проєкт",
+  "side.toggle": "Показати/сховати бічну панель",
+  "side.search": "Пошук",
+  "home.slogan": "Що будемо робити сьогодні?",
+  "home.describe": "Опишіть завдання…",
+  "home.enterProject": "Працювати в проєкті",
   "title.menu": "Меню",
   "title.newSession": "Нова сесія",
   "tabs.close": "Закрити вкладку",
