@@ -24,8 +24,18 @@ import pkg from "../../package.json"
  * string with a blank where the icon goes. The reference sets its own first
  * thing, the same way (`app.setAppUserModelId(appId)`). smoke holds this id
  * and the installer's to each other.
+ *
+ * An unpackaged run gets an id of its own, as the reference's does
+ * ("ai.opencode.desktop.dev" beside its packaged ones). Sharing the installed
+ * app's would group a development window under its taskbar button and head
+ * its notifications with the installed app's name and icon.
+ *
+ * Windows only. Electron declares the call `@platform win32`, beside
+ * setJumpList and setUserTasks; whether it exists as a no-op elsewhere cannot
+ * be shown from here, and the macOS build must not find out at launch.
  */
-app.setAppUserModelId("dev.mcode.app")
+const APP_ID = "dev.mcode.app"
+if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 

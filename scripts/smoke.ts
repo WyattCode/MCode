@@ -678,12 +678,15 @@ async function main() {
       const builder = await fs.readFile("electron-builder.yml", "utf8")
       const main = await fs.readFile("src/main/index.ts", "utf8")
       const declared = /^appId:\s*(\S+)/m.exec(builder)?.[1]
-      const claimed = /setAppUserModelId\("([^"]+)"\)/.exec(main)?.[1]
+      const constant = /const APP_ID = "([^"]+)"/.exec(main)?.[1]
       check(
         "the process claims the id the installer gives its shortcut",
-        Boolean(declared) && declared === claimed,
-        `${claimed} vs ${declared}`,
+        Boolean(declared) && declared === constant,
+        `${constant} vs ${declared}`,
       )
+      // And it is the id actually passed on - a constant nobody reads would
+      // satisfy the line above while the process kept Electron's default.
+      check("and it is the id passed to setAppUserModelId", /setAppUserModelId\([^)]*\bAPP_ID\b/.test(main))
     }
 
     fake.close()
