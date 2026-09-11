@@ -57,6 +57,16 @@ let onRequest: ((n: number) => void) | undefined
  */
 let script: { name: string; input: Record<string, unknown> }[][] = []
 /**
+ * What the fake says to a summary request - one that quotes the conversation
+ * in <conversation> tags, as a compaction now does. Shaped like the
+ * reference's template, because a reply that is not is refused.
+ */
+const FAKE_SUMMARY = "## Objective\n- a summary of the work so far\n\n## Next Move\n1. (none)"
+/** When set, the fake answers a summary request with this instead - a model that carries on. */
+let summaryReply: string | undefined
+/** When set, the usage the fake reports for a plain reply, so a window can be crossed by count. */
+let reportedUsage: { prompt_tokens: number; completion_tokens: number } | undefined
+/**
  * When set, the next chat request is refused with this body and status 400 -
  * the shape of a provider whose context the conversation has outgrown.
  */
@@ -95,14 +105,25 @@ const server = http.createServer((request, response) => {
     requests.push(body)
     onRequest?.(requests.length)
     if (enforceWindow) {
-      const asked = JSON.parse(body || "{}") as { max_tokens?: number; messages?: { role?: string }[] }
+      const asked = JSON.parse(body || "{}") as { max_tokens?: number; messages?: { role?: string; content?: unknown }[] }
       /*
        * The conversation only, never the system prompt. A turn's system
        * prompt is long and a compaction's is one paragraph, so counting it
        * would make every summary request look light enough to fit and the
        * case would pass whatever ceiling the summary asked for.
        */
-      const weight = JSON.stringify((asked.messages ?? []).filter((message) => message.role !== "system")).length
+      /*
+       * A summary request quotes the conversation between <conversation> tags
+       * and wraps it in a template; only the quoted part is the conversation.
+       * A turn carries it as messages. Either way it is the conversation's
+       * length that stands for its tokens, so the same conversation weighs
+       * the same however it is sent.
+       */
+      const turns = (asked.messages ?? []).filter((message) => message.role !== "system")
+      const quoted = /<conversation>([\s\S]*?)<\/conversation>/.exec(String(turns.at(-1)?.content ?? ""))
+      const weight = quoted
+        ? quoted[1].length
+        : turns.reduce((sum, message) => sum + (typeof message.content === "string" ? message.content.length : 0), 0)
       enforceWindow.baseline ??= weight
       const input = Math.round((enforceWindow.tokens * weight) / (enforceWindow.baseline || weight))
       const output = asked.max_tokens ?? 0
@@ -157,8 +178,8 @@ const server = http.createServer((request, response) => {
 
     response.writeHead(200, { "content-type": "text/event-stream" })
     const chunks = [
-      { choices: [{ delta: { content: "a summary" } }] },
-      { choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+      { choices: [{ delta: { content: body.includes("<conversation>") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
+      { choices: [{ delta: {}, finish_reason: "stop" }], usage: reportedUsage ?? { prompt_tokens: 10, completion_tokens: 5 } },
     ]
     let first = true
     for (const chunk of chunks) {
@@ -580,7 +601,7 @@ async function main(): Promise<void> {
     const last = assistants[assistants.length - 1]
     check("the refusal is on the transcript", Boolean(errored), errored?.error ?? "(none)")
     check("the session was compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
-    check("with the summary the model gave", after?.compacted?.summary === "a summary", after?.compacted?.summary)
+    check("with the summary the model gave", after?.compacted?.summary === FAKE_SUMMARY, after?.compacted?.summary)
     check("and the step was retried and finished", last?.finish === "end_turn" && !last.error, String(last?.finish))
     // refusal, then the summary request, then the retry
     check("three requests: refusal, summary, retry", requests.length - before === 3, String(requests.length - before))
@@ -592,7 +613,25 @@ async function main(): Promise<void> {
      * plus 32,000 is one token over the window that had refused it, so the
      * summary was refused as well and the turn ended on the original error.
      */
-    const summaryRequest = JSON.parse(requests[requests.length - 2] ?? "{}") as { max_tokens?: number }
+    const summaryRequest = JSON.parse(requests[requests.length - 2] ?? "{}") as {
+      max_tokens?: number
+      messages?: { role?: string; content?: unknown }[]
+    }
+    /*
+     * One user message quoting the conversation, not the transcript
+     * replayed. A model shown its own work in progress carries on with it:
+     * both real compactions on the machine this was found on came back as
+     * the next step of the task and replaced the conversation with it.
+     */
+    const summaryTurns = (summaryRequest.messages ?? []).filter((message) => message.role !== "system")
+    check(
+      "the summary request is the conversation quoted in one user message",
+      summaryTurns.length === 1 &&
+        summaryTurns[0].role === "user" &&
+        String(summaryTurns[0].content).includes("<conversation>") &&
+        String(summaryTurns[0].content).includes("## Objective"),
+      JSON.stringify(summaryTurns.map((message) => message.role)),
+    )
     check(
       "the summary asked for the summary ceiling, not the usual one",
       summaryRequest.max_tokens === 4096,
@@ -670,7 +709,7 @@ async function main(): Promise<void> {
     const tight = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     script = []
     const settle = idle(tight.id)
-    await runner.prompt({ sessionID: tight.id, text: "fill the window" })
+    await runner.prompt({ sessionID: tight.id, text: "fill the window ".repeat(1500) })
     await settle
 
     // 230,145 of transcript against a 262,144 window: a 32,000 answer is one
@@ -710,13 +749,43 @@ async function main(): Promise<void> {
     check("and the turn finished after it", last?.finish === "end_turn" && !last.error, String(last?.finish ?? last?.error))
   }
 
+  /*
+   * The failure that was actually seen: the model answers a summary request
+   * with the next step of the task. Accepting that replaces the conversation
+   * with one sentence, silently. It is refused instead, and the session keeps
+   * the context it had.
+   */
+  console.log("a reply that is not a summary is refused")
+  {
+    const kept = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    script = []
+    const settled = idle(kept.id)
+    await runner.prompt({ sessionID: kept.id, text: "some work to summarise" })
+    await settled
+
+    summaryReply = "I'll check the GameCategory enum next."
+    let refused: string | undefined
+    try {
+      await runner.compact(kept.id)
+    } catch (failure) {
+      refused = (failure as Error).message
+    }
+    summaryReply = undefined
+    const after = await sessions.get(kept.id)
+    check("the compaction is refused", Boolean(refused), String(refused))
+    check("and the session keeps its context", !after?.compacted, JSON.stringify(after?.compacted ?? null))
+  }
+
   console.log("a model with a known window is compacted by count")
   {
-    // The fake reports prompt_tokens 10 + completion_tokens 5 per turn. A
-    // window of 20 with a 10-token ceiling leaves 10 usable: 15 crosses it.
+    // A 10,000 window with a 1,000 ceiling leaves 9,000 usable, and the fake
+    // reports 9,000 + 5 for the turn: one step over. Large enough that the
+    // summary request itself - its template alone is a few hundred tokens -
+    // still fits, which a 20-token window never did.
     await config.setDiscovered("fake", [
-      { id: "m", name: "M", contextWindow: 20, maxOutput: 10, input: 0, output: 0 },
+      { id: "m", name: "M", contextWindow: 10000, maxOutput: 1000, input: 0, output: 0 },
     ])
+    reportedUsage = { prompt_tokens: 9000, completion_tokens: 5 }
     const counted = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     const before = requests.length
     script = []
@@ -727,7 +796,36 @@ async function main(): Promise<void> {
     check("the turn ended compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
     check("in two requests: the answer, then the summary", requests.length - before === 2, String(requests.length - before))
     const answer = JSON.parse(requests[before] ?? "{}") as { max_tokens?: number }
-    check("and the request asked for the model's own ceiling", answer.max_tokens === 10, String(answer.max_tokens))
+    check("and the request asked for the model's own ceiling", answer.max_tokens === 1000, String(answer.max_tokens))
+
+    /*
+     * The same crossing, but the model will not summarise. The turn had
+     * already succeeded; a compaction made ahead of need must not turn it into
+     * an error. The reference's compactIfNeeded returns false and carries on.
+     */
+    const ahead = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
+    /*
+     * Watched on the bus, not read off the message: the compaction happens
+     * after the answer is saved as end_turn, so a failure that escaped would
+     * leave that message looking finished and only show up as an error event.
+     */
+    const aheadErrors: string[] = []
+    const offAhead = bus.subscribe((event) => {
+      if (event.type === "session.error" && event.sessionID === ahead.id) aheadErrors.push(event.error)
+    })
+    summaryReply = "Let me look at one more file first."
+    script = []
+    const quiet = idle(ahead.id)
+    await runner.prompt({ sessionID: ahead.id, text: "hello again" })
+    await quiet
+    summaryReply = undefined
+    offAhead()
+    check("and no error is reported for it", aheadErrors.length === 0, JSON.stringify(aheadErrors).slice(0, 120))
+    const aheadAfter = await sessions.get(ahead.id)
+    const aheadLast = (await sessions.messages(ahead.id)).filter((message) => message.role === "assistant").at(-1)
+    check("a failed compaction ahead of need leaves the turn finished", aheadLast?.finish === "end_turn" && !aheadLast.error, String(aheadLast?.error ?? aheadLast?.finish))
+    check("and nothing is compacted", !aheadAfter?.compacted, JSON.stringify(aheadAfter?.compacted ?? null))
+    reportedUsage = undefined
     await config.setDiscovered("fake", [])
   }
 

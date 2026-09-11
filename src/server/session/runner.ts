@@ -38,6 +38,7 @@ import {
   maxOutputTokens,
   summaryWouldFit,
 } from "./overflow"
+import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 
 /**
@@ -594,12 +595,27 @@ export class SessionRunner {
    */
   private async compactNow(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
     const stored = await this.store.messages(session.id)
-    const messages = this.contextFor(session, stored)
-    const last = messages[messages.length - 1]
-    if (!last) throw new Error("Nothing to compact yet")
     const live = this.liveMessages(session, stored)
-    const mark = live[live.length - 1]
-    if (!mark) throw new Error("Nothing to compact yet")
+    /*
+     * What a new summary has to cover: everything since the last one. The
+     * last summary itself goes in separately, as the reference passes it, so
+     * the model is told to carry it forward rather than shown it as a message.
+     */
+    const previous = session.compacted
+    const since = (() => {
+      if (!previous) return live
+      const at = live.findIndex((message) => message.id === previous.messageID)
+      return at < 0 ? live : live.slice(at + 1)
+    })()
+    const selected = selectForSummary(since)
+    if (!selected) throw new Error("Nothing to compact yet")
+    const prompt = buildSummaryPrompt({ previousSummary: previous?.summary, context: [selected.head] })
+    // The reference's own guard: a summary request it can see will not fit is
+    // not sent. Measured on the prompt that will actually go out, not on the
+    // raw transcript, since tool output is cut to 2,000 characters in it.
+    if (!summaryWouldFit(prompt.length, this.config.modelEntry(session.model)?.contextWindow ?? 0)) {
+      throw new Error("This conversation is too long to summarise within the model's context window")
+    }
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
@@ -621,7 +637,22 @@ export class SessionRunner {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
           system: COMPACT_SYSTEM,
-          history: messages,
+          /*
+           * One user message, the conversation quoted inside it and the
+           * instruction after it, as the reference sends it. Not the
+           * transcript replayed as a live conversation, which a model
+           * continues rather than summarises.
+           */
+          history: [
+            {
+              id: `${session.id}:summary-request`,
+              sessionID: session.id,
+              role: "user",
+              text: prompt,
+              attachments: [],
+              time: { created: Date.now() },
+            },
+          ],
           tools: [],
           effort: "low",
           showReasoning: false,
@@ -649,9 +680,30 @@ export class SessionRunner {
     }
     summary = summary.trim()
     if (!summary) throw new Error("The model returned an empty summary")
+    if (!isSummary(summary)) throw new Error("The model did not return a summary")
     return this.store.update(session.id, {
-      compacted: { messageID: mark.id, summary, at: Date.now() },
+      // The last message the summary covers. Everything after it - the kept
+      // end - stays in the model's view word for word, as the reference keeps
+      // its `recent`.
+      compacted: { messageID: selected.mark.id, summary, at: Date.now() },
     })
+  }
+
+  /**
+   * A compaction nothing is waiting on.
+   *
+   * The one made because a step's token count crossed the line is ahead of
+   * need: the step itself succeeded, and failing to summarise must not turn a
+   * finished turn into an error. The reference's `compactIfNeeded` returns
+   * false and carries on; so does this. If the next request is then refused
+   * for length, the rescue in `run` takes it from there.
+   */
+  private async compactQuietly(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+    try {
+      return await this.compactNow(session, signal)
+    } catch {
+      return session
+    }
   }
 
   async prompt(input: { sessionID: string; text: string; attachments?: Attachment[] }): Promise<string> {
@@ -1021,10 +1073,9 @@ export class SessionRunner {
         if (
           rescued !== step &&
           !controller.signal.aborted &&
-          isContextOverflow(describe(reason)) &&
-          // The reference measures before it asks: a summary request it can
-          // see will not fit is not sent, and the refusal stands as it is.
-          summaryWouldFit(historyChars(history), this.config.modelEntry(session.model)?.contextWindow ?? 0)
+          // compactNow measures the prompt it will send and refuses if it
+          // cannot fit, which leaves the original refusal standing.
+          isContextOverflow(describe(reason))
         ) {
           rescued = step
           try {
@@ -1092,7 +1143,7 @@ export class SessionRunner {
         if (overflowing) {
           // Compacted at the end of the turn, so the next one starts inside
           // the window instead of being refused on its first request.
-          session = await this.compactNow(session, controller.signal)
+          session = await this.compactQuietly(session, controller.signal)
         }
         if (!this.steered(sessionID)) return
         continue
@@ -1123,7 +1174,7 @@ export class SessionRunner {
       if (controller.signal.aborted) return
       // The reference compacts after the step that crossed the line, before
       // the model is asked again.
-      if (overflowing) session = await this.compactNow(session, controller.signal)
+      if (overflowing) session = await this.compactQuietly(session, controller.signal)
     }
   }
 
@@ -1415,22 +1466,6 @@ class Shown extends Error {
     super("already reported")
     this.name = "Shown"
   }
-}
-
-/** Roughly what a request carrying these messages would weigh, in characters. */
-function historyChars(messages: Message[]): number {
-  let total = 0
-  for (const message of messages) {
-    if (message.role === "user") {
-      total += message.text.length
-      continue
-    }
-    for (const part of message.parts) {
-      if (part.type === "text") total += part.text.length
-      else if (part.type === "tool") total += (part.output ?? "").length + JSON.stringify(part.input ?? {}).length
-    }
-  }
-  return total
 }
 
 function describe(err: unknown): string {
