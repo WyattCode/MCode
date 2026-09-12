@@ -17,6 +17,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import ArtifactsView from "./components/ArtifactsView.vue"
 import PluginsView from "./components/PluginsView.vue"
 import BrowserPanel from "./components/BrowserPanel.vue"
+import SideChat from "./components/SideChat.vue"
 import RevertDock from "./components/RevertDock.vue"
 import FilePanel from "./components/FilePanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
@@ -1641,6 +1642,22 @@ function goArtifacts() {
 const browserOpen = ref(false)
 
 /*
+ * The open conversation, held in a column beside the workspace.
+ *
+ * Turning it on frees the middle: the conversation is drawn on the right and
+ * the main area goes to the launcher, so the same conversation is never drawn
+ * twice. Turning it off puts it back where it was.
+ */
+const sideChat = ref(false)
+
+function toggleSideChat() {
+  if (!app.currentID) return
+  sideChat.value = !sideChat.value
+  view.value = sideChat.value ? "home" : "session"
+  push({ view: view.value, sessionID: app.currentID })
+}
+
+/*
  * Whether the side column is read by project or by time.
  *
  * Not remembered: it is a way of looking at the same list rather than a
@@ -2296,6 +2313,14 @@ const bindableCommands = computed(() => {
       },
     })),
     {
+      id: "session.side",
+      group: "key.groupSession",
+      title: t("side.chat"),
+      hint: "Ctrl+Alt+S",
+      enabled: hasSession,
+      run: toggleSideChat,
+    },
+    {
       id: "view.timeline",
       group: "key.groupGeneral",
       title: t("side.byTime"),
@@ -2567,6 +2592,14 @@ function onKeydown(event: KeyboardEvent) {
     if (modalOpen.value || !app.currentID) return
     event.preventDefault()
     app.togglePinned(app.currentID)
+    return
+  }
+
+  /* The conversation put aside, on the reference's own chord. */
+  if (mod && event.altKey && event.key.toLowerCase() === "s") {
+    if (modalOpen.value) return
+    event.preventDefault()
+    toggleSideChat()
     return
   }
 
@@ -3281,6 +3314,16 @@ onBeforeUnmount(() => {
           </Teleport>
         </template>
       </main>
+
+      <!--
+        The conversation, when it has been put aside. Before the browser, so
+        the two columns read left to right in the order they were opened.
+      -->
+      <SideChat
+        v-if="sideChat && app.currentID"
+        @close="toggleSideChat"
+        @expand="toggleSideChat"
+      />
 
       <!--
         The browser, in the workspace rather than over it: a page being looked
