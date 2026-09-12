@@ -432,24 +432,12 @@ onBeforeUnmount(() => sizer?.disconnect())
  * between presses, and an index would send them somewhere they had left.
  */
 /**
- * Carries this conversation, as far as this message, into one of its own.
+ * Carries this conversation, as far as the end of this answer, into one of its own.
  *
- * The turn's id is the user message it began at, which is exactly the point
- * the fork is made at.
- */
-async function fork(turn: Turn) {
-  if (!turn.text?.trim()) return
-  await app.forkFrom(turn.id)
-}
-
-/**
- * The same, from the answer rather than the question.
- *
- * The reference keeps its branch under the reply, and the difference is what
- * comes along: forking at the question carries the question and leaves its
- * answer behind, forking here carries both - the point to branch from when the
- * answer is right and the next step is what should go another way. The fork is
- * made at the turn's last assistant message, which is the end of the answer.
+ * MiMo keeps its branch under the reply and nowhere else: the point to branch
+ * from is an answer that was right, with the next step the thing to take
+ * another way. The fork is made at the turn's last assistant message, which is
+ * the end of the answer, so both the question and the answer come along.
  */
 async function branchReply(turn: Turn) {
   if (!turn.last?.id) return
@@ -557,51 +545,20 @@ defineExpose({ stepMessage })
             to copy back out, and which model picked it up belongs with the
             question as much as with the answer.
           -->
+          <!--
+            MiMo's question footer: when it was asked, then copy, then edit.
+            Branching lives under the answer, and the agent and model are the
+            answer's to state. Edit takes the conversation back to before this
+            question and puts it into the box to be changed and sent again.
+          -->
           <div class="footer user-footer">
-            <template v-if="turn.last">
-              <span>{{ t(`agent.${turn.last.agent}`) }}</span>
-              <span class="dot">·</span>
-              <span>{{ modelName(turn.last) }}</span>
-              <template v-if="effortName(turn.last)">
-                <span class="dot">·</span>
-                <span class="level">{{ effortName(turn.last) }}</span>
-              </template>
-              <span class="dot">·</span>
-            </template>
-            <span>{{ askedAt(turn) }}</span>
+            <span class="when">{{ askedAt(turn) }}</span>
             <button
               class="copy"
-              v-tip="{ label: t('stream.fork'), placement: 'top' }"
-              @click="fork(turn)"
+              :aria-label="t('stream.copyAsked')"
+              v-tip="{ label: t('stream.copyAsked'), placement: 'top' }"
+              @click="copyAsked(turn)"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <circle cx="4" cy="3.4" r="1.6" stroke="currentColor" stroke-width="1" />
-                <circle cx="4" cy="12.6" r="1.6" stroke="currentColor" stroke-width="1" />
-                <circle cx="12" cy="8" r="1.6" stroke="currentColor" stroke-width="1" />
-                <path d="M4 5v6M5.6 8H10.4" stroke="currentColor" stroke-width="1" stroke-linecap="round" />
-              </svg>
-            </button>
-            <!--
-              Where the reference puts it: beside the other things that can be
-              done with what was asked, immediately before copying it.
-            -->
-            <button
-              class="copy"
-              :disabled="reverting"
-              :aria-label="t('stream.revert')"
-              v-tip="{ label: t('stream.revert'), placement: 'top' }"
-              @click="revert(turn)"
-            >
-              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path
-                  d="M5.83333 4.16406L2.5 7.4974L5.83333 10.8307M3.33333 7.4974H17.9167V15.4141H10"
-                  stroke="currentColor"
-                  stroke-width="1.2"
-                  stroke-linecap="square"
-                />
-              </svg>
-            </button>
-            <button class="copy" v-tip="{ label: t('stream.copyAsked'), placement: 'top' }" @click="copyAsked(turn)">
               <svg v-if="copied === `${turn.id}:asked`" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1" />
               </svg>
@@ -610,6 +567,22 @@ defineExpose({ stepMessage })
                   d="M4.14908 11.0081H1.76282V1.51758H9.1038V2.55588M14.2225 4.99681H6.75397V14.4873H14.2225V4.99681Z"
                   stroke="currentColor"
                   stroke-width="1"
+                />
+              </svg>
+            </button>
+            <button
+              class="copy edit"
+              :disabled="reverting"
+              :aria-label="t('stream.edit')"
+              v-tip="{ label: t('stream.edit'), placement: 'top' }"
+              @click="revert(turn)"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path
+                  d="M10.6 2.6l2.8 2.8L6 12.8H3.2V10zM9 4.2l2.8 2.8"
+                  stroke="currentColor"
+                  stroke-width="1.1"
+                  stroke-linejoin="round"
                 />
               </svg>
             </button>
@@ -901,10 +874,28 @@ defineExpose({ stepMessage })
   margin: 6px 2px 2px;
 }
 
-/* Its buttons close the line rather than open it, so the gap changes sides. */
+/*
+ * MiMo's measure: the time six clear of two 26px buttons, those two apart by
+ * two, each on a 7px corner around a 12px glyph.
+ */
+.user-footer {
+  gap: 2px;
+}
+
+.user-footer .when {
+  margin-inline-end: 4px;
+}
+
 .user-footer .copy {
-  margin-inline-end: 0;
-  margin-inline-start: 2px;
+  width: 26px;
+  height: 26px;
+  margin-inline: 0;
+  border-radius: 7px;
+}
+
+.user-footer .copy svg {
+  width: 12px;
+  height: 12px;
 }
 
 /*

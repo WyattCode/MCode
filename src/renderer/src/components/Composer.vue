@@ -1388,7 +1388,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 </script>
 
 <template>
-  <div class="composer">
+  <div class="composer" :class="{ noted: sessionID }">
     <div class="shell">
       <div
         class="box"
@@ -1952,6 +1952,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
         :anchor="hovered.anchor"
       />
     </Teleport>
+
+    <!-- Under a conversation's box, as MiMo has one: answers are generated, and can be wrong. -->
+    <p v-if="sessionID" class="ai-note">{{ t("composer.aiNote") }}</p>
   </div>
 </template>
 
@@ -2933,6 +2936,25 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  */
 .composer {
   padding: 4px 24px 24px;
+}
+
+/*
+ * With the note under it the dock's foot is the note's: six under the box, a
+ * 14px line, six to the edge - MiMo's 1025 / 1031 / 1045 / 1052.
+ */
+.composer.noted {
+  padding-bottom: 6px;
+}
+
+.ai-note {
+  box-sizing: border-box;
+  max-width: 712px;
+  margin: 6px auto 0;
+  color: var(--text-weak);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 14px;
+  text-align: center;
 }
 
 .shell {

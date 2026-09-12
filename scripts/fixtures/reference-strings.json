@@ -6650,26 +6650,6 @@
     "tr": "Terminal",
     "uk": "Термінал"
   },
-  "stream.revert": {
-    "ar": "التراجع عن الرسالة",
-    "bs": "Vrati na ovu poruku",
-    "da": "Nulstil til dette punkt",
-    "de": "Auf diesen Punkt zurücksetzen",
-    "en": "Revert message",
-    "es": "Restablecer a este punto",
-    "fr": "Réinitialiser à ce point",
-    "ja": "この時点までリセット",
-    "ko": "메시지 되돌리기",
-    "nb": "Tilbakestill til dette punktet",
-    "pl": "Cofnij wiadomość",
-    "ptBR": "Redefinir para este ponto",
-    "ru": "Сбросить до этого момента",
-    "th": "รีเซ็ตไปยังจุดนี้",
-    "tr": "Bu noktaya sıfırla",
-    "uk": "Скинути до цього моменту",
-    "zhCN": "撤销此消息",
-    "zhTW": "重設至此點"
-  },
   "tabs.close": {
     "ar": "إغلاق علامة التبويب",
     "bs": "Zatvori karticu",
