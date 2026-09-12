@@ -14,6 +14,7 @@ import Composer from "./components/Composer.vue"
 import TodoDock from "./components/TodoDock.vue"
 import InfoPanel from "./components/InfoPanel.vue"
 import ArtifactsView from "./components/ArtifactsView.vue"
+import PluginsView from "./components/PluginsView.vue"
 import RevertDock from "./components/RevertDock.vue"
 import FilePanel from "./components/FilePanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
@@ -61,7 +62,7 @@ import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
 const app = useApp()
 
 /** "home" is the launcher; "session" is a project workspace. */
-const view = ref<"home" | "session" | "artifacts">("home")
+const view = ref<"home" | "session" | "artifacts" | "plugins">("home")
 /** The 2.0 side column; up unless it has been put away. */
 const leftPanel = ref(true)
 /*
@@ -840,7 +841,10 @@ watch(
  */
 const onboarding = computed(() => app.connected && app.config !== undefined && !app.config.onboarded)
 const isArtifacts = computed(() => view.value === "artifacts")
-const isHome = computed(() => !isArtifacts.value && (view.value === "home" || !app.current))
+const isPlugins = computed(() => view.value === "plugins")
+const isHome = computed(
+  () => !isArtifacts.value && !isPlugins.value && (view.value === "home" || !app.current),
+)
 /** Empty transcript shows the hero instead of a blank scroller. */
 const empty = computed(() => app.messages.length === 0)
 
@@ -1577,6 +1581,12 @@ function goArtifacts() {
   push({ view: "artifacts" })
 }
 
+/* So is the plugins page, which MiMo opens in the workspace rather than over it. */
+function goPlugins() {
+  view.value = "plugins"
+  push({ view: "plugins" })
+}
+
 /** A file's session, opened from the artifacts page. */
 async function openFromArtifacts(sessionID: string) {
   view.value = "session"
@@ -1662,7 +1672,7 @@ function leaveProject(directory: string) {
 // ---------------------------------------------------------------------------
 
 interface Location {
-  view: "home" | "session" | "artifacts"
+  view: "home" | "session" | "artifacts" | "plugins"
   sessionID?: string
 }
 
@@ -1695,6 +1705,8 @@ async function apply(location: Location) {
       view.value = "session"
     } else if (location.view === "artifacts") {
       view.value = "artifacts"
+    } else if (location.view === "plugins") {
+      view.value = "plugins"
     } else {
       view.value = "home"
     }
@@ -2933,7 +2945,7 @@ onBeforeUnmount(() => {
         :selecting="selecting"
         @select="toggleSelected"
         @batch="runBatch"
-        @plugins="mcpOpen = true"
+        @plugins="goPlugins"
         @search="paletteOpen = true"
         @back="back"
         @forward="forward"
@@ -2965,6 +2977,8 @@ onBeforeUnmount(() => {
         <Onboarding v-else-if="onboarding" @done="app.patchConfig({ onboarded: true })" />
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
+
+        <PluginsView v-else-if="isPlugins" @manage="mcpOpen = true" />
 
         <HomeHero
           v-else-if="isHome"
