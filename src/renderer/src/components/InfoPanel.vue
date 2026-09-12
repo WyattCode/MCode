@@ -88,13 +88,13 @@ async function open(file: string) {
       </button>
       <template v-if="!shut.artifacts">
         <div v-if="files.written.length" class="files">
-          <button v-for="file in files.written" :key="file" class="file" :title="file" @click="open(file)">
+          <button v-for="file in files.written" :key="file.path" class="file" :title="file.path" @click="open(file.path)">
             <svg class="file-mark" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4 1.8h5.2L12.5 5v9.2H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               <path d="M9 1.8V5.2h3.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
-            <span class="file-name">{{ base(file) }}</span>
-            <span class="file-dir">{{ folder(file) }}</span>
+            <span class="file-name">{{ base(file.path) }}</span>
+            <span class="file-dir">{{ folder(file.path) }}</span>
           </button>
         </div>
         <p v-else class="empty">{{ t("info.noArtifacts") }}</p>
@@ -119,9 +119,9 @@ async function open(file: string) {
             <span class="group-count">{{ files.read.length }}</span>
           </button>
           <div v-if="projectFilesOpen" class="files nested">
-            <button v-for="file in files.read" :key="file" class="file" :title="file" @click="open(file)">
-              <span class="file-name">{{ base(file) }}</span>
-              <span class="file-dir">{{ folder(file) }}</span>
+            <button v-for="file in files.read" :key="file.path" class="file" :title="file.path" @click="open(file.path)">
+              <span class="file-name">{{ base(file.path) }}</span>
+              <span class="file-dir">{{ folder(file.path) }}</span>
             </button>
           </div>
         </template>

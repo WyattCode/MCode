@@ -13,6 +13,7 @@ import MessageStream from "./components/MessageStream.vue"
 import Composer from "./components/Composer.vue"
 import TodoDock from "./components/TodoDock.vue"
 import InfoPanel from "./components/InfoPanel.vue"
+import ArtifactsView from "./components/ArtifactsView.vue"
 import RevertDock from "./components/RevertDock.vue"
 import FilePanel from "./components/FilePanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
@@ -60,7 +61,7 @@ import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
 const app = useApp()
 
 /** "home" is the launcher; "session" is a project workspace. */
-const view = ref<"home" | "session">("home")
+const view = ref<"home" | "session" | "artifacts">("home")
 /** The 2.0 side column; up unless it has been put away. */
 const leftPanel = ref(true)
 /*
@@ -768,7 +769,8 @@ watch(
  * needs a key before it can do anything.
  */
 const onboarding = computed(() => app.connected && app.config !== undefined && !app.config.onboarded)
-const isHome = computed(() => view.value === "home" || !app.current)
+const isArtifacts = computed(() => view.value === "artifacts")
+const isHome = computed(() => !isArtifacts.value && (view.value === "home" || !app.current))
 /** Empty transcript shows the hero instead of a blank scroller. */
 const empty = computed(() => app.messages.length === 0)
 
@@ -1377,6 +1379,18 @@ function sendNotes(notes: { file: string; line: number; text: string }[]) {
   panelTab.value = "review"
 }
 
+/* The artifacts page is a place, so it is worth being able to come back to. */
+function goArtifacts() {
+  view.value = "artifacts"
+  push({ view: "artifacts" })
+}
+
+/** A file's session, opened from the artifacts page. */
+async function openFromArtifacts(sessionID: string) {
+  view.value = "session"
+  await app.open(sessionID)
+}
+
 function goHome() {
   view.value = "home"
   push({ view: "home" })
@@ -1456,7 +1470,7 @@ function leaveProject(directory: string) {
 // ---------------------------------------------------------------------------
 
 interface Location {
-  view: "home" | "session"
+  view: "home" | "session" | "artifacts"
   sessionID?: string
 }
 
@@ -1487,6 +1501,8 @@ async function apply(location: Location) {
       }
       if (app.currentID !== location.sessionID) await app.open(location.sessionID)
       view.value = "session"
+    } else if (location.view === "artifacts") {
+      view.value = "artifacts"
     } else {
       view.value = "home"
     }
@@ -2718,7 +2734,9 @@ onBeforeUnmount(() => {
     >
       <Sidebar
         v-if="leftPanel && !onboarding"
+        :page="view"
         @newTask="newSession"
+        @artifacts="goArtifacts"
         @plugins="mcpOpen = true"
         @search="paletteOpen = true"
         @back="back"
@@ -2749,6 +2767,8 @@ onBeforeUnmount(() => {
         </div>
 
         <Onboarding v-else-if="onboarding" @done="app.patchConfig({ onboarded: true })" />
+
+        <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
 
         <HomeHero v-else-if="isHome" @start="startTask" />
 

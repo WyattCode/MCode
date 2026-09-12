@@ -114,6 +114,32 @@ export interface ReasoningPart {
 
 export type AssistantPart = TextPart | ReasoningPart | ToolPart
 
+/**
+ * One file a stored session produced, as the artifacts page needs it.
+ *
+ * `at` is when the session last wrote it; `modified` is what the file system
+ * says now. The two differ when something outside the app has edited the file
+ * since, which is worth being able to see.
+ */
+export interface ArtifactFile {
+  /** Project-relative where the file is inside the project, absolute otherwise. */
+  path: string
+  at: number
+  /** False once the file has been deleted or moved away. */
+  exists: boolean
+  size?: number
+  modified?: number
+}
+
+/** What one stored session produced, newest file first. */
+export interface SessionArtifacts {
+  sessionID: string
+  title: string
+  directory: string
+  updated: number
+  files: ArtifactFile[]
+}
+
 export interface UserMessage {
   id: string
   sessionID: string
@@ -944,6 +970,8 @@ export interface ModelInfo {
 
 export type Request =
   | { type: "session.list" }
+  /* Every file every stored session has written, for the artifacts page. */
+  | { type: "artifact.list" }
   | { type: "session.create"; directory?: string; title?: string }
   | { type: "session.get"; sessionID: string }
   /**
@@ -1103,6 +1131,7 @@ export interface ResponseMap {
     compacting: string[]
     permissions: PermissionRequest[]
   }
+  "artifact.list": { artifacts: SessionArtifacts[] }
   "session.create": { session: SessionInfo }
   "session.get": { session: SessionInfo; messages: Message[] }
   "session.systemPrompt": { prompt: string }

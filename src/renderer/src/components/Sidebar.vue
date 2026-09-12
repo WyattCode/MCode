@@ -17,7 +17,11 @@ import { t } from "../lib/i18n"
  * so "Recent" is every task by when it last changed, across projects, which
  * is the view a project-less list would otherwise give.
  */
+/** Which page the pane is showing, so the row that opened it stays lit. */
+defineProps<{ page?: string }>()
+
 const emit = defineEmits<{
+  artifacts: []
   newTask: []
   plugins: []
   search: []
@@ -115,6 +119,18 @@ function toggleProject(directory: string) {
         </svg>
         <span class="row-label">{{ t("side.newTask") }}</span>
       </button>
+      <button class="row" :class="{ on: page === 'artifacts' }" @click="emit('artifacts')">
+        <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path
+            d="M2.9 11.5h3.4l1 1.9h5.4l1-1.9h3.4M2.9 11.5 5 4.6h10l2.1 6.9M2.9 11.5v3.9h14.2v-3.9"
+            stroke="currentColor"
+            stroke-width="1.2"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <span class="row-label">{{ t("side.artifacts") }}</span>
+      </button>
+
       <button class="row" @click="emit('plugins')">
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M8 3.5H12V6.5H15.5V16.5H4.5V6.5H8V3.5Z" stroke="currentColor" stroke-linejoin="round" />

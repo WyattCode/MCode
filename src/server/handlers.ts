@@ -1,7 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { kindFor, mimeFor } from "./media"
-import type { FileEntry, Request, ResponseMap } from "@shared/protocol"
+import type { ArtifactFile, FileEntry, Request, ResponseMap, SessionArtifacts } from "@shared/protocol"
+import { sessionFiles } from "@shared/session-files"
 import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
 import { discoverModels } from "./provider/discover"
@@ -72,6 +73,48 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
          */
         permissions: runtime.permissions.outstanding(),
       } satisfies Handled<"session.list">
+
+    /*
+     * Every file every stored session has written, for the artifacts page.
+     *
+     * Read from the transcripts rather than from a list kept alongside them:
+     * the transcripts are the record of what happened, and a list maintained
+     * in parallel is a second thing to keep right. Each file is then stat'd,
+     * because a session's record of writing it says nothing about whether it
+     * is still there - it may have been deleted, moved, or changed since by
+     * something other than this app, and the page says which.
+     *
+     * Sessions with no writes are left out entirely rather than listed empty.
+     */
+    case "artifact.list": {
+      const sessions = await runtime.sessions.list()
+      const artifacts: SessionArtifacts[] = []
+      for (const session of sessions) {
+        const messages = await runtime.sessions.messages(session.id)
+        const produced = sessionFiles(messages, session.directory).written
+        if (!produced.length) continue
+        const files: ArtifactFile[] = []
+        for (const touch of produced) {
+          const target = path.resolve(session.directory, touch.path)
+          const stats = await fs.stat(target).catch(() => undefined)
+          files.push({
+            path: touch.path,
+            at: touch.at,
+            exists: Boolean(stats?.isFile()),
+            size: stats?.isFile() ? stats.size : undefined,
+            modified: stats?.isFile() ? stats.mtimeMs : undefined,
+          })
+        }
+        artifacts.push({
+          sessionID: session.id,
+          title: session.title,
+          directory: session.directory,
+          updated: session.updated,
+          files,
+        })
+      }
+      return { artifacts } satisfies Handled<"artifact.list">
+    }
 
     case "session.create": {
       const config = runtime.config.get()
