@@ -928,11 +928,6 @@ async function selectTab(id: string) {
 }
 
 /** Starts a task from the 2.0 home screen, in the project picked there. */
-async function startTask(directory: string | undefined) {
-  if (directory) await newSessionIn(directory)
-  else await newSession()
-}
-
 async function newSession() {
   await app.create(app.current?.directory)
   view.value = "session"
@@ -2735,7 +2730,7 @@ onBeforeUnmount(() => {
       <Sidebar
         v-if="leftPanel && !onboarding"
         :page="view"
-        @newTask="newSession"
+        @newTask="goHome"
         @artifacts="goArtifacts"
         @plugins="mcpOpen = true"
         @search="paletteOpen = true"
@@ -2770,7 +2765,14 @@ onBeforeUnmount(() => {
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
 
-        <HomeHero v-else-if="isHome" @start="startTask" />
+        <HomeHero
+          v-else-if="isHome"
+          :commands="commands"
+          @open-settings="openSettings"
+          @connect="connectOpen = true"
+          @manage-models="manageModelsOpen = true"
+          @shell="runShellCommand"
+        />
 
         <template v-else-if="!onboarding">
           <!--

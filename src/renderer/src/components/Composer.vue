@@ -36,7 +36,17 @@ const emit = defineEmits<{ "open-settings": []
  * the same filtered list the palette shows, so an entry that cannot run where
  * the user is standing is not offered.
  */
-const props = defineProps<{ commands?: { id: string; title: string; hint?: string; run: () => void }[] }>()
+const props = defineProps<{
+  commands?: { id: string; title: string; hint?: string; run: () => void }[]
+  /**
+   * Which project a task started from the home screen goes into.
+   *
+   * The home screen has no session behind it - MiMo creates the task when the
+   * first message is sent, not when the screen opens - so the box carries the
+   * project it would be created in, and creates it on the way out.
+   */
+  startDirectory?: string
+}>()
 
 const app = useApp()
 const text = ref("")
@@ -58,7 +68,11 @@ const historyIndex = ref(-1)
  * slug there made the same model read two different ways on one screen.
  */
 const modelName = computed(() => {
-  const chosen = app.current?.model
+  /*
+   * With no session open - the home screen - the box names the app's default,
+   * because that is the model the task this box creates will run.
+   */
+  const chosen = app.current?.model ?? app.config?.model
   if (!chosen) return "no model"
   const provider = app.providers.find((entry) => entry.id === chosen.provider)
   const found = provider?.models.find((entry) => entry.id === chosen.model)
@@ -298,6 +312,25 @@ async function submit() {
   attachments.value = []
   mentioned.value = new Set()
   await nextTick(resize)
+
+  /*
+   * On the home screen there is nothing to send into yet. The session is made
+   * here, on the way out, rather than when the screen opened: one created just
+   * because somebody looked at the home screen is a row in the side column
+   * that nobody asked for. If it cannot be made, the draft comes back.
+   */
+  if (!app.currentID) {
+    try {
+      await app.create(props.startDirectory)
+    } catch (err) {
+      text.value = value
+      attachments.value = sent
+      mentioned.value = carried
+      await nextTick(resize)
+      notifyFailure(t("home.startFailed"), err instanceof Error ? err.message : String(err))
+      return
+    }
+  }
 
   const named = await mentionAttachments(value, carried)
 
@@ -828,7 +861,9 @@ async function chooseAccess(next: Access) {
 const AGENTS = ["build", "plan"] as const
 
 /** What the session is running on, as the server describes it. */
-const currentModel = computed<ModelInfo | undefined>(() => findModel(app.providers, app.current?.model))
+const currentModel = computed<ModelInfo | undefined>(() =>
+  findModel(app.providers, app.current?.model ?? app.config?.model),
+)
 
 /**
  * The reasoning steps THIS model accepts, which is not the same list for all of
@@ -931,9 +966,10 @@ function modelKey(provider: string, model: string) {
   return `${provider}:${model}`
 }
 
-const currentKey = computed(() =>
-  app.current ? modelKey(app.current.model.provider, app.current.model.model) : "",
-)
+const currentKey = computed(() => {
+  const chosen = app.current?.model ?? app.config?.model
+  return chosen ? modelKey(chosen.provider, chosen.model) : ""
+})
 
 /**
  * Every row the arrow keys walk, in the order they are drawn.
@@ -1054,11 +1090,26 @@ function toggle(which: "agent" | "model" | "effort" | "access") {
 
 async function chooseAgent(next: (typeof AGENTS)[number]) {
   menu.value = undefined
+  // No session on the home screen, so the choice is the app's default - which
+  // is what the task this box creates will start as.
+  if (!app.currentID) {
+    await app.patchConfig({ agent: next })
+    return
+  }
   await app.setAgent(next)
 }
 
 async function chooseModel(provider: string, model: string) {
   menu.value = undefined
+  /*
+   * On the home screen there is no session to set it on, so the choice is the
+   * app's default - which the next task created from here will start with, and
+   * which every session already falls back to.
+   */
+  if (!app.currentID) {
+    await app.patchConfig({ model: { provider, model } })
+    return
+  }
   await app.setModel({ provider, model })
 }
 
@@ -1506,7 +1557,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             reasoning control gets no pill at all rather than one whose every
             setting the provider ignores, which is the reference's own rule.
           -->
-          <div v-if="variants.length" class="pill-wrap">
+          <div v-if="variants.length && app.currentID" class="pill-wrap">
             <button
               class="pill"
               :class="{ open: menu === 'effort' }"
@@ -1794,7 +1845,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  * in, it added to that gap instead of being replaced by it. Without it the box
  * is 104 tall, which is the reference's number exactly.
  */
-#hero-dock .composer {
+#hero-dock .composer,
+.home-hero .composer {
   padding: 0;
 }
 

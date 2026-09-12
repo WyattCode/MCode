@@ -3,6 +3,7 @@ import { computed, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import SelectMenu from "./SelectMenu.vue"
+import Composer from "./Composer.vue"
 
 /**
  * The 2.0 home screen: what a new task starts from.
@@ -13,12 +14,21 @@ import SelectMenu from "./SelectMenu.vue"
  * the project the task goes into. The greeting is MCode's own, and so is the
  * mark above it.
  *
- * A task here is a session, and a session is created on the server as soon
- * as it exists - so the card does not take typing itself. Clicking it starts
- * the task in the chosen project and hands the keyboard to that session's
- * composer, which is the real one, with everything it carries.
+ * The box is the real composer - the same component a conversation carries,
+ * with the same controls. MiMo lets you type here and creates the task when the
+ * message is sent rather than when the screen opens, so looking at this screen
+ * no longer leaves an empty session behind it; the picker underneath says which
+ * project that task will be created in.
  */
-const emit = defineEmits<{ start: [directory: string | undefined] }>()
+defineProps<{ commands?: { id: string; title: string; hint?: string; run: () => void }[] }>()
+
+/* What the box asks the window for, passed straight through. */
+const emit = defineEmits<{
+  "open-settings": []
+  connect: []
+  "manage-models": []
+  shell: [command: string]
+}>()
 
 const app = useApp()
 
@@ -47,22 +57,16 @@ const options = computed(() => projects.value.map((entry) => ({ value: entry, la
       <div class="wordmark" role="img" aria-label="MCode" />
       <p class="slogan">{{ t("home.slogan") }}</p>
 
-      <button class="card" @click="emit('start', directory)">
-        <span class="placeholder">{{ t("home.describe") }}</span>
-        <span class="bar">
-          <span class="round" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-              <path d="M10 4.5V15.5M4.5 10H15.5" stroke="currentColor" stroke-linecap="square" />
-            </svg>
-          </span>
-          <span class="spacer" />
-          <span class="round send" aria-hidden="true">
-            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-              <path d="M10 15.5V4.5M5 9.5L10 4.5L15 9.5" stroke="currentColor" stroke-linecap="square" />
-            </svg>
-          </span>
-        </span>
-      </button>
+      <div class="dock-slot">
+        <Composer
+          :commands="commands"
+          :start-directory="directory"
+          @open-settings="emit('open-settings')"
+          @connect="emit('connect')"
+          @manage-models="emit('manage-models')"
+          @shell="emit('shell', $event)"
+        />
+      </div>
 
       <div v-if="options.length" class="enter">
         <SelectMenu
@@ -120,53 +124,11 @@ const options = computed(() => projects.value.map((entry) => ({ value: entry, la
   text-align: center;
 }
 
-/* 712x103, radius 20, half-pixel line, 0 2px 10px shadow, 8 padding. */
-.card {
+/* Where the box lands on this screen; the composer brings its own shape. */
+.dock-slot {
   display: flex;
   flex-direction: column;
-  gap: 6px;
   width: 100%;
-  min-height: 103px;
-  padding: 8px;
-  color: var(--text-strong);
-  background: var(--surface-menu);
-  border: 0.5px solid var(--border-weak);
-  border-radius: 20px;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.5);
-  cursor: text;
-  text-align: start;
-}
-
-.placeholder {
-  padding: 5px 5px 8px;
-  color: var(--text-weak);
-  font-size: 14px;
-  line-height: 21px;
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  margin-top: auto;
-}
-
-.spacer {
-  flex: 1;
-}
-
-/* 30x30 round controls, as MiMo's composer draws them. */
-.round {
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  color: var(--text-base);
-  border-radius: 50%;
-}
-
-.send {
-  color: #0d0d0d;
-  background: #5a5a5a;
 }
 
 .enter {

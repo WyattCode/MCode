@@ -196,9 +196,15 @@ check(
   /function set\(next: Draft\) \{[^}]*attachments\.value = next\.attachments/.test(composer),
   true,
 )
+/*
+ * Two halves, both of them load-bearing: a model with no steps to choose
+ * between gets no pill, and neither does the home screen - the setting belongs
+ * to a session, and there is no session behind that box until a message is
+ * sent. MiMo's home box carries no such control either.
+ */
 check(
-  "the effort pill is drawn only for a model with steps",
-  /<div v-if="variants\.length" class="pill-wrap">/.test(composer),
+  "the effort pill is drawn only for a model with steps, and only with a session",
+  /<div v-if="variants\.length && app\.currentID" class="pill-wrap">/.test(composer),
   true,
 )
 check(
