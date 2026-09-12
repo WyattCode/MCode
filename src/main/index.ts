@@ -15,9 +15,12 @@ import { applyZoom } from "./zoom"
 import {
   act,
   closePanel,
+  closeTab,
   navigate,
+  newTab,
   openPanel,
   panelState,
+  selectTab,
   setBounds,
   type BrowserBounds,
 } from "./browser"
@@ -626,6 +629,14 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:browser-act", (event, what: "back" | "forward" | "reload" | "stop") => {
     const window = BrowserWindow.fromWebContents(event.sender)
     return window ? act(window, what) : undefined
+  })
+
+  ipcMain.handle("mcode:browser-tab", (event, what: "new" | "select" | "close", id?: string) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return undefined
+    if (what === "new") return newTab(window)
+    if (what === "select") return selectTab(window, String(id ?? ""))
+    return closeTab(window, String(id ?? ""))
   })
 
   /* The switch itself. The renderer holds the config document, so it says. */

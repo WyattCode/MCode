@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { LocalServer } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
@@ -20,15 +20,32 @@ import { t } from "../lib/i18n"
 const app = useApp()
 const emit = defineEmits<{ close: [] }>()
 
+interface Tab {
+  id: string
+  title: string
+  url: string
+  loading: boolean
+}
+
 interface State {
   url: string
   title: string
   loading: boolean
   canGoBack: boolean
   canGoForward: boolean
+  tabs: Tab[]
+  active: string
 }
 
-const state = ref<State>({ url: "", title: "", loading: false, canGoBack: false, canGoForward: false })
+const state = ref<State>({
+  url: "",
+  title: "",
+  loading: false,
+  canGoBack: false,
+  canGoForward: false,
+  tabs: [],
+  active: "",
+})
 const address = ref("")
 /* While the reader is typing, the bar is theirs; the page stops rewriting it. */
 const editing = ref(false)
@@ -37,7 +54,6 @@ const servers = ref<LocalServer[]>([])
 const scanning = ref(false)
 
 let stopState: (() => void) | undefined
-let frame = 0
 
 const showingPage = computed(() => Boolean(state.value.url))
 
@@ -45,6 +61,12 @@ function apply(next: unknown) {
   if (!next || typeof next !== "object") return
   state.value = next as State
   if (!editing.value) address.value = state.value.url
+  /* Any of this can change the layout - a page arriving takes the starting
+     list's room, a title can wrap the strip - so the hole is measured again. */
+  remeasure()
+  /* The last tab closing takes the panel with it; the window is told so it can
+     stop drawing a frame around nothing. */
+  if (!state.value.tabs.length) emit("close")
 }
 
 /** Where the page goes, in the window's own pixels. */
@@ -60,10 +82,17 @@ function measure() {
   })
 }
 
-/* Cheap, and it has to happen on every layout change, so it rides a frame. */
+/*
+ * After the DOM has settled, not after the next paint.
+ *
+ * This rode requestAnimationFrame, and a window that is not being composited
+ * does not get frames: the page was placed once at zero height and never
+ * corrected, behind chrome that looked entirely correct. A microtask runs
+ * whether or not anything is on screen, which is the right guarantee for a
+ * measurement.
+ */
 function remeasure() {
-  cancelAnimationFrame(frame)
-  frame = requestAnimationFrame(measure)
+  void nextTick(measure)
 }
 
 onMounted(async () => {
@@ -84,7 +113,6 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", remeasure)
-  cancelAnimationFrame(frame)
   observer.disconnect()
   stopState?.()
   window.mcode.browserClose()
@@ -110,6 +138,15 @@ async function act(what: "back" | "forward" | "reload" | "stop") {
   apply(await window.mcode.browserAct(what))
 }
 
+async function tab(what: "new" | "select" | "close", id?: string) {
+  apply(await window.mcode.browserTab(what, id))
+}
+
+/** What a tab calls itself before it has been anywhere. */
+function tabName(entry: Tab): string {
+  return entry.title || entry.url || t("browser.newTab")
+}
+
 function openServer(server: LocalServer) {
   address.value = server.url
   void go()
@@ -130,12 +167,31 @@ async function scan() {
 <template>
   <section class="browser" :aria-label="t('browser.title')">
     <header class="tabs">
-      <div class="tab">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2" />
-          <path d="M1.8 8h12.4M8 1.8c1.7 1.8 2.6 3.9 2.6 6.2S9.7 12.4 8 14.2C6.3 12.4 5.4 10.3 5.4 8S6.3 3.6 8 1.8z" stroke="currentColor" stroke-width="1.2" />
-        </svg>
-        <span class="tab-name">{{ state.title || t("browser.title") }}</span>
+      <div class="strip">
+        <div
+          v-for="entry in state.tabs"
+          :key="entry.id"
+          class="tab"
+          :class="{ on: entry.id === state.active }"
+        >
+          <button class="tab-open" :title="entry.url || tabName(entry)" @click="tab('select', entry.id)">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2" />
+              <path d="M1.8 8h12.4M8 1.8c1.7 1.8 2.6 3.9 2.6 6.2S9.7 12.4 8 14.2C6.3 12.4 5.4 10.3 5.4 8S6.3 3.6 8 1.8z" stroke="currentColor" stroke-width="1.2" />
+            </svg>
+            <span class="tab-name">{{ tabName(entry) }}</span>
+          </button>
+          <button class="tab-close" :aria-label="t('common.close')" @click="tab('close', entry.id)">
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+          </button>
+        </div>
+        <button class="ico" :aria-label="t('browser.newTab')" @click="tab('new')">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
       <button class="ico" :aria-label="t('common.close')" @click="emit('close')">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -221,17 +277,54 @@ async function scan() {
   padding: 0 8px;
 }
 
-.tab {
+/* The row scrolls rather than squeezing: a tab too narrow to read is not a
+   tab, and the panel is narrow to begin with. */
+.strip {
   display: flex;
   flex: 1;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.strip::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  max-width: 168px;
+  height: 26px;
+  padding-inline-end: 4px;
+  color: var(--text-base);
+  background: transparent;
+  border-radius: 8px;
+}
+
+.tab.on {
+  color: var(--text-strong);
+  background: var(--surface-raised);
+}
+
+.tab:hover:not(.on) {
+  background: var(--surface-hover);
+}
+
+.tab-open {
+  display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
   height: 26px;
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: var(--surface-raised);
-  border-radius: 8px;
+  padding: 0 4px 0 10px;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 .tab-name {
@@ -240,6 +333,25 @@ async function scan() {
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-close {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--icon-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.tab-close:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 .bar {

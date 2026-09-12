@@ -130,6 +130,8 @@ const api = {
   browserNavigate: (input: string) => ipcRenderer.invoke("mcode:browser-navigate", input),
   browserAct: (what: "back" | "forward" | "reload" | "stop") =>
     ipcRenderer.invoke("mcode:browser-act", what),
+  browserTab: (what: "new" | "select" | "close", id?: string) =>
+    ipcRenderer.invoke("mcode:browser-tab", what, id),
   onBrowserState: (handler: (state: unknown) => void): (() => void) => {
     const listener = (_event: unknown, state: unknown) => handler(state)
     ipcRenderer.on("mcode:browser-state", listener)
