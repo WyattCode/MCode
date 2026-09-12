@@ -1280,6 +1280,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <div class="line-title">{{ t("set.terminalFont") }}</div>
                 <div class="line-sub">{{ t("set.terminalFontSub") }}</div>
               </div>
+              <input
+                class="field font-field"
+                :value="app.config?.terminalFont ?? ''"
+                :placeholder="FONT_TERMINAL_DEFAULT"
+                spellcheck="false"
+                @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
+              />
+            </div>
 
             <div class="line">
               <div class="line-text">
@@ -1350,14 +1358,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               >
                 <span class="knob" />
               </button>
-            </div>
-              <input
-                class="field font-field"
-                :value="app.config?.terminalFont ?? ''"
-                :placeholder="FONT_TERMINAL_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
             </div>
           </div>
 
