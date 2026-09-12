@@ -119,6 +119,15 @@ function toggleProject(directory: string) {
         </svg>
         <span class="row-label">{{ t("side.newTask") }}</span>
       </button>
+      <button class="row" @click="emit('plugins')">
+        <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M8 3.5H12V6.5H15.5V16.5H4.5V6.5H8V3.5Z" stroke="currentColor" stroke-linejoin="round" />
+          <path d="M8 11H12" stroke="currentColor" stroke-linecap="square" />
+        </svg>
+        <span class="row-label">{{ t("side.plugins") }}</span>
+      </button>
+
+      <!-- Third, where MiMo keeps it: new task, plugins, then what came out. -->
       <button class="row" :class="{ on: page === 'artifacts' }" @click="emit('artifacts')">
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path
@@ -129,14 +138,6 @@ function toggleProject(directory: string) {
           />
         </svg>
         <span class="row-label">{{ t("side.artifacts") }}</span>
-      </button>
-
-      <button class="row" @click="emit('plugins')">
-        <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M8 3.5H12V6.5H15.5V16.5H4.5V6.5H8V3.5Z" stroke="currentColor" stroke-linejoin="round" />
-          <path d="M8 11H12" stroke="currentColor" stroke-linecap="square" />
-        </svg>
-        <span class="row-label">{{ t("side.plugins") }}</span>
       </button>
     </nav>
 
