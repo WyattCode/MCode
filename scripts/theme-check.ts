@@ -121,9 +121,6 @@ const PHYSICAL = /^\s*(padding-(?:left|right)|margin-(?:left|right)|border-(?:le
  * and the alignment has to be turned back by hand.
  */
 const PHYSICAL_ALLOWED = new Set([
-  "TitleBar.vue:margin-left",
-  "TitleBar.vue:margin-right",
-  "TitleBar.vue:padding-left",
   "FilePanel.vue:text-align",
 ])
 

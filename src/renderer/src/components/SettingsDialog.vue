@@ -1513,25 +1513,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
 
-            <!--
-              The two title-bar controls opencode keeps behind a setting, both
-              off to begin with as they are there. Their descriptions name the
-              buttons exactly, so the rows say what they reveal.
-            -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.showNav") }}</div>
-                <div class="line-sub">{{ t("set.showNavSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showNavigation }"
-                @click="app.patchConfig({ showNavigation: !app.config?.showNavigation })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
+            <!-- The bottom-panel toggle in the bar, which a reader can take away. -->
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.showTerm") }}</div>
@@ -1541,34 +1523,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 class="switch"
                 :class="{ on: app.config?.showTerminal }"
                 @click="app.patchConfig({ showTerminal: !app.config?.showTerminal })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.paletteButton") }}</div>
-                <div class="line-sub">{{ t("set.paletteButtonSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showPaletteButton }"
-                @click="app.patchConfig({ showPaletteButton: !app.config?.showPaletteButton })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.serverButton") }}</div>
-                <div class="line-sub">{{ t("set.serverButtonSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showServerButton }"
-                @click="app.patchConfig({ showServerButton: !app.config?.showServerButton })"
               >
                 <span class="knob" />
               </button>

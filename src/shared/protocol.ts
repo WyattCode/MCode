@@ -760,15 +760,8 @@ export interface AppConfig {
    * its sessions are kept, so reopening the directory brings them all back.
    */
   closedProjects: string[]
-  /**
-   * Width in pixels of the docked project panel, once someone has dragged it.
-   * Optional because absent has to stay distinguishable from a deliberate
-   * choice: the panel then uses its own default rather than a number written
-   * on first launch that would look like the user had picked it.
-   */
   /** How wide the browser panel is, when it has been dragged. */
   browserWidth?: number
-  sidebarWidth?: number
   /** Optional display name per project directory, keyed by absolute path. */
   projectNames: Record<string, string>
   /** Per-project badge artwork, stored as a data URL so it survives a move. */
@@ -834,15 +827,6 @@ export interface AppConfig {
   expandShell: boolean
   /** Start edit, write and patch tool calls expanded in the transcript. */
   expandEdits: boolean
-  /*
-   * What the title bar carries besides the review toggle.
-   *
-   * opencode keeps its bar to one control and puts these two behind settings
-   * that ship off, which is why a bar with three buttons on it did not look
-   * like the same application.
-   */
-  showServerButton: boolean
-  showPaletteButton: boolean
 
   /*
    * Type. Empty means the built-in stack, which is what almost everyone wants;
@@ -951,18 +935,13 @@ export interface AppConfig {
   /** Whether a session offers the review panel at all. */
   showFileTree: boolean
   /**
-   * Two title-bar controls kept behind a setting.
+   * The bottom-panel toggle in the bar, on to begin with.
    *
-   * `showNavigation` stays false, which is opencode's own default
-   * (`defaultSettings` at main-8t-QUXax.js @1901464 has both false): the back
-   * and forward arrows are already at the top of the side column.
-   *
-   * `showTerminal` is now true. The reference this app follows for 2.0 keeps a
-   * bottom-panel toggle in the bar at all times, and the drawer is otherwise
-   * reachable only by a chord nobody is told about. The setting stays, so a
-   * reader who wants the bar emptier can have that.
+   * The reference this app follows for 2.0 keeps a bottom-panel toggle in the
+   * bar at all times, and the drawer is otherwise reachable only by a chord
+   * nobody is told about. The setting stays, so a reader who wants the bar
+   * emptier can have that.
    */
-  showNavigation: boolean
   showTerminal: boolean
   /** Whether the composer offers the agent switcher. */
   showAgentPicker: boolean

@@ -180,19 +180,6 @@ function tagEnd(source: string, from: number): number {
   return source.length
 }
 
-/*
- * Events raised only from a mode nothing mounts.
- *
- * ProjectPanel can render docked, as a popover or as a bare menu, and it raises
- * "close" only when it is floating - `if (floating.value) emit("close")`. The
- * app mounts it docked and nowhere else, so the event cannot fire. That is an
- * unused mode rather than a control that does nothing, and it is written down
- * here so the check keeps reporting the failures that matter. If the floating
- * modes are ever mounted, the binding has to come with them; if they are
- * removed, this line goes too.
- */
-const UNMOUNTED_MODES = new Set(["ProjectPanel.vue:close"])
-
 let checkedEvents = 0
 for (const file of componentFiles) {
   const name = file.replace(/\.vue$/, "")
@@ -219,7 +206,7 @@ for (const file of componentFiles) {
     const bound = tags.some(
       (tag) => tag.includes(`@${event}=`) || tag.includes(`@${event}.`) || tag.includes(`v-on:${event}`),
     )
-    if (bound || UNMOUNTED_MODES.has(`${file}:${event}`)) continue
+    if (bound) continue
     problems.push(`${file} raises "${event}" but no parent binds @${event}`)
   }
 }
