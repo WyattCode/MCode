@@ -296,6 +296,12 @@ for (const name of names) {
  * a replica - so a disagreement is a defect worth failing on. Placeholders are
  * normalised because the two apps spell them differently ({{x}} against {name})
  * while meaning the same thing.
+ *
+ * A key the 2.0 design deliberately rewrites is taken out of the fixture rather
+ * than excused in code here: 2.0 lays its interface out from Xiaomi MiMo, so
+ * for those strings OpenCode is no longer the authority. Everything still in
+ * the fixture is compared as strictly as before, and removing a key is a
+ * visible edit to a checked-in file rather than a condition in this script.
  */
 const fixture = path.join(root, "scripts/fixtures/reference-strings.json")
 if (fixture && fs.existsSync(fixture)) {

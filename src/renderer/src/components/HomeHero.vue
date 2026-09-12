@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import SelectMenu from "./SelectMenu.vue"
@@ -48,6 +48,26 @@ const projects = computed(() => {
 const picked = ref<string>()
 const directory = computed(() => picked.value ?? projects.value[0] ?? app.config?.directory ?? undefined)
 const options = computed(() => projects.value.map((entry) => ({ value: entry, label: name(entry) })))
+
+/** The box below, so a starting point can be put into it rather than run. */
+const box = ref<InstanceType<typeof Composer>>()
+
+/*
+ * What the chosen project offers to start from.
+ *
+ * MiMo lists example tasks of its own here; this lists the commands and skills
+ * the project itself carries, which is the same offer made out of something
+ * real. They are read per project, so changing the picker re-reads them.
+ */
+const starters = computed(() => app.commands.slice(0, 3))
+
+watch(directory, (next) => next && void app.refreshCommands(next), { immediate: true })
+
+function start(name: string) {
+  // A starting point names no files, so it carries no chips and no mentions.
+  box.value?.set({ text: `/${name} `, attachments: [], mentioned: new Set() })
+  box.value?.focus()
+}
 </script>
 
 <template>
@@ -59,6 +79,7 @@ const options = computed(() => projects.value.map((entry) => ({ value: entry, la
 
       <div class="dock-slot">
         <Composer
+          ref="box"
           :commands="commands"
           :start-directory="directory"
           @open-settings="emit('open-settings')"
@@ -68,13 +89,34 @@ const options = computed(() => projects.value.map((entry) => ({ value: entry, la
         />
       </div>
 
+      <div v-if="starters.length" class="starters" :aria-label="t('home.starters')">
+        <button v-for="command in starters" :key="command.name" class="starter" @click="start(command.name)">
+          <svg class="starter-mark" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.8 4.2h10.4M2.8 8h10.4M2.8 11.8h6.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+          <span class="starter-name">/{{ command.name }}</span>
+          <span v-if="command.description" class="starter-note">{{ command.description }}</span>
+        </button>
+      </div>
+
       <div v-if="options.length" class="enter">
         <SelectMenu
           :model-value="directory ?? ''"
           :options="options"
           :aria-label="t('home.enterProject')"
           @update:model-value="picked = $event"
-        />
+        >
+          <template #icon>
+            <svg class="folder" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M1.9 4.2c0-.6.5-1.1 1.1-1.1h2.6l1.3 1.5h6.1c.6 0 1.1.5 1.1 1.1v6.1c0 .6-.5 1.1-1.1 1.1H3c-.6 0-1.1-.5-1.1-1.1z"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </template>
+        </SelectMenu>
       </div>
     </div>
   </div>
@@ -134,5 +176,61 @@ const options = computed(() => projects.value.map((entry) => ({ value: entry, la
 .enter {
   align-self: flex-start;
   margin-top: 12px;
+}
+
+/* Under the box, as MiMo keeps them: a row each, parted by a dashed rule. */
+.starters {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  margin-top: 14px;
+}
+
+.starter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 46px;
+  padding: 0 8px;
+  color: var(--text-strong);
+  border-bottom: 1px dashed var(--border-weak);
+  border-radius: 8px;
+  text-align: start;
+}
+
+.starter:last-child {
+  border-bottom: 0;
+}
+
+.starter:hover {
+  background: var(--surface-hover);
+}
+
+.starter-mark {
+  flex-shrink: 0;
+  color: var(--text-weak);
+}
+
+.starter-name {
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.folder {
+  flex-shrink: 0;
+  color: var(--text-weak);
+}
+
+.starter-note {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--text-weak);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

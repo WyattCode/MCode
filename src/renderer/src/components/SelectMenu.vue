@@ -157,6 +157,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="root" class="select" :style="{ width: width ? `${width}px` : undefined }">
     <button class="trigger" :class="{ open }" @click="toggle">
+      <slot name="icon" />
       <span class="label">{{ label }}</span>
       <svg class="caret" :class="{ up: open }" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
