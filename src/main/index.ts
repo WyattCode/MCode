@@ -12,6 +12,15 @@ import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wi
 import { isKnownOpenWith } from "@shared/open-app"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
+import {
+  act,
+  closePanel,
+  navigate,
+  openPanel,
+  panelState,
+  setBounds,
+  type BrowserBounds,
+} from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { cascade, restore, track } from "./window-state"
 import pkg from "../../package.json"
@@ -586,6 +595,39 @@ app.whenReady().then(async () => {
    * server's, and main never reads it - so main is told rather than asking. An
    * id that names no file leaves the icon alone instead of blanking it.
    */
+  /*
+   * The browser panel. The window owns the layout and says where the page
+   * goes; main owns the page itself, for the reasons at the top of browser.ts.
+   */
+  ipcMain.handle("mcode:browser-open", (event, bounds: BrowserBounds) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window) return undefined
+    openPanel(window, bounds, (state) => {
+      if (!window.isDestroyed()) window.webContents.send("mcode:browser-state", state)
+    })
+    return panelState(window)
+  })
+
+  ipcMain.on("mcode:browser-bounds", (event, bounds: BrowserBounds) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (window) setBounds(window, bounds)
+  })
+
+  ipcMain.on("mcode:browser-close", (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (window) closePanel(window)
+  })
+
+  ipcMain.handle("mcode:browser-navigate", (event, input: string) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    return window ? navigate(window, String(input)) : undefined
+  })
+
+  ipcMain.handle("mcode:browser-act", (event, what: "back" | "forward" | "reload" | "stop") => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    return window ? act(window, what) : undefined
+  })
+
   /* The switch itself. The renderer holds the config document, so it says. */
   /*
    * What the window is allowed to ask the machine for.

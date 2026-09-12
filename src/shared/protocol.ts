@@ -571,6 +571,14 @@ export interface McpServerConfig {
  * false starts, filler, the punctuation nobody says out loud - which takes a
  * round trip and is why it is a choice.
  */
+/** A development server answering on this machine right now. */
+export interface LocalServer {
+  port: number
+  url: string
+  /** The page's own title, when it gave one. */
+  title: string
+}
+
 export type VoiceMode = "fast" | "smart"
 
 /** Usage gathered under one heading - a day, a model, or everything. */
@@ -1185,6 +1193,7 @@ export type Request =
   /* "branch" widens the review past the working tree to the whole branch. */
   | { type: "app.paths"; directory?: string }
   | { type: "usage.summary"; days?: number }
+  | { type: "local.servers" }
   | {
       type: "voice.transcribe"
       /** The recording, base64. Kept small by the window: it stops at a minute. */
@@ -1340,6 +1349,7 @@ export interface ResponseMap {
   "shell.attach": { data: string; alive: boolean }
   "app.paths": { paths: AppPaths }
   "usage.summary": { summary: UsageSummary }
+  "local.servers": { servers: LocalServer[] }
   "voice.transcribe": { text: string; heard: string }
   "workspace.list": { worktrees: Worktree[] }
   "workspace.create": { directory: string; branch: string }

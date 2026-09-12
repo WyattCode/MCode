@@ -118,6 +118,24 @@ const api = {
   /** Which colourway the window and the taskbar should wear. */
   appIcon: (id: string): void => ipcRenderer.send("mcode:app-icon", id),
 
+  /*
+   * The browser panel. The window says where it goes and what to load; the
+   * page itself is out of its reach by design.
+   */
+  browserOpen: (bounds: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke("mcode:browser-open", bounds),
+  browserBounds: (bounds: { x: number; y: number; width: number; height: number }): void =>
+    ipcRenderer.send("mcode:browser-bounds", bounds),
+  browserClose: (): void => ipcRenderer.send("mcode:browser-close"),
+  browserNavigate: (input: string) => ipcRenderer.invoke("mcode:browser-navigate", input),
+  browserAct: (what: "back" | "forward" | "reload" | "stop") =>
+    ipcRenderer.invoke("mcode:browser-act", what),
+  onBrowserState: (handler: (state: unknown) => void): (() => void) => {
+    const listener = (_event: unknown, state: unknown) => handler(state)
+    ipcRenderer.on("mcode:browser-state", listener)
+    return () => ipcRenderer.off("mcode:browser-state", listener)
+  },
+
   /** Whether to keep an icon in the system tray. */
   tray: (enabled: boolean): void => ipcRenderer.send("mcode:tray", enabled),
 

@@ -26,6 +26,7 @@ import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
 import { splitSendWord } from "../src/renderer/src/lib/voice"
+import { addressToURL, safeURL } from "../src/shared/web-address"
 import { ToolError } from "../src/server/tool/types"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { Bus } from "../src/server/bus"
@@ -1341,6 +1342,30 @@ async function main() {
       splitSendWord("send the patch to review").text === "send the patch to review",
     )
     check("nothing said is nothing sent", splitSendWord("   ").send === false)
+  }
+
+  section("The address bar")
+  {
+    /*
+     * The two refusals the panel rests on. A file:// in the address bar would
+     * turn a browser panel into a reader for every file the user owns.
+     */
+    check("a file path is refused", safeURL("file:///C:/Windows/win.ini") === undefined)
+    check("and so is anything else with a scheme", safeURL("mcode://settings") === undefined)
+    check("http survives", safeURL("http://example.com/") === "http://example.com/")
+
+    /*
+     * A port means a development server, and a development server means http.
+     * Guessing https there fails with an empty panel and no explanation.
+     */
+    check("a port on this machine is http", addressToURL("127.0.0.1:5173") === "http://127.0.0.1:5173/")
+    check("localhost too", addressToURL("localhost:3000/app") === "http://localhost:3000/app")
+    check("a bare domain is https", addressToURL("example.com") === "https://example.com/")
+    check(
+      "and words are a search",
+      (addressToURL("how to fix a flaky test") ?? "").startsWith("https://duckduckgo.com/?q="),
+    )
+    check("nothing typed goes nowhere", addressToURL("   ") === undefined)
   }
 
   section("Attachments")

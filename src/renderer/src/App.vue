@@ -16,6 +16,7 @@ import InfoPanel from "./components/InfoPanel.vue"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import ArtifactsView from "./components/ArtifactsView.vue"
 import PluginsView from "./components/PluginsView.vue"
+import BrowserPanel from "./components/BrowserPanel.vue"
 import RevertDock from "./components/RevertDock.vue"
 import FilePanel from "./components/FilePanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
@@ -1630,6 +1631,15 @@ function goArtifacts() {
   push({ view: "artifacts" })
 }
 
+/*
+ * The browser panel, along the far side of the workspace.
+ *
+ * Not remembered across launches on purpose: it holds a live page, and an app
+ * that reopened a website on its own every morning would be making a request
+ * nobody asked for that morning.
+ */
+const browserOpen = ref(false)
+
 /* So is the plugins page, which MiMo opens in the workspace rather than over it. */
 function goPlugins() {
   view.value = "plugins"
@@ -2649,6 +2659,8 @@ function onKeydown(event: KeyboardEvent) {
       s: () => void cycleScheme(),
       // The plugins page, on the reference's own chord.
       p: () => goPlugins(),
+      // The browser panel, on the reference's own chord as well.
+      b: () => (browserOpen.value = !browserOpen.value),
       // And the list of all of these, which is a settings page here.
       "?": () => {
         settingsSection.value = "keys"
@@ -3243,6 +3255,13 @@ onBeforeUnmount(() => {
         </template>
       </main>
 
+      <!--
+        The browser, in the workspace rather than over it: a page being looked
+        at beside the conversation is the point, and a panel that covered the
+        conversation would defeat it.
+      -->
+      <BrowserPanel v-if="browserOpen" class="browser-panel" @close="browserOpen = false" />
+
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />
 
@@ -3701,5 +3720,13 @@ onBeforeUnmount(() => {
 
 .main.info-open :deep(.composer) {
   padding-inline-end: calc(24px + 262px);
+}
+/*
+ * The browser gets its own column at the far side, wide enough for a page to
+ * be readable beside the conversation rather than instead of it.
+ */
+.browser-panel {
+  flex-shrink: 0;
+  width: 420px;
 }
 </style>

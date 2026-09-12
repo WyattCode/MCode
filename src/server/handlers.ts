@@ -7,6 +7,7 @@ import type {
   FileEntry,
   Request,
   ResponseMap,
+  LocalServer,
   SessionArtifacts,
   Usage,
   UsageBucket,
@@ -420,6 +421,34 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const text = (completion.choices?.[0]?.message?.content ?? "").trim()
       /* A cleanup that came back empty is not an improvement on what was said. */
       return { text: text || heard, heard } satisfies Handled<"voice.transcribe">
+    }
+
+    case "local.servers": {
+      /*
+       * The ports a development server is actually likely to be on. Scanning
+       * everything would be a port scan of the reader's own machine, which is
+       * both slow and a rude thing for an app to do; this is the short list
+       * the common tools use, asked politely and dropped the moment it does
+       * not answer.
+       */
+      const PORTS = [
+        3000, 3001, 3002, 3003, 4000, 4200, 5000, 5001, 5173, 5174, 5175, 5176,
+        7000, 8000, 8001, 8080, 8081, 8088, 8090, 8888, 9000, 1420, 4321, 4173,
+      ]
+      const found: LocalServer[] = []
+      await Promise.all(
+        PORTS.map(async (port) => {
+          const url = `http://127.0.0.1:${port}/`
+          const stop = AbortSignal.timeout(400)
+          const response = await fetch(url, { signal: stop, redirect: "manual" }).catch(() => undefined)
+          if (!response) return
+          const body = await response.text().catch(() => "")
+          const title = (body.match(/<title[^>]*>([^<]{1,80})</i)?.[1] ?? "").trim()
+          found.push({ port, url, title })
+        }),
+      )
+      found.sort((a, b) => a.port - b.port)
+      return { servers: found } satisfies Handled<"local.servers">
     }
 
     case "provider.list":
