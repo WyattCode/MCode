@@ -3315,6 +3315,13 @@ onBeforeUnmount(() => {
             />
           </Teleport>
         </template>
+
+        <!--
+          The terminal, docked along the foot of the conversation the way MiMo
+          has it: the full width of this column, under the composer, with its
+          own edge to drag. Not in the right-hand column, which is the review's.
+        -->
+        <TerminalDrawer v-if="terminalUp" ref="drawer" @close="terminalOpen = false" />
       </main>
 
       <!--
@@ -3350,19 +3357,10 @@ onBeforeUnmount(() => {
         which of them was being read.
       -->
       <!--
-        The right column: the panel and the terminal, stacked.
-
-        Measured on the reference with both up - review at `616,44 831x575` and
-        the terminal directly beneath it at `616,627 831x280`, the same left
-        edge and the same width, 8 apart. They are not alternatives to each
-        other; closing the review lets the terminal take the whole column
-        (`616,44 831x863`), which is why the column exists rather than the two
-        taking turns in the row.
-
-        The column owns the width, so dragging the panel's edge and dragging it
-        with only a terminal open move the same thing.
+        The right column, which holds the review panel. The terminal used to be
+        stacked under it here; it now docks at the foot of the conversation.
       -->
-      <div v-if="reviewPanelUp || terminalUp" class="column" :style="reviewWidth ? { width: `${reviewWidth}px` } : undefined">
+      <div v-if="reviewPanelUp" class="column" :style="reviewWidth ? { width: `${reviewWidth}px` } : undefined">
       <FilePanel
         v-if="reviewPanelUp"
         v-model:tree-open="fileTreeOpen"
@@ -3374,7 +3372,6 @@ onBeforeUnmount(() => {
         @notes="sendNotes"
         @export="exportSessionData"
       />
-      <TerminalDrawer v-if="terminalUp" ref="drawer" @close="terminalOpen = false" />
       </div>
     </div>
 
@@ -3671,7 +3668,6 @@ onBeforeUnmount(() => {
 /* Each region is its own card. */
 .body > .main,
 .column > .panel,
-.column > .drawer,
 .body > .panel-host {
   overflow: hidden;
   background: var(--surface-raised);
@@ -3686,34 +3682,20 @@ onBeforeUnmount(() => {
  * rather than the two lying in the same plane.
  */
 .column > .panel,
-.column > .drawer,
 .body > .panel-host {
   box-shadow: var(--shadow-md);
 }
 
-/*
- * The panel takes what the terminal leaves. With no terminal it is the whole
- * column; with one it is the column less the terminal's own height, which is
- * the reader's to drag and so is left fixed here.
- */
+/* The panel is the whole column. */
 .column > .panel {
   flex: 1;
   width: auto;
   min-height: 0;
 }
 
-.column > .drawer {
+/* The docked terminal keeps the height it was dragged to; the transcript gives way. */
+.main > .drawer {
   flex: none;
-}
-
-/*
- * With the review closed the terminal has the column to itself, which is what
- * the reference does: its terminal goes from `831x280` under the review to
- * `831x863` without it. `flex-basis` beats the dragged height here, so the
- * height the reader chose is kept for when the review comes back.
- */
-.column > .drawer:only-child {
-  flex: 1;
 }
 
 /*

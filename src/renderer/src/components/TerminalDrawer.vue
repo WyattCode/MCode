@@ -243,9 +243,8 @@ function startResize(event: PointerEvent) {
       </button>
 
       <span class="gap" />
-      <span class="cwd mono">{{ app.current?.directory }}</span>
       <button
-        class="icon-btn"
+        class="icon-btn hide"
         v-tip="{ label: t('term.hide'), placement: 'top' }"
         @click="emit('close')"
       >
@@ -290,26 +289,25 @@ function startResize(event: PointerEvent) {
 
 <style scoped>
 /*
- * A card in the right column, not a strip across the foot of the window. The
- * seam it used to draw along its top belonged to the old shape - butted against
- * the conversation, it needed a line to say where one ended; separated from the
- * panel above it by the column's own gutter, the line only doubled the edge.
+ * Docked along the foot of the conversation, as MiMo has it: the full width of
+ * the column, butted against the transcript and set off from it by a hairline
+ * along its top. The drag edge straddles that line, 7px tall.
  */
 .drawer {
   position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--surface-raised);
+  border-top: 0.5px solid var(--border-weak);
 }
 
 .resize {
   position: absolute;
-  top: -2px;
+  top: -4px;
   left: 0;
   right: 0;
-  height: 5px;
-  cursor: ns-resize;
+  height: 7px;
+  cursor: row-resize;
   z-index: 2;
 }
 
@@ -317,41 +315,36 @@ function startResize(event: PointerEvent) {
   background: var(--surface-selected);
 }
 
-/* 52 tall with eight between the tabs, which is what the reference measures. */
+/* MiMo's bar: 38 tall on a 5px/10px padding, four between the tabs, no rule under it. */
 .head {
   display: flex;
   flex-shrink: 0;
+  box-sizing: border-box;
   align-items: center;
-  gap: 8px;
-  height: 52px;
-  padding-inline: 12px;
-  border-bottom: 1px solid var(--border-weak);
+  gap: 4px;
+  height: 38px;
+  padding: 5px 10px;
 }
 
 /*
- * Measured off the reference's own terminal panel rather than reasoned about:
- * 28 tall on a 6px radius, a symmetric 8px inline padding, 8px between the
- * label and the close button, and its text at 14px/500 on a 21px line.
- *
- * The padding used to be 10px at the start and 8px at the end, on the argument
- * that a label wants more room than a close button - a fair argument, and not
- * what the reference does. The label was also inheriting the interface's
- * 13px/440, a size and weight below the reference's.
+ * MiMo's tab: 70x28 for a two-character label and its close mark - an 11px
+ * inline padding, 8 between the two, a 7px corner, 12px text.
  */
 .tab {
   display: flex;
   flex-shrink: 0;
+  box-sizing: border-box;
   align-items: center;
   gap: 8px;
   max-width: 180px;
   height: 28px;
   padding-block: 0;
-  padding-inline: 8px;
+  padding-inline: 11px;
   color: var(--text-weak);
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 21px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
 }
 
 .tab:hover {
@@ -359,29 +352,16 @@ function startResize(event: PointerEvent) {
 }
 
 /*
- * The reference gives the selected terminal tab a hairline of its own -
- * `background-color: var(--v2-background-bg-layer-01)` with
- * `box-shadow: inset 0 0 0 .5px var(--v2-border-border-muted)` under
- * `#terminal-panel` - which is what separates it from a tab that merely has
- * the pointer over it. A pressed overlay alone read as the hover state held.
+ * The selected tab is the bar's own colour with a hairline round it - in MiMo
+ * the outline is the whole difference between it and a tab at rest.
  */
 .tab.on {
   color: var(--text-strong);
-  background: var(--surface-raised-hover);
-  box-shadow: inset 0 0 0 0.5px var(--border-muted);
+  box-shadow: inset 0 0 0 0.5px var(--border-weak);
 }
 
 .tab-label {
   overflow: hidden;
-  font-size: 13px;
-  font-weight: 440;
-  /*
-   * Its own, rather than the tab's 21. The tab element is 14px/500/21 and the
-   * label inside it is 13px/440/16 - two different rules, which is easy to miss
-   * because measuring the tab answers for the tab. Inheriting 21 made the label
-   * box 21 tall where the reference's is 16.
-   */
-  line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -400,6 +380,13 @@ function startResize(event: PointerEvent) {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
+}
+
+/* Putting the panel away is MiMo's 26px button at the far end of the bar. */
+.head .icon-btn.hide {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
 }
 
 /*
@@ -433,14 +420,6 @@ function startResize(event: PointerEvent) {
 .tab-close:hover {
   opacity: 1;
   background: var(--overlay-hover);
-}
-
-.cwd {
-  overflow: hidden;
-  color: var(--text-weak);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .gap {
