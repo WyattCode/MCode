@@ -442,6 +442,20 @@ async function fork(turn: Turn) {
   await app.forkFrom(turn.id)
 }
 
+/**
+ * The same, from the answer rather than the question.
+ *
+ * The reference keeps its branch under the reply, and the difference is what
+ * comes along: forking at the question carries the question and leaves its
+ * answer behind, forking here carries both - the point to branch from when the
+ * answer is right and the next step is what should go another way. The fork is
+ * made at the turn's last assistant message, which is the end of the answer.
+ */
+async function branchReply(turn: Turn) {
+  if (!turn.last?.id) return
+  await app.forkFrom(turn.last.id)
+}
+
 /** True while a rollback is in flight, so a second press cannot race the first. */
 const reverting = ref(false)
 
@@ -647,6 +661,14 @@ defineExpose({ stepMessage })
             under every message - and the copy button belongs with it.
           -->
           <div v-if="turn.finish && !turn.error && turn.last" class="footer">
+            <button class="copy branch" v-tip="{ label: t('stream.fork'), placement: 'top' }" @click="branchReply(turn)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="4.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1" />
+                <circle cx="4.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1" />
+                <circle cx="11.5" cy="5.5" r="1.6" stroke="currentColor" stroke-width="1" />
+                <path d="M4.5 5.1v5.8M11.5 7.1c0 2.6-2.2 3.4-5.4 3.9" stroke="currentColor" stroke-width="1" stroke-linecap="round" />
+              </svg>
+            </button>
             <button class="copy" v-tip="{ label: t('stream.copy'), placement: 'top' }" @click="copyReply(turn)">
               <svg v-if="copied === turn.id" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1" />
