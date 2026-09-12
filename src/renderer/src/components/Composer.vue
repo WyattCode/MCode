@@ -21,6 +21,8 @@ import {
 import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
 import ModelTooltip from "./ModelTooltip.vue"
+import ContextRing from "./ContextRing.vue"
+import { readContext } from "./session-context"
 import ProviderIcon from "./ProviderIcon.vue"
 import { t, language } from "../lib/i18n"
 
@@ -49,9 +51,23 @@ const props = defineProps<{
   startDirectory?: string
   /** Start that task with no project, in a folder of its own. */
   startScratch?: boolean
+  /**
+   * This box starts a new task rather than speaking into the open one.
+   *
+   * The home screen's box. Going home does not close the conversation that was
+   * open - its tab, the side chat and the back button all still need it - so
+   * without this the box read that conversation's model, agent and context,
+   * and a message sent from it went into that conversation instead of starting
+   * the task the screen offers.
+   */
+  fresh?: boolean
 }>()
 
 const app = useApp()
+
+/* The conversation this box speaks for: none in a box that starts a new task. */
+const sessionID = computed(() => (props.fresh ? undefined : app.currentID))
+const session = computed(() => (props.fresh ? undefined : app.current))
 const text = ref("")
 const input = ref<HTMLTextAreaElement>()
 /**
@@ -75,7 +91,7 @@ const modelName = computed(() => {
    * With no session open - the home screen - the box names the app's default,
    * because that is the model the task this box creates will run.
    */
-  const chosen = app.current?.model ?? app.config?.model
+  const chosen = session.value?.model ?? app.config?.model
   if (!chosen) return "no model"
   const provider = app.providers.find((entry) => entry.id === chosen.provider)
   const found = provider?.models.find((entry) => entry.id === chosen.model)
@@ -366,7 +382,7 @@ function attachFromMenu() {
 }
 
 function terminalFromMenu() {
-  if (!app.currentID) return
+  if (!sessionID.value) return
   menu.value = undefined
   emit("terminal")
 }
@@ -383,10 +399,15 @@ function terminalFromMenu() {
  * "on" while its turns ran without the section at all.
  */
 const staged = computed(() =>
-  app.currentID ? (app.current?.staged ?? false) : (app.config?.staged ?? false),
+  sessionID.value ? (session.value?.staged ?? false) : (app.config?.staged ?? false),
 )
 
 async function toggleStaged() {
+  // A box starting a new task sets what that task will start with.
+  if (!sessionID.value) {
+    await app.patchConfig({ staged: !staged.value })
+    return
+  }
   await app.setStaged(!staged.value)
 }
 
@@ -435,7 +456,7 @@ async function submit() {
    * because somebody looked at the home screen is a row in the side column
    * that nobody asked for. If it cannot be made, the draft comes back.
    */
-  if (!app.currentID) {
+  if (!sessionID.value) {
     try {
       await app.create(props.startDirectory, { scratch: props.startScratch })
     } catch (err) {
@@ -542,7 +563,8 @@ const files = ref<string[]>([])
 const listedFor = ref<string>()
 
 async function loadFiles() {
-  const directory = app.current?.directory
+  // A box starting a new task lists the folder that task will be made in.
+  const directory = props.fresh ? props.startDirectory : app.current?.directory
   if (!directory || !app.client || listedFor.value === directory) return
   listedFor.value = directory
   try {
@@ -925,8 +947,59 @@ function onKeydown(event: KeyboardEvent) {
 
 
 /** Which pill has its menu open, if any. */
-const menu = ref<"agent" | "model" | "effort" | "access" | "plus">()
+const menu = ref<"agent" | "model" | "effort" | "access" | "plus" | "context">()
 const modelQuery = ref("")
+
+/** Token counts the way a context window is talked about: 39.2K, 1.0M. */
+function compactTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}K`
+  return String(count)
+}
+
+/**
+ * How full the model's context is, read from the box itself.
+ *
+ * The reference keeps this ring beside the model picker rather than in a
+ * header, which is where the question comes up: about to send, is there room.
+ * The figures come from session-context.ts like the header's, so the two never
+ * disagree. Before a turn has spent anything the ring is drawn empty against
+ * the current model's window. A model whose window nobody has told the app -
+ * a local server that does not report one - still gets its ring, empty, and a
+ * card that gives the tokens spent and says the size is not known: the
+ * reference always has the control, and a control that comes and goes with a
+ * provider setting is a puzzle. Not drawn on the home screen, which has no
+ * conversation to measure.
+ */
+const contextUsage = computed(() => {
+  if (!sessionID.value) return undefined
+  const reading = readContext(app.messages, app.providers)
+  const current = session.value?.model
+  const window =
+    reading?.window ??
+    (current
+      ? app.providers.find((provider) => provider.id === current.provider)?.models.find((model) => model.id === current.model)
+          ?.contextWindow
+      : undefined)
+  const used = reading?.used ?? 0
+  if (!window) {
+    return {
+      percent: 0,
+      shareLine: t("composer.ctxUsedOnly", { used: compactTokens(used) }),
+      tokensLine: t("composer.ctxUnknown"),
+    }
+  }
+  const share = (used / window) * 100
+  const decimal = new Intl.NumberFormat(language.value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  return {
+    percent: share,
+    shareLine: t("composer.ctxPercent", {
+      used: decimal.format(share),
+      left: decimal.format(Math.max(0, 100 - share)),
+    }),
+    tokensLine: t("composer.ctxTokens", { used: compactTokens(used), total: compactTokens(window) }),
+  }
+})
 const pills = ref<HTMLElement>()
 
 /**
@@ -978,7 +1051,7 @@ const AGENTS = ["build", "plan"] as const
 
 /** What the session is running on, as the server describes it. */
 const currentModel = computed<ModelInfo | undefined>(() =>
-  findModel(app.providers, app.current?.model ?? app.config?.model),
+  findModel(app.providers, session.value?.model ?? app.config?.model),
 )
 
 /**
@@ -1014,7 +1087,7 @@ const EFFORT_CHOICES = computed<(Effort | undefined)[]>(() => [undefined, ...var
  * be tidier on the wire and lose the setting on every model change, so the
  * resolution stays a reading of the state rather than a write to it.
  */
-const effortLevel = computed<Effort | undefined>(() => resolveVariant(variants.value, app.current?.effort))
+const effortLevel = computed<Effort | undefined>(() => resolveVariant(variants.value, session.value?.effort))
 
 async function chooseEffort(level?: Effort) {
   menu.value = undefined
@@ -1026,7 +1099,7 @@ async function chooseEffort(level?: Effort) {
  * session says, and an older session keeps the agent it was opened with. The
  * model pill beside this one reads the session for the same reason.
  */
-const agent = computed(() => app.current?.agent ?? app.config?.agent ?? "build")
+const agent = computed(() => session.value?.agent ?? app.config?.agent ?? "build")
 
 /**
  * Models offered in the picker: every connected provider, minus anything the
@@ -1083,7 +1156,7 @@ function modelKey(provider: string, model: string) {
 }
 
 const currentKey = computed(() => {
-  const chosen = app.current?.model ?? app.config?.model
+  const chosen = session.value?.model ?? app.config?.model
   return chosen ? modelKey(chosen.provider, chosen.model) : ""
 })
 
@@ -1190,7 +1263,7 @@ function openModelMenu() {
   })
 }
 
-function toggle(which: "agent" | "model" | "effort" | "access" | "plus") {
+function toggle(which: "agent" | "model" | "effort" | "access" | "plus" | "context") {
   if (menu.value === which) {
     menu.value = undefined
     modelQuery.value = ""
@@ -1208,7 +1281,7 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
   menu.value = undefined
   // No session on the home screen, so the choice is the app's default - which
   // is what the task this box creates will start as.
-  if (!app.currentID) {
+  if (!sessionID.value) {
     await app.patchConfig({ agent: next })
     return
   }
@@ -1222,7 +1295,7 @@ async function chooseModel(provider: string, model: string) {
    * app's default - which the next task created from here will start with, and
    * which every session already falls back to.
    */
-  if (!app.currentID) {
+  if (!sessionID.value) {
     await app.patchConfig({ model: { provider, model } })
     return
   }
@@ -1481,7 +1554,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </svg>
                 <span class="item-name">{{ t("composer.attach") }}</span>
               </button>
-              <button class="item" :disabled="!app.currentID" @click="terminalFromMenu">
+              <button class="item" :disabled="!sessionID" @click="terminalFromMenu">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
                   <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -1612,6 +1685,31 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
           <span class="grow" />
 
+          <!--
+            The context ring, left of the model the way the reference has it.
+            Resting on it shows the figures; pressing it keeps them up until
+            the next press or a click elsewhere. The slot is always present so
+            the model pill's position in the row does not depend on whether
+            there is a ring - the side chat's narrow rules find the pill by it.
+          -->
+          <span class="ctx-slot">
+            <button
+              v-if="contextUsage"
+              class="ctx"
+              :class="{ open: menu === 'context' }"
+              :aria-label="t('context.usage.view')"
+              :aria-expanded="menu === 'context'"
+              @click="toggle('context')"
+            >
+              <ContextRing :percent="contextUsage.percent" :size="18" :stroke="2.4" />
+            </button>
+            <span v-if="contextUsage" class="ctx-card" :class="{ shown: menu === 'context' }" role="status">
+              <span class="ctx-title">{{ t("composer.ctxTitle") }}</span>
+              <span>{{ contextUsage.shareLine }}</span>
+              <span>{{ contextUsage.tokensLine }}</span>
+            </span>
+          </span>
+
           <div class="pill-wrap">
             <button class="pill" :class="{ open: menu === 'model' }" @click="toggle('model')">
               <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -1733,7 +1831,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             reasoning control gets no pill at all rather than one whose every
             setting the provider ignores, which is the reference's own rule.
           -->
-          <div v-if="variants.length && app.currentID" class="pill-wrap">
+          <div v-if="variants.length && sessionID" class="pill-wrap">
             <button
               class="pill"
               :class="{ open: menu === 'effort' }"
@@ -2353,6 +2451,70 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  * Beside the send button and a size down from it: this starts something the
  * reader then decides about, where send is the decision.
  */
+.ctx-slot {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.ctx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-inline-end: 2px;
+  padding: 0;
+  color: var(--icon-base);
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.ctx:hover,
+.ctx.open {
+  background: var(--surface-hover);
+}
+
+/*
+ * Measured from the reference: centred over the ring, six pixels clear of it,
+ * a 20px corner on a hairline, three centred 12px lines. Symmetric about the
+ * ring, so it needs no mirroring for right-to-left.
+ */
+.ctx-card {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  z-index: 20;
+  display: none;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 208px;
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 15px;
+  white-space: nowrap;
+  color: var(--text-strong);
+  background: var(--surface-menu);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 20px;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.ctx-slot:hover .ctx-card,
+.ctx-card.shown {
+  display: flex;
+}
+
+.ctx-title {
+  color: var(--text-base);
+}
+
 .mic {
   display: inline-flex;
   flex-shrink: 0;

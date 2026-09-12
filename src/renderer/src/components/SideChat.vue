@@ -195,14 +195,14 @@ const emit = defineEmits<{
   min-width: 0;
 }
 
-.dock :deep(.grow + .pill-wrap),
-.dock :deep(.grow + .pill-wrap .pill),
-.dock :deep(.grow + .pill-wrap .pill > span) {
+.dock :deep(.ctx-slot + .pill-wrap),
+.dock :deep(.ctx-slot + .pill-wrap .pill),
+.dock :deep(.ctx-slot + .pill-wrap .pill > span) {
   min-width: 0;
   flex-shrink: 1;
 }
 
-.dock :deep(.grow + .pill-wrap .pill > span) {
+.dock :deep(.ctx-slot + .pill-wrap .pill > span) {
   max-width: 6em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -219,11 +219,11 @@ const emit = defineEmits<{
  * the wrapper's other child, positioned against it, and hiding the wrapper's
  * overflow would cut the menu off the moment it opened.
  */
-.dock :deep(.grow + .pill-wrap) {
+.dock :deep(.ctx-slot + .pill-wrap) {
   display: flex;
 }
 
-.dock :deep(.grow + .pill-wrap .pill) {
+.dock :deep(.ctx-slot + .pill-wrap .pill) {
   max-width: 100%;
   overflow: hidden;
 }

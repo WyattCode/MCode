@@ -142,6 +142,7 @@ function start(name: string) {
           :commands="commands"
           :start-directory="scratch ? undefined : chosen"
           :start-scratch="scratch"
+          fresh
           @open-settings="emit('open-settings')"
           @connect="emit('connect')"
           @manage-models="emit('manage-models')"
