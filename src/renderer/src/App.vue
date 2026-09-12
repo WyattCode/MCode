@@ -1128,7 +1128,7 @@ const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean
   {
     id: "row.continue",
     label: "menu.continueNew",
-    icon: "M5.4 3.4v5.2a2 2 0 0 0 2 2h3.2M8.8 8.6l2.4 2-2.4 2M5.4 3.4a1.1 1.1 0 1 0-2.2 0 1.1 1.1 0 0 0 2.2 0z",
+    icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z",
   },
   {
     id: "row.move",
