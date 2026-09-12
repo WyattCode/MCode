@@ -180,6 +180,47 @@ watch(
   { immediate: true },
 )
 
+/* Spoken input: how it is written down, and by which model. */
+const voiceModes = computed(() => [
+  { value: "smart", label: t("set.voiceModeSmart") },
+  { value: "fast", label: t("set.voiceModeFast") },
+])
+
+/*
+ * Every model the connected providers offer, plus "not set" at the top.
+ *
+ * Not filtered to the ones that can hear: nothing in a provider's catalogue
+ * says whether a model transcribes, and a picker that guessed would hide the
+ * right answer on the machines where it guessed wrong.
+ */
+const voiceModelOptions = computed(() => [
+  { value: "", label: t("set.voiceModelNone") },
+  ...app.providers
+    .filter((provider) => provider.configured)
+    .flatMap((provider) =>
+      provider.models.map((model) => ({
+        value: `${provider.id}/${model.id}`,
+        label: `${provider.name} · ${model.name || model.id}`,
+      })),
+    ),
+])
+
+const voiceModelValue = computed(() => {
+  const chosen = app.config?.voiceModel
+  return chosen?.provider && chosen.model ? `${chosen.provider}/${chosen.model}` : ""
+})
+
+function setVoiceModel(value: string) {
+  if (!value) {
+    void app.patchConfig({ voiceModel: undefined })
+    return
+  }
+  const cut = value.indexOf("/")
+  void app.patchConfig({
+    voiceModel: { provider: value.slice(0, cut), model: value.slice(cut + 1) },
+  })
+}
+
 /* The colourways the mark comes in, drawn from the one module that defines them. */
 const appIcon = computed(() => app.config?.appIcon ?? DEFAULT_APP_ICON)
 
@@ -1251,6 +1292,67 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 spellcheck="false"
                 @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
               />
+            </div>
+          </div>
+
+          <h3>{{ t("set.voice") }}</h3>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceModel") }}</div>
+                <div class="line-sub">{{ t("set.voiceModelSub") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="voiceModelValue"
+                :options="voiceModelOptions"
+                @update:model-value="setVoiceModel($event)"
+              />
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceMode") }}</div>
+                <div class="line-sub">{{ t("set.voiceModeSub") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="app.config?.voiceMode ?? 'smart'"
+                :options="voiceModes"
+                @update:model-value="app.patchConfig({ voiceMode: $event as 'smart' })"
+              />
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceSend") }}</div>
+                <div class="line-sub">{{ t("set.voiceSendSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.voiceSend ?? false }"
+                role="switch"
+                :aria-checked="app.config?.voiceSend ?? false"
+                :aria-label="t('set.voiceSend')"
+                @click="app.patchConfig({ voiceSend: !(app.config?.voiceSend ?? false) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceFeedback") }}</div>
+                <div class="line-sub">{{ t("set.voiceFeedbackSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.voiceFeedback ?? true }"
+                role="switch"
+                :aria-checked="app.config?.voiceFeedback ?? true"
+                :aria-label="t('set.voiceFeedback')"
+                @click="app.patchConfig({ voiceFeedback: !(app.config?.voiceFeedback ?? true) })"
+              >
+                <span class="knob" />
+              </button>
             </div>
           </div>
 

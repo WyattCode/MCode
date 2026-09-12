@@ -564,6 +564,15 @@ export interface McpServerConfig {
 }
 
 /** One checkout of a repository - what this app calls a workspace. */
+/**
+ * How spoken input is turned into text.
+ *
+ * "fast" writes down what was heard. "smart" reads it once more and tidies it -
+ * false starts, filler, the punctuation nobody says out loud - which takes a
+ * round trip and is why it is a choice.
+ */
+export type VoiceMode = "fast" | "smart"
+
 /** Usage gathered under one heading - a day, a model, or everything. */
 export interface UsageBucket {
   /** A date as YYYY-MM-DD, or a model as "provider/model". */
@@ -827,6 +836,25 @@ export interface AppConfig {
    * the repository and the other travels with the reader.
    */
   instructions: string
+  /** How spoken input is written down. */
+  voiceMode: VoiceMode
+  /**
+   * Whether saying "send" at the end of a recording sends the message.
+   *
+   * Off by default, which is what the reference does - a word that submits
+   * whatever is in the box is not something to turn on for someone.
+   */
+  voiceSend: boolean
+  /** Whether the app reads short progress lines aloud. */
+  voiceFeedback: boolean
+  /**
+   * Which model writes the speech down.
+   *
+   * Absent means the feature is not set up: the window says so rather than
+   * recording into nothing. It is kept apart from the chat model because a
+   * provider that is good at one is not necessarily offering the other.
+   */
+  voiceModel?: ModelRef
   /**
    * Whether the app keeps an icon in the system tray.
    *
@@ -1157,6 +1185,16 @@ export type Request =
   /* "branch" widens the review past the working tree to the whole branch. */
   | { type: "app.paths"; directory?: string }
   | { type: "usage.summary"; days?: number }
+  | {
+      type: "voice.transcribe"
+      /** The recording, base64. Kept small by the window: it stops at a minute. */
+      audio: string
+      mime: string
+      /** Overrides the configured mode for this one recording. */
+      mode?: VoiceMode
+      /** What the window is showing, so the considered mode can say it better. */
+      language?: string
+    }
   | { type: "git.status"; directory: string; scope?: "worktree" | "branch" }
   | { type: "git.init"; directory: string }
   /*
@@ -1302,6 +1340,7 @@ export interface ResponseMap {
   "shell.attach": { data: string; alive: boolean }
   "app.paths": { paths: AppPaths }
   "usage.summary": { summary: UsageSummary }
+  "voice.transcribe": { text: string; heard: string }
   "workspace.list": { worktrees: Worktree[] }
   "workspace.create": { directory: string; branch: string }
   "workspace.remove": Record<string, never>

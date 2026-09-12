@@ -4,7 +4,7 @@ import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
@@ -587,6 +587,22 @@ app.whenReady().then(async () => {
    * id that names no file leaves the icon alone instead of blanking it.
    */
   /* The switch itself. The renderer holds the config document, so it says. */
+  /*
+   * What the window is allowed to ask the machine for.
+   *
+   * Electron grants nothing unless asked, and asked here rather than in the
+   * window: a page that could answer its own permission questions is not a
+   * permission system. The microphone is allowed because the composer has a
+   * button for it that a reader presses; everything else - the camera, the
+   * screen, the location, notifications through the web API - is refused,
+   * because nothing in this app has a reason to want them.
+   */
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, done) => {
+    done(permission === "media")
+  })
+
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) => permission === "media")
+
   ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
     refreshTray(Boolean(enabled), createWindow)
   })

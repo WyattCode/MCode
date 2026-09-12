@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { VoiceRecorder, splitSendWord, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, Effort, ModelInfo } from "@shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
@@ -21,7 +22,7 @@ import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
 import ModelTooltip from "./ModelTooltip.vue"
 import ProviderIcon from "./ProviderIcon.vue"
-import { t } from "../lib/i18n"
+import { t, language } from "../lib/i18n"
 
 const emit = defineEmits<{ "open-settings": []
   connect: []
@@ -280,6 +281,76 @@ const stopping = computed(() => app.busy && !text.value.trim() && !attachments.v
 function setMode(next: "normal" | "shell") {
   mode.value = next
   focus()
+}
+
+/*
+ * Speaking instead of typing.
+ *
+ * The recorder is held for the life of the box so a second press finds the
+ * same one; it opens the microphone on the first press and closes it on the
+ * second, and `cancel` on unmount makes sure a window closed mid-recording
+ * does not leave the device open.
+ */
+const recorder = new VoiceRecorder()
+const voice = ref<VoiceState>("idle")
+
+const voiceConfigured = computed(() => Boolean(app.config?.voiceModel?.model))
+
+onBeforeUnmount(() => recorder.cancel())
+
+async function toggleVoice() {
+  if (voice.value === "working") return
+  if (voice.value === "recording") {
+    voice.value = "working"
+    try {
+      const recording = await recorder.stop()
+      /* A press and an immediate second press is a slip, not a message. */
+      if (!recording || recording.ms < 350) return
+      const result = await app.client?.request({
+        type: "voice.transcribe",
+        audio: recording.audio,
+        mime: recording.mime,
+        language: language.value,
+      })
+      const said = (result?.text ?? "").trim()
+      if (!said) return
+      const { text: spoken, send } = splitSendWord(said)
+      if (spoken) {
+        const existing = text.value.trim()
+        text.value = existing ? `${existing} ${spoken}` : spoken
+        await nextTick(resize)
+      }
+      if (send && (app.config?.voiceSend ?? false) && text.value.trim()) await submit()
+    } catch (err) {
+      notifyFailure(t("voice.failed"), reasonForVoice(err))
+    } finally {
+      voice.value = "idle"
+    }
+    return
+  }
+
+  if (!voiceConfigured.value) {
+    notifyFailure(t("voice.failed"), t("voice.notConfigured"))
+    return
+  }
+  try {
+    await recorder.start()
+    voice.value = "recording"
+  } catch (err) {
+    voice.value = "idle"
+    notifyFailure(t("voice.failed"), reasonForVoice(err))
+  }
+}
+
+/** The app's own phrasing for the failures it can recognise. */
+function reasonForVoice(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  if (message.includes("voice.notConfigured")) return t("voice.notConfigured")
+  if (message.includes("voice.noEndpoint")) return t("voice.noEndpoint")
+  if (message.includes("voice.noRecorder")) return t("voice.noRecorder")
+  if (message.includes("NotAllowedError") || message.includes("Permission")) return t("voice.noPermission")
+  if (message.includes("NotFoundError")) return t("voice.noDevice")
+  return message
 }
 
 async function submit() {
@@ -1597,6 +1668,30 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </div>
 
           <!--
+            The microphone. Three states and a different shape for each: idle,
+            listening, and writing down what it heard. It is drawn even when no
+            transcription model is set, and says so when pressed - a control
+            that vanishes because of a setting elsewhere is a puzzle.
+          -->
+          <button
+            class="mic"
+            :class="{ live: voice === 'recording', busy: voice === 'working' }"
+            :disabled="voice === 'working'"
+            :aria-label="t('voice.input')"
+            :aria-pressed="voice === 'recording'"
+            v-tip="{ label: voice === 'recording' ? t('voice.stop') : t('voice.input'), placement: 'top' }"
+            @click="toggleVoice"
+          >
+            <svg v-if="voice === 'recording'" width="15" height="15" viewBox="0 0 20 20" aria-hidden="true">
+              <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" fill="currentColor" />
+            </svg>
+            <svg v-else width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <rect x="7.4" y="2.6" width="5.2" height="9.2" rx="2.6" stroke="currentColor" stroke-width="1.3" />
+              <path d="M4.8 9.6a5.2 5.2 0 0 0 10.4 0M10 14.8v2.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+            </svg>
+          </button>
+
+          <!--
             One button, which is what the reference has. It stops the turn only
             when there is nothing to send; type during a turn and it becomes
             send again, because a message sent now joins the turn rather than
@@ -2147,6 +2242,40 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .attach:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/*
+ * Beside the send button and a size down from it: this starts something the
+ * reader then decides about, where send is the decision.
+ */
+.mic {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-inline-end: 4px;
+  color: var(--icon-base);
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.mic:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+/* Listening says so in the warning hue: the microphone is open. */
+.mic.live {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 14%, transparent);
+}
+
+.mic.busy {
+  opacity: 0.6;
+  cursor: default;
 }
 
 /* The one bright element in the composer, and a rounded square rather than a

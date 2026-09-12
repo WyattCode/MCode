@@ -25,6 +25,7 @@ import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shar
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
+import { splitSendWord } from "../src/renderer/src/lib/voice"
 import { ToolError } from "../src/server/tool/types"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { Bus } from "../src/server/bus"
@@ -1317,6 +1318,29 @@ async function main() {
       instructions: "   " + String.fromCharCode(10) + "  ",
     })
     check("and neither does whitespace", !blankStanding.includes("## Standing instructions"))
+  }
+
+  section("Voice")
+  {
+    /*
+     * Only the end of a recording counts. "Send" in the middle of a sentence
+     * is a word someone said, and a box that submitted on it would be unusable
+     * for talking about sending anything.
+     */
+    check("the send word is taken off the end", splitSendWord("打开安装包 发送").text === "打开安装包")
+    check("and is reported", splitSendWord("打开安装包 发送").send)
+    check("spoken punctuation after it still counts", splitSendWord("open it 发送。").send)
+    check("English too", splitSendWord("open the installer send").send)
+    check(
+      "a send in the middle is left alone",
+      splitSendWord("send the patch to review").send === false,
+      splitSendWord("send the patch to review"),
+    )
+    check(
+      "and the words survive it",
+      splitSendWord("send the patch to review").text === "send the patch to review",
+    )
+    check("nothing said is nothing sent", splitSendWord("   ").send === false)
   }
 
   section("Attachments")

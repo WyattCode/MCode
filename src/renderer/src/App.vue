@@ -51,6 +51,7 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { closeTab, openTab, readStrip, stripKey, writeStrip } from "./lib/session-tabs"
 import { notify, notifyFailure } from "./lib/toast"
+import { hush, speak } from "./lib/voice"
 import { projectName } from "./lib/project"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
@@ -2884,11 +2885,27 @@ function alertDesktop(kind: "agent" | "permission" | "error", body: string, sess
   if (kind === "permission" && config?.soundPermission) play("permission")
   if (kind === "error" && config?.soundError) play("error")
 
+  /*
+   * The spoken line, beside the banner and on the same reasoning: a short
+   * phrase read aloud is for someone who has looked away, so it waits for the
+   * window to be in the background the way the banner does. It is one line
+   * about what just happened - never the answer itself, which is what the
+   * screen is for.
+   */
+  if (kind !== "permission" && config?.voiceFeedback && document.hidden) {
+    speak(t(`voice.said.${kind}`), language.value)
+  }
+
   if (kind === "agent" && config?.notifyAgent === false) return
   if (kind === "permission" && config?.notifyPermission === false) return
   if (kind === "error" && config?.notifyError === false) return
   window.mcode.notify(t(`notify.${kind}`), body, sessionID)
 }
+
+/* Coming back to the window cuts off whatever was being read out. */
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) hush()
+})
 
 // A turn that was running and now is not has finished, one way or another.
 watch(
