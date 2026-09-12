@@ -52,6 +52,8 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
       <div class="column">
         <div class="wordmark" role="img" :aria-label="t('hero.title')" />
 
+        <p class="slogan">{{ t("home.slogan") }}</p>
+
         <!--
           Where the box goes while the session is empty.
           
@@ -141,32 +143,45 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
  * its column comes back 720, 720 and 686: fixed until the window is too narrow
  * to hold it, then shrinking with the padding. This was 800.
  */
+/*
+ * 2.0: the width of the card, not of opencode's hero.
+ *
+ * MiMo has no empty-task screen at all - starting one puts you on its home
+ * screen, greeting and box - so that is what an empty session shows here:
+ * the mark, the greeting, and the same 712 box a conversation is answered in,
+ * with the line saying which project it points at kept underneath.
+ */
 .column {
   display: flex;
   flex-direction: column;
-  /* 32 above the box and 32 below it, which is what the reference measures. */
-  gap: 32px;
+  align-items: center;
   width: 100%;
-  max-width: 720px;
+  max-width: 712px;
 }
 
 .dock-slot {
   display: flex;
   flex-direction: column;
+  width: 100%;
 }
 
-/*
- * Barely there: the mark is set at the background's own weight, so it reads as
- * part of the surface rather than as something placed on it.
- */
+/* The mark at its own size, as MiMo sets it on the home screen: 132 by 36. */
 .wordmark {
-  width: 100%;
-  height: 129px;
-  background-image: var(--wordmark);
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: contain;
-  opacity: 0.07;
+  width: 132px;
+  height: 36px;
+  background: var(--wordmark) center / contain no-repeat;
+  opacity: 0.92;
+}
+
+/* 18/600/28.8 at 0.4px, measured on MiMo's greeting - the home screen's own. */
+.slogan {
+  margin: 22px 0 26px;
+  color: var(--text-strong);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 28.8px;
+  letter-spacing: 0.4px;
+  text-align: center;
 }
 
 /* One step below the mark, which is the gap the reference sets between the
@@ -176,6 +191,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   align-items: center;
   justify-content: center;
   min-height: 28px;
+  margin-top: 26px;
   /*
    * No margin of its own: the column's 32px gap is the whole distance, and this
    * used to be added to it for 48. The reference measures 32 between the box
