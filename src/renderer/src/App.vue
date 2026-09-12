@@ -2260,6 +2260,61 @@ const bindableCommands = computed(() => {
         if (app.currentID) app.closeTab(app.currentID)
       },
     },
+    /*
+     * The numbered slots. The strip is what they count along - not the sidebar
+     * and not the recency order - because the number a reader is aiming at is
+     * the position they can see.
+     */
+    ...Array.from({ length: 9 }, (_, index) => ({
+      id: `tab.goto.${index + 1}`,
+      group: "key.groupSession",
+      title: t("key.gotoTab", { n: index + 1 }),
+      hint: `Ctrl+Alt+${index + 1}`,
+      enabled: () => app.tabs.length > index,
+      run: () => {
+        const target = app.tabs[index]
+        if (target) void app.open(target)
+      },
+    })),
+    {
+      id: "session.pin",
+      group: "key.groupSession",
+      title: t("key.togglePin"),
+      hint: "Ctrl+Alt+P",
+      enabled: hasSession,
+      run: () => {
+        if (app.currentID) app.togglePinned(app.currentID)
+      },
+    },
+    {
+      id: "session.copyID",
+      group: "key.groupSession",
+      title: t("key.copyID"),
+      hint: "Ctrl+Alt+C",
+      enabled: hasSession,
+      run: () => {
+        if (!app.currentID) return
+        window.mcode.setClipboardText(app.currentID)
+        notify(t("menu.copiedID"))
+      },
+    },
+    {
+      id: "app.plugins",
+      group: "key.groupGeneral",
+      title: t("side.plugins"),
+      hint: "Ctrl+Shift+P",
+      run: goPlugins,
+    },
+    {
+      id: "app.shortcuts",
+      group: "key.groupGeneral",
+      title: t("key.showShortcuts"),
+      hint: "Ctrl+Shift+/",
+      run: () => {
+        settingsSection.value = "keys"
+        settingsOpen.value = true
+      },
+    },
     { id: "app.back", group: "key.groupGeneral", title: t("key.back"), hint: "Ctrl+[", run: () => void back() },
     { id: "app.forward", group: "key.groupGeneral", title: t("key.forward"), hint: "Ctrl+]", run: () => void forward() },
     {
@@ -2466,6 +2521,38 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
+   * Ctrl+Alt and a digit opens the slot the strip shows in that position.
+   *
+   * The reference puts this on Ctrl and a digit; here that already opens the
+   * project in that position, and moving a shortcut a reader already uses is a
+   * worse trade than putting the new one a modifier away.
+   */
+  if (mod && event.altKey && /^[1-9]$/.test(event.key)) {
+    if (modalOpen.value) return
+    const target = app.tabs[Number(event.key) - 1]
+    if (!target) return
+    event.preventDefault()
+    void app.open(target)
+    return
+  }
+
+  /* Pinning the open conversation, and copying the id of it. */
+  if (mod && event.altKey && event.key.toLowerCase() === "p") {
+    if (modalOpen.value || !app.currentID) return
+    event.preventDefault()
+    app.togglePinned(app.currentID)
+    return
+  }
+
+  if (mod && event.altKey && event.key.toLowerCase() === "c") {
+    if (modalOpen.value || !app.currentID) return
+    event.preventDefault()
+    window.mcode.setClipboardText(app.currentID)
+    notify(t("menu.copiedID"))
+    return
+  }
+
+  /*
    * A new terminal, from wherever. This used to live inside the drawer, which
    * is mounted only while the drawer is open, so the key did nothing in the one
    * state where someone is most likely to press it.
@@ -2559,6 +2646,17 @@ function onKeydown(event: KeyboardEvent) {
       // The scheme, then the palette. Stepping rather than opening a dialog is
       // what makes them worth a key: the answer is on screen immediately.
       s: () => void cycleScheme(),
+      // The plugins page, on the reference's own chord.
+      p: () => goPlugins(),
+      // And the list of all of these, which is a settings page here.
+      "?": () => {
+        settingsSection.value = "keys"
+        settingsOpen.value = true
+      },
+      "/": () => {
+        settingsSection.value = "keys"
+        settingsOpen.value = true
+      },
     }
     const shiftedHandler = shifted[event.key.toLowerCase()]
     if (!shiftedHandler) return
