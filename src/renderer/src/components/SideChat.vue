@@ -5,23 +5,17 @@ import MessageStream from "./MessageStream.vue"
 import Composer from "./Composer.vue"
 
 /**
- * The open conversation, in a column of its own beside the workspace.
+ * A side chat: a second conversation beside the open one, as MiMo has it.
  *
- * The point is to keep a conversation in view while the main area is doing
- * something else - a page in the browser, the artifacts list, the start of a
- * new task. It holds whichever conversation is current, which is what makes it
- * safe: the box in here sends where every other box in the app would send, and
- * there is no second session for a message to go to by mistake.
- *
- * That is also its limit, and it is deliberate. Pinning a *different*
- * conversation here would mean giving the composer a target other than the
- * current session, and the send path is not somewhere to make a change as a
- * side effect of building a panel.
+ * It is a conversation of its own - opened in the same project, numbered, and
+ * shown in no list - with its own transcript and its own box. The stream and
+ * the box are told they are the side ones, and every read and send they make
+ * then goes to the side chat, so nothing typed here can land in the
+ * conversation in the middle.
  */
 const app = useApp()
 const emit = defineEmits<{
   close: []
-  expand: []
   "open-settings": []
   connect: []
   "manage-models": []
@@ -33,14 +27,10 @@ const emit = defineEmits<{
 <template>
   <aside class="side-chat" :aria-label="t('side.chat')">
     <header class="bar">
-      <span class="title">{{ sessionTitle(app.current?.title ?? "") }}</span>
-      <!-- Back to the middle, which is where a conversation lives by default. -->
-      <button class="ico" :aria-label="t('side.chatExpand')" v-tip="{ label: t('side.chatExpand'), placement: 'bottom' }" @click="emit('expand')">
-        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M8 3.5H4.5a1 1 0 0 0-1 1V8M12 16.5h3.5a1 1 0 0 0 1-1V12" stroke="currentColor" stroke-linecap="round" />
-          <path d="M16.5 3.5 11 9M3.5 16.5 9 11" stroke="currentColor" stroke-linecap="round" />
-        </svg>
-      </button>
+      <span class="heading">
+        <span class="title">{{ app.side ? sessionTitle(app.side.title) : t("side.chat") }}</span>
+        <span class="sub">{{ t("side.chatSub") }}</span>
+      </span>
       <button class="ico" :aria-label="t('common.close')" @click="emit('close')">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
@@ -48,7 +38,7 @@ const emit = defineEmits<{
       </button>
     </header>
 
-    <MessageStream class="stream" />
+    <MessageStream class="stream" side />
 
     <!--
       Its own box rather than the one in the middle. The middle's is moved
@@ -63,6 +53,7 @@ const emit = defineEmits<{
         to fail.
       -->
       <Composer
+        side
         @open-settings="emit('open-settings')"
         @connect="emit('connect')"
         @manage-models="emit('manage-models')"
@@ -97,8 +88,23 @@ const emit = defineEmits<{
   padding: 0 8px 0 14px;
 }
 
-.title {
+.heading {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sub {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title {
   overflow: hidden;
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));

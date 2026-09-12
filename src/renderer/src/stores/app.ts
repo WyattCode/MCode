@@ -64,6 +64,20 @@ export const useApp = defineStore("app", () => {
   const compacting = computed(() => (currentID.value ? summarising.value.has(currentID.value) : false))
   const error = ref<string>()
 
+  /*
+   * Side chats: conversations started beside the open one, in the side column.
+   * They are kept apart from `sessions` so that no list - the side column, the
+   * tabs, the palette, the home screen - ever shows one, and they carry their
+   * own transcript so the open conversation and the side chat never share one.
+   */
+  const sideSessions = ref<SessionInfo[]>([])
+  const sideID = ref<string>()
+  const sideMessages = ref<Message[]>([])
+  const sideError = ref<string>()
+  const sidePartIndex = new Map<string, { messageID: string; index: number }>()
+  const side = computed(() => sideSessions.value.find((session) => session.id === sideID.value))
+  const sideBusy = computed(() => (sideID.value ? running.value.has(sideID.value) : false))
+
   const config = ref<AppConfig>()
   const providers = ref<ProviderStatus[]>([])
   /**
@@ -356,9 +370,20 @@ export const useApp = defineStore("app", () => {
     message.parts.forEach((part, index) => partIndex.set(part.id, { messageID: message.id, index }))
   }
 
+  function sideReindex(message: Message) {
+    if (message.role !== "assistant") return
+    message.parts.forEach((part, index) => sidePartIndex.set(part.id, { messageID: message.id, index }))
+  }
+
   function apply(event: ServerEvent) {
     switch (event.type) {
       case "session.updated": {
+        if (event.session.sideOf) {
+          const at = sideSessions.value.findIndex((session) => session.id === event.session.id)
+          if (at === -1) sideSessions.value.push(event.session)
+          else sideSessions.value[at] = event.session
+          break
+        }
         const existing = sessions.value.findIndex((session) => session.id === event.session.id)
         if (existing === -1) sessions.value.unshift(event.session)
         else sessions.value[existing] = event.session
@@ -366,6 +391,11 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.deleted": {
+        if (sideSessions.value.some((session) => session.id === event.sessionID)) {
+          sideSessions.value = sideSessions.value.filter((session) => session.id !== event.sessionID)
+          if (sideID.value === event.sessionID) closeSide()
+          break
+        }
         const removed = sessions.value.find((session) => session.id === event.sessionID)
         sessions.value = sessions.value.filter((session) => session.id !== event.sessionID)
         forgetSession(event.sessionID)
@@ -395,6 +425,13 @@ export const useApp = defineStore("app", () => {
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
       case "message.updated": {
+        if (event.message.sessionID === sideID.value) {
+          const at = sideMessages.value.findIndex((message) => message.id === event.message.id)
+          if (at === -1) sideMessages.value.push(event.message)
+          else sideMessages.value[at] = event.message
+          sideReindex(event.message)
+          break
+        }
         if (event.message.sessionID !== currentID.value) break
         const index = messages.value.findIndex((message) => message.id === event.message.id)
         if (index === -1) messages.value.push(event.message)
@@ -403,6 +440,15 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "message.delta": {
+        if (event.sessionID === sideID.value) {
+          const location = sidePartIndex.get(event.partID)
+          const message = location && sideMessages.value.find((candidate) => candidate.id === location.messageID)
+          if (location && message?.role === "assistant") {
+            const part = message.parts[location.index]
+            if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+          }
+          break
+        }
         if (event.sessionID !== currentID.value) break
         const location = partIndex.get(event.partID)
         if (!location) break
@@ -435,6 +481,7 @@ export const useApp = defineStore("app", () => {
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
         if (event.sessionID === currentID.value) error.value = event.error
+        if (event.sessionID === sideID.value) sideError.value = event.error
         break
       case "permission.requested":
         pendingPermissions.value.set(event.request.sessionID, event.request)
@@ -591,7 +638,8 @@ export const useApp = defineStore("app", () => {
     config.value = (await instance.request({ type: "config.get" })).config
     providers.value = (await instance.request({ type: "provider.list" })).providers
     const listed = await instance.request({ type: "session.list" })
-    sessions.value = listed.sessions
+    sessions.value = listed.sessions.filter((session) => !session.sideOf)
+    sideSessions.value = listed.sessions.filter((session) => session.sideOf)
     running.value = new Set(listed.running)
     summarising.value = new Set(listed.compacting)
     /*
@@ -708,7 +756,8 @@ export const useApp = defineStore("app", () => {
   async function resync() {
     try {
       const listed = await api().request({ type: "session.list" })
-      sessions.value = listed.sessions
+      sessions.value = listed.sessions.filter((session) => !session.sideOf)
+      sideSessions.value = listed.sessions.filter((session) => session.sideOf)
       running.value = new Set(listed.running)
       summarising.value = new Set(listed.compacting)
       // The same replay as on boot: a socket that dropped missed anything
@@ -956,22 +1005,28 @@ export const useApp = defineStore("app", () => {
   }
 
   /** Returns false when the message was not accepted, so the draft can survive. */
-  async function send(text: string, attachments: Attachment[] = []): Promise<boolean> {
+  /* `to` names a side chat; without it the message goes to the open conversation. */
+  async function send(text: string, attachments: Attachment[] = [], to?: string): Promise<boolean> {
+    const target = to ?? currentID.value
     // An attachment with no words is still something to answer.
-    if (!currentID.value || (!text.trim() && !attachments.length)) return false
-    error.value = undefined
-    noteError(currentID.value, undefined)
+    if (!target || (!text.trim() && !attachments.length)) return false
+    const onSide = target === sideID.value
+    const report = (message: string | undefined) => {
+      if (onSide) sideError.value = message
+      else error.value = message
+    }
+    report(undefined)
+    noteError(target, undefined)
 
     // Caught here rather than in the backend so it can be said in the user's
     // language - the server has no idea which one that is.
-    const chosen = current.value?.model
+    const chosen = (onSide ? side.value : sessions.value.find((session) => session.id === target))?.model
     const provider = providers.value.find((entry) => entry.id === chosen?.provider)
     if (provider && !provider.configured) {
-      error.value = t("error.noProvider", { name: provider.name })
+      report(t("error.noProvider", { name: provider.name }))
       return false
     }
 
-    const target = currentID.value
     /*
      * Whether this message is starting the work or joining work already under
      * way. A message can now be sent into a turn that is running, and if that
@@ -986,13 +1041,13 @@ export const useApp = defineStore("app", () => {
       return true
     } catch (err) {
       if (!joined) running.value.delete(target)
-      error.value = err instanceof Error ? err.message : String(err)
+      report(err instanceof Error ? err.message : String(err))
       return false
     }
   }
 
-  async function abort() {
-    const target = currentID.value
+  async function abort(to?: string) {
+    const target = to ?? currentID.value
     if (!target) return
     await api().request({ type: "session.abort", sessionID: target })
     running.value.delete(target)
@@ -1023,10 +1078,12 @@ export const useApp = defineStore("app", () => {
     await api().request({ type: "session.effort", sessionID: currentID.value, effort })
   }
 
-  async function setModel(model: ModelRef) {
-    if (!currentID.value) return
-    await api().request({ type: "session.model", sessionID: currentID.value, model })
-    await patchConfig({ model })
+  async function setModel(model: ModelRef, to?: string) {
+    const target = to ?? currentID.value
+    if (!target) return
+    await api().request({ type: "session.model", sessionID: target, model })
+    // A side chat's model is its own; the default follows the open conversation.
+    if (target !== sideID.value) await patchConfig({ model })
   }
 
   /**
@@ -1240,6 +1297,51 @@ export const useApp = defineStore("app", () => {
   }
 
   /** The turn currently streaming, if any - used to anchor the scroll. */
+  /**
+   * Opens a side chat beside a conversation: a new, numbered conversation in
+   * the same project that no list shows. An empty one this conversation already
+   * has is taken up again rather than leaving a trail of blank ones behind.
+   */
+  async function openSide(parentID: string) {
+    const parent = sessions.value.find((session) => session.id === parentID)
+    if (!parent) return
+    const previous = sideSessions.value
+      .filter((session) => session.sideOf === parentID)
+      .sort((a, b) => b.updated - a.updated)[0]
+    let chosen: SessionInfo | undefined
+    if (previous) {
+      const got = await api().request({ type: "session.get", sessionID: previous.id }).catch(() => undefined)
+      if (got && !got.messages.length) chosen = previous
+    }
+    if (!chosen) {
+      const created = await api().request({
+        type: "session.create",
+        directory: parent.directory,
+        title: t("side.chatNumbered", { n: sideSessions.value.length + 1 }),
+        sideOf: parentID,
+      })
+      chosen = created.session
+      if (!sideSessions.value.some((session) => session.id === created.session.id)) sideSessions.value.push(created.session)
+    }
+    sideID.value = chosen.id
+    sideError.value = undefined
+    sideMessages.value = []
+    sidePartIndex.clear()
+  }
+
+  function closeSide() {
+    sideID.value = undefined
+    sideMessages.value = []
+    sideError.value = undefined
+    sidePartIndex.clear()
+  }
+
+  const sideStreaming = computed<AssistantMessage | undefined>(() => {
+    if (!sideBusy.value) return undefined
+    const last = sideMessages.value[sideMessages.value.length - 1]
+    return last?.role === "assistant" ? last : undefined
+  })
+
   const streaming = computed<AssistantMessage | undefined>(() => {
     if (!busy.value) return undefined
     const last = messages.value[messages.value.length - 1]
@@ -1288,6 +1390,14 @@ export const useApp = defineStore("app", () => {
     isPinned,
     togglePinned,
     streaming,
+    side,
+    sideID,
+    sideMessages,
+    sideBusy,
+    sideStreaming,
+    sideError,
+    openSide,
+    closeSide,
     start,
     open,
     create,

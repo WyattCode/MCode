@@ -121,6 +121,7 @@ export class SessionStore {
     agent?: AgentName
     staged?: boolean
     scratch?: boolean
+    sideOf?: string
     title?: string
   }): Promise<SessionInfo> {
     const now = Date.now()
@@ -132,6 +133,7 @@ export class SessionStore {
       agent: input.agent ?? "build",
       ...(input.staged ? { staged: true } : {}),
       ...(input.scratch ? { scratch: true } : {}),
+      ...(input.sideOf ? { sideOf: input.sideOf } : {}),
       created: now,
       updated: now,
       usage: emptyUsage(),

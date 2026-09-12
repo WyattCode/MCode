@@ -61,13 +61,16 @@ const props = defineProps<{
    * the task the screen offers.
    */
   fresh?: boolean
+  /** This box speaks for the side chat in the side column, not the open conversation. */
+  side?: boolean
 }>()
 
 const app = useApp()
 
 /* The conversation this box speaks for: none in a box that starts a new task. */
-const sessionID = computed(() => (props.fresh ? undefined : app.currentID))
-const session = computed(() => (props.fresh ? undefined : app.current))
+const sessionID = computed(() => (props.fresh ? undefined : props.side ? app.sideID : app.currentID))
+const session = computed(() => (props.fresh ? undefined : props.side ? app.side : app.current))
+const busyHere = computed(() => (props.side ? app.sideBusy : app.busy))
 const text = ref("")
 const input = ref<HTMLTextAreaElement>()
 /**
@@ -78,7 +81,7 @@ const input = ref<HTMLTextAreaElement>()
  * after a restart recalled nothing at all.
  */
 const history = computed(() =>
-  app.messages.filter((message) => message.role === "user").map((message) => message.text),
+  (props.side ? app.sideMessages : app.messages).filter((message) => message.role === "user").map((message) => message.text),
 )
 const historyIndex = ref(-1)
 
@@ -294,7 +297,7 @@ const mode = ref<"normal" | "shell">("normal")
  * there is nothing waiting to go. Anything typed puts send back, so the box
  * never becomes a dead end while the model works.
  */
-const stopping = computed(() => app.busy && !text.value.trim() && !attachments.value.length)
+const stopping = computed(() => busyHere.value && !text.value.trim() && !attachments.value.length)
 
 function setMode(next: "normal" | "shell") {
   mode.value = next
@@ -472,7 +475,7 @@ async function submit() {
   const named = await mentionAttachments(value, carried)
 
   // A rejected message should not cost the user what they typed, or gathered.
-  if (!(await app.send(outgoing(value), [...sent, ...named]))) {
+  if (!(await app.send(outgoing(value), [...sent, ...named], props.side ? app.sideID : undefined))) {
     text.value = value
     attachments.value = sent
     mentioned.value = carried
@@ -518,7 +521,7 @@ function outgoing(value: string): string {
  * not go with it.
  */
 async function mentionAttachments(value: string, chosen: Set<string>): Promise<Attachment[]> {
-  const root = app.current?.directory
+  const root = (props.side ? app.side : app.current)?.directory
   if (!root || !app.client || !chosen.size) return []
   const out: Attachment[] = []
   for (const path of mentionedIn(value)) {
@@ -564,7 +567,7 @@ const listedFor = ref<string>()
 
 async function loadFiles() {
   // A box starting a new task lists the folder that task will be made in.
-  const directory = props.fresh ? props.startDirectory : app.current?.directory
+  const directory = props.fresh ? props.startDirectory : session.value?.directory
   if (!directory || !app.client || listedFor.value === directory) return
   listedFor.value = directory
   try {
@@ -916,9 +919,9 @@ function onKeydown(event: KeyboardEvent) {
    * throw away everything it had done in order to do nothing. The Stop button
    * is on the bar throughout, so nothing becomes unreachable.
    */
-  if (event.key === "Escape" && app.busy && !text.value.trim()) {
+  if (event.key === "Escape" && busyHere.value && !text.value.trim()) {
     event.preventDefault()
-    void app.abort()
+    void app.abort(sessionID.value)
     return
   }
 
@@ -973,7 +976,7 @@ function compactTokens(count: number): string {
  */
 const contextUsage = computed(() => {
   if (!sessionID.value) return undefined
-  const reading = readContext(app.messages, app.providers)
+  const reading = readContext(props.side ? app.sideMessages : app.messages, app.providers)
   const current = session.value?.model
   const window =
     reading?.window ??
@@ -1299,7 +1302,7 @@ async function chooseModel(provider: string, model: string) {
     await app.patchConfig({ model: { provider, model } })
     return
   }
-  await app.setModel({ provider, model })
+  await app.setModel({ provider, model }, sessionID.value)
 }
 
 function onPointerDown(event: MouseEvent) {
@@ -1392,7 +1395,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
     <div class="shell">
       <div
         class="box"
-        :class="{ busy: app.busy, dropping: dragging, filled: attachments.length > 0 }"
+        :class="{ busy: busyHere, dropping: dragging, filled: attachments.length > 0 }"
       >
         <!--
           What was gathered, above the text it belongs to.
@@ -1554,7 +1557,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </svg>
                 <span class="item-name">{{ t("composer.attach") }}</span>
               </button>
-              <button class="item" :disabled="!sessionID" @click="terminalFromMenu">
+              <button v-if="!side" class="item" :disabled="!sessionID" @click="terminalFromMenu">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
                   <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
@@ -1566,6 +1569,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 it changes how the whole conversation is worked, not one reply.
               -->
               <button
+                v-if="!side"
                 class="item staged-row"
                 role="switch"
                 :aria-checked="staged"
@@ -1599,7 +1603,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             allow, or put back to its default. Deny is left alone either way - it
             is a deliberate "never", and a shortcut has no business undoing it.
           -->
-          <div class="pill-wrap">
+          <!-- A side chat asks nothing about access, agents or effort: it is the model and the words. -->
+          <div v-if="!side" class="pill-wrap">
             <button
               class="pill access"
               :class="{ open: menu === 'access', full: access === 'full' }"
@@ -1651,7 +1656,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             a picker with nothing to pick between is a control that only takes
             up room.
           -->
-          <div v-if="app.config?.showAgentPicker !== false" class="pill-wrap">
+          <div v-if="!side && app.config?.showAgentPicker !== false" class="pill-wrap">
             <button class="pill" :class="{ open: menu === 'agent' }" @click="toggle('agent')">
               <span>{{ t(`agent.${agent}`) }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1831,7 +1836,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             reasoning control gets no pill at all rather than one whose every
             setting the provider ignores, which is the reference's own rule.
           -->
-          <div v-if="variants.length && sessionID" class="pill-wrap">
+          <div v-if="!side && variants.length && sessionID" class="pill-wrap">
             <button
               class="pill"
               :class="{ open: menu === 'effort' }"
@@ -1903,9 +1908,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           -->
           <button
             class="send"
-            :disabled="!app.busy && !text.trim() && !attachments.length"
+            :disabled="!busyHere && !text.trim() && !attachments.length"
             v-tip="{ label: stopping ? t('composer.stop') : t('composer.send'), placement: 'top' }"
-            @click="stopping ? app.abort() : submit()"
+            @click="stopping ? app.abort(sessionID) : submit()"
           >
             <!-- The reference's own shapes: a square with square corners, a
                  solid arrow, and a turned arrow while the box runs commands. -->

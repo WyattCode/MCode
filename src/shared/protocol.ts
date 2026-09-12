@@ -46,6 +46,13 @@ export interface SessionInfo {
    * a folder nobody chose is not something anyone would go back to by name.
    */
   scratch?: boolean
+  /**
+   * A side chat, and the conversation it was opened beside.
+   *
+   * A side chat is a conversation of its own, in the same project, that no
+   * list shows: it lives in the side column of the conversation it belongs to.
+   */
+  sideOf?: string
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */
@@ -1104,7 +1111,7 @@ export type Request =
   | { type: "session.list" }
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
-  | { type: "session.create"; directory?: string; title?: string; scratch?: boolean }
+  | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
   | { type: "session.get"; sessionID: string }
   /**
    * The instructions the model is given ahead of the conversation.

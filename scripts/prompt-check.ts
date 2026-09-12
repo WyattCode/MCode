@@ -204,7 +204,7 @@ check(
  */
 check(
   "the effort pill is drawn only for a model with steps, and only with a session",
-  /<div v-if="variants\.length && sessionID" class="pill-wrap">/.test(composer),
+  /<div v-if="!side && variants\.length && sessionID" class="pill-wrap">/.test(composer),
   true,
 )
 check(

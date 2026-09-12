@@ -132,6 +132,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const session = await runtime.sessions.create({
         directory: request.scratch ? await scratchDirectory() : (request.directory ?? config.directory),
         ...(request.scratch ? { scratch: true } : {}),
+        ...(request.sideOf ? { sideOf: request.sideOf } : {}),
         model: config.model,
         // The last choice made is the starting point for the next session, the
         // same way the model is.

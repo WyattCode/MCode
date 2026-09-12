@@ -36,6 +36,20 @@ import { notifyFailure } from "../lib/toast"
  */
 
 const app = useApp()
+
+/*
+ * In the side column the stream shows the side chat's conversation instead of
+ * the open one. Everything the stream reads about "its" conversation goes
+ * through these, so the two can never be mixed.
+ */
+const props = defineProps<{ side?: boolean }>()
+const shownMessages = computed(() => (props.side ? app.sideMessages : app.visible))
+const shownBusy = computed(() => (props.side ? app.sideBusy : app.busy))
+const shownCompacting = computed(() => (props.side ? false : app.compacting))
+const shownSession = computed(() => (props.side ? app.side : app.current))
+const shownID = computed(() => (props.side ? app.sideID : app.currentID))
+const shownStreaming = computed(() => (props.side ? app.sideStreaming : app.streaming))
+const shownError = computed(() => (props.side ? app.sideError : app.error))
 const scroller = ref<HTMLElement>()
 /** Handed down by App.vue, which is the only thing that can see the composer. */
 const restoreDraft = useRestoreDraft()
@@ -146,7 +160,7 @@ const turns = computed<Turn[]>(() => {
    * turns are no longer part of the conversation - so this is where they stop
    * being drawn.
    */
-  for (const message of app.visible) {
+  for (const message of shownMessages.value) {
     if (message.role === "user") {
       current = {
         id: message.id,
@@ -197,8 +211,8 @@ function thinking(turn: Turn, at: number): boolean {
    * minutes on a long transcript. Without this the refusal is the last thing
    * on screen for all of them, and the app looks like it stopped.
    */
-  if (app.compacting) return true
-  return app.busy && !turn.error && rows(turn.parts).length === 0
+  if (shownCompacting.value) return true
+  return shownBusy.value && !turn.error && rows(turn.parts).length === 0
 }
 
 /**
@@ -209,7 +223,7 @@ function thinking(turn: Turn, at: number): boolean {
  * reason.
  */
 function compactedAfter(turn: Turn): boolean {
-  const mark = app.current?.compacted?.messageID
+  const mark = shownSession.value?.compacted?.messageID
   if (!mark) return false
   return turn.last?.id === mark || turn.id === mark
 }
@@ -365,7 +379,7 @@ function toBottom(smooth = false) {
  * up in the previous one would land in the middle of itself.
  */
 watch(
-  () => app.currentID,
+  () => shownID.value,
   async () => {
     following.value = true
     await nextTick()
@@ -383,7 +397,7 @@ watch(
  * not even be escaped twice.
  */
 watch(
-  () => app.messages.length,
+  () => shownMessages.value.length,
   async () => {
     if (!following.value) return
     await nextTick()
@@ -394,7 +408,7 @@ watch(
 // Streaming grows the last message in place, which does not change the array
 // length - so follow the text itself.
 watch(
-  () => app.streaming?.parts.map((part) => ("text" in part ? part.text.length : part.status)).join(),
+  () => shownStreaming.value?.parts.map((part) => ("text" in part ? part.text.length : part.status)).join(),
   async () => {
     if (!following.value) return
     await nextTick()
@@ -571,6 +585,7 @@ defineExpose({ stepMessage })
               </svg>
             </button>
             <button
+              v-if="!side"
               class="copy edit"
               :disabled="reverting"
               :aria-label="t('stream.edit')"
@@ -634,7 +649,7 @@ defineExpose({ stepMessage })
             under every message - and the copy button belongs with it.
           -->
           <div v-if="turn.finish && !turn.error && turn.last" class="footer">
-            <button class="copy branch" v-tip="{ label: t('stream.fork'), placement: 'top' }" @click="branchReply(turn)">
+            <button v-if="!side" class="copy branch" v-tip="{ label: t('stream.fork'), placement: 'top' }" @click="branchReply(turn)">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <circle cx="4.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1" />
                 <circle cx="4.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1" />
@@ -687,7 +702,7 @@ defineExpose({ stepMessage })
         </div>
       </div>
 
-      <div v-if="app.error" class="err banner">{{ app.error }}</div>
+      <div v-if="shownError" class="err banner">{{ shownError }}</div>
     </div>
 
     <!--

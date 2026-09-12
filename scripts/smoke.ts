@@ -148,6 +148,19 @@ async function main() {
   await call({ type: "session.delete", sessionID: loose.session.id })
   await call({ type: "session.delete", sessionID: looseAgain.session.id })
 
+  /* A side chat is a session of its own that remembers the conversation it sits beside. */
+  const sideChat = await call({ type: "session.create", directory: project, title: "Side chat 1", sideOf: sessionID })
+  const listedSide = await call({ type: "session.list" })
+  check(
+    "a side chat remembers the conversation it belongs to",
+    sideChat.session.sideOf === sessionID &&
+      sideChat.session.id !== sessionID &&
+      listedSide.sessions.some((entry: { id: string; sideOf?: string }) => entry.id === sideChat.session.id && entry.sideOf === sessionID),
+    sideChat.session,
+  )
+  check("an ordinary session belongs to no conversation", created.session.sideOf === undefined, created.session)
+  await call({ type: "session.delete", sessionID: sideChat.session.id })
+
   const listed = await call({ type: "session.list" })
   check("session.list includes it", listed.sessions.some((s: any) => s.id === sessionID))
   /*

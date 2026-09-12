@@ -1837,19 +1837,24 @@ function goArtifacts() {
 const browserOpen = ref(false)
 
 /*
- * The open conversation, held in a column beside the workspace.
+ * A side chat: a second conversation beside the open one, as MiMo has it.
  *
- * Turning it on frees the middle: the conversation is drawn on the right and
- * the main area goes to the launcher, so the same conversation is never drawn
- * twice. Turning it off puts it back where it was.
+ * Opening it starts a conversation in the same project that no list shows -
+ * or takes up an empty one this conversation already has - with its own
+ * transcript and box, and the open conversation stays where it is in the
+ * middle. Closing it puts the side chat away.
  */
 const sideChat = ref(false)
 
-function toggleSideChat() {
+async function toggleSideChat() {
+  if (sideChat.value) {
+    sideChat.value = false
+    app.closeSide()
+    return
+  }
   if (!app.currentID) return
-  sideChat.value = !sideChat.value
-  view.value = sideChat.value ? "home" : "session"
-  push({ view: view.value, sessionID: app.currentID })
+  sideChat.value = true
+  await app.openSide(app.currentID)
 }
 
 /*
@@ -3599,9 +3604,8 @@ onBeforeUnmount(() => {
         the two columns read left to right in the order they were opened.
       -->
       <SideChat
-        v-if="sideChat && app.currentID"
+        v-if="sideChat && app.sideID"
         @close="toggleSideChat"
-        @expand="toggleSideChat"
         @open-settings="openSettings"
         @connect="connectOpen = true"
         @manage-models="manageModelsOpen = true"
