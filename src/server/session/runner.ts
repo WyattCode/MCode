@@ -966,6 +966,7 @@ export class SessionRunner {
     const system = await systemPrompt({
       directory: session.directory,
       agent: session.agent,
+      staged: session.staged,
       instructions: config.instructions,
     })
 

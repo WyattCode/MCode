@@ -1040,6 +1040,20 @@ export const useApp = defineStore("app", () => {
     await patchConfig({ agent })
   }
 
+  /*
+   * Staged mode, the same shape as the agent: set on the open conversation if
+   * there is one, and written as the default either way so the next
+   * conversation starts where this choice left off.
+   */
+  async function setStaged(staged: boolean) {
+    if (currentID.value) {
+      const result = await api().request({ type: "session.staged", sessionID: currentID.value, staged })
+      const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
+      if (at >= 0) sessions.value[at] = result.session
+    }
+    await patchConfig({ staged })
+  }
+
   async function patchConfig(patch: Partial<AppConfig>) {
     config.value = (await api().request({ type: "config.set", patch })).config
   }
@@ -1294,6 +1308,7 @@ export const useApp = defineStore("app", () => {
     setModel,
     setEffort,
     setAgent,
+    setStaged,
     patchConfig,
     setDefaultServer,
     setProviderEndpoint,

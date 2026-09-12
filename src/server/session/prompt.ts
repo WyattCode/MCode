@@ -34,6 +34,8 @@ export interface PromptContext {
   agent: string
   /** The reader's standing instructions, if they have written any. */
   instructions?: string
+  /** Whether the conversation works in stages. */
+  staged?: boolean
 }
 
 /**
@@ -51,9 +53,31 @@ Read whatever you need, then answer with a plan: what you would change, in
 which files, in what order, and what you are unsure of. Say plainly when the
 answer depends on something you could not determine by reading.`
 
+/*
+ * Staged mode. Four stages, named so the reader can see where the work is, and
+ * each with the one thing that makes it a stage rather than a heading: what has
+ * to be true before moving on. Plan mode already stops before building, so in
+ * plan mode this section is left out rather than contradicted.
+ */
+const STAGED = `## Working in stages
+
+The user has asked for this conversation to be worked in four stages. Name the
+stage you are in when you move into it.
+
+1. Clarify. Say back what you understand the task to be. If something the work
+   depends on is genuinely unclear, ask before going further - with the question
+   tool when it is available. Do not ask about things you can find out by reading.
+2. Plan. Write down what will change, in which files, and how you will check it.
+   Record the steps with todowrite.
+3. Build. Make the changes the plan describes. If the plan turns out to be wrong,
+   say so and revise it rather than quietly doing something else.
+4. Review. Compare what you changed against the plan, run the project's checks,
+   and report plainly what passed, what failed, and anything left undone.`
+
 export async function systemPrompt(context: PromptContext): Promise<string> {
   const sections = [BASE]
   if (context.agent === "plan") sections.push(PLAN)
+  else if (context.staged) sections.push(STAGED)
 
   /*
    * Before the project's own files, and said to be the reader's rather than

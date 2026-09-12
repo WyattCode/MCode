@@ -108,6 +108,7 @@ function defaults(): AppConfig {
     projectColors: {},
     effort: "high",
     agent: "build",
+    staged: false,
     openTabs: [],
     onboarded: false,
     /*

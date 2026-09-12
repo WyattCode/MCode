@@ -134,6 +134,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         // The last choice made is the starting point for the next session, the
         // same way the model is.
         agent: config.agent,
+        staged: config.staged,
         title: request.title,
       })
       return { session } satisfies Handled<"session.create">
@@ -201,6 +202,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.agent":
       return { session: await runtime.sessions.update(request.sessionID, { agent: request.agent }) }
+
+    case "session.staged":
+      return { session: await runtime.sessions.update(request.sessionID, { staged: request.staged }) }
 
     case "session.prompt": {
       const messageID = await runtime.runner.prompt({

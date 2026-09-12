@@ -115,7 +115,13 @@ export class SessionStore {
     return `session/${sessionID}/message/${messageID}`
   }
 
-  async create(input: { directory: string; model: ModelRef; agent?: AgentName; title?: string }): Promise<SessionInfo> {
+  async create(input: {
+    directory: string
+    model: ModelRef
+    agent?: AgentName
+    staged?: boolean
+    title?: string
+  }): Promise<SessionInfo> {
     const now = Date.now()
     const session: SessionInfo = {
       id: Identifier.session(),
@@ -123,6 +129,7 @@ export class SessionStore {
       directory: input.directory,
       model: input.model,
       agent: input.agent ?? "build",
+      ...(input.staged ? { staged: true } : {}),
       created: now,
       updated: now,
       usage: emptyUsage(),

@@ -32,6 +32,13 @@ export interface SessionInfo {
    * "whatever the provider does".
    */
   effort?: Effort
+  /**
+   * Whether this conversation works in stages: clarify, plan, build, review.
+   *
+   * Absent is off, which is what every conversation stored before this field
+   * existed has to read as.
+   */
+  staged?: boolean
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */
@@ -765,6 +772,8 @@ export interface AppConfig {
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
+  /** Whether new sessions start in staged mode; each may then differ. */
+  staged: boolean
   /**
    * Sessions with a tab in the title bar, in the order they are drawn.
    *
@@ -1124,6 +1133,7 @@ export type Request =
   | { type: "session.redo"; sessionID: string }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
+  | { type: "session.staged"; sessionID: string; staged: boolean }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
   /* Which project a conversation belongs to, which is the directory it works in. */
@@ -1285,6 +1295,7 @@ export interface ResponseMap {
    */
   "session.revert": { session: SessionInfo; files: number; history: HistoryDepth }
   "session.agent": { session: SessionInfo }
+  "session.staged": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }
   "session.undo": { files: number; history: HistoryDepth }

@@ -369,6 +369,25 @@ function terminalFromMenu() {
   emit("terminal")
 }
 
+/*
+ * Staged mode as the plus menu shows it: the open conversation's setting when
+ * there is one, the default the next conversation will start with when there
+ * is not.
+ *
+ * In a conversation it is that conversation's value and nothing else, with
+ * absent meaning off - which is what the server reads when it builds the
+ * prompt. Falling back to the default here made the switch lie: with the
+ * default turned on, every conversation from before the setting existed showed
+ * "on" while its turns ran without the section at all.
+ */
+const staged = computed(() =>
+  app.currentID ? (app.current?.staged ?? false) : (app.config?.staged ?? false),
+)
+
+async function toggleStaged() {
+  await app.setStaged(!staged.value)
+}
+
 /* A skill is started the way typing its name would start it. */
 async function useSkill(name: string) {
   menu.value = undefined
@@ -1467,6 +1486,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </svg>
                 <span class="item-name">{{ t("composer.menuTerminal") }}</span>
               </button>
+              <!--
+                Staged mode. A switch rather than a command, because it stays on:
+                it changes how the whole conversation is worked, not one reply.
+              -->
+              <button
+                class="item staged-row"
+                role="switch"
+                :aria-checked="staged"
+                @click="toggleStaged"
+              >
+                <span class="staged-text">
+                  <span class="item-name">{{ t("composer.staged") }}</span>
+                  <span class="staged-sub">{{ t("composer.stagedSub") }}</span>
+                </span>
+                <span class="staged-switch" :class="{ on: staged }"><span class="staged-knob" /></span>
+              </button>
               <div class="rule" />
               <div class="plus-head">{{ t("composer.menuSkills") }}</div>
               <div class="plus-skills">
@@ -2471,6 +2506,59 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .item:disabled:hover {
   background: transparent;
+}
+
+/* A two-line row with a switch at its end. */
+.item.staged-row {
+  height: auto;
+  padding-block: 6px;
+}
+
+.staged-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.staged-sub {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staged-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 28px;
+  height: 16px;
+  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-raised));
+  border-radius: 999px;
+  transition: background-color 0.15s;
+}
+
+.staged-switch.on {
+  background: var(--icon-base);
+}
+
+.staged-knob {
+  position: absolute;
+  top: 2px;
+  width: 12px;
+  height: 12px;
+  background: var(--icon-base);
+  border-radius: 50%;
+  inset-inline-start: 2px;
+  transition: inset-inline-start 0.15s, background-color 0.15s;
+}
+
+.staged-switch.on .staged-knob {
+  background: var(--surface-raised);
+  inset-inline-start: 14px;
 }
 
 .plus-head {
