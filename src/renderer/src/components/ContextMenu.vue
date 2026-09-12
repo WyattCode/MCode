@@ -130,7 +130,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 .heading {
   padding: 6px 10px 2px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -166,7 +166,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   color: var(--text-strong);
   text-align: start;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   letter-spacing: -0.04px;
 }
@@ -199,7 +199,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   margin-inline-start: auto;
   padding-inline-start: 20px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

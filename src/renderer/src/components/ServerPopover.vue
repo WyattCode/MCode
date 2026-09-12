@@ -270,7 +270,7 @@ onBeforeUnmount(() => {
 .none {
   padding: 4px 0 2px;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .tabs {
@@ -283,7 +283,7 @@ onBeforeUnmount(() => {
 .tab {
   padding: 6px 8px 8px;
   color: var(--text-weaker);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   /* The underline is the selected mark, so it has to sit on the strip's own
      rule rather than above it. */
   border-bottom: 1.5px solid transparent;
@@ -355,14 +355,14 @@ onBeforeUnmount(() => {
 
 .name {
   color: var(--text-strong);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
 }
 
 .meta {
   flex: 1;
   color: var(--text-weaker);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .tick {
@@ -377,7 +377,7 @@ onBeforeUnmount(() => {
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .manage:hover {

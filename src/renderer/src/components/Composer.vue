@@ -1976,7 +1976,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .slash-head {
   padding: 4px 6px 6px;
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -2008,7 +2008,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   height: 15px;
   border-radius: 3px;
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -2020,7 +2020,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   flex: 1;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2032,7 +2032,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .slash-empty {
   padding: 5px 6px;
   color: var(--text-weaker);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -2071,7 +2071,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   min-width: 0;
   overflow: hidden;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2087,7 +2087,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border-radius: 4px;
   background: var(--surface-hover);
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .slash-hint {
@@ -2101,7 +2101,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   overflow: hidden;
   color: var(--text-weaker);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
   direction: ltr;
@@ -2209,7 +2209,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-strong);
   resize: none;
   outline: none;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20px;
 }
 
@@ -2365,7 +2365,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-base);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   line-height: 1.25;
 }
 
@@ -2422,14 +2422,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-layer-02);
   border: 0.5px solid var(--border-weak);
   border-radius: 2px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   letter-spacing: 0.05px;
 }
 
 .mode-exit {
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   letter-spacing: 0.05px;
 }
@@ -2497,7 +2497,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   gap: 3px;
   min-width: 208px;
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 15px;
   white-space: nowrap;
@@ -2600,7 +2600,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-base);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20px;
   transition: background 0.12s, color 0.12s;
 }
@@ -2692,7 +2692,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .staged-sub {
   overflow: hidden;
   color: var(--text-weak);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2731,7 +2731,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .plus-head {
   padding: 8px 12px 4px;
   color: var(--text-weak);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   line-height: 16px;
 }
 
@@ -2743,7 +2743,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .plus-none {
   padding: 4px 12px 8px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .menu.model-pop {
@@ -2781,7 +2781,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: transparent;
   border: 0;
   outline: none;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -2827,7 +2827,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 0 12px;
   background: var(--surface-menu);
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: 0.05px;
@@ -2839,7 +2839,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   height: 48px;
   padding: 0 12px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -2861,7 +2861,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-strong);
   text-align: start;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -2909,7 +2909,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-weaker);
   border: 1px solid var(--border-weaker);
   border-radius: 4px;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   line-height: 15px;
 }
 
@@ -2951,7 +2951,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-width: 712px;
   margin: 6px auto 0;
   color: var(--text-weak);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 14px;
   text-align: center;
@@ -2986,7 +2986,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .input {
   min-height: 52px;
   padding: 5px 5px 8px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 21px;
 }
@@ -3038,7 +3038,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 7px 6px;
   border: 0;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 18px;
 }
@@ -3089,7 +3089,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .access-hint {
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 16px;
   white-space: normal;
 }

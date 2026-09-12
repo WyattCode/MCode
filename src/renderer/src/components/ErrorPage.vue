@@ -275,7 +275,7 @@ header {
 h1 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 18px;
+  font-size: calc(18px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 24px;
 }
@@ -283,7 +283,7 @@ h1 {
 header p {
   margin: 0;
   color: var(--text-weak);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -307,7 +307,7 @@ header p {
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-lg);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.55;
   /* Stack frames carry long absolute paths. Wrapping them keeps the field to
      one axis of scrolling, which is the one a person expects to use. */
@@ -357,7 +357,7 @@ header p {
   background: var(--button-primary);
   border: 1px solid transparent;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   -webkit-app-region: no-drag;
 }
 
@@ -381,7 +381,7 @@ header p {
   max-inline-size: 672px;
   margin: 0;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: center;
   overflow-wrap: anywhere;
 }
@@ -400,6 +400,6 @@ footer {
 footer p {
   margin: 0;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 </style>

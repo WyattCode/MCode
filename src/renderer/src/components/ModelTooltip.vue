@@ -145,7 +145,7 @@ watch(() => [props.anchor, props.model.id], () => void nextTick(place))
   background: var(--surface-raised-hover);
   border-radius: 4px;
   box-shadow: var(--shadow-lg);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.35;
   pointer-events: none;
 }

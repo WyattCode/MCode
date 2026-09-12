@@ -385,7 +385,7 @@ function openKeyPage() {
 h1 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 24px;
+  font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 530;
   letter-spacing: -0.01em;
 }
@@ -393,7 +393,7 @@ h1 {
 .sub {
   margin: 10px 0 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -411,12 +411,12 @@ h1 {
   display: block;
   margin-bottom: 8px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .link {
   color: var(--text-interactive);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .link:hover {
@@ -439,7 +439,7 @@ h1 {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-lg);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: border-color 0.12s, color 0.12s, background 0.12s;
 }
 
@@ -462,7 +462,7 @@ h1 {
   color: var(--text-weak);
   background: var(--surface-base);
   border-radius: var(--radius-sm);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -476,7 +476,7 @@ h1 {
   color: var(--primary);
   background: color-mix(in srgb, var(--primary) 14%, transparent);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .more {
@@ -486,7 +486,7 @@ h1 {
   margin-top: 10px;
   padding: 6px 2px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .more:hover {
@@ -515,7 +515,7 @@ h1 {
   color: var(--text-base);
   text-align: start;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .way:hover {
@@ -542,13 +542,13 @@ h1 {
 .steps {
   margin: 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
 .link.inline {
   padding: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .code {
@@ -563,7 +563,7 @@ h1 {
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   letter-spacing: 0.08em;
   cursor: pointer;
 }
@@ -577,7 +577,7 @@ h1 {
   align-items: center;
   gap: 8px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .spinner {
@@ -605,7 +605,7 @@ h1 {
   align-items: center;
   gap: 8px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .signed .dot {
@@ -628,7 +628,7 @@ h1 {
   padding: 0 16px;
   color: var(--text-base);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: background 0.12s, color 0.12s;
 }
 
@@ -650,7 +650,7 @@ h1 {
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-lg);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
   transition: border-color 0.12s;
 }
@@ -662,7 +662,7 @@ h1 {
 .hint {
   margin-top: 8px;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
 
@@ -675,7 +675,7 @@ h1 {
   margin-top: 16px;
   margin-bottom: 8px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .error {
@@ -684,7 +684,7 @@ h1 {
   color: var(--text-error);
   background: var(--surface-critical);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .actions {
@@ -696,7 +696,7 @@ h1 {
 
 .skip {
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .skip:hover {
@@ -710,7 +710,7 @@ h1 {
   color: var(--button-primary-text);
   background: var(--button-primary);
   border-radius: var(--radius-lg);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: filter 0.12s;
 }
 

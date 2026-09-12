@@ -410,7 +410,7 @@ async function submit() {
 .cpintro {
   margin: 0;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -448,7 +448,7 @@ async function submit() {
  */
 .cplabel {
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 18px;
 }
@@ -462,7 +462,7 @@ async function submit() {
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   outline: none;
 }
 
@@ -472,13 +472,13 @@ async function submit() {
 
 .cphelp {
   color: var(--text-base);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
 
 .cperror {
   color: var(--text-critical);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
 
@@ -532,7 +532,7 @@ async function submit() {
   color: var(--text-base);
   background: none;
   border: none;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
@@ -549,7 +549,7 @@ async function submit() {
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 

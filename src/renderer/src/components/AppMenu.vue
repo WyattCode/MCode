@@ -252,7 +252,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   height: 28px;
   padding: 0 12px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -264,7 +264,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   padding: 0 12px;
   color: var(--text-strong);
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   cursor: default;
 }
 
@@ -314,7 +314,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   padding: 0 12px;
   color: var(--text-strong);
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: start;
 }
 

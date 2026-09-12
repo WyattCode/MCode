@@ -837,6 +837,13 @@ export interface AppConfig {
    */
   uiFont: string
   codeFont: string
+  /**
+   * The base size, in px, of the interface's text and of code in the
+   * transcript and diffs. MiMo's defaults, 14 and 12; each becomes a scale on
+   * the root that the sizes in the interface are multiplied by.
+   */
+  uiFontSize: number
+  codeFontSize: number
   terminalFont: string
 
   /**

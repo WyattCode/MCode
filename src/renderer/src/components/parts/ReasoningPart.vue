@@ -80,7 +80,7 @@ const open = ref(false)
   gap: 8px;
   margin: 10px 0 6px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.3;
 }
 

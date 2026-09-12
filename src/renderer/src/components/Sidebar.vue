@@ -528,7 +528,7 @@ function toggleProject(directory: string) {
   height: 100%;
   background: var(--surface-base);
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   user-select: none;
 }
 
@@ -574,7 +574,7 @@ function toggleProject(directory: string) {
 
 .brand-name {
   color: var(--text-strong);
-  font-size: 19px;
+  font-size: calc(19px * var(--ui-font-scale, 1));
   font-weight: 600;
   letter-spacing: 0.2px;
 }
@@ -587,7 +587,7 @@ function toggleProject(directory: string) {
   color: #ffffff;
   background: #2a3f52;
   border-radius: 999px;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 600;
   letter-spacing: 0.14px;
 }
@@ -628,7 +628,7 @@ function toggleProject(directory: string) {
 
 .row-label {
   overflow: hidden;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
   text-overflow: ellipsis;
@@ -665,7 +665,7 @@ function toggleProject(directory: string) {
 .day-head {
   padding: 10px 14px 4px;
   color: var(--text-weak);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 16px;
 }
@@ -684,7 +684,7 @@ function toggleProject(directory: string) {
 .row-note {
   overflow: hidden;
   color: var(--text-weak);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -699,7 +699,7 @@ function toggleProject(directory: string) {
   align-items: center;
   gap: 4px;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   /* Normal, as MiMo's heading is: 15 tall, where the inherited 24 made it 24. */
   line-height: normal;
@@ -755,7 +755,7 @@ function toggleProject(directory: string) {
 .empty {
   padding: 7px 9px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 19.2px;
 }
 
@@ -856,7 +856,7 @@ function toggleProject(directory: string) {
   flex: 1;
   min-width: 100%;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 18px;
 }
 
@@ -867,7 +867,7 @@ function toggleProject(directory: string) {
   padding: 0 6px;
   color: var(--text-strong);
   border-radius: 7px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: background 0.12s, color 0.12s;
 }
 

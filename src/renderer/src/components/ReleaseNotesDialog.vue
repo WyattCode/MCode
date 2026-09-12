@@ -136,7 +136,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-font-scale, 1));
   font-weight: 560;
   line-height: 20px;
 }
@@ -144,7 +144,7 @@ h2 {
 p {
   margin: 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 18px;
 }
 
@@ -178,7 +178,7 @@ footer {
   color: var(--text-weak);
   background: none;
   border: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
@@ -193,7 +193,7 @@ footer {
   padding: 0 16px;
   border: 0;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
   cursor: pointer;
 }

@@ -22,7 +22,7 @@ const html = computed(() => renderMarkdown(props.part.text))
  */
 .text {
   overflow-wrap: anywhere;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 22.4px;
 }
 
@@ -42,7 +42,7 @@ const html = computed(() => renderMarkdown(props.part.text))
   margin: 16px 0;
   overflow-x: auto;
   border-collapse: collapse;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
 }
 
 .text .md-table th,
@@ -99,19 +99,19 @@ const html = computed(() => renderMarkdown(props.part.text))
 
 .text .md-h[data-level="1"] {
   margin: 28px 0 12px;
-  font-size: 17px;
+  font-size: calc(17px * var(--ui-font-scale, 1));
   font-weight: 600;
 }
 
 .text .md-h[data-level="2"] {
   margin: 24px 0 10px;
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 600;
 }
 
 .text .md-h[data-level="3"] {
   margin: 20px 0 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -122,7 +122,7 @@ const html = computed(() => renderMarkdown(props.part.text))
 .text .md-h[data-level="4"] {
   margin: 20px 0 8px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -196,7 +196,7 @@ const html = computed(() => renderMarkdown(props.part.text))
   background: var(--surface-raised);
   border: 0.5px solid var(--border-weak);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--code-font-scale, 1));
   line-height: 1.5;
 }
 
@@ -209,7 +209,7 @@ const html = computed(() => renderMarkdown(props.part.text))
 .text .md-url {
   color: var(--text-weak);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: calc(11px * var(--code-font-scale, 1));
 }
 
 /*
@@ -234,25 +234,25 @@ const html = computed(() => renderMarkdown(props.part.text))
 
 .text .md-h[data-level="1"] {
   margin: 20px 0 12px;
-  font-size: 22px;
+  font-size: calc(22px * var(--ui-font-scale, 1));
   font-weight: 600;
 }
 
 .text .md-h[data-level="2"] {
   margin: 18px 0 10px;
-  font-size: 20px;
+  font-size: calc(20px * var(--ui-font-scale, 1));
   font-weight: 600;
 }
 
 .text .md-h[data-level="3"] {
   margin: 16px 0 8px;
-  font-size: 16px;
+  font-size: calc(16px * var(--ui-font-scale, 1));
   font-weight: 600;
 }
 
 .text .md-h[data-level="4"] {
   margin: 14px 0 6px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 600;
 }
 
@@ -275,18 +275,18 @@ const html = computed(() => renderMarkdown(props.part.text))
   color: color-mix(in srgb, var(--text-strong) 90%, transparent);
   background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
   border-radius: 5px;
-  font-size: 13px;
+  font-size: calc(13px * var(--code-font-scale, 1));
   font-weight: 500;
 }
 
 .text .md-code {
   padding: 10px 12px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--code-font-scale, 1));
   line-height: 1.7;
 }
 
 .text .md-table {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .text .md-table th {

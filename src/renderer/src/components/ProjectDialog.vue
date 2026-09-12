@@ -197,7 +197,7 @@ header {
 h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.13px;
@@ -217,7 +217,7 @@ h2 {
 .label {
   margin-top: 8px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .field {
@@ -233,7 +233,7 @@ h2 {
   background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
   border: 0;
   border-radius: var(--radius-md);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .field:focus {
@@ -261,7 +261,7 @@ h2 {
 .preview {
   width: 68px;
   height: 68px;
-  font-size: 26px;
+  font-size: calc(26px * var(--ui-font-scale, 1));
   border: 1px solid transparent;
 }
 
@@ -284,7 +284,7 @@ h2 {
 
 .hint {
   color: var(--text-weaker);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .hidden {
@@ -299,7 +299,7 @@ h2 {
 .swatch {
   width: 40px;
   height: 40px;
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   border: 2px solid transparent;
 }
 
@@ -309,7 +309,7 @@ h2 {
 
 .error {
   color: var(--text-critical);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 footer {
@@ -324,7 +324,7 @@ footer {
   padding: 0 14px;
   color: var(--text-base);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .ghost:hover {
@@ -338,13 +338,13 @@ footer {
   color: var(--surface-base);
   background: var(--text-strong);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
 .link {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-decoration: underline;
   text-underline-offset: 2px;
 }

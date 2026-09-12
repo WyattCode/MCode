@@ -100,7 +100,7 @@ import { t } from "../lib/i18n"
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -145,7 +145,7 @@ import { t } from "../lib/i18n"
  */
 .title {
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -155,7 +155,7 @@ import { t } from "../lib/i18n"
   /* 4 between them, from `[data-slot="toast-v2-content"] { gap: 4px }`. */
   margin-top: 4px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;

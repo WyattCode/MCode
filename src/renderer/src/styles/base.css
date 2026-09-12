@@ -18,7 +18,7 @@ body {
   /* text-base is the default body colour; text-strong is for emphasis. */
   color: var(--text-base);
   font-family: var(--font-sans);
-  font-size: var(--font-size-base);
+  font-size: calc(var(--font-size-base) * var(--ui-font-scale, 1));
   /*
    * Four-forty, not four hundred. opencode sets Inter's variable axis to 440
    * for body text and 530 for emphasis; at 400 every label in this app read a
@@ -80,7 +80,7 @@ code,
 pre,
 kbd {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -159,7 +159,7 @@ kbd {
   padding: 0 5px;
   justify-content: center;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   color: var(--text-base);
   background: var(--surface-raised-hover);
   border: 1px solid var(--border-weak);
@@ -209,7 +209,7 @@ kbd {
   height: 28px;
   padding: 0 11px;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -370,7 +370,7 @@ kbd {
 .dialog-title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.13px;
@@ -379,7 +379,7 @@ kbd {
 
 .dialog-sub {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -425,7 +425,7 @@ kbd {
   background: var(--surface-raised-hover);
   border-radius: 4px;
   box-shadow: var(--shadow-lg);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1.3;
   white-space: nowrap;
   pointer-events: none;
@@ -500,7 +500,7 @@ kbd {
   color: var(--text-base);
   background: var(--surface-key);
   border-radius: 2px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   letter-spacing: 0.05px;
   /* opencode sets its caps in capitals however the binding was written. */

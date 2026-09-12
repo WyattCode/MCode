@@ -416,7 +416,7 @@ const rendered = computed(() => {
 
 .stat-name {
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1.5;
 }
@@ -429,7 +429,7 @@ const rendered = computed(() => {
 .stat-value {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1.5;
   /* Figures that change as a turn runs, so the columns must not shift under
@@ -456,7 +456,7 @@ const rendered = computed(() => {
 .block-title {
   margin: 0;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1.5;
 }
@@ -470,7 +470,7 @@ const rendered = computed(() => {
   padding-inline: 8px;
   color: var(--text-weak);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   transition: background 0.12s, color 0.12s;
 }
@@ -506,7 +506,7 @@ const rendered = computed(() => {
   align-items: center;
   gap: 4px;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1.5;
 }
@@ -533,7 +533,7 @@ const rendered = computed(() => {
 .note {
   margin: 0;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1.5;
 }
@@ -550,7 +550,7 @@ const rendered = computed(() => {
   padding: 8px 12px;
   overflow-y: auto;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.55;
   background: var(--surface-base);
   border: 1px solid var(--border-weaker);
@@ -568,7 +568,7 @@ const rendered = computed(() => {
 .prompt :deep(pre),
 .prompt :deep(code) {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
 }
 
 .prompt :deep(pre) {
@@ -599,7 +599,7 @@ const rendered = computed(() => {
   width: 100%;
   padding-block: 7px;
   padding-inline: 10px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   text-align: start;
   transition: background 0.12s;
@@ -629,7 +629,7 @@ const rendered = computed(() => {
   min-width: 0;
   color: var(--text-base);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -638,7 +638,7 @@ const rendered = computed(() => {
   flex-shrink: 0;
   margin-inline-start: auto;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 
@@ -667,7 +667,7 @@ const rendered = computed(() => {
   color: var(--text-base);
   background: var(--surface-base);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

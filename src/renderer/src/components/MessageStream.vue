@@ -716,7 +716,7 @@ defineExpose({ stepMessage })
   gap: 6px;
   margin: 10px 0 2px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   opacity: 0;
   transition: opacity 0.12s;
 }
@@ -770,7 +770,7 @@ defineExpose({ stepMessage })
   min-width: 0;
   min-height: 20px;
   margin-top: 12px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
   color: var(--text-weak);
@@ -795,7 +795,7 @@ defineExpose({ stepMessage })
 .compacted-text {
   flex: none;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: nowrap;
   text-align: center;
 }
@@ -978,7 +978,7 @@ defineExpose({ stepMessage })
   overflow: hidden;
   min-width: 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.5;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1000,7 +1000,7 @@ defineExpose({ stepMessage })
    * run at thirteen; what a person wrote, and what the model wrote back, are
    * the thing being read and run at fourteen.
    */
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 21px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1023,7 +1023,7 @@ defineExpose({ stepMessage })
   background: color-mix(in srgb, var(--error) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--error) 32%, transparent);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .err.banner {
@@ -1033,7 +1033,7 @@ defineExpose({ stepMessage })
 .note {
   margin-top: 6px;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -1106,14 +1106,14 @@ defineExpose({ stepMessage })
 }
 
 .run-label {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 18px;
 }
 
 .run-time {
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 16px;
 }

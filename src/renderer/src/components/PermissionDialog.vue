@@ -181,7 +181,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
 .title {
   min-width: 0;
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 150%;
 }
@@ -197,7 +197,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
 .subject {
   color: var(--text-base);
   font-family: var(--font-mono);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   /*
    * The same leading as the title above it. opencode gives both
    * `line-height: var(--line-height-large)`, which is 150% there - so its title
@@ -231,7 +231,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
   padding: 10px;
   color: var(--text-base);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: pre-wrap;
 }
 

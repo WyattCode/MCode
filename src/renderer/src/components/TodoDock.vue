@@ -117,7 +117,7 @@ const open = ref(false)
 .progress {
   flex-shrink: 0;
   color: var(--text-weaker);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   font-weight: 440;
 }
 
@@ -125,7 +125,7 @@ const open = ref(false)
 .active {
   overflow: hidden;
   color: var(--text-base);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -143,7 +143,7 @@ const open = ref(false)
   gap: 8px;
   padding: 3px 0;
   color: var(--text-base);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 17px;
 }
 

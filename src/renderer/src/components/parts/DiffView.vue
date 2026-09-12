@@ -56,7 +56,7 @@ const stat = computed(() => ({
   background: var(--surface-raised-hover);
   border-bottom: 1px solid var(--border-weak);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: calc(10px * var(--code-font-scale, 1));
 }
 
 .plus {
@@ -76,7 +76,7 @@ const stat = computed(() => ({
 .row {
   display: flex;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--code-font-scale, 1));
   line-height: 1.6;
   white-space: pre;
 }

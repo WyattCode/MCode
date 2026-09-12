@@ -507,7 +507,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.13px;
@@ -517,7 +517,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .lead {
   margin: 4px 0 18px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -527,7 +527,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .lead.soft {
   margin: 8px 0 0;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
 
@@ -562,7 +562,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-strong);
   background: none;
   border: none;
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
   outline: none;
 }
 
@@ -574,7 +574,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .group-head {
   padding: 14px 6px 6px;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .row {
@@ -607,7 +607,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .row-name {
   flex-shrink: 0;
   color: var(--text-strong);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
 }
 
 /* Trails the name, and gives way first when the dialog is narrow. */
@@ -615,19 +615,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   flex: 1;
   overflow: hidden;
   color: var(--text-weaker);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .row-state {
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .row-add {
   color: var(--text-weaker);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
 }
 
 /* Stands where a vendor's logo would, so the pinned row lines up with the
@@ -642,13 +642,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-base);
   background: var(--surface-raised-hover);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .row-mark.big {
   width: 34px;
   height: 34px;
-  font-size: 17px;
+  font-size: calc(17px * var(--ui-font-scale, 1));
 }
 
 .row-tag {
@@ -656,13 +656,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-weak);
   background: var(--surface-raised-hover);
   border-radius: 999px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .empty {
   padding: 24px 6px;
   color: var(--text-weaker);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
@@ -696,7 +696,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .way-name {
   flex: 1;
   color: var(--text-strong);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
 }
 
 /* --- form --------------------------------------------------------------- */
@@ -705,7 +705,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   display: block;
   margin-bottom: 7px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .field {
@@ -717,7 +717,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   border: 0;
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }
 
@@ -738,7 +738,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--surface-base);
   background: var(--text-strong);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -750,7 +750,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 .link {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .link:hover {
@@ -771,7 +771,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 19px;
+  font-size: calc(19px * var(--ui-font-scale, 1));
   letter-spacing: 0.18em;
 }
 
@@ -782,7 +782,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .code-hint {
   color: var(--text-weaker);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   letter-spacing: 0;
 }
 
@@ -792,7 +792,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   gap: 10px;
   margin-top: 16px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .spinner {
@@ -813,7 +813,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .error {
   margin-top: 16px;
   color: var(--text-critical);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 </style>

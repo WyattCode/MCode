@@ -142,7 +142,7 @@ watch(input, (element) => props.find.setInput(element))
   border: none;
   outline: none;
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .needle::placeholder {
@@ -157,7 +157,7 @@ watch(input, (element) => props.find.setInput(element))
   flex-shrink: 0;
   width: 10ch;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
   text-align: end;
 }

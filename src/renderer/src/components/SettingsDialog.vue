@@ -328,6 +328,22 @@ function bucketTitle(bucket: PermissionKind): string {
  * reaches the app underneath - otherwise pressing Ctrl+W to record it would
  * close the tab while recording.
  */
+/*
+ * A size typed into one of the two rows: a whole number in the range the
+ * interface can still be laid out at, else the row goes back to what it was.
+ */
+function setSize(field: "uiFontSize" | "codeFontSize", event: Event, fallback: number) {
+  const input = event.target as HTMLInputElement
+  const value = Math.round(Number(input.value))
+  const [min, max] = field === "uiFontSize" ? [10, 24] : [8, 24]
+  if (!input.value.trim() || !Number.isFinite(value) || value < min || value > max) {
+    input.value = String(app.config?.[field] ?? fallback)
+    return
+  }
+  input.value = String(value)
+  if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
+}
+
 const capturing = ref<string>()
 
 /** The chord a row answers to: the user's if they set one, else the built-in. */
@@ -1185,6 +1201,45 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   {{ t(`set.motion.${mode}`) }}
                 </button>
               </div>
+            </div>
+
+            <!-- MiMo's pair: the base size of the interface's text, and of code in the transcript and diffs. -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.uiFontSize") }}</div>
+                <div class="line-sub">{{ t("set.uiFontSizeSub") }}</div>
+              </div>
+              <span class="size-field">
+                <input
+                  class="field size-input"
+                  :value="app.config?.uiFontSize ?? 14"
+                  inputmode="numeric"
+                  spellcheck="false"
+                  :aria-label="t('set.uiFontSize')"
+                  @change="setSize('uiFontSize', $event, 14)"
+                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">px</span>
+              </span>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.codeFontSize") }}</div>
+                <div class="line-sub">{{ t("set.codeFontSizeSub") }}</div>
+              </div>
+              <span class="size-field">
+                <input
+                  class="field size-input"
+                  :value="app.config?.codeFontSize ?? 12"
+                  inputmode="numeric"
+                  spellcheck="false"
+                  :aria-label="t('set.codeFontSize')"
+                  @change="setSize('codeFontSize', $event, 12)"
+                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">px</span>
+              </span>
             </div>
 
             <!--
@@ -2060,6 +2115,27 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
  * `.field` underneath sits on `--surface-base` with an elevation, which is
  * right where it is used and wrong here.
  */
+/* The two size rows: a narrow field with its unit beside it, as MiMo draws them. */
+.size-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.size-input {
+  width: 64px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  box-shadow: none;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.unit {
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
 .font-field {
   width: 220px;
   color: var(--text-strong);
@@ -2079,7 +2155,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .sub-head {
   margin: 28px 0 12px;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 640;
   line-height: 1;
 }
@@ -2091,7 +2167,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .sub-note {
   margin: -8px 0 14px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -2170,7 +2246,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   height: 24px;
   padding: 0 0 0 4px;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 24px;
 }
@@ -2205,7 +2281,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-base);
   text-align: start;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: background 0.12s, color 0.12s;
 }
 
@@ -2247,7 +2323,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   margin-top: auto;
   padding: 4px 0 4px 4px;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: 1;
 }
 
@@ -2264,7 +2340,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 h2 {
   margin: 0 0 32px;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 640;
   line-height: 1;
 }
@@ -2283,7 +2359,7 @@ h2 + h3 {
 h3 {
   margin: 36px 0 20px;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 640;
   line-height: 1;
 }
@@ -2291,7 +2367,7 @@ h3 {
 .note {
   margin: -8px 0 14px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -2354,7 +2430,7 @@ h3 {
 
 .line-title {
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -2365,7 +2441,7 @@ h3 {
      down, which is what sets the title and the line under it 4.5px apart. */
   margin-block: -3.5px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
 }
@@ -2436,7 +2512,7 @@ h3 {
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2449,7 +2525,7 @@ h3 {
 
 .link-btn {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .link-btn:hover {
@@ -2470,7 +2546,7 @@ h3 {
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   outline: none;
 }
 
@@ -2489,7 +2565,7 @@ h3 {
 .reset-count {
   margin: 0;
   color: var(--error);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -2515,7 +2591,7 @@ h3 {
   color: #fff;
   background: var(--error);
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .danger-btn:hover {
@@ -2529,7 +2605,7 @@ h3 {
 /* Nine of these are now words rather than identifiers, so the monospace face
    that made `todowrite` legible is only right for the two that stayed raw. */
 .tool {
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .tool.raw {
@@ -2560,7 +2636,7 @@ h3 {
 
 .total-value {
   color: var(--text-strong);
-  font-size: 20px;
+  font-size: calc(20px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 26px;
   font-variant-numeric: tabular-nums;
@@ -2568,13 +2644,13 @@ h3 {
 
 .total-value.small {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 20px;
 }
 
 .total-name {
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 16px;
 }
 
@@ -2589,7 +2665,7 @@ h3 {
   flex-shrink: 0;
   width: 44px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
 }
 
@@ -2612,7 +2688,7 @@ h3 {
   flex-shrink: 0;
   width: 56px;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: end;
   font-variant-numeric: tabular-nums;
 }
@@ -2633,7 +2709,7 @@ h3 {
   border-radius: var(--radius-md);
   outline: none;
   font-family: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20px;
   resize: vertical;
 }
@@ -2652,14 +2728,14 @@ h3 {
 /* A path is read left to right and has to wrap somewhere, so let it wrap. */
 .line-sub.path {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   overflow-wrap: anywhere;
 }
 
 .page-sub {
   margin: -4px 0 14px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20px;
 }
 
@@ -2707,7 +2783,7 @@ h3 {
 
 .tile-name {
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 16px;
 }
 
@@ -2732,7 +2808,7 @@ h3 {
   color: var(--text-weak);
   background: transparent;
   border: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
@@ -2875,7 +2951,7 @@ h3 {
   flex-shrink: 0;
   color: var(--text-weak);
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 11px;
   letter-spacing: 0.05px;
@@ -2886,7 +2962,7 @@ h3 {
   align-items: center;
   gap: 7px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .led {
@@ -2930,7 +3006,7 @@ h3 {
   background: var(--surface-layer);
   border-radius: 2px;
   box-shadow: inset 0 0 0 0.5px var(--border-weak);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 11px;
   letter-spacing: 0.05px;
@@ -2953,7 +3029,7 @@ h3 {
   color: var(--text-base);
   background: var(--surface-raised-hover);
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .search-in {
@@ -2971,7 +3047,7 @@ h3 {
   background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
   border: 0;
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }
 
@@ -2982,7 +3058,7 @@ h3 {
 .empty-note {
   padding: 18px 2px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 /* Provider rows read as a scannable list: identity on the left, one action on
    the right. The key field is disclosed per row rather than always present -
@@ -3013,7 +3089,7 @@ h3 {
   color: var(--text-base);
   background: var(--surface-raised-hover);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -3032,7 +3108,7 @@ h3 {
   align-items: center;
   gap: 8px;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -3042,7 +3118,7 @@ h3 {
   margin-top: 1px;
   overflow: hidden;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   text-overflow: ellipsis;
@@ -3066,7 +3142,7 @@ h3 {
   color: var(--text-base);
   background: transparent;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -3086,7 +3162,7 @@ h3 {
 .plink {
   flex-shrink: 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .plink:hover {
@@ -3099,7 +3175,7 @@ h3 {
   flex-shrink: 0;
   max-width: 260px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: end;
 }
 
@@ -3113,7 +3189,7 @@ h3 {
 .pnotice {
   max-width: 520px;
   color: var(--text-critical);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -3197,7 +3273,7 @@ h3 {
   height: 36px;
   padding: 0 11px;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 600;
   line-height: 36px;
 }
@@ -3209,7 +3285,7 @@ h3 {
   height: 35px;
   padding: 0 11px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 19.2px;
 }
@@ -3225,7 +3301,7 @@ h3 {
   padding: 0 11px;
   color: var(--text-strong);
   border-radius: 8px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
 }
@@ -3255,14 +3331,14 @@ h3 {
 
 h2 {
   margin: 0 0 27px;
-  font-size: 24px;
+  font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 38.4px;
 }
 
 h3 {
   margin: 27px 0 4px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 22.4px;
 }
@@ -3289,7 +3365,7 @@ h3 {
 }
 
 .line-title {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 22.4px;
   letter-spacing: 0;
@@ -3297,7 +3373,7 @@ h3 {
 
 .line-sub {
   margin-block: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 18.6px;
 }
@@ -3342,7 +3418,7 @@ h3 {
   background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
   border: 0;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -3352,7 +3428,7 @@ h3 {
   padding: 0 8px 0 10px;
   background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
   border-radius: 8px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .content :deep(.trigger .label) {
@@ -3371,7 +3447,7 @@ h3 {
   border: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--surface-raised));
   border-radius: 8px;
   outline: none;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 22.4px;
 }
 
@@ -3390,6 +3466,6 @@ h3 {
 .nav-empty {
   padding: 8px 11px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 </style>

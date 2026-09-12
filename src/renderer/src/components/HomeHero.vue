@@ -223,7 +223,7 @@ function start(name: string) {
 .slogan {
   margin: 22px 0 26px;
   color: var(--text-strong);
-  font-size: 18px;
+  font-size: calc(18px * var(--ui-font-scale, 1));
   font-weight: 600;
   line-height: 28.8px;
   letter-spacing: 0.4px;
@@ -278,7 +278,7 @@ function start(name: string) {
 
 .starter-name {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
 }
@@ -292,7 +292,7 @@ function start(name: string) {
   overflow: hidden;
   min-width: 0;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;

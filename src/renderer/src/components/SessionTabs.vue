@@ -392,7 +392,7 @@ async function commitRename(id: string) {
   position: relative;
   display: flex;
   flex: 0 1 auto;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 24px;
   /* Full width while there is room, shrinking towards the avatar when there
      is not - so a tenth tab narrows the row instead of overflowing it. */
@@ -488,7 +488,7 @@ async function commitRename(id: string) {
 
 .tab-card-project {
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1.5;
   letter-spacing: -0.04px;
@@ -496,7 +496,7 @@ async function commitRename(id: string) {
 
 .tab-card-title {
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1.5;
   letter-spacing: -0.04px;
@@ -514,7 +514,7 @@ async function commitRename(id: string) {
   flex: 1 0 0;
   min-width: 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1.5;
   letter-spacing: -0.04px;
@@ -536,7 +536,7 @@ async function commitRename(id: string) {
      paints an unselected tab. */
   background: var(--surface-base);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 
@@ -580,7 +580,7 @@ async function commitRename(id: string) {
   min-width: 0;
   height: 100%;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   /*
    * Five hundred, not the 530 the row titles take. The reference runs two
    * weights and the difference is not noise: its tab-link and its tool rows
@@ -644,7 +644,7 @@ async function commitRename(id: string) {
   /* The same hue the rail badge uses, so a project reads the same everywhere. */
   background: hsl(var(--h) 42% 46%);
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
 }
@@ -674,7 +674,7 @@ async function commitRename(id: string) {
   background: none;
   border: none;
   outline: none;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 16px;
 }

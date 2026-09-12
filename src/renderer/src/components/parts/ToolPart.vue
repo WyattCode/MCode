@@ -216,7 +216,7 @@ const subject = computed(() => {
 .verb {
   flex-shrink: 0;
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 21px;
 }
@@ -236,7 +236,7 @@ const subject = computed(() => {
   min-width: 0;
   overflow: hidden;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 21px;
   /* Figures line up between rows, so a column of counts reads as a column. */
@@ -277,7 +277,7 @@ const subject = computed(() => {
   padding: 12px;
   overflow: hidden auto;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -292,14 +292,14 @@ const subject = computed(() => {
 .error {
   padding: 8px 10px;
   color: var(--error);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   white-space: pre-wrap;
 }
 
 .empty {
   padding: 8px 10px;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -312,7 +312,7 @@ const subject = computed(() => {
   gap: 2px;
   margin: 0;
   padding: 8px 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 150%;
 }
 
@@ -344,7 +344,7 @@ const subject = computed(() => {
   gap: 8px;
   padding: 1px 0;
   color: var(--text-base);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
 }
 
 .todos li.completed {

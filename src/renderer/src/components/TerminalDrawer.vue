@@ -342,7 +342,7 @@ function startResize(event: PointerEvent) {
   padding-inline: 11px;
   color: var(--text-weak);
   border-radius: 7px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 18px;
 }

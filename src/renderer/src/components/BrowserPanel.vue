@@ -419,7 +419,7 @@ async function scan() {
 
 .tab-name {
   overflow: hidden;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -485,7 +485,7 @@ async function scan() {
   border: 1px solid transparent;
   border-radius: 8px;
   outline: none;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .address:focus {
@@ -523,7 +523,7 @@ async function scan() {
 
 .start-title {
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 18px;
 }
@@ -532,7 +532,7 @@ async function scan() {
   color: var(--text-base);
   background: transparent;
   border: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
@@ -558,19 +558,19 @@ async function scan() {
 
 .server-name {
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 18px;
 }
 
 .server-url {
   color: var(--text-weak);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
 }
 
 .none {
   margin: 0;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 </style>

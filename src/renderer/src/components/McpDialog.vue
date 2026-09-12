@@ -167,7 +167,7 @@ onMounted(() => {
 .title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.13px;
@@ -176,7 +176,7 @@ onMounted(() => {
 .lead {
   margin-top: 4px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -221,7 +221,7 @@ onMounted(() => {
   height: 48px;
   padding: 0 12px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .row {
@@ -260,7 +260,7 @@ onMounted(() => {
 .name {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -270,7 +270,7 @@ onMounted(() => {
 .status,
 .why {
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 440;
 }
 

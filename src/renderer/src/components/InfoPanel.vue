@@ -172,7 +172,7 @@ async function open(file: string) {
   gap: 6px;
   width: 100%;
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 18px;
   text-align: start;
@@ -195,7 +195,7 @@ async function open(file: string) {
   color: var(--text-weak);
   background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
   border-radius: 999px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 16px;
 }
@@ -219,7 +219,7 @@ async function open(file: string) {
   align-items: flex-start;
   gap: 7px;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 20.3px;
 }
@@ -256,7 +256,7 @@ async function open(file: string) {
 .empty {
   margin: 6px 0 0;
   color: var(--text-weak);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 22.4px;
 }
 
@@ -281,7 +281,7 @@ async function open(file: string) {
   padding: 0 6px;
   color: var(--text-base);
   border-radius: 7px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: start;
 }
 
@@ -307,7 +307,7 @@ async function open(file: string) {
   min-width: 0;
   overflow: hidden;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -319,7 +319,7 @@ async function open(file: string) {
   width: 100%;
   margin-top: 6px;
   color: var(--text-weak);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 18px;
   text-align: start;
@@ -341,7 +341,7 @@ async function open(file: string) {
 .group-count {
   margin-inline-start: auto;
   padding-inline-end: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
 }
 @media (prefers-color-scheme: dark) {

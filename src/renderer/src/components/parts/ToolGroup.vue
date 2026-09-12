@@ -132,7 +132,7 @@ const summary = computed(() =>
   gap: 8px;
   height: 32px;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 21px;
 }
 

@@ -159,7 +159,7 @@ async function toggle(name: string) {
 .title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 24px;
+  font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 30px;
 }
@@ -167,7 +167,7 @@ async function toggle(name: string) {
 .subtitle {
   margin: 4px 0 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 20px;
 }
@@ -192,7 +192,7 @@ async function toggle(name: string) {
   background: transparent;
   border: 0;
   outline: none;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 22.4px;
 }
 
@@ -209,7 +209,7 @@ async function toggle(name: string) {
 
 .head-label {
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 22.4px;
 }
@@ -217,7 +217,7 @@ async function toggle(name: string) {
 .manage {
   margin-inline-start: auto;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 17px;
 }
 
@@ -255,7 +255,7 @@ async function toggle(name: string) {
 .card-name {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 21px;
   text-overflow: ellipsis;
@@ -265,7 +265,7 @@ async function toggle(name: string) {
 .card-note {
   overflow: hidden;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 18.9px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -278,7 +278,7 @@ async function toggle(name: string) {
 .card-state {
   flex-shrink: 0;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 16px;
 }
 
@@ -324,7 +324,7 @@ async function toggle(name: string) {
 .empty {
   margin: 14px 0 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20.8px;
 }
 </style>

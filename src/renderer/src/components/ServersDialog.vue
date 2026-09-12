@@ -363,7 +363,7 @@ onMounted(() => {
 .title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.13px;
@@ -372,7 +372,7 @@ onMounted(() => {
 .lead {
   margin-top: 4px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -415,7 +415,7 @@ onMounted(() => {
   height: 48px;
   padding: 0 12px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 /* The menu hangs off the row, so the row is what it is positioned against. */
@@ -462,7 +462,7 @@ onMounted(() => {
 .name {
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -470,7 +470,7 @@ onMounted(() => {
 .where {
   overflow: hidden;
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 440;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -484,7 +484,7 @@ onMounted(() => {
   flex-shrink: 0;
   padding: 1px 6px;
   color: var(--text-weaker);
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   font-weight: 500;
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
@@ -526,7 +526,7 @@ onMounted(() => {
 .item {
   padding: 6px 8px;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   text-align: start;
   border-radius: 4px;
 }
@@ -554,19 +554,19 @@ onMounted(() => {
 .form-title {
   margin: 0 0 2px;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
 .label {
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 440;
 }
 
 .error {
   color: var(--text-danger, #f87171);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 .actions {
@@ -603,7 +603,7 @@ onMounted(() => {
   margin: 4px 12px 0;
   padding: 7px 10px;
   color: var(--text-base);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: 6px;
@@ -628,14 +628,14 @@ onMounted(() => {
 
 .foot-title {
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
 .foot-value {
   overflow: hidden;
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -643,7 +643,7 @@ onMounted(() => {
 .foot-lead {
   margin-top: 3px;
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 16px;
 }

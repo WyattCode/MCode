@@ -331,7 +331,7 @@ watch(
 .summary {
   min-width: 0;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 150%;
 }
@@ -392,7 +392,7 @@ watch(
   margin: 0;
   padding: 0 10px;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 150%;
   user-select: text;
@@ -408,7 +408,7 @@ watch(
   margin: 0;
   padding: 0 10px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 150%;
 }
@@ -514,7 +514,7 @@ watch(
 
 .label {
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 150%;
 }
@@ -522,7 +522,7 @@ watch(
 .desc {
   min-width: 0;
   color: var(--text-weak);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 150%;
   overflow-wrap: anywhere;
@@ -543,7 +543,7 @@ watch(
   background: none;
   color: var(--text-base);
   font-family: var(--font-sans);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 150%;
   overflow: hidden;
@@ -590,7 +590,7 @@ watch(
   height: 28px;
   padding: 0 11px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.04px;

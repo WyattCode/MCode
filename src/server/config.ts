@@ -122,6 +122,8 @@ function defaults(): AppConfig {
     expandEdits: false,
     uiFont: "",
     codeFont: "",
+    uiFontSize: 14,
+    codeFontSize: 12,
     terminalFont: "",
     instructions: "",
     tray: true,

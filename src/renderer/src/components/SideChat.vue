@@ -101,7 +101,7 @@ const emit = defineEmits<{
   flex: 1;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;

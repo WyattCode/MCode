@@ -390,7 +390,7 @@ onMounted(() => {
   outline: none;
   transition: background-color 0.12s ease-in-out;
   /* 13, which is what opencode's palette field measures - and what its rows use. */
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .search-in:focus {
@@ -413,14 +413,14 @@ onMounted(() => {
 .empty {
   padding: 22px;
   color: var(--text-weak);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-align: center;
 }
 
 .group {
   padding: 8px 12px 4px;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
 }
 
@@ -455,7 +455,7 @@ onMounted(() => {
   flex-shrink: 0;
   border-radius: 3px;
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -463,7 +463,7 @@ onMounted(() => {
   flex: 1;
   overflow: hidden;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -471,13 +471,13 @@ onMounted(() => {
 .title.mono {
   color: var(--text-base);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .hint {
   flex-shrink: 0;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .foot {
@@ -487,7 +487,7 @@ onMounted(() => {
   color: var(--text-weak);
   background: var(--surface-raised-hover);
   border-top: 1px solid var(--border-weak);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--ui-font-scale, 1));
 }
 
 .foot .kbd {

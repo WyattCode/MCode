@@ -256,7 +256,7 @@ function openMenu(event: MouseEvent) {
   padding: 4px 8px;
   color: var(--text-strong);
   border-radius: 6px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 16px;
   letter-spacing: -0.04px;
@@ -365,7 +365,7 @@ function openMenu(event: MouseEvent) {
   background: var(--surface-raised-hover);
   border-radius: 4px;
   box-shadow: var(--shadow-lg);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 12px;
   letter-spacing: 0.05px;
@@ -462,7 +462,7 @@ function openMenu(event: MouseEvent) {
 
 /* 14 on regular weight, and the same 26px box the 4/8 padding makes of it. */
 .title {
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 18px;
   letter-spacing: 0;

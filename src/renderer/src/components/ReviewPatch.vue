@@ -451,13 +451,13 @@ function cancel() {
 .large-diff-title {
   margin-block-end: 4px;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
 .large-diff-meta {
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   /* Two long numbers in a narrow panel: better broken than overflowing. */
   word-break: break-word;
 }
@@ -481,7 +481,7 @@ function cancel() {
   border: 1px solid transparent;
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-xs-border);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 500;
   transition: background 0.12s;
 }
@@ -494,7 +494,7 @@ function cancel() {
   display: flex;
   flex-direction: column;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--code-font-scale, 1));
   line-height: 1.6;
 }
 
@@ -653,7 +653,7 @@ function cancel() {
   width: 100%;
   margin: 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1.4;
   letter-spacing: -0.04px;
@@ -664,7 +664,7 @@ function cancel() {
 .note-meta,
 .note-footer-meta {
   color: var(--text-weaker);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: 0.05px;
@@ -708,7 +708,7 @@ function cancel() {
 .note-label {
   width: 100%;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -727,7 +727,7 @@ function cancel() {
   border-radius: 6px;
   outline: none;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   resize: vertical;
 }
 
@@ -760,7 +760,7 @@ function cancel() {
   padding: 0 10px;
   color: var(--text-base);
   border-radius: var(--radius-sm);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .note-btn:hover {

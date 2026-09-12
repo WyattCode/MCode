@@ -82,7 +82,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.13px;
@@ -101,7 +101,7 @@ h2 {
   background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
   border: 0;
   border-radius: var(--radius-md);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .field:focus {
@@ -120,7 +120,7 @@ footer {
   padding: 0 14px;
   color: var(--text-base);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .ghost:hover {
@@ -134,7 +134,7 @@ footer {
   color: var(--surface-base);
   background: var(--text-strong);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 

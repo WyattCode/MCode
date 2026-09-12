@@ -1664,7 +1664,7 @@ onBeforeUnmount(() => observer?.disconnect())
   padding: 0 12px;
   color: var(--text-weak);
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   white-space: nowrap;
   transition: background 0.12s, color 0.12s;
 }
@@ -1834,7 +1834,7 @@ onBeforeUnmount(() => observer?.disconnect())
 .side-title {
   padding-inline-start: 8px;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -1883,7 +1883,7 @@ onBeforeUnmount(() => observer?.disconnect())
   border: none;
   outline: none;
   font: inherit;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .search input::placeholder {
@@ -1985,7 +1985,7 @@ onBeforeUnmount(() => observer?.disconnect())
   overflow: hidden;
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
   /* The end of a path is the part that identifies it, so that is the end kept. */
@@ -2021,7 +2021,7 @@ onBeforeUnmount(() => observer?.disconnect())
   justify-content: center;
   width: 16px;
   height: 16px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -2108,7 +2108,7 @@ onBeforeUnmount(() => observer?.disconnect())
   flex: none;
   margin-inline-end: 8px;
   color: var(--text-weak);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1;
   letter-spacing: 0.05px;
@@ -2150,7 +2150,7 @@ onBeforeUnmount(() => observer?.disconnect())
   overflow: hidden;
   min-width: 0;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2202,7 +2202,7 @@ onBeforeUnmount(() => observer?.disconnect())
 .warn {
   margin-inline-end: 8px;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .toolbar .ghost {
@@ -2210,7 +2210,7 @@ onBeforeUnmount(() => observer?.disconnect())
   padding: 0 10px;
   color: var(--text-base);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .toolbar .ghost:hover {
@@ -2225,7 +2225,7 @@ onBeforeUnmount(() => observer?.disconnect())
   color: #fff;
   background: var(--error);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .file-head {
@@ -2241,7 +2241,7 @@ onBeforeUnmount(() => observer?.disconnect())
 .file-name {
   flex: none;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -2254,7 +2254,7 @@ onBeforeUnmount(() => observer?.disconnect())
   min-width: 0;
   margin-inline-start: -4px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -2270,7 +2270,7 @@ onBeforeUnmount(() => observer?.disconnect())
   gap: 8px;
   margin-inline-start: auto;
   padding-inline-start: 12px;
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1;
   letter-spacing: 0.05px;
@@ -2317,7 +2317,7 @@ onBeforeUnmount(() => observer?.disconnect())
   flex: none;
   margin-top: -8px;
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
   letter-spacing: -0.04px;
@@ -2327,7 +2327,7 @@ onBeforeUnmount(() => observer?.disconnect())
   flex: none;
   max-width: 282px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -2350,7 +2350,7 @@ onBeforeUnmount(() => observer?.disconnect())
   color: var(--button-primary-text);
   background: var(--button-primary);
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .notes-send:hover {
@@ -2362,7 +2362,7 @@ onBeforeUnmount(() => observer?.disconnect())
   padding: 0 10px;
   color: var(--text-weak);
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .notes-clear:hover {
@@ -2383,7 +2383,7 @@ onBeforeUnmount(() => observer?.disconnect())
 
 .init-title {
   color: var(--text-strong);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
 }
 
@@ -2391,7 +2391,7 @@ onBeforeUnmount(() => observer?.disconnect())
   max-width: 360px;
   margin-top: -12px;
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20px;
 }
 
@@ -2402,7 +2402,7 @@ onBeforeUnmount(() => observer?.disconnect())
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .init-go:hover:not(:disabled) {
@@ -2417,7 +2417,7 @@ onBeforeUnmount(() => observer?.disconnect())
   padding: 0 9px;
   color: var(--text-strong);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 530;
   transition: background 0.12s;
 }
@@ -2450,7 +2450,7 @@ onBeforeUnmount(() => observer?.disconnect())
   padding: 0 9px;
   color: var(--text-base);
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 
@@ -2462,12 +2462,12 @@ onBeforeUnmount(() => observer?.disconnect())
 .empty {
   padding: 18px 14px;
   color: var(--text-weaker);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .empty.small {
   padding: 16px 10px;
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -2497,7 +2497,7 @@ onBeforeUnmount(() => observer?.disconnect())
   margin-inline-start: -3px;
   border-radius: 3px;
   font-family: var(--font-mono);
-  font-size: 8.5px;
+  font-size: calc(8.5px * var(--ui-font-scale, 1));
   font-weight: 530;
   letter-spacing: -0.02em;
 }
@@ -2505,7 +2505,7 @@ onBeforeUnmount(() => observer?.disconnect())
 .name {
   overflow: hidden;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }

@@ -866,6 +866,22 @@ watch(
   { immediate: true },
 )
 
+/*
+ * The two sizes on the appearance page, carried the way MiMo carries them: a
+ * scale on the root that every size in the interface is multiplied by - text
+ * by the UI scale, code in the transcript and the diffs by the code one. At
+ * the defaults both are 1 and nothing moves.
+ */
+watch(
+  () => [app.config?.uiFontSize, app.config?.codeFontSize] as const,
+  ([ui, code]) => {
+    const style = document.documentElement.style
+    style.setProperty("--ui-font-scale", String((ui || 14) / 14))
+    style.setProperty("--code-font-scale", String((code || 12) / 12))
+  },
+  { immediate: true },
+)
+
 // The i18n table reads a module-level ref, so mirror config into it whenever
 // the setting changes - every t() call re-renders off that ref.
 watch(
@@ -3801,7 +3817,7 @@ onBeforeUnmount(() => {
 .boot-msg {
   max-width: 460px;
   color: var(--text-weak);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
   line-height: 1.65;
 }
 
@@ -3811,7 +3827,7 @@ onBeforeUnmount(() => {
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .boot-retry:hover {

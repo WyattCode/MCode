@@ -181,7 +181,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-weaker);
   border: 1px solid var(--border-weaker);
   border-radius: 4px;
-  font-size: 10px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
   line-height: 15px;
 }
 
@@ -220,7 +220,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 15px;
+  font-size: calc(15px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 20px;
   letter-spacing: -0.13px;
@@ -236,7 +236,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
   border-radius: var(--radius-md);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
 .add:hover {
@@ -269,7 +269,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .lead {
   margin: 4px 0 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 20px;
   letter-spacing: -0.04px;
@@ -303,7 +303,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   color: var(--text-strong);
   background: none;
   border: none;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   outline: none;
 }
 
@@ -318,7 +318,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   gap: 9px;
   padding: 16px 6px 6px;
   color: var(--text-weaker);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .row {
@@ -341,7 +341,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .row-name {
   flex: 1;
   color: var(--text-strong);
-  font-size: 13.5px;
+  font-size: calc(13.5px * var(--ui-font-scale, 1));
 }
 
 .switch {
@@ -381,7 +381,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .empty {
   padding: 26px 6px;
   color: var(--text-weaker);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   text-align: center;
 }
 </style>

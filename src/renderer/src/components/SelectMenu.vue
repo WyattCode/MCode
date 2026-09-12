@@ -235,7 +235,7 @@ onBeforeUnmount(() => {
   border-radius: 4px;
   outline: 1px solid transparent;
   outline-offset: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: outline-color 0.12s, background 0.12s;
 }
 
@@ -329,7 +329,7 @@ onBeforeUnmount(() => {
   color: var(--text-strong);
   text-align: start;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   letter-spacing: -0.04px;
   white-space: nowrap;

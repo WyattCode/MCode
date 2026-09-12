@@ -177,7 +177,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
 .slogan {
   margin: 22px 0 26px;
   color: var(--text-strong);
-  font-size: 18px;
+  font-size: calc(18px * var(--ui-font-scale, 1));
   font-weight: 600;
   line-height: 28.8px;
   letter-spacing: 0.4px;
@@ -198,7 +198,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
    * and this row, the same as between the wordmark and the box.
    */
   color: var(--text-weak);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .chip {
@@ -242,7 +242,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
   color: #fff;
   background: hsl(var(--h) 42% 46%);
   border-radius: var(--radius-sm);
-  font-size: 11px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 530;
   line-height: 1;
 }
@@ -268,7 +268,7 @@ const initial = computed(() => (name.value.match(/[a-z0-9]/i)?.[0] ?? name.value
 .missing {
   margin-top: 6px;
   color: var(--error);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-align: center;
 }
 </style>

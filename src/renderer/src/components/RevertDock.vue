@@ -181,7 +181,7 @@ async function restore(id: string) {
 .summary {
   flex-shrink: 0;
   color: var(--text-weaker);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   font-weight: 440;
 }
 
@@ -189,7 +189,7 @@ async function restore(id: string) {
 .preview {
   overflow: hidden;
   color: var(--text-base);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -229,7 +229,7 @@ async function restore(id: string) {
   min-width: 0;
   overflow: hidden;
   color: var(--text-base);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--ui-font-scale, 1));
   line-height: 17px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -239,7 +239,7 @@ async function restore(id: string) {
   flex-shrink: 0;
   padding: 3px 8px;
   color: var(--text-base);
-  font-size: 11.5px;
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
   background: var(--button-neutral);
   border: 1px solid var(--border-weaker);
   border-radius: 6px;

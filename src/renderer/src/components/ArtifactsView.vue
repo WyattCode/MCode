@@ -205,7 +205,7 @@ async function open(row: Row) {
 .title {
   margin: 0;
   color: var(--text-strong);
-  font-size: 24px;
+  font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 30px;
 }
@@ -213,7 +213,7 @@ async function open(row: Row) {
 .subtitle {
   margin: 4px 0 0;
   color: var(--text-base);
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 20px;
 }
@@ -238,7 +238,7 @@ async function open(row: Row) {
   background: transparent;
   border: 0;
   outline: none;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 22.4px;
 }
 
@@ -260,7 +260,7 @@ async function open(row: Row) {
   padding: 0 10px;
   color: var(--text-base);
   border-radius: 10px;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   transition: background 0.12s, color 0.12s;
 }
@@ -276,7 +276,7 @@ async function open(row: Row) {
 
 .chip-count {
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
@@ -333,7 +333,7 @@ async function open(row: Row) {
 
 .file-name {
   overflow: hidden;
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
   text-overflow: ellipsis;
@@ -350,7 +350,7 @@ async function open(row: Row) {
   gap: 8px;
   min-width: 0;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 18px;
 }
 
@@ -372,7 +372,7 @@ async function open(row: Row) {
 .when {
   flex-shrink: 0;
   color: var(--text-weak);
-  font-size: 12px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 18px;
 }
 
@@ -387,7 +387,7 @@ async function open(row: Row) {
   padding: 0 8px;
   color: var(--text-base);
   border-radius: 8px;
-  font-size: 13px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
   transition: background 0.12s, color 0.12s;
 }
 
@@ -405,7 +405,7 @@ async function open(row: Row) {
 .empty {
   margin: 96px 0 0;
   color: var(--text-base);
-  font-size: 14px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 22.4px;
   text-align: center;
 }
