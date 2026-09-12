@@ -18,9 +18,25 @@ export interface AppIconSpec {
   tile: [string, string]
   /** The ribbon, along the same diagonal. */
   ink: [string, string]
+  /**
+   * The app's own original artwork rather than a drawing of it.
+   *
+   * The mark this app shipped with is a painted image, not these paths, and
+   * redrawing it would be a different icon wearing its name. The one entry
+   * marked this way is shown from the file; the rest are drawn.
+   */
+  original?: boolean
 }
 
 export const APP_ICONS: AppIconSpec[] = [
+  /* First and default: the mark the app has always had. */
+  {
+    id: "classic",
+    name: "Classic",
+    tile: ["#1e1e22", "#0b0b0d"],
+    ink: ["#e4e9f2", "#8ea4c6"],
+    original: true,
+  },
   { id: "graphite", name: "Graphite", tile: ["#1e1e22", "#0b0b0d"], ink: ["#e4e9f2", "#8ea4c6"] },
   { id: "paper", name: "Paper", tile: ["#fbfbfc", "#e6e7ea"], ink: ["#3f4654", "#1b1d22"] },
   { id: "indigo", name: "Indigo", tile: ["#2b3570", "#141a3c"], ink: ["#eef1ff", "#a7b4ee"] },
@@ -29,7 +45,7 @@ export const APP_ICONS: AppIconSpec[] = [
   { id: "brass", name: "Brass", tile: ["#1e1b14", "#0c0a07"], ink: ["#f6e3b0", "#c69a48"] },
 ]
 
-export const DEFAULT_APP_ICON = "graphite"
+export const DEFAULT_APP_ICON = "classic"
 
 export function appIconByID(id: string): AppIconSpec {
   return APP_ICONS.find((entry) => entry.id === id) ?? APP_ICONS[0]

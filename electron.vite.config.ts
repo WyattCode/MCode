@@ -29,6 +29,12 @@ export default defineConfig({
       alias: {
         "@": resolve("src/renderer/src"),
         "@shared": resolve("src/shared"),
+        /*
+         * The app's own artwork, which both halves need: the settings gallery
+         * draws the original mark from the same file the main process hands
+         * the window, rather than keeping a second copy that could drift.
+         */
+        "@resources": resolve("resources"),
       },
     },
     build: {

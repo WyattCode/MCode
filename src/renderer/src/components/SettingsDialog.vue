@@ -21,6 +21,7 @@ import { projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AppPath, AppPaths, UsageSummary, Worktree } from "@shared/protocol"
+import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
@@ -224,8 +225,17 @@ function setVoiceModel(value: string) {
 /* The colourways the mark comes in, drawn from the one module that defines them. */
 const appIcon = computed(() => app.config?.appIcon ?? DEFAULT_APP_ICON)
 
-/* The gallery's own tiles: the same drawing the icon file is rasterised from. */
-const iconTiles = APP_ICONS.map((spec) => ({ spec, svg: appIconSvg(spec, 44) }))
+/*
+ * The gallery's tiles. The drawn ones come from the same string their PNGs are
+ * rasterised from; the original comes from its own file, because it is a
+ * painted mark rather than these paths and a redrawing of it would be a
+ * different icon wearing its name.
+ */
+const iconTiles = APP_ICONS.map((spec) => ({
+  spec,
+  svg: spec.original ? "" : appIconSvg(spec, 44),
+  image: spec.original ? classicIcon : "",
+}))
 
 /* The segments each of the two appearance choices offers, in the order shown. */
 const MOTION_MODES = ["system", "on", "off"] as const
@@ -1129,7 +1139,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   :aria-label="tile.spec.name"
                   @click="app.patchConfig({ appIcon: tile.spec.id })"
                 >
-                  <span class="tile-art" v-html="tile.svg" />
+                  <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
+                  <span v-else class="tile-art" v-html="tile.svg" />
                   <span class="tile-name">{{ tile.spec.name }}</span>
                 </button>
               </div>
