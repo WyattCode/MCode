@@ -288,6 +288,26 @@ async function copyReply(turn: Turn) {
   }, 1600)
 }
 
+/** Turns whose run of tool calls is folded away, by the line above the answer. */
+const folded = ref(new Set<string>())
+
+function foldRun(id: string) {
+  const next = new Set(folded.value)
+  if (!next.delete(id)) next.add(id)
+  folded.value = next
+}
+
+/** Whether this turn did any work worth folding. */
+function hasTools(turn: Turn): boolean {
+  return turn.parts.some((part) => part.type === "tool")
+}
+
+/** What the answer shows: its own words always, its steps unless folded. */
+function shown(turn: Turn): Row[] {
+  const all = rows(turn.parts)
+  return folded.value.has(turn.id) ? all.filter((row) => row.kind !== "tools") : all
+}
+
 function elapsed(turn: Turn): string | undefined {
   if (!turn.started || !turn.completed) return undefined
   const seconds = Math.max(1, Math.round((turn.completed - turn.started) / 1000))
@@ -563,7 +583,38 @@ defineExpose({ stepMessage })
         </div>
 
         <div v-if="turn.parts.length || turn.error" class="msg assistant">
-          <div v-for="row in rows(turn.parts)" :key="row.id" class="part">
+          <!--
+            What the turn did, above the answer rather than under it. MiMo
+            states it there and keeps it; this app had the same figure in a
+            footer that only appeared under the pointer. The chevron folds the
+            run of tool calls away - offered, not imposed, so an answer still
+            arrives with its work visible.
+          -->
+          <div v-if="turn.started" class="run">
+            <span class="run-label">{{ turn.completed ? t("turn.processed") : t("turn.processing") }}</span>
+            <span v-if="elapsed(turn)" class="run-time">{{ elapsed(turn) }}</span>
+            <button
+              v-if="hasTools(turn)"
+              class="run-fold"
+              :aria-expanded="!folded.has(turn.id)"
+              :aria-label="t('turn.steps')"
+              @click="foldRun(turn.id)"
+            >
+              <svg
+                class="run-chev"
+                :class="{ folded: folded.has(turn.id) }"
+                width="13"
+                height="13"
+                viewBox="0 0 16 16"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
+
+          <div v-for="row in shown(turn)" :key="row.id" class="part">
             <ToolGroup v-if="row.kind === 'tools'" :parts="row.parts" />
             <ReasoningPart v-else-if="row.part.type === 'reasoning'" :part="row.part" />
             <ToolPart v-else-if="row.part.type === 'tool'" :part="row.part" />
@@ -1002,5 +1053,55 @@ defineExpose({ stepMessage })
   .inner {
     max-width: 764px;
   }
+}
+
+/*
+ * 2.0: MiMo's line above an answer - 14/500 in the base colour, the time a
+ * size down and fainter beside it, and twelve clear of the first line so the
+ * two sit thirty apart as they do there.
+ */
+.run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--text-base);
+}
+
+.run-label {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.run-time {
+  color: var(--text-weak);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.run-fold {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-weak);
+  border-radius: 6px;
+}
+
+.run-fold:hover {
+  color: var(--text-base);
+  background: var(--surface-hover);
+}
+
+/* Pointing down while the steps are shown, and along the line once folded. */
+.run-chev {
+  transform: rotate(90deg);
+  transition: transform 0.12s;
+}
+
+.run-chev.folded {
+  transform: rotate(0deg);
 }
 </style>
