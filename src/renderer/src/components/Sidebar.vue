@@ -236,7 +236,7 @@ function toggleProject(directory: string) {
                   </svg>
                 </span>
                 <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+                  <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
                 <span class="row-label task-label">{{ title(session.title) }}</span>
               </button>
@@ -247,7 +247,7 @@ function toggleProject(directory: string) {
                 @click.stop="app.togglePinned(session.id)"
               >
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+                  <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
               </button>
               <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
@@ -286,7 +286,7 @@ function toggleProject(directory: string) {
                   </svg>
                 </span>
             <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
             <span class="row-label task-label">{{ title(session.title) }}</span>
           </button>
@@ -297,7 +297,7 @@ function toggleProject(directory: string) {
             @click.stop="app.togglePinned(session.id)"
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
           </button>
           <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">

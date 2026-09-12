@@ -1119,7 +1119,7 @@ const deletingMany = ref<string[]>()
  */
 const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean; danger?: boolean }[] = [
   { id: "session.rename", label: "common.rename", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" },
-  { id: "row.pin", label: "menu.pin", icon: "M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" },
+  { id: "row.pin", label: "menu.pin", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" },
   {
     id: "row.unread",
     label: "menu.markUnread",
@@ -1128,7 +1128,7 @@ const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean
   {
     id: "row.continue",
     label: "menu.continueNew",
-    icon: "M4.6 3.2v6.2a2 2 0 0 0 2 2h4.8M9.2 8.8l2.4 2.6-2.4 2.6M4.6 3.2a1.2 1.2 0 1 0 0-.1z",
+    icon: "M5.4 3.4v5.2a2 2 0 0 0 2 2h3.2M8.8 8.6l2.4 2-2.4 2M5.4 3.4a1.1 1.1 0 1 0-2.2 0 1.1 1.1 0 0 0 2.2 0z",
   },
   {
     id: "row.move",
