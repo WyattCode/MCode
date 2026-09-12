@@ -22,6 +22,7 @@ defineProps<{ page?: string }>()
 
 const emit = defineEmits<{
   artifacts: []
+  menu: [sessionID: string, x: number, y: number]
   newTask: []
   plugins: []
   search: []
@@ -42,6 +43,18 @@ const name = (directory: string) =>
   app.config?.projectNames?.[directory] || directory.split(/[\\/]/).filter(Boolean).pop() || directory
 
 const title = (text?: string) => (text && text.trim() ? text : t("side.newTask"))
+
+/* Pinned conversations rise to the top of whichever list they are in. */
+const byPinned = (entries: typeof app.sessions) =>
+  [...entries].sort((a, b) => Number(app.isPinned(b.id)) - Number(app.isPinned(a.id)))
+
+/** Where the row's own menu opens from: the button, or the pointer. */
+function openMenu(sessionID: string, event: MouseEvent) {
+  const from = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  const x = event.clientX || (from ? Math.round(from.left) : 0)
+  const y = event.clientY || (from ? Math.round(from.bottom + 4) : 0)
+  emit("menu", sessionID, x, y)
+}
 
 const projects = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
@@ -182,15 +195,27 @@ function toggleProject(directory: string) {
             </button>
           </div>
           <template v-if="isExpanded(project.directory)">
-            <button
-              v-for="session in project.sessions.slice(0, 8)"
+            <div
+              v-for="session in byPinned(project.sessions).slice(0, 8)"
               :key="session.id"
               class="row task"
               :class="{ on: app.currentID === session.id }"
-              @click="emit('open', session.id)"
+              @contextmenu.prevent="openMenu(session.id, $event)"
             >
-              <span class="row-label task-label">{{ title(session.title) }}</span>
-            </button>
+              <button class="row-open" @click="emit('open', session.id)">
+                <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+                </svg>
+                <span class="row-label task-label">{{ title(session.title) }}</span>
+              </button>
+              <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                  <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                  <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+                </svg>
+              </button>
+            </div>
           </template>
         </template>
       </template>
@@ -205,15 +230,27 @@ function toggleProject(directory: string) {
       </div>
       <template v-if="recentOpen">
         <div v-if="recent.length === 0" class="empty">{{ t("side.noTasks") }}</div>
-        <button
-          v-for="session in recent"
+        <div
+          v-for="session in byPinned(recent)"
           :key="session.id"
           class="row task"
           :class="{ on: app.currentID === session.id }"
-          @click="emit('open', session.id)"
+          @contextmenu.prevent="openMenu(session.id, $event)"
         >
-          <span class="row-label task-label">{{ title(session.title) }}</span>
-        </button>
+          <button class="row-open" @click="emit('open', session.id)">
+            <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+            </svg>
+            <span class="row-label task-label">{{ title(session.title) }}</span>
+          </button>
+          <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+              <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+              <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
       </template>
     </div>
 
@@ -459,5 +496,51 @@ function toggleProject(directory: string) {
   color: var(--text-base);
   background: var(--surface-layer);
   border-radius: 50%;
+}
+
+/*
+ * A row is now two controls in one line: the conversation, and the menu that
+ * belongs to it. The menu keeps out of the way until the row is under the
+ * pointer or holds the keyboard, which is how MiMo shows its own.
+ */
+.row-open {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  color: inherit;
+  text-align: start;
+}
+
+.pin {
+  flex-shrink: 0;
+  color: var(--text-weak);
+}
+
+.row-menu {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-inline-start: 4px;
+  color: var(--text-weak);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.row:hover .row-menu,
+.row-menu:focus-visible,
+.row.on .row-menu {
+  opacity: 1;
+}
+
+.row-menu:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 </style>

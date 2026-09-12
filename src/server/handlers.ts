@@ -165,6 +165,16 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { session: await runtime.sessions.update(request.sessionID, { title: request.title }) }
 
     /*
+     * The conversation stays as it is; only the project it works in changes.
+     * Nothing on disk moves - a session's transcript lives in this app's own
+     * store, not in the project - so this is the one field and nothing else.
+     */
+    case "session.move":
+      return {
+        session: await runtime.sessions.update(request.sessionID, { directory: request.directory }),
+      } satisfies Handled<"session.move">
+
+    /*
      * A second conversation that starts where this one was, rather than a blank
      * one. The reference's own endpoint takes the same two arguments.
      */

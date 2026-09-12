@@ -998,6 +998,8 @@ export type Request =
   | { type: "session.agent"; sessionID: string; agent: AgentName }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
+  /* Which project a conversation belongs to, which is the directory it works in. */
+  | { type: "session.move"; sessionID: string; directory: string }
   | { type: "session.fork"; sessionID: string; messageID: string }
   | { type: "session.model"; sessionID: string; model: ModelRef }
   | { type: "session.effort"; sessionID: string; effort?: Effort }
@@ -1149,6 +1151,7 @@ export interface ResponseMap {
   "session.history": { history: HistoryDepth }
   "session.archive": { session: SessionInfo }
   "session.rename": { session: SessionInfo }
+  "session.move": { session: SessionInfo }
   "session.fork": { session: SessionInfo }
   "session.model": { session: SessionInfo }
   "session.effort": { session: SessionInfo }

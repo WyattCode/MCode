@@ -20,7 +20,11 @@ import Composer from "./Composer.vue"
  * no longer leaves an empty session behind it; the picker underneath says which
  * project that task will be created in.
  */
-defineProps<{ commands?: { id: string; title: string; hint?: string; run: () => void }[] }>()
+const props = defineProps<{
+  commands?: { id: string; title: string; hint?: string; run: () => void }[]
+  /** The project a task started from here should go into, when one was named. */
+  directory?: string
+}>()
 
 /* What the box asks the window for, passed straight through. */
 const emit = defineEmits<{
@@ -46,7 +50,20 @@ const projects = computed(() => {
 })
 
 const picked = ref<string>()
-const directory = computed(() => picked.value ?? projects.value[0] ?? app.config?.directory ?? undefined)
+
+/*
+ * What the next task will be created in: whatever the reader last picked here,
+ * else what the window asked for, else the project used most recently.
+ */
+const chosen = computed(
+  () => picked.value ?? props.directory ?? projects.value[0] ?? app.config?.directory ?? undefined,
+)
+
+/* A fresh request from the window replaces a stale pick from a previous visit. */
+watch(
+  () => props.directory,
+  () => (picked.value = undefined),
+)
 const options = computed(() => projects.value.map((entry) => ({ value: entry, label: name(entry) })))
 
 /** The box below, so a starting point can be put into it rather than run. */
@@ -61,7 +78,7 @@ const box = ref<InstanceType<typeof Composer>>()
  */
 const starters = computed(() => app.commands.slice(0, 3))
 
-watch(directory, (next) => next && void app.refreshCommands(next), { immediate: true })
+watch(chosen, (next) => next && void app.refreshCommands(next), { immediate: true })
 
 function start(name: string) {
   // A starting point names no files, so it carries no chips and no mentions.
@@ -81,7 +98,7 @@ function start(name: string) {
         <Composer
           ref="box"
           :commands="commands"
-          :start-directory="directory"
+          :start-directory="chosen"
           @open-settings="emit('open-settings')"
           @connect="emit('connect')"
           @manage-models="emit('manage-models')"
@@ -91,7 +108,7 @@ function start(name: string) {
 
       <div v-if="options.length" class="enter">
         <SelectMenu
-          :model-value="directory ?? ''"
+          :model-value="chosen ?? ''"
           :options="options"
           :aria-label="t('home.enterProject')"
           @update:model-value="picked = $event"

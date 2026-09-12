@@ -70,6 +70,9 @@ const leftPanel = ref(true)
  * window gave half its width to a panel that, on a project with no changes,
  * said only that there were none.
  */
+/* The project a task typed on the home screen will be created in. */
+const homeDirectory = ref<string>()
+
 const rightPanel = ref(false)
 
 /*
@@ -364,7 +367,7 @@ async function createWorkspace(directory: string, name: string) {
       name: name.trim(),
     })
     if (!made) return
-    await app.create(made.directory)
+    startIn(made.directory)
     notify(t("workspace.created", { name: made.branch }))
   } catch (err) {
     notifyFailure(t("workspace.failed"), err instanceof Error ? err.message : String(err))
@@ -442,7 +445,7 @@ async function confirmDeleteWorkspace() {
   try {
     await app.client?.request({ type: "workspace.remove", directory: asked.from, target: asked.target })
     // The directory the session was in is gone, so it cannot be left open on it.
-    await app.create(asked.from)
+    startIn(asked.from)
     notify(t("workspace.deleted"))
   } catch (err) {
     notifyFailure(t("workspace.deleteFailed"), err instanceof Error ? err.message : String(err))
@@ -472,7 +475,7 @@ async function switchWorkspace() {
   // One other checkout needs no picker; more than one goes through the palette
   // the same way projects do.
   if (others.length === 1) {
-    await app.create(others[0].directory)
+    startIn(others[0].directory)
     return
   }
   workspaceChoices.value = others.map((entry) => entry.directory)
@@ -649,6 +652,21 @@ async function runShellCommand(command: string) {
  * are the same list with a different filter, so they are the same surface here
  * rather than three dialogs that would drift apart.
  */
+/*
+ * The project picker answers two questions: which project a new task starts
+ * in, and which project a conversation moves to. Which one is being asked is
+ * held in `movingSession` while the picker is up.
+ */
+async function pickedProject(directory: string) {
+  const moving = movingSession.value
+  movingSession.value = undefined
+  if (moving) {
+    await app.move(moving, directory)
+    return
+  }
+  startIn(directory)
+}
+
 function openPalette(mode: PaletteMode = "all") {
   paletteMode.value = mode
   paletteOpen.value = true
@@ -899,14 +917,24 @@ async function openProject(directory: string) {
  * one. Both are reachable from the project panel, and a button labelled "new
  * session" reusing an old one reads as the button doing nothing.
  */
+/*
+ * Starting a task no longer creates anything: it puts the home screen up with
+ * that project chosen, and the session is created by the send. A session made
+ * on the way to the screen is a row in the side column that nobody asked for -
+ * and MiMo has none of them.
+ */
+function startIn(directory?: string) {
+  homeDirectory.value = directory
+  goHome()
+  void focusComposer()
+}
+
 async function newSessionIn(directory: string) {
   const closed = app.config?.closedProjects ?? []
   if (closed.includes(directory)) {
     await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
   }
-  await app.create(directory)
-  view.value = "session"
-  await focusComposer()
+  startIn(directory)
 }
 
 async function browse() {
@@ -928,10 +956,8 @@ async function selectTab(id: string) {
 }
 
 /** Starts a task from the 2.0 home screen, in the project picked there. */
-async function newSession() {
-  await app.create(app.current?.directory)
-  view.value = "session"
-  await focusComposer()
+function newSession() {
+  startIn(app.current?.directory)
 }
 
 /**
@@ -1001,7 +1027,15 @@ const deletingSession = ref<string>()
 const appMenu = ref<{ x: number; y: number }>()
 
 /** Where the session's own menu was opened from, if it is open. */
-const sessionMenu = ref<{ x: number; y: number }>()
+const sessionMenu = ref<{ x: number; y: number; sessionID?: string }>()
+
+/* Which conversation the open menu is about: the row's, else the open one. */
+const menuSession = computed(() =>
+  app.sessions.find((entry) => entry.id === (sessionMenu.value?.sessionID ?? app.currentID)),
+)
+
+/* Set while the project picker is being used to move a conversation. */
+const movingSession = ref<string>()
 
 /**
  * The session menu's contents: what each entry does comes from the palette's
@@ -1018,12 +1052,43 @@ const sessionMenu = ref<{ x: number; y: number }>()
  * values carry none - and marks the entries that open something rather than
  * acting at once.
  */
-const SESSION_MENU: { id: string; label: string; asks?: boolean }[] = [
+const SESSION_MENU: { id: string; label: string; asks?: boolean; divided?: boolean }[] = [
   { id: "session.rename", label: "common.rename" },
-  { id: "session.export", label: "common.export", asks: true },
+  { id: "row.pin", label: "menu.pin" },
+  { id: "row.unread", label: "menu.markUnread" },
+  { id: "row.continue", label: "menu.continueNew" },
+  { id: "row.move", label: "menu.moveToProject", asks: true, divided: true },
   { id: "session.archive", label: "common.archive" },
-  { id: "session.delete", label: "common.delete", asks: true },
+  { id: "row.copyDirectory", label: "menu.copyDirectory", divided: true },
+  { id: "session.export", label: "common.export", asks: true },
+  { id: "session.delete", label: "common.delete", asks: true, divided: true },
 ]
+
+/*
+ * The rows that are this menu's own rather than commands: they name a
+ * conversation, where a command acts on whichever one is open. A command
+ * cannot take an argument here - the palette and the keyboard reach the same
+ * table - so these live beside it and the menu dispatches both.
+ */
+const ROW_ACTIONS: Record<string, (sessionID: string) => void | Promise<void>> = {
+  "row.pin": (sessionID) => app.togglePinned(sessionID),
+  "row.unread": (sessionID) => app.markUnread(sessionID),
+  "row.continue": async (sessionID) => {
+    if (app.currentID !== sessionID) await app.open(sessionID)
+    const last = app.messages[app.messages.length - 1]
+    if (last) await app.forkFrom(last.id)
+  },
+  "row.move": (sessionID) => {
+    movingSession.value = sessionID
+    openPalette("projects")
+  },
+  "row.copyDirectory": (sessionID) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target) return
+    window.mcode.setClipboardText(target.directory)
+    notify(t("menu.copiedDirectory"), target.directory)
+  },
+}
 
 /*
  * Built from the UNFILTERED list, because `commands` drops anything disabled
@@ -1034,6 +1099,17 @@ const SESSION_MENU: { id: string; label: string; asks?: boolean }[] = [
  */
 const sessionMenuItems = computed(() =>
   SESSION_MENU.map((entry) => {
+    const target = menuSession.value
+    if (ROW_ACTIONS[entry.id]) {
+      const pinned = target ? app.isPinned(target.id) : false
+      const label = entry.id === "row.pin" ? t(pinned ? "menu.unpin" : "menu.pin") : t(entry.label)
+      return {
+        key: entry.id,
+        label: label + (entry.asks ? "…" : ""),
+        enabled: Boolean(target),
+        divided: Boolean(entry.divided),
+      }
+    }
     const command = bindableCommands.value.find((item) => item.id === entry.id)
     if (!command) return undefined
     const short = t(entry.label)
@@ -1042,8 +1118,8 @@ const sessionMenuItems = computed(() =>
       // A key with no string of its own falls back to the command's sentence
       // rather than showing the key, which is what `t` returns when it misses.
       label: (short === entry.label ? command.title : short) + (entry.asks ? "…" : ""),
-      enabled: command.enabled,
-      divided: entry.id === "session.delete",
+      enabled: command.enabled && Boolean(target),
+      divided: Boolean(entry.divided),
     }
   }).filter((item): item is { key: string; label: string; enabled: boolean; divided: boolean } => Boolean(item)),
 )
@@ -1090,9 +1166,26 @@ function runAppMenu(key: string) {
   }
 }
 
-function runSessionMenu(key: string) {
+/*
+ * A row's menu acts on the conversation it names. The entries that have to
+ * show it - renaming edits the header, exporting writes what is on screen -
+ * open it first and then run the command that already exists, so there is one
+ * implementation of each rather than two that can drift.
+ */
+async function runSessionMenu(key: string) {
+  const target = menuSession.value?.id
   sessionMenu.value = undefined
-  void commands.value.find((entry) => entry.id === key)?.run()
+  if (!target) return
+  const own = ROW_ACTIONS[key]
+  if (own) {
+    await own(target)
+    return
+  }
+  if (app.currentID !== target) {
+    view.value = "session"
+    await app.open(target)
+  }
+  await commands.value.find((entry) => entry.id === key)?.run()
 }
 
 async function confirmDeleteSession() {
@@ -2056,7 +2149,7 @@ const bindableCommands = computed(() => {
       title: t("key.openProjectNumbered", { name: projectName(directory, app.config?.projectNames) }),
       hint: `Ctrl+${at + 1}`,
       hidden: true,
-      run: () => void app.create(directory),
+      run: () => startIn(directory),
     })),
     {
       id: "session.fork",
@@ -2318,7 +2411,7 @@ function onKeydown(event: KeyboardEvent) {
     const directory = openProjects.value[Number(event.key) - 1]
     if (!directory) return
     event.preventDefault()
-    void app.create(directory)
+    startIn(directory)
     return
   }
 
@@ -2732,6 +2825,7 @@ onBeforeUnmount(() => {
         :page="view"
         @newTask="goHome"
         @artifacts="goArtifacts"
+        @menu="(id, x, y) => (sessionMenu = { x, y, sessionID: id })"
         @plugins="mcpOpen = true"
         @search="paletteOpen = true"
         @back="back"
@@ -2767,6 +2861,7 @@ onBeforeUnmount(() => {
 
         <HomeHero
           v-else-if="isHome"
+          :directory="homeDirectory"
           :commands="commands"
           @open-settings="openSettings"
           @connect="connectOpen = true"
@@ -2919,7 +3014,7 @@ onBeforeUnmount(() => {
       :projects="workspaceChoices.length ? workspaceChoices : openProjects"
       @close="paletteOpen = false; workspaceChoices = []"
       @file="composer?.mention($event)"
-      @project="app.create($event)"
+      @project="pickedProject"
       @message="app.forkFrom($event)"
     />
 

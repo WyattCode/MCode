@@ -935,6 +935,22 @@ export const useApp = defineStore("app", () => {
     await api().request({ type: "session.rename", sessionID, title })
   }
 
+  /** Which project a conversation belongs to. The transcript does not move. */
+  async function move(sessionID: string, directory: string) {
+    await api().request({ type: "session.move", sessionID, directory })
+    if (directory !== commandsFor && currentID.value === sessionID) void refreshCommands(directory)
+  }
+
+  /*
+   * Marked unread by hand, which is the one way into this set that is not an
+   * answer arriving while the reader was somewhere else. Opening the session
+   * clears it again, as it always did.
+   */
+  function markUnread(sessionID: string) {
+    if (unseen.value.has(sessionID)) return
+    unseen.value = new Set(unseen.value).add(sessionID)
+  }
+
   /** Returns false when the message was not accepted, so the draft can survive. */
   async function send(text: string, attachments: Attachment[] = []): Promise<boolean> {
     // An attachment with no words is still something to answer.
@@ -1259,6 +1275,8 @@ export const useApp = defineStore("app", () => {
     create,
     remove,
     rename,
+    move,
+    markUnread,
     archive,
     compact,
     history,
