@@ -89,16 +89,6 @@ function start(name: string) {
         />
       </div>
 
-      <div v-if="starters.length" class="starters" :aria-label="t('home.starters')">
-        <button v-for="command in starters" :key="command.name" class="starter" @click="start(command.name)">
-          <svg class="starter-mark" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2.8 4.2h10.4M2.8 8h10.4M2.8 11.8h6.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-          </svg>
-          <span class="starter-name">/{{ command.name }}</span>
-          <span v-if="command.description" class="starter-note">{{ command.description }}</span>
-        </button>
-      </div>
-
       <div v-if="options.length" class="enter">
         <SelectMenu
           :model-value="directory ?? ''"
@@ -117,6 +107,18 @@ function start(name: string) {
             </svg>
           </template>
         </SelectMenu>
+      </div>
+
+      <!-- Under the project row, which is the order MiMo reads in: the box,
+           what it points at, and then what you might start with. -->
+      <div v-if="starters.length" class="starters" :aria-label="t('home.starters')">
+        <button v-for="command in starters" :key="command.name" class="starter" @click="start(command.name)">
+          <svg class="starter-mark" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.8 4.2h10.4M2.8 8h10.4M2.8 11.8h6.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+          <span class="starter-name">/{{ command.name }}</span>
+          <span v-if="command.description" class="starter-note">{{ command.description }}</span>
+        </button>
       </div>
     </div>
   </div>
