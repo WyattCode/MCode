@@ -30,4 +30,6 @@ export interface MenuItem {
   icon?: string
   /** Drawn in the error colour: the row that destroys something. */
   danger?: boolean
+  /** The shortcut that does the same, shown at the far end of the row. */
+  hint?: string
 }

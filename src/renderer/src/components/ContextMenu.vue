@@ -88,6 +88,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
           </svg>
         </span>
         {{ item.label }}
+        <span v-if="item.hint" class="hint">{{ item.hint }}</span>
       </button>
     </template>
   </div>
@@ -193,6 +194,16 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 }
 
 /* A glyph against every row, as MiMo draws its conversation menu. */
+/* A shortcut beside its row, pushed to the far edge so a column of them lines up. */
+.hint {
+  margin-inline-start: auto;
+  padding-inline-start: 20px;
+  color: var(--text-weak);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .glyph {
   flex-shrink: 0;
   color: var(--text-base);

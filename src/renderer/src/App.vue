@@ -1134,7 +1134,7 @@ const deletingSession = ref<string>()
 const appMenu = ref<{ x: number; y: number }>()
 
 /** Where the session's own menu was opened from, if it is open. */
-const sessionMenu = ref<{ x: number; y: number; sessionID?: string }>()
+const sessionMenu = ref<{ x: number; y: number; sessionID?: string; header?: boolean }>()
 
 /* Which conversation the open menu is about: the row's, else the open one. */
 const menuSession = computed(() =>
@@ -1216,6 +1216,33 @@ const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean
   },
 ]
 
+/* A row of either conversation menu. */
+type MenuRow = { id: string; label: string; icon: string; hint?: string; divided?: boolean; danger?: boolean }
+
+/*
+ * The conversation header's own menu, which MiMo keeps shorter than a row's:
+ * pin, rename, archive and the side chat with their shortcuts beside them, then
+ * copy and branch, then delete. Copy is the whole conversation as Markdown;
+ * branch carries it all into a new conversation.
+ */
+const HEADER_MENU: MenuRow[] = [
+  { id: "row.pin", label: "menu.pin", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4", hint: "Ctrl+Alt+P" },
+  { id: "session.rename", label: "menu.renameConversation", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z", hint: "Ctrl+Alt+R" },
+  { id: "session.archive", label: "menu.archive", icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2", hint: "Ctrl+Alt+A" },
+  { id: "session.side", label: "menu.openSideChat", icon: "M2.4 3h11.2v10H2.4zM9.6 3v10", hint: "Ctrl+Alt+S" },
+  { id: "row.copyMarkdown", label: "menu.copyConversation", icon: "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2", divided: true },
+  { id: "row.continue", label: "menu.branch", icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z" },
+  { id: "session.delete", label: "menu.delete", icon: "M3 4.4h10M6.4 4.4V2.8h3.2v1.6M4.4 4.4l.7 8.4h5.8l.7-8.4M6.8 6.8v3.8M9.2 6.8v3.8", divided: true, danger: true },
+]
+
+/*
+ * The shortcut a row shows is the one that will work: the reader's own
+ * binding when they have moved it, else the default. Pinning is a row action
+ * here and a command on the shortcuts page, so it is looked up by that name.
+ */
+const hintFor = (entry: MenuRow) =>
+  entry.hint && (app.config?.keybinds?.[entry.id === "row.pin" ? "session.pin" : entry.id] || entry.hint)
+
 /*
  * The rows that are this menu's own rather than commands: they name a
  * conversation, where a command acts on whichever one is open. A command
@@ -1237,6 +1264,11 @@ const ROW_ACTIONS: Record<string, (sessionID: string) => void | Promise<void>> =
     movingSession.value = sessionID
     openPalette("projects")
   },
+  "row.copyMarkdown": async (sessionID) => {
+    if (app.currentID !== sessionID) await app.open(sessionID)
+    window.mcode.setClipboardText(transcriptMarkdown())
+    notify(t("menu.copiedConversation"))
+  },
   "row.copyDirectory": (sessionID) => {
     const target = app.sessions.find((entry) => entry.id === sessionID)
     if (!target) return
@@ -1253,7 +1285,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string) => void | Promise<void>> =
  * same menu a moment later.
  */
 const sessionMenuItems = computed(() =>
-  SESSION_MENU.map((entry) => {
+  (sessionMenu.value?.header ? HEADER_MENU : (SESSION_MENU as MenuRow[])).map((entry) => {
     const target = menuSession.value
     if (ROW_ACTIONS[entry.id]) {
       const pinned = target ? app.isPinned(target.id) : false
@@ -1265,6 +1297,7 @@ const sessionMenuItems = computed(() =>
         divided: Boolean(entry.divided),
         icon: entry.icon,
         danger: Boolean(entry.danger),
+        hint: hintFor(entry),
       }
     }
     const command = bindableCommands.value.find((item) => item.id === entry.id)
@@ -1279,9 +1312,18 @@ const sessionMenuItems = computed(() =>
       divided: Boolean(entry.divided),
       icon: entry.icon,
       danger: Boolean(entry.danger),
+      hint: hintFor(entry),
     }
   }).filter(
-    (item): item is { key: string; label: string; enabled: boolean; divided: boolean; icon: string; danger: boolean } =>
+    (item): item is {
+      key: string
+      label: string
+      enabled: boolean
+      divided: boolean
+      icon: string
+      danger: boolean
+      hint: string | undefined
+    } =>
       Boolean(item),
   ),
 )
@@ -1960,6 +2002,7 @@ const bindableCommands = computed(() => {
       id: "session.rename",
       group: "key.groupSession",
       title: t("cmd.rename"),
+      hint: "Ctrl+Alt+R",
       enabled: hasSession,
       run: () => header.value?.begin(),
     },
@@ -2058,7 +2101,7 @@ const bindableCommands = computed(() => {
       id: "session.archive",
       group: "key.groupSession",
       title: t("cmd.archive"),
-      hint: "Ctrl+Shift+Backspace",
+      hint: "Ctrl+Alt+A",
       enabled: hasSession,
       run: async () => {
         if (app.currentID) await app.archive(app.currentID, true)
@@ -2700,6 +2743,21 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
+  /* Renaming and archiving the open conversation, on MiMo's chords. */
+  if (mod && event.altKey && event.key.toLowerCase() === "r") {
+    if (modalOpen.value || !app.currentID || isHome.value) return
+    event.preventDefault()
+    header.value?.begin()
+    return
+  }
+
+  if (mod && event.altKey && event.key.toLowerCase() === "a") {
+    if (modalOpen.value || !app.currentID) return
+    event.preventDefault()
+    void app.archive(app.currentID, true)
+    return
+  }
+
   /* The conversation put aside, on the reference's own chord. */
   if (mod && event.altKey && event.key.toLowerCase() === "s") {
     if (modalOpen.value) return
@@ -2761,17 +2819,6 @@ function onKeydown(event: KeyboardEvent) {
    * Shift combinations first: they are separate commands, not variants, and a
    * handler table keyed on the bare letter cannot tell Ctrl+T from Ctrl+Shift+T.
    */
-  /*
-   * Backspace is not a letter, so it cannot ride in the table below - and it
-   * is destructive enough that it should not be reachable by a near miss.
-   */
-  if (event.shiftKey && event.key === "Backspace") {
-    if (modalOpen.value || !app.currentID) return
-    event.preventDefault()
-    void app.archive(app.currentID, true)
-    return
-  }
-
   /*
    * Find first, and only if a host will have it.
    *
@@ -3352,7 +3399,7 @@ onBeforeUnmount(() => {
             :info-open="infoShowing"
             @info="toggleInfo"
             @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
-            @menu="(x, y) => (sessionMenu = { x, y })"
+            @menu="(x, y) => (sessionMenu = { x, y, header: true })"
             @context="toggleContext"
           />
 
