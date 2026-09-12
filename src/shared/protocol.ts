@@ -827,6 +827,14 @@ export interface AppConfig {
    * the repository and the other travels with the reader.
    */
   instructions: string
+  /**
+   * Whether the app keeps an icon in the system tray.
+   *
+   * On by default, which is what the reference does. Closing the window still
+   * closes it - a tray icon is a way back to a running app, not a trapdoor
+   * that makes the close button mean something else.
+   */
+  tray: boolean
   /** Whether text is drawn with the lighter antialiasing or the system's own. */
   fontSmoothing: boolean
   /**

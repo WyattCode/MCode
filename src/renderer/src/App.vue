@@ -804,6 +804,13 @@ watch(
   { immediate: true },
 )
 
+/* And whether there is an icon in the corner at all. */
+watch(
+  () => app.config?.tray ?? true,
+  (enabled) => window.mcode.tray(enabled),
+  { immediate: true },
+)
+
 /*
  * Four choices that are answered by the stylesheet rather than by a component:
  * the cursor over what can be pressed, whether anything animates, how a diff

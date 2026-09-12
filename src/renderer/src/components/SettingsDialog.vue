@@ -1184,6 +1184,23 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
             <div class="line">
               <div class="line-text">
+                <div class="line-title">{{ t("set.tray") }}</div>
+                <div class="line-sub">{{ t("set.traySub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.tray ?? true }"
+                role="switch"
+                :aria-checked="app.config?.tray ?? true"
+                :aria-label="t('set.tray')"
+                @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
                 <div class="line-title">{{ t("set.fontSmoothing") }}</div>
                 <div class="line-sub">{{ t("set.fontSmoothingSub") }}</div>
               </div>

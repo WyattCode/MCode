@@ -124,6 +124,7 @@ function defaults(): AppConfig {
     codeFont: "",
     terminalFont: "",
     instructions: "",
+    tray: true,
     fontSmoothing: true,
     appIcon: DEFAULT_APP_ICON,
     pointerCursor: true,

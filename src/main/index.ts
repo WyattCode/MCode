@@ -4,12 +4,13 @@ import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
-import { setLabels } from "./labels"
+import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
 import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
+import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { cascade, restore, track } from "./window-state"
@@ -51,6 +52,79 @@ const windows = new Set<BrowserWindow>()
 
 /** Files written through the save dialog, and so safe to show in the shell. */
 const savedFiles = new Set<string>()
+
+/*
+ * The tray, if the reader has asked for one.
+ *
+ * Held at module scope because there is one of it and several windows: a tray
+ * per window would put three copies of the same icon in the same corner. The
+ * colourway is remembered so the icon can be rebuilt when either the switch or
+ * the chosen artwork changes.
+ */
+let tray: Tray | undefined
+let trayIcon = DEFAULT_APP_ICON
+
+/** The file an id names, or nothing if it names none. */
+function appIconFile(id: string): string | undefined {
+  if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
+  const file = app.isPackaged
+    ? path.join(process.resourcesPath, "app-icons", id + ".png")
+    : path.join(here, "../../resources/app-icons", id + ".png")
+  return existsSync(file) ? file : undefined
+}
+
+/**
+ * Builds or rebuilds the tray.
+ *
+ * Electron cannot relabel a tray menu in place any more than it can a menu bar,
+ * so a language change rebuilds this the same way it rebuilds that one.
+ */
+function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
+  if (!enabled) {
+    tray?.destroy()
+    tray = undefined
+    return
+  }
+  const file = appIconFile(trayIcon)
+  if (!file) return
+  // 16 logical pixels is what Windows and Linux draw; macOS takes the same and
+  // scales it. The source is 512, so this is a reduction rather than a stretch.
+  const image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
+  if (!tray) {
+    tray = new Tray(image)
+    tray.on("click", () => {
+      const window = BrowserWindow.getAllWindows()[0] ?? make()
+      if (window.isVisible() && !window.isMinimized()) window.hide()
+      else {
+        window.show()
+        window.focus()
+      }
+    })
+  } else tray.setImage(image)
+
+  tray.setToolTip(app.getName())
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: label("tray.show", "Show MCode"),
+        click: () => {
+          const window = BrowserWindow.getAllWindows()[0] ?? make()
+          window.show()
+          window.focus()
+        },
+      },
+      { label: label("menu.newWindow", "New Window"), click: () => make() },
+      { type: "separator" },
+      {
+        label: label("menu.quit", "Quit"),
+        click: () => {
+          beginIntentionalQuit()
+          app.quit()
+        },
+      },
+    ]),
+  )
+}
 
 /**
  * Taskbar icon for unpackaged runs. macOS takes its icon from the app bundle
@@ -230,6 +304,8 @@ app.whenReady().then(async () => {
     setLabels(next)
     // Rebuilt rather than patched: Electron has no way to relabel in place.
     buildMenu(createWindow)
+    // The tray's menu has the same problem and the same answer.
+    if (tray) refreshTray(true, createWindow)
   })
 
   /*
@@ -510,6 +586,11 @@ app.whenReady().then(async () => {
    * server's, and main never reads it - so main is told rather than asking. An
    * id that names no file leaves the icon alone instead of blanking it.
    */
+  /* The switch itself. The renderer holds the config document, so it says. */
+  ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
+    refreshTray(Boolean(enabled), createWindow)
+  })
+
   ipcMain.on("mcode:app-icon", (event, id: string) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || process.platform === "darwin") return
@@ -520,6 +601,9 @@ app.whenReady().then(async () => {
     if (!existsSync(file)) return
     const image = nativeImage.createFromPath(file)
     if (!image.isEmpty()) window.setIcon(image)
+    /* The corner and the taskbar are the same app; they wear the same icon. */
+    trayIcon = id
+    if (tray) refreshTray(true, createWindow)
   })
 
   ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {

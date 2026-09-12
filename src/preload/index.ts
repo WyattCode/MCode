@@ -118,6 +118,9 @@ const api = {
   /** Which colourway the window and the taskbar should wear. */
   appIcon: (id: string): void => ipcRenderer.send("mcode:app-icon", id),
 
+  /** Whether to keep an icon in the system tray. */
+  tray: (enabled: boolean): void => ipcRenderer.send("mcode:tray", enabled),
+
 
 
   /** Menu accelerators the renderer turns into in-app commands. */
