@@ -1144,6 +1144,9 @@ const menuSession = computed(() =>
 /* Set while the project picker is being used to move a conversation. */
 const movingSession = ref<string>()
 
+/* The project row's menu, and which project folder it is about. */
+const projectMenu = ref<{ x: number; y: number; directory: string }>()
+
 /*
  * Selection mode in the side column: the conversations ticked, or absent when
  * the column is being read rather than managed. The set is held here because
@@ -1282,6 +1285,108 @@ const sessionMenuItems = computed(() =>
       Boolean(item),
   ),
 )
+
+/*
+ * MiMo's project menu, row for row: rename, pin, archive its conversations,
+ * batch management, show in the file explorer, copy the working directory,
+ * change the folder location, remove. Removing only takes the project out of
+ * the side column - its conversations and its folder stay, and opening the
+ * folder again brings it back, the same as closing a project always has.
+ */
+const PROJECT_MENU: { id: string; label: string; icon: string; divided?: boolean; danger?: boolean }[] = [
+  { id: "rename", label: "menu.renameProject", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" },
+  { id: "pin", label: "menu.pinProject", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" },
+  { id: "archive", label: "menu.archiveProject", icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2", divided: true },
+  { id: "batch", label: "menu.batch", icon: "M2.4 4.4h1.6M6.6 4.4h7M2.4 8h1.6M6.6 8h7M2.4 11.6h1.6M6.6 11.6h7" },
+  { id: "reveal", label: "files.reveal", icon: "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1z", divided: true },
+  { id: "copyDirectory", label: "menu.copyDirectory", icon: "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2" },
+  { id: "relocate", label: "menu.relocateProject", icon: "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1zM8 7.4v4M6.4 9l1.6-1.6L9.6 9" },
+  { id: "remove", label: "menu.removeProject", icon: "M4.4 4.4l7.2 7.2M11.6 4.4l-7.2 7.2", divided: true, danger: true },
+]
+
+/* A project's conversations that are still in the side column. */
+const projectSessions = (directory: string) =>
+  app.sessions.filter((session) => session.directory === directory && !session.archived)
+
+/* Settings keyed by a project's folder follow it when the folder changes. */
+function rekey<T>(map: Record<string, T> | undefined, from: string, to: string): Record<string, T> {
+  const next = { ...(map ?? {}) }
+  if (from in next) {
+    next[to] = next[from]
+    delete next[from]
+  }
+  return next
+}
+
+const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void>> = {
+  rename: (directory) => {
+    editingProject.value = directory
+  },
+  pin: async (directory) => {
+    const pinned = app.config?.pinnedProjects ?? []
+    await app.patchConfig({
+      pinnedProjects: pinned.includes(directory) ? pinned.filter((entry) => entry !== directory) : [...pinned, directory],
+    })
+  },
+  archive: async (directory) => {
+    for (const session of projectSessions(directory)) await app.archive(session.id, true)
+  },
+  batch: (directory) => {
+    selecting.value = projectSessions(directory).map((session) => session.id)
+  },
+  reveal: (directory) => {
+    void window.mcode.revealFile(directory, "")
+  },
+  copyDirectory: (directory) => {
+    window.mcode.setClipboardText(directory)
+    notify(t("menu.copiedDirectory"), directory)
+  },
+  /*
+   * The folder was moved or renamed on disk: every conversation that worked in
+   * the old path works in the new one, archived ones included, and the name,
+   * icon, colour and pin the project had come along with it.
+   */
+  relocate: async (directory) => {
+    const [next] = await window.mcode.pickDirectory(t("menu.relocateProject"), false)
+    if (!next || next === directory) return
+    for (const session of app.sessions.filter((entry) => entry.directory === directory)) await app.move(session.id, next)
+    const config = app.config
+    if (!config) return
+    const swap = (list: string[] | undefined) => (list ?? []).map((entry) => (entry === directory ? next : entry))
+    await app.patchConfig({
+      projectNames: rekey(config.projectNames, directory, next),
+      projectIcons: rekey(config.projectIcons, directory, next),
+      projectColors: rekey(config.projectColors, directory, next),
+      pinnedProjects: swap(config.pinnedProjects),
+      closedProjects: swap(config.closedProjects),
+    })
+  },
+  remove: async (directory) => {
+    const closed = app.config?.closedProjects ?? []
+    if (!closed.includes(directory)) await app.patchConfig({ closedProjects: [...closed, directory] })
+  },
+}
+
+const projectMenuItems = computed(() => {
+  const directory = projectMenu.value?.directory
+  const pinned = directory ? (app.config?.pinnedProjects ?? []).includes(directory) : false
+  const live = directory ? projectSessions(directory).length : 0
+  return PROJECT_MENU.map((entry) => ({
+    key: entry.id,
+    label: t(entry.id === "pin" && pinned ? "menu.unpinProject" : entry.label),
+    // Archiving and batch management need a conversation to act on.
+    enabled: Boolean(directory) && ((entry.id !== "archive" && entry.id !== "batch") || live > 0),
+    divided: Boolean(entry.divided),
+    icon: entry.icon,
+    danger: Boolean(entry.danger),
+  }))
+})
+
+async function runProjectMenu(key: string) {
+  const directory = projectMenu.value?.directory
+  projectMenu.value = undefined
+  if (directory) await PROJECT_ACTIONS[key]?.(directory)
+}
 
 /**
  * Runs an application-menu item.
@@ -3177,6 +3282,7 @@ onBeforeUnmount(() => {
         @newTask="goHome"
         @artifacts="goArtifacts"
         @menu="(id, x, y) => (sessionMenu = { x, y, sessionID: id })"
+        @projectMenu="(directory, x, y) => (projectMenu = { x, y, directory })"
         :selecting="selecting"
         @select="toggleSelected"
         @batch="runBatch"
@@ -3507,6 +3613,15 @@ onBeforeUnmount(() => {
     :items="sessionMenuItems"
     @pick="runSessionMenu"
     @close="sessionMenu = undefined"
+  />
+
+  <ContextMenu
+    v-if="projectMenu"
+    :x="projectMenu.x"
+    :y="projectMenu.y"
+    :items="projectMenuItems"
+    @pick="runProjectMenu"
+    @close="projectMenu = undefined"
   />
 
   <!-- Listens at the document, so every text field gets the same menu. -->

@@ -719,6 +719,8 @@ export interface AppConfig {
   soundError: boolean
   /** Sessions whose tabs survive a close-others and sort to the front. */
   pinnedTabs: string[]
+  /** Project folders pinned to the top of the side column's project list. */
+  pinnedProjects: string[]
   /** Model Context Protocol servers, by the name they are shown under. */
   mcpServers: Record<string, McpServerConfig>
   /** UI display language. Simplified Chinese is the default. */

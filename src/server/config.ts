@@ -81,6 +81,7 @@ function defaults(): AppConfig {
     themeID: "mcode-2",
     mcpServers: {},
     pinnedTabs: [],
+    pinnedProjects: [],
     keybinds: {},
     serverURL: "",
     servers: [],

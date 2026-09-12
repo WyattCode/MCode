@@ -34,6 +34,7 @@ const emit = defineEmits<{
   "toggle-browser": []
   "toggle-timeline": []
   menu: [sessionID: string, x: number, y: number]
+  projectMenu: [directory: string, x: number, y: number]
   select: [sessionID: string]
   batch: [action: "archive" | "move" | "delete" | "cancel"]
   newTask: []
@@ -78,6 +79,17 @@ function openMenu(sessionID: string, event: MouseEvent) {
   emit("menu", sessionID, x, y)
 }
 
+/* The project row's menu, from a right-click or from its own button. */
+function openProjectMenu(directory: string, event: MouseEvent) {
+  const from = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+  const x = event.clientX || (from ? Math.round(from.left) : 0)
+  const y = event.clientY || (from ? Math.round(from.bottom + 4) : 0)
+  emit("projectMenu", directory, x, y)
+}
+
+/* Pinned from that menu: a pinned project heads the list, as a pinned conversation does. */
+const pinnedProject = (directory: string) => (app.config?.pinnedProjects ?? []).includes(directory)
+
 const projects = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
   const byDirectory = new Map<string, { directory: string; updated: number; sessions: typeof app.sessions }>()
@@ -91,7 +103,7 @@ const projects = computed(() => {
   }
   return [...byDirectory.values()]
     .map((entry) => ({ ...entry, sessions: [...entry.sessions].sort((a, b) => b.updated - a.updated) }))
-    .sort((a, b) => b.updated - a.updated)
+    .sort((a, b) => Number(pinnedProject(b.directory)) - Number(pinnedProject(a.directory)) || b.updated - a.updated)
 })
 
 /*
@@ -307,12 +319,32 @@ function toggleProject(directory: string) {
       </div>
       <template v-if="projectsOpen && !timeline">
         <template v-for="project in projects" :key="project.directory">
-          <div class="row project" :class="{ on: app.current?.directory === project.directory && !isExpanded(project.directory) }">
+          <div
+            class="row project"
+            :class="{ on: app.current?.directory === project.directory && !isExpanded(project.directory) }"
+            @contextmenu.prevent="openProjectMenu(project.directory, $event)"
+          >
             <button class="project-toggle" v-tip="{ label: project.directory, placement: 'right' }" @click="toggleProject(project.directory)">
               <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M3.5 5.5H8L9.5 7H16.5V15H3.5V5.5Z" stroke="currentColor" stroke-linejoin="round" />
               </svg>
               <span class="row-label plain">{{ name(project.directory) }}</span>
+              <svg v-if="pinnedProject(project.directory)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <!-- MiMo's pair on a project row: its menu, then a new task in it. -->
+            <button
+              class="row-menu"
+              :aria-label="t('side.projectOptions')"
+              v-tip="{ label: t('side.projectOptions') }"
+              @click.stop="openProjectMenu(project.directory, $event)"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+              </svg>
             </button>
             <button class="ico inline" :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask') }" @click="emit('createIn', project.directory)">
               <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
