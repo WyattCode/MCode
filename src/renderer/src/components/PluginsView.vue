@@ -297,7 +297,7 @@ async function toggle(name: string) {
 }
 
 .switch.on {
-  background: #ececec;
+  background: var(--icon-base);
 }
 
 .switch:disabled {
@@ -309,14 +309,15 @@ async function toggle(name: string) {
   top: 2px;
   width: 16px;
   height: 16px;
-  background: #ececec;
+  /* Always the opposite of the track it sits on, in either scheme. */
+  background: var(--icon-base);
   border-radius: 50%;
   inset-inline-start: 2px;
   transition: inset-inline-start 0.15s, background-color 0.15s;
 }
 
 .switch.on .knob {
-  background: #141414;
+  background: var(--surface-raised);
   inset-inline-start: 14px;
 }
 

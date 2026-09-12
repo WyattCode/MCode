@@ -3,6 +3,10 @@ productName: MCode
 directories:
   output: dist
   buildResources: build
+extraResources:
+  - from: resources/app-icons
+    to: app-icons
+
 files:
   - out/**/*
   - package.json

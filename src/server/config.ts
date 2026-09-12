@@ -1,3 +1,4 @@
+import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
@@ -122,6 +123,7 @@ function defaults(): AppConfig {
     uiFont: "",
     codeFont: "",
     terminalFont: "",
+    appIcon: DEFAULT_APP_ICON,
     pointerCursor: true,
     reduceMotion: "system",
     diffMarks: "color",

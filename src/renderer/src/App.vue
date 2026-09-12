@@ -13,6 +13,7 @@ import MessageStream from "./components/MessageStream.vue"
 import Composer from "./components/Composer.vue"
 import TodoDock from "./components/TodoDock.vue"
 import InfoPanel from "./components/InfoPanel.vue"
+import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import ArtifactsView from "./components/ArtifactsView.vue"
 import PluginsView from "./components/PluginsView.vue"
 import RevertDock from "./components/RevertDock.vue"
@@ -789,6 +790,17 @@ watch(
     // the system theme but not this app's, so it has to be told which one won.
     window.mcode.titlebarMode(dark ? "dark" : "light")
   },
+  { immediate: true },
+)
+
+/*
+ * The icon the window wears. Main cannot read the config document, so it is
+ * told - at startup as well as on a change, because a window created before
+ * the config arrived is wearing the packaged default.
+ */
+watch(
+  () => app.config?.appIcon ?? DEFAULT_APP_ICON,
+  (id) => window.mcode.appIcon(id),
   { immediate: true },
 )
 

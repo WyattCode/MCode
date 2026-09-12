@@ -1,9 +1,10 @@
 import fs from "node:fs/promises"
+import { existsSync } from "node:fs"
 import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeTheme, Notification, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
 import { setLabels } from "./labels"
 import { buildMenu } from "./menu"
@@ -501,6 +502,25 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.on("mcode:zoom", (event, action: "in" | "out" | "reset") => applyZoom(event.sender, action))
+
+  /*
+   * The icon the window and the taskbar wear.
+   *
+   * Only the renderer knows which one is chosen - the config document is the
+   * server's, and main never reads it - so main is told rather than asking. An
+   * id that names no file leaves the icon alone instead of blanking it.
+   */
+  ipcMain.on("mcode:app-icon", (event, id: string) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || process.platform === "darwin") return
+    if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return
+    const file = app.isPackaged
+      ? path.join(process.resourcesPath, "app-icons", id + ".png")
+      : path.join(here, "../../resources/app-icons", id + ".png")
+    if (!existsSync(file)) return
+    const image = nativeImage.createFromPath(file)
+    if (!image.isEmpty()) window.setIcon(image)
+  })
 
   ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {
     setTitlebarMode(BrowserWindow.fromWebContents(event.sender), mode)

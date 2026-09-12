@@ -104,6 +104,30 @@ const recent = computed(() => {
     .slice(0, RECENT_LIMIT)
 })
 
+/*
+ * The three answers, in the order the button walks them. "Follow the machine"
+ * leads because it is the default, and a reader who presses once is most
+ * likely trying to pin down what the machine is currently doing.
+ */
+const SCHEMES = ["system", "light", "dark"] as const
+
+const scheme = computed(() => app.config?.theme ?? "system")
+
+const themeLabel = computed(() =>
+  t(
+    scheme.value === "light"
+      ? "set.themeLight"
+      : scheme.value === "dark"
+        ? "set.themeDark"
+        : "set.themeSystem",
+  ),
+)
+
+function cycleTheme() {
+  const next = SCHEMES[(SCHEMES.indexOf(scheme.value) + 1) % SCHEMES.length]
+  app.patchConfig({ theme: next })
+}
+
 const projectsOpen = ref(true)
 const recentOpen = ref(true)
 /** Which projects show their tasks. The one holding the open task always does. */
@@ -312,6 +336,44 @@ function toggleProject(directory: string) {
     </div>
 
     <div class="foot">
+      <!--
+        The scheme, one press away. It is in the appearance settings too - this
+        is the same choice, not a second one, and it shows which of the three
+        answers is in force rather than only offering to change it.
+      -->
+      <button
+        class="row theme"
+        :aria-label="themeLabel"
+        v-tip="{ label: themeLabel, placement: 'top' }"
+        @click="cycleTheme"
+      >
+        <span class="avatar" aria-hidden="true">
+          <!-- Follow the machine: half lit, half not. -->
+          <svg v-if="scheme === 'system'" width="16" height="16" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="6" stroke="currentColor" />
+            <path d="M10 4a6 6 0 0 0 0 12z" fill="currentColor" />
+          </svg>
+          <!-- Light: the sun. -->
+          <svg v-else-if="scheme === 'light'" width="16" height="16" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="3.4" stroke="currentColor" />
+            <path
+              d="M10 3v2M10 15v2M3 10h2M15 10h2M5.05 5.05l1.4 1.4M13.55 13.55l1.4 1.4M5.05 14.95l1.4-1.4M13.55 6.45l1.4-1.4"
+              stroke="currentColor"
+              stroke-linecap="round"
+            />
+          </svg>
+          <!-- Dark: the moon. -->
+          <svg v-else width="16" height="16" viewBox="0 0 20 20" fill="none">
+            <path
+              d="M15.5 12.2A6.3 6.3 0 0 1 7.8 4.5a6.3 6.3 0 1 0 7.7 7.7z"
+              stroke="currentColor"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </span>
+        <span class="row-label plain">{{ themeLabel }}</span>
+      </button>
+
       <button class="row" @click="emit('settings')">
         <span class="avatar" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none">

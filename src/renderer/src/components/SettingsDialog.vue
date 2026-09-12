@@ -19,6 +19,7 @@ import {
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
+import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
@@ -65,6 +66,12 @@ interface Bindable {
 
 const props = defineProps<{ section?: Section; commands: Bindable[] }>()
 const section = ref<Section>(props.section ?? "general")
+
+/* The colourways the mark comes in, drawn from the one module that defines them. */
+const appIcon = computed(() => app.config?.appIcon ?? DEFAULT_APP_ICON)
+
+/* The gallery's own tiles: the same drawing the icon file is rasterised from. */
+const iconTiles = APP_ICONS.map((spec) => ({ spec, svg: appIconSvg(spec, 44) }))
 
 /* The segments each of the two appearance choices offers, in the order shown. */
 const MOTION_MODES = ["system", "on", "off"] as const
@@ -894,6 +901,34 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :options="paletteOptions"
                 @update:model-value="app.patchConfig({ themeID: $event })"
               />
+            </div>
+
+            <!--
+              The mark comes in six colourways. They are drawn here rather than
+              loaded as pictures, from the same string the icon files are
+              rasterised from, so the tile a reader presses is the icon they
+              get rather than a picture of one that might have drifted.
+            -->
+            <div class="line icons">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.appIcon") }}</div>
+                <div class="line-sub">{{ t("set.appIconSub") }}</div>
+              </div>
+              <div class="gallery" role="radiogroup" :aria-label="t('set.appIcon')">
+                <button
+                  v-for="tile in iconTiles"
+                  :key="tile.spec.id"
+                  class="tile"
+                  :class="{ on: appIcon === tile.spec.id }"
+                  role="radio"
+                  :aria-checked="appIcon === tile.spec.id"
+                  :aria-label="tile.spec.name"
+                  @click="app.patchConfig({ appIcon: tile.spec.id })"
+                >
+                  <span class="tile-art" v-html="tile.svg" />
+                  <span class="tile-name">{{ tile.spec.name }}</span>
+                </button>
+              </div>
             </div>
 
             <!--
@@ -2104,6 +2139,59 @@ h3 {
  * as one setting with three positions rather than three separate buttons that
  * happen to sit together.
  */
+/* The gallery is a block of its own, so its row stacks instead of squeezing. */
+.line.icons {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.tile:hover {
+  background: var(--surface-hover);
+}
+
+/* The chosen one is said twice - a ring and a stronger name - because a ring
+   alone is easy to miss at this size and colour is not everyone's channel. */
+.tile.on {
+  border-color: var(--icon-base);
+}
+
+.tile-art {
+  display: block;
+  overflow: hidden;
+  border-radius: 10px;
+  line-height: 0;
+}
+
+.tile-name {
+  color: var(--text-weak);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.tile.on .tile-name {
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
 .choice {
   display: inline-flex;
   flex-shrink: 0;
@@ -2705,7 +2793,7 @@ h3 {
 
 .switch.on,
 .switch.on:hover {
-  background: #ececec;
+  background: var(--icon-base);
 }
 
 .knob,
@@ -2713,12 +2801,13 @@ h3 {
   top: 2px;
   width: 16px;
   height: 16px;
-  background: #ececec;
+  /* Always the opposite of the track it sits on, in either scheme. */
+  background: var(--icon-base);
   border-radius: 50%;
 }
 
 .switch.on .knob {
-  background: #141414;
+  background: var(--surface-raised);
   inset-inline-start: 14px;
 }
 

@@ -115,6 +115,9 @@ const api = {
    */
   titlebarMode: (mode: "dark" | "light"): void => ipcRenderer.send("mcode:titlebar-mode", mode),
 
+  /** Which colourway the window and the taskbar should wear. */
+  appIcon: (id: string): void => ipcRenderer.send("mcode:app-icon", id),
+
 
 
   /** Menu accelerators the renderer turns into in-app commands. */

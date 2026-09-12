@@ -781,6 +781,14 @@ export interface AppConfig {
   codeFont: string
   terminalFont: string
 
+  /**
+   * Which of the app's colourways the icon wears.
+   *
+   * An id rather than a path: the artwork is the app's own and ships with it,
+   * and a path in the config document would be a way to point the window at a
+   * file that is not there.
+   */
+  appIcon: string
   /** Whether pointing at something pressable turns the cursor into a hand. */
   pointerCursor: boolean
   /**

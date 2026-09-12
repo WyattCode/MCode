@@ -151,7 +151,12 @@ async function open(file: string) {
   background: var(--surface-raised);
   border: 0.5px solid var(--border-weak);
   border-radius: 20px;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  /*
+   * Weighted per scheme. A shadow is a hole in the light, and how dark a hole
+   * may be depends on how bright the room is: 40% black under a white card is
+   * a smudge, while the same value under a near-black one is barely a lift.
+   */
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
   scrollbar-width: thin;
 }
 
@@ -338,5 +343,14 @@ async function open(file: string) {
   padding-inline-end: 6px;
   font-size: 12px;
   font-weight: 400;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .info {
+    box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  }
+}
+
+:root[data-theme="dark"] .info {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 </style>
