@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { SessionInfo } from "@shared/protocol"
 import { computed, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
@@ -24,11 +25,14 @@ const props = defineProps<{
   selecting?: string[]
   /** Whether the browser panel is up, so its button can say so. */
   browser?: boolean
+  /** Whether the column is showing everything by time rather than by project. */
+  timeline?: boolean
 }>()
 
 const emit = defineEmits<{
   artifacts: []
   "toggle-browser": []
+  "toggle-timeline": []
   menu: [sessionID: string, x: number, y: number]
   select: [sessionID: string]
   batch: [action: "archive" | "move" | "delete" | "cancel"]
@@ -106,6 +110,54 @@ const recent = computed(() => {
     .sort((a, b) => b.updated - a.updated)
     .slice(0, RECENT_LIMIT)
 })
+
+/**
+ * Every conversation by when it was last touched, in days.
+ *
+ * One list holding two kinds of thing - a day's heading and a conversation -
+ * so the column can render it with the row markup it already has instead of a
+ * fourth copy of it. The project is carried alongside because this list has no
+ * tree above it to say which one a conversation came from.
+ */
+interface TimelineEntry {
+  head?: string
+  session?: SessionInfo
+  note?: string
+}
+
+const DAY = 24 * 60 * 60 * 1000
+
+function dayLabel(at: number): string {
+  const now = new Date()
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  if (at >= midnight) return t("side.today")
+  if (at >= midnight - DAY) return t("side.yesterday")
+  if (at >= midnight - 7 * DAY) return t("side.thisWeek")
+  return t("side.earlier")
+}
+
+/* Named apart from the prop of the same idea: a local const would shadow it
+   in the template, and `aria-pressed` would be handed an array. */
+const byDay = computed<TimelineEntry[]>(() => {
+  const rows: TimelineEntry[] = []
+  let heading = ""
+  for (const session of [...app.sessions]
+    .filter((entry) => !entry.archived)
+    .sort((a, b) => b.updated - a.updated)) {
+    const label = dayLabel(session.updated)
+    if (label !== heading) {
+      heading = label
+      rows.push({ head: label })
+    }
+    rows.push({ session, note: name(session.directory) })
+  }
+  return rows
+})
+
+/* What the one list renders: the timeline, or Recent as it always was. */
+const listed = computed<TimelineEntry[]>(() =>
+  props.timeline ? byDay.value : byPinned(recent.value).map((session) => ({ session })),
+)
 
 /*
  * The three answers, in the order the button walks them. "Follow the machine"
@@ -239,7 +291,7 @@ function toggleProject(directory: string) {
     </div>
 
     <div class="lists">
-      <div class="section">
+      <div v-if="!timeline" class="section">
         <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -252,7 +304,7 @@ function toggleProject(directory: string) {
           </svg>
         </button>
       </div>
-      <template v-if="projectsOpen">
+      <template v-if="projectsOpen && !timeline">
         <template v-for="project in projects" :key="project.directory">
           <div class="row project" :class="{ on: app.current?.directory === project.directory && !isExpanded(project.directory) }">
             <button class="project-toggle" v-tip="{ label: project.directory, placement: 'right' }" @click="toggleProject(project.directory)">
@@ -310,43 +362,66 @@ function toggleProject(directory: string) {
 
       <div class="section">
         <button class="section-head" :aria-expanded="recentOpen" @click="recentOpen = !recentOpen">
-          <span>{{ t("side.recent") }}</span>
+          <span>{{ timeline ? t("side.byTime") : t("side.recent") }}</span>
           <svg class="chev" :class="{ shut: !recentOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
           </svg>
         </button>
+        <!--
+          The two ways to read the column: by the project a conversation is in,
+          or by when it was last touched. One button, lit while the second one
+          is in force.
+        -->
+        <button
+          class="ico add"
+          :class="{ on: timeline }"
+          :aria-pressed="timeline"
+          :aria-label="t('side.byTime')"
+          v-tip="{ label: t('side.byTime'), hint: 'Ctrl+Alt+U' }"
+          @click="emit('toggle-timeline')"
+        >
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
+            <path d="M10 6.3V10l2.4 1.6" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+        </button>
       </div>
       <template v-if="recentOpen">
-        <div v-if="recent.length === 0" class="empty">{{ t("side.noTasks") }}</div>
+        <div v-if="!listed.length" class="empty">{{ t("side.noTasks") }}</div>
+        <template v-for="(entry, index) in listed" :key="entry.session?.id ?? `head-${index}`">
+        <div v-if="entry.head" class="day-head">{{ entry.head }}</div>
         <div
-          v-for="session in byPinned(recent)"
-          :key="session.id"
+          v-else-if="entry.session"
           class="row task"
-          :class="{ on: app.currentID === session.id }"
-          @contextmenu.prevent="openMenu(session.id, $event)"
+          :class="{ on: app.currentID === entry.session.id, noted: Boolean(entry.note) }"
+          @contextmenu.prevent="openMenu(entry.session.id, $event)"
         >
-          <button class="row-open" @click="press(session.id)">
-                <span v-if="picking" class="tick" :class="{ on: ticked(session.id) }" aria-hidden="true">
-                  <svg v-if="ticked(session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
-                    <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </span>
-            <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <button class="row-open" @click="press(entry.session.id)">
+            <span v-if="picking" class="tick" :class="{ on: ticked(entry.session.id) }" aria-hidden="true">
+              <svg v-if="ticked(entry.session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <svg v-if="app.isPinned(entry.session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
-            <span class="row-label task-label">{{ title(session.title) }}</span>
+            <span class="stack">
+              <span class="row-label task-label">{{ title(entry.session.title) }}</span>
+              <!-- Which project it is in, which the tree above would have said. -->
+              <span v-if="entry.note" class="row-note">{{ entry.note }}</span>
+            </span>
           </button>
           <button
             class="row-pin"
-            :class="{ on: app.isPinned(session.id) }"
-            :aria-label="t(app.isPinned(session.id) ? 'menu.unpin' : 'menu.pin')"
-            @click.stop="app.togglePinned(session.id)"
+            :class="{ on: app.isPinned(entry.session.id) }"
+            :aria-label="t(app.isPinned(entry.session.id) ? 'menu.unpin' : 'menu.pin')"
+            @click.stop="app.togglePinned(entry.session.id)"
           >
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
           </button>
-          <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
+          <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(entry.session.id, $event)">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="3" cy="8" r="1.1" fill="currentColor" />
               <circle cx="8" cy="8" r="1.1" fill="currentColor" />
@@ -354,6 +429,7 @@ function toggleProject(directory: string) {
             </svg>
           </button>
         </div>
+        </template>
       </template>
     </div>
 
@@ -552,7 +628,36 @@ function toggleProject(directory: string) {
 }
 
 .section + .row,
-.section + .empty {
+.section + /* A day's heading inside the list, quieter than a section's own. */
+.day-head {
+  padding: 10px 14px 4px;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/* A row carrying a project underneath is two lines, so it cannot be one. */
+.row.task.noted {
+  min-height: 44px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.row-note {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty {
   margin-top: 6px;
 }
 

@@ -1640,6 +1640,14 @@ function goArtifacts() {
  */
 const browserOpen = ref(false)
 
+/*
+ * Whether the side column is read by project or by time.
+ *
+ * Not remembered: it is a way of looking at the same list rather than a
+ * setting, and the tree is what the column is for most of the time.
+ */
+const timelineView = ref(false)
+
 /* So is the plugins page, which MiMo opens in the workspace rather than over it. */
 function goPlugins() {
   view.value = "plugins"
@@ -2288,6 +2296,13 @@ const bindableCommands = computed(() => {
       },
     })),
     {
+      id: "view.timeline",
+      group: "key.groupGeneral",
+      title: t("side.byTime"),
+      hint: "Ctrl+Alt+U",
+      run: () => (timelineView.value = !timelineView.value),
+    },
+    {
       id: "session.pin",
       group: "key.groupSession",
       title: t("key.togglePin"),
@@ -2552,6 +2567,14 @@ function onKeydown(event: KeyboardEvent) {
     if (modalOpen.value || !app.currentID) return
     event.preventDefault()
     app.togglePinned(app.currentID)
+    return
+  }
+
+  /* The column by time, on the reference's own chord. */
+  if (mod && event.altKey && event.key.toLowerCase() === "u") {
+    if (modalOpen.value) return
+    event.preventDefault()
+    timelineView.value = !timelineView.value
     return
   }
 
@@ -3115,7 +3138,9 @@ onBeforeUnmount(() => {
         v-if="leftPanel && !onboarding"
         :page="view"
         :browser="browserOpen"
+        :timeline="timelineView"
         @toggle-browser="browserOpen = !browserOpen"
+        @toggle-timeline="timelineView = !timelineView"
         @newTask="goHome"
         @artifacts="goArtifacts"
         @menu="(id, x, y) => (sessionMenu = { x, y, sessionID: id })"
