@@ -7,6 +7,9 @@
  * itself is the one piece this cannot reach without one.
  */
 import { nameFromId } from "../src/server/provider/model-name"
+import { commandRisk } from "../src/server/command-risk"
+import { Permissions } from "../src/server/permission"
+import { DEFAULT_PERMISSIONS as PERMISSION_DEFAULTS } from "../src/shared/protocol"
 import { discoverModels } from "../src/server/provider/discover"
 import { isSummary, selectForSummary } from "../src/server/session/summary"
 import { OpenAICompatible, toMessages } from "../src/server/provider/openai"
@@ -147,6 +150,34 @@ async function main() {
   check("a task in a project is not marked as having none", created.session.scratch === undefined, created.session)
   await call({ type: "session.delete", sessionID: loose.session.id })
   await call({ type: "session.delete", sessionID: looseAgain.session.id })
+
+  /*
+   * The composer's middle access level. The classifier lets everyday commands
+   * through and stops what deletes, elevates, kills, changes rights or sends
+   * work away - however it is chained. Through Permissions, the level answers
+   * a file change and a safe command itself and still asks about a delete.
+   */
+  section("Access: approve for me")
+  const risky = ["rm -rf build", "Remove-Item dist -Recurse", "sudo apt install x", "taskkill /F /IM node.exe", "git push origin main", "npm run build && rm -rf dist", "echo $(rm -rf /)", "chmod 777 run.sh", "git clean -fdx", "Start-Process pwsh -Verb RunAs", "git reset --hard HEAD~1"]
+  const everyday = ["git status", "npm test", "npm run build", "ls -la", "git diff --stat", "node scripts/check.js", "git log --oneline -5"]
+  check("every risky command is caught", risky.every((command) => commandRisk(command) !== undefined), risky.filter((command) => commandRisk(command) === undefined))
+  check("no everyday command is", everyday.every((command) => commandRisk(command) === undefined), everyday.filter((command) => commandRisk(command) !== undefined))
+
+  const raised: string[] = []
+  const levelBus = { subscribe: () => () => {}, publish: (event: { type: string }) => raised.push(event.type) }
+  let level: "ask" | "auto" = "auto"
+  const levelConfig = { get: () => ({ permissions: { ...PERMISSION_DEFAULTS }, accessLevel: level }) }
+  const gate = new Permissions(levelBus as never, levelConfig as never)
+  const askAbout = (kind: "edit" | "bash", subject: string) =>
+    gate.ask({ sessionID: "ses_level", messageID: "msg_level", callID: `call_${raised.length}_${subject}`, kind, title: subject, subject })
+  const settled = async (promise: Promise<void>) =>
+    Promise.race([promise.then(() => "ran"), new Promise((resolve) => setTimeout(() => resolve("waiting"), 50))])
+  check("on approve-for-me a file change asks nothing", (await settled(askAbout("edit", "src/app.ts"))) === "ran" && raised.length === 0, raised)
+  check("and neither does an everyday command", (await settled(askAbout("bash", "npm test"))) === "ran" && raised.length === 0, raised)
+  check("but a delete still asks", (await settled(askAbout("bash", "rm -rf build"))) === "waiting" && raised.includes("permission.requested"), raised)
+  level = "ask"
+  raised.length = 0
+  check("while the default level still asks about the file change", (await settled(askAbout("edit", "src/other.ts"))) === "waiting" && raised.includes("permission.requested"), raised)
 
   /* A side chat is a session of its own that remembers the conversation it sits beside. */
   const sideChat = await call({ type: "session.create", directory: project, title: "Side chat 1", sideOf: sessionID })

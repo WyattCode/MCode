@@ -102,6 +102,7 @@ function defaults(): AppConfig {
      * The value here only matters for the moment between the two.
      */
     autoApprove: allowed(DEFAULT_PERMISSIONS),
+    allowFullAccess: false,
     directory: process.cwd(),
     closedProjects: [],
     projectNames: {},

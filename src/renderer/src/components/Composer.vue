@@ -21,6 +21,7 @@ import {
 import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
 import ModelTooltip from "./ModelTooltip.vue"
+import ConfirmDialog from "./ConfirmDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import { readContext } from "./session-context"
 import ProviderIcon from "./ProviderIcon.vue"
@@ -1006,17 +1007,29 @@ const contextUsage = computed(() => {
 const pills = ref<HTMLElement>()
 
 /**
- * The access chip's two positions. "full" is what is left once nothing asks -
- * a map with a deny in it still counts, since a deny never prompts either.
+ * The access chip's three positions, as MiMo has them: the default, "approve
+ * for me" in the middle, and full access. "full" is what is left once nothing
+ * asks - a map with a deny in it still counts, since a deny never prompts
+ * either. The middle one is carried by `accessLevel`, and the server applies
+ * it on top of whatever the map says.
  */
-const ACCESS_CHOICES = ["ask", "full"] as const
+const ACCESS_CHOICES = ["ask", "auto", "full"] as const
 type Access = (typeof ACCESS_CHOICES)[number]
 
 const access = computed<Access>(() => {
+  if (app.config?.accessLevel === "auto") return "auto"
   const map = app.config?.permissions
   if (!map) return "ask"
   return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
 })
+
+/* Full access is offered only once settings allow it - or while it is already on, so it can be left. */
+const accessChoices = computed(() =>
+  ACCESS_CHOICES.filter((entry) => entry !== "full" || app.config?.allowFullAccess || access.value === "full"),
+)
+
+/* Set while the question before full access is on screen. */
+const confirmingFull = ref(false)
 
 /**
  * Full turns every bucket that is not denied to allow, and keeps the map it
@@ -1029,22 +1042,48 @@ const access = computed<Access>(() => {
  */
 async function chooseAccess(next: Access) {
   menu.value = undefined
+  if (!app.config?.permissions || next === access.value) return
+  // Skipping every question is asked about once, the way MiMo asks.
+  if (next === "full") {
+    confirmingFull.value = true
+    return
+  }
+  await applyAccess(next)
+}
+
+async function confirmFull() {
+  confirmingFull.value = false
+  await applyAccess("full")
+}
+
+/*
+ * Moving between the default and the middle level leaves the map alone - the
+ * middle level is applied on top of it. Only entering and leaving full access
+ * rewrites the map, and leaving it puts back what was there.
+ */
+async function applyAccess(next: Access) {
   const map = app.config?.permissions
-  if (!map || next === access.value) return
-  const kept = app.config?.accessBefore ?? {}
-  const permissions = { ...map }
-  for (const kind of PERMISSION_KINDS) {
-    if (permissions[kind] === "deny") continue
-    const restored = kept[kind]
-    permissions[kind] =
-      next === "full"
-        ? "allow"
-        : restored && (PERMISSION_ACTIONS as readonly string[]).includes(restored)
-          ? restored
-          : DEFAULT_PERMISSIONS[kind]
+  if (!map) return
+  const leavingFull = access.value === "full"
+  let permissions = map
+  let accessBefore = app.config?.accessBefore
+  if (next === "full") {
+    permissions = { ...map }
+    for (const kind of PERMISSION_KINDS) if (permissions[kind] !== "deny") permissions[kind] = "allow"
+    accessBefore = { ...map }
+  } else if (leavingFull) {
+    const kept = app.config?.accessBefore ?? {}
+    permissions = { ...map }
+    for (const kind of PERMISSION_KINDS) {
+      if (permissions[kind] === "deny") continue
+      const restored = kept[kind]
+      permissions[kind] =
+        restored && (PERMISSION_ACTIONS as readonly string[]).includes(restored) ? restored : DEFAULT_PERMISSIONS[kind]
+    }
+    accessBefore = undefined
   }
   try {
-    await app.patchConfig({ permissions, accessBefore: next === "full" ? { ...map } : undefined })
+    await app.patchConfig({ permissions, accessBefore, accessLevel: next })
   } catch (err) {
     notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
   }
@@ -1615,6 +1654,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 <path d="M8 4.6v4.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
                 <circle cx="8" cy="11.1" r="0.8" fill="currentColor" />
               </svg>
+              <svg v-else-if="access === 'auto'" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2.8 13.4h10.4M10.4 2.4l2.2 2.2-6.8 6.8H3.6V9.2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              </svg>
               <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 1.8 13 3.7v4c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5v-4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>
@@ -1625,7 +1667,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             </button>
             <div v-if="menu === 'access'" class="menu access-menu">
               <button
-                v-for="entry in ACCESS_CHOICES"
+                v-for="entry in accessChoices"
                 :key="entry"
                 class="item access-item"
                 :class="{ on: entry === access }"
@@ -1960,6 +2002,17 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
     <!-- Under a conversation's box, as MiMo has one: answers are generated, and can be wrong. -->
     <p v-if="sessionID" class="ai-note">{{ t("composer.aiNote") }}</p>
+
+    <Teleport to="body">
+      <ConfirmDialog
+        v-if="confirmingFull"
+        :title="t('composer.access.confirmTitle')"
+        :body="t('composer.access.confirmBody')"
+        :confirm-label="t('composer.access.confirmOk')"
+        @confirm="confirmFull"
+        @close="confirmingFull = false"
+      />
+    </Teleport>
   </div>
 </template>
 

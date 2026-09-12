@@ -6,6 +6,7 @@ import type {
 } from "@shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
 import { Identifier } from "@shared/id"
+import { commandRisk } from "./command-risk"
 import path from "node:path"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
@@ -38,6 +39,17 @@ function refusal(kind: string, subject: string): string {
 }
 
 /** The bucket a tool declares, when this build knows the name. */
+/*
+ * What the composer's middle level lets through. Changes inside the project and
+ * reaching outside it go ahead, and so does a command - unless it deletes or is
+ * risky, which still asks. Everything else keeps whatever its bucket says.
+ */
+export function autoAllows(kind: PermissionKind, subject: string): boolean {
+  if (kind === "edit" || kind === "write" || kind === "outside") return true
+  if (kind === "bash") return commandRisk(subject) === undefined
+  return false
+}
+
 function bucketOf(kind: string): PermissionKind | undefined {
   return (PERMISSION_KINDS as readonly string[]).includes(kind) ? (kind as PermissionKind) : undefined
 }
@@ -151,6 +163,8 @@ export class Permissions {
      */
     if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
     if (action === "allow") return
+    // The middle access level. A refusal set in settings has already won above.
+    if (this.config.get().accessLevel === "auto" && autoAllows(input.kind, input.subject)) return
     if (input.scope && this.allowsOutside(input.sessionID, input.scope)) return
     if (!input.scope && this.approved.has(this.key(input.sessionID, input.kind))) return
 

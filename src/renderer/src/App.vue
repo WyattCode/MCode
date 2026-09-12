@@ -1162,7 +1162,7 @@ async function toggleAutoAccept() {
     if (next[kind] === "deny") continue
     next[kind] = on ? DEFAULT_PERMISSIONS[kind] : "allow"
   }
-  await app.patchConfig({ permissions: next })
+  await app.patchConfig({ permissions: next, accessLevel: on ? "ask" : "full" })
   if (on) notify(t("toast.autoOffTitle"), t("toast.autoOffBody"))
   else notify(t("toast.autoOnTitle"), t("toast.autoOnBody"))
 }

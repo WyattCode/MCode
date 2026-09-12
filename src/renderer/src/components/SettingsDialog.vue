@@ -595,7 +595,7 @@ function toggleAutoApproveAll() {
     if (next[bucket] === "deny") continue
     next[bucket] = on ? DEFAULT_PERMISSIONS[bucket] : "allow"
   }
-  void app.patchConfig({ permissions: next })
+  void app.patchConfig({ permissions: next, accessLevel: on ? "ask" : "full" })
 }
 
 async function pickDirectory() {
@@ -1020,6 +1020,24 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :options="languageOptions"
                 @update:model-value="app.patchConfig({ language: $event as Language })"
               />
+            </div>
+
+            <!-- MiMo's gate: full access can only be picked in the box once this is on. -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.allowFullAccess") }}</div>
+                <div class="line-sub">{{ t("set.allowFullAccessSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.allowFullAccess }"
+                role="switch"
+                :aria-checked="Boolean(app.config?.allowFullAccess)"
+                :aria-label="t('set.allowFullAccess')"
+                @click="app.patchConfig({ allowFullAccess: !app.config?.allowFullAccess })"
+              >
+                <span class="knob" />
+              </button>
             </div>
 
             <div class="line">

@@ -762,6 +762,19 @@ export interface AppConfig {
    * factory ones. Absent whenever the chip is not holding one.
    */
   accessBefore?: Partial<Record<PermissionKind, PermissionAction>>
+  /**
+   * The composer's access level. "auto" is the middle one: changes inside the
+   * project, reaching outside it and everyday commands go ahead; deleting and
+   * risky commands still ask. Absent, the level is read off `permissions` -
+   * "full" when nothing asks, otherwise "ask" - which is what every config
+   * written before this field meant.
+   */
+  accessLevel?: "ask" | "auto" | "full"
+  /**
+   * Whether full access can be picked in the composer at all. Off to begin
+   * with: skipping every question is something to turn on deliberately.
+   */
+  allowFullAccess: boolean
   /** Working directory for new sessions. */
   directory: string
   /**
