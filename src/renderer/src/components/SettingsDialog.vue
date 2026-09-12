@@ -57,6 +57,7 @@ type Section =
   | "files"
   | "environment"
   | "usage"
+  | "updates"
   | "server"
   | "providers"
   | "models"
@@ -205,6 +206,7 @@ const NAV_LABELS: Record<Section, string> = {
   files: "set.files",
   environment: "set.environment",
   usage: "set.usage",
+  updates: "set.updates",
   server: "set.server",
   providers: "set.providers",
   models: "set.models",
@@ -918,6 +920,16 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           {{ t("set.models") }}
         </button>
 
+        <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
+
+        <button v-show="navShows('updates')" class="nav-item" :class="{ on: section === 'updates' }" @click="section = 'updates'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M10 4v8M10 4 6.8 7.2M10 4l3.2 3.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M4.5 13.5v2h11v-2" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <span>{{ t("set.updates") }}</span>
+        </button>
+
         <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
 
         <div class="nav-foot">
@@ -1239,40 +1251,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 spellcheck="false"
                 @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
               />
-            </div>
-          </div>
-
-          <!--
-            Updates. opencode has this section too, with a Check now button and
-            an updater behind it. MCode has no update service, so the address to
-            look at has to be given here - without it the check could only ever
-            answer "no update feed is configured", which is what it did from all
-            three places that offer it.
-          -->
-          <h3>{{ t("set.updates") }}</h3>
-          <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.updateFeed") }}</div>
-                <div class="line-sub">{{ t("set.updateFeedSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.updateFeed ?? ''"
-                placeholder="https://example.com/latest.json"
-                spellcheck="false"
-                @change="app.patchConfig({ updateFeed: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("update.check") }}</div>
-                <div class="line-sub">{{ t("set.updateFeedSub") }}</div>
-              </div>
-              <button class="ctl-btn" :disabled="!app.config?.updateFeed?.trim()" @click="emit('check-updates')">
-                {{ t("set.checkNow") }}
-              </button>
             </div>
           </div>
 
@@ -1681,6 +1659,54 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
             <p v-if="usage && !usage.byModel.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>
+        </template>
+
+        <template v-else-if="section === 'updates'">
+          <h2>{{ t("set.updates") }}</h2>
+          <p class="page-sub">{{ t("set.updatesSub") }}</p>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.version") }}</div>
+                <div class="line-sub">{{ t("set.versionSub") }}</div>
+              </div>
+              <span class="total-value small">v{{ app.version }}</span>
+            </div>
+          </div>
+
+          <!--
+            Updates. opencode has this section too, with a Check now button and
+            an updater behind it. MCode has no update service, so the address to
+            look at has to be given here - without it the check could only ever
+            answer "no update feed is configured", which is what it did from all
+            three places that offer it.
+          -->
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.updateFeed") }}</div>
+                <div class="line-sub">{{ t("set.updateFeedSub") }}</div>
+              </div>
+              <input
+                class="field font-field"
+                :value="app.config?.updateFeed ?? ''"
+                placeholder="https://example.com/latest.json"
+                spellcheck="false"
+                @change="app.patchConfig({ updateFeed: ($event.target as HTMLInputElement).value.trim() })"
+              />
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("update.check") }}</div>
+                <div class="line-sub">{{ t("set.updateFeedSub") }}</div>
+              </div>
+              <button class="ctl-btn" :disabled="!app.config?.updateFeed?.trim()" @click="emit('check-updates')">
+                {{ t("set.checkNow") }}
+              </button>
+            </div>
+          </div>
+
         </template>
 
         <template v-else-if="section === 'keys'">
