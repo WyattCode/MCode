@@ -10,7 +10,7 @@ import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protoc
 import { preview } from "../lib/attach"
 import { useRestoreDraft } from "../lib/draft"
 import { withoutLatest } from "../lib/model"
-import { t } from "../lib/i18n"
+import { language, t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
 
 /**
@@ -245,19 +245,32 @@ function modelName(message: AssistantMessage): string {
 const copied = ref<string>()
 
 /**
- * Clock time rather than "5 minutes ago".
+ * A moment as the reference writes one: the day and the clock, "9月12日 19:50".
  *
- * A message carries one fixed moment, so a relative phrase would have to keep
- * being recomputed to stay true, and reads oddly next to the model that
- * answered it.
+ * Clock time rather than "5 minutes ago", because a message carries one fixed
+ * moment and a relative phrase would have to keep being recomputed to stay
+ * true. The day is written as well as the time: a conversation returned to
+ * the next morning otherwise says "19:50" with nothing to say which evening.
+ * Formatted in the interface's language rather than the machine's, so the
+ * footer reads in the same language as the words beside it.
  */
-function askedAt(turn: Turn): string | undefined {
-  if (turn.asked === undefined) return undefined
-  return new Date(turn.asked).toLocaleTimeString(undefined, {
+function stamp(at: number): string {
+  return new Intl.DateTimeFormat(language.value, {
+    month: "short",
+    day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
-  })
+  }).format(at)
+}
+
+function askedAt(turn: Turn): string | undefined {
+  return turn.asked === undefined ? undefined : stamp(turn.asked)
+}
+
+/** When the reply finished, for the footer under it - the reference keeps one there too. */
+function completedAt(turn: Turn): string | undefined {
+  return turn.completed === undefined ? undefined : stamp(turn.completed)
 }
 
 async function copyAsked(turn: Turn) {
@@ -656,6 +669,10 @@ defineExpose({ stepMessage })
             <template v-if="elapsed(turn)">
               <span class="dot">·</span>
               <span>{{ elapsed(turn) }}</span>
+            </template>
+            <template v-if="completedAt(turn)">
+              <span class="dot">·</span>
+              <span class="when">{{ completedAt(turn) }}</span>
             </template>
           </div>
 
