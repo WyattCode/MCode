@@ -3223,6 +3223,7 @@ onBeforeUnmount(() => {
           @connect="connectOpen = true"
           @manage-models="manageModelsOpen = true"
           @shell="runShellCommand"
+          @terminal="terminalOpen = true"
         />
 
         <template v-else-if="!onboarding">
@@ -3310,6 +3311,7 @@ onBeforeUnmount(() => {
               @connect="connectOpen = true"
               @manage-models="manageModelsOpen = true"
               @shell="runShellCommand"
+              @terminal="terminalOpen = true"
             />
           </Teleport>
         </template>
@@ -3323,6 +3325,11 @@ onBeforeUnmount(() => {
         v-if="sideChat && app.currentID"
         @close="toggleSideChat"
         @expand="toggleSideChat"
+        @open-settings="openSettings"
+        @connect="connectOpen = true"
+        @manage-models="manageModelsOpen = true"
+        @shell="runShellCommand"
+        @terminal="terminalOpen = true"
       />
 
       <!--

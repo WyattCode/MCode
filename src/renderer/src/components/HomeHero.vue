@@ -27,7 +27,7 @@ const props = defineProps<{
 }>()
 
 /* What the box asks the window for, passed straight through. */
-const emit = defineEmits<{
+const emit = defineEmits<{ terminal: [];
   "open-settings": []
   connect: []
   "manage-models": []
@@ -103,6 +103,7 @@ function start(name: string) {
           @connect="emit('connect')"
           @manage-models="emit('manage-models')"
           @shell="emit('shell', $event)"
+          @terminal="emit('terminal')"
         />
       </div>
 

@@ -24,7 +24,7 @@ import ModelTooltip from "./ModelTooltip.vue"
 import ProviderIcon from "./ProviderIcon.vue"
 import { t, language } from "../lib/i18n"
 
-const emit = defineEmits<{ "open-settings": []
+const emit = defineEmits<{ terminal: []; "open-settings": []
   connect: []
   "manage-models": []
   shell: [command: string]
@@ -351,6 +351,30 @@ function reasonForVoice(err: unknown): string {
   if (message.includes("NotAllowedError") || message.includes("Permission")) return t("voice.noPermission")
   if (message.includes("NotFoundError")) return t("voice.noDevice")
   return message
+}
+
+/*
+ * The plus menu's three rows. Each closes the menu first, so the thing it
+ * opens - a file dialog, the drawer, a command in the box - is what the reader
+ * is looking at next rather than a menu still hanging over it.
+ */
+function attachFromMenu() {
+  menu.value = undefined
+  pick()
+}
+
+function terminalFromMenu() {
+  if (!app.currentID) return
+  menu.value = undefined
+  emit("terminal")
+}
+
+/* A skill is started the way typing its name would start it. */
+async function useSkill(name: string) {
+  menu.value = undefined
+  text.value = `/${name} `
+  await nextTick(resize)
+  focus()
 }
 
 async function submit() {
@@ -880,7 +904,7 @@ function onKeydown(event: KeyboardEvent) {
 
 
 /** Which pill has its menu open, if any. */
-const menu = ref<"agent" | "model" | "effort" | "access">()
+const menu = ref<"agent" | "model" | "effort" | "access" | "plus">()
 const modelQuery = ref("")
 const pills = ref<HTMLElement>()
 
@@ -1145,7 +1169,7 @@ function openModelMenu() {
   })
 }
 
-function toggle(which: "agent" | "model" | "effort" | "access") {
+function toggle(which: "agent" | "model" | "effort" | "access" | "plus") {
   if (menu.value === which) {
     menu.value = undefined
     modelQuery.value = ""
@@ -1410,11 +1434,55 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
         <div ref="pills" class="row">
           <input ref="picker" class="picker" type="file" multiple @change="onPicked" />
-          <button class="attach" v-tip="{ label: t('composer.attach'), placement: 'top' }" @click="pick">
-            <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
-              <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-            </svg>
-          </button>
+          <!--
+            The plus opens a menu rather than a file dialog, as the reference's
+            does: adding context is one of the things it offers, not the only
+            one. The class stays "attach" so everything that sizes or places
+            the button - including the side column's narrow layout - still
+            finds it.
+          -->
+          <div class="pill-wrap">
+            <button
+              class="attach"
+              :class="{ open: menu === 'plus' }"
+              :aria-expanded="menu === 'plus'"
+              v-tip="{ label: t('composer.attach'), placement: 'top' }"
+              @click="toggle('plus')"
+            >
+              <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+              </svg>
+            </button>
+            <div v-if="menu === 'plus'" class="menu plus-menu">
+              <button class="item" @click="attachFromMenu">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M10.6 5.2 6 9.8a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5.2 5.2a4.2 4.2 0 0 0 6 6l4.2-4.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                </svg>
+                <span class="item-name">{{ t("composer.attach") }}</span>
+              </button>
+              <button class="item" :disabled="!app.currentID" @click="terminalFromMenu">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
+                  <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                </svg>
+                <span class="item-name">{{ t("composer.menuTerminal") }}</span>
+              </button>
+              <div class="rule" />
+              <div class="plus-head">{{ t("composer.menuSkills") }}</div>
+              <div class="plus-skills">
+                <button
+                  v-for="skill in app.commands"
+                  :key="skill.name"
+                  class="item"
+                  :title="skill.description || skill.name"
+                  @click="useSkill(skill.name)"
+                >
+                  <span class="item-name">/{{ skill.name }}</span>
+                </button>
+                <div v-if="!app.commands.length" class="plus-none">{{ t("composer.menuNoSkills") }}</div>
+              </div>
+            </div>
+          </div>
 
           <!--
             The permission map in one control: every bucket that asks turned to
@@ -2391,6 +2459,38 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  * so that the two rules between them can reach the menu's edges. Padding on
  * the menu itself would inset the rules with everything else.
  */
+/* The plus menu: its skills scroll rather than growing past the window. */
+.menu.plus-menu {
+  min-width: 220px;
+}
+
+.item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.item:disabled:hover {
+  background: transparent;
+}
+
+.plus-head {
+  padding: 8px 12px 4px;
+  color: var(--text-weak);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+
+.plus-skills {
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.plus-none {
+  padding: 4px 12px 8px;
+  color: var(--text-weak);
+  font-size: 12px;
+}
+
 .menu.model-pop {
   width: 284px;
   padding: 0;

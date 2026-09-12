@@ -19,7 +19,15 @@ import Composer from "./Composer.vue"
  * side effect of building a panel.
  */
 const app = useApp()
-const emit = defineEmits<{ close: []; expand: [] }>()
+const emit = defineEmits<{
+  close: []
+  expand: []
+  "open-settings": []
+  connect: []
+  "manage-models": []
+  shell: [command: string]
+  terminal: []
+}>()
 </script>
 
 <template>
@@ -48,7 +56,19 @@ const emit = defineEmits<{ close: []; expand: [] }>()
       column that appears and disappears is not something to hand that.
     -->
     <div class="dock">
-      <Composer />
+      <!--
+        Every event the box raises is passed on. It was mounted with none bound,
+        so from this column managing models, connecting a provider and shell
+        mode all did nothing - silently, which is the worst way for a button
+        to fail.
+      -->
+      <Composer
+        @open-settings="emit('open-settings')"
+        @connect="emit('connect')"
+        @manage-models="emit('manage-models')"
+        @shell="emit('shell', $event)"
+        @terminal="emit('terminal')"
+      />
     </div>
   </aside>
 </template>
