@@ -20,4 +20,14 @@ export interface MenuItem {
   checked?: boolean
   /** A group's name rather than something to press, like its GroupLabel. */
   heading?: boolean
+  /**
+   * The row's glyph, as an SVG path on a 16x16 grid.
+   *
+   * A path rather than a component: a menu is built as data by whoever opens
+   * it, and passing components through that list would make every caller
+   * import the icons it names.
+   */
+  icon?: string
+  /** Drawn in the error colour: the row that destroys something. */
+  danger?: boolean
 }

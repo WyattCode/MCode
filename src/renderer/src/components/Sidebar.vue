@@ -240,6 +240,16 @@ function toggleProject(directory: string) {
                 </svg>
                 <span class="row-label task-label">{{ title(session.title) }}</span>
               </button>
+              <button
+                class="row-pin"
+                :class="{ on: app.isPinned(session.id) }"
+                :aria-label="t(app.isPinned(session.id) ? 'menu.unpin' : 'menu.pin')"
+                @click.stop="app.togglePinned(session.id)"
+              >
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+                </svg>
+              </button>
               <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <circle cx="3" cy="8" r="1.1" fill="currentColor" />
@@ -279,6 +289,16 @@ function toggleProject(directory: string) {
               <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
             <span class="row-label task-label">{{ title(session.title) }}</span>
+          </button>
+          <button
+            class="row-pin"
+            :class="{ on: app.isPinned(session.id) }"
+            :aria-label="t(app.isPinned(session.id) ? 'menu.unpin' : 'menu.pin')"
+            @click.stop="app.togglePinned(session.id)"
+          >
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+            </svg>
           </button>
           <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -640,5 +660,34 @@ function toggleProject(directory: string) {
 
 .batch-act.danger {
   color: var(--error);
+}
+
+/* The quick pin MiMo keeps beside the row's menu: no menu needed to use it. */
+.row-pin {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-inline-start: 2px;
+  color: var(--text-weak);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, color 0.12s;
+}
+
+.row:hover .row-pin,
+.row-pin:focus-visible,
+.row-pin.on {
+  opacity: 1;
+}
+
+.row-pin.on {
+  color: var(--text-base);
+}
+
+.row-pin:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 </style>

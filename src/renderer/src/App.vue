@@ -1112,17 +1112,50 @@ const deletingMany = ref<string[]>()
  * values carry none - and marks the entries that open something rather than
  * acting at once.
  */
-const SESSION_MENU: { id: string; label: string; asks?: boolean; divided?: boolean }[] = [
-  { id: "session.rename", label: "common.rename" },
-  { id: "row.pin", label: "menu.pin" },
-  { id: "row.unread", label: "menu.markUnread" },
-  { id: "row.continue", label: "menu.continueNew" },
-  { id: "row.move", label: "menu.moveToProject", asks: true, divided: true },
-  { id: "session.archive", label: "common.archive" },
-  { id: "row.batch", label: "menu.batch" },
-  { id: "row.copyDirectory", label: "menu.copyDirectory", divided: true },
-  { id: "session.export", label: "common.export", asks: true },
-  { id: "session.delete", label: "common.delete", asks: true, divided: true },
+/*
+ * MiMo's conversation menu, row for row: the wording names the conversation
+ * rather than "this session", there are no trailing dots, and every row
+ * carries a glyph. The four groups are its own.
+ */
+const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean; danger?: boolean }[] = [
+  { id: "session.rename", label: "common.rename", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" },
+  { id: "row.pin", label: "menu.pin", icon: "M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" },
+  {
+    id: "row.unread",
+    label: "menu.markUnread",
+    icon: "M1.8 8S4 3.8 8 3.8 14.2 8 14.2 8 12 12.2 8 12.2 1.8 8 1.8 8zM8 9.6a1.6 1.6 0 1 0 0-3.2 1.6 1.6 0 0 0 0 3.2z",
+  },
+  {
+    id: "row.continue",
+    label: "menu.continueNew",
+    icon: "M4.6 3.2v6.2a2 2 0 0 0 2 2h4.8M9.2 8.8l2.4 2.6-2.4 2.6M4.6 3.2a1.2 1.2 0 1 0 0-.1z",
+  },
+  {
+    id: "row.move",
+    label: "menu.moveToProject",
+    icon: "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1zM8 7.4v4M6.4 9l1.6-1.6L9.6 9",
+    divided: true,
+  },
+  {
+    id: "session.archive",
+    label: "menu.archive",
+    icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2",
+  },
+  { id: "row.batch", label: "menu.batch", icon: "M2.4 4.4h1.6M6.6 4.4h7M2.4 8h1.6M6.6 8h7M2.4 11.6h1.6M6.6 11.6h7" },
+  {
+    id: "row.copyDirectory",
+    label: "menu.copyDirectory",
+    icon: "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2",
+    divided: true,
+  },
+  { id: "session.export", label: "menu.export", icon: "M8 2.6v7.2M5.2 7.2 8 10l2.8-2.8M2.8 12.2h10.4" },
+  {
+    id: "session.delete",
+    label: "menu.delete",
+    icon: "M3 4.4h10M6.4 4.4V2.8h3.2v1.6M4.4 4.4l.7 8.4h5.8l.7-8.4M6.8 6.8v3.8M9.2 6.8v3.8",
+    divided: true,
+    danger: true,
+  },
 ]
 
 /*
@@ -1169,9 +1202,11 @@ const sessionMenuItems = computed(() =>
       const label = entry.id === "row.pin" ? t(pinned ? "menu.unpin" : "menu.pin") : t(entry.label)
       return {
         key: entry.id,
-        label: label + (entry.asks ? "…" : ""),
+        label,
         enabled: Boolean(target),
         divided: Boolean(entry.divided),
+        icon: entry.icon,
+        danger: Boolean(entry.danger),
       }
     }
     const command = bindableCommands.value.find((item) => item.id === entry.id)
@@ -1181,11 +1216,16 @@ const sessionMenuItems = computed(() =>
       key: entry.id,
       // A key with no string of its own falls back to the command's sentence
       // rather than showing the key, which is what `t` returns when it misses.
-      label: (short === entry.label ? command.title : short) + (entry.asks ? "…" : ""),
+      label: short === entry.label ? command.title : short,
       enabled: command.enabled && Boolean(target),
       divided: Boolean(entry.divided),
+      icon: entry.icon,
+      danger: Boolean(entry.danger),
     }
-  }).filter((item): item is { key: string; label: string; enabled: boolean; divided: boolean } => Boolean(item)),
+  }).filter(
+    (item): item is { key: string; label: string; enabled: boolean; divided: boolean; icon: string; danger: boolean } =>
+      Boolean(item),
+  ),
 )
 
 /**

@@ -74,11 +74,14 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
       <button
         v-else
         class="item"
-        :class="{ ticked: item.checked }"
+        :class="{ ticked: item.checked, danger: item.danger }"
         :disabled="item.enabled === false"
         @mousedown.prevent
         @click="emit('pick', item.key)"
       >
+        <svg v-if="item.icon" class="glyph" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path :d="item.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
         <span class="tick" aria-hidden="true">
           <svg v-if="item.checked" width="12" height="12" viewBox="0 0 20 20" fill="none">
             <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-linecap="square" />
@@ -187,5 +190,26 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   width: calc(100% + 4px);
   margin: 2px -2px;
   background: var(--border-muted);
+}
+
+/* A glyph against every row, as MiMo draws its conversation menu. */
+.glyph {
+  flex-shrink: 0;
+  color: var(--text-base);
+}
+
+.item:hover:not(:disabled) .glyph {
+  color: var(--text-strong);
+}
+
+/* The row that destroys something says so before it is pressed. */
+.item.danger,
+.item.danger .glyph,
+.item.danger:hover:not(:disabled) .glyph {
+  color: var(--error);
+}
+
+.item.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--error) 12%, transparent);
 }
 </style>
