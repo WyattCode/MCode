@@ -3724,11 +3724,10 @@ onBeforeUnmount(() => {
   padding-inline-end: calc(24px + 262px);
 }
 /*
- * The browser gets its own column at the far side, wide enough for a page to
- * be readable beside the conversation rather than instead of it.
+ * The browser's column. Its width belongs to the panel, which is what is
+ * dragged and what remembers; this only keeps it from being squeezed.
  */
 .browser-panel {
   flex-shrink: 0;
-  width: 420px;
 }
 </style>

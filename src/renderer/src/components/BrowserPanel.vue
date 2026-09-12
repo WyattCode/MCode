@@ -53,6 +53,64 @@ const stage = ref<HTMLElement>()
 const servers = ref<LocalServer[]>([])
 const scanning = ref(false)
 
+/*
+ * The panel's width, held locally while a drag is in flight and read from the
+ * config the rest of the time - the same arrangement the project panel uses,
+ * so a drag stays smooth and what is kept is what was let go of.
+ */
+const MIN_WIDTH = 320
+const DEFAULT_WIDTH = 420
+const dragWidth = ref<number>()
+const dragging = ref(false)
+
+const width = computed(() =>
+  Math.max(MIN_WIDTH, dragWidth.value ?? app.config?.browserWidth ?? DEFAULT_WIDTH),
+)
+
+function clampWidth(want: number) {
+  /* Never more than two thirds: the conversation is the reason the panel is
+     beside it rather than over it. */
+  return Math.round(Math.min(window.innerWidth * 0.66, Math.max(MIN_WIDTH, want)))
+}
+
+async function commitWidth(next: number) {
+  dragWidth.value = next
+  if (next !== app.config?.browserWidth) await app.patchConfig({ browserWidth: next })
+  dragWidth.value = undefined
+}
+
+function beginResize(event: PointerEvent) {
+  if (event.detail > 1) return
+  const target = event.currentTarget as HTMLElement
+  const startX = event.clientX
+  const startWidth = width.value
+  /* The panel is on the trailing edge, so widening means dragging towards the
+     leading one - and in Arabic that is the other direction. */
+  const sign = getComputedStyle(target).direction === "rtl" ? 1 : -1
+  target.setPointerCapture(event.pointerId)
+  dragging.value = true
+  dragWidth.value = startWidth
+
+  const move = (moved: PointerEvent) => {
+    dragWidth.value = clampWidth(startWidth + sign * (moved.clientX - startX))
+    remeasure()
+  }
+  const done = () => {
+    dragging.value = false
+    target.removeEventListener("pointermove", move)
+    target.removeEventListener("pointerup", done)
+    target.removeEventListener("pointercancel", done)
+    void commitWidth(width.value)
+  }
+  target.addEventListener("pointermove", move)
+  target.addEventListener("pointerup", done)
+  target.addEventListener("pointercancel", done)
+}
+
+function resetWidth() {
+  void commitWidth(DEFAULT_WIDTH)
+}
+
 let stopState: (() => void) | undefined
 
 const showingPage = computed(() => Boolean(state.value.url))
@@ -165,7 +223,17 @@ async function scan() {
 </script>
 
 <template>
-  <section class="browser" :aria-label="t('browser.title')">
+  <section class="browser" :aria-label="t('browser.title')" :style="{ width: `${width}px` }">
+    <!--
+      The seam, which is a thing you drag. Eight pixels to grab and three to
+      see, the same handle the project panel uses.
+    -->
+    <div
+      class="pane-grip"
+      :class="{ on: dragging }"
+      @pointerdown.prevent="beginResize"
+      @dblclick="resetWidth"
+    />
     <header class="tabs">
       <div class="strip">
         <div
@@ -259,13 +327,23 @@ async function scan() {
 
 <style scoped>
 .browser {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: 100%;
+  flex-shrink: 0;
   height: 100%;
   min-height: 0;
   background: var(--surface-base);
   border-inline-start: 1px solid var(--border-weak);
+}
+
+.pane-grip {
+  position: absolute;
+  z-index: 30;
+  inset-block: 0;
+  inset-inline-start: -4px;
+  width: 8px;
+  cursor: col-resize;
 }
 
 .tabs {

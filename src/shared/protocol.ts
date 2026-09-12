@@ -752,6 +752,8 @@ export interface AppConfig {
    * choice: the panel then uses its own default rather than a number written
    * on first launch that would look like the user had picked it.
    */
+  /** How wide the browser panel is, when it has been dragged. */
+  browserWidth?: number
   sidebarWidth?: number
   /** Optional display name per project directory, keyed by absolute path. */
   projectNames: Record<string, string>
