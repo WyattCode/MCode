@@ -564,6 +564,26 @@ export interface McpServerConfig {
 }
 
 /** One checkout of a repository - what this app calls a workspace. */
+/** Usage gathered under one heading - a day, a model, or everything. */
+export interface UsageBucket {
+  /** A date as YYYY-MM-DD, or a model as "provider/model". */
+  key: string
+  usage: Usage
+  /** How many assistant turns went into it. */
+  turns: number
+}
+
+export interface UsageSummary {
+  total: Usage
+  turns: number
+  /** Oldest first, one entry per day that actually has turns in it. */
+  byDay: UsageBucket[]
+  /** Heaviest first. */
+  byModel: UsageBucket[]
+  /** How many days back the daily list was gathered over. */
+  days: number
+}
+
 /** One file this app keeps, or looks for, and whether it is actually there. */
 export interface AppPath {
   /** What to call it in the list. */
@@ -1128,6 +1148,7 @@ export type Request =
   | { type: "app.reset" }
   /* "branch" widens the review past the working tree to the whole branch. */
   | { type: "app.paths"; directory?: string }
+  | { type: "usage.summary"; days?: number }
   | { type: "git.status"; directory: string; scope?: "worktree" | "branch" }
   | { type: "git.init"; directory: string }
   /*
@@ -1272,6 +1293,7 @@ export interface ResponseMap {
   "shell.list": { shells: ShellSummary[] }
   "shell.attach": { data: string; alive: boolean }
   "app.paths": { paths: AppPaths }
+  "usage.summary": { summary: UsageSummary }
   "workspace.list": { worktrees: Worktree[] }
   "workspace.create": { directory: string; branch: string }
   "workspace.remove": Record<string, never>

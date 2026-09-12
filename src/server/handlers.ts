@@ -1,7 +1,16 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { kindFor, mimeFor } from "./media"
-import type { AppPath, ArtifactFile, FileEntry, Request, ResponseMap, SessionArtifacts } from "@shared/protocol"
+import type {
+  AppPath,
+  ArtifactFile,
+  FileEntry,
+  Request,
+  ResponseMap,
+  SessionArtifacts,
+  Usage,
+  UsageBucket,
+} from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
 import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
@@ -277,6 +286,71 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           .catch(() => false)
       }
       return { paths: { storage, files } } satisfies Handled<"app.paths">
+    }
+
+    case "usage.summary": {
+      const days = Math.max(1, Math.min(365, request.days ?? 30))
+      const since = Date.now() - days * 24 * 60 * 60 * 1000
+      const empty = (): Usage => ({
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        cost: 0,
+      })
+      const add = (into: Usage, from: Usage) => {
+        into.input += from.input
+        into.output += from.output
+        into.reasoning += from.reasoning
+        into.cacheRead += from.cacheRead
+        into.cacheWrite += from.cacheWrite
+        into.cost += from.cost
+      }
+      const total = empty()
+      let turns = 0
+      const byDay = new Map<string, UsageBucket>()
+      const byModel = new Map<string, UsageBucket>()
+      const bucket = (map: Map<string, UsageBucket>, key: string) => {
+        const found = map.get(key)
+        if (found) return found
+        const made: UsageBucket = { key, usage: empty(), turns: 0 }
+        map.set(key, made)
+        return made
+      }
+
+      for (const session of await runtime.sessions.list()) {
+        for (const message of await runtime.sessions.messages(session.id)) {
+          if (message.role !== "assistant" || !message.usage) continue
+          /*
+           * The turn's own clock, not the session's. A conversation returned
+           * to over a fortnight would otherwise report every token it ever
+           * spent on whichever day it was last touched.
+           */
+          const at = message.time.created
+          add(total, message.usage)
+          turns += 1
+          const model = `${message.model.provider}/${message.model.model}`
+          const inModel = bucket(byModel, model)
+          add(inModel.usage, message.usage)
+          inModel.turns += 1
+          if (at < since) continue
+          const day = new Date(at).toISOString().slice(0, 10)
+          const inDay = bucket(byDay, day)
+          add(inDay.usage, message.usage)
+          inDay.turns += 1
+        }
+      }
+
+      return {
+        summary: {
+          total,
+          turns,
+          days,
+          byDay: [...byDay.values()].sort((a, b) => a.key.localeCompare(b.key)),
+          byModel: [...byModel.values()].sort((a, b) => b.usage.cost - a.usage.cost || b.turns - a.turns),
+        },
+      } satisfies Handled<"usage.summary">
     }
 
     case "provider.list":

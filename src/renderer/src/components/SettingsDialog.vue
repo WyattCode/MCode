@@ -20,7 +20,7 @@ import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib
 import { projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
-import type { AppPath, AppPaths, Worktree } from "@shared/protocol"
+import type { AppPath, AppPaths, UsageSummary, Worktree } from "@shared/protocol"
 import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
@@ -56,6 +56,7 @@ type Section =
   | "archive"
   | "files"
   | "environment"
+  | "usage"
   | "server"
   | "providers"
   | "models"
@@ -116,6 +117,37 @@ function openPath(file: AppPath) {
   window.mcode.openFile(file.path.slice(0, cut), file.path.slice(cut + 1))
 }
 
+/*
+ * Money in the reader's own locale, always in dollars - the figures the
+ * providers report are dollars, and relabelling them in another currency
+ * would change what they say without changing what they are. The same
+ * reasoning the session header's readout is built on.
+ */
+const money = computed(
+  () => new Intl.NumberFormat(language.value, { style: "currency", currency: "USD" }),
+)
+
+/* What has been spent, gathered by the server from every turn on disk. */
+const usage = ref<UsageSummary>()
+
+async function loadUsage() {
+  usage.value = await app.client
+    ?.request({ type: "usage.summary", days: 14 })
+    .then((result) => result.summary)
+    .catch(() => undefined)
+}
+
+/* The widest day sets the scale, so the bars mean something next to each other. */
+const busiestDay = computed(() =>
+  Math.max(1, ...(usage.value?.byDay ?? []).map((day) => day.usage.input + day.usage.output)),
+)
+
+function tokens(count: number): string {
+  if (count >= 1_000_000) return (count / 1_000_000).toFixed(count >= 10_000_000 ? 0 : 1) + "M"
+  if (count >= 1000) return (count / 1000).toFixed(count >= 10_000 ? 0 : 1) + "k"
+  return String(count)
+}
+
 /* The worktrees of whichever project is open. */
 const trees = ref<Worktree[]>([])
 const treesFor = ref("")
@@ -142,6 +174,7 @@ watch(
   (next: Section) => {
     if (next === "files") void loadPaths()
     if (next === "environment") void loadTrees()
+    if (next === "usage") void loadUsage()
   },
   { immediate: true },
 )
@@ -171,6 +204,7 @@ const NAV_LABELS: Record<Section, string> = {
   archive: "set.archive",
   files: "set.files",
   environment: "set.environment",
+  usage: "set.usage",
   server: "set.server",
   providers: "set.providers",
   models: "set.models",
@@ -822,7 +856,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           {{ t("set.archive") }}
         </button>
 
-        <div v-show="navShows('files') || navShows('environment')" class="nav-group">{{ t("set.groupProject") }}</div>
+        <div v-show="navShows('usage') || navShows('files') || navShows('environment')" class="nav-group">{{ t("set.groupProject") }}</div>
+
+        <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M4 16V9M8 16V5M12 16v-4M16 16v-8" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <span>{{ t("set.usage") }}</span>
+        </button>
 
         <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1563,6 +1604,65 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <div class="line-sub">{{ t("set.noWorktrees") }}</div>
               </div>
             </div>
+          </div>
+        </template>
+
+        <template v-else-if="section === 'usage'">
+          <h2>{{ t("set.usage") }}</h2>
+          <p class="page-sub">{{ t("set.usageSub") }}</p>
+          <div class="card">
+            <div class="totals">
+              <div class="total">
+                <span class="total-value">{{ money.format(usage?.total.cost ?? 0) }}</span>
+                <span class="total-name">{{ t("context.usage.cost") }}</span>
+              </div>
+              <div class="total">
+                <span class="total-value">{{ tokens(usage?.total.input ?? 0) }}</span>
+                <span class="total-name">{{ t("set.usageInput") }}</span>
+              </div>
+              <div class="total">
+                <span class="total-value">{{ tokens(usage?.total.output ?? 0) }}</span>
+                <span class="total-name">{{ t("set.usageOutput") }}</span>
+              </div>
+              <div class="total">
+                <span class="total-value">{{ usage?.turns ?? 0 }}</span>
+                <span class="total-name">{{ t("set.usageTurns") }}</span>
+              </div>
+            </div>
+          </div>
+
+          <h3>{{ t("set.usageByDay", { n: String(usage?.days ?? 14) }) }}</h3>
+          <div class="card">
+            <div v-for="day in usage?.byDay ?? []" :key="day.key" class="day">
+              <span class="day-name">{{ day.key.slice(5) }}</span>
+              <span class="day-bar">
+                <span
+                  class="day-fill"
+                  :style="{
+                    width:
+                      Math.max(2, ((day.usage.input + day.usage.output) / busiestDay) * 100) + '%',
+                  }"
+                />
+              </span>
+              <span class="day-value">{{ tokens(day.usage.input + day.usage.output) }}</span>
+              <span class="day-cost">{{ money.format(day.usage.cost) }}</span>
+            </div>
+            <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
+          </div>
+
+          <h3>{{ t("set.usageByModel") }}</h3>
+          <div class="card">
+            <div v-for="entry in usage?.byModel ?? []" :key="entry.key" class="line">
+              <div class="line-text">
+                <div class="line-title">{{ entry.key }}</div>
+                <div class="line-sub">
+                  {{ t("set.usageTurnCount", { n: String(entry.turns) }) }} ·
+                  {{ tokens(entry.usage.input + entry.usage.output) }}
+                </div>
+              </div>
+              <span class="total-value small">{{ money.format(entry.usage.cost) }}</span>
+            </div>
+            <p v-if="usage && !usage.byModel.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>
         </template>
 
@@ -2335,6 +2435,78 @@ h3 {
  * as one setting with three positions rather than three separate buttons that
  * happen to sit together.
  */
+/* Four figures across, each its own column so they line up whatever their width. */
+.totals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.total {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.total-value {
+  color: var(--text-strong);
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 26px;
+  font-variant-numeric: tabular-nums;
+}
+
+.total-value.small {
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.total-name {
+  color: var(--text-weak);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.day-name {
+  flex-shrink: 0;
+  width: 44px;
+  color: var(--text-weak);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.day-bar {
+  flex: 1;
+  height: 8px;
+  background: var(--surface-base);
+  border-radius: 999px;
+}
+
+.day-fill {
+  display: block;
+  height: 100%;
+  background: var(--icon-base);
+  border-radius: 999px;
+}
+
+.day-value,
+.day-cost {
+  flex-shrink: 0;
+  width: 56px;
+  color: var(--text-base);
+  font-size: 12px;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
 /* A row whose control is a block of its own rather than a thing on the end. */
 .line.stack {
   flex-direction: column;
