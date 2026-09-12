@@ -288,13 +288,20 @@ async function copyReply(turn: Turn) {
   }, 1600)
 }
 
-/** Turns whose run of tool calls is folded away, by the line above the answer. */
-const folded = ref(new Set<string>())
+/*
+ * Turns whose run of tool calls has been opened by hand.
+ *
+ * Folded is the resting state, as it is in MiMo: an answer arrives with its
+ * steps put away behind the line above it, and the chevron opens them. This
+ * was the other way round - shown unless folded - which left a long run of
+ * lookups between the question and the sentence that answered it.
+ */
+const opened = ref(new Set<string>())
 
 function foldRun(id: string) {
-  const next = new Set(folded.value)
+  const next = new Set(opened.value)
   if (!next.delete(id)) next.add(id)
-  folded.value = next
+  opened.value = next
 }
 
 /** Whether this turn did any work worth folding. */
@@ -302,10 +309,10 @@ function hasTools(turn: Turn): boolean {
   return turn.parts.some((part) => part.type === "tool")
 }
 
-/** What the answer shows: its own words always, its steps unless folded. */
+/** What the answer shows: its own words always, its steps once opened. */
 function shown(turn: Turn): Row[] {
   const all = rows(turn.parts)
-  return folded.value.has(turn.id) ? all.filter((row) => row.kind !== "tools") : all
+  return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "tools")
 }
 
 function elapsed(turn: Turn): string | undefined {
@@ -596,13 +603,13 @@ defineExpose({ stepMessage })
             <button
               v-if="hasTools(turn)"
               class="run-fold"
-              :aria-expanded="!folded.has(turn.id)"
+              :aria-expanded="opened.has(turn.id)"
               :aria-label="t('turn.steps')"
               @click="foldRun(turn.id)"
             >
               <svg
                 class="run-chev"
-                :class="{ folded: folded.has(turn.id) }"
+                :class="{ open: opened.has(turn.id) }"
                 width="13"
                 height="13"
                 viewBox="0 0 16 16"
@@ -1095,13 +1102,13 @@ defineExpose({ stepMessage })
   background: var(--surface-hover);
 }
 
-/* Pointing down while the steps are shown, and along the line once folded. */
+/* Along the line while the steps are away, and down once they are opened. */
 .run-chev {
-  transform: rotate(90deg);
+  transform: rotate(0deg);
   transition: transform 0.12s;
 }
 
-.run-chev.folded {
-  transform: rotate(0deg);
+.run-chev.open {
+  transform: rotate(90deg);
 }
 </style>
