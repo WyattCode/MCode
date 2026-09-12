@@ -659,12 +659,64 @@ async function runShellCommand(command: string) {
  */
 async function pickedProject(directory: string) {
   const moving = movingSession.value
+  const many = movingMany.value
   movingSession.value = undefined
+  movingMany.value = undefined
+  if (many?.length) {
+    for (const sessionID of many) await app.move(sessionID, directory)
+    selecting.value = undefined
+    return
+  }
   if (moving) {
     await app.move(moving, directory)
     return
   }
   startIn(directory)
+}
+
+/* Set while the picker is being used to move everything that is ticked. */
+const movingMany = ref<string[]>()
+
+/** A conversation ticked or unticked in the side column's selection mode. */
+function toggleSelected(sessionID: string) {
+  const current = selecting.value ?? []
+  selecting.value = current.includes(sessionID)
+    ? current.filter((entry) => entry !== sessionID)
+    : [...current, sessionID]
+}
+
+/**
+ * What the selection bar asks for.
+ *
+ * Each of these is the single-conversation action run over the set, so the
+ * rules that already hold - leaving an archived session, the confirmation
+ * before a delete - hold here too.
+ */
+async function runBatch(action: "archive" | "move" | "delete" | "cancel") {
+  const chosen = selecting.value ?? []
+  if (action === "cancel") {
+    selecting.value = undefined
+    return
+  }
+  if (!chosen.length) return
+  if (action === "archive") {
+    for (const sessionID of chosen) await app.archive(sessionID, true)
+    selecting.value = undefined
+    return
+  }
+  if (action === "move") {
+    movingMany.value = [...chosen]
+    openPalette("projects")
+    return
+  }
+  deletingMany.value = [...chosen]
+}
+
+async function confirmDeleteMany() {
+  const targets = deletingMany.value ?? []
+  deletingMany.value = undefined
+  for (const sessionID of targets) await app.remove(sessionID)
+  selecting.value = undefined
 }
 
 function openPalette(mode: PaletteMode = "all") {
@@ -1037,6 +1089,14 @@ const menuSession = computed(() =>
 /* Set while the project picker is being used to move a conversation. */
 const movingSession = ref<string>()
 
+/*
+ * Selection mode in the side column: the conversations ticked, or absent when
+ * the column is being read rather than managed. The set is held here because
+ * what it is for - archiving, moving, deleting - is held here too.
+ */
+const selecting = ref<string[]>()
+const deletingMany = ref<string[]>()
+
 /**
  * The session menu's contents: what each entry does comes from the palette's
  * own command list, so a command's behaviour and availability are defined once.
@@ -1059,6 +1119,7 @@ const SESSION_MENU: { id: string; label: string; asks?: boolean; divided?: boole
   { id: "row.continue", label: "menu.continueNew" },
   { id: "row.move", label: "menu.moveToProject", asks: true, divided: true },
   { id: "session.archive", label: "common.archive" },
+  { id: "row.batch", label: "menu.batch" },
   { id: "row.copyDirectory", label: "menu.copyDirectory", divided: true },
   { id: "session.export", label: "common.export", asks: true },
   { id: "session.delete", label: "common.delete", asks: true, divided: true },
@@ -1077,6 +1138,9 @@ const ROW_ACTIONS: Record<string, (sessionID: string) => void | Promise<void>> =
     if (app.currentID !== sessionID) await app.open(sessionID)
     const last = app.messages[app.messages.length - 1]
     if (last) await app.forkFrom(last.id)
+  },
+  "row.batch": (sessionID) => {
+    selecting.value = [sessionID]
   },
   "row.move": (sessionID) => {
     movingSession.value = sessionID
@@ -2826,6 +2890,9 @@ onBeforeUnmount(() => {
         @newTask="goHome"
         @artifacts="goArtifacts"
         @menu="(id, x, y) => (sessionMenu = { x, y, sessionID: id })"
+        :selecting="selecting"
+        @select="toggleSelected"
+        @batch="runBatch"
         @plugins="mcpOpen = true"
         @search="paletteOpen = true"
         @back="back"
@@ -3090,6 +3157,19 @@ onBeforeUnmount(() => {
     :confirm-label="t('common.delete')"
     @confirm="confirmDeleteWorkspace"
     @close="deletingWorkspace = undefined"
+  />
+
+  <!--
+    Several conversations at once, so the button says "Delete" rather than
+    "Delete this session" - the question above it is about a count.
+  -->
+  <ConfirmDialog
+    v-if="deletingMany?.length"
+    :title="t('confirm.deleteSessions')"
+    :body="t('confirm.deleteSessionsBody', { n: String(deletingMany.length) })"
+    :confirm-label="t('common.delete')"
+    @confirm="confirmDeleteMany"
+    @close="deletingMany = undefined"
   />
 
   <ConfirmDialog

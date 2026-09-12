@@ -17,12 +17,18 @@ import { t } from "../lib/i18n"
  * so "Recent" is every task by when it last changed, across projects, which
  * is the view a project-less list would otherwise give.
  */
-/** Which page the pane is showing, so the row that opened it stays lit. */
-defineProps<{ page?: string }>()
+const props = defineProps<{
+  /** Which page the pane is showing, so the row that opened it stays lit. */
+  page?: string
+  /** The conversations ticked in selection mode; absent when not in it. */
+  selecting?: string[]
+}>()
 
 const emit = defineEmits<{
   artifacts: []
   menu: [sessionID: string, x: number, y: number]
+  select: [sessionID: string]
+  batch: [action: "archive" | "move" | "delete" | "cancel"]
   newTask: []
   plugins: []
   search: []
@@ -47,6 +53,15 @@ const title = (text?: string) => (text && text.trim() ? text : t("side.newTask")
 /* Pinned conversations rise to the top of whichever list they are in. */
 const byPinned = (entries: typeof app.sessions) =>
   [...entries].sort((a, b) => Number(app.isPinned(b.id)) - Number(app.isPinned(a.id)))
+
+const picking = computed(() => Array.isArray(props.selecting))
+const ticked = (sessionID: string) => Boolean(props.selecting?.includes(sessionID))
+
+/** In selection mode a row ticks rather than opens. */
+function press(sessionID: string) {
+  if (picking.value) emit("select", sessionID)
+  else emit("open", sessionID)
+}
 
 /** Where the row's own menu opens from: the button, or the pointer. */
 function openMenu(sessionID: string, event: MouseEvent) {
@@ -165,6 +180,18 @@ function toggleProject(directory: string) {
       </button>
     </nav>
 
+    <!--
+      The bar selection mode brings with it: what is chosen, and the three
+      things worth doing to several conversations at once.
+    -->
+    <div v-if="picking" class="batch">
+      <span class="batch-count">{{ t("batch.selected", { n: String(selecting?.length ?? 0) }) }}</span>
+      <button class="batch-act" :disabled="!selecting?.length" @click="emit('batch', 'archive')">{{ t("common.archive") }}</button>
+      <button class="batch-act" :disabled="!selecting?.length" @click="emit('batch', 'move')">{{ t("menu.moveToProject") }}</button>
+      <button class="batch-act danger" :disabled="!selecting?.length" @click="emit('batch', 'delete')">{{ t("common.delete") }}</button>
+      <button class="batch-act" @click="emit('batch', 'cancel')">{{ t("common.cancel") }}</button>
+    </div>
+
     <div class="lists">
       <div class="section">
         <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
@@ -202,7 +229,12 @@ function toggleProject(directory: string) {
               :class="{ on: app.currentID === session.id }"
               @contextmenu.prevent="openMenu(session.id, $event)"
             >
-              <button class="row-open" @click="emit('open', session.id)">
+              <button class="row-open" @click="press(session.id)">
+                <span v-if="picking" class="tick" :class="{ on: ticked(session.id) }" aria-hidden="true">
+                  <svg v-if="ticked(session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
+                    <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
                 <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
@@ -237,7 +269,12 @@ function toggleProject(directory: string) {
           :class="{ on: app.currentID === session.id }"
           @contextmenu.prevent="openMenu(session.id, $event)"
         >
-          <button class="row-open" @click="emit('open', session.id)">
+          <button class="row-open" @click="press(session.id)">
+                <span v-if="picking" class="tick" :class="{ on: ticked(session.id) }" aria-hidden="true">
+                  <svg v-if="ticked(session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
+                    <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
             <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M6.2 2.4h3.6l-.5 4 2.2 1.9v1H4.5v-1l2.2-1.9zM8 9.3v4.3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
@@ -542,5 +579,66 @@ function toggleProject(directory: string) {
 .row-menu:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/* Selection mode: a box before each row, and the bar that acts on them. */
+.tick {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  color: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 4px;
+}
+
+.tick.on {
+  background: var(--interactive);
+  border-color: var(--interactive);
+}
+
+.batch {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 8px 6px;
+  padding: 8px;
+  background: var(--surface-menu);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 10px;
+}
+
+.batch-count {
+  flex: 1;
+  min-width: 100%;
+  color: var(--text-base);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* Six and five, not eight and six: at 256 the four labels came to 225 against
+   224 of room, and "cancel" fell to a second line by one pixel. */
+.batch-act {
+  height: 26px;
+  padding: 0 6px;
+  color: var(--text-strong);
+  border-radius: 7px;
+  font-size: 13px;
+  transition: background 0.12s, color 0.12s;
+}
+
+.batch-act:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.batch-act:disabled {
+  color: var(--text-weak);
+  cursor: default;
+}
+
+.batch-act.danger {
+  color: var(--error);
 }
 </style>
