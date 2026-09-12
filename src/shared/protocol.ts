@@ -564,6 +564,23 @@ export interface McpServerConfig {
 }
 
 /** One checkout of a repository - what this app calls a workspace. */
+/** One file this app keeps, or looks for, and whether it is actually there. */
+export interface AppPath {
+  /** What to call it in the list. */
+  name: string
+  /** Absolute, because the point of the page is to be able to go and open it. */
+  path: string
+  exists: boolean
+  /** Where it is read from: the app's own storage, or the open project. */
+  scope: "app" | "project"
+}
+
+export interface AppPaths {
+  /** The folder everything the app stores lives under. */
+  storage: string
+  files: AppPath[]
+}
+
 export interface Worktree {
   directory: string
   branch?: string
@@ -781,6 +798,17 @@ export interface AppConfig {
   codeFont: string
   terminalFont: string
 
+  /**
+   * Standing instructions from the user, added to every session's prompt.
+   *
+   * A project's own AGENTS.md says how that project is written; this says how
+   * this person wants to be worked with, wherever they are working. Kept
+   * separate from the project files for exactly that reason - one travels with
+   * the repository and the other travels with the reader.
+   */
+  instructions: string
+  /** Whether text is drawn with the lighter antialiasing or the system's own. */
+  fontSmoothing: boolean
   /**
    * Which of the app's colourways the icon wears.
    *
@@ -1099,6 +1127,7 @@ export type Request =
   | { type: "workspace.info"; directory: string }
   | { type: "app.reset" }
   /* "branch" widens the review past the working tree to the whole branch. */
+  | { type: "app.paths"; directory?: string }
   | { type: "git.status"; directory: string; scope?: "worktree" | "branch" }
   | { type: "git.init"; directory: string }
   /*
@@ -1242,6 +1271,7 @@ export interface ResponseMap {
   "shell.close": Record<string, never>
   "shell.list": { shells: ShellSummary[] }
   "shell.attach": { data: string; alive: boolean }
+  "app.paths": { paths: AppPaths }
   "workspace.list": { worktrees: Worktree[] }
   "workspace.create": { directory: string; branch: string }
   "workspace.remove": Record<string, never>

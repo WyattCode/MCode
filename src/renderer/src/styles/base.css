@@ -648,3 +648,22 @@ html[data-wrap="on"] .md-code code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/*
+ * Text drawn the lighter way, or the way the platform draws everything else.
+ *
+ * On by default because this interface is mostly light text on a dark ground,
+ * where the system's stem darkening reads as a smear; a reader who prefers
+ * their machine's own rendering can have it back.
+ */
+html[data-smoothing="on"],
+html[data-smoothing="on"] body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html[data-smoothing="off"],
+html[data-smoothing="off"] body {
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+}

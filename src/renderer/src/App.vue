@@ -820,6 +820,7 @@ watch(
       app.config?.reduceMotion ?? "system",
       app.config?.diffMarks ?? "color",
       app.config?.wrapCode ?? true,
+      app.config?.fontSmoothing ?? true,
     ] as const,
   ([cursor, motion, marks, wrap]) => {
     const root = document.documentElement
@@ -827,6 +828,7 @@ watch(
     root.setAttribute("data-motion", motion)
     root.setAttribute("data-diff-marks", marks)
     root.setAttribute("data-wrap", wrap ? "on" : "off")
+    root.setAttribute("data-smoothing", (app.config?.fontSmoothing ?? true) ? "on" : "off")
   },
   { immediate: true },
 )

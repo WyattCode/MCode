@@ -34,6 +34,11 @@ export async function writeAtomic(target: string, data: string, mode?: number): 
 export class Storage {
   constructor(private readonly root: string) {}
 
+  /** Where everything this app stores actually sits, for the page that says so. */
+  get directory(): string {
+    return this.root
+  }
+
   /**
    * The last write queued for each key.
    *

@@ -962,8 +962,12 @@ export class SessionRunner {
           : OpenAICompatible
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
-    const system = await systemPrompt({ directory: session.directory, agent: session.agent })
     const config = this.config.get()
+    const system = await systemPrompt({
+      directory: session.directory,
+      agent: session.agent,
+      instructions: config.instructions,
+    })
 
     /*
      * The step that was last rescued by a compaction. A request the provider

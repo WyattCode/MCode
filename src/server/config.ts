@@ -123,6 +123,8 @@ function defaults(): AppConfig {
     uiFont: "",
     codeFont: "",
     terminalFont: "",
+    instructions: "",
+    fontSmoothing: true,
     appIcon: DEFAULT_APP_ICON,
     pointerCursor: true,
     reduceMotion: "system",

@@ -1284,6 +1284,39 @@ async function main() {
     const buildPrompt = await systemPrompt({ directory: project, agent: "build" })
     check("plan is told what mode it is in", planPrompt.includes("plan mode"), planPrompt.slice(0, 80))
     check("build is not", !buildPrompt.includes("plan mode"))
+
+    /*
+     * Standing instructions. They are the reader's own rather than the
+     * project's, so they are announced as such and placed before the project's
+     * own files - a repository that disagrees about, say, commit style should
+     * win inside that repository.
+     */
+    const withStanding = await systemPrompt({
+      directory: project,
+      agent: "build",
+      instructions: "  Always use pnpm in my projects.  ",
+    })
+    check(
+      "standing instructions reach the prompt",
+      withStanding.includes("Always use pnpm in my projects."),
+      withStanding.slice(0, 120),
+    )
+    check(
+      "and are named as the user's own",
+      withStanding.includes("## Standing instructions"),
+      withStanding.slice(0, 120),
+    )
+    check(
+      "they come before the environment block",
+      withStanding.indexOf("## Standing instructions") < withStanding.indexOf("## Environment"),
+    )
+    check("writing none adds no section", !buildPrompt.includes("## Standing instructions"))
+    const blankStanding = await systemPrompt({
+      directory: project,
+      agent: "build",
+      instructions: "   " + String.fromCharCode(10) + "  ",
+    })
+    check("and neither does whitespace", !blankStanding.includes("## Standing instructions"))
   }
 
   section("Attachments")

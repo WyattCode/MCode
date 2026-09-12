@@ -1,7 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import { kindFor, mimeFor } from "./media"
-import type { ArtifactFile, FileEntry, Request, ResponseMap, SessionArtifacts } from "@shared/protocol"
+import type { AppPath, ArtifactFile, FileEntry, Request, ResponseMap, SessionArtifacts } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
 import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
@@ -251,6 +251,33 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "config.set":
       return { config: await runtime.config.set(request.patch) } satisfies Handled<"config.set">
+
+    case "app.paths": {
+      /*
+       * The instruction files are named here in the order the prompt reads
+       * them, and each is reported whether or not it exists: "this project has
+       * no AGENTS.md" is the more useful answer, and it is also the one that
+       * tells a reader where to put one.
+       */
+      const storage = runtime.storage.directory
+      const files: AppPath[] = [
+        { name: "config.json", path: path.join(storage, "config.json"), exists: false, scope: "app" },
+        { name: "models.json", path: path.join(storage, "models.json"), exists: false, scope: "app" },
+      ]
+      const directory = request.directory
+      if (directory) {
+        for (const name of ["AGENTS.md", "CLAUDE.md", ".mcode/rules.md"]) {
+          files.push({ name, path: path.join(directory, name), exists: false, scope: "project" })
+        }
+      }
+      for (const entry of files) {
+        entry.exists = await fs
+          .access(entry.path)
+          .then(() => true)
+          .catch(() => false)
+      }
+      return { paths: { storage, files } } satisfies Handled<"app.paths">
+    }
 
     case "provider.list":
       return { providers: runtime.config.providers() } satisfies Handled<"provider.list">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import ConnectDialog from "./ConnectDialog.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
@@ -20,6 +20,7 @@ import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib
 import { projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
+import type { AppPath, AppPaths, Worktree } from "@shared/protocol"
 import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
@@ -48,7 +49,16 @@ const shellOptions = computed(() => [
       ]),
 ])
 
-type Section = "general" | "keys" | "server" | "providers" | "models" | "archive"
+type Section =
+  | "general"
+  | "personal"
+  | "keys"
+  | "archive"
+  | "files"
+  | "environment"
+  | "server"
+  | "providers"
+  | "models"
 
 /** Which page to land on - the title bar's server button aims straight at it. */
 /**
@@ -66,6 +76,75 @@ interface Bindable {
 
 const props = defineProps<{ section?: Section; commands: Bindable[] }>()
 const section = ref<Section>(props.section ?? "general")
+
+/*
+ * Standing instructions are edited in a box and saved on purpose rather than
+ * on every keystroke: this text goes into the prompt of every session, and a
+ * half-typed sentence saved mid-word would reach the next turn.
+ */
+const draft = ref(app.config?.instructions ?? "")
+const savedInstructions = computed(() => app.config?.instructions ?? "")
+const dirty = computed(() => draft.value !== savedInstructions.value)
+
+watch(savedInstructions, (next: string) => {
+  if (!dirty.value) draft.value = next
+})
+
+async function saveInstructions() {
+  await app.patchConfig({ instructions: draft.value })
+}
+
+/* This app's own files, and the open project's instruction files. */
+const paths = ref<AppPaths>()
+
+async function loadPaths() {
+  paths.value = await app.client
+    ?.request({ type: "app.paths", directory: app.current?.directory ?? app.config?.directory })
+    .then((result) => result.paths)
+    .catch(() => undefined)
+}
+
+function revealPath(file: AppPath) {
+  const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
+  if (cut < 0) return
+  window.mcode.revealFile(file.path.slice(0, cut), file.path.slice(cut + 1))
+}
+
+function openPath(file: AppPath) {
+  const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
+  if (cut < 0) return
+  window.mcode.openFile(file.path.slice(0, cut), file.path.slice(cut + 1))
+}
+
+/* The worktrees of whichever project is open. */
+const trees = ref<Worktree[]>([])
+const treesFor = ref("")
+
+async function loadTrees() {
+  const directory = app.current?.directory ?? app.config?.directory ?? ""
+  treesFor.value = directory
+  if (!directory) {
+    trees.value = []
+    return
+  }
+  const listed = await app.client
+    ?.request({ type: "workspace.list", directory })
+    .catch(() => undefined)
+  trees.value = listed?.worktrees ?? []
+}
+
+/*
+ * Loaded when the page is opened rather than when the dialog is, because both
+ * answers are about the disk and both go stale while the dialog sits open.
+ */
+watch(
+  section,
+  (next: Section) => {
+    if (next === "files") void loadPaths()
+    if (next === "environment") void loadTrees()
+  },
+  { immediate: true },
+)
 
 /* The colourways the mark comes in, drawn from the one module that defines them. */
 const appIcon = computed(() => app.config?.appIcon ?? DEFAULT_APP_ICON)
@@ -87,8 +166,11 @@ const DIFF_MARKS = ["color", "signs"] as const
 const navQuery = ref("")
 const NAV_LABELS: Record<Section, string> = {
   general: "set.general",
+  personal: "set.personal",
   keys: "set.keyboard",
   archive: "set.archive",
+  files: "set.files",
+  environment: "set.environment",
   server: "set.server",
   providers: "set.providers",
   models: "set.models",
@@ -703,6 +785,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           {{ t("set.general") }}
         </button>
 
+        <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="10" cy="7" r="3" stroke="currentColor" />
+            <path d="M4.5 16c0-2.5 2.5-4 5.5-4s5.5 1.5 5.5 4" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <span>{{ t("set.personal") }}</span>
+        </button>
+
         <button v-show="navShows('keys')" class="nav-item" :class="{ on: section === 'keys' }" @click="section = 'keys'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
@@ -730,6 +820,26 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             />
           </svg>
           {{ t("set.archive") }}
+        </button>
+
+        <div v-show="navShows('files') || navShows('environment')" class="nav-group">{{ t("set.groupProject") }}</div>
+
+        <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 3.5h6l4 4V16.5H5z" stroke="currentColor" stroke-linejoin="round" />
+            <path d="M11 3.5v4h4" stroke="currentColor" stroke-linejoin="round" />
+          </svg>
+          <span>{{ t("set.files") }}</span>
+        </button>
+
+        <button v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M6.5 4v6.5a2 2 0 0 0 2 2H14" stroke="currentColor" stroke-linecap="round" />
+            <circle cx="6.5" cy="3.6" r="1.6" stroke="currentColor" />
+            <circle cx="15.4" cy="12.5" r="1.6" stroke="currentColor" />
+            <circle cx="6.5" cy="15.4" r="1.6" stroke="currentColor" />
+          </svg>
+          <span>{{ t("set.environment") }}</span>
         </button>
 
         <div v-show="navShows('server') || navShows('providers') || navShows('models')" class="nav-group">{{ t("set.groupServer") }}</div>
@@ -1029,6 +1139,23 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   {{ t(`set.marks.${mark}`) }}
                 </button>
               </div>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.fontSmoothing") }}</div>
+                <div class="line-sub">{{ t("set.fontSmoothingSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.fontSmoothing ?? true }"
+                role="switch"
+                :aria-checked="app.config?.fontSmoothing ?? true"
+                :aria-label="t('set.fontSmoothing')"
+                @click="app.patchConfig({ fontSmoothing: !(app.config?.fontSmoothing ?? true) })"
+              >
+                <span class="knob" />
+              </button>
             </div>
 
             <div class="line">
@@ -1370,6 +1497,75 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <!-- Keyboard -->
+        <template v-else-if="section === 'personal'">
+          <h2>{{ t("set.personal") }}</h2>
+          <p class="page-sub">{{ t("set.personalSub") }}</p>
+          <div class="card">
+            <div class="line stack">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.instructions") }}</div>
+                <div class="line-sub">{{ t("set.instructionsSub") }}</div>
+              </div>
+              <textarea
+                v-model="draft"
+                class="instructions"
+                spellcheck="false"
+                :placeholder="t('set.instructionsPlaceholder')"
+                :aria-label="t('set.instructions')"
+              />
+              <div class="stack-foot">
+                <span v-if="dirty" class="line-sub">{{ t("set.unsaved") }}</span>
+                <button class="ctl-btn" :disabled="!dirty" @click="saveInstructions">
+                  {{ t("common.save") }}
+                </button>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="section === 'files'">
+          <h2>{{ t("set.files") }}</h2>
+          <p class="page-sub">{{ t("set.filesSub") }}</p>
+          <div class="card">
+            <div v-for="file in paths?.files ?? []" :key="file.path" class="line">
+              <div class="line-text">
+                <div class="line-title">{{ file.name }}</div>
+                <div class="line-sub path">{{ file.path }}</div>
+              </div>
+              <span v-if="!file.exists" class="tag">{{ t("set.fileMissing") }}</span>
+              <button v-if="file.exists" class="ctl-btn" @click="openPath(file)">
+                {{ t("files.open") }}
+              </button>
+              <button class="ctl-btn" @click="revealPath(file)">{{ t("set.reveal") }}</button>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="section === 'environment'">
+          <h2>{{ t("set.environment") }}</h2>
+          <p class="page-sub">{{ t("set.environmentSub") }}</p>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.project") }}</div>
+                <div class="line-sub path">{{ treesFor || t("set.noProject") }}</div>
+              </div>
+            </div>
+            <div v-for="tree in trees" :key="tree.directory" class="line">
+              <div class="line-text">
+                <div class="line-title">{{ tree.branch || t("set.detached") }}</div>
+                <div class="line-sub path">{{ tree.directory }}</div>
+              </div>
+              <span v-if="tree.main" class="tag">{{ t("set.mainTree") }}</span>
+            </div>
+            <div v-if="treesFor && !trees.length" class="line">
+              <div class="line-text">
+                <div class="line-sub">{{ t("set.noWorktrees") }}</div>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <template v-else-if="section === 'keys'">
           <h2>{{ t("set.shortcuts") }}</h2>
           <p class="note">{{ t("set.shortcutsSub") }}</p>
@@ -2139,6 +2335,52 @@ h3 {
  * as one setting with three positions rather than three separate buttons that
  * happen to sit together.
  */
+/* A row whose control is a block of its own rather than a thing on the end. */
+.line.stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.instructions {
+  min-height: 132px;
+  padding: 10px 12px;
+  color: var(--text-strong);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: var(--radius-md);
+  outline: none;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  resize: vertical;
+}
+
+.instructions:focus {
+  border-color: var(--border-strong);
+}
+
+.stack-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* A path is read left to right and has to wrap somewhere, so let it wrap. */
+.line-sub.path {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.page-sub {
+  margin: -4px 0 14px;
+  color: var(--text-base);
+  font-size: 13px;
+  line-height: 20px;
+}
+
 /* The gallery is a block of its own, so its row stacks instead of squeezing. */
 .line.icons {
   flex-direction: column;

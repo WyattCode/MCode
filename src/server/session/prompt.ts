@@ -32,6 +32,8 @@ Never fabricate a file path, a command's output, or an API you have not verified
 export interface PromptContext {
   directory: string
   agent: string
+  /** The reader's standing instructions, if they have written any. */
+  instructions?: string
 }
 
 /**
@@ -52,6 +54,19 @@ answer depends on something you could not determine by reading.`
 export async function systemPrompt(context: PromptContext): Promise<string> {
   const sections = [BASE]
   if (context.agent === "plan") sections.push(PLAN)
+
+  /*
+   * Before the project's own files, and said to be the reader's rather than
+   * the project's: a standing instruction is a preference, and a project that
+   * disagrees with it - a repository with its own commit style, say - should
+   * win inside that repository.
+   */
+  const standing = (context.instructions ?? "").trim()
+  if (standing) {
+    sections.push(
+      `## Standing instructions\n\nThese are the user's own, and apply to every project they work in.\n\n${standing}`,
+    )
+  }
 
   const instructions = await projectInstructions(context.directory)
   if (instructions) {
