@@ -192,13 +192,24 @@ async function go() {
   apply(await window.mcode.browserNavigate(address.value))
 }
 
-async function act(what: "back" | "forward" | "reload" | "stop") {
+async function act(what: "back" | "forward" | "reload" | "forceReload" | "stop") {
   apply(await window.mcode.browserAct(what))
 }
 
 async function tab(what: "new" | "select" | "close", id?: string) {
   apply(await window.mcode.browserTab(what, id))
 }
+
+/* What the window's shortcuts reach in here: a new tab, the address bar, a reload. */
+const addressInput = ref<HTMLInputElement>()
+defineExpose({
+  newTab: () => tab("new"),
+  focusAddress: () => {
+    addressInput.value?.focus()
+    addressInput.value?.select()
+  },
+  reload: (force = false) => act(force ? "forceReload" : "reload"),
+})
 
 /** What a tab calls itself before it has been anywhere. */
 function tabName(entry: Tab): string {
@@ -280,6 +291,7 @@ async function scan() {
         </svg>
       </button>
       <input
+        ref="addressInput"
         v-model="address"
         class="address"
         spellcheck="false"

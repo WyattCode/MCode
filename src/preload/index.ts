@@ -128,7 +128,7 @@ const api = {
     ipcRenderer.send("mcode:browser-bounds", bounds),
   browserClose: (): void => ipcRenderer.send("mcode:browser-close"),
   browserNavigate: (input: string) => ipcRenderer.invoke("mcode:browser-navigate", input),
-  browserAct: (what: "back" | "forward" | "reload" | "stop") =>
+  browserAct: (what: "back" | "forward" | "reload" | "forceReload" | "stop") =>
     ipcRenderer.invoke("mcode:browser-act", what),
   browserTab: (what: "new" | "select" | "close", id?: string) =>
     ipcRenderer.invoke("mcode:browser-tab", what, id),

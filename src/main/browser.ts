@@ -282,7 +282,7 @@ export function navigate(window: BrowserWindow, input: string): BrowserState | u
 
 export function act(
   window: BrowserWindow,
-  what: "back" | "forward" | "reload" | "stop",
+  what: "back" | "forward" | "reload" | "forceReload" | "stop",
 ): BrowserState | undefined {
   const panel = panels.get(window.id)
   if (!panel) return undefined
@@ -291,6 +291,7 @@ export function act(
   if (what === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack()
   if (what === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward()
   if (what === "reload") contents.reload()
+  if (what === "forceReload") contents.reloadIgnoringCache()
   if (what === "stop") contents.stop()
   return stateOf(panel)
 }

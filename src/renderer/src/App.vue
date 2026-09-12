@@ -628,6 +628,7 @@ const retiredChords = computed(() => {
 })
 
 const drawer = ref<InstanceType<typeof TerminalDrawer>>()
+const browserPanel = ref<InstanceType<typeof BrowserPanel>>()
 /* Set while the project picker is standing in for a workspace picker. */
 const workspaceChoices = ref<string[]>([])
 
@@ -983,6 +984,37 @@ function toggleReviewPanel() {
     return
   }
   rightPanel.value = true
+}
+
+/* Ctrl+T, MiMo's: a new page in the browser panel, which opens with one if it was shut. */
+async function openBrowserTab() {
+  if (!browserOpen.value) {
+    browserOpen.value = true
+    return
+  }
+  await browserPanel.value?.newTab()
+}
+
+/* Ctrl+L goes to the browser's address bar while there is one to type in, else to the box. */
+function focusBrowserAddress() {
+  if (browserOpen.value && browserPanel.value) {
+    browserPanel.value.focusAddress()
+    return
+  }
+  composer.value?.focus()
+}
+
+/* The review, as its own tab in the side panel, on MiMo's Ctrl+Shift+G. */
+function openReviewTab() {
+  panelTab.value = "review"
+  rightPanel.value = true
+}
+
+function copyWorkingDirectory() {
+  const directory = app.current?.directory
+  if (!directory) return
+  window.mcode.setClipboardText(directory)
+  notify(t("menu.copiedDirectory"), directory)
 }
 
 /*
@@ -1979,7 +2011,7 @@ const bindableCommands = computed(() => {
 
   const all = [
     // Session
-    { id: "session.new", group: "key.groupGeneral", title: t("cmd.newSession"), hint: "Ctrl+T", run: newSession },
+    { id: "session.new", group: "key.groupGeneral", title: t("cmd.newSession"), hint: "Ctrl+N", run: newSession },
     {
       id: "view.model",
       group: "key.groupModels",
@@ -2131,6 +2163,56 @@ const bindableCommands = computed(() => {
       enabled: hasSession,
       run: () => (leftPanel.value = !leftPanel.value),
     },
+    // MiMo's panel and browser chords.
+    {
+      id: "view.bottom",
+      group: "key.groupGeneral",
+      title: t("key.bottomPanel"),
+      hint: "Ctrl+J",
+      enabled: inWorkspace,
+      run: () => (terminalOpen.value = !terminalOpen.value),
+    },
+    {
+      id: "view.browser",
+      group: "key.groupGeneral",
+      title: t("key.browserPanel"),
+      hint: "Ctrl+Shift+B",
+      run: () => (browserOpen.value = !browserOpen.value),
+    },
+    { id: "browser.tab", group: "key.groupGeneral", title: t("key.browserTab"), hint: "Ctrl+T", run: () => void openBrowserTab() },
+    { id: "browser.address", group: "key.groupGeneral", title: t("key.browserAddress"), hint: "Ctrl+L", run: focusBrowserAddress },
+    {
+      id: "browser.reload",
+      group: "key.groupGeneral",
+      title: t("key.browserReload"),
+      hint: "Ctrl+R",
+      enabled: browserOpen.value,
+      run: () => void browserPanel.value?.reload(),
+    },
+    {
+      id: "browser.forceReload",
+      group: "key.groupGeneral",
+      title: t("key.browserForceReload"),
+      hint: "Ctrl+Shift+R",
+      enabled: browserOpen.value,
+      run: () => void browserPanel.value?.reload(true),
+    },
+    {
+      id: "view.review",
+      group: "key.groupSession",
+      title: t("key.reviewTab"),
+      hint: "Ctrl+Shift+G",
+      enabled: inWorkspace,
+      run: openReviewTab,
+    },
+    {
+      id: "app.copyDirectory",
+      group: "key.groupSession",
+      title: t("menu.copyDirectory"),
+      hint: "Ctrl+Shift+C",
+      enabled: hasSession,
+      run: copyWorkingDirectory,
+    },
     {
       id: "view.server",
       group: "key.groupGeneral",
@@ -2142,7 +2224,7 @@ const bindableCommands = computed(() => {
       id: "view.right",
       group: "key.groupSession",
       title: reviewPanelUp.value ? t("cmd.hideFiles") : t("cmd.showFiles"),
-      hint: "Ctrl+Shift+R",
+      hint: "Ctrl+Alt+B",
       enabled: inWorkspace,
       run: toggleReviewPanel,
     },
@@ -2280,7 +2362,6 @@ const bindableCommands = computed(() => {
       id: "app.addSelection",
       group: "key.groupGeneral",
       title: t("cmd.addSelection"),
-      hint: "Ctrl+Shift+L",
       enabled: hasSession,
       run: () => addSelection(),
     },
@@ -2430,7 +2511,7 @@ const bindableCommands = computed(() => {
       id: "input.focus",
       group: "key.groupGeneral",
       title: t("key.focusInput"),
-      hint: "Ctrl+L",
+      hint: "Ctrl+Shift+L",
       enabled: hasSession,
       run: () => composer.value?.focus(),
     },
@@ -2453,7 +2534,7 @@ const bindableCommands = computed(() => {
       id: `tab.goto.${index + 1}`,
       group: "key.groupSession",
       title: t("key.gotoTab", { n: index + 1 }),
-      hint: `Ctrl+Alt+${index + 1}`,
+      hint: `Ctrl+${index + 1}`,
       enabled: () => app.tabs.length > index,
       run: () => {
         const target = app.tabs[index]
@@ -2565,7 +2646,7 @@ const bindableCommands = computed(() => {
       id: `project.${at + 1}`,
       group: "key.groupGeneral",
       title: t("key.openProjectNumbered", { name: projectName(directory, app.config?.projectNames) }),
-      hint: `Ctrl+${at + 1}`,
+      hint: `Ctrl+Alt+${at + 1}`,
       hidden: true,
       run: () => startIn(directory),
     })),
@@ -2728,10 +2809,18 @@ function onKeydown(event: KeyboardEvent) {
    */
   if (mod && event.altKey && /^[1-9]$/.test(event.key)) {
     if (modalOpen.value) return
-    const target = app.tabs[Number(event.key) - 1]
-    if (!target) return
+    const directory = openProjects.value[Number(event.key) - 1]
+    if (!directory) return
     event.preventDefault()
-    void app.open(target)
+    startIn(directory)
+    return
+  }
+
+  /* The side panel, on MiMo's chord; its review tab is Ctrl+Shift+G. */
+  if (mod && event.altKey && event.key.toLowerCase() === "b") {
+    if (modalOpen.value || isHome.value) return
+    event.preventDefault()
+    toggleReviewPanel()
     return
   }
 
@@ -2839,8 +2928,15 @@ function onKeydown(event: KeyboardEvent) {
 
   if (event.shiftKey) {
     const shifted: Record<string, () => void> = {
-      // The panel itself. Folding the column inside it is Ctrl+backslash.
-      r: toggleReviewPanel,
+      // MiMo's: a reload that skips the cache, while there is a page to reload.
+      r: () => void browserPanel.value?.reload(true),
+      // MiMo's model picker and working directory.
+      m: () => composer.value?.openModelMenu(),
+      c: copyWorkingDirectory,
+      // Stepping back through a search while one is open; otherwise the review tab.
+      g: () => {
+        if (!stepFind(-1, event)) openReviewTab()
+      },
       // Step the reasoning effort, which otherwise only lives in settings.
       d: () => void cycleEffort(),
       // Approve everything, or stop. Symmetric, and it always says so.
@@ -2852,8 +2948,8 @@ function onKeydown(event: KeyboardEvent) {
       // The two composer modes, on the reference's keys.
       x: () => composer.value?.setMode("shell"),
       e: () => composer.value?.setMode("normal"),
-      // Whatever is selected on screen, handed to the composer.
-      l: () => addSelection(),
+      // The box, on MiMo's chord; Ctrl+L is the browser's address bar.
+      l: () => composer.value?.focus(),
       // Agents, backwards; forwards is Ctrl+period.
       ".": () => void cycleAgent(-1),
       // The reference lists this key twice, for reopening a tab and for
@@ -2887,14 +2983,15 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
-   * Ctrl and a digit opens the project in that position, the way a browser
-   * switches to the nth tab.
+   * Ctrl and a digit opens the conversation in that slot of the strip, the way
+   * MiMo and a browser both do. The project in that position is Ctrl+Alt and
+   * the digit.
    */
   if (/^[1-9]$/.test(event.key)) {
-    const directory = openProjects.value[Number(event.key) - 1]
-    if (!directory) return
+    const target = app.tabs[Number(event.key) - 1]
+    if (!target) return
     event.preventDefault()
-    startIn(directory)
+    void selectTab(target)
     return
   }
 
@@ -2910,9 +3007,12 @@ function onKeydown(event: KeyboardEvent) {
     ",": openSettings,
     ";": () => (mcpOpen.value = true),
     n: () => void newSession(),
-    // The reference binds a new session to Ctrl+T, the way a browser binds a
-    // new tab; Ctrl+N is kept because it is what this app has always used.
-    t: () => void newSession(),
+    // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
+    t: () => void openBrowserTab(),
+    j: () => (terminalOpen.value = !terminalOpen.value),
+    r: () => {
+      if (browserOpen.value) void browserPanel.value?.reload()
+    },
     o: () => void browse(),
     w: () => {
       if (app.currentID) app.closeTab(app.currentID)
@@ -2923,8 +3023,8 @@ function onKeydown(event: KeyboardEvent) {
      * needs two keys is that the two are genuinely different questions.
      */
     "\\": () => (fileTreeOpen.value = !fileTreeOpen.value),
-    // Focus the composer without reaching for the pointer.
-    l: () => composer.value?.focus(),
+    // The browser's address bar while it is open, else the box.
+    l: focusBrowserAddress,
     // The model picker, on the key opencode uses for it. There is one picker
     // and it hangs off the pill, so both keys open the same menu.
     "'": () => composer.value?.openModelMenu(),
@@ -3054,6 +3154,7 @@ const KEY_COMMAND_IDS: Record<string, string> = {
   p: "app.openFile",
   b: "view.left",
   "`": "view.terminal",
+  j: "view.bottom",
   m: "view.model",
   "[": "app.back",
   "]": "app.forward",
@@ -3497,7 +3598,7 @@ onBeforeUnmount(() => {
         at beside the conversation is the point, and a panel that covered the
         conversation would defeat it.
       -->
-      <BrowserPanel v-if="browserOpen" class="browser-panel" @close="browserOpen = false" />
+      <BrowserPanel v-if="browserOpen" ref="browserPanel" class="browser-panel" @close="browserOpen = false" />
 
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />

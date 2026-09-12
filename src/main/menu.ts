@@ -116,7 +116,11 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
         { label: L("menu.sidebar", "Toggle Sidebar"), ...shown("CmdOrCtrl+B"), click: send("menu:sidebar") },
         { label: L("menu.files", "Toggle File Tree"), ...shown("CmdOrCtrl+\\"), click: send("menu:files") },
         { type: "separator" },
-        { role: "reload", label: L("menu.reload", "Reload") },
+        /*
+         * Shown, not claimed: MiMo gives Ctrl+R to the browser panel, and a role's
+         * registered chord would reload this whole window ahead of that.
+         */
+        { role: "reload", label: L("menu.reload", "Reload"), ...shown("CmdOrCtrl+R") },
         { role: "toggleDevTools", label: L("menu.devTools", "Toggle Developer Tools") },
         { type: "separator" },
         // Not the built-in roles: those apply Chromium's own page zoom, which

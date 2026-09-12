@@ -626,7 +626,7 @@ app.whenReady().then(async () => {
     return window ? navigate(window, String(input)) : undefined
   })
 
-  ipcMain.handle("mcode:browser-act", (event, what: "back" | "forward" | "reload" | "stop") => {
+  ipcMain.handle("mcode:browser-act", (event, what: "back" | "forward" | "reload" | "forceReload" | "stop") => {
     const window = BrowserWindow.fromWebContents(event.sender)
     return window ? act(window, what) : undefined
   })
