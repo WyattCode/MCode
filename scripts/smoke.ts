@@ -1572,6 +1572,40 @@ async function main() {
   const worktree = await gitOps.status(repoRoot)
   check("a committed change is not a working-tree change", !worktree.changed.includes("feature.txt"), worktree.changed)
 
+  /*
+   * The agent's opening context. Until this existed it began every session
+   * blind: not knowing it was in a repository, which branch it was on, what
+   * was already dirty, or how this project is built - all of which it would
+   * otherwise spend its first turn discovering.
+   */
+  await fs.writeFile(path.join(repoRoot, "loose.txt"), "not committed")
+  await fs.writeFile(
+    path.join(repoRoot, "package.json"),
+    JSON.stringify({ name: "fixture", scripts: { build: "tsc", smoke: "node t.js" } }),
+  )
+  const situated = await systemPrompt({ directory: repoRoot, agent: "build" })
+  check("the prompt names the branch", situated.includes("Branch: feature"), situated.slice(-400))
+  check(
+    "and what was already dirty before the turn",
+    situated.includes("loose.txt") && situated.includes("Already modified"),
+    situated.slice(-400),
+  )
+  check("and the last commits", situated.includes("two"), situated.slice(-300))
+  check(
+    "and how this project is built",
+    situated.includes("npm run <name>") && situated.includes("build, smoke"),
+    situated.slice(-600),
+  )
+  await fs.rm(path.join(repoRoot, "loose.txt"))
+  await fs.rm(path.join(repoRoot, "package.json"))
+
+  /* A folder that is not a repository says nothing about one. */
+  const noRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-plain-"))
+  const bare = await systemPrompt({ directory: noRepo, agent: "build" })
+  check("a plain folder gets no repository section", !bare.includes("## Repository"), bare.slice(-200))
+  check("and no build section it cannot support", !bare.includes("## Building and testing"), bare.slice(-200))
+  await fs.rm(noRepo, { recursive: true, force: true })
+
   const branchScope = await gitOps.status(repoRoot, "branch")
   check("branch scope sees it", branchScope.changed.includes("feature.txt"), branchScope.changed)
   check(

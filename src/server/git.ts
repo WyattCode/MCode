@@ -94,6 +94,25 @@ async function committed(root: string, directory: string, base: string): Promise
   return entries
 }
 
+/**
+ * The last few commits, subject line only.
+ *
+ * For the agent's opening context rather than for the review: what a project
+ * has been doing lately is the cheapest available hint about how its commits
+ * are written and what part of it is currently being worked on.
+ */
+export async function recentCommits(directory: string, count = 5): Promise<string[]> {
+  const out = await git(directory, [
+    "log",
+    "--max-count=" + Math.max(1, Math.min(20, count)),
+    "--pretty=format:%h %s",
+  ]).catch(() => "")
+  return out
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
 export type StatusScope = "worktree" | "branch"
 
 export async function status(directory: string, scope: StatusScope = "worktree"): Promise<GitStatus> {

@@ -1,6 +1,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { recentCommits, status } from "../git"
 
 /**
  * Instruction files a project can drop in its root to teach the agent its
@@ -57,7 +58,17 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
     sections.push(`## Project instructions\n\nThese come from the project itself and take precedence over the general guidance above.\n\n${instructions}`)
   }
 
+  const commands = await projectCommands(context.directory)
+  if (commands) sections.push(commands)
+
+  /*
+   * Last, and in this order: the environment changes per project, the
+   * repository changes per turn. Anything after them would be re-sent with a
+   * new prefix every time the working tree moved.
+   */
   sections.push(await environment(context.directory))
+  const repository = await repositoryState(context.directory)
+  if (repository) sections.push(repository)
   return sections.join("\n\n")
 }
 
@@ -91,6 +102,93 @@ Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || "/bi
 Today: ${new Date().toISOString().slice(0, 10)}
 
 Top level of the project: ${entries}`
+}
+
+/**
+ * How this project is built and tested, read off the files that say so.
+ *
+ * The agent is told to check its work, which is no help if finding the check
+ * costs it a turn of grepping. Only names that are actually declared appear
+ * here - a script this lists can be run, and one this omits may simply not
+ * exist rather than being hidden.
+ */
+async function projectCommands(directory: string): Promise<string | undefined> {
+  const lines: string[] = []
+
+  const manifest = await readJSON(path.join(directory, "package.json"))
+  if (manifest && typeof manifest.scripts === "object" && manifest.scripts) {
+    const names = Object.keys(manifest.scripts as Record<string, string>)
+    if (names.length) {
+      /* The runner is whichever lockfile is on disk; npm is the fallback,
+         because running pnpm's scripts through npm mostly works and guessing
+         pnpm where there is none does not. */
+      const runner = (await exists(path.join(directory, "pnpm-lock.yaml")))
+        ? "pnpm"
+        : (await exists(path.join(directory, "yarn.lock")))
+          ? "yarn"
+          : (await exists(path.join(directory, "bun.lockb")))
+            ? "bun"
+            : "npm"
+      const shown = names.slice(0, 24).join(", ")
+      lines.push(`package.json scripts (\`${runner} run <name>\`): ${shown}`)
+    }
+  }
+
+  if (await exists(path.join(directory, "Cargo.toml"))) lines.push("Cargo project: `cargo build`, `cargo test`")
+  if (await exists(path.join(directory, "go.mod"))) lines.push("Go module: `go build ./...`, `go test ./...`")
+  if (await exists(path.join(directory, "pyproject.toml"))) lines.push("pyproject.toml is present")
+  if (await exists(path.join(directory, "Makefile"))) lines.push("Makefile is present")
+
+  if (!lines.length) return undefined
+  return `## Building and testing\n\n${lines.join("\n")}`
+}
+
+/**
+ * The repository, as it stands this turn.
+ *
+ * Which branch, what is already dirty, and what the last few commits were. The
+ * first two keep the agent from committing to the wrong place or claiming
+ * credit for changes that were there before it started; the third is the
+ * cheapest look at how this project writes its history.
+ */
+async function repositoryState(directory: string): Promise<string | undefined> {
+  const state = await status(directory).catch(() => undefined)
+  if (!state?.repo) return undefined
+
+  const lines: string[] = []
+  lines.push(`Branch: ${state.branch || "(no commits yet)"}`)
+
+  if (!state.changed.length) lines.push("Working tree: clean")
+  else {
+    const shown = state.entries.slice(0, 12).map((entry) => `  ${entry.kind}: ${entry.path}`)
+    const rest = state.entries.length - shown.length
+    lines.push(`Already modified before this turn (${state.entries.length}):`)
+    lines.push(...shown)
+    if (rest > 0) lines.push(`  ...and ${rest} more`)
+  }
+
+  const commits = await recentCommits(directory, 5).catch(() => [])
+  if (commits.length) lines.push("Recent commits:", ...commits.map((line) => `  ${line}`))
+
+  return `## Repository\n\n${lines.join("\n")}`
+}
+
+async function exists(file: string): Promise<boolean> {
+  return fs
+    .access(file)
+    .then(() => true)
+    .catch(() => false)
+}
+
+async function readJSON(file: string): Promise<Record<string, unknown> | undefined> {
+  const raw = await fs.readFile(file, "utf8").catch(() => undefined)
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /** First line of the user's opening message, trimmed into a sidebar title. */
