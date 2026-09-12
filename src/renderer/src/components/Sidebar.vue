@@ -58,12 +58,23 @@ const projects = computed(() => {
     .sort((a, b) => b.updated - a.updated)
 })
 
-const recent = computed(() =>
-  app.sessions
-    .filter((session) => !session.archived)
+/*
+ * What is not already above it.
+ *
+ * Every session belongs to some directory, so listing them all here repeated
+ * the whole of Projects a second time - the open task appeared twice in a
+ * column short enough to see both at once. MiMo's Recent holds what its
+ * project list does not, and says "no tasks" when that is nothing. A session
+ * whose project has been closed still belongs here: it is the only place left
+ * that can reach it.
+ */
+const recent = computed(() => {
+  const listed = new Set(projects.value.map((project) => project.directory))
+  return app.sessions
+    .filter((session) => !session.archived && !listed.has(session.directory))
     .sort((a, b) => b.updated - a.updated)
-    .slice(0, RECENT_LIMIT),
-)
+    .slice(0, RECENT_LIMIT)
+})
 
 const projectsOpen = ref(true)
 const recentOpen = ref(true)

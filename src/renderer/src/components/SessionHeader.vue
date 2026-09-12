@@ -143,6 +143,18 @@ function openMenu(event: MouseEvent) {
         @blur="commit"
       />
       <h1 v-else class="title" :title="title" @click="begin">{{ title }}</h1>
+
+      <!--
+        Beside the name rather than at the far end of the bar: it is this
+        conversation's menu, and MiMo keeps it against the title it belongs to.
+        The buttons at the other end drive the panels, which are not the
+        conversation.
+      -->
+      <button class="ico options" v-tip="{ label: t('session.options'), placement: 'bottom' }" @click="openMenu">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2.5 7.5H3.5V8.5H2.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M7.5 7.5H8.5V8.5H7.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M12.5 7.5H13.5V8.5H12.5V7.5Z" stroke="currentColor" stroke-width="1" />
+        </svg>
+      </button>
     </div>
 
     <div class="right">
@@ -207,11 +219,6 @@ function openMenu(event: MouseEvent) {
         </div>
       </button>
 
-      <button class="ico" v-tip="{ label: t('session.options'), placement: 'bottom' }" @click="openMenu">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M2.5 7.5H3.5V8.5H2.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M7.5 7.5H8.5V8.5H7.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M12.5 7.5H13.5V8.5H12.5V7.5Z" stroke="currentColor" stroke-width="1" />
-        </svg>
-      </button>
     </div>
   </div>
 </template>
@@ -466,6 +473,12 @@ function openMenu(event: MouseEvent) {
   width: 26px;
   height: 26px;
   border-radius: 7px;
+}
+
+/* Against the title, and never squeezed by a long one. */
+.options {
+  flex-shrink: 0;
+  margin-inline-start: 2px;
 }
 
 /* A toggle that is on stays lit, the way the readout does while its view is up. */
