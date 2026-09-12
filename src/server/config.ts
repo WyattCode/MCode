@@ -154,7 +154,7 @@ function defaults(): AppConfig {
     migrations: [],
     showFileTree: true,
     showNavigation: false,
-    showTerminal: false,
+    showTerminal: true,
     showAgentPicker: true,
     shell: "",
     customProviders: [],

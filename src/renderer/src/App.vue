@@ -3114,6 +3114,8 @@ onBeforeUnmount(() => {
       <Sidebar
         v-if="leftPanel && !onboarding"
         :page="view"
+        :browser="browserOpen"
+        @toggle-browser="browserOpen = !browserOpen"
         @newTask="goHome"
         @artifacts="goArtifacts"
         @menu="(id, x, y) => (sessionMenu = { x, y, sessionID: id })"

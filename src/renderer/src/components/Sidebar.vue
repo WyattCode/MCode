@@ -22,10 +22,13 @@ const props = defineProps<{
   page?: string
   /** The conversations ticked in selection mode; absent when not in it. */
   selecting?: string[]
+  /** Whether the browser panel is up, so its button can say so. */
+  browser?: boolean
 }>()
 
 const emit = defineEmits<{
   artifacts: []
+  "toggle-browser": []
   menu: [sessionID: string, x: number, y: number]
   select: [sessionID: string]
   batch: [action: "archive" | "move" | "delete" | "cancel"]
@@ -159,6 +162,25 @@ function toggleProject(directory: string) {
       <button class="ico" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M4 10H15.5M11 5L16 10L11 15" stroke="currentColor" stroke-linecap="square" />
+        </svg>
+      </button>
+      <!--
+        The browser, which is the one panel with something in it wherever the
+        reader is - a page does not need a conversation open - so it belongs in
+        this row rather than with the session's own controls. Until now it was
+        reachable only by a chord nobody is told about.
+      -->
+      <button
+        class="ico"
+        :class="{ on: browser }"
+        :aria-pressed="browser"
+        :aria-label="t('browser.title')"
+        v-tip="{ label: t('browser.title'), hint: 'Ctrl+Shift+B', placement: 'bottom' }"
+        @click="emit('toggle-browser')"
+      >
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <rect x="3" y="3.5" width="14" height="13" rx="2" stroke="currentColor" />
+          <path d="M13.5 3.5V16.5" stroke="currentColor" />
         </svg>
       </button>
       <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K', placement: 'bottom' }" @click="emit('search')">

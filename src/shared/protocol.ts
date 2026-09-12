@@ -933,13 +933,16 @@ export interface AppConfig {
   /** Whether a session offers the review panel at all. */
   showFileTree: boolean
   /**
-   * Two title-bar controls the reference keeps behind a setting.
+   * Two title-bar controls kept behind a setting.
    *
-   * Both default to false, which is opencode's own default (`defaultSettings`
-   * at main-8t-QUXax.js @1901464 has showNavigation and showTerminal false), so
-   * the bar looks exactly as it did until a reader turns one on. Its strings
-   * name the buttons precisely: "the back and forward buttons in the desktop
-   * title bar" and "the terminal button in the desktop title bar".
+   * `showNavigation` stays false, which is opencode's own default
+   * (`defaultSettings` at main-8t-QUXax.js @1901464 has both false): the back
+   * and forward arrows are already at the top of the side column.
+   *
+   * `showTerminal` is now true. The reference this app follows for 2.0 keeps a
+   * bottom-panel toggle in the bar at all times, and the drawer is otherwise
+   * reachable only by a chord nobody is told about. The setting stays, so a
+   * reader who wants the bar emptier can have that.
    */
   showNavigation: boolean
   showTerminal: boolean
