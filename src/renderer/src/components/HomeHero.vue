@@ -27,7 +27,8 @@ const props = defineProps<{
 }>()
 
 /* What the box asks the window for, passed straight through. */
-const emit = defineEmits<{ terminal: [];
+const emit = defineEmits<{
+  terminal: []
   "open-settings": []
   connect: []
   "manage-models": []
@@ -43,13 +44,24 @@ const projects = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
   const latest = new Map<string, number>()
   for (const session of app.sessions) {
-    if (closed.has(session.directory)) continue
+    if (session.scratch || closed.has(session.directory)) continue
     latest.set(session.directory, Math.max(latest.get(session.directory) ?? 0, session.updated))
   }
   return [...latest.entries()].sort((a, b) => b[1] - a[1]).map(([directory]) => directory)
 })
 
 const picked = ref<string>()
+
+/*
+ * The picker's two rows that are not projects, as the reference has them under
+ * its list: one to bring a folder in, one to start with none. Neither value can
+ * be an absolute path, so neither can collide with a project.
+ */
+const ADD_PROJECT = "mcode:add-project"
+const NO_PROJECT = "mcode:no-project"
+
+/** A folder brought in from here, listed until it has a task of its own. */
+const added = ref<string>()
 
 /*
  * What the next task will be created in: whatever the reader last picked here,
@@ -64,7 +76,37 @@ watch(
   () => props.directory,
   () => (picked.value = undefined),
 )
-const options = computed(() => projects.value.map((entry) => ({ value: entry, label: name(entry) })))
+/* Whether the task this screen starts works in a folder of its own. */
+const scratch = computed(() => chosen.value === NO_PROJECT)
+
+const options = computed(() => {
+  const listed = [...projects.value]
+  for (const extra of [props.directory, added.value]) {
+    if (extra && !listed.includes(extra)) listed.unshift(extra)
+  }
+  return [
+    ...listed.map((entry) => ({ value: entry, label: name(entry) })),
+    { value: ADD_PROJECT, label: t("home.newProject"), divider: listed.length > 0 },
+    { value: NO_PROJECT, label: t("home.noProject") },
+  ]
+})
+
+async function pick(value: string) {
+  if (value !== ADD_PROJECT) {
+    picked.value = value
+    return
+  }
+  const [directory] = await window.mcode.pickDirectory(t("home.newProject"), false)
+  if (!directory) return
+  // Bringing back a folder that was closed opens it again, as opening it does.
+  const closed = app.config?.closedProjects ?? []
+  if (closed.includes(directory)) {
+    await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
+  }
+  added.value = directory
+  picked.value = directory
+  box.value?.focus()
+}
 
 /** The box below, so a starting point can be put into it rather than run. */
 const box = ref<InstanceType<typeof Composer>>()
@@ -78,7 +120,7 @@ const box = ref<InstanceType<typeof Composer>>()
  */
 const starters = computed(() => app.commands.slice(0, 3))
 
-watch(chosen, (next) => next && void app.refreshCommands(next), { immediate: true })
+watch(chosen, (next) => next && next !== NO_PROJECT && void app.refreshCommands(next), { immediate: true })
 
 function start(name: string) {
   // A starting point names no files, so it carries no chips and no mentions.
@@ -98,7 +140,8 @@ function start(name: string) {
         <Composer
           ref="box"
           :commands="commands"
-          :start-directory="chosen"
+          :start-directory="scratch ? undefined : chosen"
+          :start-scratch="scratch"
           @open-settings="emit('open-settings')"
           @connect="emit('connect')"
           @manage-models="emit('manage-models')"
@@ -107,12 +150,12 @@ function start(name: string) {
         />
       </div>
 
-      <div v-if="options.length" class="enter">
+      <div class="enter">
         <SelectMenu
           :model-value="chosen ?? ''"
           :options="options"
           :aria-label="t('home.enterProject')"
-          @update:model-value="picked = $event"
+          @update:model-value="pick"
         >
           <template #icon>
             <svg class="folder" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">

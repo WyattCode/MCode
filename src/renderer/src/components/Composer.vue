@@ -47,6 +47,8 @@ const props = defineProps<{
    * project it would be created in, and creates it on the way out.
    */
   startDirectory?: string
+  /** Start that task with no project, in a folder of its own. */
+  startScratch?: boolean
 }>()
 
 const app = useApp()
@@ -435,7 +437,7 @@ async function submit() {
    */
   if (!app.currentID) {
     try {
-      await app.create(props.startDirectory)
+      await app.create(props.startDirectory, { scratch: props.startScratch })
     } catch (err) {
       text.value = value
       attachments.value = sent

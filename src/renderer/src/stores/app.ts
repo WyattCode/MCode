@@ -770,8 +770,12 @@ export const useApp = defineStore("app", () => {
     result.messages.forEach(reindex)
   }
 
-  async function create(directory?: string) {
-    const result = await api().request({ type: "session.create", directory })
+  async function create(directory?: string, options: { scratch?: boolean } = {}) {
+    const result = await api().request({
+      type: "session.create",
+      directory,
+      ...(options.scratch ? { scratch: true } : {}),
+    })
     // The session.updated event usually lands before this response, so only
     // insert if it did not - otherwise the list gets a duplicate row.
     if (!sessions.value.some((session) => session.id === result.session.id)) {

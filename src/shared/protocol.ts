@@ -39,6 +39,13 @@ export interface SessionInfo {
    * existed has to read as.
    */
   staged?: boolean
+  /**
+   * Started with no project: its directory is a folder made for it alone.
+   *
+   * The side column lists these under Recent rather than as projects, since
+   * a folder nobody chose is not something anyone would go back to by name.
+   */
+  scratch?: boolean
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */
@@ -1109,7 +1116,7 @@ export type Request =
   | { type: "session.list" }
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
-  | { type: "session.create"; directory?: string; title?: string }
+  | { type: "session.create"; directory?: string; title?: string; scratch?: boolean }
   | { type: "session.get"; sessionID: string }
   /**
    * The instructions the model is given ahead of the conversation.

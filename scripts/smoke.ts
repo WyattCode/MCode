@@ -79,6 +79,8 @@ async function main() {
 
   // ---------------------------------------------------------------- protocol
   section("WebSocket protocol")
+  // Tasks started with no project get folders of their own; keep them in here.
+  process.env.MCODE_SCRATCH_ROOT = path.join(root, "scratch")
   const backend = await startBackend(dataDirectory)
   check("backend picked a port", backend.port > 0, backend.port)
 
@@ -121,6 +123,30 @@ async function main() {
   const sessionID: string = created.session.id
   check("session.create returns a session", typeof sessionID === "string" && sessionID.startsWith("ses_"), sessionID)
   check("session.create broadcast an event", events.some((event) => event.type === "session.updated"))
+
+  /*
+   * "No project" on the home screen: a fresh empty folder under the scratch
+   * root, a session marked as such, and a second one never sharing the first's.
+   */
+  const loose = await call({ type: "session.create", scratch: true })
+  const looseAgain = await call({ type: "session.create", scratch: true })
+  const looseStat = await fs.stat(loose.session.directory).catch(() => undefined)
+  check(
+    "a task with no project gets a folder of its own",
+    loose.session.scratch === true &&
+      path.dirname(loose.session.directory) === process.env.MCODE_SCRATCH_ROOT &&
+      looseStat?.isDirectory() === true &&
+      (await fs.readdir(loose.session.directory)).length === 0,
+    loose.session,
+  )
+  check(
+    "two tasks with no project never share a folder",
+    looseAgain.session.directory !== loose.session.directory,
+    [loose.session.directory, looseAgain.session.directory],
+  )
+  check("a task in a project is not marked as having none", created.session.scratch === undefined, created.session)
+  await call({ type: "session.delete", sessionID: loose.session.id })
+  await call({ type: "session.delete", sessionID: looseAgain.session.id })
 
   const listed = await call({ type: "session.list" })
   check("session.list includes it", listed.sessions.some((s: any) => s.id === sessionID))

@@ -16,6 +16,7 @@ import { sessionFiles } from "@shared/session-files"
 import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
 import { discoverModels } from "./provider/discover"
+import { scratchDirectory } from "./scratch"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
@@ -129,7 +130,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "session.create": {
       const config = runtime.config.get()
       const session = await runtime.sessions.create({
-        directory: request.directory ?? config.directory,
+        directory: request.scratch ? await scratchDirectory() : (request.directory ?? config.directory),
+        ...(request.scratch ? { scratch: true } : {}),
         model: config.model,
         // The last choice made is the starting point for the next session, the
         // same way the model is.

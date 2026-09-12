@@ -120,6 +120,7 @@ export class SessionStore {
     model: ModelRef
     agent?: AgentName
     staged?: boolean
+    scratch?: boolean
     title?: string
   }): Promise<SessionInfo> {
     const now = Date.now()
@@ -130,6 +131,7 @@ export class SessionStore {
       model: input.model,
       agent: input.agent ?? "build",
       ...(input.staged ? { staged: true } : {}),
+      ...(input.scratch ? { scratch: true } : {}),
       created: now,
       updated: now,
       usage: emptyUsage(),
@@ -358,6 +360,9 @@ export class SessionStore {
       directory: origin.directory,
       model: origin.model,
       agent: origin.agent,
+      // A branch works the way its origin did, and in the same kind of folder.
+      staged: origin.staged,
+      scratch: origin.scratch,
       // Named for what it came from, so the pair reads as a pair in the list.
       title: origin.title,
     })

@@ -82,7 +82,8 @@ const projects = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
   const byDirectory = new Map<string, { directory: string; updated: number; sessions: typeof app.sessions }>()
   for (const session of app.sessions) {
-    if (session.archived || closed.has(session.directory)) continue
+    // A folder made for a task with no project is not a project; Recent has it.
+    if (session.archived || session.scratch || closed.has(session.directory)) continue
     const entry = byDirectory.get(session.directory) ?? { directory: session.directory, updated: 0, sessions: [] }
     entry.updated = Math.max(entry.updated, session.updated)
     entry.sessions.push(session)

@@ -17,7 +17,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
  */
 const props = defineProps<{
   modelValue: string
-  options: { value: string; label: string }[]
+  /** `divider` draws a rule above that option, to set it apart from the list. */
+  options: { value: string; label: string; divider?: boolean }[]
   /** Widen when the labels are long; the trigger sizes to this. */
   width?: number
 }>()
@@ -43,7 +44,7 @@ function place() {
   const el = root.value
   if (!el) return
   const rect = el.getBoundingClientRect()
-  const wanted = props.options.length * ROW + 8
+  const wanted = props.options.length * ROW + props.options.filter((option) => option.divider).length * 9 + 8
   const below = window.innerHeight - rect.bottom - MARGIN - GAP
   const above = rect.top - MARGIN - GAP
   const flip = below < wanted && above > below
@@ -175,19 +176,20 @@ onBeforeUnmount(() => {
           maxHeight: `${box.maxHeight}px`,
         }"
       >
-        <button
-          v-for="(option, index) in options"
-          :key="option.value"
-          class="item"
-          :class="{ on: option.value === modelValue, active: index === active }"
-          @click="choose(option.value)"
-          @mousemove="active = index"
-        >
-          <span>{{ option.label }}</span>
-          <svg v-if="option.value === modelValue" width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
-            <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
-          </svg>
-        </button>
+        <template v-for="(option, index) in options" :key="option.value">
+          <div v-if="option.divider" class="rule" role="separator" />
+          <button
+            class="item"
+            :class="{ on: option.value === modelValue, active: index === active }"
+            @click="choose(option.value)"
+            @mousemove="active = index"
+          >
+            <span>{{ option.label }}</span>
+            <svg v-if="option.value === modelValue" width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
+            </svg>
+          </button>
+        </template>
       </div>
     </Teleport>
   </div>
@@ -303,6 +305,13 @@ onBeforeUnmount(() => {
 /* Rows are spaced rather than touching, unlike the ones in a plain menu. */
 .select-pop .item + .item {
   margin-top: 2px;
+}
+
+.select-pop .rule {
+  flex: none;
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-weak);
 }
 
 .select-pop.flip {
