@@ -66,6 +66,10 @@ interface Bindable {
 const props = defineProps<{ section?: Section; commands: Bindable[] }>()
 const section = ref<Section>(props.section ?? "general")
 
+/* The segments each of the two appearance choices offers, in the order shown. */
+const MOTION_MODES = ["system", "on", "off"] as const
+const DIFF_MARKS = ["color", "signs"] as const
+
 /*
  * The column's search, after MiMo's: narrows the entries to those whose name
  * matches, and Enter opens the first of them. Being the first text field in
@@ -893,6 +897,47 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
 
             <!--
+              Four questions the stylesheet answers, kept together because they
+              are all about how the window behaves rather than what it holds.
+            -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.pointerCursor") }}</div>
+                <div class="line-sub">{{ t("set.pointerCursorSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.pointerCursor ?? true }"
+                role="switch"
+                :aria-checked="app.config?.pointerCursor ?? true"
+                :aria-label="t('set.pointerCursor')"
+                @click="app.patchConfig({ pointerCursor: !(app.config?.pointerCursor ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.reduceMotion") }}</div>
+                <div class="line-sub">{{ t("set.reduceMotionSub") }}</div>
+              </div>
+              <div class="choice" role="radiogroup" :aria-label="t('set.reduceMotion')">
+                <button
+                  v-for="mode in MOTION_MODES"
+                  :key="mode"
+                  class="choice-btn"
+                  :class="{ on: (app.config?.reduceMotion ?? 'system') === mode }"
+                  role="radio"
+                  :aria-checked="(app.config?.reduceMotion ?? 'system') === mode"
+                  @click="app.patchConfig({ reduceMotion: mode })"
+                >
+                  {{ t(`set.motion.${mode}`) }}
+                </button>
+              </div>
+            </div>
+
+            <!--
               Three faces rather than one, because the jobs differ: prose wants
               a different face from code, and a terminal wants one whose glyphs
               are all the same width whatever the rest of the app uses.
@@ -930,6 +975,43 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <div class="line-title">{{ t("set.terminalFont") }}</div>
                 <div class="line-sub">{{ t("set.terminalFontSub") }}</div>
               </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.diffMarks") }}</div>
+                <div class="line-sub">{{ t("set.diffMarksSub") }}</div>
+              </div>
+              <div class="choice" role="radiogroup" :aria-label="t('set.diffMarks')">
+                <button
+                  v-for="mark in DIFF_MARKS"
+                  :key="mark"
+                  class="choice-btn"
+                  :class="{ on: (app.config?.diffMarks ?? 'color') === mark }"
+                  role="radio"
+                  :aria-checked="(app.config?.diffMarks ?? 'color') === mark"
+                  @click="app.patchConfig({ diffMarks: mark })"
+                >
+                  {{ t(`set.marks.${mark}`) }}
+                </button>
+              </div>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.wrapCode") }}</div>
+                <div class="line-sub">{{ t("set.wrapCodeSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.wrapCode ?? true }"
+                role="switch"
+                :aria-checked="app.config?.wrapCode ?? true"
+                :aria-label="t('set.wrapCode')"
+                @click="app.patchConfig({ wrapCode: !(app.config?.wrapCode ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
               <input
                 class="field font-field"
                 :value="app.config?.terminalFont ?? ''"

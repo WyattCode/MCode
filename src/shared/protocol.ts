@@ -781,6 +781,29 @@ export interface AppConfig {
   codeFont: string
   terminalFont: string
 
+  /** Whether pointing at something pressable turns the cursor into a hand. */
+  pointerCursor: boolean
+  /**
+   * Whether the interface animates.
+   *
+   * Three states rather than two, because "follow the machine" is a different
+   * answer from "no": a reader who has asked the OS for less motion should get
+   * less of it here without having to say so twice, and a reader who wants the
+   * transitions back should be able to keep them even so.
+   */
+  reduceMotion: "system" | "on" | "off"
+  /**
+   * How a diff says which lines changed: by the ground under them, or by a
+   * sign at the head of each one.
+   *
+   * Ground alone fails a reader who cannot separate the two hues; signs alone
+   * survive a screenshot in greyscale. Neither is right for everyone, so it is
+   * asked rather than assumed.
+   */
+  diffMarks: "color" | "signs"
+  /** Whether a long line in code or a diff folds rather than scrolling away. */
+  wrapCode: boolean
+
   /** Desktop notifications, by occasion. */
   notifyAgent: boolean
   notifyPermission: boolean

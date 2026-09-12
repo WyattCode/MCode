@@ -562,3 +562,89 @@ kbd {
     animation: none;
   }
 }
+
+/*
+ * The hand over what can be pressed.
+ *
+ * A button is not a link and the platform does not put a hand on one, so this
+ * is a preference rather than a fix; it is on by default because every control
+ * in this window is drawn rather than native, and a drawn control with an
+ * arrow over it reads as decoration.
+ */
+html[data-cursor="pointer"] button:not(:disabled),
+html[data-cursor="pointer"] summary,
+html[data-cursor="pointer"] [role="button"]:not([aria-disabled="true"]),
+html[data-cursor="pointer"] [role="tab"],
+html[data-cursor="pointer"] [role="option"],
+html[data-cursor="pointer"] [role="menuitem"],
+html[data-cursor="pointer"] [role="radio"],
+html[data-cursor="pointer"] [role="switch"],
+html[data-cursor="pointer"] label:has(> input[type="checkbox"]) {
+  cursor: pointer;
+}
+
+/*
+ * And taking it away again.
+ *
+ * Turning the setting off has to say so rather than merely stop saying the
+ * opposite: most controls in this window set `cursor: pointer` in their own
+ * stylesheet, and a rule that only added the hand would leave every one of
+ * them showing it. The selector carries `html`, so it outweighs the single
+ * class those rules are written with.
+ */
+html[data-cursor="default"] button:not(:disabled),
+html[data-cursor="default"] summary,
+html[data-cursor="default"] [role="button"]:not([aria-disabled="true"]),
+html[data-cursor="default"] [role="tab"],
+html[data-cursor="default"] [role="option"],
+html[data-cursor="default"] [role="menuitem"],
+html[data-cursor="default"] [role="radio"],
+html[data-cursor="default"] [role="switch"],
+html[data-cursor="default"] label:has(> input[type="checkbox"]) {
+  cursor: default;
+}
+
+/*
+ * Motion held back.
+ *
+ * Not `animation: none`, which would leave an element wherever its first frame
+ * put it - a spinner frozen mid-turn, a panel stopped half open. A duration
+ * near zero runs the whole thing and lands it where it was going.
+ *
+ * `!important` because these have to beat the rule that set the duration, and
+ * those live in component stylesheets this one does not know the names of.
+ */
+html[data-motion="on"] *,
+html[data-motion="on"] *::before,
+html[data-motion="on"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Following the machine means following it while the window is open. */
+@media (prefers-reduced-motion: reduce) {
+  html[data-motion="system"] *,
+  html[data-motion="system"] *::before,
+  html[data-motion="system"] *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/*
+ * Long lines fold rather than running off the side.
+ *
+ * `anywhere` rather than `break-word` because the long line in code is usually
+ * one unbroken run - a path, a hash, a base64 blob - with nowhere a word
+ * breaker would agree to split.
+ */
+html[data-wrap="on"] .md-code,
+html[data-wrap="on"] .md-code code {
+  overflow-x: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

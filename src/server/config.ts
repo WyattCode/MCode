@@ -122,6 +122,10 @@ function defaults(): AppConfig {
     uiFont: "",
     codeFont: "",
     terminalFont: "",
+    pointerCursor: true,
+    reduceMotion: "system",
+    diffMarks: "color",
+    wrapCode: true,
     notifyAgent: true,
     notifyPermission: true,
     /*

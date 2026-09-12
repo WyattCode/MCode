@@ -777,4 +777,13 @@ function cancel() {
   opacity: 0.5;
   cursor: default;
 }
+/* The same one-or-the-other the conversation's own diff follows. */
+html[data-diff-marks="color"] .sign {
+  display: none;
+}
+
+html[data-diff-marks="signs"] .row.add,
+html[data-diff-marks="signs"] .row.del {
+  background: transparent;
+}
 </style>

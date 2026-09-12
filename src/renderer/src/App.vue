@@ -793,6 +793,33 @@ watch(
 )
 
 /*
+ * Four choices that are answered by the stylesheet rather than by a component:
+ * the cursor over what can be pressed, whether anything animates, how a diff
+ * marks its changed lines, and whether a long line folds.
+ *
+ * They land on <html> because each one reaches across the whole window - a
+ * wrapper element would leave out every dialog, menu and tooltip, which are
+ * exactly the places a transition is most noticeable.
+ */
+watch(
+  () =>
+    [
+      app.config?.pointerCursor ?? true,
+      app.config?.reduceMotion ?? "system",
+      app.config?.diffMarks ?? "color",
+      app.config?.wrapCode ?? true,
+    ] as const,
+  ([cursor, motion, marks, wrap]) => {
+    const root = document.documentElement
+    root.setAttribute("data-cursor", cursor ? "pointer" : "default")
+    root.setAttribute("data-motion", motion)
+    root.setAttribute("data-diff-marks", marks)
+    root.setAttribute("data-wrap", wrap ? "on" : "off")
+  },
+  { immediate: true },
+)
+
+/*
  * A chosen typeface goes in front of the built-in stack rather than replacing
  * it: a name that turns out not to be installed then falls through to what was
  * there before instead of dropping the app to Times New Roman. The name is
