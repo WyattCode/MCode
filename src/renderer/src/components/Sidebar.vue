@@ -371,7 +371,7 @@ function toggleProject(directory: string) {
 
 <template>
   <aside class="side">
-    <div class="top">
+    <div class="top" :class="{ mac: app.platform === 'darwin' }">
       <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B', placement: 'bottom' }" @click="emit('toggle')">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <rect x="3" y="3.5" width="14" height="13" rx="2" stroke="currentColor" />
@@ -751,8 +751,11 @@ function toggleProject(directory: string) {
   user-select: none;
 }
 
-/* The window-control row: 44 tall, buttons 24x24 at 32px pitch from x=65.
-   It drags the window; the buttons opt out. */
+/* The window-control row: 44 tall, buttons 24x24 at 32px pitch. It drags the
+   window; the buttons opt out.
+   MiMo starts the row at x=65; MCode keeps it to the left on purpose, the 17px
+   glyphs lining up with the brand and the destination icons at x=22. Only on
+   macOS does it start at 65, clear of the traffic lights. */
 .top {
   display: flex;
   flex-shrink: 0;
@@ -760,8 +763,12 @@ function toggleProject(directory: string) {
   gap: 8px;
   height: 44px;
   padding-block: 13px 0;
-  padding-inline: 65px 8px;
+  padding-inline: 18px 8px;
   -webkit-app-region: drag;
+}
+
+.top.mac {
+  padding-inline-start: 65px;
 }
 
 .ico {
@@ -1014,11 +1021,7 @@ function toggleProject(directory: string) {
   background: var(--surface-hover);
 }
 
-/* The priority filter's bell, pushed to the far end of the controls row. */
-.ico.bell {
-  margin-inline-start: auto;
-}
-
+/* The priority filter's bell: sixth in the left-aligned controls row, lit while on. */
 .ico.bell.on {
   color: var(--text-accent);
 }
