@@ -1007,8 +1007,6 @@ export interface AppConfig {
    * emptier can have that.
    */
   showTerminal: boolean
-  /** Whether the composer offers the agent switcher. */
-  showAgentPicker: boolean
 
   /**
    * The shell the terminal opens and the bash tool runs in.

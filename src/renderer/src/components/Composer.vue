@@ -941,7 +941,7 @@ function onKeydown(event: KeyboardEvent) {
 
 
 /** Which pill has its menu open, if any. */
-const menu = ref<"agent" | "model" | "access" | "plus" | "context">()
+const menu = ref<"model" | "access" | "plus" | "context">()
 
 /** Token counts the way a context window is talked about: 39.2K, 1.0M. */
 function compactTokens(count: number): string {
@@ -967,6 +967,8 @@ function compactTokens(count: number): string {
 const contextUsage = computed(() => {
   if (!sessionID.value) return undefined
   const reading = readContext(props.side ? app.sideMessages : app.messages, app.providers)
+  // MiMo draws no ring until a turn has spent something: an empty conversation has nothing to show.
+  if (!reading) return undefined
   const current = session.value?.model
   const window =
     reading?.window ??
@@ -1337,7 +1339,7 @@ function openModelMenu() {
   })
 }
 
-function toggle(which: "agent" | "model" | "access" | "plus" | "context") {
+function toggle(which: "model" | "access" | "plus" | "context") {
   if (menu.value === which) {
     menu.value = undefined
     return
@@ -1633,6 +1635,24 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 <span class="item-name">{{ t("composer.menuTerminal") }}</span>
               </button>
               <!--
+                Plan mode, as a switch beside staged mode now that the bar has
+                no agent picker: the chip it raises in the bar turns it off.
+              -->
+              <button
+                v-if="!side"
+                class="item staged-row"
+                role="switch"
+                data-mode="plan"
+                :aria-checked="agent === 'plan'"
+                @click="chooseAgent(agent === 'plan' ? 'build' : 'plan')"
+              >
+                <span class="staged-text">
+                  <span class="item-name">{{ t("composer.planMode") }}</span>
+                  <span class="staged-sub">{{ t("composer.planModeSub") }}</span>
+                </span>
+                <span class="staged-switch" :class="{ on: agent === 'plan' }"><span class="staged-knob" /></span>
+              </button>
+              <!--
                 Staged mode. A switch rather than a command, because it stays on:
                 it changes how the whole conversation is worked, not one reply.
               -->
@@ -1713,41 +1733,39 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </div>
 
           <!--
-            Hidden by setting, in which case the session simply runs as Build:
-            a picker with nothing to pick between is a control that only takes
-            up room.
+            MiMo keeps no agent switcher in the bar. A mode other than the
+            everyday one shows as a chip - plan, or working in stages - and
+            pressing the chip turns it off again. Both are switched on from the
+            plus menu.
           -->
-          <div v-if="!side && app.config?.showAgentPicker !== false" class="pill-wrap">
-            <button class="pill" :class="{ open: menu === 'agent' }" @click="toggle('agent')">
-              <span>{{ t(`agent.${agent}`) }}</span>
-              <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
-              </svg>
-            </button>
-            <div v-if="menu === 'agent'" class="menu">
-              <button
-                v-for="entry in AGENTS"
-                :key="entry"
-                class="item"
-                :class="{ on: entry === agent }"
-                @click="chooseAgent(entry)"
-              >
-                <span class="tick">
-                  <svg
-                    v-show="entry === agent"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
-                  </svg>
-                </span>
-                <span class="item-name">{{ t(`agent.${entry}`) }}</span>
-              </button>
-            </div>
-          </div>
+          <button
+            v-if="!side && agent === 'plan'"
+            class="mode-chip"
+            data-mode="plan"
+            v-tip="{ label: t('composer.modeChipTip', { mode: t('composer.planMode') }), placement: 'top' }"
+            @click="chooseAgent('build')"
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M5.5 2.5h5v2h-5z" />
+              <path d="M5 3.5H3.5v10h9v-10H11" />
+              <path d="M5.5 8h5M5.5 10.5h3.5" />
+            </svg>
+            <span>{{ t("composer.planChip") }}</span>
+          </button>
+          <button
+            v-if="!side && staged"
+            class="mode-chip"
+            data-mode="staged"
+            v-tip="{ label: t('composer.modeChipTip', { mode: t('composer.staged') }), placement: 'top' }"
+            @click="toggleStaged"
+          >
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4.5 4v6a2 2 0 0 0 2 2h4" />
+              <path d="M4.5 1.8a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z" />
+              <path d="M12.2 10.4a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z" />
+            </svg>
+            <span>{{ t("composer.staged") }}</span>
+          </button>
 
           <span class="grow" />
 
@@ -2724,6 +2742,40 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .item.staged-row {
   height: auto;
   padding-block: 6px;
+}
+
+/* MiMo's mode chip: a filled 12/500 label with its mark, 3 by 8 at a 7px corner. */
+.mode-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  color: var(--text-strong);
+  white-space: nowrap;
+  background: var(--surface-layer);
+  border: 0;
+  border-radius: 7px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.mode-chip:hover {
+  background: var(--surface-selected);
+}
+
+.mode-chip svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.mode-chip svg path {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .staged-text {

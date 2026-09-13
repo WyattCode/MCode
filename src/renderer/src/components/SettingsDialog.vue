@@ -1576,19 +1576,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
 
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.agentPicker") }}</div>
-                <div class="line-sub">{{ t("set.agentPickerSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showAgentPicker }"
-                @click="app.patchConfig({ showAgentPicker: !app.config?.showAgentPicker })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
           </div>
 
           <h3>{{ t("set.perTool") }}</h3>
