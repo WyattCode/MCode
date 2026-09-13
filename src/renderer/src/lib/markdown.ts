@@ -60,7 +60,39 @@ function tableAlignment(line: string): ("left" | "center" | "right" | undefined)
   })
 }
 
-export function renderMarkdown(source: string): string {
+/** What a caller can ask the renderer for beyond plain formatting. */
+export interface MarkdownOptions {
+  /**
+   * A head on every code block with its language and a copy button, as MiMo
+   * draws code in a reply. The words come from the caller, which knows the
+   * language the window is in; the button carries both its idle and its
+   * "copied" label, and the caller's click handler switches between them.
+   */
+  codeActions?: { copy: string; copied: string; label: string }
+}
+
+const COPY_ICON =
+  '<svg class="md-code-icon idle" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+  '<rect x="5.5" y="5.5" width="8" height="8" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
+  '<path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" stroke="currentColor" stroke-width="1.2"/></svg>' +
+  '<svg class="md-code-icon done" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
+  '<path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+
+/** One fenced block; its body is already escaped. */
+function codeBlock(language: string, body: string, options: MarkdownOptions): string {
+  const pre = `<pre class="md-code"${language ? ` data-lang="${language}"` : ""}><code>${body}</code></pre>`
+  const actions = options.codeActions
+  if (!actions) return pre
+  return (
+    `<div class="md-codeblock"><div class="md-code-head">` +
+    `<span class="md-code-lang">${language ? language.toLowerCase() : "text"}</span>` +
+    `<button type="button" class="md-code-copy" data-copy-code aria-label="${escapeHtml(actions.label)}">${COPY_ICON}` +
+    `<span class="md-code-word idle">${escapeHtml(actions.copy)}</span>` +
+    `<span class="md-code-word done">${escapeHtml(actions.copied)}</span></button></div>${pre}</div>`
+  )
+}
+
+export function renderMarkdown(source: string, options: MarkdownOptions = {}): string {
   const escaped = escapeHtml(source)
   const lines = escaped.split("\n")
   const out: string[] = []
@@ -89,9 +121,7 @@ export function renderMarkdown(source: string): string {
     const fence = line.match(/^\s*```(\w*)\s*$/)
     if (fence) {
       if (inCode) {
-        out.push(
-          `<pre class="md-code"${codeLanguage ? ` data-lang="${codeLanguage}"` : ""}><code>${codeBuffer.join("\n")}</code></pre>`,
-        )
+        out.push(codeBlock(codeLanguage, codeBuffer.join("\n"), options))
         codeBuffer = []
         inCode = false
         codeLanguage = ""
@@ -230,7 +260,7 @@ export function renderMarkdown(source: string): string {
   // An unterminated fence still has content worth showing - this is the normal
   // state while a code block is streaming in.
   if (inCode && codeBuffer.length) {
-    out.push(`<pre class="md-code"><code>${codeBuffer.join("\n")}</code></pre>`)
+    out.push(codeBlock(codeLanguage, codeBuffer.join("\n"), options))
   }
   closeList()
   closeQuote()

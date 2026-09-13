@@ -2,15 +2,39 @@
 import { computed } from "vue"
 import type { TextPart } from "@shared/protocol"
 import { renderMarkdown } from "../../lib/markdown"
+import { t } from "../../lib/i18n"
+import { notifyFailure } from "../../lib/toast"
 
 const props = defineProps<{ part: TextPart }>()
 
 // Safe to bind as HTML: renderMarkdown escapes the source before formatting it.
-const html = computed(() => renderMarkdown(props.part.text))
+const html = computed(() =>
+  renderMarkdown(props.part.text, {
+    codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
+  }),
+)
+
+/*
+ * The copy button on a code block, as MiMo has it: the block's text goes to the
+ * clipboard and the button says so for two seconds. The markup is rendered as
+ * HTML, so the click is caught here on the way up rather than on the button.
+ */
+async function onClick(event: MouseEvent) {
+  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-copy-code]")
+  if (!button) return
+  const code = button.closest(".md-codeblock")?.querySelector("pre code")?.textContent ?? ""
+  try {
+    await navigator.clipboard.writeText(code)
+    button.classList.add("copied")
+    window.setTimeout(() => button.classList.remove("copied"), 2000)
+  } catch {
+    notifyFailure(t("code.copyFailed"))
+  }
+}
 </script>
 
 <template>
-  <div class="text" v-html="html" />
+  <div class="text" v-html="html" @click="onClick" />
 </template>
 
 <style>
@@ -204,6 +228,78 @@ const html = computed(() => renderMarkdown(props.part.text))
   padding: 0;
   background: none;
   border: none;
+}
+
+/*
+ * A reply's code block, as MiMo frames it: a head with the language at the start
+ * and a small copy button at the end, over the code itself. The button is quiet
+ * until the block is hovered, and says "copied" in the success colour for two
+ * seconds after a press.
+ */
+.text .md-codeblock {
+  margin: 8px 0;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 6px;
+}
+
+.text .md-codeblock .md-code {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.text .md-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 0.5px solid var(--border-weak);
+}
+
+.text .md-code-lang {
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 18px;
+  text-transform: lowercase;
+}
+
+.text .md-code-copy {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  opacity: 0.7;
+  transition: opacity 0.12s, background-color 0.12s;
+}
+
+.text .md-codeblock:hover .md-code-copy,
+.text .md-code-copy:focus-visible {
+  opacity: 1;
+}
+
+.text .md-code-copy:hover {
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+}
+
+.text .md-code-copy .done,
+.text .md-code-copy.copied .idle {
+  display: none;
+}
+
+.text .md-code-copy.copied .done {
+  display: inline;
+}
+
+.text .md-code-copy.copied .md-code-icon.done {
+  color: var(--text-success);
 }
 
 .text .md-url {
