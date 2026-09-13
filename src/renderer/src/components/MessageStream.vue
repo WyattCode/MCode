@@ -258,6 +258,29 @@ function modelName(message: AssistantMessage): string {
 /** Which copy button is showing its tick, keyed by turn and by which one. */
 const copied = ref<string>()
 
+// MiMo's fold for a long question: past fourteen lines, or past 1200 characters
+// on fewer, not counting the newlines it ends on.
+const ASKED_LINES = 14
+const ASKED_CHARS = 1200
+const openAsked = ref(new Set<string>())
+
+function askedLines(text: string) {
+  const trimmed = text.replace(/\n+$/, "")
+  return trimmed ? trimmed.split("\n").length : 0
+}
+
+function foldable(text: string) {
+  const trimmed = text.replace(/\n+$/, "")
+  return askedLines(trimmed) > ASKED_LINES || trimmed.length > ASKED_CHARS
+}
+
+function toggleAsked(id: string) {
+  const next = new Set(openAsked.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  openAsked.value = next
+}
+
 /**
  * A moment as the reference writes one: the day and the clock, "9月12日 19:50".
  *
@@ -584,7 +607,15 @@ defineExpose({ stepMessage, scroller })
               </span>
             </template>
           </div>
-          <div v-if="turn.text" class="user-bubble">{{ turn.text }}</div>
+          <!--
+            MiMo folds a long question: its first 264px under a fade, and a
+            button beneath that says how many lines there are. Kept on one line
+            each - the bubble keeps its whitespace, so any between these shows.
+          -->
+          <div v-if="turn.text && foldable(turn.text)" class="user-bubble" data-asked-fold :data-folded="openAsked.has(turn.id) ? undefined : ''">
+            <span class="asked-text" :class="{ folded: !openAsked.has(turn.id) }">{{ turn.text }}</span><button class="asked-expand" data-asked-expand @click="toggleAsked(turn.id)" @dblclick.stop>{{ openAsked.has(turn.id) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(turn.text) }) }}</button>
+          </div>
+          <div v-else-if="turn.text" class="user-bubble">{{ turn.text }}</div>
 
           <!--
             The same footer the reply gets. What was asked is worth being able
@@ -1170,6 +1201,46 @@ defineExpose({ stepMessage, scroller })
   border-radius: 16px;
   font-weight: 500;
   line-height: 20px;
+}
+
+.asked-text {
+  display: block;
+}
+
+.asked-text.folded {
+  position: relative;
+  max-height: 264px;
+  overflow: hidden;
+}
+
+/* The fade runs up from the bubble's own fill, so the cut reads as a fold. */
+.asked-text.folded::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 56px;
+  background: linear-gradient(to top, color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised)), transparent);
+  pointer-events: none;
+}
+
+/* MiMo's: 12px in the muted colour, 2 by 4 of padding on a 6px corner. */
+.asked-expand {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  white-space: normal;
+  cursor: pointer;
+}
+
+.asked-expand:hover {
+  color: var(--text-strong);
 }
 
 @media (min-width: 1536px) {
