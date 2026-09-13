@@ -699,6 +699,13 @@ watch(picking, (on) => {
                 </span>
               </button>
               <span class="row-actions">
+                <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                    <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                    <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+                  </svg>
+                </button>
                 <button
                   class="row-pin"
                   :class="{ on: app.isPinned(session.id) }"
@@ -707,13 +714,6 @@ watch(picking, (on) => {
                 >
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-                  </svg>
-                </button>
-                <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <circle cx="3" cy="8" r="1.1" fill="currentColor" />
-                    <circle cx="8" cy="8" r="1.1" fill="currentColor" />
-                    <circle cx="13" cy="8" r="1.1" fill="currentColor" />
                   </svg>
                 </button>
               </span>
@@ -824,6 +824,13 @@ watch(picking, (on) => {
             </span>
           </button>
           <span class="row-actions">
+            <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(entry.session.id, $event)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+              </svg>
+            </button>
             <button
               class="row-pin"
               :class="{ on: app.isPinned(entry.session.id) }"
@@ -832,13 +839,6 @@ watch(picking, (on) => {
             >
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-              </svg>
-            </button>
-            <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(entry.session.id, $event)">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <circle cx="3" cy="8" r="1.1" fill="currentColor" />
-                <circle cx="8" cy="8" r="1.1" fill="currentColor" />
-                <circle cx="13" cy="8" r="1.1" fill="currentColor" />
               </svg>
             </button>
           </span>
@@ -1572,20 +1572,58 @@ watch(picking, (on) => {
 .row-actions {
   position: absolute;
   inset-block: 0;
-  inset-inline-end: 8px;
+  inset-inline-end: 0;
   display: flex;
   align-items: center;
-  padding-inline-start: 8px;
-  /*
-   * Solid, not inherited: the row's hover tint is translucent, and inheriting it
-   * left the end of a long name showing through under the buttons laid over it.
-   * The same tint, laid on the column's own ground.
-   */
-  background: linear-gradient(var(--surface-hover), var(--surface-hover)), var(--surface-base);
-  border-radius: inherit;
+  gap: 1px;
+  border-start-end-radius: inherit;
+  border-end-end-radius: inherit;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.12s;
+  transition: opacity 0.1s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/*
+ * MiMo's scrim under the buttons: the row's tint on the column's own ground,
+ * solid under them and fading in over the 32px before them, so a long name
+ * runs out under it rather than stopping at an edge. The tint is translucent,
+ * hence the ground beneath it.
+ */
+.row-actions::before {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  inset-inline: -32px 0;
+  border-start-end-radius: inherit;
+  border-end-end-radius: inherit;
+  background:
+    linear-gradient(to right, transparent 0, var(--surface-hover) 32px),
+    linear-gradient(to right, transparent 0, var(--surface-base) 32px);
+  pointer-events: none;
+}
+
+.row-actions:dir(rtl)::before {
+  background:
+    linear-gradient(to left, transparent 0, var(--surface-hover) 32px),
+    linear-gradient(to left, transparent 0, var(--surface-base) 32px);
+}
+
+/* On the open row the scrim wears that row's selected tint instead. */
+.row.on .row-actions::before {
+  background:
+    linear-gradient(to right, transparent 0, var(--surface-selected) 32px),
+    linear-gradient(to right, transparent 0, var(--surface-base) 32px);
+}
+
+.row.on .row-actions:dir(rtl)::before {
+  background:
+    linear-gradient(to left, transparent 0, var(--surface-selected) 32px),
+    linear-gradient(to left, transparent 0, var(--surface-base) 32px);
+}
+
+/* A project waiting on an answer keeps its pill in view, so no scrim goes over it. */
+.row.project:has(.status-pill) .row-actions::before {
+  content: none;
 }
 
 .row.task:hover .row-actions,
@@ -1595,14 +1633,38 @@ watch(picking, (on) => {
   pointer-events: auto;
 }
 
+/* MiMo's 24px buttons, a pixel apart, above the scrim. */
 .row-actions .row-pin,
 .row-actions .row-menu,
 .row-actions .ico.inline {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  margin: 0;
+  border-radius: 6px;
   opacity: 1;
 }
 
-/* On the open row the overlay wears that row's selected tint instead. */
-.row.on .row-actions {
-  background: linear-gradient(var(--surface-selected), var(--surface-selected)), var(--surface-base);
+/*
+ * The waiting pill does not give way as the spinner and the dot do: on a task
+ * it steps 54px aside for the buttons, on a project the marks make room for them.
+ */
+.row-status:has(.status-pill) {
+  transition: opacity 0.12s, transform var(--motion-fast, 0.12s), padding var(--motion-fast, 0.12s);
+}
+
+.row.task:hover .row-status:has(.status-pill) {
+  opacity: 1;
+  transform: translateX(-54px);
+}
+
+.row.task:hover .row-status:has(.status-pill):dir(rtl) {
+  transform: translateX(54px);
+}
+
+.row.project:hover .row-status:has(.status-pill),
+.row.project:focus-within .row-status:has(.status-pill) {
+  opacity: 1;
+  padding-inline-end: 52px;
 }
 </style>
