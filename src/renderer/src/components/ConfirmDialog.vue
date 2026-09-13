@@ -75,6 +75,7 @@ h2 {
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
+  white-space: pre-line;
 }
 
 footer {

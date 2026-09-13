@@ -477,7 +477,9 @@ async function toggleVoice() {
         text.value = existing ? `${existing} ${spoken}` : spoken
         await nextTick(resize)
       }
-      if (send && (app.config?.voiceSend ?? false) && text.value.trim()) await submit()
+      /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
+      const sendsByVoice = (app.config?.voiceSend ?? false) && (app.config?.voiceMode ?? "smart") === "smart"
+      if (send && sendsByVoice && text.value.trim()) await submit()
     } catch (err) {
       notifyFailure(t("voice.failed"), reasonForVoice(err))
     } finally {

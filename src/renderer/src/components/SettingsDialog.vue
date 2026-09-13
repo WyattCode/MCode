@@ -290,6 +290,22 @@ const voiceModes = computed(() => [
  * says whether a model transcribes, and a picker that guessed would hide the
  * right answer on the machines where it guessed wrong.
  */
+/*
+ * As MiMo asks: a misheard "send" hands the agent a message nobody meant, so
+ * turning the switch on takes a confirmation; turning it off does not.
+ */
+const confirmingVoiceSend = ref(false)
+
+function toggleVoiceSend() {
+  if (app.config?.voiceSend) void app.patchConfig({ voiceSend: false })
+  else confirmingVoiceSend.value = true
+}
+
+async function enableVoiceSend() {
+  confirmingVoiceSend.value = false
+  await app.patchConfig({ voiceSend: true })
+}
+
 const voiceModelOptions = computed(() => [
   { value: "", label: t("set.voiceModelNone") },
   ...app.providers
@@ -1336,10 +1352,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               />
             </div>
 
-            <div class="line">
+            <div v-if="(app.config?.voiceMode ?? 'smart') === 'smart'" class="line" data-voice-send>
               <div class="line-text">
                 <div class="line-title">{{ t("set.voiceSend") }}</div>
-                <div class="line-sub">{{ t("set.voiceSendSub") }}</div>
+                <div class="line-sub">{{ t(app.config?.voiceSend ? "set.voiceSendSubOn" : "set.voiceSendSub") }}</div>
               </div>
               <button
                 class="switch"
@@ -1347,11 +1363,21 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 role="switch"
                 :aria-checked="app.config?.voiceSend ?? false"
                 :aria-label="t('set.voiceSend')"
-                @click="app.patchConfig({ voiceSend: !(app.config?.voiceSend ?? false) })"
+                @click="toggleVoiceSend"
               >
                 <span class="knob" />
               </button>
             </div>
+            <Teleport to="body">
+              <ConfirmDialog
+                v-if="confirmingVoiceSend"
+                :title="t('set.voiceSendConfirmTitle')"
+                :body="t('set.voiceSendConfirmBody')"
+                :confirm-label="t('set.voiceSendConfirmOk')"
+                @confirm="enableVoiceSend"
+                @close="confirmingVoiceSend = false"
+              />
+            </Teleport>
 
             <div class="line">
               <div class="line-text">
