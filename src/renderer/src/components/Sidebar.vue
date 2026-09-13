@@ -2,7 +2,9 @@
 import type { SessionInfo } from "@shared/protocol"
 import { computed, ref } from "vue"
 import { useApp } from "../stores/app"
-import { t } from "../lib/i18n"
+import { language, t } from "../lib/i18n"
+import type { MenuItem } from "../lib/menu"
+import ContextMenu from "./ContextMenu.vue"
 
 /**
  * The 2.0 side column.
@@ -25,14 +27,15 @@ const props = defineProps<{
   selecting?: string[]
   /** Whether the browser panel is up, so its button can say so. */
   browser?: boolean
-  /** Whether the column is showing everything by time rather than by project. */
-  timeline?: boolean
+  /** Whether MiMo's priority filter is on: attention first, then the week by day. */
+  priority?: boolean
 }>()
 
 const emit = defineEmits<{
   artifacts: []
   "toggle-browser": []
-  "toggle-timeline": []
+  "toggle-priority": []
+  "archive-all": []
   menu: [sessionID: string, x: number, y: number]
   projectMenu: [directory: string, x: number, y: number]
   select: [sessionID: string]
@@ -134,28 +137,88 @@ const recent = computed(() => {
  */
 interface TimelineEntry {
   head?: string
+  /** A section's own heading row inside the priority view. */
+  section?: "priority" | "pinned"
   session?: SessionInfo
   note?: string
+  /** Which part of the list it belongs to; a pinned row can be in two. */
+  group?: string
 }
+
+/* Keeps an entry literal typed as an entry, so its section stays a union. */
+const entry = (value: TimelineEntry) => value
 
 const DAY = 24 * 60 * 60 * 1000
 
+/*
+ * A day's heading as MiMo words it: today, yesterday, and before that the
+ * weekday's name. The list reaches back one week, so a weekday is never
+ * ambiguous.
+ */
 function dayLabel(at: number): string {
   const now = new Date()
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
   if (at >= midnight) return t("side.today")
   if (at >= midnight - DAY) return t("side.yesterday")
-  if (at >= midnight - 7 * DAY) return t("side.thisWeek")
-  return t("side.earlier")
+  return new Intl.DateTimeFormat(language.value, { weekday: "long" }).format(new Date(at))
 }
+
+/* What a conversation is waiting on, most urgent first. */
+type Attention = "waiting" | "unread" | "active"
+const RANK: Record<Attention, number> = { waiting: 0, unread: 1, active: 2 }
+
+function attentionOf(sessionID: string): Attention | undefined {
+  if (app.pendingPermissions.has(sessionID)) return "waiting"
+  if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
+  if (app.running.has(sessionID)) return "active"
+  return undefined
+}
+
+/*
+ * The priority view's first section: every conversation that wants something
+ * - a question to answer, a turn that finished or failed while you were away,
+ * a turn still running - the most urgent first and the newest within that.
+ */
+const attention = computed(() =>
+  app.sessions
+    .filter((session) => !session.archived && attentionOf(session.id))
+    .sort((a, b) => RANK[attentionOf(a.id)!] - RANK[attentionOf(b.id)!] || b.updated - a.updated),
+)
+
+/* Whether the priority view also lists what is pinned; remembered, as MiMo does. */
+const SHOW_PINNED_KEY = "mcode.priorityShowPinned"
+const showPinned = ref(
+  (() => {
+    try {
+      return localStorage.getItem(SHOW_PINNED_KEY) === "true"
+    } catch {
+      return false
+    }
+  })(),
+)
+
+function toggleShowPinned() {
+  showPinned.value = !showPinned.value
+  try {
+    localStorage.setItem(SHOW_PINNED_KEY, String(showPinned.value))
+  } catch {}
+}
+
+const pinnedSessions = computed(() =>
+  app.sessions.filter((session) => !session.archived && app.isPinned(session.id)).sort((a, b) => b.updated - a.updated),
+)
 
 /* Named apart from the prop of the same idea: a local const would shadow it
    in the template, and `aria-pressed` would be handed an array. */
 const byDay = computed<TimelineEntry[]>(() => {
+  // What the sections above already hold is not listed a second time.
+  const held = new Set(attention.value.map((session) => session.id))
+  if (showPinned.value) for (const session of pinnedSessions.value) held.add(session.id)
+  const since = Date.now() - 7 * DAY
   const rows: TimelineEntry[] = []
   let heading = ""
   for (const session of [...app.sessions]
-    .filter((entry) => !entry.archived)
+    .filter((item) => !item.archived && !held.has(item.id) && item.updated >= since)
     .sort((a, b) => b.updated - a.updated)) {
     const label = dayLabel(session.updated)
     if (label !== heading) {
@@ -167,10 +230,44 @@ const byDay = computed<TimelineEntry[]>(() => {
   return rows
 })
 
-/* What the one list renders: the timeline, or Recent as it always was. */
+/* The priority view, top to bottom: attention, pinned when asked for, the week. */
+const priorityList = computed<TimelineEntry[]>(() => [
+  entry({ section: "priority", group: "priority" }),
+  ...attention.value.map((session) => entry({ session, note: name(session.directory), group: "priority" })),
+  ...(showPinned.value
+    ? [
+        entry({ section: "pinned", group: "pinned" }),
+        ...pinnedSessions.value.map((session) => entry({ session, note: name(session.directory), group: "pinned" })),
+      ]
+    : []),
+  ...byDay.value.map((row) => ({ ...row, group: "day" })),
+])
+
+/* What the one list renders: the priority view, or Recent as it always was. */
 const listed = computed<TimelineEntry[]>(() =>
-  props.timeline ? byDay.value : byPinned(recent.value).map((session) => ({ session })),
+  props.priority ? priorityList.value : byPinned(recent.value).map((session) => ({ session, group: "recent" })),
 )
+
+/* The priority section's menu, opened from its heading's own button. */
+const priorityMenu = ref<{ x: number; y: number }>()
+
+const priorityMenuItems = computed<MenuItem[]>(() => [
+  { key: "pinned", label: t("side.priorityPinned"), checked: showPinned.value },
+  { key: "read", label: t("side.markAllRead"), divided: true },
+  { key: "archive", label: t("side.archiveAll") },
+])
+
+function openPriorityMenu(event: MouseEvent) {
+  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  priorityMenu.value = { x: Math.round(from.left), y: Math.round(from.bottom + 4) }
+}
+
+function pickPriorityMenu(key: string) {
+  priorityMenu.value = undefined
+  if (key === "pinned") toggleShowPinned()
+  else if (key === "read") app.markAllRead()
+  else if (key === "archive") emit("archive-all")
+}
 
 /*
  * The three answers, in the order the button walks them. "Follow the machine"
@@ -254,6 +351,23 @@ function toggleProject(directory: string) {
           <path d="M13 13L16.5 16.5" stroke="currentColor" stroke-linecap="square" />
         </svg>
       </button>
+      <!--
+        MiMo's priority filter, at the far end of this row as MiMo has it: the
+        column led by what wants attention, then the rest of the week by day.
+      -->
+      <button
+        class="ico bell"
+        :class="{ on: priority }"
+        :aria-pressed="Boolean(priority)"
+        :aria-label="t(priority ? 'side.priorityOff' : 'side.priorityOn')"
+        v-tip="{ label: t(priority ? 'side.priorityOff' : 'side.priorityOn'), hint: 'Ctrl+Alt+U', placement: 'bottom' }"
+        @click="emit('toggle-priority')"
+      >
+        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M5.5 13.5V9a4.5 4.5 0 0 1 9 0v4.5l1.5 1.5H4z" stroke="currentColor" stroke-linejoin="round" />
+          <path d="M8.3 16.6a1.8 1.8 0 0 0 3.4 0" stroke="currentColor" stroke-linecap="round" />
+        </svg>
+      </button>
     </div>
 
     <div class="brand">
@@ -304,7 +418,7 @@ function toggleProject(directory: string) {
     </div>
 
     <div class="lists">
-      <div v-if="!timeline" class="section">
+      <div v-if="!priority" class="section">
         <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -317,7 +431,7 @@ function toggleProject(directory: string) {
           </svg>
         </button>
       </div>
-      <template v-if="projectsOpen && !timeline">
+      <template v-if="projectsOpen && !priority">
         <template v-for="project in projects" :key="project.directory">
           <div
             class="row project"
@@ -393,36 +507,34 @@ function toggleProject(directory: string) {
         </template>
       </template>
 
-      <div class="section">
+      <div v-if="!priority" class="section">
         <button class="section-head" :aria-expanded="recentOpen" @click="recentOpen = !recentOpen">
-          <span>{{ timeline ? t("side.byTime") : t("side.recent") }}</span>
+          <span>{{ t("side.recent") }}</span>
           <svg class="chev" :class="{ shut: !recentOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
           </svg>
         </button>
-        <!--
-          The two ways to read the column: by the project a conversation is in,
-          or by when it was last touched. One button, lit while the second one
-          is in force.
-        -->
-        <button
-          class="ico add"
-          :class="{ on: timeline }"
-          :aria-pressed="timeline"
-          :aria-label="t('side.byTime')"
-          v-tip="{ label: t('side.byTime'), hint: 'Ctrl+Alt+U' }"
-          @click="emit('toggle-timeline')"
-        >
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
-            <path d="M10 6.3V10l2.4 1.6" stroke="currentColor" stroke-linecap="round" />
-          </svg>
-        </button>
       </div>
-      <template v-if="recentOpen">
+      <template v-if="priority || recentOpen">
         <div v-if="!listed.length" class="empty">{{ t("side.noTasks") }}</div>
-        <template v-for="(entry, index) in listed" :key="entry.session?.id ?? `head-${index}`">
-        <div v-if="entry.head" class="day-head">{{ entry.head }}</div>
+        <template v-for="(entry, index) in listed" :key="`${entry.group}-${entry.session?.id ?? entry.section ?? entry.head ?? index}`">
+        <div v-if="entry.section" class="section priority-head">
+          <span class="section-head">{{ t(entry.section === "priority" ? "side.priority" : "side.priorityPinned") }}</span>
+          <button
+            v-if="entry.section === 'priority'"
+            class="ico add more"
+            :aria-label="t('side.priorityMore')"
+            v-tip="{ label: t('side.priorityMore') }"
+            @click.stop="openPriorityMenu"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+              <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+              <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
+        <div v-else-if="entry.head" class="day-head">{{ entry.head }}</div>
         <div
           v-else-if="entry.session"
           class="row task"
@@ -515,6 +627,14 @@ function toggleProject(directory: string) {
         <span class="row-label plain">{{ t("rail.settings") }}</span>
       </button>
     </div>
+    <ContextMenu
+      v-if="priorityMenu"
+      :x="priorityMenu.x"
+      :y="priorityMenu.y"
+      :items="priorityMenuItems"
+      @pick="pickPriorityMenu"
+      @close="priorityMenu = undefined"
+    />
   </aside>
 </template>
 
@@ -757,6 +877,25 @@ function toggleProject(directory: string) {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 19.2px;
+}
+
+/* The priority filter's bell, pushed to the far end of the controls row. */
+.ico.bell {
+  margin-inline-start: auto;
+}
+
+.ico.bell.on {
+  color: var(--text-accent);
+}
+
+/* The priority section's menu button shows while its heading is hovered. */
+.priority-head .more {
+  opacity: 0;
+}
+
+.priority-head:hover .more,
+.priority-head .more:focus-visible {
+  opacity: 1;
 }
 
 /* The foot row sits 10 above the window's bottom edge. */

@@ -138,6 +138,16 @@ export const useApp = defineStore("app", () => {
     )
   }
 
+  /**
+   * Clears every "something happened here" mark at once - the priority
+   * filter's mark-all-read. Finished and failed turns both count as unread
+   * here, so both marks go.
+   */
+  function markAllRead() {
+    unseen.value = new Set()
+    sessionErrors.value = new Map()
+  }
+
   /** Whether a session's last turn ended badly, for the dot on its row. */
   function failed(sessionID: string): boolean {
     return sessionErrors.value.has(sessionID)
@@ -1393,6 +1403,8 @@ export const useApp = defineStore("app", () => {
     unseen,
     unread,
     failed,
+    markAllRead,
+    running,
     clearPermission,
     reopenTab,
     recent,

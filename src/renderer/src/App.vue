@@ -1863,12 +1863,30 @@ async function toggleSideChat() {
 }
 
 /*
- * Whether the side column is read by project or by time.
- *
- * Not remembered: it is a way of looking at the same list rather than a
- * setting, and the tree is what the column is for most of the time.
+ * MiMo's priority filter: the side column led by what wants attention, then
+ * the rest of the week by day. Remembered, as MiMo remembers it, because it is
+ * a way of working through the day rather than a glance at the list.
  */
-const timelineView = ref(false)
+const PRIORITY_KEY = "mcode.priorityFilter"
+const priorityFilter = ref(
+  (() => {
+    try {
+      return localStorage.getItem(PRIORITY_KEY) === "true"
+    } catch {
+      return false
+    }
+  })(),
+)
+watch(priorityFilter, (on) => {
+  try {
+    localStorage.setItem(PRIORITY_KEY, String(on))
+  } catch {}
+})
+
+/* The priority section's archive-all, which MiMo applies to every conversation. */
+async function archiveAll() {
+  for (const session of app.sessions.filter((entry) => !entry.archived)) await app.archive(session.id, true)
+}
 
 /* So is the plugins page, which MiMo opens in the workspace rather than over it. */
 function goPlugins() {
@@ -2637,11 +2655,11 @@ const bindableCommands = computed(() => {
       run: toggleSideChat,
     },
     {
-      id: "view.timeline",
+      id: "view.priority",
       group: "key.groupGeneral",
-      title: t("side.byTime"),
+      title: priorityFilter.value ? t("side.priorityOff") : t("side.priorityOn"),
       hint: "Ctrl+Alt+U",
-      run: () => (timelineView.value = !timelineView.value),
+      run: () => (priorityFilter.value = !priorityFilter.value),
     },
     {
       id: "session.pin",
@@ -2981,11 +2999,11 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
-  /* The column by time, on the reference's own chord. */
+  /* The priority filter, on MiMo's own chord. */
   if (mod && event.altKey && event.key.toLowerCase() === "u") {
     if (modalOpen.value) return
     event.preventDefault()
-    timelineView.value = !timelineView.value
+    priorityFilter.value = !priorityFilter.value
     return
   }
 
@@ -3566,9 +3584,10 @@ onBeforeUnmount(() => {
         v-if="leftPanel && !onboarding"
         :page="view"
         :browser="browserOpen"
-        :timeline="timelineView"
+        :priority="priorityFilter"
         @toggle-browser="browserOpen = !browserOpen"
-        @toggle-timeline="timelineView = !timelineView"
+        @toggle-priority="priorityFilter = !priorityFilter"
+        @archive-all="archiveAll"
         @newTask="goHome"
         @artifacts="goArtifacts"
         @menu="(id, x, y) => (sessionMenu = { x, y, sessionID: id })"
