@@ -18,6 +18,8 @@ const props = defineProps<{
   keyboard?: boolean
   /** `y` is the menu's bottom edge: for a control at the foot of the window. */
   above?: boolean
+  /** `x` is the menu's right edge: for a control at the end of a row. */
+  end?: boolean
 }>()
 const emit = defineEmits<{ pick: [key: string]; close: [] }>()
 
@@ -31,6 +33,7 @@ onMounted(async () => {
   if (!rect) return
   const margin = 8
   if (props.above) at.value.y = Math.max(margin, props.y - rect.height)
+  if (props.end) at.value.x = Math.max(margin, props.x - rect.width)
   /*
    * Flipped to the other side of the pointer rather than merely pushed back,
    * so the pointer never lands on top of the first item.

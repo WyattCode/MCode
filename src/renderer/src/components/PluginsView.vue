@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
 import type { McpServerState } from "@shared/protocol"
+import ContextMenu from "./ContextMenu.vue"
+import type { MenuItem } from "../lib/menu"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
-import { notifyFailure } from "../lib/toast"
+import { notify, notifyFailure } from "../lib/toast"
 
 /**
  * The plugins page, laid out from MiMo's: a 900 column with a 24/500 title, a
@@ -24,10 +26,58 @@ const servers = ref<McpServerState[]>([])
 const loaded = ref(false)
 const query = ref("")
 
+/**
+ * One row of the installed list: a server, or a skill the open project offers.
+ * A skill has no switch - it is on wherever its file is - so it only ever
+ * counts as enabled.
+ */
+interface Entry {
+  key: string
+  kind: "plugin" | "skill"
+  name: string
+  enabled: boolean
+  server?: McpServerState
+  description?: string
+}
+
+/* MiMo's filter: by state, then by type, each with its own "all". */
+type StatusFilter = "all" | "on" | "off"
+type TypeFilter = "all" | "plugin" | "skill"
+const status = ref<StatusFilter>("all")
+const kind = ref<TypeFilter>("all")
+const filtering = computed(() => status.value !== "all" || kind.value !== "all")
+
+const entries = computed<Entry[]>(() => [
+  ...servers.value.map((server) => ({
+    key: `plugin:${server.name}`,
+    kind: "plugin" as const,
+    name: server.name,
+    enabled: server.status !== "disabled",
+    server,
+  })),
+  ...app.commands
+    .filter((command) => command.source === "skill")
+    .map((command) => ({
+      key: `skill:${command.name}`,
+      kind: "skill" as const,
+      name: command.name,
+      enabled: true,
+      description: command.description,
+    })),
+])
+
 const shown = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase()
-  if (!needle) return servers.value
-  return servers.value.filter((entry) => entry.name.toLocaleLowerCase().includes(needle))
+  return entries.value.filter((entry) => {
+    if (status.value === "on" && !entry.enabled) return false
+    if (status.value === "off" && entry.enabled) return false
+    if (kind.value !== "all" && entry.kind !== kind.value) return false
+    if (!needle) return true
+    return (
+      entry.name.toLocaleLowerCase().includes(needle) ||
+      (entry.description ?? "").toLocaleLowerCase().includes(needle)
+    )
+  })
 })
 
 let off: (() => void) | undefined
@@ -44,6 +94,7 @@ onMounted(async () => {
   })
   const result = await app.client?.request({ type: "mcp.list" }).catch(() => undefined)
   servers.value = result?.servers ?? []
+  await app.refreshCommands()
   loaded.value = true
 })
 
@@ -69,27 +120,109 @@ async function toggle(name: string) {
     busy.value = ""
   }
 }
+
+/*
+ * Refresh reads both halves again - the servers and the skills - and says
+ * whether it could, as MiMo's does. The server list is the read that can fail;
+ * the skills are read beside it and fall back to none rather than throwing.
+ */
+const refreshing = ref(false)
+
+async function refresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    const [listed] = await Promise.all([app.client?.request({ type: "mcp.list" }), app.refreshCommands()])
+    if (listed) servers.value = listed.servers
+    notify(t("plugins.refreshed"))
+  } catch (err) {
+    notifyFailure(t("plugins.refreshFailed", { error: err instanceof Error ? err.message : String(err) }))
+  } finally {
+    refreshing.value = false
+  }
+}
+
+/** The filter menu, its right edge on the button's as MiMo aligns it. */
+const filterMenu = ref<{ x: number; y: number }>()
+
+const filterItems = computed<MenuItem[]>(() => [
+  { key: "status:all", label: t("plugins.filterAll"), checked: status.value === "all" },
+  { key: "status:on", label: t("plugins.filterOn"), checked: status.value === "on" },
+  { key: "status:off", label: t("plugins.filterOff"), checked: status.value === "off" },
+  { key: "type:all", label: t("plugins.typeAll"), checked: kind.value === "all", divided: true },
+  { key: "type:plugin", label: t("plugins.typePlugins"), checked: kind.value === "plugin" },
+  { key: "type:skill", label: t("plugins.typeSkills"), checked: kind.value === "skill" },
+])
+
+function openFilter(event: MouseEvent) {
+  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  filterMenu.value = { x: Math.round(from.right), y: Math.round(from.bottom + 4) }
+}
+
+function pickFilter(key: string) {
+  filterMenu.value = undefined
+  const [group, value] = key.split(":")
+  if (group === "status") status.value = value as StatusFilter
+  else if (group === "type") kind.value = value as TypeFilter
+}
 </script>
 
 <template>
   <div class="plugins">
     <div class="drag" aria-hidden="true" />
     <div class="column">
-      <h1 class="title">{{ t("plugins.title") }}</h1>
+      <div class="title-row">
+        <h1 class="title">{{ t("plugins.title") }}</h1>
+        <div class="actions">
+          <button
+            class="icon-btn refresh"
+            :aria-label="t('plugins.refresh')"
+            v-tip="{ label: t('plugins.refresh'), placement: 'bottom' }"
+            :disabled="refreshing"
+            @click="refresh"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path
+                d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"
+                stroke="currentColor"
+                stroke-width="1.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
       <p class="subtitle">{{ t("plugins.subtitle") }}</p>
 
-      <div class="search">
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="7" cy="7" r="4.3" stroke="currentColor" stroke-width="1.2" />
-          <path d="M10.2 10.2 14 14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-        </svg>
-        <input
-          v-model="query"
-          :placeholder="t('plugins.search')"
-          :aria-label="t('plugins.search')"
-          spellcheck="false"
-          autocomplete="off"
-        />
+      <div class="bar">
+        <div class="search">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.3" stroke="currentColor" stroke-width="1.2" />
+            <path d="M10.2 10.2 14 14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+          <input
+            v-model="query"
+            :placeholder="t('plugins.search')"
+            :aria-label="t('plugins.search')"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </div>
+        <button
+          class="filter"
+          :class="{ active: filtering }"
+          :aria-label="t('plugins.filter')"
+          :aria-expanded="Boolean(filterMenu)"
+          aria-haspopup="menu"
+          v-tip="{ label: t('plugins.filter'), placement: 'bottom' }"
+          @click="openFilter"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2.5 4h11M4.5 8h7M6.5 12h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+          </svg>
+          <span v-if="filtering" class="dot" aria-hidden="true" />
+        </button>
       </div>
 
       <div class="head">
@@ -98,31 +231,46 @@ async function toggle(name: string) {
       </div>
 
       <div v-if="shown.length" class="cards">
-        <div v-for="entry in shown" :key="entry.name" class="card">
+        <div v-for="entry in shown" :key="entry.key" class="card" :data-kind="entry.kind">
           <div class="card-text">
             <span class="card-name">{{ entry.name }}</span>
             <span class="card-note">
-              <span v-if="entry.error" class="card-error">{{ entry.error }}</span>
-              <template v-else>{{ t("plugins.tools", { n: String(entry.tools) }) }}</template>
+              <template v-if="entry.server">
+                <span v-if="entry.server.error" class="card-error">{{ entry.server.error }}</span>
+                <template v-else>{{ t("plugins.tools", { n: String(entry.server.tools) }) }}</template>
+              </template>
+              <template v-else>{{ entry.description || t("plugins.skill") }}</template>
             </span>
           </div>
-          <span class="card-state">{{ t(`mcp.status.${entry.status}`) }}</span>
-          <button
-            class="switch"
-            :class="{ on: entry.status === 'connected' }"
-            role="switch"
-            :aria-checked="entry.status === 'connected'"
-            :aria-label="entry.name"
-            :disabled="busy === entry.name || entry.status === 'pending'"
-            @click="toggle(entry.name)"
-          >
-            <span class="knob" />
-          </button>
+          <template v-if="entry.server">
+            <span class="card-state">{{ t(`mcp.status.${entry.server.status}`) }}</span>
+            <button
+              class="switch"
+              :class="{ on: entry.server.status === 'connected' }"
+              role="switch"
+              :aria-checked="entry.server.status === 'connected'"
+              :aria-label="entry.name"
+              :disabled="busy === entry.name || entry.server.status === 'pending'"
+              @click="toggle(entry.name)"
+            >
+              <span class="knob" />
+            </button>
+          </template>
+          <span v-else class="card-state">{{ t("plugins.skill") }}</span>
         </div>
       </div>
 
-      <p v-else-if="loaded" class="empty">{{ t("plugins.none") }}</p>
+      <p v-else-if="loaded" class="empty">{{ entries.length ? t("plugins.noMatch") : t("plugins.none") }}</p>
     </div>
+    <ContextMenu
+      v-if="filterMenu"
+      :x="filterMenu.x"
+      :y="filterMenu.y"
+      :items="filterItems"
+      end
+      @pick="pickFilter"
+      @close="filterMenu = undefined"
+    />
   </div>
 </template>
 
@@ -172,12 +320,84 @@ async function toggle(name: string) {
   line-height: 20px;
 }
 
-.search {
+/* The title with its actions at the far end: 16 apart, the row at least 30 tall. */
+.title-row {
   display: flex;
   align-items: center;
+  gap: 16px;
+  min-height: 30px;
+}
+
+.actions {
+  display: flex;
+  flex: none;
+  align-items: center;
   gap: 8px;
-  height: 38px;
+  margin-inline-start: auto;
+}
+
+/* A bare 30px square with a 7px corner, filled only under the pointer. */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-base);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+
+.icon-btn:hover:not(:disabled) {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+}
+
+.icon-btn:disabled {
+  opacity: 0.6;
+}
+
+/* The search field and its filter button, 10 apart. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-top: 22px;
+}
+
+/* Outlined, a 7px inset around a 16px glyph, and a 6px dot while a filter is on. */
+.filter {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 7px;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-raised));
+  border-radius: 8px;
+}
+
+.filter:hover {
+  background: color-mix(in srgb, var(--text-strong) 4%, transparent);
+}
+
+.dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  background: var(--text-accent);
+  border-radius: 50%;
+}
+
+.search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
   padding: 0 12px;
   color: var(--text-weak);
   background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-raised));
