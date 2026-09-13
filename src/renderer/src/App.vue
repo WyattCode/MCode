@@ -1503,11 +1503,14 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
   rename: (directory) => {
     editingProject.value = directory
   },
+  /* MiMo's pinToFront: the latest pin heads 置顶, and a toast says what happened. */
   pin: async (directory) => {
     const pinned = app.config?.pinnedProjects ?? []
+    const was = pinned.includes(directory)
     await app.patchConfig({
-      pinnedProjects: pinned.includes(directory) ? pinned.filter((entry) => entry !== directory) : [...pinned, directory],
+      pinnedProjects: was ? pinned.filter((entry) => entry !== directory) : [directory, ...pinned],
     })
+    notify(t(was ? "side.projectUnpinnedToast" : "side.projectPinnedToast"))
   },
   archive: async (directory) => {
     for (const session of projectSessions(directory)) await app.archive(session.id, true)

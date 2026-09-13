@@ -201,11 +201,14 @@ export const useApp = defineStore("app", () => {
     return pinned.value.has(sessionID)
   }
 
+  /* A new pin goes to the end of 置顶, as MiMo adds it, and a toast says what happened. */
   async function togglePinned(sessionID: string) {
     const next = new Set(pinned.value)
-    if (next.has(sessionID)) next.delete(sessionID)
+    const was = next.has(sessionID)
+    if (was) next.delete(sessionID)
     else next.add(sessionID)
     await patchConfig({ pinnedTabs: [...next] })
+    notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
   }
 
   /** Recently closed tabs, newest last, for Ctrl+Shift+T. */

@@ -99,7 +99,7 @@ function openProjectMenu(directory: string, event: MouseEvent) {
   emit("projectMenu", directory, x, y)
 }
 
-/* Pinned from that menu: a pinned project heads the list, as a pinned conversation does. */
+/* Pinned from that menu: a pinned project moves up into the 置顶 section. */
 const pinnedProject = (directory: string) => (app.config?.pinnedProjects ?? []).includes(directory)
 
 const projects = computed(() => {
@@ -114,8 +114,101 @@ const projects = computed(() => {
     byDirectory.set(session.directory, entry)
   }
   return [...byDirectory.values()]
-    .map((entry) => ({ ...entry, sessions: [...entry.sessions].sort((a, b) => b.updated - a.updated) }))
-    .sort((a, b) => Number(pinnedProject(b.directory)) - Number(pinnedProject(a.directory)) || b.updated - a.updated)
+    .map((entry) => {
+      const sessions = [...entry.sessions].sort((a, b) => b.updated - a.updated)
+      // A pinned conversation is listed in 置顶 rather than under its project, as MiMo lists it.
+      return { ...entry, sessions, children: sessions.filter((session) => !app.isPinned(session.id)) }
+    })
+    .sort((a, b) => b.updated - a.updated)
+})
+
+type ProjectRow = (typeof projects.value)[number]
+
+/*
+ * MiMo's 置顶 section, above Projects: pinned conversations in the order they
+ * were pinned, then pinned projects with the latest pin first. Five rows until
+ * 展开更多, which opens the rest - conversations before projects - and opens by
+ * itself when the open conversation is among them. Neither kind is listed again
+ * further down.
+ */
+const PINNED_PAGE = 5
+const PINNED_OPEN_KEY = "mcode.pinnedOpen"
+
+const pinnedConvos = computed(() =>
+  (app.config?.pinnedTabs ?? [])
+    .map((id) => app.sessions.find((session) => session.id === id))
+    .filter((session): session is SessionInfo => Boolean(session && !session.archived)),
+)
+
+const pinnedProjectRows = computed(() =>
+  (app.config?.pinnedProjects ?? [])
+    .map((directory) => projects.value.find((project) => project.directory === directory))
+    .filter((project): project is ProjectRow => Boolean(project)),
+)
+
+const normalProjects = computed(() => projects.value.filter((project) => !pinnedProject(project.directory)))
+
+const pinnedOpen = ref(
+  (() => {
+    try {
+      return localStorage.getItem(PINNED_OPEN_KEY) !== "false"
+    } catch {
+      return true
+    }
+  })(),
+)
+
+function togglePinnedOpen() {
+  pinnedOpen.value = !pinnedOpen.value
+  try {
+    localStorage.setItem(PINNED_OPEN_KEY, String(pinnedOpen.value))
+  } catch {}
+}
+
+const pinnedMore = ref(false)
+
+interface ColumnBlock {
+  key: string
+  kind: "pinned-head" | "pinned-more" | "projects-head" | "projects-pages" | "session" | "project"
+  session?: SessionInfo
+  project?: ProjectRow
+}
+
+const pinnedBlocks = computed<ColumnBlock[]>(() => {
+  const convos = pinnedConvos.value
+  const rows = pinnedProjectRows.value
+  if (!convos.length && !rows.length) return []
+  const head: ColumnBlock = { key: "pinned-head", kind: "pinned-head" }
+  if (!pinnedOpen.value) return [head]
+  const firstConvos = convos.slice(0, PINNED_PAGE)
+  const firstProjects = rows.slice(0, Math.max(0, PINNED_PAGE - firstConvos.length))
+  const restConvos = convos.slice(firstConvos.length)
+  const restProjects = rows.slice(firstProjects.length)
+  const open = pinnedMore.value || restConvos.some((session) => session.id === app.currentID)
+  const sessionBlock = (session: SessionInfo): ColumnBlock => ({ key: `pinned-session:${session.id}`, kind: "session", session })
+  const projectBlock = (project: ProjectRow): ColumnBlock => ({ key: `pinned-project:${project.directory}`, kind: "project", project })
+  return [
+    head,
+    ...firstConvos.map(sessionBlock),
+    ...firstProjects.map(projectBlock),
+    ...(!open && (restConvos.length || restProjects.length) ? [{ key: "pinned-more", kind: "pinned-more" } as ColumnBlock] : []),
+    ...(open ? [...restConvos.map(sessionBlock), ...restProjects.map(projectBlock)] : []),
+  ]
+})
+
+/* The top of the column, in order: 置顶, then Projects with its pages. */
+const columnBlocks = computed<ColumnBlock[]>(() => {
+  if (props.priority) return []
+  return [
+    ...pinnedBlocks.value,
+    { key: "projects-head", kind: "projects-head" },
+    ...(projectsOpen.value
+      ? shownProjects.value.map((project): ColumnBlock => ({ key: `project:${project.directory}`, kind: "project", project }))
+      : []),
+    ...(projectsOpen.value && !picking.value && (projectsLeft.value > 0 || projectsPaged.value)
+      ? [{ key: "projects-pages", kind: "projects-pages" } as ColumnBlock]
+      : []),
+  ]
 })
 
 /*
@@ -149,7 +242,7 @@ function setRecentSort(mode: "recent" | "name") {
 
 const recentAll = computed(() => {
   const listed = new Set(projects.value.map((project) => project.directory))
-  const rows = app.sessions.filter((session) => !session.archived && !listed.has(session.directory))
+  const rows = app.sessions.filter((session) => !session.archived && !listed.has(session.directory) && !app.isPinned(session.id))
   return recentSort.value === "name"
     ? rows.sort((a, b) => title(a.title).localeCompare(title(b.title), language.value))
     : rows.sort((a, b) => b.updated - a.updated)
@@ -438,8 +531,8 @@ function toggleProject(directory: string) {
 /* MiMo lists five tasks under a project until asked for the rest. */
 const PROJECT_TASKS = 5
 const allTasks = ref(new Set<string>())
-const tasksOf = (project: { directory: string; sessions: typeof app.sessions }) => {
-  const rows = byPinned(project.sessions)
+const tasksOf = (project: ProjectRow) => {
+  const rows = project.children
   return allTasks.value.has(project.directory) ? rows : rows.slice(0, PROJECT_TASKS)
 }
 function showAllTasks(directory: string) {
@@ -453,12 +546,12 @@ function showAllTasks(directory: string) {
 const PROJECT_PAGE = 5
 const PROJECT_STEP = 10
 const projectsShown = ref(PROJECT_PAGE)
-const shownProjects = computed(() => (picking.value ? projects.value : projects.value.slice(0, projectsShown.value)))
-const projectsLeft = computed(() => projects.value.length - shownProjects.value.length)
-const projectsPaged = computed(() => !picking.value && projectsShown.value > PROJECT_PAGE && projects.value.length > PROJECT_PAGE)
+const shownProjects = computed(() => (picking.value ? normalProjects.value : normalProjects.value.slice(0, projectsShown.value)))
+const projectsLeft = computed(() => normalProjects.value.length - shownProjects.value.length)
+const projectsPaged = computed(() => !picking.value && projectsShown.value > PROJECT_PAGE && normalProjects.value.length > PROJECT_PAGE)
 function moreProjects() {
   const shown = projectsShown.value
-  projectsShown.value = Math.min(projects.value.length, shown <= PROJECT_PAGE ? PROJECT_STEP : shown + PROJECT_STEP)
+  projectsShown.value = Math.min(normalProjects.value.length, shown <= PROJECT_PAGE ? PROJECT_STEP : shown + PROJECT_STEP)
 }
 watch(picking, (on) => {
   if (on) projectsShown.value = PROJECT_PAGE
@@ -582,7 +675,66 @@ watch(picking, (on) => {
     </div>
 
     <div class="lists">
-      <div v-if="!priority" class="section">
+      <template v-for="block in columnBlocks" :key="block.key">
+        <!-- MiMo's 置顶 section: pinned conversations, then pinned projects. -->
+        <div v-if="block.kind === 'pinned-head'" class="section pinned-head" data-pinned-section>
+          <button class="section-head" :aria-expanded="pinnedOpen" @click="togglePinnedOpen">
+            <span>{{ t("side.priorityPinned") }}</span>
+            <svg class="chev" :class="{ shut: !pinnedOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
+            </svg>
+          </button>
+        </div>
+        <button v-else-if="block.kind === 'pinned-more'" class="pinned-more" data-pin-show-more @click="pinnedMore = true">
+          {{ t("side.expandPinned") }}
+        </button>
+        <div
+          v-else-if="block.session"
+          class="row task recent pinned-convo"
+          :class="{ on: app.currentID === block.session.id }"
+          @contextmenu.prevent="openMenu(block.session.id, $event)"
+        >
+          <button class="row-open" @click="press(block.session.id)">
+            <span v-if="picking" class="tick" :class="{ on: ticked(block.session.id) }" aria-hidden="true">
+              <svg v-if="ticked(block.session.id)" width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <!-- MiMo's pinned conversation leads with a conversation mark in a 46px cell. -->
+            <span class="convo-cell" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4.5 5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 3.5V17H4.5A1.5 1.5 0 0 1 3 15.5v-9A1.5 1.5 0 0 1 4.5 5z" />
+              </svg>
+            </span>
+            <RowTitle
+              class="row-label task-label"
+              v-tip="picking ? '' : { card: convoCard(block.session, app.config?.projectNames), placement: 'right' }"
+              :text="title(block.session.title)"
+              :cover="picking ? 0 : TITLE_COVER"
+              @rename="!picking && emit('rename', block.session.id)"
+            />
+            <span v-if="statusOf(block.session.id)" class="row-status" :data-status="statusOf(block.session.id)">
+              <span v-if="statusOf(block.session.id) === 'running'" class="status-spin" aria-hidden="true" />
+              <span v-else-if="statusOf(block.session.id) === 'unread'" class="status-dot" aria-hidden="true" />
+              <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+            </span>
+          </button>
+          <span class="row-actions">
+            <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(block.session.id, $event)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+              </svg>
+            </button>
+            <button class="row-pin on" :aria-label="t('menu.unpin')" @click.stop="app.togglePinned(block.session.id)">
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </span>
+        </div>
+        <div v-else-if="block.kind === 'projects-head'" class="section">
         <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -595,8 +747,8 @@ watch(picking, (on) => {
           </svg>
         </button>
       </div>
-      <template v-if="projectsOpen && !priority">
-        <template v-for="project in shownProjects" :key="project.directory">
+        <template v-else-if="block.project">
+          <template v-for="project in [block.project]" :key="project.directory">
           <div
             class="row project"
             :class="{ on: app.current?.directory === project.directory && !isExpanded(project.directory) }"
@@ -621,16 +773,13 @@ watch(picking, (on) => {
                 <path d="M3.5 5.5H8L9.5 7H16.5V15H3.5V5.5Z" stroke="currentColor" stroke-linejoin="round" />
               </svg>
               <span class="row-label plain">{{ name(project.directory) }}</span>
-              <svg v-if="pinnedProject(project.directory)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-              </svg>
               <span
-                v-if="!isExpanded(project.directory) && projectStatus(project.sessions)"
+                v-if="!isExpanded(project.directory) && projectStatus(project.children)"
                 class="row-status"
-                :data-status="projectStatus(project.sessions)"
+                :data-status="projectStatus(project.children)"
               >
-                <span v-if="projectStatus(project.sessions) === 'running'" class="status-spin" aria-hidden="true" />
-                <span v-else-if="projectStatus(project.sessions) === 'unread'" class="status-dot" aria-hidden="true" />
+                <span v-if="projectStatus(project.children) === 'running'" class="status-spin" aria-hidden="true" />
+                <span v-else-if="projectStatus(project.children) === 'unread'" class="status-dot" aria-hidden="true" />
                 <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
               </span>
             </button>
@@ -710,7 +859,7 @@ watch(picking, (on) => {
               </span>
             </div>
             <button
-              v-if="project.sessions.length > PROJECT_TASKS && !allTasks.has(project.directory)"
+              v-if="project.children.length > PROJECT_TASKS && !allTasks.has(project.directory)"
               class="project-show-all"
               :data-project-show-all="project.directory"
               aria-expanded="false"
@@ -719,8 +868,9 @@ watch(picking, (on) => {
               {{ t("side.showAllTasks") }}
             </button>
           </template>
+          </template>
         </template>
-        <div v-if="!picking && (projectsLeft > 0 || projectsPaged)" class="projects-pages" data-projects-pagination>
+        <div v-else-if="block.kind === 'projects-pages'" class="projects-pages" data-projects-pagination>
           <button v-if="projectsLeft > 0" class="pages-more" data-projects-show-more :aria-expanded="projectsPaged" @click="moreProjects">
             {{ projectsPaged ? t("side.moreProjectsLeft", { count: projectsLeft }) : t("side.moreProjects") }}
           </button>
@@ -1297,6 +1447,37 @@ watch(picking, (on) => {
 .show-more:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/* A pinned conversation: MiMo's 46px mark cell in place of the 9px start, the title right after it. */
+.row.task.pinned-convo {
+  padding-inline-start: 0;
+}
+
+.row.task.pinned-convo > .row-open {
+  gap: 0;
+}
+
+.convo-cell {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 46px;
+  color: var(--text-weak);
+}
+
+/* 展开更多 under the first five pinned rows: 12px in the secondary colour, 9 in, 5 above and below. */
+.pinned-more {
+  width: 100%;
+  padding: 5px 9px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: calc(22px * var(--ui-font-scale, 1));
+  text-align: start;
+}
+
+.pinned-more:hover {
+  color: var(--text-strong);
 }
 
 /* Under a project's first five: 12px in the secondary colour, in line with the task names. */
