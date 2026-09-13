@@ -120,7 +120,7 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
     runtime,
     port,
     async close() {
-      shells.closeAll()
+      await shells.closeAll()
       mcp.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))

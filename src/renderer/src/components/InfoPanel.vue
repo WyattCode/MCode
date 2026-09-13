@@ -41,10 +41,20 @@ async function open(file: string) {
   const refused = await window.mcode.openFile(directory.value, file)
   if (refused) notifyFailure(t("info.openFailed"), refused)
 }
+
+/*
+ * The height of whatever is docked along the foot of the conversation. The card
+ * keeps its usual 12px above the bottom edge, measured from the top of that
+ * dock instead of from the bottom of the column.
+ */
+defineProps<{ bottomInset?: number }>()
 </script>
 
 <template>
-  <aside class="info" :aria-label="t('info.toggle')">
+  <aside
+    class="info"
+    :style="bottomInset ? { maxHeight: `calc(100% - ${66 + bottomInset}px)` } : undefined"
+    :aria-label="t('info.toggle')">
     <section class="section">
       <button class="head" :aria-expanded="!shut.tasks" @click="shut.tasks = !shut.tasks">
         <span class="head-label">{{ t("info.tasks") }}</span>

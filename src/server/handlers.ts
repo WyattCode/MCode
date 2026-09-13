@@ -766,6 +766,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
            */
           owner,
         ),
+        cwd,
       } satisfies Handled<"shell.open">
     }
 

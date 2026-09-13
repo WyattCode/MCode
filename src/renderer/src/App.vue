@@ -204,6 +204,8 @@ async function installUpdate() {
 }
 
 const terminalOpen = ref(false)
+/** How tall the docked terminal is, so the info card can end above it. */
+const drawerHeight = ref(0)
 
 /*
  * What changed in the version now running, shown once.
@@ -3646,7 +3648,7 @@ onBeforeUnmount(() => {
 
           <SessionHero v-if="empty && !app.error" />
           <MessageStream v-else ref="stream" />
-          <InfoPanel v-if="infoShowing" />
+          <InfoPanel v-if="infoShowing" :bottom-inset="terminalUp ? drawerHeight : 0" />
 
           <!--
             The dock, which is the same region in every state a session can be
@@ -3715,7 +3717,7 @@ onBeforeUnmount(() => {
           has it: the full width of this column, under the composer, with its
           own edge to drag. Not in the right-hand column, which is the review's.
         -->
-        <TerminalDrawer v-if="terminalUp" ref="drawer" @close="terminalOpen = false" />
+        <TerminalDrawer v-if="terminalUp" ref="drawer" @close="terminalOpen = false" @height="(px: number) => (drawerHeight = px)" />
       </main>
 
       <!--

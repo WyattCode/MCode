@@ -1971,7 +1971,7 @@ async function main(): Promise<void> {
     check("and offers no model", config.enabled().every((entry) => entry.provider !== "bynothing"))
   }
 
-  shells.closeAll()
+  await shells.closeAll()
   mcp.close()
   server.close()
   console.log("")

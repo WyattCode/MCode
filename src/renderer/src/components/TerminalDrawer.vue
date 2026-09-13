@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import TerminalPane from "./TerminalPane.vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; height: [px: number] }>()
 const app = useApp()
 
 const root = ref<HTMLElement>()
@@ -14,6 +14,13 @@ const root = ref<HTMLElement>()
  * against that panel's `831x575`, in a column 863 tall.
  */
 const height = ref(280)
+
+/*
+ * Told to the app so the info card can stop above the drawer. The card floats
+ * over the conversation, and without this a long one ran down over the
+ * terminal and covered the buttons at its right-hand end.
+ */
+watch(height, (px) => emit("height", px), { immediate: true })
 
 /*
  * The drawer holds a list of shells rather than one. Each entry keeps its own
@@ -28,7 +35,7 @@ const height = ref(280)
  * Ending one is the tab's close button; whatever is left goes when the window
  * that opened it does.
  */
-const terms = ref<{ id: number; shellID?: string; dead: boolean }[]>([])
+const terms = ref<{ id: number; shellID?: string; cwd?: string; dead: boolean }[]>([])
 const activeID = ref(1)
 let nextID = 1
 
@@ -78,18 +85,48 @@ function select(id: number) {
   void nextTick(() => panes.get(id)?.focus())
 }
 
-function add(shellID?: string, dead = false) {
+function add(shellID?: string, dead = false, cwd?: string) {
   const id = nextID
   nextID += 1
-  terms.value.push({ id, shellID, dead })
+  terms.value.push({ id, shellID, cwd, dead })
   select(id)
   return id
 }
 
 /** Records the backend id a fresh pane opened, so the tab can close it later. */
-function opened(id: number, shellID: string) {
+function opened(id: number, shellID: string, cwd: string) {
   const term = terms.value.find((entry) => entry.id === id)
-  if (term) term.shellID = shellID
+  if (!term) return
+  term.shellID = shellID
+  term.cwd = cwd
+}
+
+/*
+ * The drawer stays up while the conversation changes, so the terminal on show
+ * can belong to another project. MiMo says so above the terminal and offers a
+ * new one here, or to leave it be; leaving it be holds for that project until
+ * the drawer is opened again.
+ */
+const dismissed = ref(new Set<string>())
+
+function samePlace(a: string, b: string) {
+  const plain = (value: string) => {
+    const flat = value.replace(/\\/g, "/").replace(/\/+$/, "")
+    return /^[a-zA-Z]:/.test(flat) ? flat.toLowerCase() : flat
+  }
+  return plain(a) === plain(b)
+}
+
+const mismatch = computed(() => {
+  const here = app.current?.directory
+  const term = terms.value.find((entry) => entry.id === activeID.value)
+  if (!here || !term?.cwd || dismissed.value.has(here)) return false
+  return !samePlace(term.cwd, here)
+})
+
+function dismissMismatch() {
+  const here = app.current?.directory
+  if (here) dismissed.value = new Set(dismissed.value).add(here)
 }
 
 /*
@@ -107,7 +144,7 @@ onMounted(async () => {
     return
   }
   const found = await client.request({ type: "shell.list", sessionID }).catch(() => undefined)
-  if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, !shell.alive)
+  if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, !shell.alive, shell.cwd)
   else add()
 })
 
@@ -258,6 +295,12 @@ function startResize(event: PointerEvent) {
       </button>
     </div>
 
+    <div v-if="mismatch" class="mismatch" role="status">
+      <span class="mismatch-msg">{{ t("term.mismatch") }}</span>
+      <button class="mismatch-btn" @click="dismissMismatch">{{ t("ui.common.dismiss") }}</button>
+      <button class="mismatch-btn primary" @click="add()">{{ t("term.new") }}</button>
+    </div>
+
     <!--
       shellID is bound in camelCase deliberately. Vue hyphenates it to
       shell-i-d, so `:shell-id` arrives as a prop named shellId and never
@@ -272,7 +315,7 @@ function startResize(event: PointerEvent) {
       :height="height"
       :shellID="term.shellID"
       @exited="exited(term.id)"
-      @opened="(shellID: string) => opened(term.id, shellID)"
+      @opened="(shellID: string, cwd: string) => opened(term.id, shellID, cwd)"
     />
 
     <!--
@@ -424,6 +467,51 @@ function startResize(event: PointerEvent) {
 
 .gap {
   flex: 1;
+}
+
+/*
+ * The notice for a terminal outside the conversation's project, as MiMo draws
+ * it: a bordered strip between the tabs and the terminal, then two outlined
+ * buttons, the one that opens a terminal filled with the text colour.
+ */
+.mismatch {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 8px 0;
+  padding: 6px 10px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.mismatch-msg {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.mismatch-btn {
+  flex: 0 0 auto;
+  padding: 2px 10px;
+  color: var(--text-strong);
+  background: none;
+  border: 1px solid var(--border-weak);
+  border-radius: 6px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  cursor: pointer;
+}
+
+.mismatch-btn:hover {
+  opacity: 0.85;
+}
+
+.mismatch-btn.primary {
+  color: var(--surface-raised);
+  background: var(--text-strong);
+  border-color: transparent;
 }
 
 </style>

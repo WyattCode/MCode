@@ -772,7 +772,14 @@ app.on("before-quit", (event) => {
   if (quitting || !backend) return
   event.preventDefault()
   quitting = true
-  // Bounded, so a backend that will not close cannot trap the app open.
-  const closed = Promise.race([backend.close(), new Promise((resolve) => setTimeout(resolve, 3000))])
+  /*
+   * Out of sight while the backend closes. Ending the terminals takes about
+   * three seconds on Windows, and a window left standing through that looks
+   * as if the app has frozen rather than as if it is quitting.
+   */
+  for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.hide()
+  // Bounded, so a backend that will not close cannot trap the app open; above
+  // the terminals' own four-second bound so that bound is the one that applies.
+  const closed = Promise.race([backend.close(), new Promise((resolve) => setTimeout(resolve, 5000))])
   void closed.finally(() => app.quit())
 })

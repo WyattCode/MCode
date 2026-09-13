@@ -280,6 +280,11 @@ async function main(): Promise<void> {
       listed.map((entry) => entry.shellID).join(", "),
     )
     check("which it reports as alive", listed.find((entry) => entry.shellID === mine)?.alive === true)
+    check(
+      "and says which directory it runs in",
+      listed.find((entry) => entry.shellID === mine)?.cwd === os.tmpdir(),
+      listed.find((entry) => entry.shellID === mine)?.cwd,
+    )
 
     // What a pane coming back would redraw itself from.
     const replay = shells.attach(mine)
@@ -335,7 +340,7 @@ async function main(): Promise<void> {
     await until(() => seen.exited(id))
   }
 
-  shells.closeAll()
+  await shells.closeAll()
 
   console.log("")
   if (problems.length) {

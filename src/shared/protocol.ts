@@ -213,6 +213,8 @@ export type GitChangeKind = "added" | "deleted" | "modified"
 /** One shell the backend is holding, as the drawer needs to know it. */
 export interface ShellSummary {
   shellID: string
+  /** The directory it was started in, so the drawer can tell it apart from the conversation's. */
+  cwd: string
   /** False once the process has ended; its output is still there to read. */
   alive: boolean
 }
@@ -1372,7 +1374,7 @@ export interface ResponseMap {
     mime?: string
     data?: string
   }
-  "shell.open": { shellID: string }
+  "shell.open": { shellID: string; cwd: string }
   "shell.input": Record<string, never>
   "shell.resize": Record<string, never>
   "shell.close": Record<string, never>

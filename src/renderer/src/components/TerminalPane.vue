@@ -57,7 +57,7 @@ const props = defineProps<{
   /** A shell the backend is already holding, to come back to instead of starting one. */
   shellID?: string
 }>()
-const emit = defineEmits<{ exited: []; opened: [shellID: string] }>()
+const emit = defineEmits<{ exited: []; opened: [shellID: string, cwd: string] }>()
 
 const app = useApp()
 
@@ -66,6 +66,7 @@ const menu = ref<{ x: number; y: number }>()
 const shellID = ref<string>()
 let terminal: Terminal | undefined
 let fit: FitAddon | undefined
+let resized: ResizeObserver | undefined
 let offEvents: (() => void) | undefined
 let offTheme: (() => void) | undefined
 let blinkOn: (() => void) | undefined
@@ -217,6 +218,18 @@ onMounted(async () => {
   terminal.loadAddon(fit)
 
   /*
+   * Refit whenever the pane itself changes size, not only when the drawer is
+   * dragged. A notice above the terminal takes rows away while the drawer
+   * stays the same height, and xterm otherwise goes on drawing the rows it no
+   * longer has room for below the clip.
+   */
+  resized = new ResizeObserver(() => {
+    if (!props.active) return
+    requestAnimationFrame(() => fit?.fit())
+  })
+  resized.observe(host.value)
+
+  /*
    * Wider character widths, before anything is written.
    *
    * xterm defaults to Unicode 6 wcwidth, under which a ZWJ emoji sequence or
@@ -338,7 +351,7 @@ onMounted(async () => {
       rows: terminal.rows,
     })
     shellID.value = result.shellID
-    emit("opened", result.shellID)
+    emit("opened", result.shellID, result.cwd)
   }
 
   offEvents = client.on((event) => {
@@ -445,6 +458,7 @@ function watchTheme() {
 onBeforeUnmount(() => {
   offTheme?.()
   offEvents?.()
+  resized?.disconnect()
   const textarea = terminal?.textarea
   if (textarea && blinkOn && blinkOff) {
     textarea.removeEventListener("focus", blinkOn)
@@ -509,7 +523,6 @@ watch(
 .term {
   flex: 1;
   min-height: 0;
-  padding: 6px 8px;
   /*
    * The terminal measures a character by parking a span some hundred thousand
    * pixels off to one side. Past the origin that span is simply unreachable,
@@ -518,5 +531,16 @@ watch(
    * Clipping it here leaves it where it was meant to be - out of reach.
    */
   overflow: hidden;
+}
+
+/*
+ * The inset sits on xterm's own element rather than on the box above. The fit
+ * addon sizes the grid from that box's height and takes off only the padding
+ * of xterm's element; with border-box sizing, padding on the box was counted as
+ * room for rows, so the last row ran past the bottom whenever the height came
+ * close to a whole row - which a notice above the terminal made the usual case.
+ */
+.term :deep(.xterm) {
+  padding: 6px 8px;
 }
 </style>

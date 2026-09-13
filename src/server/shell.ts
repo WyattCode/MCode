@@ -65,6 +65,7 @@ const EXITED_LIMIT = 25
 interface Running {
   proc: IPty
   sessionID: string
+  cwd: string
   owner?: ShellOwner
   /** What it has printed, oldest first, trimmed to BUFFER_LIMIT. */
   output: string[]
@@ -76,6 +77,8 @@ export class Shells {
   private readonly shells = new Map<string, Running>()
   /** Finished shells in the order they finished, so the oldest can be let go. */
   private readonly exited: string[] = []
+  /** Whoever is waiting for a shell to have ended, by shell id. */
+  private readonly exitWaiters = new Map<string, () => void>()
 
   constructor(private readonly bus: Bus) {}
 
@@ -139,6 +142,8 @@ export class Shells {
       this.bus.publish({ type: "shell.data", shellID, data })
     })
     proc.onExit(({ exitCode }) => {
+      this.exitWaiters.get(shellID)?.()
+      this.exitWaiters.delete(shellID)
       /*
        * Kept rather than dropped. A shell that has ended still has its last
        * words on screen, and a reader who reopens the drawer expects to find
@@ -155,7 +160,7 @@ export class Shells {
       this.bus.publish({ type: "shell.exit", shellID, code: exitCode })
     })
 
-    this.shells.set(shellID, { proc, sessionID, owner, output: [], bytes: 0, alive: true })
+    this.shells.set(shellID, { proc, sessionID, cwd, owner, output: [], bytes: 0, alive: true })
     return shellID
   }
 
@@ -194,8 +199,32 @@ export class Shells {
     } catch {}
   }
 
-  closeAll(): void {
+  /**
+   * Ends every shell, and waits for them to have gone.
+   *
+   * On Windows a pty still has an exit callback to run after it is killed.
+   * Leaving the process straight after the kill ran that callback into a module
+   * that was already being torn down, and the prebuilt conpty answered with a
+   * native "Assertion failed" dialog on the user's screen. Measured on Windows:
+   * the exit arrives about three seconds after the kill however the process is
+   * ended, so the bound sits above that. It is still a bound, so a process that
+   * will not end cannot hold the app open.
+   */
+  async closeAll(timeout = 4000): Promise<void> {
+    const ending = [...this.shells.entries()]
+      .filter(([, entry]) => entry.alive)
+      .map(([shellID]) => new Promise<void>((resolve) => this.exitWaiters.set(shellID, resolve)))
     for (const shellID of [...this.shells.keys()]) this.close(shellID)
+    if (!ending.length) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      Promise.all(ending),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, timeout)
+      }),
+    ])
+    clearTimeout(timer)
+    this.exitWaiters.clear()
   }
 
   /**
@@ -211,7 +240,7 @@ export class Shells {
     for (const [shellID, entry] of this.shells) {
       if (entry.sessionID !== sessionID) continue
       if (owner && entry.owner && entry.owner !== owner) continue
-      found.push({ shellID, alive: entry.alive })
+      found.push({ shellID, cwd: entry.cwd, alive: entry.alive })
     }
     return found
   }
