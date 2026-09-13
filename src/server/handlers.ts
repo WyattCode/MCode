@@ -854,6 +854,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       await runtime.mcp.toggle(request.name)
       return { servers: runtime.mcp.list() } satisfies Handled<"mcp.toggle">
     }
+
+    case "mcp.tools":
+      return runtime.mcp.toolsOf(request.name) satisfies Handled<"mcp.tools">
   }
 }
 

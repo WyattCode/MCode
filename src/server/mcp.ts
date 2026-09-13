@@ -456,6 +456,18 @@ export class McpServers {
       })
   }
 
+  /**
+   * One server's tools, for the settings page. Only a connected server has any
+   * to show; otherwise the answer is its status name, or its error when it
+   * failed with one, which the page words for the reader.
+   */
+  toolsOf(name: string): { tools?: { name: string; description?: string }[]; error?: string } {
+    const connection = this.connections.get(name)
+    if (!connection || connection.status === "disabled") return { error: "disabled" }
+    if (connection.status !== "connected") return { error: connection.error ?? connection.status }
+    return { tools: connection.tools.map((tool) => ({ name: tool.name, description: tool.description })) }
+  }
+
   private publish(): void {
     this.bus.publish({ type: "mcp.status", servers: this.list() })
   }

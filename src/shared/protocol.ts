@@ -675,6 +675,12 @@ export interface McpServerState {
   tools: number
 }
 
+/** One tool a server offers, as the MCP settings page lists it. */
+export interface McpToolInfo {
+  name: string
+  description?: string
+}
+
 /**
  * A server the user has saved, so it can be returned to by name.
  *
@@ -1310,6 +1316,7 @@ export type Request =
   | { type: "workspace.remove"; directory: string; target: string }
   | { type: "mcp.list" }
   | { type: "mcp.toggle"; name: string }
+  | { type: "mcp.tools"; name: string }
 
 export type RequestType = Request["type"]
 export type RequestOf<T extends RequestType> = Extract<Request, { type: T }>
@@ -1433,6 +1440,8 @@ export interface ResponseMap {
   "workspace.remove": Record<string, never>
   "mcp.list": { servers: McpServerState[] }
   "mcp.toggle": { servers: McpServerState[] }
+  /** A connected server's tools, or why there are none to list (a status name or the server's error). */
+  "mcp.tools": { tools?: McpToolInfo[]; error?: string }
 }
 
 // ---------------------------------------------------------------------------

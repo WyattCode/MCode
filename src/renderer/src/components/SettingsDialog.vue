@@ -24,6 +24,7 @@ import { CHIMES, chimeOf, type Chime } from "@shared/chime"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AppPath, AppPaths, UsageSummary } from "@shared/protocol"
+import type { McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure, notify } from "../lib/toast"
@@ -65,6 +66,7 @@ type Section =
   | "updates"
   | "server"
   | "models"
+  | "mcp"
 
 /** Which page to land on - the title bar's server button aims straight at it. */
 /**
@@ -135,6 +137,218 @@ function openPath(file: AppPath) {
   const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
   if (cut < 0) return
   window.mcode.openFile(file.path.slice(0, cut), file.path.slice(cut + 1))
+}
+
+/*
+ * MiMo's MCP 服务器 page. The servers live in the config's mcpServers, so the
+ * page edits that map through patchConfig and the backend reconnects to match;
+ * each server's status comes from the store, which follows the backend's events.
+ */
+interface McpForm {
+  name: string
+  type: "stdio" | "http"
+  command: string
+  url: string
+  args: string[]
+  env: { key: string; value: string }[]
+  headers: { key: string; value: string }[]
+}
+
+const MCP_KINDS = ["stdio", "http"] as const
+const MCP_TONE: Record<McpStatus, string> = {
+  connected: "ok",
+  failed: "err",
+  needs_auth: "warn",
+  pending: "muted",
+  disabled: "muted",
+}
+const MCP_EXAMPLE = `{
+  "mcpServers": {
+    "filesystem": {
+      "type": "local",
+      "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "."],
+      "enabled": true
+    },
+    "my-remote": {
+      "type": "remote",
+      "url": "https://example.com/mcp",
+      "enabled": true
+    }
+  }
+}`
+
+const mcpView = ref<"list" | "form">("list")
+const mcpEditing = ref<string>()
+const mcpForm = ref<McpForm>(blankMcpForm())
+const mcpRevealed = ref<Record<string, boolean>>({})
+const mcpToolsOpen = ref<string>()
+const mcpTools = ref<Record<string, "loading" | { tools?: McpToolInfo[]; error?: string }>>({})
+
+function blankMcpForm(): McpForm {
+  return { name: "", type: "stdio", command: "", url: "", args: [], env: [], headers: [] }
+}
+
+const mcpRows = computed(() =>
+  Object.entries(app.config?.mcpServers ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([name, entry]) => {
+      const state = app.mcpServers.find((server) => server.name === name)
+      const enabled = entry.enabled !== false
+      return {
+        name,
+        remote: entry.type === "remote",
+        enabled,
+        status: (enabled ? (state?.status ?? "pending") : "disabled") as McpStatus,
+        error: state?.error,
+      }
+    }),
+)
+
+/* The config keeps a command already split; the form shows its first word as a line, quoted when it has a space. */
+function joinCommand(parts: string[]): string {
+  return parts.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ")
+}
+
+function splitCommand(line: string): string[] {
+  const parts: string[] = []
+  const pattern = /"([^"]*)"|(\S+)/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(line))) parts.push(match[1] ?? match[2])
+  return parts
+}
+
+function recordOf(rows: { key: string; value: string }[]): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const row of rows) if (row.key.trim()) out[row.key.trim()] = row.value
+  return Object.keys(out).length ? out : undefined
+}
+
+function rowsOf(record?: Record<string, string>) {
+  return Object.entries(record ?? {}).map(([key, value]) => ({ key, value }))
+}
+
+function httpURL(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === "http:" || url.protocol === "https:"
+  } catch {
+    return false
+  }
+}
+
+const mcpFormError = computed(() => {
+  const form = mcpForm.value
+  if (!form.name.trim()) return "set.mcpForm.errNeedName"
+  if (form.type === "stdio" && !form.command.trim()) return "set.mcpForm.errNeedCommand"
+  if (form.type === "http" && !form.url.trim()) return "set.mcpForm.errNeedUrl"
+  if (form.type === "http" && !httpURL(form.url.trim())) return "set.mcpForm.errBadUrl"
+  return undefined
+})
+
+function addMcp() {
+  mcpEditing.value = undefined
+  mcpForm.value = blankMcpForm()
+  mcpRevealed.value = {}
+  mcpView.value = "form"
+}
+
+function editMcp(name: string) {
+  const entry = app.config?.mcpServers?.[name]
+  if (!entry) {
+    notifyFailure(t("set.mcp.editFailed"))
+    return
+  }
+  const [command, ...args] = entry.command ?? []
+  mcpForm.value = {
+    name,
+    type: entry.type === "remote" ? "http" : "stdio",
+    command: command ? joinCommand([command]) : "",
+    url: entry.url ?? "",
+    args,
+    env: rowsOf(entry.environment),
+    headers: rowsOf(entry.headers),
+  }
+  mcpEditing.value = name
+  mcpRevealed.value = {}
+  mcpView.value = "form"
+}
+
+async function saveMcp() {
+  const form = mcpForm.value
+  if (mcpFormError.value) {
+    notifyFailure(t(mcpFormError.value))
+    return
+  }
+  const name = form.name.trim()
+  const entry: McpServerConfig =
+    form.type === "http"
+      ? { type: "remote", url: form.url.trim(), headers: recordOf(form.headers) }
+      : {
+          type: "local",
+          command: [...splitCommand(form.command), ...form.args.filter((arg) => arg.trim())],
+          environment: recordOf(form.env),
+        }
+  // An edit keeps the server as switched on or off as it was.
+  if (app.config?.mcpServers?.[name]?.enabled === false) entry.enabled = false
+  try {
+    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: entry } })
+  } catch {
+    notifyFailure(t("set.mcpForm.saveFailed"))
+    return
+  }
+  delete mcpTools.value[name]
+  notify(t("set.mcpForm.saved", { name }))
+  mcpView.value = "list"
+}
+
+async function setMcpEnabled(name: string, enabled: boolean) {
+  const entry = app.config?.mcpServers?.[name]
+  if (!entry) return
+  try {
+    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: { ...entry, enabled } } })
+  } catch {
+    notifyFailure(t("set.mcp.toggleFailed"))
+  }
+  delete mcpTools.value[name]
+}
+
+/* As in MiMo, removing asks nothing and says what went. */
+async function removeMcp(name: string) {
+  const servers = { ...(app.config?.mcpServers ?? {}) }
+  delete servers[name]
+  await app.patchConfig({ mcpServers: servers })
+  if (mcpToolsOpen.value === name) mcpToolsOpen.value = undefined
+  delete mcpTools.value[name]
+  notify(t("set.mcp.removed") + name)
+}
+
+async function loadMcpTools(name: string) {
+  mcpTools.value = { ...mcpTools.value, [name]: "loading" }
+  const result = await app.client
+    ?.request({ type: "mcp.tools", name })
+    .catch((err: unknown) => ({ error: err instanceof Error ? err.message : String(err) }))
+  mcpTools.value = { ...mcpTools.value, [name]: result ?? { error: "" } }
+}
+
+function toggleMcpTools(name: string) {
+  if (mcpToolsOpen.value === name) {
+    mcpToolsOpen.value = undefined
+    return
+  }
+  mcpToolsOpen.value = name
+  if (!mcpTools.value[name]) void loadMcpTools(name)
+}
+
+/* What the tools panel shows for a server: loading, why it failed, nothing, or the list. */
+function mcpToolsView(name: string) {
+  const entry = mcpTools.value[name]
+  if (!entry || entry === "loading") return { kind: "loading", tools: [] as McpToolInfo[], error: "" }
+  if (entry.error !== undefined) {
+    const error = entry.error in MCP_TONE ? t(`set.mcp.status.${entry.error}`) : entry.error
+    return { kind: "error", tools: [] as McpToolInfo[], error }
+  }
+  const tools = entry.tools ?? []
+  return { kind: tools.length ? "list" : "empty", tools, error: "" }
 }
 
 /*
@@ -276,7 +490,8 @@ async function refreshTrees() {
 watch(
   section,
   (next: Section) => {
-    if (next === "files" || next === "models") void loadPaths()
+    if (next === "files" || next === "models" || next === "mcp") void loadPaths()
+    if (next !== "mcp") mcpView.value = "list"
     if (next === "environment") void loadTrees()
     else configuring.value = undefined
     if (next === "usage") void loadUsage()
@@ -377,6 +592,7 @@ const NAV_LABELS: Record<Section, string> = {
   server: "set.server",
   personal: "set.personal",
   keys: "set.shortcuts",
+  mcp: "set.nav.mcp",
   environment: "set.environment",
   archive: "set.nav.archive",
   updates: "set.nav.updates",
@@ -1156,6 +1372,20 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             />
           </svg>
           {{ t("set.shortcuts") }}
+        </button>
+
+        <div v-show="navShows('mcp')" class="nav-group">{{ t("set.group.integrations") }}</div>
+
+        <button v-show="navShows('mcp')" class="nav-item" :class="{ on: section === 'mcp' }" @click="section = 'mcp'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path
+              d="M7.5 2.5v3.5M12.5 2.5v3.5M5.5 6h9v3.5a4.5 4.5 0 0 1-9 0V6ZM10 14v3.5"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>{{ t("set.nav.mcp") }}</span>
         </button>
 
         <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
@@ -1975,6 +2205,185 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <button class="ctl-btn" @click="revealPath(file)">{{ t("set.reveal") }}</button>
             </div>
           </div>
+        </template>
+
+        <template v-else-if="section === 'mcp' && mcpView === 'form'">
+          <h2>{{ t(mcpEditing ? "set.mcpForm.editTitle" : "set.mcpForm.title") }}</h2>
+          <div class="card mcp-form" data-mcp-form>
+            <label class="mcp-label">{{ t("set.mcpForm.name") }}</label>
+            <input
+              v-model="mcpForm.name"
+              class="mcp-input"
+              data-mcp-name
+              :disabled="Boolean(mcpEditing)"
+              placeholder="my-server"
+              spellcheck="false"
+            />
+            <label class="mcp-label">{{ t("set.mcpForm.type") }}</label>
+            <div class="mcp-types" role="radiogroup" :aria-label="t('set.mcpForm.type')">
+              <button
+                v-for="kind in MCP_KINDS"
+                :key="kind"
+                type="button"
+                class="mcp-type"
+                :class="{ on: mcpForm.type === kind }"
+                role="radio"
+                :aria-checked="mcpForm.type === kind"
+                :data-mcp-type="kind"
+                @click="mcpForm.type = kind"
+              >
+                {{ t(`set.mcpForm.type_${kind}`) }}
+              </button>
+            </div>
+
+            <template v-if="mcpForm.type === 'stdio'">
+              <label class="mcp-label">{{ t("set.mcpForm.command") }}</label>
+              <input v-model="mcpForm.command" class="mcp-input" data-mcp-command placeholder="node server.js" spellcheck="false" />
+              <label class="mcp-label">{{ t("set.mcpForm.args") }}</label>
+              <div v-for="(_, at) in mcpForm.args" :key="`arg${at}`" class="mcp-pair">
+                <input v-model="mcpForm.args[at]" class="mcp-input small" :data-mcp-arg="at" spellcheck="false" />
+                <button type="button" class="ctl-btn" :data-mcp-arg-rm="at" @click="mcpForm.args.splice(at, 1)">
+                  {{ t("set.mcp.remove") }}
+                </button>
+              </div>
+              <button type="button" class="ctl-btn mcp-add-row" data-mcp-arg-add @click="mcpForm.args.push('')">
+                {{ t("set.mcpForm.addArg") }}
+              </button>
+              <label class="mcp-label">{{ t("set.mcpForm.env") }}</label>
+              <div v-for="(row, at) in mcpForm.env" :key="`env${at}`" class="mcp-pair">
+                <input v-model="row.key" class="mcp-input small" placeholder="KEY" :data-mcp-env-key="at" spellcheck="false" />
+                <input
+                  v-model="row.value"
+                  class="mcp-input small"
+                  :type="mcpRevealed[`env:${at}`] ? 'text' : 'password'"
+                  placeholder="value"
+                  :data-mcp-env-val="at"
+                  spellcheck="false"
+                />
+                <button type="button" class="ctl-btn" :data-mcp-env-reveal="at" @click="mcpRevealed[`env:${at}`] = !mcpRevealed[`env:${at}`]">
+                  {{ t(mcpRevealed[`env:${at}`] ? "set.mcpForm.hide" : "set.mcpForm.reveal") }}
+                </button>
+                <button type="button" class="ctl-btn" :data-mcp-env-rm="at" @click="mcpForm.env.splice(at, 1)">
+                  {{ t("set.mcp.remove") }}
+                </button>
+              </div>
+              <button type="button" class="ctl-btn mcp-add-row last" data-mcp-env-add @click="mcpForm.env.push({ key: '', value: '' })">
+                {{ t("set.mcpForm.addEnv") }}
+              </button>
+            </template>
+
+            <template v-else>
+              <label class="mcp-label">{{ t("set.mcpForm.url") }}</label>
+              <input v-model="mcpForm.url" class="mcp-input" data-mcp-url placeholder="https://example.com/mcp" spellcheck="false" />
+              <label class="mcp-label">{{ t("set.mcpForm.headers") }}</label>
+              <div v-for="(row, at) in mcpForm.headers" :key="`hdr${at}`" class="mcp-pair">
+                <input v-model="row.key" class="mcp-input small" placeholder="Header" :data-mcp-header-key="at" spellcheck="false" />
+                <input
+                  v-model="row.value"
+                  class="mcp-input small"
+                  :type="mcpRevealed[`hdr:${at}`] ? 'text' : 'password'"
+                  placeholder="value"
+                  :data-mcp-header-val="at"
+                  spellcheck="false"
+                />
+                <button type="button" class="ctl-btn" :data-mcp-header-reveal="at" @click="mcpRevealed[`hdr:${at}`] = !mcpRevealed[`hdr:${at}`]">
+                  {{ t(mcpRevealed[`hdr:${at}`] ? "set.mcpForm.hide" : "set.mcpForm.reveal") }}
+                </button>
+                <button type="button" class="ctl-btn" :data-mcp-header-rm="at" @click="mcpForm.headers.splice(at, 1)">
+                  {{ t("set.mcp.remove") }}
+                </button>
+              </div>
+              <button type="button" class="ctl-btn mcp-add-row" data-mcp-header-add @click="mcpForm.headers.push({ key: '', value: '' })">
+                {{ t("set.mcpForm.addHeader") }}
+              </button>
+              <p class="mcp-hint" data-mcp-http-hint>{{ t("set.mcpForm.httpHint") }}</p>
+            </template>
+
+            <div class="mcp-form-actions">
+              <button type="button" class="ctl-btn" data-mcp-cancel @click="mcpView = 'list'">{{ t("common.cancel") }}</button>
+              <button type="button" class="ctl-btn update-install" data-mcp-save :disabled="Boolean(mcpFormError)" @click="saveMcp">
+                {{ t("common.save") }}
+              </button>
+            </div>
+          </div>
+        </template>
+
+        <template v-else-if="section === 'mcp'">
+          <h2>{{ t("set.nav.mcp") }}</h2>
+          <p class="page-sub">{{ t("set.mcp.sub") }}</p>
+          <div class="card" data-mcp-list>
+            <template v-for="row in mcpRows" :key="row.name">
+              <div class="line" :data-mcp-row="row.name">
+                <div class="line-text">
+                  <div class="line-title">{{ row.name }}</div>
+                  <div class="line-sub mcp-row-desc">
+                    <span>{{ t(row.remote ? "set.mcp.remote" : "set.mcp.local") }}</span>
+                    <span class="mcp-status" :class="MCP_TONE[row.status]" :data-mcp-status="row.status" :title="row.error">
+                      <span class="mcp-status-dot" />
+                      {{ t(`set.mcp.status.${row.status}`) }}
+                    </span>
+                  </div>
+                </div>
+                <div class="mcp-ctrl">
+                  <button
+                    class="switch"
+                    :class="{ on: row.enabled }"
+                    role="switch"
+                    :aria-checked="row.enabled"
+                    :aria-label="row.name"
+                    :data-mcp-enabled="row.name"
+                    @click="setMcpEnabled(row.name, !row.enabled)"
+                  >
+                    <span class="knob" />
+                  </button>
+                  <button class="ctl-btn" :data-mcp-tools="row.name" @click="toggleMcpTools(row.name)">{{ t("set.mcp.tools") }}</button>
+                  <button class="ctl-btn" :data-mcp-edit="row.name" @click="editMcp(row.name)">{{ t("set.mcp.edit") }}</button>
+                  <button class="ctl-btn" :data-mcp-rm="row.name" @click="removeMcp(row.name)">{{ t("set.mcp.remove") }}</button>
+                </div>
+              </div>
+              <div v-if="mcpToolsOpen === row.name" class="mcp-tools-panel" :data-mcp-tools-panel="row.name">
+                <template v-for="view in [mcpToolsView(row.name)]" :key="row.name">
+                  <div v-if="view.kind === 'loading'" class="mcp-tools-hint" data-mcp-tools-loading>{{ t("set.mcp.toolsLoading") }}</div>
+                  <div v-else-if="view.kind === 'error'" class="mcp-tools-hint err" data-mcp-tools-error>
+                    <span>{{ t("set.mcp.toolsFailed") }}{{ view.error }}</span>
+                    <button class="ctl-btn" :data-mcp-tools-retry="row.name" @click="loadMcpTools(row.name)">{{ t("set.mcp.toolsRetry") }}</button>
+                  </div>
+                  <div v-else-if="view.kind === 'empty'" class="mcp-tools-hint" data-mcp-tools-empty>{{ t("set.mcp.toolsEmpty") }}</div>
+                  <template v-else>
+                    <div class="mcp-tools-head">{{ t("set.mcp.toolsCount", { count: String(view.tools.length) }) }}</div>
+                    <ul class="mcp-tools-list">
+                      <li v-for="tool in view.tools" :key="tool.name" :data-mcp-tool="tool.name">
+                        <code class="mcp-tool-name">{{ tool.name }}</code>
+                        <span v-if="tool.description" class="mcp-tool-desc" :title="tool.description">{{ tool.description }}</span>
+                      </li>
+                    </ul>
+                  </template>
+                </template>
+              </div>
+            </template>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.mcp.addServer") }}</div>
+                <div class="line-sub">{{ t("set.mcp.addServerDesc") }}</div>
+              </div>
+              <button class="ctl-btn" data-add-mcp @click="addMcp">{{ t("set.mcp.add") }}</button>
+            </div>
+          </div>
+
+          <h3>{{ t("set.mcp.manualTitle") }}</h3>
+          <p class="page-sub mcp-sub">{{ t("set.mcp.manualSub") }}</p>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.mcp.configFile") }}</div>
+                <div class="line-sub mcp-path" data-config-path :title="configFile?.path">
+                  {{ configFile?.path ?? t("set.mcp.configResolving") }}
+                </div>
+              </div>
+            </div>
+          </div>
+          <p class="page-sub mcp-example-label">{{ t("set.mcp.exampleLabel") }}</p>
+          <pre class="mcp-example" data-mcp-example><code>{{ MCP_EXAMPLE }}</code></pre>
         </template>
 
         <template v-else-if="section === 'environment' && configuring">
@@ -2984,6 +3393,255 @@ h3 {
 
 .update-hint {
   display: block;
+}
+
+.ctl-btn.update-install:disabled {
+  color: var(--surface-base);
+  opacity: 0.4;
+}
+
+/*
+ * MiMo's MCP page: under each name its kind and a status pill (6px dot, 11px,
+ * round, tinted by state), a switch and three buttons at the end, and the tools
+ * a server offers in a panel under its row; then 手动配置 with the config file
+ * on one line and an example block.
+ */
+.mcp-row-desc {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  color: var(--text-weak);
+  border: 1px solid var(--border-weak);
+  border-radius: 999px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.4;
+}
+
+.mcp-status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.mcp-status.ok {
+  color: var(--text-success);
+  background: color-mix(in srgb, var(--text-success) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-success) 35%, transparent);
+}
+
+.mcp-status.err {
+  color: var(--text-critical);
+  background: color-mix(in srgb, var(--text-critical) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-critical) 35%, transparent);
+}
+
+.mcp-status.warn {
+  color: var(--text-warning);
+  background: color-mix(in srgb, var(--text-warning) 8%, transparent);
+  border-color: color-mix(in srgb, var(--text-warning) 35%, transparent);
+}
+
+.mcp-ctrl {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.mcp-tools-panel {
+  padding: 4px 0 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+}
+
+.mcp-tools-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.mcp-tools-hint.err {
+  color: var(--text-critical);
+}
+
+.mcp-tools-head {
+  margin-bottom: 8px;
+  color: var(--text-weak);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+}
+
+.mcp-tools-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.mcp-tools-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mcp-tool-name {
+  color: var(--text-base);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--code-font-scale, 1));
+}
+
+.mcp-tool-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.page-sub.mcp-sub {
+  margin-top: 0;
+}
+
+.mcp-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.page-sub.mcp-example-label {
+  margin: 14px 0 8px;
+}
+
+.mcp-example {
+  margin: 0;
+  padding: 12px 14px;
+  overflow-x: auto;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 9px;
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--code-font-scale, 1));
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.mcp-example code {
+  color: inherit;
+  font: inherit;
+}
+
+/* MiMo's add / edit form: labelled 9-round fields on one card, stdio or HTTP picked in a pill pair. */
+.card.mcp-form {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 16px;
+}
+
+.mcp-label {
+  margin-bottom: 6px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.mcp-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  color: var(--text-strong);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 9px;
+  outline: none;
+  font-family: inherit;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.mcp-input:focus {
+  border-color: var(--border-strong);
+}
+
+.mcp-input:disabled {
+  opacity: 0.6;
+}
+
+.mcp-input.small {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+  padding: 8px 10px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.mcp-types {
+  display: inline-flex;
+  align-self: flex-start;
+  margin-bottom: 14px;
+  padding: 2px;
+  border: 1px solid var(--border-weak);
+  border-radius: 9px;
+}
+
+.mcp-type {
+  padding: 6px 14px;
+  color: var(--text-base);
+  border-radius: 7px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1;
+}
+
+.mcp-type.on {
+  color: #fff;
+  background: var(--interactive);
+}
+
+.mcp-pair {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mcp-add-row {
+  align-self: flex-start;
+  margin-bottom: 14px;
+}
+
+.mcp-add-row.last {
+  margin-bottom: 18px;
+}
+
+.mcp-hint {
+  margin: 0 0 18px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+}
+
+.mcp-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .link-btn {

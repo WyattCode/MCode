@@ -36,7 +36,6 @@ import ConfirmDialog from "./components/ConfirmDialog.vue"
 import ConnectDialog from "./components/ConnectDialog.vue"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import EditMenu from "./components/EditMenu.vue"
-import McpDialog from "./components/McpDialog.vue"
 import Onboarding from "./components/Onboarding.vue"
 import {
   LANGUAGES,
@@ -330,13 +329,12 @@ onMounted(() => {
   onBeforeUnmount(offLink)
 })
 onBeforeUnmount(() => find.unmount())
-const mcpOpen = ref(false)
 const paletteOpen = ref(false)
 /* MiMo's search over conversations, projects and artifacts: the side column's magnifier and Ctrl+K. */
 const searchOpen = ref(false)
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<"general" | "keys" | "server" | "models">()
+const settingsSection = ref<"general" | "keys" | "server" | "models" | "mcp">()
 
 /** The server control opens its own panel rather than general settings. */
 const serverPanel = ref(false)
@@ -356,9 +354,12 @@ const choosingServer = ref(false)
 /** Whether the saved-servers dialog is up. */
 const managingServers = ref(false)
 
-/* The model menu's "configure custom models" lands on the models page, as MiMo's does. */
+/*
+ * The model menu's "configure custom models" lands on the models page, as MiMo's
+ * does; the MCP command and Ctrl+; land on the MCP page, MiMo's only MCP screen.
+ */
 function openSettings(section?: unknown) {
-  settingsSection.value = section === "models" ? "models" : undefined
+  settingsSection.value = section === "models" || section === "mcp" ? section : undefined
   settingsOpen.value = true
 }
 
@@ -2654,7 +2655,7 @@ const bindableCommands = computed(() => {
       group: "key.groupModels",
       title: t("cmd.mcp"),
       hint: "Ctrl+;",
-      run: () => (mcpOpen.value = true),
+      run: () => openSettings("mcp"),
     },
     {
       id: "session.previous",
@@ -2930,7 +2931,6 @@ const commands = computed(() => bindableCommands.value.filter((command) => comma
 const modalOpen = computed(
   () =>
     settingsOpen.value ||
-    mcpOpen.value ||
     choosingServer.value ||
     managingServers.value ||
     Boolean(namingWorkspace.value) ||
@@ -3280,7 +3280,7 @@ function onKeydown(event: KeyboardEvent) {
     "`": () => (terminalOpen.value = !terminalOpen.value),
     m: () => composer.value?.openModelMenu(),
     ",": openSettings,
-    ";": () => (mcpOpen.value = true),
+    ";": () => openSettings("mcp"),
     n: () => void newSession(),
     // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
     t: () => void openBrowserTab(),
@@ -3806,7 +3806,7 @@ onBeforeUnmount(() => {
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
 
-        <PluginsView v-else-if="isPlugins" @manage="mcpOpen = true" />
+        <PluginsView v-else-if="isPlugins" @manage="openSettings('mcp')" />
 
         <HomeHero
           v-else-if="isHome"
@@ -3998,7 +3998,6 @@ onBeforeUnmount(() => {
       @disable="dismissReleaseNotes(true)"
     />
 
-    <McpDialog v-if="mcpOpen" @close="mcpOpen = false" />
 
     <CommandPalette
       v-if="paletteOpen"
