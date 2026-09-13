@@ -19,6 +19,8 @@ import { t } from "../lib/i18n"
  */
 const app = useApp()
 const emit = defineEmits<{ close: [] }>()
+/* At the window's right edge, where the caption buttons and the side panel button sit over its tab row. */
+defineProps<{ edge?: boolean }>()
 
 interface Tab {
   id: string
@@ -245,7 +247,7 @@ async function scan() {
       @pointerdown.prevent="beginResize"
       @dblclick="resetWidth"
     />
-    <header class="tabs">
+    <header class="tabs" :class="{ edge }">
       <div class="strip">
         <div
           v-for="entry in state.tabs"
@@ -272,11 +274,9 @@ async function scan() {
           </svg>
         </button>
       </div>
-      <button class="ico" :aria-label="t('common.close')" @click="emit('close')">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        </svg>
-      </button>
+      <!-- No close of its own, as MiMo's panel has none: beside the window's own
+           close it read as a second set of window buttons. The last tab closing
+           takes the panel with it, and Ctrl+Shift+B puts it away. -->
     </header>
 
     <div class="bar">
@@ -365,6 +365,11 @@ async function scan() {
   gap: 6px;
   height: 38px;
   padding: 0 8px;
+}
+
+/* Clear of the caption buttons, and of the side panel button beside them. */
+.tabs.edge {
+  padding-inline-end: calc(46px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
 }
 
 /* The row scrolls rather than squeezing: a tab too narrow to read is not a

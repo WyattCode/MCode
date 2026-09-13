@@ -31,6 +31,8 @@ const props = defineProps<{
   contextTab?: boolean
   panelTab?: "review" | "context"
   canReview?: boolean
+  /* At the window's right edge, where the caption buttons and the side panel button sit over the bar. */
+  edge?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -864,7 +866,7 @@ onBeforeUnmount(() => observer?.disconnect())
       The panel's own bar. The first control folds the file column away, which
       is what lets a diff use the whole width when the list is not being read.
     -->
-    <header class="head">
+    <header class="head" :class="{ edge }">
       <button
         v-if="canReview"
         class="head-toggle"
@@ -1457,6 +1459,11 @@ onBeforeUnmount(() => observer?.disconnect())
   padding-block: 0;
   padding-inline: 8px 12px;
   border-bottom: 1px solid var(--border-weaker);
+}
+
+/* Clear of the caption buttons, and of the side panel button beside them. */
+.head.edge {
+  padding-inline-end: calc(46px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
 }
 
 /* First in the bar, and set apart: it acts on the bar's own layout. */

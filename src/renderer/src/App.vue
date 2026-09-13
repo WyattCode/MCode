@@ -1020,6 +1020,8 @@ function toggleReviewPanel() {
  */
 const launcherOpen = ref(false)
 const sidePanelUp = computed(() => !onboarding.value && (reviewPanelUp.value || launcherOpen.value))
+/* The launcher on screen: asked for, and not displaced by the review it gives way to. */
+const launcherShown = computed(() => launcherOpen.value && !reviewPanelUp.value && !onboarding.value)
 const filePanel = ref<InstanceType<typeof FilePanel>>()
 
 watch(reviewPanelUp, (up) => {
@@ -3847,6 +3849,7 @@ onBeforeUnmount(() => {
       -->
       <SideChat
         v-if="sideChat && app.sideID"
+        :edge="!(browserOpen && browserAllowed) && !launcherShown && !reviewPanelUp"
         @close="toggleSideChat"
         @open-settings="openSettings"
         @connect="connectOpen = true"
@@ -3859,10 +3862,16 @@ onBeforeUnmount(() => {
         at beside the conversation is the point, and a panel that covered the
         conversation would defeat it.
       -->
-      <BrowserPanel v-if="browserOpen && browserAllowed" ref="browserPanel" class="browser-panel" @close="browserOpen = false" />
+      <BrowserPanel
+        v-if="browserOpen && browserAllowed"
+        ref="browserPanel"
+        class="browser-panel"
+        :edge="!launcherShown && !reviewPanelUp"
+        @close="browserOpen = false"
+      />
 
       <!-- MiMo's side panel with nothing chosen: a card for each thing it can hold. -->
-      <RightLauncher v-if="launcherOpen && !reviewPanelUp && !onboarding" :available="launchAvailable" @pick="launch" />
+      <RightLauncher v-if="launcherShown" :available="launchAvailable" @pick="launch" />
 
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />
@@ -3882,6 +3891,7 @@ onBeforeUnmount(() => {
       <FilePanel
         v-if="reviewPanelUp"
         ref="filePanel"
+        edge
         v-model:tree-open="fileTreeOpen"
         v-model:width="reviewWidth"
         v-model:context-tab="contextTab"

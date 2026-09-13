@@ -14,6 +14,8 @@ import Composer from "./Composer.vue"
  * conversation in the middle.
  */
 const app = useApp()
+/* At the window's right edge, where the caption buttons and the side panel button sit over its header. */
+defineProps<{ edge?: boolean }>()
 const emit = defineEmits<{
   close: []
   "open-settings": [section?: "models"]
@@ -25,7 +27,7 @@ const emit = defineEmits<{
 
 <template>
   <aside class="side-chat" :aria-label="t('side.chat')">
-    <header class="bar">
+    <header class="bar" :class="{ edge }">
       <span class="heading">
         <span class="title">{{ app.side ? sessionTitle(app.side.title) : t("side.chat") }}</span>
         <span class="sub">{{ t("side.chatSub") }}</span>
@@ -84,6 +86,11 @@ const emit = defineEmits<{
   gap: 4px;
   height: 46px;
   padding: 0 8px 0 14px;
+}
+
+/* Clear of the caption buttons, and of the side panel button beside them. */
+.bar.edge {
+  padding-inline-end: calc(46px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
 }
 
 .heading {
