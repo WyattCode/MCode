@@ -520,13 +520,55 @@ const archived = computed(() =>
   app.sessions.filter((session) => session.archived).sort((a, b) => b.updated - a.updated),
 )
 
-/** Deleting from here is final, so it asks the same way the reset does. */
-const confirmingDelete = ref<string>()
+/*
+ * MiMo's batch management for archived conversations: a toggle beside the
+ * heading turns the rows into checkboxes, and a toolbar selects all or none,
+ * counts the choice, and restores or deletes it together. Deleting - one or
+ * many - is final, so it asks first in a dialog.
+ */
+const selecting = ref(false)
+const picked = ref<string[]>([])
+const pickedLive = computed(() => picked.value.filter((id) => archived.value.some((session) => session.id === id)))
+const allPicked = computed(() => archived.value.length > 0 && pickedLive.value.length >= archived.value.length)
 
-async function removeArchived(sessionID: string) {
-  await app.remove(sessionID)
-  confirmingDelete.value = undefined
+function stopSelecting() {
+  selecting.value = false
+  picked.value = []
 }
+
+function togglePick(sessionID: string) {
+  picked.value = picked.value.includes(sessionID)
+    ? picked.value.filter((entry) => entry !== sessionID)
+    : [...picked.value, sessionID]
+}
+
+function toggleAllPicked() {
+  picked.value = allPicked.value ? [] : archived.value.map((session) => session.id)
+}
+
+async function restorePicked() {
+  for (const sessionID of pickedLive.value) await app.archive(sessionID, false)
+  stopSelecting()
+}
+
+/** What the delete dialog is about: one named conversation, or the selection. */
+const confirmingDelete = ref<{ ids: string[]; title?: string }>()
+
+async function confirmRemove() {
+  const target = confirmingDelete.value
+  confirmingDelete.value = undefined
+  if (!target) return
+  for (const sessionID of target.ids) await app.remove(sessionID)
+  if (target.title === undefined) stopSelecting()
+}
+
+// Nothing left to manage ends the selection, as the toggle disappears with the list.
+watch(
+  () => archived.value.length,
+  (count) => {
+    if (!count) stopSelecting()
+  },
+)
 
 /*
  * Asked twice, not typed out.
@@ -2232,27 +2274,91 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
           </div>
 
-          <h3 class="sub-head">{{ t("set.archivedSessions") }}</h3>
+          <div class="sec-row archived-head">
+            <h3 class="sub-head">{{ t("set.archivedSessions") }}</h3>
+            <button
+              v-if="archived.length"
+              class="ctl-btn batch-toggle"
+              @click="selecting ? stopSelecting() : (selecting = true)"
+            >
+              {{ selecting ? t("set.batchDone") : t("set.batchManage") }}
+            </button>
+          </div>
           <p class="sub-note">{{ t("set.archivedSub") }}</p>
 
           <div v-if="!archived.length" class="empty-note">{{ t("set.archiveEmpty") }}</div>
 
-          <div v-else class="card">
-            <div v-for="session in archived" :key="session.id" class="line">
-              <div class="line-text">
-                <div class="line-title">{{ sessionTitle(session.title) }}</div>
-                <div class="line-sub">{{ session.directory }} · {{ ago(session.updated) }}</div>
-              </div>
-              <div v-if="confirmingDelete === session.id" class="confirm">
-                <button class="ctl-btn" @click="confirmingDelete = undefined">{{ t("common.cancel") }}</button>
-                <button class="danger-btn" @click="removeArchived(session.id)">{{ t("set.deleteForever") }}</button>
-              </div>
-              <div v-else class="confirm">
-                <button class="ctl-btn" @click="app.archive(session.id, false)">{{ t("set.unarchive") }}</button>
-                <button class="plink danger" @click="confirmingDelete = session.id">{{ t("set.deleteForever") }}</button>
+          <template v-else>
+            <div v-if="selecting" class="batch-bar">
+              <button class="batch-all" @click="toggleAllPicked">
+                {{ allPicked ? t("set.selectNone") : t("set.selectAll") }}
+              </button>
+              <span class="batch-count">{{ t("set.selectedCount", { n: String(pickedLive.length) }) }}</span>
+              <span class="batch-acts">
+                <button class="ctl-btn" data-batch="restore" :disabled="!pickedLive.length" @click="restorePicked">
+                  {{ t("set.restoreN", { n: String(pickedLive.length) }) }}
+                </button>
+                <button
+                  class="plink danger"
+                  data-batch="delete"
+                  :disabled="!pickedLive.length"
+                  @click="confirmingDelete = { ids: [...pickedLive] }"
+                >
+                  {{ t("set.deleteN", { n: String(pickedLive.length) }) }}
+                </button>
+              </span>
+            </div>
+
+            <div class="card">
+              <div
+                v-for="session in archived"
+                :key="session.id"
+                class="line archived-row"
+                :class="{ picking: selecting }"
+                :role="selecting ? 'checkbox' : undefined"
+                :aria-checked="selecting ? pickedLive.includes(session.id) : undefined"
+                @click="selecting && togglePick(session.id)"
+              >
+                <span v-if="selecting" class="check" :class="{ on: pickedLive.includes(session.id) }" aria-hidden="true">
+                  <svg v-if="pickedLive.includes(session.id)" width="10" height="10" viewBox="0 0 12 12" fill="none">
+                    <path d="M2.5 6.2 5 8.6l4.5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </span>
+                <div class="line-text">
+                  <div class="line-title">{{ sessionTitle(session.title) }}</div>
+                  <div class="line-sub">{{ session.directory }} · {{ ago(session.updated) }}</div>
+                </div>
+                <div v-if="!selecting" class="confirm">
+                  <button class="ctl-btn" @click="app.archive(session.id, false)">{{ t("set.unarchive") }}</button>
+                  <button
+                    class="plink danger"
+                    @click="confirmingDelete = { ids: [session.id], title: sessionTitle(session.title) }"
+                  >
+                    {{ t("set.deleteForever") }}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>
+          </template>
+
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="confirmingDelete"
+              :title="
+                confirmingDelete.title !== undefined
+                  ? t('set.deleteOneTitle')
+                  : t('set.deleteN', { n: String(confirmingDelete.ids.length) })
+              "
+              :body="
+                confirmingDelete.title !== undefined
+                  ? t('set.deleteOneBody', { title: confirmingDelete.title })
+                  : t('set.deleteManyBody', { n: String(confirmingDelete.ids.length) })
+              "
+              :confirm-label="t('set.deleteForever')"
+              @confirm="confirmRemove"
+              @close="confirmingDelete = undefined"
+            />
+          </Teleport>
         </template>
 
         <!-- Server -->
@@ -3970,5 +4076,73 @@ h3 {
 
 .env-save:disabled {
   opacity: 0.5;
+}
+/*
+ * Archived conversations in batch: MiMo's toolbar - a framed 10px-corner strip
+ * with select all at the start, the count after it and the two actions at the
+ * far end - and a checkbox at the start of each row while selecting.
+ */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.batch-all {
+  padding: 0;
+  color: var(--text-base);
+  background: transparent;
+  border: 0;
+}
+
+.batch-all:hover {
+  color: var(--text-strong);
+}
+
+.batch-count {
+  color: var(--text-weak);
+}
+
+.batch-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: auto;
+}
+
+.batch-acts button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.archived-head h3 {
+  margin: 0;
+}
+
+.archived-row.picking {
+  gap: 10px;
+  cursor: pointer;
+}
+
+.check {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  color: var(--surface-raised);
+  border: 1px solid var(--text-weak);
+  border-radius: 4px;
+}
+
+.check.on {
+  background: var(--text-strong);
+  border-color: var(--text-strong);
 }
 </style>
