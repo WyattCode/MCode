@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { GitChange, GitStatus } from "@shared/protocol"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
-import { FILE_MANAGER_ID, fileManagerLabel, openApps, type OpenApp } from "@shared/open-app"
 import ContextRing from "./ContextRing.vue"
 import ContextView from "./ContextView.vue"
 import { useApp } from "../stores/app"
@@ -261,84 +260,6 @@ async function openFile() {
   const root = app.current?.directory
   if (root && menu.value) await window.mcode.openFile(root, menu.value.path)
   closeMenu()
-}
-
-/**
- * Which app the trailing button hands the project to.
- *
- * Remembered, as opencode remembers it: its menu is a RadioGroup whose value
- * persists, so the button keeps meaning whatever was last chosen rather than
- * asking again. The file manager is the starting value and the one with no
- * `openWith` - it is the plain "hand it to the desktop" path.
- */
-const OPEN_WITH_KEY = "mcode.openWith"
-
-function storedOpenWith(): string {
-  try {
-    const saved = localStorage.getItem(OPEN_WITH_KEY)
-    if (saved && (saved === FILE_MANAGER_ID || apps.value.some((entry) => entry.id === saved))) return saved
-  } catch {
-    /* A window with storage switched off simply always starts at the default. */
-  }
-  return FILE_MANAGER_ID
-}
-
-const apps = computed<OpenApp[]>(() => openApps(app.platform))
-/*
- * What the shell option is called here. It was "File Explorer" outright, which
- * is only true on Windows - the reference names it Finder on a Mac and File
- * Manager elsewhere, and that is the only part of the option the OS changes.
- */
-const managerLabel = computed(() => t(fileManagerLabel(app.platform)))
-const openWith = ref(FILE_MANAGER_ID)
-onMounted(() => (openWith.value = storedOpenWith()))
-
-const chosenApp = computed(() => apps.value.find((entry) => entry.id === openWith.value))
-/** What the button says it will do, which is the whole point of remembering. */
-const openLabel = computed(() =>
-  chosenApp.value ? t(chosenApp.value.label) : managerLabel.value,
-)
-
-const appMenu = ref<{ x: number; y: number }>()
-
-/** The panel's own "open in editor": the project, not a file inside it. */
-async function openProject() {
-  const root = app.current?.directory
-  if (!root) return
-  await window.mcode.openFile(root, "", chosenApp.value?.openWith)
-}
-
-const appMenuItems = computed<MenuItem[]>(() => [
-  { key: "heading", label: t("session.header.openIn"), heading: true },
-  {
-    key: `app.${FILE_MANAGER_ID}`,
-    label: managerLabel.value,
-    checked: openWith.value === FILE_MANAGER_ID,
-  },
-  ...apps.value.map((entry) => ({
-    key: `app.${entry.id}`,
-    label: t(entry.label),
-    checked: openWith.value === entry.id,
-  })),
-  { key: "copyPath", label: t("session.header.open.copyPath"), divided: true },
-])
-
-async function pickAppMenu(key: string) {
-  appMenu.value = undefined
-  if (key === "heading") return
-  if (key === "copyPath") {
-    const root = app.current?.directory
-    if (root) await navigator.clipboard.writeText(root)
-    return
-  }
-  const id = key.slice("app.".length)
-  openWith.value = id
-  try {
-    localStorage.setItem(OPEN_WITH_KEY, id)
-  } catch {
-    /* Not remembering is a smaller failure than refusing to open. */
-  }
-  await openProject()
 }
 
 async function copyPath(which: "absolute" | "relative") {
@@ -1049,43 +970,6 @@ onBeforeUnmount(() => observer?.disconnect())
         </div>
       </div>
 
-      <!--
-        A split button, as opencode has it: pressing the face does the
-        remembered thing, and the 20px caret beside it chooses what that is.
-        Before this the button always went to the file manager and the five
-        editors it has strings for were unreachable.
-      -->
-      <div class="head-open-split">
-        <button
-          class="head-open"
-          :aria-label="t('session.header.open.ariaLabel', { app: openLabel })"
-          v-tip="{ label: t('session.header.open.action', { app: openLabel }), placement: 'bottom' }"
-          @click="openProject"
-        >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path
-              d="M2 4.5C2 3.67157 2.67157 3 3.5 3H6L7.5 4.75H12.5C13.3284 4.75 14 5.42157 14 6.25V11.5C14 12.3284 13.3284 13 12.5 13H3.5C2.67157 13 2 12.3284 2 11.5V4.5Z"
-              stroke="currentColor"
-              stroke-width="1"
-              stroke-linejoin="round"
-            />
-          </svg>
-        </button>
-        <button
-          class="head-open-more"
-          :aria-label="t('session.header.open.menu')"
-          @click="
-            appMenu = {
-              x: ($event.currentTarget as HTMLElement).getBoundingClientRect().right,
-              y: ($event.currentTarget as HTMLElement).getBoundingClientRect().bottom + 4,
-            }
-          "
-        >
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M6.6665 8.33325L9.99984 11.6666L13.3332 8.33325" stroke="currentColor" stroke-linecap="square" />
-          </svg>
-        </button>
-      </div>
     </header>
 
     <!--
@@ -1474,14 +1358,6 @@ onBeforeUnmount(() => observer?.disconnect())
       </div>
     </div>
 
-    <ContextMenu
-      v-if="appMenu"
-      :x="appMenu.x"
-      :y="appMenu.y"
-      :items="appMenuItems"
-      @pick="pickAppMenu"
-      @close="appMenu = undefined"
-    />
 
     <ContextMenu
       v-if="menu"
@@ -1581,52 +1457,14 @@ onBeforeUnmount(() => observer?.disconnect())
 }
 
 /* First in the bar, and set apart: it acts on the bar's own layout. */
-.head-toggle,
-/*
- * The two halves read as one control: they share a border and only the seam
- * between them is drawn, which is what makes a split button look like a button
- * with a choice rather than two buttons that happen to touch.
- */
-.head-open-split {
+.head-toggle {
   display: flex;
   align-items: center;
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
-.head-open-split:hover {
-  background: var(--surface-hover);
-}
-
-/* opencode's caret is a 20px column with no border of its own. */
-.head-open-more {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  align-self: stretch;
-  color: var(--icon-base);
-  border-inline-start: 1px solid var(--border-weaker);
-}
-
-.head-open-more:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-.head-open {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 28px;
-  color: var(--icon-base);
-  border-radius: 6px;
-  transition: background 0.12s, color 0.12s;
-}
-
-.head-toggle:hover,
-.head-open:hover {
+.head-toggle:hover {
   background: var(--surface-hover);
 }
 

@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue"
 import { useApp } from "../stores/app"
+import ContextMenu from "./ContextMenu.vue"
+import { useOpenWith } from "../lib/open-with"
 import { sessionTitle, t } from "../lib/i18n"
 
 /**
@@ -58,6 +60,21 @@ function cancel() {
 
 defineExpose({ begin })
 
+/* MiMo's open-location control: the folder the conversation works in. */
+const directory = computed(() => app.current?.directory)
+const { label: openLabel, items: openItems, open: openIn, pick: pickOpen } = useOpenWith(() => app.platform)
+const appMenu = ref<{ x: number; y: number }>()
+
+function openAppMenu(event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  appMenu.value = { x: Math.round(rect.left), y: Math.round(rect.bottom + 4) }
+}
+
+function pickApp(key: string) {
+  appMenu.value = undefined
+  if (directory.value) void pickOpen(key, directory.value)
+}
+
 function openMenu(event: MouseEvent) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   emit("menu", rect.right, rect.bottom + 4)
@@ -93,6 +110,39 @@ function openMenu(event: MouseEvent) {
     </div>
 
     <div class="right">
+      <!--
+        MiMo's first tool: the face opens the project folder in the app last
+        chosen, the caret chooses another. Only while there is a folder.
+      -->
+      <div v-if="directory" class="open-with">
+        <button
+          class="open-face"
+          :aria-label="t('header.openDirTip', { name: openLabel })"
+          v-tip="{ label: t('header.openDirTip', { name: openLabel }), placement: 'bottom' }"
+          @click="openIn(directory)"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M2 4.5C2 3.67 2.67 3 3.5 3H6l1.5 1.75h5c.83 0 1.5.67 1.5 1.5v5.25c0 .83-.67 1.5-1.5 1.5h-9c-.83 0-1.5-.67-1.5-1.5v-7Z"
+              stroke="currentColor"
+              stroke-width="1.2"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>{{ t("header.openLocation") }}</span>
+        </button>
+        <button
+          class="open-caret"
+          :aria-label="t('header.pickApp')"
+          v-tip="{ label: t('header.pickApp'), placement: 'bottom' }"
+          @click="openAppMenu"
+        >
+          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M6.7 8.3 10 11.7l3.3-3.4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </div>
+      <ContextMenu v-if="appMenu" :x="appMenu.x" :y="appMenu.y" :items="openItems" @pick="pickApp" @close="appMenu = undefined" />
       <!-- The info card beside the conversation; lit while it is up, as MiMo's toggle is. -->
       <button
         class="ico info"
@@ -252,6 +302,47 @@ function openMenu(event: MouseEvent) {
 .options {
   flex-shrink: 0;
   margin-inline-start: 2px;
+}
+
+/*
+ * MiMo's open-location control, measured: one bordered piece 24 tall with a
+ * 10px corner; the face is 14px medium text after a 14px glyph, 10 in from the
+ * left and 4 before the caret, which is 2 and 6 either side of its chevron.
+ */
+.open-with {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  height: 24px;
+  overflow: hidden;
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+}
+
+.open-face {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding-inline: 10px 4px;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.open-caret {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  padding-inline: 2px 6px;
+  color: var(--text-weak);
+}
+
+.open-face:hover,
+.open-caret:hover {
+  background: var(--surface-hover);
 }
 
 /* A toggle that is on stays lit while its panel is up. */
