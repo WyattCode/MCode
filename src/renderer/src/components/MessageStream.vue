@@ -5,7 +5,6 @@ import TextPart from "./parts/TextPart.vue"
 import ReasoningPart from "./parts/ReasoningPart.vue"
 import ToolPart from "./parts/ToolPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
-import TextShimmer from "./parts/TextShimmer.vue"
 import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
 import { preview } from "../lib/attach"
 import { useRestoreDraft } from "../lib/draft"
@@ -192,17 +191,11 @@ const turns = computed<Turn[]>(() => {
 })
 
 /**
- * Whether to say the model is working before it has said anything.
+ * Whether the live turn ends in MiMo's working indicator.
  *
- * A turn that has been sent but has produced no renderable part yet used to
- * draw nothing at all - the transcript simply sat there, and the only sign the
- * message had gone anywhere was the composer's stop button. The reference puts
- * a shimmering "Thinking" at the end of the live turn instead, and drops it the
- * moment the first part arrives.
- *
- * `rows()` rather than `parts.length` because a part can be present and render
- * nothing - an empty reasoning part is the usual case, and counting it would
- * clear this row while the screen was still blank.
+ * MiMo keeps a small cascade of four marks at the end of the turn for as long
+ * as it runs - under the parts that have arrived, not only before the first -
+ * and hides it while the turn waits on the reader (here: a permission request).
  */
 function thinking(turn: Turn, at: number): boolean {
   if (at !== turns.value.length - 1) return false
@@ -214,7 +207,8 @@ function thinking(turn: Turn, at: number): boolean {
    * on screen for all of them, and the app looks like it stopped.
    */
   if (shownCompacting.value) return true
-  return shownBusy.value && !turn.error && rows(turn.parts).length === 0
+  const waiting = shownID.value ? app.pendingPermissions.has(shownID.value) : false
+  return shownBusy.value && !turn.error && !waiting
 }
 
 /**
@@ -860,8 +854,17 @@ defineExpose({ stepMessage, scroller })
           <div v-else-if="turn.finish === 'max_tokens'" class="note">{{ t("stream.maxTokens") }}</div>
         </div>
 
-        <div v-if="thinking(turn, at)" class="thinking">
-          <TextShimmer :text="t('stream.thinking')" :active="true" />
+        <div
+          v-if="thinking(turn, at)"
+          class="work-indicator"
+          role="status"
+          aria-live="polite"
+          :aria-label="t('stream.workLoading')"
+          data-work-loading
+        >
+          <svg viewBox="0 0 34 7" width="34" height="7" aria-hidden="true" focusable="false">
+            <circle v-for="x in [3.5, 12.5, 21.5, 30.5]" :key="x" :cx="x" cy="3.5" r="3" fill="currentColor" />
+          </svg>
         </div>
 
         <div v-if="compactedAfter(turn)" class="compacted">
@@ -944,20 +947,57 @@ defineExpose({ stepMessage, scroller })
   text-transform: capitalize;
 }
 
-/* Quiet: it marks a boundary, it is not an event in the conversation. */
-/* The reference's own `session-turn-thinking` rule, rather than a guess at it. */
-.thinking {
+/*
+ * MiMo's working indicator: a 40 by 14 box at 58% of the strongest text colour
+ * holding a 34 by 7 row of four marks, each rising and brightening in turn over
+ * a 1.8s loop (a tenth of the loop apart). The marks are MCode's own dots.
+ */
+.work-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-  min-height: 20px;
-  margin-top: 12px;
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 20px;
-  color: var(--text-weak);
+  width: 40px;
+  height: 14px;
+  margin-top: 6px;
+  color: var(--text-strong);
+  opacity: 0.58;
+}
+
+.work-indicator svg {
+  display: block;
+  width: 34px;
+  height: 7px;
+  margin-inline-start: 2px;
+  overflow: visible;
+}
+
+.work-indicator circle {
+  transform-box: fill-box;
+  animation: work-cascade 1.8s ease-in-out infinite both;
+}
+
+.work-indicator circle:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.work-indicator circle:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+.work-indicator circle:nth-child(4) {
+  animation-delay: 0.54s;
+}
+
+@keyframes work-cascade {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: translateY(1px);
+  }
+
+  42% {
+    opacity: 1;
+    transform: translateY(-1px);
+  }
 }
 
 .compacted {
