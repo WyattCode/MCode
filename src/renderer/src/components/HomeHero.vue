@@ -34,6 +34,8 @@ const emit = defineEmits<{
   "open-settings": [section?: "models"]
   connect: []
   shell: [command: string]
+  /** The project folder picked here, or nothing for a task without one. */
+  directory: [directory?: string]
 }>()
 
 const app = useApp()
@@ -78,6 +80,9 @@ watch(
 )
 /* Whether the task this screen starts works in a folder of its own. */
 const scratch = computed(() => chosen.value === NO_PROJECT)
+
+/* Told to the window, so its bottom panel can open a terminal in that folder before any task exists. */
+watch(chosen, (value) => emit("directory", value === NO_PROJECT ? undefined : value), { immediate: true })
 
 const segments = (directory: string) => directory.split(/[\\/]+/).filter(Boolean)
 

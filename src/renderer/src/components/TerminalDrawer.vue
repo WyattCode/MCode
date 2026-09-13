@@ -39,6 +39,12 @@ const terms = ref<{ id: number; shellID?: string; cwd?: string; dead: boolean }[
 const activeID = ref(1)
 let nextID = 1
 
+/*
+ * Whose terminals these are: a conversation's, or - on the home screen, before
+ * there is one - the project folder picked there.
+ */
+const props = defineProps<{ sessionID?: string; directory?: string }>()
+
 type Pane = { focus: () => void; run: (command: string) => boolean }
 
 const panes = new Map<number, Pane>()
@@ -118,14 +124,14 @@ function samePlace(a: string, b: string) {
 }
 
 const mismatch = computed(() => {
-  const here = app.current?.directory
+  const here = props.directory ?? app.current?.directory
   const term = terms.value.find((entry) => entry.id === activeID.value)
   if (!here || !term?.cwd || dismissed.value.has(here)) return false
   return !samePlace(term.cwd, here)
 })
 
 function dismissMismatch() {
-  const here = app.current?.directory
+  const here = props.directory ?? app.current?.directory
   if (here) dismissed.value = new Set(dismissed.value).add(here)
 }
 
@@ -138,12 +144,12 @@ function dismissMismatch() {
  */
 onMounted(async () => {
   const client = app.client
-  const sessionID = app.currentID
-  if (!client || !sessionID) {
+  const where = props.sessionID ? { sessionID: props.sessionID } : props.directory ? { directory: props.directory } : undefined
+  if (!client || !where) {
     add()
     return
   }
-  const found = await client.request({ type: "shell.list", sessionID }).catch(() => undefined)
+  const found = await client.request({ type: "shell.list", ...where }).catch(() => undefined)
   if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, !shell.alive, shell.cwd)
   else add()
 })
@@ -314,6 +320,8 @@ function startResize(event: PointerEvent) {
       :active="term.id === activeID"
       :height="height"
       :shellID="term.shellID"
+      :sessionID="sessionID"
+      :directory="directory"
       @exited="exited(term.id)"
       @opened="(shellID: string, cwd: string) => opened(term.id, shellID, cwd)"
     />

@@ -81,6 +81,8 @@ const leftPanel = ref(true)
  */
 /* The project a task typed on the home screen will be created in. */
 const homeDirectory = ref<string>()
+/* The folder the home screen has picked, which its bottom panel's terminal opens in. */
+const homeShellDirectory = ref<string>()
 
 const rightPanel = ref(false)
 
@@ -943,10 +945,13 @@ const reviewPanelUp = computed(
 )
 
 /*
- * The terminal shares the right column with the panel, so it is subject to the
- * same two conditions: the launcher has no column, and neither does onboarding.
+ * The terminal docks along the foot of the main column. Not during onboarding;
+ * on the home screen, as MiMo allows, once there is a project folder for it to
+ * open in, since no conversation has one yet.
  */
-const terminalUp = computed(() => terminalOpen.value && !isHome.value && !onboarding.value)
+const terminalUp = computed(
+  () => terminalOpen.value && !onboarding.value && (!isHome.value || Boolean(homeShellDirectory.value)),
+)
 
 /*
  * Which tab is actually up, as against the one last picked.
@@ -3678,6 +3683,24 @@ onBeforeUnmount(() => {
         <path d="M15 2.5v19" />
       </svg>
     </button>
+    <!--
+      MiMo's home screen keeps the bottom panel's button beside the side panel's;
+      a conversation has its own in the header. Unlit when pressed, as MiMo's is.
+    -->
+    <button
+      v-if="!onboarding && isHome"
+      class="side-panel-toggle home-bottom"
+      :aria-pressed="terminalUp"
+      :disabled="!homeShellDirectory"
+      :aria-label="t('key.bottomPanel')"
+      v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J', placement: 'bottom' }"
+      @click="terminalOpen = !terminalOpen"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+        <path d="M2.5 15h19" />
+      </svg>
+    </button>
 
     <div
       class="body"
@@ -3742,6 +3765,7 @@ onBeforeUnmount(() => {
         <HomeHero
           v-else-if="isHome"
           :directory="homeDirectory"
+          @directory="(directory?: string) => (homeShellDirectory = directory)"
           @open-settings="openSettings"
           @connect="connectOpen = true"
           @shell="runShellCommand"
@@ -3844,7 +3868,15 @@ onBeforeUnmount(() => {
           has it: the full width of this column, under the composer, with its
           own edge to drag. Not in the right-hand column, which is the review's.
         -->
-        <TerminalDrawer v-if="terminalUp" ref="drawer" @close="terminalOpen = false" @height="(px: number) => (drawerHeight = px)" />
+        <TerminalDrawer
+          v-if="terminalUp"
+          :key="isHome ? `home:${homeShellDirectory}` : 'session'"
+          ref="drawer"
+          :sessionID="isHome ? undefined : app.currentID"
+          :directory="isHome ? homeShellDirectory : undefined"
+          @close="terminalOpen = false"
+          @height="(px: number) => (drawerHeight = px)"
+        />
       </main>
 
       <!--
@@ -4364,5 +4396,17 @@ onBeforeUnmount(() => {
 .side-panel-toggle.on {
   color: var(--text-strong);
   background: var(--surface-selected);
+}
+
+/* The home screen's bottom panel button: MiMo's 4px before the side panel toggle. */
+.side-panel-toggle.home-bottom {
+  inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 37px);
+}
+
+/* "No project" leaves the terminal nowhere to open. */
+.side-panel-toggle.home-bottom:disabled {
+  background: transparent;
+  cursor: default;
+  opacity: 0.35;
 }
 </style>

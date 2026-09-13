@@ -27,6 +27,25 @@ import type { ShellOwner } from "./shell"
 type Handled<T extends Request["type"]> = ResponseMap[T]
 
 /**
+ * Which shells a request is about, and the folder they start in.
+ *
+ * A conversation's are grouped under its id and work in its folder. The home
+ * screen's bottom panel comes before any conversation, so it names the project
+ * folder it has picked instead; those shells are grouped under that folder.
+ */
+async function shellGroup(runtime: Runtime, request: { sessionID?: string; directory?: string }) {
+  if (request.sessionID) {
+    const session = await runtime.sessions.require(request.sessionID)
+    return { key: request.sessionID, directory: session.directory }
+  }
+  if (!request.directory || !path.isAbsolute(request.directory)) {
+    throw new Error("a terminal needs a conversation or a project folder")
+  }
+  const directory = path.resolve(request.directory)
+  return { key: `home:${directory}`, directory }
+}
+
+/**
  * One switch mapping every request to its effect. Kept flat and exhaustive so
  * the protocol and the implementation cannot drift: adding a request type
  * without handling it is a type error.
@@ -773,8 +792,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "shell.open": {
-      const session = await runtime.sessions.require(request.sessionID)
-      const cwd = request.cwd ? resolveInside(session.directory, request.cwd) : session.directory
+      const group = await shellGroup(runtime, request)
+      const cwd = request.cwd ? resolveInside(group.directory, request.cwd) : group.directory
       return {
         /*
          * The size travels with the open so the shell prints its first prompt
@@ -782,7 +801,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
          * a prompt that has already been wrapped at the wrong column.
          */
         shellID: runtime.shells.open(
-          request.sessionID,
+          group.key,
           cwd,
           runtime.config.get().shell,
           { cols: request.cols ?? 0, rows: request.rows ?? 0 },
@@ -805,7 +824,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {} satisfies Handled<"shell.resize">
 
     case "shell.list":
-      return { shells: runtime.shells.list(request.sessionID, owner) } satisfies Handled<"shell.list">
+      return { shells: runtime.shells.list((await shellGroup(runtime, request)).key, owner) } satisfies Handled<"shell.list">
 
     case "shell.attach": {
       const found = runtime.shells.attach(request.shellID)

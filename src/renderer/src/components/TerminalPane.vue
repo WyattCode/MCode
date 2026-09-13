@@ -56,6 +56,10 @@ const props = defineProps<{
   height: number
   /** A shell the backend is already holding, to come back to instead of starting one. */
   shellID?: string
+  /** The conversation this terminal belongs to; absent on the home screen. */
+  sessionID?: string
+  /** On the home screen, the project folder picked there, which the shell starts in. */
+  directory?: string
 }>()
 const emit = defineEmits<{ exited: []; opened: [shellID: string, cwd: string] }>()
 
@@ -182,7 +186,7 @@ function withAlpha(colour: string, alpha: number): string {
 }
 
 onMounted(async () => {
-  if (!host.value || !app.currentID) return
+  if (!host.value || (!props.sessionID && !props.directory)) return
 
   terminal = new Terminal({
     // Its own variable, so a terminal face can differ from the code face.
@@ -346,7 +350,7 @@ onMounted(async () => {
      */
     const result = await client.request({
       type: "shell.open",
-      sessionID: app.currentID,
+      ...(props.sessionID ? { sessionID: props.sessionID } : { directory: props.directory }),
       cols: terminal.cols,
       rows: terminal.rows,
     })

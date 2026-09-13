@@ -1290,7 +1290,11 @@ export type Request =
   | { type: "git.revert"; directory: string; file: string }
   | { type: "file.list"; directory: string; query?: string }
   | { type: "file.read"; path: string }
-  | { type: "shell.open"; sessionID: string; cwd?: string; cols?: number; rows?: number }
+  /*
+   * A conversation's shells work in its folder. The home screen's bottom panel
+   * has no conversation yet, so it names the project folder it has picked.
+   */
+  | { type: "shell.open"; sessionID?: string; directory?: string; cwd?: string; cols?: number; rows?: number }
   | { type: "shell.input"; shellID: string; data: string }
   | { type: "shell.resize"; shellID: string; cols: number; rows: number }
   | { type: "shell.close"; shellID: string }
@@ -1298,7 +1302,7 @@ export type Request =
    * The shells this session already has running, so the drawer can come back
    * to them instead of starting new ones.
    */
-  | { type: "shell.list"; sessionID: string }
+  | { type: "shell.list"; sessionID?: string; directory?: string }
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
