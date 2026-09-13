@@ -186,6 +186,8 @@ export interface UserMessage {
   /** Files pinned into the prompt by the user. */
   attachments: Attachment[]
   time: { created: number }
+  /** Sent into a turn that was already running (MiMo's 插话), so the transcript keeps it inside that turn. */
+  steered?: boolean
 }
 
 export interface Attachment {

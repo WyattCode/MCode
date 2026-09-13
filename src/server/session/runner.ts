@@ -878,6 +878,8 @@ export class SessionRunner {
       text: input.text,
       attachments: input.attachments ?? [],
       time: { created: Date.now() },
+      // Marked, so the transcript can show it inside the turn it joined.
+      steered: true,
     }
     steering.waiting.push(user.id)
     /*

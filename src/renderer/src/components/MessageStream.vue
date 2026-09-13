@@ -55,8 +55,19 @@ const scroller = ref<HTMLElement>()
 /** Handed down by App.vue, which is the only thing that can see the composer. */
 const restoreDraft = useRestoreDraft()
 
+/** A message sent into a turn while it was running - MiMo's 插话 - and where among the turn's parts it landed. */
+interface Steer {
+  id: string
+  text?: string
+  attachments?: Attachment[]
+  created: number
+  /** How many of the turn's parts came before it. */
+  at: number
+}
+
 type Row =
   | { kind: "part"; id: string; part: AssistantPart }
+  | { kind: "steer"; id: string; steer: Steer }
   /** A run of lookups plus whatever the model said between them. */
   | { kind: "tools"; id: string; parts: AssistantPart[] }
 
@@ -133,6 +144,7 @@ interface Turn {
   /** When the user sent it, for the footer under their own message. */
   asked?: number
   parts: AssistantPart[]
+  steers: Steer[]
   last?: AssistantMessage
   started?: number
   completed?: number
@@ -163,18 +175,35 @@ const turns = computed<Turn[]>(() => {
    */
   for (const message of shownMessages.value) {
     if (message.role === "user") {
+      /*
+       * A message sent into a running turn stays inside that turn, where the
+       * model took it in, as MiMo shows it. The backend marks such a message
+       * when it joins the turn; guessing from the step before it would also
+       * swallow the next question after a turn the app was closed during.
+       */
+      if (current && message.steered) {
+        current.steers.push({
+          id: message.id,
+          text: message.text,
+          attachments: message.attachments,
+          created: message.time.created,
+          at: current.parts.length,
+        })
+        continue
+      }
       current = {
         id: message.id,
         text: message.text,
         attachments: message.attachments,
         asked: message.time.created,
         parts: [],
+        steers: [],
       }
       out.push(current)
       continue
     }
     if (!current) {
-      current = { id: message.id, parts: [] }
+      current = { id: message.id, parts: [], steers: [] }
       out.push(current)
     }
     current.parts.push(...message.parts)
@@ -394,8 +423,23 @@ function hasTools(turn: Turn): boolean {
 
 /** What the answer shows: its own words always, its steps once opened. */
 function shown(turn: Turn): Row[] {
-  const all = rows(turn.parts)
+  const all: Row[] = []
+  let from = 0
+  for (const steer of turn.steers) {
+    all.push(...rows(turn.parts.slice(from, steer.at)), { kind: "steer", id: steer.id, steer })
+    from = steer.at
+  }
+  all.push(...rows(turn.parts.slice(from)))
   return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "tools")
+}
+
+/*
+ * MiMo's 已插话 · 会尽快处理 under a message sent into the running turn, until
+ * the model has taken it in - which is when a step begins after it.
+ */
+function steerWaiting(turn: Turn, at: number, steer: Steer): boolean {
+  if (at !== turns.value.length - 1 || !shownBusy.value) return false
+  return !shownMessages.value.some((message) => message.role === "assistant" && message.time.created > steer.created)
 }
 
 function elapsed(turn: Turn): string | undefined {
@@ -761,7 +805,26 @@ defineExpose({ stepMessage, scroller })
           </div>
 
           <div v-for="row in shown(turn)" :key="row.id" class="part">
-            <ToolGroup v-if="row.kind === 'tools'" :parts="row.parts" />
+            <div
+              v-if="row.kind === 'steer'"
+              class="steer"
+              :data-user-steer="row.id"
+              :data-steer-state="steerWaiting(turn, at, row.steer) ? 'waiting' : 'landed'"
+            >
+              <div v-if="row.steer.attachments?.length" class="sent">
+                <template v-for="(item, index) in row.steer.attachments" :key="index">
+                  <span v-if="preview(item)" class="sent-tile picture">
+                    <img :src="preview(item)" :alt="item.path" />
+                  </span>
+                  <span v-else class="sent-tile file" :title="item.path">
+                    <span class="sent-name">{{ item.path }}</span>
+                  </span>
+                </template>
+              </div>
+              <div v-if="row.steer.text" class="user-bubble steer-bubble">{{ row.steer.text }}</div>
+              <span v-if="steerWaiting(turn, at, row.steer)" class="steer-note">{{ t("stream.steerWaiting") }}</span>
+            </div>
+            <ToolGroup v-else-if="row.kind === 'tools'" :parts="row.parts" />
             <ReasoningPart v-else-if="row.part.type === 'reasoning'" :part="row.part" />
             <ToolPart v-else-if="row.part.type === 'tool'" :part="row.part" />
             <TextPart v-else :part="row.part" />
@@ -1356,6 +1419,30 @@ defineExpose({ stepMessage, scroller })
  */
 .user-bubble[data-asked-parts] {
   white-space: normal;
+}
+
+/*
+ * MiMo's 插话: the message sits where it landed among the turn's steps, at the
+ * end of the line and at most 78% of it wide, in the question's own bubble,
+ * with a 12px quiet note under it until the model has taken it in.
+ */
+.steer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: 78%;
+  margin-inline-start: auto;
+  padding: 5px 0;
+}
+
+.steer-bubble {
+  max-width: 100%;
+}
+
+.steer-note {
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .asked-part {

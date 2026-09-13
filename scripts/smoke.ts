@@ -1907,6 +1907,30 @@ async function main() {
     await fs.rm(created, { force: true })
   }
 
+  section("Steering")
+  {
+    const store = backend.runtime.sessions
+    const steerSession = await store.create({
+      directory: project,
+      model: { provider: "anthropic", model: "claude-opus-5" },
+    })
+    // A turn under way is one the runner holds a steering entry for; a prompt then joins it rather than starting one.
+    const internals = backend.runtime.runner as unknown as {
+      steering: Map<string, { waiting: string[]; written: Promise<void> }>
+      pending: Map<string, unknown>
+    }
+    internals.steering.set(steerSession.id, { waiting: [], written: Promise.resolve() })
+    const joinedID = await backend.runtime.runner.prompt({ sessionID: steerSession.id, text: "also check the tests" })
+    const joined = (await store.messages(steerSession.id)).find((message) => message.id === joinedID)
+    check(
+      "a message sent into a running turn is saved marked as steered",
+      joined?.role === "user" && joined.steered === true,
+      joined,
+    )
+    internals.steering.delete(steerSession.id)
+    internals.pending.delete(steerSession.id)
+  }
+
   section("Persistence")
   socket.close()
   await backend.close()
