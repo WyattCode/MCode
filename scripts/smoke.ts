@@ -26,6 +26,7 @@ import { WebSocket } from "ws"
 import { startBackend } from "../src/server/index"
 import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
 import { readTask, smartRoute } from "../src/shared/smart"
+import { chimeOf, longTask } from "../src/shared/chime"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
@@ -152,6 +153,38 @@ async function main() {
   check("a task in a project is not marked as having none", created.session.scratch === undefined, created.session)
   await call({ type: "session.delete", sessionID: loose.session.id })
   await call({ type: "session.delete", sessionID: looseAgain.session.id })
+
+  /*
+   * The default project location: a chosen folder takes the next task with no
+   * project, and clearing the choice sends the one after back to the default.
+   */
+  const chosenRoot = path.join(root, "chosen-root")
+  await call({ type: "config.set", patch: { projectRoot: chosenRoot } })
+  const placed = await call({ type: "session.create", scratch: true })
+  await call({ type: "config.set", patch: { projectRoot: "" } })
+  const unplaced = await call({ type: "session.create", scratch: true })
+  check(
+    "a chosen project location takes the next task with no project",
+    path.dirname(placed.session.directory) === chosenRoot,
+    placed.session.directory,
+  )
+  check(
+    "clearing the location sends the next one back to the default",
+    path.dirname(unplaced.session.directory) === process.env.MCODE_SCRATCH_ROOT,
+    unplaced.session.directory,
+  )
+  await call({ type: "session.delete", sessionID: placed.session.id })
+  await call({ type: "session.delete", sessionID: unplaced.session.id })
+
+  /* The long-task chime: past a minute only, and an unknown choice plays the default. */
+  check(
+    "a task of a minute exactly stays quiet and one past it chimes",
+    !longTask(60_000) && longTask(60_001) && !longTask(Number.NaN),
+  )
+  check(
+    "an unknown chime plays the default and off stays off",
+    chimeOf("bogus") === "settle" && chimeOf(undefined) === "settle" && chimeOf("off") === "off" && chimeOf("zen") === "zen",
+  )
 
   /*
    * The composer's middle access level. The classifier lets everyday commands

@@ -60,7 +60,8 @@ import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import FindBar from "./components/FindBar.vue"
 import { createFind, openFind, stepFind } from "./lib/find"
-import { play } from "./lib/sound"
+import { chime, play } from "./lib/sound"
+import { chimeOf, longTask } from "@shared/chime"
 import { themeTokens } from "./lib/theme-engine"
 import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
 
@@ -3376,7 +3377,6 @@ function alertDesktop(kind: "agent" | "permission" | "error", body: string, sess
    * reason to want the other. Someone watching the window wants the tone and
    * not the banner; someone away from it wants the reverse.
    */
-  if (kind === "agent" && config?.soundAgent) play("done")
   if (kind === "permission" && config?.soundPermission) play("permission")
   if (kind === "error" && config?.soundError) play("error")
 
@@ -3401,6 +3401,20 @@ function alertDesktop(kind: "agent" | "permission" | "error", body: string, sess
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) hush()
 })
+
+/*
+ * The long-task chime. The store times each turn from when it was seen to start,
+ * so a quick reply stays quiet, and one that ran past a minute is heard even
+ * when it ends in a conversation other than the one on screen.
+ */
+watch(
+  () => app.finished,
+  (turn) => {
+    if (!turn || !longTask(turn.elapsed)) return
+    const choice = chimeOf(app.config?.taskDoneSound)
+    if (choice !== "off") chime(choice)
+  },
+)
 
 // A turn that was running and now is not has finished, one way or another.
 watch(

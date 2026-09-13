@@ -87,7 +87,8 @@ function defaults(): AppConfig {
     servers: [],
     defaultServer: "",
     updateFeed: "",
-    soundAgent: false,
+    taskDoneSound: "settle",
+    projectRoot: "",
     soundPermission: false,
     soundError: false,
     /*

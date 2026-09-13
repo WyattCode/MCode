@@ -737,8 +737,14 @@ export interface AppConfig {
   defaultServer: string
   /** Where to look for a newer release, if anywhere. */
   updateFeed: string
-  /** Whether each notification also makes a sound. Off by default. */
-  soundAgent: boolean
+  /** The chime a task that ran past a minute makes when it ends. */
+  taskDoneSound: "off" | "settle" | "triple" | "sweep" | "duet" | "zen"
+  /**
+   * Where a task with no project gets its folder. Empty means MCodeProjects
+   * in the home directory.
+   */
+  projectRoot: string
+  /** Whether a permission request or a failure also makes a sound. Off by default. */
   soundPermission: boolean
   soundError: boolean
   /** Sessions whose tabs survive a close-others and sort to the front. */

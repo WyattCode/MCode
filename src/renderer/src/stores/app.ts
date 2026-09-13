@@ -51,6 +51,22 @@ export const useApp = defineStore("app", () => {
    * may have moved on by the time the turn ends.
    */
   const running = ref(new Set<string>())
+  /*
+   * When each running turn began, as far as this window saw it, and the last
+   * turn to end on its own with how long it took - which is what decides
+   * whether it was long enough to chime for. A stopped or failed turn is
+   * dropped from the clock rather than reported.
+   */
+  const turnStarted = new Map<string, number>()
+  const finished = ref<{ sessionID: string; elapsed: number }>()
+
+  /** Starts the clock on turns not seen beginning, and forgets the ones no longer running. */
+  function clockTurns(ids: Iterable<string>) {
+    const now = Date.now()
+    const live = new Set(ids)
+    for (const id of live) if (!turnStarted.has(id)) turnStarted.set(id, now)
+    for (const id of [...turnStarted.keys()]) if (!live.has(id)) turnStarted.delete(id)
+  }
   const busy = computed(() => (currentID.value ? running.value.has(currentID.value) : false))
   /** Sessions whose transcript is being summarised right now. */
   const summarising = ref(new Set<string>())
@@ -307,6 +323,7 @@ export const useApp = defineStore("app", () => {
     closedTabs.value = closedTabs.value.filter((entry) => entry.sessionID !== sessionID)
 
     if (running.value.delete(sessionID)) running.value = new Set(running.value)
+    turnStarted.delete(sessionID)
     if (unseen.value.has(sessionID)) {
       const next = new Set(unseen.value)
       next.delete(sessionID)
@@ -484,8 +501,11 @@ export const useApp = defineStore("app", () => {
         summarising.value = next
         break
       }
-      case "session.idle":
+      case "session.idle": {
         running.value.delete(event.sessionID)
+        const began = turnStarted.get(event.sessionID)
+        turnStarted.delete(event.sessionID)
+        if (began !== undefined) finished.value = { sessionID: event.sessionID, elapsed: Date.now() - began }
         if (event.sessionID === currentID.value) void refreshHistory(event.sessionID)
         // A turn that ended somewhere the user is not looking is the thing the
         // unread dot exists to report.
@@ -493,8 +513,10 @@ export const useApp = defineStore("app", () => {
           unseen.value = new Set(unseen.value).add(event.sessionID)
         }
         break
+      }
       case "session.error":
         running.value.delete(event.sessionID)
+        turnStarted.delete(event.sessionID)
         noteError(event.sessionID, event.error)
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
@@ -659,6 +681,7 @@ export const useApp = defineStore("app", () => {
     sessions.value = listed.sessions.filter((session) => !session.sideOf)
     sideSessions.value = listed.sessions.filter((session) => session.sideOf)
     running.value = new Set(listed.running)
+    clockTurns(listed.running)
     summarising.value = new Set(listed.compacting)
     /*
      * Questions a tool is still parked on.
@@ -777,6 +800,7 @@ export const useApp = defineStore("app", () => {
       sessions.value = listed.sessions.filter((session) => !session.sideOf)
       sideSessions.value = listed.sessions.filter((session) => session.sideOf)
       running.value = new Set(listed.running)
+      clockTurns(listed.running)
       summarising.value = new Set(listed.compacting)
       // The same replay as on boot: a socket that dropped missed anything
       // published while it was down, a permission request included.
@@ -1055,11 +1079,15 @@ export const useApp = defineStore("app", () => {
      */
     const joined = running.value.has(target)
     running.value.add(target)
+    if (!joined) turnStarted.set(target, Date.now())
     try {
       await api().request({ type: "session.prompt", sessionID: target, text, attachments })
       return true
     } catch (err) {
-      if (!joined) running.value.delete(target)
+      if (!joined) {
+        running.value.delete(target)
+        turnStarted.delete(target)
+      }
       report(err instanceof Error ? err.message : String(err))
       return false
     }
@@ -1068,6 +1096,8 @@ export const useApp = defineStore("app", () => {
   async function abort(to?: string) {
     const target = to ?? currentID.value
     if (!target) return
+    // Before the request: the idle that follows a stop may arrive ahead of its answer.
+    turnStarted.delete(target)
     await api().request({ type: "session.abort", sessionID: target })
     running.value.delete(target)
   }
@@ -1413,6 +1443,7 @@ export const useApp = defineStore("app", () => {
     failed,
     markAllRead,
     running,
+    finished,
     clearPermission,
     reopenTab,
     recent,

@@ -130,7 +130,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "session.create": {
       const config = runtime.config.get()
       const session = await runtime.sessions.create({
-        directory: request.scratch ? await scratchDirectory() : (request.directory ?? config.directory),
+        directory: request.scratch ? await scratchDirectory(new Date(), config.projectRoot) : (request.directory ?? config.directory),
         ...(request.scratch ? { scratch: true } : {}),
         ...(request.sideOf ? { sideOf: request.sideOf } : {}),
         model: config.model,

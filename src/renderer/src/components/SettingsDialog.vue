@@ -19,6 +19,8 @@ import {
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
+import { chime } from "../lib/sound"
+import { CHIMES, chimeOf, type Chime } from "@shared/chime"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AppPath, AppPaths, UsageSummary, Worktree } from "@shared/protocol"
@@ -604,6 +606,39 @@ async function pickDirectory() {
   if (directory) await app.patchConfig({ directory })
 }
 
+/** Where tasks with no project get their folders. Empty is the default under the home folder. */
+async function pickProjectRoot() {
+  const [directory] = await window.mcode.pickDirectory(t("set.pickDir"))
+  if (!directory) return
+  await app.patchConfig({ projectRoot: directory })
+  notify(t("set.projectRootSet"))
+}
+
+async function resetProjectRoot() {
+  await app.patchConfig({ projectRoot: "" })
+  notify(t("set.projectRootReset"))
+}
+
+const CHIME_LABEL: Record<Chime, string> = {
+  off: "set.chimeOff",
+  settle: "set.chimeSettle",
+  triple: "set.chimeTriple",
+  sweep: "set.chimeSweep",
+  duet: "set.chimeDuet",
+  zen: "set.chimeZen",
+}
+
+const chimeOptions = computed(() =>
+  (["off", ...CHIMES] as Chime[]).map((value) => ({ value, label: t(CHIME_LABEL[value]) })),
+)
+
+/** Picking a chime is how it is heard: the list has no separate play button. */
+function chooseChime(value: string) {
+  const choice = chimeOf(value)
+  void app.patchConfig({ taskDoneSound: choice })
+  if (choice !== "off") chime(choice)
+}
+
 
 
 const modelQuery = ref("")
@@ -1146,6 +1181,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <button class="ctl-btn" @click="pickDirectory">{{ app.config?.directory ?? "-" }}</button>
             </div>
 
+            <div class="line project-root">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.projectRoot") }}</div>
+                <div class="line-sub">{{ app.config?.projectRoot || t("set.projectRootEmpty") }}</div>
+              </div>
+              <span class="ctl-pair">
+                <button class="ctl-btn" data-pick @click="pickProjectRoot">{{ t("set.pickDir") }}</button>
+                <button v-if="app.config?.projectRoot" class="ctl-btn" data-reset @click="resetProjectRoot">
+                  {{ t("set.resetDir") }}
+                </button>
+              </span>
+            </div>
+
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.effort") }}</div>
@@ -1521,18 +1569,16 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
           <h3>{{ t("set.sounds") }}</h3>
           <div class="card">
-            <div class="line">
+            <div class="line task-done">
               <div class="line-text">
-                <div class="line-title">{{ t("set.soundAgent") }}</div>
-                <div class="line-sub">{{ t("set.soundAgentSub") }}</div>
+                <div class="line-title">{{ t("set.taskDone") }}</div>
+                <div class="line-sub">{{ t("set.taskDoneSub") }}</div>
               </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.soundAgent }"
-                @click="app.patchConfig({ soundAgent: !app.config?.soundAgent })"
-              >
-                <span class="knob" />
-              </button>
+              <SelectMenu
+                :model-value="chimeOf(app.config?.taskDoneSound)"
+                :options="chimeOptions"
+                @update:model-value="chooseChime"
+              />
             </div>
 
             <div class="line">
@@ -2618,6 +2664,12 @@ h3 {
 .switch.on .knob {
   background: linear-gradient(180deg, #fff 0%, #fff0 100%), #eeeeee;
   inset-inline-start: 10px;
+}
+
+.ctl-pair {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
 }
 
 .ctl-btn {

@@ -11,16 +11,25 @@ import path from "node:path"
  * empty folder of its own under one parent, so nothing it makes lands in
  * somebody's project and two of them never share a floor.
  *
- * The parent can be moved with MCODE_SCRATCH_ROOT, which is how the test suite
- * keeps these folders out of the home directory of whoever runs it.
+ * The parent is the default project location chosen in settings when there is
+ * one. Otherwise it can be moved with MCODE_SCRATCH_ROOT, which is how the test
+ * suite keeps these folders out of the home directory of whoever runs it.
  */
-export function scratchRoot(): string {
-  return process.env.MCODE_SCRATCH_ROOT || path.join(os.homedir(), "MCodeProjects")
+export function scratchRoot(chosen = ""): string {
+  return chosen.trim() || process.env.MCODE_SCRATCH_ROOT || path.join(os.homedir(), "MCodeProjects")
 }
 
-export async function scratchDirectory(now = new Date()): Promise<string> {
-  const root = scratchRoot()
-  await fs.mkdir(root, { recursive: true })
+export async function scratchDirectory(now = new Date(), chosen = ""): Promise<string> {
+  let root = scratchRoot(chosen)
+  try {
+    await fs.mkdir(root, { recursive: true })
+  } catch (err) {
+    // A chosen folder that can no longer be made - a drive since unplugged -
+    // costs the task its place, not the task itself.
+    if (!chosen.trim()) throw err
+    root = scratchRoot()
+    await fs.mkdir(root, { recursive: true })
+  }
   const pad = (value: number) => String(value).padStart(2, "0")
   const stamp =
     `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
