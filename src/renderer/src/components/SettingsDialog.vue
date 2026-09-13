@@ -90,14 +90,19 @@ const section = ref<Section>(props.section ?? "general")
  */
 const draft = ref(app.config?.instructions ?? "")
 const savedInstructions = computed(() => app.config?.instructions ?? "")
-const dirty = computed(() => draft.value !== savedInstructions.value)
+// As in MiMo: saving keeps the trimmed text, so only a change past whitespace counts.
+const dirty = computed(() => draft.value.trim() !== savedInstructions.value.trim())
+const ciHelpOpen = ref(false)
 
 watch(savedInstructions, (next: string) => {
   if (!dirty.value) draft.value = next
 })
 
 async function saveInstructions() {
-  await app.patchConfig({ instructions: draft.value })
+  const text = draft.value.trim()
+  await app.patchConfig({ instructions: text })
+  draft.value = text
+  notify(t("set.instructionsSaved"))
 }
 
 /* This app's own files, and the open project's instruction files. */
@@ -1895,26 +1900,29 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <template v-else-if="section === 'personal'">
           <h2>{{ t("set.personal") }}</h2>
           <p class="page-sub">{{ t("set.personalSub") }}</p>
-          <div class="card">
-            <div class="line stack">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.instructions") }}</div>
-                <div class="line-sub">{{ t("set.instructionsSub") }}</div>
-              </div>
-              <textarea
-                v-model="draft"
-                class="instructions"
-                spellcheck="false"
-                :placeholder="t('set.instructionsPlaceholder')"
-                :aria-label="t('set.instructions')"
-              />
-              <div class="stack-foot">
-                <span v-if="dirty" class="line-sub">{{ t("set.unsaved") }}</span>
-                <button class="ctl-btn" :disabled="!dirty" @click="saveInstructions">
-                  {{ t("common.save") }}
-                </button>
-              </div>
-            </div>
+          <h3>{{ t("set.instructions") }}</h3>
+          <p class="page-sub ci-sub">
+            {{ t("set.instructionsSub") }}
+            <button type="button" class="ci-link" :aria-expanded="ciHelpOpen" @click="ciHelpOpen = !ciHelpOpen">
+              {{ t("set.learnMore") }}
+            </button>
+          </p>
+          <div v-if="ciHelpOpen" class="ci-help" data-ci-help>
+            <span>{{ t("set.ciHelp1") }}</span>
+            <span>{{ t("set.ciHelp2") }}</span>
+            <span>{{ t("set.ciHelp3") }}</span>
+          </div>
+          <textarea
+            v-model="draft"
+            class="ci-input"
+            spellcheck="false"
+            :placeholder="t('set.instructionsPlaceholder')"
+            :aria-label="t('set.instructions')"
+          />
+          <div class="ci-actions">
+            <button class="ctl-btn" :disabled="!dirty" @click="saveInstructions">
+              {{ t("common.save") }}
+            </button>
           </div>
         </template>
 
@@ -3111,36 +3119,68 @@ h3 {
   font-variant-numeric: tabular-nums;
 }
 
-/* A row whose control is a block of its own rather than a thing on the end. */
-.line.stack {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
+/*
+ * MiMo's custom instructions: a heading, a line with an inline 了解更多 that
+ * opens three lines of help, a 200px box on the page itself, and Save below.
+ */
+.page-sub.ci-sub {
+  margin-top: 0;
 }
 
-.instructions {
-  min-height: 132px;
+.ci-link {
+  display: inline;
+  padding: 0;
+  color: var(--text-interactive);
+  background: none;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ci-link:hover {
+  text-decoration: underline;
+}
+
+.ci-help {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: -6px 0 14px;
   padding: 10px 12px;
+  color: var(--text-weak);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+}
+
+.ci-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 200px;
+  margin-top: 10px;
+  padding: 12px 14px;
   color: var(--text-strong);
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
+  border-radius: 10px;
   outline: none;
   font-family: inherit;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  line-height: 20px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1.6;
   resize: vertical;
 }
 
-.instructions:focus {
+.ci-input:focus {
   border-color: var(--border-strong);
 }
 
-.stack-foot {
+.ci-actions {
   display: flex;
-  align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  margin-top: 10px;
 }
 
 /* A path is read left to right and has to wrap somewhere, so let it wrap. */
