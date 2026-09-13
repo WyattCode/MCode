@@ -74,6 +74,31 @@ const counts = computed(() => ({
   other: found.value.filter((row) => row.kind === "other").length,
 }))
 
+/*
+ * Grid or list, as MiMo offers both and remembers which was last used. Grid is
+ * where it starts; a window with storage switched off simply always starts there.
+ */
+const LAYOUT_KEY = "mcode.artifactsViewMode"
+const layout = ref<"grid" | "list">(
+  (() => {
+    try {
+      return localStorage.getItem(LAYOUT_KEY) === "list" ? "list" : "grid"
+    } catch {
+      return "grid"
+    }
+  })(),
+)
+
+function setLayout(mode: "grid" | "list") {
+  layout.value = mode
+  try {
+    localStorage.setItem(LAYOUT_KEY, mode)
+  } catch {}
+}
+
+/* The bucket a file falls in, named the way its filter chip names it. */
+const KIND_LABEL: Record<FileKind, string> = { doc: "art.docs", code: "art.code", other: "art.other" }
+
 const FILTERS = [
   { id: "all", label: "art.all" },
   { id: "doc", label: "art.docs" },
@@ -128,26 +153,104 @@ async function open(row: Row) {
         />
       </div>
 
-      <div class="filters">
-        <button
-          v-for="filter in FILTERS"
-          :key="filter.id"
-          class="chip"
-          :class="{ on: kind === filter.id }"
-          @click="kind = filter.id"
-        >
-          <span class="chip-label">{{ t(filter.label) }}</span>
-          <span class="chip-count">{{ counts[filter.id] }}</span>
-        </button>
+      <div class="bar">
+        <div class="filters">
+          <button
+            v-for="filter in FILTERS"
+            :key="filter.id"
+            class="chip"
+            :class="{ on: kind === filter.id }"
+            @click="kind = filter.id"
+          >
+            <span class="chip-label">{{ t(filter.label) }}</span>
+            <span class="chip-count">{{ counts[filter.id] }}</span>
+          </button>
+        </div>
+        <!-- MiMo's two layouts, at the end of the filter row. -->
+        <div class="view-toggle" role="group" :aria-label="t('art.viewMode')">
+          <button
+            class="view-btn"
+            data-view="grid"
+            :aria-pressed="layout === 'grid'"
+            :aria-label="t('art.viewGrid')"
+            v-tip="{ label: t('art.viewGrid') }"
+            @click="setLayout('grid')"
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="2" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" />
+              <rect x="9" y="2" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" />
+              <rect x="2" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" />
+              <rect x="9" y="9" width="5" height="5" rx="1" stroke="currentColor" stroke-width="1.2" />
+            </svg>
+          </button>
+          <button
+            class="view-btn"
+            data-view="list"
+            :aria-pressed="layout === 'list'"
+            :aria-label="t('art.viewList')"
+            v-tip="{ label: t('art.viewList') }"
+            @click="setLayout('list')"
+          >
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M5.5 4h8M5.5 8h8M5.5 12h8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+              <circle cx="2.8" cy="4" r="0.8" fill="currentColor" />
+              <circle cx="2.8" cy="8" r="0.8" fill="currentColor" />
+              <circle cx="2.8" cy="12" r="0.8" fill="currentColor" />
+            </svg>
+          </button>
+        </div>
       </div>
 
-      <div v-if="shown.length" class="card">
+      <!--
+        The grid: one tile per file, a well with the file's mark and its kind
+        above the name, and the way back to its conversation on hover.
+      -->
+      <div v-if="shown.length && layout === 'grid'" class="grid">
+        <div
+          v-for="row in shown"
+          :key="row.key"
+          class="tile"
+          :class="{ gone: !row.exists }"
+          :title="row.path"
+          @click="open(row)"
+        >
+          <div class="well">
+            <svg class="well-mark" width="38" height="38" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M4 1.8h5.2L12.5 5v9.2H4z" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round" />
+              <path d="M9 1.8V5.2h3.4" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round" />
+            </svg>
+            <span class="badge">{{ t(KIND_LABEL[row.kind]) }}</span>
+            <button
+              class="tile-back"
+              :aria-label="t('art.back')"
+              v-tip="{ label: row.session.title }"
+              @click.stop="emit('open', row.session.sessionID)"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
+          <div class="tile-body">
+            <span class="file-name">{{ row.name }}</span>
+            <span class="file-meta">
+              <span v-if="!row.exists" class="gone-tag">{{ t("art.missing") }}</span>
+              <span v-else-if="row.size !== undefined" class="file-size">{{ size(row.size) }}</span>
+              <span class="file-when">{{ when(row.at) }}</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="shown.length" class="list">
         <div v-for="row in shown" :key="row.key" class="row" :class="{ gone: !row.exists }">
           <button class="file" :title="row.path" :disabled="!row.exists" @click="open(row)">
-            <svg class="file-mark" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <span class="file-box">
+              <svg class="file-mark" width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4 1.8h5.2L12.5 5v9.2H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               <path d="M9 1.8V5.2h3.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-            </svg>
+              </svg>
+            </span>
             <span class="file-text">
               <span class="file-name">{{ row.name }}</span>
               <span class="file-meta">
@@ -246,10 +349,146 @@ async function open(row: Row) {
   color: var(--text-weak);
 }
 
+/* The filter chips take the row; the layout toggle sits at its end, as MiMo's does. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 11px;
+}
+
 .filters {
   display: flex;
+  flex: 1;
+  flex-wrap: wrap;
   gap: 5px;
-  margin-top: 11px;
+  min-width: 0;
+}
+
+/* MiMo's toggle, measured: a 1px frame on an 8px corner around two 28x24 buttons. */
+.view-toggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+}
+
+.view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  color: var(--text-weak);
+  border-radius: 6px;
+  transition: color 0.12s, background 0.12s;
+}
+
+.view-btn:hover {
+  color: var(--text-strong);
+}
+
+.view-btn[aria-pressed="true"] {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+/* Three across with 14 between, as MiMo lays its grid. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.tile {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 14px;
+  cursor: pointer;
+  transition: box-shadow 0.12s;
+}
+
+.tile:hover {
+  box-shadow: var(--shadow-xs-border);
+}
+
+.tile.gone {
+  cursor: default;
+}
+
+/* The 96px well the file's mark sits in, with its kind top left and the way back top right. */
+.well {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 96px;
+  color: var(--text-weak);
+  background: var(--surface-base);
+}
+
+.badge {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  padding: 2px 8px;
+  color: var(--text-base);
+  background: var(--surface-hover);
+  border-radius: 9999px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 600;
+  line-height: 16px;
+}
+
+.tile-back {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-base);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.tile:hover .tile-back,
+.tile-back:focus-visible {
+  opacity: 1;
+}
+
+.tile-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px 12px;
+}
+
+.tile .file-name {
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 600;
+}
+
+.tile.gone .file-name {
+  color: var(--text-weak);
+  text-decoration: line-through;
+}
+
+.file-when {
+  flex-shrink: 0;
 }
 
 .chip {
@@ -284,24 +523,39 @@ async function open(row: Row) {
   color: var(--text-base);
 }
 
-.card {
+/* The list: one framed row per file, 10 apart on a 10px corner, as MiMo's list is. */
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 18px;
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-raised));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-raised));
-  border-radius: 16px;
-  overflow: hidden;
 }
 
 .row {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 17px;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 8%, transparent);
+  gap: 10px;
+  padding: 0 12px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  transition: box-shadow 0.12s;
 }
 
-.row:last-child {
-  border-bottom: none;
+.row:hover {
+  box-shadow: var(--shadow-xs-border);
+}
+
+/* MiMo's 32px box the file's mark sits in at the start of a row. */
+.file-box {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--surface-base);
+  border-radius: 8px;
 }
 
 .file {
@@ -310,7 +564,7 @@ async function open(row: Row) {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  height: 60px;
+  height: 56px;
   color: var(--text-strong);
   text-align: start;
 }
