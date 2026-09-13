@@ -504,6 +504,37 @@ async function revert(turn: Turn) {
   }
 }
 
+/** A turn that finished without saying or doing anything. */
+function emptyReply(turn: Turn): boolean {
+  if (!turn.finish || turn.error || turn.finish === "aborted") return false
+  return !turn.parts.some((part) => (part.type === "text" && part.text.trim()) || part.type === "tool")
+}
+
+/*
+ * MiMo's retry on a turn that failed, was stopped or came back empty: the
+ * question that started it goes out again, as it was, in place of the turn.
+ * The conversation is taken back to just before that question - the same
+ * rollback editing it uses - and the question is sent once more. While a turn
+ * is still running, or when there is no question to send, it says so instead.
+ */
+async function retry(turn: Turn) {
+  const sessionID = props.side ? app.sideID : app.currentID
+  const message = shownMessages.value.find((entry) => entry.id === turn.id)
+  if (!sessionID || shownBusy.value || reverting.value || message?.role !== "user") {
+    notifyFailure(t("stream.retryUnavailable"))
+    return
+  }
+  reverting.value = true
+  try {
+    await app.revert(sessionID, turn.id)
+    await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined)
+  } catch (failure) {
+    notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
+  } finally {
+    reverting.value = false
+  }
+}
+
 function stepMessage(by: 1 | -1) {
   const view = scroller.value
   if (!view) return
@@ -605,7 +636,7 @@ defineExpose({ stepMessage, scroller })
           </div>
         </div>
 
-        <div v-if="turn.parts.length || turn.error" class="msg assistant">
+        <div v-if="turn.parts.length || turn.error || turn.finish" class="msg assistant">
           <!--
             What the turn did, above the answer rather than under it. MiMo
             states it there and keeps it; this app had the same figure in a
@@ -687,8 +718,47 @@ defineExpose({ stepMessage, scroller })
             </template>
           </div>
 
-          <div v-if="turn.error" class="err">{{ turn.errorCode ? t(turn.errorCode, turn.errorParams) : turn.error }}</div>
-          <div v-else-if="turn.finish === 'aborted'" class="note">{{ t("stream.stopped") }}</div>
+          <!--
+            A failure as MiMo shows one: a card with the reason and a retry at its
+            end. A stopped or empty turn gets its line and a quiet retry under it.
+          -->
+          <div v-if="turn.error" class="err-card" data-turn-error>
+            <svg class="err-icon" width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2" />
+              <path d="M8 4.8v3.8M8 11v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </svg>
+            <span class="err-text">{{ turn.errorCode ? t(turn.errorCode, turn.errorParams) : turn.error }}</span>
+            <button class="retry-pill" data-retry @click="retry(turn)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.8v2.9h-2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              {{ t("stream.retry") }}
+            </button>
+          </div>
+          <template v-else-if="turn.finish === 'aborted' || emptyReply(turn)">
+            <div class="note finished" :class="{ empty: emptyReply(turn) }" data-turn-finished>
+              {{
+                emptyReply(turn)
+                  ? t("stream.noContent")
+                  : elapsed(turn)
+                    ? t("stream.stoppedAfter", { dur: elapsed(turn) ?? "" })
+                    : t("stream.stopped")
+              }}
+            </div>
+            <div class="retry-row">
+              <button
+                class="retry-icon"
+                data-retry
+                :aria-label="t('stream.retry')"
+                v-tip="{ label: t('stream.retry'), placement: 'top' }"
+                @click="retry(turn)"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.8v2.9h-2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </template>
           <div v-else-if="turn.finish === 'max_tokens'" class="note">{{ t("stream.maxTokens") }}</div>
         </div>
 
@@ -1156,5 +1226,90 @@ defineExpose({ stepMessage, scroller })
 
 .run-chev.open {
   transform: rotate(90deg);
+}
+/*
+ * A failed, stopped or empty turn, as MiMo draws one. The failure is a card on a
+ * 16px corner - the reason clamped to about six lines, a framed retry pill at
+ * its end. A stopped or empty turn keeps its short line with a 26px retry
+ * button under it.
+ */
+.err-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-top: 12px;
+  padding: 12px 14px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 16px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.err-icon {
+  flex-shrink: 0;
+  color: var(--error);
+}
+
+.err-text {
+  flex: 1;
+  min-width: 0;
+  max-height: 143px;
+  overflow: hidden;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.retry-pill {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 13px;
+  color: var(--text-base);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 999px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: 1.7;
+}
+
+.retry-pill:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.note.finished {
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.note.finished.empty {
+  color: var(--error);
+}
+
+.retry-row {
+  display: flex;
+  gap: 2px;
+  margin-top: 2px;
+}
+
+.retry-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+
+.retry-icon:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 </style>
