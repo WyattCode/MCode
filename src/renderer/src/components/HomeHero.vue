@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
+import { computed, nextTick, ref, watch } from "vue"
+import { APP_ICONS, DEFAULT_APP_ICON, appIconByID, appIconSvg } from "@shared/app-icons"
+import classicIcon from "@resources/app-icons/classic.png"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import SelectMenu from "./SelectMenu.vue"
@@ -127,13 +129,166 @@ function start(name: string) {
   box.value?.set({ text: `/${name} `, attachments: [], mentioned: new Set() })
   box.value?.focus()
 }
+
+/*
+ * The mark above the greeting, as MiMo's home has one: press it and it trades
+ * places with another of the app's icons through a short animation. Only what
+ * this screen shows changes - the icon setting is left alone. The app's own
+ * icon comes round most often, and neither the same icon nor the same
+ * animation plays twice in a row.
+ */
+const HERO_DEFAULT = "home:default"
+const HERO_POOL = [HERO_DEFAULT, HERO_DEFAULT, HERO_DEFAULT, ...APP_ICONS.map((spec) => spec.id)]
+
+function pickOther<T>(current: T, pool: T[], same: (a: T, b: T) => boolean = (a, b) => a === b): T {
+  const others = pool.filter((entry) => !same(entry, current))
+  const from = others.length ? others : pool
+  return from[Math.floor(Math.random() * from.length)]
+}
+
+const heroChoice = ref(HERO_DEFAULT)
+const resolveHero = (choice: string) => (choice === HERO_DEFAULT ? app.config?.appIcon || DEFAULT_APP_ICON : choice)
+const heroSpec = computed(() => appIconByID(resolveHero(heroChoice.value)))
+// The one original artwork is shown from its file; the rest are drawn.
+const heroImage = computed(() => (heroSpec.value.original ? classicIcon : ""))
+const heroSvg = computed(() => (heroSpec.value.original ? "" : appIconSvg(heroSpec.value, 50)))
+
+/** A swap in two halves: the old mark leaves, the new one arrives. */
+interface Swap {
+  leave: Keyframe[]
+  arrive: Keyframe[]
+  leaveMs: number
+  arriveMs: number
+  easing: string
+}
+
+const SWAPS: Record<string, Swap> = {
+  spin: {
+    leave: [{ transform: "none", opacity: 1 }, { transform: "scale(0.4) rotate(-70deg)", opacity: 0 }],
+    arrive: [
+      { transform: "scale(0.4) rotate(40deg)", opacity: 0 },
+      { transform: "scale(1.08) rotate(-6deg)", opacity: 1, offset: 0.6 },
+      { transform: "none", opacity: 1 },
+    ],
+    leaveMs: 150,
+    arriveMs: 480,
+    easing: "cubic-bezier(0.2, 0.9, 0.3, 1.2)",
+  },
+  flip: {
+    leave: [{ transform: "perspective(400px) rotateY(0deg)" }, { transform: "perspective(400px) rotateY(90deg)" }],
+    arrive: [{ transform: "perspective(400px) rotateY(-90deg)" }, { transform: "perspective(400px) rotateY(0deg)" }],
+    leaveMs: 170,
+    arriveMs: 320,
+    easing: "cubic-bezier(0.3, 1.4, 0.5, 1)",
+  },
+  drop: {
+    leave: [{ transform: "none", opacity: 1 }, { transform: "translateY(-30px)", opacity: 0 }],
+    arrive: [
+      { transform: "translateY(-40px) scale(0.92)", opacity: 1 },
+      { transform: "translateY(0) scale(1)", offset: 0.55 },
+      { transform: "translateY(-9px)", offset: 0.75 },
+      { transform: "none" },
+    ],
+    leaveMs: 150,
+    arriveMs: 560,
+    easing: "ease-out",
+  },
+  blur: {
+    leave: [{ transform: "none", opacity: 1, filter: "blur(0)" }, { transform: "scale(1.4)", opacity: 0, filter: "blur(6px)" }],
+    arrive: [{ transform: "scale(0.6)", opacity: 0, filter: "blur(6px)" }, { transform: "none", opacity: 1, filter: "blur(0)" }],
+    leaveMs: 170,
+    arriveMs: 380,
+    easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
+  },
+  slide: {
+    leave: [{ transform: "none", opacity: 1 }, { transform: "translateX(-36px)", opacity: 0 }],
+    arrive: [
+      { transform: "translateX(36px)", opacity: 0 },
+      { transform: "translateX(-4px)", opacity: 1, offset: 0.7 },
+      { transform: "none", opacity: 1 },
+    ],
+    leaveMs: 140,
+    arriveMs: 360,
+    easing: "ease-out",
+  },
+  squash: {
+    leave: [{ transform: "none" }, { transform: "translateY(10px) scale(1.22, 0.55)" }],
+    arrive: [
+      { transform: "translateY(10px) scale(1.22, 0.55)" },
+      { transform: "translateY(-3px) scale(0.92, 1.1)", offset: 0.45 },
+      { transform: "none" },
+    ],
+    leaveMs: 130,
+    arriveMs: 600,
+    easing: "ease-out",
+  },
+}
+
+const heroMark = ref<HTMLElement>()
+const heroBusy = ref(false)
+const heroSwap = ref("")
+
+/*
+ * An animation's `finished` is not a promise that it will finish: a page that is
+ * hidden or throttled can hold it indefinitely, and a swap waiting on it would
+ * leave the mark unpressable for good. Each half waits for its animation or for
+ * its own length and a little more, whichever comes first.
+ */
+function settle(animation: Animation, ms: number): Promise<unknown> {
+  return Promise.race([animation.finished.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, ms + 120))])
+}
+
+async function swapHero() {
+  if (heroBusy.value) return
+  const next = pickOther(heroChoice.value, HERO_POOL, (a, b) => resolveHero(a) === resolveHero(b))
+  const mark = heroMark.value
+  // Without motion, or with nothing to move, the icon simply changes.
+  if (!mark || typeof mark.animate !== "function" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    heroChoice.value = next
+    return
+  }
+  const name = pickOther(heroSwap.value, Object.keys(SWAPS))
+  heroSwap.value = name
+  const swap = SWAPS[name]
+  heroBusy.value = true
+  try {
+    const leaving = mark.animate(swap.leave, { duration: swap.leaveMs, easing: "ease-in", fill: "forwards" })
+    await settle(leaving, swap.leaveMs)
+    heroChoice.value = next
+    await nextTick()
+    const arriving = mark.animate(swap.arrive, { duration: swap.arriveMs, easing: swap.easing })
+    leaving.cancel()
+    await settle(arriving, swap.arriveMs)
+  } catch {
+    // An animation cut short - the screen left mid-swap - still leaves the new icon.
+    heroChoice.value = next
+  } finally {
+    // Whatever did not run out is stopped, so the mark always rests at its own size.
+    for (const running of mark.getAnimations()) running.cancel()
+    heroBusy.value = false
+  }
+}
 </script>
 
 <template>
   <div class="home-hero">
     <div class="drag" aria-hidden="true" />
     <div class="column">
-      <div class="wordmark" role="img" aria-label="MCode" />
+      <button
+        type="button"
+        class="hero-icon"
+        :aria-label="t('home.iconLabel')"
+        :data-hero-icon="heroSpec.id"
+        :data-hero-swap="heroSwap"
+        :data-animating="heroBusy ? 'true' : 'false'"
+        @click="swapHero"
+      >
+        <span ref="heroMark" class="hero-mark">
+          <img v-if="heroImage" :src="heroImage" alt="" draggable="false" />
+          <!-- Safe to bind as HTML: the markup is this app's own drawing, not text from anywhere else. -->
+          <span v-else class="hero-drawn" v-html="heroSvg" />
+        </span>
+      </button>
       <p class="slogan">{{ t("home.slogan") }}</p>
 
       <div class="dock-slot">
@@ -212,11 +367,39 @@ function start(name: string) {
   width: min(712px, 100%);
 }
 
-.wordmark {
-  width: 132px;
-  height: 36px;
-  background: var(--wordmark) center / contain no-repeat;
-  opacity: 0.92;
+/* MiMo's 50px mark: a bare button, the icon itself the only thing drawn. */
+.hero-icon {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.hero-icon:focus-visible {
+  outline: 2px solid var(--border-focus, var(--text-weak));
+  outline-offset: 3px;
+}
+
+.hero-mark,
+.hero-drawn {
+  display: grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+}
+
+.hero-mark img,
+.hero-drawn :deep(svg) {
+  display: block;
+  width: 50px;
+  height: 50px;
+  user-select: none;
 }
 
 /* 18/600/28.8 at 0.4px, measured on MiMo's greeting. */
