@@ -423,6 +423,8 @@ function startResize(event: PointerEvent) {
   flex-shrink: 0;
   width: 24px;
   height: 24px;
+  /* MiMo's 7, the corner its tabs and the close at the far end share; the shared button's is 4. */
+  border-radius: 7px;
 }
 
 /* Putting the panel away is MiMo's 26px button at the far end of the bar. */
