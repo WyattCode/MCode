@@ -2121,7 +2121,8 @@ const bindableCommands = computed(() => {
       id: "view.model",
       group: "key.groupModels",
       title: t("cmd.switchModel"),
-      hint: "Ctrl+'",
+      // MiMo's chord for its model picker; Ctrl+' still opens the same menu.
+      hint: "Ctrl+Shift+M",
       // The picker hangs off the composer's model pill, and the composer is
       // only mounted inside a project - so on the home screen this command had
       // nothing to open, and both menus offered it anyway.
