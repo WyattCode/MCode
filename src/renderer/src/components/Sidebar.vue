@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SessionInfo } from "@shared/protocol"
 import { computed, ref, watch } from "vue"
+import RowTitle from "./RowTitle.vue"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import type { MenuItem } from "../lib/menu"
@@ -47,6 +48,7 @@ const emit = defineEmits<{
   toggle: []
   browse: []
   open: [sessionID: string]
+  rename: [sessionID: string]
   createIn: [directory: string]
   settings: []
 }>()
@@ -61,6 +63,9 @@ const name = (directory: string) =>
   app.config?.projectNames?.[directory] || directory.split(/[\\/]/).filter(Boolean).pop() || directory
 
 const title = (text?: string) => (text && text.trim() ? text : t("side.newTask"))
+
+/* What a task row's pin and menu lie over at its end, as MiMo allows for them. */
+const TITLE_COVER = 55
 
 /* Pinned conversations rise to the top of whichever list they are in. */
 const byPinned = (entries: typeof app.sessions) =>
@@ -681,7 +686,12 @@ watch(picking, (on) => {
                 <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
-                <span class="row-label task-label">{{ title(session.title) }}</span>
+                <RowTitle
+                  class="row-label task-label"
+                  :text="title(session.title)"
+                  :cover="picking ? 0 : TITLE_COVER"
+                  @rename="!picking && emit('rename', session.id)"
+                />
                 <span v-if="statusOf(session.id)" class="row-status" :data-status="statusOf(session.id)">
                   <span v-if="statusOf(session.id) === 'running'" class="status-spin" aria-hidden="true" />
                   <span v-else-if="statusOf(session.id) === 'unread'" class="status-dot" aria-hidden="true" />
@@ -798,7 +808,12 @@ watch(picking, (on) => {
               <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
             <span class="stack">
-              <span class="row-label task-label">{{ title(entry.session.title) }}</span>
+              <RowTitle
+                class="row-label task-label"
+                :text="title(entry.session.title)"
+                :cover="picking ? 0 : TITLE_COVER"
+                @rename="!picking && emit('rename', entry.session.id)"
+              />
               <!-- Which project it is in, which the tree above would have said. -->
               <span v-if="entry.note" class="row-note">{{ entry.note }}</span>
             </span>
@@ -1163,6 +1178,18 @@ watch(picking, (on) => {
   color: color-mix(in srgb, var(--text-strong) 80%, transparent);
   font-weight: 400;
   line-height: 22px;
+}
+
+/*
+ * MiMo's resting title when it runs under the row's buttons: its last 24px
+ * fade out instead of an ellipsis. Hovered, focused or open, it is left whole.
+ */
+.row.task:not(.on):not(:hover):not(:focus-within) .title-viewport[data-title-overflow="true"] {
+  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 24px), transparent 100%);
+}
+
+.row.task:not(.on):not(:hover):not(:focus-within) .title-viewport[data-title-overflow="true"]:dir(rtl) {
+  mask-image: linear-gradient(to left, #000 0, #000 calc(100% - 24px), transparent 100%);
 }
 
 .empty {

@@ -1606,6 +1606,15 @@ async function runSessionMenu(key: string) {
   await commands.value.find((entry) => entry.id === key)?.run()
 }
 
+/* A double-click on a row's title renames it, as its menu's rename does. */
+async function renameFromSide(sessionID: string) {
+  if (app.currentID !== sessionID) {
+    view.value = "session"
+    await app.open(sessionID)
+  }
+  await commands.value.find((entry) => entry.id === "session.rename")?.run()
+}
+
 async function confirmDeleteSession() {
   const target = deletingSession.value
   deletingSession.value = undefined
@@ -3710,6 +3719,7 @@ onBeforeUnmount(() => {
         @toggle="leftPanel = !leftPanel"
         @browse="browse"
         @open="app.open($event)"
+        @rename="renameFromSide"
         @createIn="newSessionIn"
         @settings="openSettings"
       />
