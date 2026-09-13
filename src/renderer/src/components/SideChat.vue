@@ -16,9 +16,8 @@ import Composer from "./Composer.vue"
 const app = useApp()
 const emit = defineEmits<{
   close: []
-  "open-settings": []
+  "open-settings": [section?: "models"]
   connect: []
-  "manage-models": []
   shell: [command: string]
   terminal: []
 }>()
@@ -48,15 +47,14 @@ const emit = defineEmits<{
     <div class="dock">
       <!--
         Every event the box raises is passed on. It was mounted with none bound,
-        so from this column managing models, connecting a provider and shell
+        so from this column configuring models, connecting a provider and shell
         mode all did nothing - silently, which is the worst way for a button
         to fail.
       -->
       <Composer
         side
-        @open-settings="emit('open-settings')"
+        @open-settings="emit('open-settings', $event)"
         @connect="emit('connect')"
-        @manage-models="emit('manage-models')"
         @shell="emit('shell', $event)"
         @terminal="emit('terminal')"
       />

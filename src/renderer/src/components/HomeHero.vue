@@ -31,9 +31,8 @@ const props = defineProps<{
 /* What the box asks the window for, passed straight through. */
 const emit = defineEmits<{
   terminal: []
-  "open-settings": []
+  "open-settings": [section?: "models"]
   connect: []
-  "manage-models": []
   shell: [command: string]
 }>()
 
@@ -229,9 +228,8 @@ async function hop() {
             :start-directory="scratch ? undefined : chosen"
             :start-scratch="scratch"
             fresh
-            @open-settings="emit('open-settings')"
+            @open-settings="emit('open-settings', $event)"
             @connect="emit('connect')"
-            @manage-models="emit('manage-models')"
             @shell="emit('shell', $event)"
             @terminal="emit('terminal')"
           />

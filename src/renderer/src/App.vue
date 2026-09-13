@@ -34,7 +34,6 @@ import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
 import ConnectDialog from "./components/ConnectDialog.vue"
 import EditMenu from "./components/EditMenu.vue"
-import ManageModelsDialog from "./components/ManageModelsDialog.vue"
 import McpDialog from "./components/McpDialog.vue"
 import Onboarding from "./components/Onboarding.vue"
 import {
@@ -320,8 +319,9 @@ const choosingServer = ref(false)
 /** Whether the saved-servers dialog is up. */
 const managingServers = ref(false)
 
-function openSettings() {
-  settingsSection.value = undefined
+/* The model menu's "configure custom models" lands on the models page, as MiMo's does. */
+function openSettings(section?: unknown) {
+  settingsSection.value = section === "models" ? "models" : undefined
   settingsOpen.value = true
 }
 
@@ -1555,7 +1555,6 @@ async function confirmDeleteSession() {
   deletingSession.value = undefined
   if (target) await app.remove(target)
 }
-const manageModelsOpen = ref(false)
 
 /**
  * The conversation as a Markdown file.
@@ -3674,7 +3673,6 @@ onBeforeUnmount(() => {
           :directory="homeDirectory"
           @open-settings="openSettings"
           @connect="connectOpen = true"
-          @manage-models="manageModelsOpen = true"
           @shell="runShellCommand"
           @terminal="terminalOpen = true"
         />
@@ -3762,7 +3760,6 @@ onBeforeUnmount(() => {
               ref="composer"
               @open-settings="openSettings"
               @connect="connectOpen = true"
-              @manage-models="manageModelsOpen = true"
               @shell="runShellCommand"
               @terminal="terminalOpen = true"
             />
@@ -3786,7 +3783,6 @@ onBeforeUnmount(() => {
         @close="toggleSideChat"
         @open-settings="openSettings"
         @connect="connectOpen = true"
-        @manage-models="manageModelsOpen = true"
         @shell="runShellCommand"
         @terminal="terminalOpen = true"
       />
@@ -3972,12 +3968,6 @@ onBeforeUnmount(() => {
 
   <!-- Listens at the document, so every text field gets the same menu. -->
   <EditMenu />
-
-  <ManageModelsDialog
-    v-if="manageModelsOpen"
-    @close="manageModelsOpen = false"
-    @connect="manageModelsOpen = false; connectOpen = true"
-  />
 
   <Toasts />
 

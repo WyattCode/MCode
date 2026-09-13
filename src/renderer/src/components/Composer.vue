@@ -8,7 +8,7 @@ import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles } from "../lib/attach"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
-import { findModel, isLatest, resolveVariant, withoutLatest } from "../lib/model"
+import { findModel, resolveVariant, withoutLatest } from "../lib/model"
 import {
   absolutePath,
   fileDirectory,
@@ -20,16 +20,18 @@ import {
 } from "../lib/mention"
 import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
-import ModelTooltip from "./ModelTooltip.vue"
+import ModelMenuRow from "./ModelMenuRow.vue"
+import { besideRow } from "../lib/submenu"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import { readContext } from "./session-context"
 import ProviderIcon from "./ProviderIcon.vue"
 import { t, language } from "../lib/i18n"
 
-const emit = defineEmits<{ terminal: []; "open-settings": []
+const emit = defineEmits<{
+  terminal: []
+  "open-settings": [section?: "models"]
   connect: []
-  "manage-models": []
   shell: [command: string]
 }>()
 
@@ -939,8 +941,7 @@ function onKeydown(event: KeyboardEvent) {
 
 
 /** Which pill has its menu open, if any. */
-const menu = ref<"agent" | "model" | "effort" | "access" | "plus" | "context">()
-const modelQuery = ref("")
+const menu = ref<"agent" | "model" | "access" | "plus" | "context">()
 
 /** Token counts the way a context window is talked about: 39.2K, 1.0M. */
 function compactTokens(count: number): string {
@@ -1032,18 +1033,18 @@ const ACCESS_ICONS: Record<Access, string[]> = {
 }
 
 /*
- * The menu opens below its chip, as MiMo's does. On the home screen that is
- * always so; under a conversation the box sits at the window's foot, and a menu
- * that would run within 60px of the bottom opens above instead.
+ * The access and model menus open below their chips, as MiMo's do. On the home
+ * screen that is always so; under a conversation the box sits at the window's
+ * foot, and a menu that would run within 60px of the bottom opens above instead.
  */
 const accessMenu = ref<HTMLElement>()
-const accessUp = ref(false)
+const menuUp = ref(false)
 watch(menu, async (value) => {
-  accessUp.value = false
-  if (value !== "access" || props.fresh) return
+  menuUp.value = false
+  if ((value !== "access" && value !== "model") || props.fresh) return
   await nextTick()
-  const rect = accessMenu.value?.getBoundingClientRect()
-  if (rect && rect.bottom > window.innerHeight - 60) accessUp.value = true
+  const rect = (value === "access" ? accessMenu.value : modelMenu.value)?.getBoundingClientRect()
+  if (rect && rect.bottom > window.innerHeight - 60) menuUp.value = true
 })
 
 /**
@@ -1131,8 +1132,6 @@ const currentModel = computed<ModelInfo | undefined>(() =>
  */
 const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
 
-/** "Follow the app default" at the head, then this model's own levels. */
-const EFFORT_CHOICES = computed<(Effort | undefined)[]>(() => [undefined, ...variants.value])
 
 /**
  * The session's step, if this model still takes it.
@@ -1146,8 +1145,9 @@ const EFFORT_CHOICES = computed<(Effort | undefined)[]>(() => [undefined, ...var
  */
 const effortLevel = computed<Effort | undefined>(() => resolveVariant(variants.value, session.value?.effort))
 
-async function chooseEffort(level?: Effort) {
-  menu.value = undefined
+/* A level chosen in a model's submenu: that model, then that level on the conversation. */
+async function chooseModelEffort(provider: string, model: string, level?: Effort) {
+  await chooseModel(provider, model)
   await app.setEffort(level)
 }
 
@@ -1165,48 +1165,61 @@ const agent = computed(() => session.value?.agent ?? app.config?.agent ?? "build
  */
 const groups = computed(() => {
   const chosen = new Set(app.config?.enabledModels ?? [])
-  const needle = modelQuery.value.trim().toLowerCase()
   return app.providers
     .filter((provider) => provider.configured)
     .map((provider) => ({
       provider,
-      models: provider.models.filter((model) => {
-        if (chosen.size && !chosen.has(`${provider.id}/${model.id}`)) return false
-        if (!needle) return true
-        return model.name.toLowerCase().includes(needle) || model.id.toLowerCase().includes(needle)
-      }),
+      models: provider.models.filter((model) => !chosen.size || chosen.has(`${provider.id}/${model.id}`)),
     }))
     .filter((group) => group.models.length > 0)
 })
 
-const MANAGE_KEY = "action:manage"
-const modelField = ref<HTMLInputElement>()
+const CONFIG_KEY = "action:config"
+const MORE_KEY = "action:more"
 const modelMenu = ref<HTMLElement>()
+const moreMenu = ref<HTMLElement>()
 const activeKey = ref("")
 
-/**
- * The row the pointer is resting on, and where it is, for the readout beside it.
- *
- * Hover only, and with no delay, which is what the reference does: its picker
- * rows carry a tooltip at `openDelay: 0` so the list can be read by running the
- * pointer down it. The keyboard's own highlight does not raise it - moving the
- * selection with the arrows does not open one there either.
+/*
+ * Which row's submenu is open: a model's reasoning levels, or "more models".
+ * One at a time, as in MiMo, following the pointer or the arrow keys. Inside
+ * "more models" a second one holds that list's own row.
  */
-const hovered = ref<{ model: ModelInfo; provider: string; anchor: DOMRect }>()
+const modelSub = ref<string>()
+const moreSub = ref<string>()
+const morePlace = ref({ left: 0, top: 0 })
 
-function hoverModel(key: string, model: ModelInfo, provider: string, event: MouseEvent) {
-  // The pointer moves the keyboard's highlight with it, which is what the row
-  // did before this and is why the two are set together rather than by two
-  // handlers racing on the same event.
-  activeKey.value = key
-  hovered.value = { model, provider, anchor: (event.currentTarget as HTMLElement).getBoundingClientRect() }
+/*
+ * MiMo's split: its own models at the top level, everyone else's behind "more
+ * models" under a heading per vendor. Here the first connected provider stands
+ * where MiMo's own models do.
+ */
+const primaryGroup = computed(() => groups.value[0])
+const moreGroups = computed(() => groups.value.slice(1))
+
+watch(menu, () => {
+  modelSub.value = undefined
+  moreSub.value = undefined
+})
+
+watch(modelSub, async (value) => {
+  moreSub.value = undefined
+  if (value !== MORE_KEY) return
+  await nextTick()
+  const row = modelMenu.value?.querySelector(`[data-key="${MORE_KEY}"]`)?.getBoundingClientRect()
+  if (row && moreMenu.value) morePlace.value = besideRow(row, moreMenu.value.offsetWidth, moreMenu.value.offsetHeight)
+})
+
+/* The levels a row offers: none where there is no conversation of this box's to set them on. */
+function effortsFor(model: ModelInfo): (Effort | undefined)[] {
+  return sessionID.value && !props.side && model.variants.length ? [undefined, ...model.variants] : []
 }
 
-// The box is placed against a rectangle read once, so anything that moves the
-// row out from under it - closing the menu, scrolling the list - retires it.
-watch(menu, (which) => {
-  if (which !== "model") hovered.value = undefined
-})
+/* The pointer moves the keyboard's highlight with it, and opens that row's submenu if it has one. */
+function hoverRow(key: string) {
+  activeKey.value = key
+  modelSub.value = key
+}
 
 function modelKey(provider: string, model: string) {
   return `${provider}:${model}`
@@ -1221,19 +1234,18 @@ const currentKey = computed(() => {
 })
 
 /**
- * Every row the arrow keys walk, in the order they are drawn.
- *
- * Manage models is the last of them rather than a separate control: the
- * reference lets the keyboard reach it the same way it reaches a model, and
- * arriving at the end of the list is how someone finds it.
+ * Every top-level row the arrow keys walk, in the order they are drawn:
+ * Smart, the first provider's models, "more models", and configuring models.
  */
-const modelKeys = computed(() => [
-  ...(modelQuery.value ? [] : [SMART_KEY]),
-  ...groups.value.flatMap((group) =>
-    group.models.map((model) => modelKey(group.provider.id, model.id)),
-  ),
-  MANAGE_KEY,
-])
+const modelKeys = computed(() => {
+  const primary = primaryGroup.value
+  return [
+    SMART_KEY,
+    ...(primary ? primary.models.map((model) => modelKey(primary.provider.id, model.id)) : []),
+    ...(moreGroups.value.length ? [MORE_KEY] : []),
+    CONFIG_KEY,
+  ]
+})
 
 function scrollActiveIntoView() {
   void nextTick(() => {
@@ -1243,46 +1255,38 @@ function scrollActiveIntoView() {
   })
 }
 
-/*
- * Typing re-aims the selection at the first row still showing, so that Enter
- * takes the obvious match instead of a row the search has scrolled away.
- */
-function setModelQuery(value: string) {
-  modelQuery.value = value
-  activeKey.value = modelKeys.value[0] ?? MANAGE_KEY
-}
-
 function moveActive(by: number) {
   const keys = modelKeys.value
   if (!keys.length) return
   const index = keys.indexOf(activeKey.value)
   const start = index === -1 ? 0 : index
   activeKey.value = keys[(start + by + keys.length) % keys.length]
+  modelSub.value = undefined
   scrollActiveIntoView()
 }
 
-function openManage() {
+/* MiMo's "configure custom models": the models page of settings, not a dialog of its own. */
+function openConfig() {
   menu.value = undefined
-  emit("manage-models")
+  emit("open-settings", "models")
 }
 
 function selectActive() {
-  if (activeKey.value === MANAGE_KEY) {
-    openManage()
+  if (activeKey.value === CONFIG_KEY) {
+    openConfig()
+    return
+  }
+  if (activeKey.value === MORE_KEY) {
+    modelSub.value = MORE_KEY
     return
   }
   if (activeKey.value === SMART_KEY) {
     void chooseSmart()
     return
   }
-  for (const group of groups.value) {
-    for (const model of group.models) {
-      if (modelKey(group.provider.id, model.id) === activeKey.value) {
-        void chooseModel(group.provider.id, model.id)
-        return
-      }
-    }
-  }
+  const primary = primaryGroup.value
+  const model = primary?.models.find((entry) => modelKey(primary.provider.id, entry.id) === activeKey.value)
+  if (primary && model) void chooseModel(primary.provider.id, model.id)
 }
 
 /*
@@ -1305,6 +1309,12 @@ function onModelKeys(event: KeyboardEvent) {
   } else if (event.key === "ArrowUp") {
     event.preventDefault()
     moveActive(-1)
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault()
+    modelSub.value = activeKey.value
+  } else if (event.key === "ArrowLeft") {
+    event.preventDefault()
+    modelSub.value = undefined
   } else if (event.key === "Enter" && !event.isComposing) {
     event.preventDefault()
     selectActive()
@@ -1320,18 +1330,16 @@ function onModelKeys(event: KeyboardEvent) {
  */
 function openModelMenu() {
   menu.value = "model"
-  modelQuery.value = ""
-  activeKey.value = currentKey.value || modelKeys.value[0] || MANAGE_KEY
+  activeKey.value = modelKeys.value.includes(currentKey.value) ? currentKey.value : modelKeys.value[0]
   void nextTick(() => {
-    modelField.value?.focus()
+    modelMenu.value?.focus()
     scrollActiveIntoView()
   })
 }
 
-function toggle(which: "agent" | "model" | "effort" | "access" | "plus" | "context") {
+function toggle(which: "agent" | "model" | "access" | "plus" | "context") {
   if (menu.value === which) {
     menu.value = undefined
-    modelQuery.value = ""
     return
   }
   if (which === "model") {
@@ -1339,7 +1347,6 @@ function toggle(which: "agent" | "model" | "effort" | "access" | "plus" | "conte
     return
   }
   menu.value = which
-  modelQuery.value = ""
 }
 
 async function chooseAgent(next: (typeof AGENTS)[number]) {
@@ -1684,7 +1691,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               row. What each level does is on hover, beside the row, rather than
               under every name.
             -->
-            <div v-if="menu === 'access'" ref="accessMenu" class="menu access-menu" :class="{ up: accessUp }">
+            <div v-if="menu === 'access'" ref="accessMenu" class="menu access-menu" :class="{ up: menuUp }">
               <button
                 v-for="entry in accessChoices"
                 :key="entry"
@@ -1770,183 +1777,129 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </span>
 
           <div class="pill-wrap">
-            <button class="pill" :class="{ open: menu === 'model' }" @click="toggle('model')">
-              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-                <path d="M7 1.6 8.4 5.6 12.4 7 8.4 8.4 7 12.4 5.6 8.4 1.6 7 5.6 5.6z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" />
-              </svg>
-              <span>{{ modelName }}</span>
+            <button class="pill model-pill" :class="{ open: menu === 'model' }" @click="toggle('model')">
+              <span class="model-label">{{ modelName }}</span>
+              <span v-if="!smartOn && !side && sessionID && variants.length && effortLevel" class="model-effort">{{ effortLevel }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
               </svg>
             </button>
 
+            <!--
+              MiMo's model menu: below the chip and aligned to its end. Smart,
+              the first provider's models, everyone else's behind "more models",
+              and the way to set up custom ones. A model with reasoning levels
+              opens them beside its row, and the level in use rides on the chip.
+            -->
             <div
               v-if="menu === 'model'"
               ref="modelMenu"
-              class="menu model-pop"
+              class="menu model-menu"
+              :class="{ up: menuUp }"
+              tabindex="-1"
               @keydown="onModelKeys"
             >
-              <div class="pad">
-                <div class="model-search">
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <circle cx="7" cy="7" r="4.3" stroke="currentColor" stroke-width="1.2" />
-                    <path d="M10.2 10.2 14 14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-                  </svg>
-                  <input
-                    ref="modelField"
-                    :value="modelQuery"
-                    @input="setModelQuery(($event.target as HTMLInputElement).value)"
-                    :placeholder="t('model.search')"
-                    spellcheck="false"
-                    autocomplete="off"
-                    autocorrect="off"
-                    autocapitalize="off"
-                  />
-                  <button
-                    v-if="modelQuery"
-                    class="model-clear"
-                    :aria-label="t('common.clear')"
-                    @mousedown.prevent
-                    @click="setModelQuery('')"
-                  >
-                    <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                      <path d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5" stroke="currentColor" stroke-linecap="round" />
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-              <div class="rule" />
-
-              <div class="model-scroll" @scroll="hovered = undefined">
-                <div class="pad pad-top-0">
-                  <!--
-                    MiMo's first row: Smart picks between the fast and the main
-                    model from each conversation's first message.
-                  -->
-                  <button
-                    v-if="!modelQuery"
-                    class="item smart"
-                    :class="{ hot: activeKey === SMART_KEY, on: smartOn }"
-                    :data-key="SMART_KEY"
-                    @mouseenter="activeKey = SMART_KEY"
-                    @click="chooseSmart()"
-                  >
-                    <span class="tick">
-                      <svg v-show="smartOn" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                        <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
-                      </svg>
-                    </span>
-                    <span class="smart-text">
-                      <span class="item-name">{{ t("model.smart") }}</span>
-                      <span class="item-desc">{{ t("model.smartDesc") }}</span>
-                    </span>
-                  </button>
-                  <div v-if="groups.length === 0" class="model-empty">
-                    {{ app.providers.some((p) => p.configured) ? t("model.none") : t("model.needProvider") }}
-                  </div>
-                  <template v-for="group in groups" :key="group.provider.id">
-                    <div class="model-group">
-                      <span>{{ group.provider.name }}</span>
-                    </div>
-                    <button
-                      v-for="model in group.models"
-                      :key="model.id"
-                      class="item"
-                      :class="{
-                        hot: activeKey === modelKey(group.provider.id, model.id),
-                        on: currentKey === modelKey(group.provider.id, model.id),
-                      }"
-                      :data-key="modelKey(group.provider.id, model.id)"
-                      @mouseenter="hoverModel(modelKey(group.provider.id, model.id), model, group.provider.name, $event)"
-                      @mouseleave="hovered = undefined"
-                      @click="chooseModel(group.provider.id, model.id)"
-                    >
-                      <span class="tick">
-                        <svg
-                          v-show="currentKey === modelKey(group.provider.id, model.id)"
-                          width="12"
-                          height="12"
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
-                        </svg>
-                      </span>
-                      <span class="item-name">{{ withoutLatest(model.name) }}</span>
-                      <!--
-                        The reference tags the newest model of each family
-                        rather than saying so in the name, and takes the word
-                        out of the name to do it.
-                      -->
-                      <span v-if="isLatest(model.name)" class="tag">{{ t("model.tag.latest") }}</span>
-                    </button>
-                  </template>
-                </div>
-              </div>
-
-              <div class="rule" />
-
-              <div class="pad">
-                <button
-                  class="item"
-                  :class="{ hot: activeKey === MANAGE_KEY }"
-                  :data-key="MANAGE_KEY"
-                  @mouseenter="activeKey = MANAGE_KEY"
-                  @click="openManage()"
-                >
-                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path d="M2 5h3.2M8.8 5H14M2 11h6.2M11.8 11H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-                    <circle cx="7" cy="5" r="1.7" stroke="currentColor" stroke-width="1.3" />
-                    <circle cx="10" cy="11" r="1.7" stroke="currentColor" stroke-width="1.3" />
-                  </svg>
-                  <span class="item-name">{{ t("model.manageRow") }}</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!--
-            Only for a model that has steps to choose between. A model with no
-            reasoning control gets no pill at all rather than one whose every
-            setting the provider ignores, which is the reference's own rule.
-          -->
-          <div v-if="!side && variants.length && sessionID" class="pill-wrap">
-            <button
-              class="pill"
-              :class="{ open: menu === 'effort' }"
-              :aria-label="t('ui.promptInput.chooseVariant')"
-              @click="toggle('effort')"
-            >
-              <span v-if="effortLevel" class="level">{{ effortLevel }}</span>
-              <span v-else>{{ t("effort.default") }}</span>
-              <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
-              </svg>
-            </button>
-            <div v-if="menu === 'effort'" class="menu">
               <button
-                v-for="entry in EFFORT_CHOICES"
-                :key="entry ?? 'default'"
-                class="item"
-                :class="{ on: entry === effortLevel }"
-                @click="chooseEffort(entry)"
+                class="item model-item smart"
+                :class="{ hot: activeKey === SMART_KEY, on: smartOn }"
+                :data-key="SMART_KEY"
+                @mouseenter="hoverRow(SMART_KEY)"
+                @click="chooseSmart()"
               >
-                <span class="tick">
-                  <svg
-                    v-show="entry === effortLevel"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
+                <span class="smart-mark" aria-hidden="true">
+                  <svg width="12" height="12" viewBox="0 0 14 14" fill="none">
+                    <path d="M7 1.6 8.4 5.6 12.4 7 8.4 8.4 7 12.4 5.6 8.4 1.6 7 5.6 5.6z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" />
                   </svg>
                 </span>
-                <span v-if="entry" class="item-name level">{{ entry }}</span>
-                <span v-else class="item-name">{{ t("effort.default") }}</span>
+                <span class="smart-text">
+                  <span class="item-name">{{ t("model.smart") }}</span>
+                  <span class="item-desc">{{ t("model.smartDesc") }}</span>
+                </span>
+                <svg class="model-check" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3.5 8.2 6.4 11.1 12.5 5" />
+                </svg>
+              </button>
+
+              <div class="rule" />
+              <div v-if="groups.length === 0" class="model-empty">
+                {{ app.providers.some((p) => p.configured) ? t("model.none") : t("model.needProvider") }}
+              </div>
+
+              <template v-for="group in primaryGroup ? [primaryGroup] : []" :key="group.provider.id">
+                <ModelMenuRow
+                  v-for="model in group.models"
+                  :key="model.id"
+                  :model="model"
+                  :provider="group.provider"
+                  :row-key="modelKey(group.provider.id, model.id)"
+                  :on="currentKey === modelKey(group.provider.id, model.id)"
+                  :hot="activeKey === modelKey(group.provider.id, model.id)"
+                  :efforts="effortsFor(model)"
+                  :effort="effortLevel"
+                  :sub-open="modelSub === modelKey(group.provider.id, model.id)"
+                  @enter="hoverRow(modelKey(group.provider.id, model.id))"
+                  @choose="chooseModel(group.provider.id, model.id)"
+                  @effort="chooseModelEffort(group.provider.id, model.id, $event)"
+                />
+              </template>
+
+              <div v-if="moreGroups.length" class="more-slot" @mouseenter="hoverRow(MORE_KEY)">
+                <button
+                  class="item model-item"
+                  :class="{ hot: activeKey === MORE_KEY }"
+                  :data-key="MORE_KEY"
+                  aria-haspopup="menu"
+                  :aria-expanded="modelSub === MORE_KEY"
+                  @click="modelSub = modelSub === MORE_KEY ? undefined : MORE_KEY"
+                >
+                  <span class="item-name">{{ t("model.moreModels") }}</span>
+                  <svg class="model-chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M6.5 4.5 10 8l-3.5 3.5" />
+                  </svg>
+                </button>
+                <div
+                  v-if="modelSub === MORE_KEY"
+                  ref="moreMenu"
+                  class="more-menu"
+                  role="menu"
+                  :style="{ left: `${morePlace.left}px`, top: `${morePlace.top}px` }"
+                  @scroll="moreSub = undefined"
+                >
+                  <div v-for="group in moreGroups" :key="group.provider.id" class="vendor">
+                    <div class="vendor-head">{{ group.provider.name }}</div>
+                    <ModelMenuRow
+                      v-for="model in group.models"
+                      :key="model.id"
+                      :model="model"
+                      :provider="group.provider"
+                      :row-key="modelKey(group.provider.id, model.id)"
+                      :on="currentKey === modelKey(group.provider.id, model.id)"
+                      :hot="false"
+                      :efforts="effortsFor(model)"
+                      :effort="effortLevel"
+                      :sub-open="moreSub === modelKey(group.provider.id, model.id)"
+                      @enter="moreSub = modelKey(group.provider.id, model.id)"
+                      @choose="chooseModel(group.provider.id, model.id)"
+                      @effort="chooseModelEffort(group.provider.id, model.id, $event)"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="rule" />
+              <button
+                class="item model-item"
+                :class="{ hot: activeKey === CONFIG_KEY }"
+                :data-key="CONFIG_KEY"
+                @mouseenter="hoverRow(CONFIG_KEY)"
+                @click="openConfig()"
+              >
+                <svg class="model-config" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M2 5h3.2M8.8 5H14M2 11h6.2M11.8 11H14" />
+                  <circle cx="7" cy="5" r="1.7" />
+                  <circle cx="10" cy="11" r="1.7" />
+                </svg>
+                <span class="item-name">{{ t("model.configCustom") }}</span>
               </button>
             </div>
           </div>
@@ -2020,19 +1973,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
         </div>
       </div>
     </div>
-
-    <!--
-      Beside the picker rather than inside it: the list scrolls behind a clipped
-      edge, and a box drawn next to a row from in there is cut off at that edge.
-    -->
-    <Teleport to="body">
-      <ModelTooltip
-        v-if="hovered"
-        :model="hovered.model"
-        :provider="hovered.provider"
-        :anchor="hovered.anchor"
-      />
-    </Teleport>
 
     <!-- Under a conversation's box, as MiMo has one: answers are generated, and can be wrong. -->
     <p v-if="sessionID" class="ai-note">{{ t("composer.aiNote") }}</p>
@@ -2714,21 +2654,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   position: relative;
 }
 
-/*
- * An effort level is drawn from its own id, capitalised by the stylesheet.
- *
- * This is the reference's answer to naming the steps and the reason it never
- * translates them: the select carries `class: "capitalize"` and labels every
- * option with its own id, reaching for a string only for the default entry
- * (main-8t-QUXax.js @4574058), so what it shows is "Xhigh", not a hand-built
- * "XHigh". Only the raw ids are dressed this way - the translated Default word
- * is left exactly as its table wrote it, because capitalising a translation is
- * a decision for the translator and not for a stylesheet.
- */
-.level {
-  text-transform: capitalize;
-}
-
 .pill.open {
   color: var(--text-strong);
   background: var(--surface-hover);
@@ -2866,91 +2791,132 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-.menu.model-pop {
-  width: 284px;
-  padding: 0;
-  overflow: hidden;
+/* MiMo's model menu: under the chip at its end, 210 and up, rows of mark, name and check. */
+.menu.model-menu {
+  top: calc(100% + 4px);
+  bottom: auto;
+  min-width: 210px;
+  max-width: 320px;
+  padding: 4px;
+  border-radius: 12px;
 }
 
-.pad {
-  padding: 2px;
+.menu.model-menu.up {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 
-.pad-top-0 {
-  padding-top: 0;
-}
-
-.model-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 28px;
-  /* A shade more room ahead of the magnifier than behind the clear button,
-     so the icon does not sit tight against the corner of the field. */
-  padding-block: 0;
-  padding-inline: 12px 10px;
-  color: var(--icon-weak);
-  border-radius: 2px;
-}
-
-.model-search input {
-  flex: 1;
-  min-width: 0;
-  height: 28px;
-  color: var(--text-strong);
-  background: transparent;
-  border: 0;
+.model-menu:focus {
   outline: none;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 440;
+}
+
+.model-menu .rule {
+  margin: 4px 6px;
+  background: var(--border-weak);
+}
+
+.model-menu .model-item {
+  gap: 9px;
+  height: auto;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 400;
   line-height: 20px;
-  letter-spacing: -0.04px;
 }
 
-.model-search input::placeholder {
-  color: var(--text-weak);
+.model-menu .model-item.on {
+  color: var(--text-strong);
+  font-weight: 400;
+  background: var(--surface-selected);
 }
 
-.model-clear {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
+.smart-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-strong);
+  background: var(--surface-hover);
+  border-radius: 6px;
+}
+
+.model-menu .smart-text {
+  gap: 1px;
+}
+
+.model-menu .item-desc {
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.model-check path,
+.model-chev path,
+.model-config path,
+.model-config circle {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.model-check {
+  flex: none;
   width: 16px;
   height: 16px;
-  color: var(--icon-weak);
-  border-radius: 2px;
-}
-
-.model-clear:hover {
+  margin-inline-start: auto;
   color: var(--text-strong);
+  opacity: 0;
 }
 
-.model-scroll {
-  min-height: 0;
-  max-height: 220px;
+.model-item.on .model-check {
+  opacity: 1;
+}
+
+.model-chev {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  opacity: 0.5;
+}
+
+.model-config {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: color-mix(in srgb, var(--text-base) 87%, transparent);
+}
+
+.more-slot {
+  position: relative;
+}
+
+/* Placed fixed beside its row, so it is never cut off by the composer's edge. */
+.more-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 220px;
+  max-height: min(420px, calc(100vh - 16px));
+  padding: 4px;
   overflow-y: auto;
+  background: var(--surface-menu);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
 }
 
-/*
- * Stays put while its own models scroll past, so the provider a row belongs to
- * is always on screen. It needs the menu's own fill to cover what runs beneath.
- */
-.model-group {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 28px;
-  padding: 0 12px;
-  background: var(--surface-menu);
+.vendor-head {
+  padding: 6px 10px 2px;
   color: var(--text-weak);
   font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 1;
-  letter-spacing: 0.05px;
+  line-height: 16px;
+}
+
+.model-effort {
+  color: var(--text-weak);
+  text-transform: capitalize;
 }
 
 .model-empty {
@@ -3017,20 +2983,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 20px;
-}
-
-/*
- * The Latest mark, which the reference draws as a small neutral chip after the
- * name rather than as more name.
- */
-.tag {
-  flex: none;
-  padding: 0 5px;
-  color: var(--text-weaker);
-  border: 1px solid var(--border-weaker);
-  border-radius: 4px;
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  line-height: 15px;
 }
 
 /*
