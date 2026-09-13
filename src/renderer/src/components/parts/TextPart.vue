@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue"
+import { computed, onBeforeUnmount, ref, watch } from "vue"
 import type { TextPart } from "@shared/protocol"
 import { renderMarkdown } from "../../lib/markdown"
 import { t } from "../../lib/i18n"
@@ -11,8 +11,73 @@ const props = defineProps<{ part: TextPart }>()
 const html = computed(() =>
   renderMarkdown(props.part.text, {
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
+    tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
   }),
 )
+
+/*
+ * MiMo's table copy: the table as a markdown pipe table for plain text and as
+ * the bare table for anything that pastes HTML. Falls back to the text alone.
+ */
+function pipeTable(table: HTMLTableElement): string {
+  const rows = [...table.rows]
+  if (!rows.length) return ""
+  const width = Math.max(...rows.map((row) => row.cells.length))
+  const cell = (text: string) => text.replace(/\s+/g, " ").replace(/\|/g, "\\|").trim()
+  const line = (row: HTMLTableRowElement) =>
+    `| ${Array.from({ length: width }, (_, at) => cell(row.cells[at]?.textContent ?? "")).join(" | ")} |`
+  return [line(rows[0]), `| ${Array.from({ length: width }, () => "---").join(" | ")} |`, ...rows.slice(1).map(line)].join("\n")
+}
+
+function bareTable(table: HTMLTableElement): string {
+  const copy = table.cloneNode(true) as HTMLTableElement
+  copy.removeAttribute("class")
+  copy.querySelectorAll("[class]").forEach((node) => node.removeAttribute("class"))
+  return copy.outerHTML
+}
+
+async function copyTable(button: HTMLElement) {
+  const table = button.closest(".md-table-container")?.querySelector("table")
+  if (!table) return
+  const text = pipeTable(table)
+  try {
+    const Item = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
+    let written = false
+    if (navigator.clipboard?.write && Item) {
+      try {
+        await navigator.clipboard.write([
+          new Item({ "text/plain": new Blob([text], { type: "text/plain" }), "text/html": new Blob([bareTable(table)], { type: "text/html" }) }),
+        ])
+        written = true
+      } catch {
+        // Some clipboards take only text; that is tried next.
+      }
+    }
+    if (!written) await navigator.clipboard.writeText(text)
+    button.classList.add("copied")
+    window.setTimeout(() => button.classList.remove("copied"), 2000)
+  } catch {
+    notifyFailure(t("table.copyFailed"))
+  }
+}
+
+/* MiMo's table preview: the same table, wide, in a dialog of its own. */
+const previewing = ref<string>()
+
+function closePreview() {
+  previewing.value = undefined
+}
+
+function onEscape(event: KeyboardEvent) {
+  if (event.key === "Escape") closePreview()
+}
+
+watch(previewing, (open) => {
+  if (open) window.addEventListener("keydown", onEscape)
+  else window.removeEventListener("keydown", onEscape)
+})
+
+onBeforeUnmount(() => window.removeEventListener("keydown", onEscape))
 
 /*
  * The copy button on a code block, as MiMo has it: the block's text goes to the
@@ -20,7 +85,18 @@ const html = computed(() =>
  * HTML, so the click is caught here on the way up rather than on the button.
  */
 async function onClick(event: MouseEvent) {
-  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-copy-code]")
+  const target = event.target as HTMLElement | null
+  const tableCopy = target?.closest<HTMLElement>("[data-table-copy]")
+  if (tableCopy) {
+    await copyTable(tableCopy)
+    return
+  }
+  const tablePreview = target?.closest<HTMLElement>("[data-table-preview]")
+  if (tablePreview) {
+    previewing.value = tablePreview.closest(".md-table-container")?.querySelector("table")?.outerHTML
+    return
+  }
+  const button = target?.closest<HTMLButtonElement>("[data-copy-code]")
   if (!button) return
   const code = button.closest(".md-codeblock")?.querySelector("pre code")?.textContent ?? ""
   try {
@@ -35,6 +111,28 @@ async function onClick(event: MouseEvent) {
 
 <template>
   <div class="text" v-html="html" @click="onClick" />
+  <Teleport to="body">
+    <div v-if="previewing" class="md-table-preview-overlay" data-table-preview-overlay @mousedown.self="closePreview">
+      <div class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">
+        <div class="md-table-preview-header">
+          <span>{{ t("table.previewTitle") }}</span>
+          <button
+            type="button"
+            class="md-table-icon-button"
+            data-table-preview-close
+            :aria-label="t('table.previewClose')"
+            :title="t('table.previewClose')"
+            @click="closePreview"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+              <path d="M6 6l12 12M18 6 6 18" />
+            </svg>
+          </button>
+        </div>
+        <div class="md-table-preview-scroller text" v-html="previewing" />
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style>
@@ -394,5 +492,131 @@ async function onClick(event: MouseEvent) {
 .text .md-table td {
   max-width: 480px;
   padding: 10px 24px 10px 0;
+}
+
+/*
+ * MiMo's table in a reply: it reaches 24px past the text on each side and
+ * scrolls sideways in its own strip, with its two buttons 6px above its end,
+ * out of sight until the table is hovered or focused.
+ */
+.text .md-table-container {
+  --md-table-bleed: 24px;
+  position: relative;
+  width: calc(100% + var(--md-table-bleed) * 2);
+  margin: 0 calc(-1 * var(--md-table-bleed)) 14px;
+}
+
+.text .md-table-container:focus {
+  outline: none;
+}
+
+.text .md-table-scroller {
+  margin-inline: var(--md-table-bleed);
+  overflow-x: auto;
+}
+
+.text .md-table-container .md-table,
+.md-table-preview-scroller .md-table {
+  display: table;
+  width: fit-content;
+  min-width: 100%;
+  margin: 0;
+  overflow: visible;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.text .md-table-actions {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  inset-inline-end: var(--md-table-bleed);
+  z-index: 10;
+  display: flex;
+  gap: 4px;
+  width: 56px;
+  height: 26px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast, 0.12s);
+}
+
+.text .md-table-container:hover .md-table-actions,
+.text .md-table-container:focus-within .md-table-actions {
+  opacity: 1;
+}
+
+.md-table-icon-button {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  pointer-events: auto;
+}
+
+.md-table-icon-button:hover,
+.md-table-icon-button:focus-visible {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.md-table-icon-button .md-table-copy-check,
+.md-table-icon-button.copied .md-table-copy-idle {
+  display: none;
+}
+
+.md-table-icon-button.copied .md-table-copy-check {
+  display: block;
+  color: var(--text-success);
+}
+
+/* The preview: a dim ground, and the table in a dialog up to 1120 wide under a 46px heading. */
+.md-table-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 320;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: rgb(0 0 0 / 0.34);
+}
+
+.md-table-preview-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(1120px, 100vw - 56px);
+  max-height: calc(100vh - 56px);
+  overflow: hidden;
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgb(0 0 0 / 0.2);
+}
+
+.md-table-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 46px;
+  padding-block: 8px;
+  padding-inline: 18px 10px;
+  color: var(--text-strong);
+  border-bottom: 1px solid var(--border-weaker);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 600;
+}
+
+.md-table-preview-scroller {
+  padding: 18px 24px;
+  overflow: auto;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: 1.7;
 }
 </style>

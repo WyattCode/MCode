@@ -69,6 +69,12 @@ export interface MarkdownOptions {
    * "copied" label, and the caller's click handler switches between them.
    */
   codeActions?: { copy: string; copied: string; label: string }
+  /**
+   * MiMo's table in a reply: scrolled in its own strip, with preview and copy
+   * buttons that show above its end while it is hovered. The words come from
+   * the caller; the clicks are the caller's to handle.
+   */
+  tableActions?: { label: string; preview: string; copy: string }
 }
 
 const COPY_ICON =
@@ -77,6 +83,13 @@ const COPY_ICON =
   '<path d="M10.5 5.5v-2a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" stroke="currentColor" stroke-width="1.2"/></svg>' +
   '<svg class="md-code-icon done" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
   '<path d="M3.5 8.5 6.5 11.5 12.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+
+/* The table buttons' glyphs: 12px on a 24 grid with a 1.7 stroke, as MiMo draws them. */
+const TABLE_GLYPH = 'width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"'
+const TABLE_PREVIEW_ICON = `<svg ${TABLE_GLYPH}><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></svg>`
+const TABLE_COPY_ICON =
+  `<svg class="md-table-copy-idle" ${TABLE_GLYPH}><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>` +
+  `<svg class="md-table-copy-check" ${TABLE_GLYPH}><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`
 
 /** One fenced block; its body is already escaped. */
 function codeBlock(language: string, body: string, options: MarkdownOptions): string {
@@ -197,7 +210,12 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
           const side = alignment[column]
           return side ? ` class="md-${side}"` : ""
         }
-        out.push('<table class="md-table">')
+        const actions = options.tableActions
+        out.push(
+          actions
+            ? '<div class="md-table-container" data-markdown-table tabindex="-1"><div class="md-table-scroller"><table class="md-table" dir="auto">'
+            : '<table class="md-table">',
+        )
         out.push("<thead><tr>")
         head.forEach((cell, column) => out.push(`<th${align(column)}>${inline(cell)}</th>`))
         out.push("</tr></thead>")
@@ -213,7 +231,14 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
           at += 1
         }
         if (body.length) out.push("<tbody>" + body.join("") + "</tbody>")
-        out.push("</table>")
+        out.push(
+          actions
+            ? `</table></div><div class="md-table-actions" aria-label="${escapeHtml(actions.label)}">` +
+                `<button type="button" class="md-table-icon-button" data-table-preview aria-label="${escapeHtml(actions.preview)}" title="${escapeHtml(actions.preview)}">${TABLE_PREVIEW_ICON}</button>` +
+                `<button type="button" class="md-table-icon-button" data-table-copy aria-label="${escapeHtml(actions.copy)}" title="${escapeHtml(actions.copy)}">${TABLE_COPY_ICON}</button>` +
+                "</div></div>"
+            : "</table>",
+        )
         // The loop's own increment lands on the line after the last row.
         at -= 1
         continue
