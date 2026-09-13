@@ -11,6 +11,8 @@ import { preview } from "../lib/attach"
 import { useRestoreDraft } from "../lib/draft"
 import { withoutLatest } from "../lib/model"
 import { language, t } from "../lib/i18n"
+import { questionParts } from "../lib/question-parts"
+import { renderMarkdown } from "../lib/markdown"
 import { notifyFailure } from "../lib/toast"
 
 /**
@@ -272,6 +274,43 @@ function askedLines(text: string) {
 function foldable(text: string) {
   const trimmed = text.replace(/\n+$/, "")
   return askedLines(trimmed) > ASKED_LINES || trimmed.length > ASKED_CHARS
+}
+
+/*
+ * Code in a question, as MiMo shows it: each fenced block drawn as the code
+ * blocks in a reply are - language, copy - and folded past fourteen lines to
+ * 264px under a fade, with "show all N lines" / "collapse code" beneath. The
+ * text around it folds run by run, as a whole question does.
+ */
+function hasCode(text: string) {
+  return questionParts(text).some((part) => part.type === "code")
+}
+
+const partKey = (turnID: string, index: number) => `${turnID}:${index}`
+
+function codeFolds(code: string) {
+  return askedLines(code) > ASKED_LINES
+}
+
+function codeHtml(code: string, lang: string | null) {
+  const fence = "```"
+  return renderMarkdown([fence + (lang ?? ""), code, fence].join("\n"), {
+    codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
+  })
+}
+
+/* The copy button inside that rendered block, caught on the way up as a reply's is. */
+async function copyCode(event: MouseEvent) {
+  const button = (event.target as HTMLElement | null)?.closest<HTMLButtonElement>("[data-copy-code]")
+  if (!button) return
+  const code = button.closest(".md-codeblock")?.querySelector("pre code")?.textContent ?? ""
+  try {
+    await navigator.clipboard.writeText(code)
+    button.classList.add("copied")
+    window.setTimeout(() => button.classList.remove("copied"), 2000)
+  } catch {
+    notifyFailure(t("code.copyFailed"))
+  }
 }
 
 function toggleAsked(id: string) {
@@ -612,7 +651,35 @@ defineExpose({ stepMessage, scroller })
             button beneath that says how many lines there are. Kept on one line
             each - the bubble keeps its whitespace, so any between these shows.
           -->
-          <div v-if="turn.text && foldable(turn.text)" class="user-bubble" data-asked-fold :data-folded="openAsked.has(turn.id) ? undefined : ''">
+          <div v-if="turn.text && hasCode(turn.text)" class="user-bubble" data-asked-parts>
+            <template v-for="(part, index) in questionParts(turn.text)" :key="index">
+              <div
+                v-if="part.type === 'code'"
+                class="asked-code"
+                data-asked-code
+                :data-folded="codeFolds(part.code) && !openAsked.has(partKey(turn.id, index)) ? '' : undefined"
+              >
+                <div
+                  class="text asked-code-body"
+                  :class="{ folded: codeFolds(part.code) && !openAsked.has(partKey(turn.id, index)) }"
+                  @click="copyCode"
+                  v-html="codeHtml(part.code, part.lang)"
+                />
+                <button
+                  v-if="codeFolds(part.code)"
+                  class="asked-expand code-expand"
+                  data-code-expand
+                  @click="toggleAsked(partKey(turn.id, index))"
+                  @dblclick.stop
+                >
+                  {{ openAsked.has(partKey(turn.id, index)) ? t("stream.collapseCode") : t("stream.expandAsked", { count: askedLines(part.code) }) }}
+                </button>
+              </div>
+              <div v-else-if="foldable(part.text)" class="asked-part" data-asked-fold :data-folded="openAsked.has(partKey(turn.id, index)) ? undefined : ''"><span class="asked-text" :class="{ folded: !openAsked.has(partKey(turn.id, index)) }">{{ part.text }}</span><button class="asked-expand" data-asked-expand @click="toggleAsked(partKey(turn.id, index))" @dblclick.stop>{{ openAsked.has(partKey(turn.id, index)) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(part.text) }) }}</button></div>
+              <div v-else class="asked-part">{{ part.text }}</div>
+            </template>
+          </div>
+          <div v-else-if="turn.text && foldable(turn.text)" class="user-bubble" data-asked-fold :data-folded="openAsked.has(turn.id) ? undefined : ''">
             <span class="asked-text" :class="{ folded: !openAsked.has(turn.id) }">{{ turn.text }}</span><button class="asked-expand" data-asked-expand @click="toggleAsked(turn.id)" @dblclick.stop>{{ openAsked.has(turn.id) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(turn.text) }) }}</button>
           </div>
           <div v-else-if="turn.text" class="user-bubble">{{ turn.text }}</div>
@@ -1241,6 +1308,52 @@ defineExpose({ stepMessage, scroller })
 
 .asked-expand:hover {
   color: var(--text-strong);
+}
+
+/*
+ * A question with code in it is laid out in blocks, so the bubble's own kept
+ * whitespace would show between them; only the text runs keep theirs.
+ */
+.user-bubble[data-asked-parts] {
+  white-space: normal;
+}
+
+.asked-part {
+  white-space: pre-wrap;
+}
+
+/* MiMo's code in a question: regular weight, the reply's block, 8 above and below. */
+.asked-code {
+  min-width: 0;
+  font-weight: 400;
+}
+
+.asked-code-body {
+  font-weight: 400;
+}
+
+.asked-code-body.folded {
+  position: relative;
+  max-height: 264px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+/* The fade runs up from the code's own fill. */
+.asked-code-body.folded::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 56px;
+  background: linear-gradient(to top, var(--surface-raised), transparent);
+  pointer-events: none;
+}
+
+/* Under the code rather than after text: MiMo's sits with 4 below and none above. */
+.asked-expand.code-expand {
+  margin-top: 0;
+  margin-bottom: 4px;
 }
 
 @media (min-width: 1536px) {
