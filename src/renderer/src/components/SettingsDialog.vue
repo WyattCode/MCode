@@ -55,6 +55,7 @@ const shellOptions = computed(() => [
 
 type Section =
   | "general"
+  | "appearance"
   | "personal"
   | "keys"
   | "archive"
@@ -338,17 +339,18 @@ const DIFF_MARKS = ["color", "signs"] as const
  */
 const navQuery = ref("")
 const NAV_LABELS: Record<Section, string> = {
-  general: "set.general",
-  personal: "set.personal",
-  keys: "set.keyboard",
-  archive: "set.archive",
-  files: "set.files",
-  environment: "set.environment",
-  usage: "set.usage",
-  updates: "set.updates",
-  server: "set.server",
-  providers: "set.providers",
+  general: "set.nav.general",
+  usage: "set.nav.usage",
+  appearance: "set.appearance",
+  files: "set.nav.files",
   models: "set.models",
+  providers: "set.providers",
+  server: "set.server",
+  personal: "set.personal",
+  keys: "set.shortcuts",
+  environment: "set.environment",
+  archive: "set.nav.archive",
+  updates: "set.nav.updates",
 }
 
 function navShows(entry: Section): boolean {
@@ -1064,15 +1066,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           autocomplete="off"
           @keydown.enter="openFirstMatch"
         />
-        <div v-show="navShows('general') || navShows('keys') || navShows('archive')" class="nav-group">{{ t("set.groupDesktop") }}</div>
-
         <!--
-          Every glyph below is the reference's own, lifted from its icon sprite
-          rather than drawn to look like it: same 20x20 grid, same 1px stroke,
-          same square caps. MCode's were hand-drawn at 16x16 with a 1.4 stroke
-          and round caps, which is why the column read heavier and rounder than
-          opencode's beside it.
+          MiMo's four groups, in its order. MCode's own server and provider pages
+          sit beside Models, which they feed.
         -->
+        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('providers') || navShows('server') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+
         <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
@@ -1081,7 +1080,63 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               stroke-linecap="square"
             />
           </svg>
-          {{ t("set.general") }}
+          {{ t("set.nav.general") }}
+        </button>
+
+        <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M4 16V9M8 16V5M12 16v-4M16 16v-8" stroke="currentColor" stroke-linecap="round" />
+          </svg>
+          <span>{{ t("set.nav.usage") }}</span>
+        </button>
+
+        <button v-show="navShows('appearance')" class="nav-item" :class="{ on: section === 'appearance' }" @click="section = 'appearance'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="10" cy="10" r="6.5" stroke="currentColor" />
+            <path d="M10 3.5a6.5 6.5 0 0 1 0 13z" fill="currentColor" />
+          </svg>
+          <span>{{ t("set.appearance") }}</span>
+        </button>
+
+        <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M5 3.5h6l4 4V16.5H5z" stroke="currentColor" stroke-linejoin="round" />
+            <path d="M11 3.5v4h4" stroke="currentColor" stroke-linejoin="round" />
+          </svg>
+          <span>{{ t("set.nav.files") }}</span>
+        </button>
+
+        <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path
+              fill-rule="evenodd"
+              clip-rule="evenodd"
+              d="M17.5 10C12.2917 10 10 12.2917 10 17.5C10 12.2917 7.70833 10 2.5 10C7.70833 10 10 7.70833 10 2.5C10 7.70833 12.2917 10 17.5 10Z"
+              stroke="currentColor"
+            />
+          </svg>
+          {{ t("set.models") }}
+        </button>
+
+        <button v-show="navShows('providers')" class="nav-item" :class="{ on: section === 'providers' }" @click="section = 'providers'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path
+              d="M10.0001 4.37562V2.875M13 4.37793V2.87793M7.00014 4.37793V2.875M10 17.1279V15.6279M13 17.1279V15.6279M7 17.1279V15.6279M15.625 13.0029H17.125M15.625 7.00293H17.125M15.625 10.0029H17.125M2.875 10.0029H4.375M2.875 13.0029H4.375M2.875 7.00293H4.375M4.375 4.37793H15.625V15.6279H4.375V4.37793ZM12.6241 10.0022C12.6241 11.4519 11.4488 12.6272 9.99908 12.6272C8.54934 12.6272 7.37408 11.4519 7.37408 10.0022C7.37408 8.55245 8.54934 7.3772 9.99908 7.3772C11.4488 7.3772 12.6241 8.55245 12.6241 10.0022Z"
+              stroke="currentColor"
+              stroke-linecap="square"
+            />
+          </svg>
+          {{ t("set.providers") }}
+        </button>
+
+        <button v-show="navShows('server')" class="nav-item" :class="{ on: section === 'server' }" @click="section = 'server'">
+          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <rect x="3.35547" y="1.92969" width="13.2857" height="16.1429" stroke="currentColor" />
+            <rect x="3.35547" y="11.9297" width="13.2857" height="6.14286" stroke="currentColor" />
+            <rect x="12.8555" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
+            <rect x="10" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
+          </svg>
+          {{ t("set.server") }}
         </button>
 
         <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
@@ -1100,43 +1155,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               stroke-linecap="square"
             />
           </svg>
-          {{ t("set.keyboard") }}
+          {{ t("set.shortcuts") }}
         </button>
 
-        <!--
-          The reference has no archive page in its settings - its five tabs are
-          general, shortcuts, servers, providers, models. It does archive
-          sessions, from the same command MCode has, but with
-          SHOW_HOME_SESSION_ARCHIVE false it then offers nowhere to see them
-          again. This row is kept because removing it would strand whatever is
-          already archived, and it uses opencode's own archive glyph.
-        -->
-        <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="M16.8747 6.24935H17.3747V5.74935H16.8747V6.24935ZM16.8747 16.8743V17.3743H17.3747V16.8743H16.8747ZM3.12467 16.8743H2.62467V17.3743H3.12467V16.8743ZM3.12467 6.24935V5.74935H2.62467V6.24935H3.12467ZM2.08301 2.91602V2.41602H1.58301V2.91602H2.08301ZM17.9163 2.91602H18.4163V2.41602H17.9163V2.91602ZM17.9163 6.24935V6.74935H18.4163V6.24935H17.9163ZM2.08301 6.24935H1.58301V6.74935H2.08301V6.24935ZM8.33301 9.08268H7.83301V10.0827H8.33301V9.58268V9.08268ZM11.6663 10.0827H12.1663V9.08268H11.6663V9.58268V10.0827ZM16.8747 6.24935H16.3747V16.8743H16.8747H17.3747V6.24935H16.8747ZM16.8747 16.8743V16.3743H3.12467V16.8743V17.3743H16.8747V16.8743ZM3.12467 16.8743H3.62467V6.24935H3.12467H2.62467V16.8743H3.12467ZM3.12467 6.24935V6.74935H16.8747V6.24935V5.74935H3.12467V6.24935ZM2.08301 2.91602V3.41602H17.9163V2.91602V2.41602H2.08301V2.91602ZM17.9163 2.91602H17.4163V6.24935H17.9163H18.4163V2.91602H17.9163ZM17.9163 6.24935V5.74935H2.08301V6.24935V6.74935H17.9163V6.24935ZM2.08301 6.24935H2.58301V2.91602H2.08301H1.58301V6.24935H2.08301ZM8.33301 9.58268V10.0827H11.6663V9.58268V9.08268H8.33301V9.58268Z"
-              fill="currentColor"
-            />
-          </svg>
-          {{ t("set.archive") }}
-        </button>
-
-        <div v-show="navShows('usage') || navShows('files') || navShows('environment')" class="nav-group">{{ t("set.groupProject") }}</div>
-
-        <button v-show="navShows('usage')" class="nav-item" :class="{ on: section === 'usage' }" @click="section = 'usage'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M4 16V9M8 16V5M12 16v-4M16 16v-8" stroke="currentColor" stroke-linecap="round" />
-          </svg>
-          <span>{{ t("set.usage") }}</span>
-        </button>
-
-        <button v-show="navShows('files')" class="nav-item" :class="{ on: section === 'files' }" @click="section = 'files'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M5 3.5h6l4 4V16.5H5z" stroke="currentColor" stroke-linejoin="round" />
-            <path d="M11 3.5v4h4" stroke="currentColor" stroke-linejoin="round" />
-          </svg>
-          <span>{{ t("set.files") }}</span>
-        </button>
+        <div v-show="navShows('environment')" class="nav-group">{{ t("set.group.coding") }}</div>
 
         <button v-show="navShows('environment')" class="nav-item" :class="{ on: section === 'environment' }" @click="section = 'environment'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1148,39 +1170,16 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <span>{{ t("set.environment") }}</span>
         </button>
 
-        <div v-show="navShows('server') || navShows('providers') || navShows('models')" class="nav-group">{{ t("set.groupServer") }}</div>
+        <div v-show="navShows('archive')" class="nav-group">{{ t("set.group.archived") }}</div>
 
-        <button v-show="navShows('server')" class="nav-item" :class="{ on: section === 'server' }" @click="section = 'server'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <rect x="3.35547" y="1.92969" width="13.2857" height="16.1429" stroke="currentColor" />
-            <rect x="3.35547" y="11.9297" width="13.2857" height="6.14286" stroke="currentColor" />
-            <rect x="12.8555" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
-            <rect x="10" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
-          </svg>
-          {{ t("set.server") }}
-        </button>
-
-        <button v-show="navShows('providers')" class="nav-item" :class="{ on: section === 'providers' }" @click="section = 'providers'">
+        <button v-show="navShows('archive')" class="nav-item" :class="{ on: section === 'archive' }" @click="section = 'archive'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
             <path
-              d="M10.0001 4.37562V2.875M13 4.37793V2.87793M7.00014 4.37793V2.875M10 17.1279V15.6279M13 17.1279V15.6279M7 17.1279V15.6279M15.625 13.0029H17.125M15.625 7.00293H17.125M15.625 10.0029H17.125M2.875 10.0029H4.375M2.875 13.0029H4.375M2.875 7.00293H4.375M4.375 4.37793H15.625V15.6279H4.375V4.37793ZM12.6241 10.0022C12.6241 11.4519 11.4488 12.6272 9.99908 12.6272C8.54934 12.6272 7.37408 11.4519 7.37408 10.0022C7.37408 8.55245 8.54934 7.3772 9.99908 7.3772C11.4488 7.3772 12.6241 8.55245 12.6241 10.0022Z"
-              stroke="currentColor"
-              stroke-linecap="square"
+              d="M16.8747 6.24935H17.3747V5.74935H16.8747V6.24935ZM16.8747 16.8743V17.3743H17.3747V16.8743H16.8747ZM3.12467 16.8743H2.62467V17.3743H3.12467V16.8743ZM3.12467 6.24935V5.74935H2.62467V6.24935H3.12467ZM2.08301 2.91602V2.41602H1.58301V2.91602H2.08301ZM17.9163 2.91602H18.4163V2.41602H17.9163V2.91602ZM17.9163 6.24935V6.74935H18.4163V6.24935H17.9163ZM2.08301 6.24935H1.58301V6.74935H2.08301V6.24935ZM8.33301 9.08268H7.83301V10.0827H8.33301V9.58268V9.08268ZM11.6663 10.0827H12.1663V9.08268H11.6663V9.58268V10.0827ZM16.8747 6.24935H16.3747V16.8743H16.8747H17.3747V6.24935H16.8747ZM16.8747 16.8743V16.3743H3.12467V16.8743V17.3743H16.8747V16.8743ZM3.12467 16.8743H3.62467V6.24935H3.12467H2.62467V16.8743H3.12467ZM3.12467 6.24935V6.74935H16.8747V6.24935V5.74935H3.12467V6.24935ZM2.08301 2.91602V3.41602H17.9163V2.91602V2.41602H2.08301V2.91602ZM17.9163 2.91602H17.4163V6.24935H17.9163H18.4163V2.91602H17.9163ZM17.9163 6.24935V5.74935H2.08301V6.24935V6.74935H17.9163V6.24935ZM2.08301 6.24935H2.58301V2.91602H2.08301H1.58301V6.24935H2.08301ZM8.33301 9.58268V10.0827H11.6663V9.58268V9.08268H8.33301V9.58268Z"
+              fill="currentColor"
             />
           </svg>
-          {{ t("set.providers") }}
-        </button>
-
-        <button v-show="navShows('models')" class="nav-item" :class="{ on: section === 'models' }" @click="section = 'models'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              fill-rule="evenodd"
-              clip-rule="evenodd"
-              d="M17.5 10C12.2917 10 10 12.2917 10 17.5C10 12.2917 7.70833 10 2.5 10C7.70833 10 10 7.70833 10 2.5C10 7.70833 12.2917 10 17.5 10Z"
-              stroke="currentColor"
-            />
-          </svg>
-          {{ t("set.models") }}
+          {{ t("set.nav.archive") }}
         </button>
 
         <div v-show="navShows('updates')" class="nav-group">{{ t("set.groupAbout") }}</div>
@@ -1190,7 +1189,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             <path d="M10 4v8M10 4 6.8 7.2M10 4l3.2 3.2" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" />
             <path d="M4.5 13.5v2h11v-2" stroke="currentColor" stroke-linecap="round" />
           </svg>
-          <span>{{ t("set.updates") }}</span>
+          <span>{{ t("set.nav.updates") }}</span>
         </button>
 
         <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
@@ -1204,7 +1203,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
       <div class="content">
         <!-- General -->
         <template v-if="section === 'general'">
-          <h2>{{ t("set.general") }}</h2>
+          <h2>{{ t("set.nav.general") }}</h2>
           <div class="card">
             <div class="line">
               <div class="line-text">
@@ -1331,260 +1330,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :options="effortOptions"
                 @update:model-value="app.patchConfig({ effort: $event as 'high' })"
               />
-            </div>
-          </div>
-
-          <h3>{{ t("set.appearance") }}</h3>
-          <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.scheme") }}</div>
-                <div class="line-sub">{{ t("set.schemeSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.theme ?? 'system'"
-                :options="themeOptions"
-                @update:model-value="app.patchConfig({ theme: $event as 'dark' })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.themePalette") }}</div>
-                <div class="line-sub">{{ t("set.themePaletteSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.themeID ?? DEFAULT_THEME"
-                :options="paletteOptions"
-                @update:model-value="app.patchConfig({ themeID: $event })"
-              />
-            </div>
-
-            <!--
-              The mark comes in six colourways. They are drawn here rather than
-              loaded as pictures, from the same string the icon files are
-              rasterised from, so the tile a reader presses is the icon they
-              get rather than a picture of one that might have drifted.
-            -->
-            <div class="line icons">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.appIcon") }}</div>
-                <div class="line-sub">{{ t("set.appIconSub") }}</div>
-              </div>
-              <div class="gallery" role="radiogroup" :aria-label="t('set.appIcon')">
-                <button
-                  v-for="tile in iconTiles"
-                  :key="tile.spec.id"
-                  class="tile"
-                  :class="{ on: appIcon === tile.spec.id }"
-                  role="radio"
-                  :aria-checked="appIcon === tile.spec.id"
-                  :aria-label="tile.spec.name"
-                  @click="app.patchConfig({ appIcon: tile.spec.id })"
-                >
-                  <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
-                  <span v-else class="tile-art" v-html="tile.svg" />
-                  <span class="tile-name">{{ tile.spec.name }}</span>
-                </button>
-              </div>
-            </div>
-
-            <!--
-              Four questions the stylesheet answers, kept together because they
-              are all about how the window behaves rather than what it holds.
-            -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.pointerCursor") }}</div>
-                <div class="line-sub">{{ t("set.pointerCursorSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.pointerCursor ?? true }"
-                role="switch"
-                :aria-checked="app.config?.pointerCursor ?? true"
-                :aria-label="t('set.pointerCursor')"
-                @click="app.patchConfig({ pointerCursor: !(app.config?.pointerCursor ?? true) })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.reduceMotion") }}</div>
-                <div class="line-sub">{{ t("set.reduceMotionSub") }}</div>
-              </div>
-              <div class="choice" role="radiogroup" :aria-label="t('set.reduceMotion')">
-                <button
-                  v-for="mode in MOTION_MODES"
-                  :key="mode"
-                  class="choice-btn"
-                  :class="{ on: (app.config?.reduceMotion ?? 'system') === mode }"
-                  role="radio"
-                  :aria-checked="(app.config?.reduceMotion ?? 'system') === mode"
-                  @click="app.patchConfig({ reduceMotion: mode })"
-                >
-                  {{ t(`set.motion.${mode}`) }}
-                </button>
-              </div>
-            </div>
-
-            <!-- MiMo's pair: the base size of the interface's text, and of code in the transcript and diffs. -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.uiFontSize") }}</div>
-                <div class="line-sub">{{ t("set.uiFontSizeSub") }}</div>
-              </div>
-              <span class="size-field">
-                <input
-                  class="field size-input"
-                  :value="app.config?.uiFontSize ?? 14"
-                  inputmode="numeric"
-                  spellcheck="false"
-                  :aria-label="t('set.uiFontSize')"
-                  @change="setSize('uiFontSize', $event, 14)"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
-                />
-                <span class="unit">px</span>
-              </span>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.codeFontSize") }}</div>
-                <div class="line-sub">{{ t("set.codeFontSizeSub") }}</div>
-              </div>
-              <span class="size-field">
-                <input
-                  class="field size-input"
-                  :value="app.config?.codeFontSize ?? 12"
-                  inputmode="numeric"
-                  spellcheck="false"
-                  :aria-label="t('set.codeFontSize')"
-                  @change="setSize('codeFontSize', $event, 12)"
-                  @keydown.enter="($event.target as HTMLInputElement).blur()"
-                />
-                <span class="unit">px</span>
-              </span>
-            </div>
-
-            <!--
-              Three faces rather than one, because the jobs differ: prose wants
-              a different face from code, and a terminal wants one whose glyphs
-              are all the same width whatever the rest of the app uses.
-            -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.uiFont") }}</div>
-                <div class="line-sub">{{ t("set.uiFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.uiFont ?? ''"
-                :placeholder="FONT_SANS_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ uiFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.codeFont") }}</div>
-                <div class="line-sub">{{ t("set.codeFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.codeFont ?? ''"
-                :placeholder="FONT_MONO_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ codeFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.terminalFont") }}</div>
-                <div class="line-sub">{{ t("set.terminalFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.terminalFont ?? ''"
-                :placeholder="FONT_TERMINAL_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.diffMarks") }}</div>
-                <div class="line-sub">{{ t("set.diffMarksSub") }}</div>
-              </div>
-              <div class="choice" role="radiogroup" :aria-label="t('set.diffMarks')">
-                <button
-                  v-for="mark in DIFF_MARKS"
-                  :key="mark"
-                  class="choice-btn"
-                  :class="{ on: (app.config?.diffMarks ?? 'color') === mark }"
-                  role="radio"
-                  :aria-checked="(app.config?.diffMarks ?? 'color') === mark"
-                  @click="app.patchConfig({ diffMarks: mark })"
-                >
-                  {{ t(`set.marks.${mark}`) }}
-                </button>
-              </div>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.tray") }}</div>
-                <div class="line-sub">{{ t("set.traySub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.tray ?? true }"
-                role="switch"
-                :aria-checked="app.config?.tray ?? true"
-                :aria-label="t('set.tray')"
-                @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.fontSmoothing") }}</div>
-                <div class="line-sub">{{ t("set.fontSmoothingSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.fontSmoothing ?? true }"
-                role="switch"
-                :aria-checked="app.config?.fontSmoothing ?? true"
-                :aria-label="t('set.fontSmoothing')"
-                @click="app.patchConfig({ fontSmoothing: !(app.config?.fontSmoothing ?? true) })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.wrapCode") }}</div>
-                <div class="line-sub">{{ t("set.wrapCodeSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.wrapCode ?? true }"
-                role="switch"
-                :aria-checked="app.config?.wrapCode ?? true"
-                :aria-label="t('set.wrapCode')"
-                @click="app.patchConfig({ wrapCode: !(app.config?.wrapCode ?? true) })"
-              >
-                <span class="knob" />
-              </button>
             </div>
           </div>
 
@@ -1931,6 +1676,263 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <!-- Keyboard -->
+        <!-- Appearance: a page of its own, as MiMo keeps it, rather than a group under General. -->
+        <template v-else-if="section === 'appearance'">
+          <h2>{{ t("set.appearance") }}</h2>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.scheme") }}</div>
+                <div class="line-sub">{{ t("set.schemeSub") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="app.config?.theme ?? 'system'"
+                :options="themeOptions"
+                @update:model-value="app.patchConfig({ theme: $event as 'dark' })"
+              />
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.themePalette") }}</div>
+                <div class="line-sub">{{ t("set.themePaletteSub") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="app.config?.themeID ?? DEFAULT_THEME"
+                :options="paletteOptions"
+                @update:model-value="app.patchConfig({ themeID: $event })"
+              />
+            </div>
+
+            <!--
+              The mark comes in six colourways. They are drawn here rather than
+              loaded as pictures, from the same string the icon files are
+              rasterised from, so the tile a reader presses is the icon they
+              get rather than a picture of one that might have drifted.
+            -->
+            <div class="line icons">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.appIcon") }}</div>
+                <div class="line-sub">{{ t("set.appIconSub") }}</div>
+              </div>
+              <div class="gallery" role="radiogroup" :aria-label="t('set.appIcon')">
+                <button
+                  v-for="tile in iconTiles"
+                  :key="tile.spec.id"
+                  class="tile"
+                  :class="{ on: appIcon === tile.spec.id }"
+                  role="radio"
+                  :aria-checked="appIcon === tile.spec.id"
+                  :aria-label="tile.spec.name"
+                  @click="app.patchConfig({ appIcon: tile.spec.id })"
+                >
+                  <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
+                  <span v-else class="tile-art" v-html="tile.svg" />
+                  <span class="tile-name">{{ tile.spec.name }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!--
+              Four questions the stylesheet answers, kept together because they
+              are all about how the window behaves rather than what it holds.
+            -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.pointerCursor") }}</div>
+                <div class="line-sub">{{ t("set.pointerCursorSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.pointerCursor ?? true }"
+                role="switch"
+                :aria-checked="app.config?.pointerCursor ?? true"
+                :aria-label="t('set.pointerCursor')"
+                @click="app.patchConfig({ pointerCursor: !(app.config?.pointerCursor ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.reduceMotion") }}</div>
+                <div class="line-sub">{{ t("set.reduceMotionSub") }}</div>
+              </div>
+              <div class="choice" role="radiogroup" :aria-label="t('set.reduceMotion')">
+                <button
+                  v-for="mode in MOTION_MODES"
+                  :key="mode"
+                  class="choice-btn"
+                  :class="{ on: (app.config?.reduceMotion ?? 'system') === mode }"
+                  role="radio"
+                  :aria-checked="(app.config?.reduceMotion ?? 'system') === mode"
+                  @click="app.patchConfig({ reduceMotion: mode })"
+                >
+                  {{ t(`set.motion.${mode}`) }}
+                </button>
+              </div>
+            </div>
+
+            <!-- MiMo's pair: the base size of the interface's text, and of code in the transcript and diffs. -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.uiFontSize") }}</div>
+                <div class="line-sub">{{ t("set.uiFontSizeSub") }}</div>
+              </div>
+              <span class="size-field">
+                <input
+                  class="field size-input"
+                  :value="app.config?.uiFontSize ?? 14"
+                  inputmode="numeric"
+                  spellcheck="false"
+                  :aria-label="t('set.uiFontSize')"
+                  @change="setSize('uiFontSize', $event, 14)"
+                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">px</span>
+              </span>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.codeFontSize") }}</div>
+                <div class="line-sub">{{ t("set.codeFontSizeSub") }}</div>
+              </div>
+              <span class="size-field">
+                <input
+                  class="field size-input"
+                  :value="app.config?.codeFontSize ?? 12"
+                  inputmode="numeric"
+                  spellcheck="false"
+                  :aria-label="t('set.codeFontSize')"
+                  @change="setSize('codeFontSize', $event, 12)"
+                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                />
+                <span class="unit">px</span>
+              </span>
+            </div>
+
+            <!--
+              Three faces rather than one, because the jobs differ: prose wants
+              a different face from code, and a terminal wants one whose glyphs
+              are all the same width whatever the rest of the app uses.
+            -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.uiFont") }}</div>
+                <div class="line-sub">{{ t("set.uiFontSub") }}</div>
+              </div>
+              <input
+                class="field font-field"
+                :value="app.config?.uiFont ?? ''"
+                :placeholder="FONT_SANS_DEFAULT"
+                spellcheck="false"
+                @change="app.patchConfig({ uiFont: ($event.target as HTMLInputElement).value.trim() })"
+              />
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.codeFont") }}</div>
+                <div class="line-sub">{{ t("set.codeFontSub") }}</div>
+              </div>
+              <input
+                class="field font-field"
+                :value="app.config?.codeFont ?? ''"
+                :placeholder="FONT_MONO_DEFAULT"
+                spellcheck="false"
+                @change="app.patchConfig({ codeFont: ($event.target as HTMLInputElement).value.trim() })"
+              />
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.terminalFont") }}</div>
+                <div class="line-sub">{{ t("set.terminalFontSub") }}</div>
+              </div>
+              <input
+                class="field font-field"
+                :value="app.config?.terminalFont ?? ''"
+                :placeholder="FONT_TERMINAL_DEFAULT"
+                spellcheck="false"
+                @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
+              />
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.diffMarks") }}</div>
+                <div class="line-sub">{{ t("set.diffMarksSub") }}</div>
+              </div>
+              <div class="choice" role="radiogroup" :aria-label="t('set.diffMarks')">
+                <button
+                  v-for="mark in DIFF_MARKS"
+                  :key="mark"
+                  class="choice-btn"
+                  :class="{ on: (app.config?.diffMarks ?? 'color') === mark }"
+                  role="radio"
+                  :aria-checked="(app.config?.diffMarks ?? 'color') === mark"
+                  @click="app.patchConfig({ diffMarks: mark })"
+                >
+                  {{ t(`set.marks.${mark}`) }}
+                </button>
+              </div>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.tray") }}</div>
+                <div class="line-sub">{{ t("set.traySub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.tray ?? true }"
+                role="switch"
+                :aria-checked="app.config?.tray ?? true"
+                :aria-label="t('set.tray')"
+                @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.fontSmoothing") }}</div>
+                <div class="line-sub">{{ t("set.fontSmoothingSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.fontSmoothing ?? true }"
+                role="switch"
+                :aria-checked="app.config?.fontSmoothing ?? true"
+                :aria-label="t('set.fontSmoothing')"
+                @click="app.patchConfig({ fontSmoothing: !(app.config?.fontSmoothing ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.wrapCode") }}</div>
+                <div class="line-sub">{{ t("set.wrapCodeSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.wrapCode ?? true }"
+                role="switch"
+                :aria-checked="app.config?.wrapCode ?? true"
+                :aria-label="t('set.wrapCode')"
+                @click="app.patchConfig({ wrapCode: !(app.config?.wrapCode ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+        </template>
+
         <template v-else-if="section === 'personal'">
           <h2>{{ t("set.personal") }}</h2>
           <p class="page-sub">{{ t("set.personalSub") }}</p>
@@ -1958,7 +1960,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <template v-else-if="section === 'files'">
-          <h2>{{ t("set.files") }}</h2>
+          <h2>{{ t("set.nav.files") }}</h2>
           <p class="page-sub">{{ t("set.filesSub") }}</p>
           <div class="card">
             <div v-for="file in paths?.files ?? []" :key="file.path" class="line">
@@ -2100,7 +2102,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <template v-else-if="section === 'usage'">
-          <h2>{{ t("set.usage") }}</h2>
+          <h2>{{ t("set.nav.usage") }}</h2>
           <p class="page-sub">{{ t("set.usageSub") }}</p>
           <div class="card">
             <div class="totals">
@@ -2159,7 +2161,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <template v-else-if="section === 'updates'">
-          <h2>{{ t("set.updates") }}</h2>
+          <h2>{{ t("set.nav.updates") }}</h2>
           <p class="page-sub">{{ t("set.updatesSub") }}</p>
           <div class="card">
             <div class="line">
@@ -2254,7 +2256,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <!-- Archive -->
         <template v-else-if="section === 'archive'">
-          <h2>{{ t("set.archive") }}</h2>
+          <h2>{{ t("set.nav.archive") }}</h2>
           <p class="note">{{ t("set.archiveSub") }}</p>
 
           <h3 class="sub-head">{{ t("set.closedProjects") }}</h3>
