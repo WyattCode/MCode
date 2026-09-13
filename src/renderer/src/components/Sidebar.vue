@@ -30,6 +30,9 @@ const props = defineProps<{
   selecting?: string[]
   /** Whether MiMo's priority filter is on: attention first, then the week by day. */
   priority?: boolean
+  /** Whether back and forward have anywhere to go; MiMo dims them when not. */
+  canBack?: boolean
+  canForward?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -475,12 +478,12 @@ watch(picking, (on) => {
           <path d="M8 3.5V16.5" stroke="currentColor" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
+      <button class="ico" :disabled="!canBack" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M16 10H4.5M9 5L4 10L9 15" stroke="currentColor" stroke-linecap="square" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
+      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M4 10H15.5M11 5L16 10L11 15" stroke="currentColor" stroke-linecap="square" />
         </svg>
@@ -499,12 +502,12 @@ watch(picking, (on) => {
           <path d="M8 3.5V16.5" stroke="currentColor" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
+      <button class="ico" :disabled="!canBack" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M16 10H4.5M9 5L4 10L9 15" stroke="currentColor" stroke-linecap="square" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
+      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M4 10H15.5M11 5L16 10L11 15" stroke="currentColor" stroke-linecap="square" />
         </svg>
@@ -981,6 +984,15 @@ watch(picking, (on) => {
 .ico:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/* Nowhere to go back or forward to: MiMo leaves the arrow at a third, and it does nothing. */
+.ico:disabled,
+.ico:disabled:hover {
+  color: var(--text-base);
+  background: transparent;
+  cursor: default;
+  opacity: 0.35;
 }
 
 /* The name row: 28 tall, 14 in from the 8px inset. */

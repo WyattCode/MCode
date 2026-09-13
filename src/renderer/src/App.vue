@@ -3683,7 +3683,7 @@ onBeforeUnmount(() => {
       v-tip="{ label: t('key.sidePanel'), hint: 'Ctrl+Alt+B', placement: 'bottom' }"
       @click="toggleSidePanel"
     >
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" />
         <path d="M9.5 3v10" stroke="currentColor" stroke-width="1.2" />
       </svg>
@@ -3703,6 +3703,8 @@ onBeforeUnmount(() => {
         :collapsed="!leftPanel"
         :page="view"
         :priority="priorityFilter"
+        :can-back="canGoBack"
+        :can-forward="canGoForward"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"
         @newTask="goHome"
@@ -3776,6 +3778,7 @@ onBeforeUnmount(() => {
             :info-open="infoShowing"
             :bottom-open="terminalUp"
             :side-collapsed="!leftPanel"
+            :has-content="!empty"
             @info="toggleInfo"
             @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
             @menu="(x, y) => (sessionMenu = { x, y, header: true })"
@@ -4339,17 +4342,17 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-/* Left of the caption buttons where Windows draws them, level with the header's own row. */
+/* Left of the caption buttons where Windows draws them, level with the header's own row: MiMo's 24px in a 32px row 9 down. */
 .side-panel-toggle {
   position: fixed;
-  top: 9px;
+  top: 13px;
   inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 9px);
   z-index: 30;
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  color: var(--text-weak);
+  width: 24px;
+  height: 24px;
+  color: var(--text-base);
   border-radius: 7px;
   -webkit-app-region: no-drag;
 }

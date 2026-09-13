@@ -20,7 +20,8 @@ const app = useApp()
  * whether the info card beside the conversation is.
  */
 /* `sideCollapsed`: the side column is folded to its rail, whose controls row floats over this header's start. */
-defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean }>()
+/* `hasContent`: something has been said, which is when MiMo offers the info card at all. */
+defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean }>()
 
 const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; info: []; bottom: [] }>()
 
@@ -146,15 +147,18 @@ function openMenu(event: MouseEvent) {
       <ContextMenu v-if="appMenu" :x="appMenu.x" :y="appMenu.y" :items="openItems" @pick="pickApp" @close="appMenu = undefined" />
       <!-- The info card beside the conversation; lit while it is up, as MiMo's toggle is. -->
       <button
+        v-if="hasContent"
         class="ico info"
         :aria-pressed="Boolean(infoOpen)"
         :aria-label="t('info.toggle')"
         v-tip="{ label: t('info.toggle'), placement: 'bottom' }"
         @click="emit('info')"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.2" />
-          <path d="M10 2.5v11" stroke="currentColor" stroke-width="1.2" />
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="3" cy="4" r="0.9" fill="currentColor" />
+          <circle cx="3" cy="8" r="0.9" fill="currentColor" />
+          <circle cx="3" cy="12" r="0.9" fill="currentColor" />
+          <path d="M6 4h7.5M6 8h7.5M6 12h7.5" stroke="currentColor" stroke-width="1.2" />
         </svg>
       </button>
 
@@ -170,7 +174,7 @@ function openMenu(event: MouseEvent) {
         v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J', placement: 'bottom' }"
         @click="emit('bottom')"
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.2" />
           <path d="M2 10h12" stroke="currentColor" stroke-width="1.2" />
         </svg>
@@ -281,9 +285,10 @@ function openMenu(event: MouseEvent) {
      on the same line as the side column's buttons. */
   height: 46px;
   padding-block: 4px 0;
-  /* Clear of the caption buttons, and of the side panel button App.vue keeps beside them. */
+  /* Clear of the caption buttons, and of the side panel button App.vue keeps beside them:
+     its 9px inset and 24px, then MiMo's 4px before this row's last button. */
   /* (the start is pushed past the rail's controls row by .after-rail, below) */
-  padding-inline-end: calc(58px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  padding-inline-end: calc(37px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   -webkit-app-region: drag;
 }
 
@@ -295,9 +300,11 @@ function openMenu(event: MouseEvent) {
   letter-spacing: 0;
 }
 
+/* MiMo's title-bar buttons: 24 square, 7 round, in its title-bar icon colour. */
 .ico {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
+  color: var(--text-base);
   border-radius: 7px;
 }
 
@@ -348,10 +355,10 @@ function openMenu(event: MouseEvent) {
   background: var(--surface-hover);
 }
 
-/* A toggle that is on stays lit while its panel is up. */
-.ico[aria-pressed="true"] {
+/* The info card's toggle stays lit, in the selected tint, while the card is up; the bottom panel's does not. */
+.info[aria-pressed="true"] {
   color: var(--text-strong);
-  background: var(--surface-hover);
+  background: var(--surface-selected);
 }
 
 .left > *,
