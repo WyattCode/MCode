@@ -675,6 +675,20 @@ export interface McpServerState {
   tools: number
 }
 
+/** Where an importable MCP server was found: Claude Code, Kiro or Codex. */
+export type McpImportSource = "claude" | "kiro" | "codex"
+
+/** A server another tool has configured, as the import view lists it - never its variables or headers. */
+export interface McpImportItem {
+  source: McpImportSource
+  name: string
+  type: "local" | "remote"
+  /** The command line, or the address. */
+  summary: string
+  /** Already configured here under this name, so it is skipped. */
+  exists: boolean
+}
+
 /** One tool a server offers, as the MCP settings page lists it. */
 export interface McpToolInfo {
   name: string
@@ -1317,6 +1331,8 @@ export type Request =
   | { type: "mcp.list" }
   | { type: "mcp.toggle"; name: string }
   | { type: "mcp.tools"; name: string }
+  | { type: "mcp.importScan" }
+  | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
 
 export type RequestType = Request["type"]
 export type RequestOf<T extends RequestType> = Extract<Request, { type: T }>
@@ -1442,6 +1458,9 @@ export interface ResponseMap {
   "mcp.toggle": { servers: McpServerState[] }
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }
+  "mcp.importScan": { items: McpImportItem[] }
+  /** The names actually added. */
+  "mcp.importApply": { imported: string[] }
 }
 
 // ---------------------------------------------------------------------------

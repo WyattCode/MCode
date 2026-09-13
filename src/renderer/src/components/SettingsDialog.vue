@@ -24,7 +24,7 @@ import { CHIMES, chimeOf, type Chime } from "@shared/chime"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AppPath, AppPaths, UsageSummary } from "@shared/protocol"
-import type { McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
+import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure, notify } from "../lib/toast"
@@ -177,7 +177,7 @@ const MCP_EXAMPLE = `{
   }
 }`
 
-const mcpView = ref<"list" | "form">("list")
+const mcpView = ref<"list" | "form" | "import">("list")
 const mcpEditing = ref<string>()
 const mcpForm = ref<McpForm>(blankMcpForm())
 const mcpRevealed = ref<Record<string, boolean>>({})
@@ -337,6 +337,63 @@ function toggleMcpTools(name: string) {
   }
   mcpToolsOpen.value = name
   if (!mcpTools.value[name]) void loadMcpTools(name)
+}
+
+/*
+ * MiMo's 从其他工具导入: scan Claude Code, Kiro and Codex, list what they have
+ * by source with everything not already here switched on, and add the picks.
+ */
+const MCP_IMPORT_SOURCES: { id: McpImportSource; label: string }[] = [
+  { id: "claude", label: "Claude Code" },
+  { id: "kiro", label: "Kiro" },
+  { id: "codex", label: "Codex" },
+]
+const mcpImports = ref<McpImportItem[]>([])
+const mcpImportPicked = ref<Set<string>>(new Set())
+const mcpScanning = ref(false)
+const mcpImporting = ref(false)
+
+function importKey(item: { source: string; name: string }): string {
+  return `${item.source}:${item.name}`
+}
+
+const mcpImportChosen = computed(() =>
+  mcpImports.value.filter((item) => !item.exists && mcpImportPicked.value.has(importKey(item))),
+)
+
+async function startMcpImport() {
+  if (mcpScanning.value) return
+  mcpScanning.value = true
+  try {
+    const result = await app.client?.request({ type: "mcp.importScan" }).catch(() => undefined)
+    mcpImports.value = result?.items ?? []
+    mcpImportPicked.value = new Set(mcpImports.value.filter((item) => !item.exists).map(importKey))
+    mcpView.value = "import"
+  } finally {
+    mcpScanning.value = false
+  }
+}
+
+function pickMcpImport(item: McpImportItem) {
+  const next = new Set(mcpImportPicked.value)
+  if (next.has(importKey(item))) next.delete(importKey(item))
+  else next.add(importKey(item))
+  mcpImportPicked.value = next
+}
+
+async function finishMcpImport() {
+  if (mcpImporting.value || !mcpImportChosen.value.length) return
+  mcpImporting.value = true
+  try {
+    const items = mcpImportChosen.value.map(({ source, name }) => ({ source, name }))
+    const result = await app.client?.request({ type: "mcp.importApply", items })
+    notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }))
+    mcpView.value = "list"
+  } catch (err) {
+    notifyFailure(t("set.mcp.importFailed") + (err instanceof Error ? err.message : String(err)))
+  } finally {
+    mcpImporting.value = false
+  }
 }
 
 /* What the tools panel shows for a server: loading, why it failed, nothing, or the list. */
@@ -2308,6 +2365,66 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           </div>
         </template>
 
+        <template v-else-if="section === 'mcp' && mcpView === 'import'">
+          <h2>{{ t("set.mcp.importTitle") }}</h2>
+          <p class="page-sub">{{ t("set.mcp.importViewSub") }}</p>
+          <div v-if="!mcpImports.length" class="card" data-mcp-import-none>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.mcp.importNone") }}</div>
+                <div class="line-sub">{{ t("set.mcp.importNoneDesc") }}</div>
+              </div>
+            </div>
+          </div>
+          <template v-for="source in MCP_IMPORT_SOURCES" :key="source.id">
+            <template v-if="mcpImports.some((item) => item.source === source.id)">
+              <h3>{{ source.label }}</h3>
+              <div class="card" :data-mcp-import-source="source.id">
+                <div
+                  v-for="item in mcpImports.filter((entry) => entry.source === source.id)"
+                  :key="importKey(item)"
+                  class="line"
+                  :data-mcp-import-row="item.name"
+                >
+                  <div class="line-text">
+                    <div class="line-title">{{ item.name }}</div>
+                    <div class="line-sub mcp-summary">
+                      {{ t(item.type === "remote" ? "set.mcp.remote" : "set.mcp.local") }} · {{ item.summary }}
+                    </div>
+                  </div>
+                  <span v-if="item.exists" class="mcp-status muted" :data-mcp-import-exists="item.name">
+                    {{ t("set.mcp.importExists") }}
+                  </span>
+                  <button
+                    v-else
+                    class="switch"
+                    :class="{ on: mcpImportPicked.has(importKey(item)) }"
+                    role="switch"
+                    :aria-checked="mcpImportPicked.has(importKey(item))"
+                    :aria-label="item.name"
+                    :data-mcp-import-pick="item.name"
+                    @click="pickMcpImport(item)"
+                  >
+                    <span class="knob" />
+                  </button>
+                </div>
+              </div>
+            </template>
+          </template>
+          <div class="mcp-import-actions">
+            <button class="ctl-btn" data-mcp-import-back @click="mcpView = 'list'">{{ t("set.mcp.importBack") }}</button>
+            <button
+              v-if="mcpImports.some((item) => !item.exists)"
+              class="ctl-btn update-install"
+              data-mcp-import-apply
+              :disabled="mcpImporting || !mcpImportChosen.length"
+              @click="finishMcpImport"
+            >
+              {{ mcpImporting ? t("set.mcp.importing") : t("set.mcp.importApply", { n: String(mcpImportChosen.length) }) }}
+            </button>
+          </div>
+        </template>
+
         <template v-else-if="section === 'mcp'">
           <h2>{{ t("set.nav.mcp") }}</h2>
           <p class="page-sub">{{ t("set.mcp.sub") }}</p>
@@ -2367,6 +2484,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <div class="line-sub">{{ t("set.mcp.addServerDesc") }}</div>
               </div>
               <button class="ctl-btn" data-add-mcp @click="addMcp">{{ t("set.mcp.add") }}</button>
+            </div>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.mcp.importEntry") }}</div>
+                <div class="line-sub">{{ t("set.mcp.importEntryDesc") }}</div>
+              </div>
+              <button class="ctl-btn" data-mcp-import :disabled="mcpScanning" @click="startMcpImport">
+                {{ t(mcpScanning ? "set.mcp.importScanning" : "set.mcp.importScan") }}
+              </button>
             </div>
           </div>
 
@@ -3518,6 +3644,18 @@ h3 {
 
 .page-sub.mcp-sub {
   margin-top: 0;
+}
+
+/* An import row's command or address wraps where it must, and the actions sit under the lists. */
+.mcp-summary {
+  overflow-wrap: anywhere;
+}
+
+.mcp-import-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
 }
 
 .mcp-path {

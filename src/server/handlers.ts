@@ -22,6 +22,7 @@ import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
 import { listCommands } from "./command"
+import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import type { ShellOwner } from "./shell"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
@@ -857,6 +858,14 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.tools":
       return runtime.mcp.toolsOf(request.name) satisfies Handled<"mcp.tools">
+
+    case "mcp.importScan": {
+      const found = await scanMcpImports(runtime.config.get().mcpServers ?? {})
+      return { items: found.map(importItem) } satisfies Handled<"mcp.importScan">
+    }
+
+    case "mcp.importApply":
+      return { imported: await applyMcpImports(runtime.config, request.items) } satisfies Handled<"mcp.importApply">
   }
 }
 
