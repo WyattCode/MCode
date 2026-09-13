@@ -1102,7 +1102,15 @@ export const useApp = defineStore("app", () => {
     if (!target) return
     await api().request({ type: "session.model", sessionID: target, model })
     // A side chat's model is its own; the default follows the open conversation.
-    if (target !== sideID.value) await patchConfig({ model })
+    if (target !== sideID.value) await patchConfig({ model, smart: false })
+  }
+
+  /** Puts a conversation on Smart, and makes Smart the start for the next one. */
+  async function setSmart(to?: string) {
+    const target = to ?? currentID.value
+    if (!target) return
+    await api().request({ type: "session.smart", sessionID: target })
+    if (target !== sideID.value) await patchConfig({ smart: true })
   }
 
   /**
@@ -1442,6 +1450,7 @@ export const useApp = defineStore("app", () => {
     abort,
     respond,
     setModel,
+    setSmart,
     setEffort,
     setAgent,
     setStaged,

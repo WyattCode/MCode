@@ -120,6 +120,7 @@ export class SessionStore {
     model: ModelRef
     agent?: AgentName
     staged?: boolean
+    smart?: boolean
     scratch?: boolean
     sideOf?: string
     title?: string
@@ -132,6 +133,7 @@ export class SessionStore {
       model: input.model,
       agent: input.agent ?? "build",
       ...(input.staged ? { staged: true } : {}),
+      ...(input.smart ? { smart: true } : {}),
       ...(input.scratch ? { scratch: true } : {}),
       ...(input.sideOf ? { sideOf: input.sideOf } : {}),
       created: now,

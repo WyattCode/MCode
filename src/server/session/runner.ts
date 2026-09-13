@@ -12,6 +12,7 @@ import type {
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
+import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
 import type { Permissions } from "../permission"
@@ -46,6 +47,27 @@ import { systemPrompt, titleFrom } from "./prompt"
  * What the summary is for: the next turn reads it instead of the conversation,
  * so it has to carry decisions and state rather than read as a recap.
  */
+/*
+ * Smart's one question about a conversation's first message, in this app's own
+ * words: what kind of task it is and how hard, as JSON, so the route can be
+ * decided by a rule rather than by the model's say-so.
+ */
+const SMART_SYSTEM = [
+  "You sort one request for a coding assistant before any work starts.",
+  'Answer with JSON and nothing else: {"scene": "chat" | "writing" | "software" | "research" | "other", "difficulty": "easy" | "hard", "confidence": a number from 0 to 1}.',
+  "software means reading, writing, running or fixing code; research means finding, comparing or checking information.",
+  "easy means a short answer that needs no investigation; anything else is hard.",
+].join("\n")
+
+/** Room for the JSON, and for a model that reasons before giving it. */
+const SMART_OUTPUT_TOKENS = 1024
+
+/** How long the sorting may take before the main model is used anyway. */
+const SMART_TIMEOUT_MS = 20_000
+
+/** The message is quoted up to this many characters; the start says what it is. */
+const SMART_REQUEST_CHARS = 4000
+
 /*
  * The instruction for reviewing one risky command on the user's behalf. Its
  * own short request with no tools: the model is asked for a verdict, not to
@@ -905,6 +927,72 @@ export class SessionRunner {
   }
 
   /** The setup a claimed session goes through before its turn is launched. */
+  /**
+   * Smart's one decision: which of its two models this conversation runs on.
+   *
+   * Asked of the main model in a short request with no tools. Anything that
+   * does not come back as a clear reading - a failure, a timeout, prose - lands
+   * on the main model. The answer is written into the session, so every later
+   * turn simply runs on `model` like any other conversation.
+   */
+  private async routeSmart(session: SessionInfo, text: string): Promise<SessionInfo> {
+    const config = this.config.get()
+    const main = config.smartMain?.provider ? config.smartMain : config.model
+    const fast = config.smartFast?.provider ? config.smartFast : main
+    let reading: TaskReading | undefined
+    const definition = this.config.definition(main.provider)
+    if (definition && this.config.usable(main.provider)) {
+      const adapter: ProviderAdapter =
+        definition.kind === "anthropic"
+          ? AnthropicAdapter
+          : definition.kind === "chatgpt"
+            ? ChatGPTSubscription
+            : OpenAICompatible
+      const apiKey = this.config.apiKey(definition.id) ?? ""
+      const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), SMART_TIMEOUT_MS)
+      let answer = ""
+      try {
+        await adapter.stream(
+          {
+            apiKey: tokens?.access ?? apiKey,
+            model: main,
+            system: SMART_SYSTEM,
+            history: [
+              {
+                id: `${session.id}:smart-route`,
+                sessionID: session.id,
+                role: "user",
+                text: text.slice(0, SMART_REQUEST_CHARS),
+                attachments: [],
+                time: { created: Date.now() },
+              },
+            ],
+            tools: [],
+            effort: "low",
+            showReasoning: false,
+            signal: controller.signal,
+            baseURL: definition.baseURL,
+            headers: definition.headers,
+            accountId: tokens?.accountId,
+            maxOutput: SMART_OUTPUT_TOKENS,
+          },
+          (event) => {
+            if (event.type === "text.delta") answer += event.text
+          },
+        )
+        reading = readTask(answer)
+      } catch {
+        reading = undefined
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+    const route = smartRoute(reading)
+    return this.store.update(session.id, { model: route === "fast" ? fast : main, smartRoute: route })
+  }
+
   private async begin(
     input: { sessionID: string; text: string; attachments?: Attachment[] },
     controller: AbortController,
@@ -920,6 +1008,9 @@ export class SessionRunner {
      * what keeps the two from being interleaved on disk.
      */
     if (session.revert) session = await this.commitRevert(session)
+
+    // Smart picks its model from the first message, before anything is checked against it.
+    if (session.smart && !session.smartRoute && input.text.trim()) session = await this.routeSmart(session, input.text)
 
     /*
      * The project is photographed from here rather than from the first tool

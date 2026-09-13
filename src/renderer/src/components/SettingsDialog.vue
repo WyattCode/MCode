@@ -763,6 +763,29 @@ function key(provider: string, model: string) {
   return `${provider}/${model}`
 }
 
+/*
+ * Smart's two models. An empty choice follows the default model; it is stored
+ * as an empty reference rather than removed, because a patch cannot remove a
+ * field once it has been set.
+ */
+const smartOptions = computed(() => [
+  { value: "", label: t("set.smartDefault") },
+  ...connected.value.flatMap((provider) =>
+    provider.models.map((model) => ({ value: key(provider.id, model.id), label: `${provider.name} · ${model.name}` })),
+  ),
+])
+
+function smartValue(field: "smartFast" | "smartMain") {
+  const chosen = app.config?.[field]
+  return chosen?.provider ? key(chosen.provider, chosen.model) : ""
+}
+
+function setSmartModel(field: "smartFast" | "smartMain", value: string) {
+  const at = value.indexOf("/")
+  const chosen = at > 0 ? { provider: value.slice(0, at), model: value.slice(at + 1) } : { provider: "", model: "" }
+  void app.patchConfig(field === "smartFast" ? { smartFast: chosen } : { smartMain: chosen })
+}
+
 /**
  * An empty list means "not curated yet", in which case everything is offered -
  * so the first toggle has to seed the list from what is currently visible,
@@ -2095,6 +2118,34 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <template v-else>
           <h2>{{ t("model.manage") }}</h2>
           <p class="note">{{ t("model.manageSub") }}</p>
+
+          <!-- Smart's two models, which the composer's Smart row picks between. -->
+          <h3>{{ t("model.smart") }}</h3>
+          <p class="note">{{ t("set.smartNote") }}</p>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.smartFast") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="smartValue('smartFast')"
+                :options="smartOptions"
+                :width="240"
+                @update:model-value="setSmartModel('smartFast', $event)"
+              />
+            </div>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.smartMain") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="smartValue('smartMain')"
+                :options="smartOptions"
+                :width="240"
+                @update:model-value="setSmartModel('smartMain', $event)"
+              />
+            </div>
+          </div>
 
           <input v-model="modelQuery" class="search-in" :placeholder="t('model.search')" spellcheck="false" />
 

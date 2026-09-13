@@ -138,6 +138,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         // same way the model is.
         agent: config.agent,
         staged: config.staged,
+        ...(config.smart ? { smart: true } : {}),
         title: request.title,
       })
       return { session } satisfies Handled<"session.create">
@@ -198,7 +199,19 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       } satisfies Handled<"session.fork">
 
     case "session.model":
-      return { session: await runtime.sessions.update(request.sessionID, { model: request.model }) }
+      // A model chosen by name is the end of Smart for this conversation.
+      return {
+        session: await runtime.sessions.update(request.sessionID, {
+          model: request.model,
+          smart: undefined,
+          smartRoute: undefined,
+        }),
+      }
+
+    case "session.smart":
+      return {
+        session: await runtime.sessions.update(request.sessionID, { smart: true, smartRoute: undefined }),
+      } satisfies Handled<"session.smart">
 
     case "session.effort":
       return { session: await runtime.sessions.update(request.sessionID, { effort: request.effort }) }

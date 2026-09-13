@@ -25,6 +25,7 @@ import path from "node:path"
 import { WebSocket } from "ws"
 import { startBackend } from "../src/server/index"
 import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
+import { readTask, smartRoute } from "../src/shared/smart"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
@@ -1426,6 +1427,107 @@ async function main() {
     check("nor does another scheme", parseSessionLink("https://open-session?session=x") === undefined)
     check("nor another action", parseSessionLink("mcode://delete-session?session=x") === undefined)
     check("the link is found among launch arguments", linkInArgs(["MCode.exe", "--flag", link]) === link && linkInArgs(["MCode.exe", "--flag"]) === undefined)
+  }
+
+  section("Smart")
+  {
+    check("software work goes to the main model", smartRoute({ scene: "software", difficulty: "easy", confidence: 1 }) === "main")
+    check("and so does research", smartRoute({ scene: "research", difficulty: "easy", confidence: 1 }) === "main")
+    check("an easy everyday task it is sure of goes to the fast model", smartRoute({ scene: "chat", difficulty: "easy", confidence: 0.9 }) === "fast")
+    check("but not one it is unsure of", smartRoute({ scene: "chat", difficulty: "easy", confidence: 0.89 }) === "main")
+    check("nor a hard one", smartRoute({ scene: "writing", difficulty: "hard", confidence: 0.99 }) === "main")
+    check("an answer with no reading in it goes to the main model", smartRoute(readTask("I cannot tell")) === "main")
+    const wrapped = readTask('Sure: {"scene":"chat","difficulty":"easy","confidence":0.95} - done')
+    check("a reading wrapped in prose is still read", wrapped?.scene === "chat" && wrapped?.confidence === 0.95, wrapped)
+
+    let reading = '{"scene":"chat","difficulty":"easy","confidence":0.95}'
+    const bodies: any[] = []
+    const smartServer = createServer((request, response) => {
+      if ((request.url ?? "").includes("/models")) {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ data: [{ id: "fast-one" }, { id: "main-one" }] }))
+        return
+      }
+      let raw = ""
+      request.on("data", (chunk) => (raw += chunk))
+      request.on("end", () => {
+        const body = JSON.parse(raw)
+        bodies.push(body)
+        const sorting = JSON.stringify(body.messages ?? []).includes("You sort one request")
+        const text = sorting ? reading : "done"
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.end(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n` +
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n` +
+            "data: [DONE]\n\n",
+        )
+      })
+    })
+    await new Promise<void>((resolve) => smartServer.listen(8798, "127.0.0.1", resolve))
+    await call({
+      type: "config.set",
+      patch: {
+        providerEndpoints: { lmstudio: "http://127.0.0.1:8798/v1" },
+        smartFast: { provider: "lmstudio", model: "fast-one" },
+        smartMain: { provider: "lmstudio", model: "main-one" },
+      },
+    })
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
+
+    const idleAfter = (sessionID: string, before: number) =>
+      new Promise<boolean>((resolve) => {
+        const started = Date.now()
+        const poll = setInterval(() => {
+          const done = events.slice(before).some((event) => event.type === "session.idle" && event.sessionID === sessionID)
+          if (done || Date.now() - started > 60_000) {
+            clearInterval(poll)
+            resolve(done)
+          }
+        }, 50)
+      })
+
+    const easy = await call({ type: "session.create", directory: project })
+    const easyID: string = easy.session.id
+    await call({ type: "session.model", sessionID: easyID, model: { provider: "lmstudio", model: "main-one" } })
+    const marked = await call({ type: "session.smart", sessionID: easyID })
+    check("choosing Smart marks the conversation", marked.session.smart === true && marked.session.smartRoute === undefined, marked.session)
+    let before = events.length
+    await call({ type: "session.prompt", sessionID: easyID, text: "what is the capital of France" })
+    check("the Smart turn finished", await idleAfter(easyID, before))
+    const easyAfter = await call({ type: "session.get", sessionID: easyID })
+    check(
+      "an easy everyday request is routed to the fast model",
+      easyAfter.session.smartRoute === "fast" && easyAfter.session.model.model === "fast-one",
+      easyAfter.session,
+    )
+    const sorting = bodies.find((body) => JSON.stringify(body.messages ?? []).includes("You sort one request"))
+    check("the sorting request went to the main model with no tools", sorting?.model === "main-one" && !(sorting?.tools?.length > 0), sorting && { model: sorting.model, tools: sorting.tools })
+    check("and the turn itself ran on the fast model", bodies.some((body) => body.model === "fast-one"), bodies.map((body) => body.model))
+
+    reading = '{"scene":"software","difficulty":"easy","confidence":0.99}'
+    const code = await call({ type: "session.create", directory: project })
+    const codeID: string = code.session.id
+    await call({ type: "session.smart", sessionID: codeID })
+    before = events.length
+    await call({ type: "session.prompt", sessionID: codeID, text: "fix the failing test in src/app.ts" })
+    check("the second Smart turn finished", await idleAfter(codeID, before))
+    const codeAfter = await call({ type: "session.get", sessionID: codeID })
+    check("software work is routed to the main model", codeAfter.session.smartRoute === "main" && codeAfter.session.model.model === "main-one", codeAfter.session)
+
+    const picked = await call({ type: "session.model", sessionID: codeID, model: { provider: "lmstudio", model: "fast-one" } })
+    check("choosing a model by name turns Smart off", picked.session.smart === undefined && picked.session.smartRoute === undefined, picked.session)
+
+    await call({ type: "config.set", patch: { smart: true } })
+    const inherits = await call({ type: "session.create", directory: project })
+    check("with Smart as the default a new conversation starts on it", inherits.session.smart === true, inherits.session)
+
+    for (const id of [easyID, codeID, inherits.session.id]) await call({ type: "session.delete", sessionID: id })
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
+    await call({
+      type: "config.set",
+      patch: { providerEndpoints: {}, smart: false, smartFast: { provider: "", model: "" }, smartMain: { provider: "", model: "" } },
+    })
+    smartServer.close()
   }
 
   section("Plan mode")

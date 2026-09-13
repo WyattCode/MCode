@@ -90,11 +90,15 @@ const historyIndex = ref(-1)
  * The picker lists display names, so the pill has to as well - showing the raw
  * slug there made the same model read two different ways on one screen.
  */
+/* Smart, for the open conversation or - on the home screen - for the next one. */
+const smartOn = computed(() => (session.value ? Boolean(session.value.smart) : Boolean(app.config?.smart)))
+
 const modelName = computed(() => {
   /*
    * With no session open - the home screen - the box names the app's default,
    * because that is the model the task this box creates will run.
    */
+  if (smartOn.value) return t("model.smart")
   const chosen = session.value?.model ?? app.config?.model
   if (!chosen) return "no model"
   const provider = app.providers.find((entry) => entry.id === chosen.provider)
@@ -1197,7 +1201,10 @@ function modelKey(provider: string, model: string) {
   return `${provider}:${model}`
 }
 
+const SMART_KEY = "action:smart"
+
 const currentKey = computed(() => {
+  if (smartOn.value) return SMART_KEY
   const chosen = session.value?.model ?? app.config?.model
   return chosen ? modelKey(chosen.provider, chosen.model) : ""
 })
@@ -1210,6 +1217,7 @@ const currentKey = computed(() => {
  * arriving at the end of the list is how someone finds it.
  */
 const modelKeys = computed(() => [
+  ...(modelQuery.value ? [] : [SMART_KEY]),
   ...groups.value.flatMap((group) =>
     group.models.map((model) => modelKey(group.provider.id, model.id)),
   ),
@@ -1250,6 +1258,10 @@ function openManage() {
 function selectActive() {
   if (activeKey.value === MANAGE_KEY) {
     openManage()
+    return
+  }
+  if (activeKey.value === SMART_KEY) {
+    void chooseSmart()
     return
   }
   for (const group of groups.value) {
@@ -1338,10 +1350,20 @@ async function chooseModel(provider: string, model: string) {
    * which every session already falls back to.
    */
   if (!sessionID.value) {
-    await app.patchConfig({ model: { provider, model } })
+    await app.patchConfig({ model: { provider, model }, smart: false })
     return
   }
   await app.setModel({ provider, model }, sessionID.value)
+}
+
+/* Smart: the model is picked from the conversation's first message. */
+async function chooseSmart() {
+  menu.value = undefined
+  if (!sessionID.value) {
+    await app.patchConfig({ smart: true })
+    return
+  }
+  await app.setSmart(sessionID.value)
 }
 
 function onPointerDown(event: MouseEvent) {
@@ -1808,6 +1830,28 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
               <div class="model-scroll" @scroll="hovered = undefined">
                 <div class="pad pad-top-0">
+                  <!--
+                    MiMo's first row: Smart picks between the fast and the main
+                    model from each conversation's first message.
+                  -->
+                  <button
+                    v-if="!modelQuery"
+                    class="item smart"
+                    :class="{ hot: activeKey === SMART_KEY, on: smartOn }"
+                    :data-key="SMART_KEY"
+                    @mouseenter="activeKey = SMART_KEY"
+                    @click="chooseSmart()"
+                  >
+                    <span class="tick">
+                      <svg v-show="smartOn" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                        <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
+                      </svg>
+                    </span>
+                    <span class="smart-text">
+                      <span class="item-name">{{ t("model.smart") }}</span>
+                      <span class="item-desc">{{ t("model.smartDesc") }}</span>
+                    </span>
+                  </button>
                   <div v-if="groups.length === 0" class="model-empty">
                     {{ app.providers.some((p) => p.configured) ? t("model.none") : t("model.needProvider") }}
                   </div>
@@ -2731,6 +2775,29 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .item:disabled:hover {
   background: transparent;
+}
+
+/* Smart's row: the name over a line saying what it does. */
+.item.smart {
+  height: auto;
+  padding-block: 6px;
+}
+
+.smart-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.item-desc {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* A two-line row with a switch at its end. */

@@ -40,6 +40,13 @@ export interface SessionInfo {
    */
   staged?: boolean
   /**
+   * On Smart: the first message picks between the fast and the main model, and
+   * `model` then holds the one it picked.
+   */
+  smart?: boolean
+  /** Which of the two Smart picked; absent until the first message. */
+  smartRoute?: "fast" | "main"
+  /**
    * Started with no project: its directory is a folder made for it alone.
    *
    * The side column lists these under Recent rather than as projects, since
@@ -675,6 +682,12 @@ export interface ServerEntry {
 
 export interface AppConfig {
   model: ModelRef
+  /** New conversations start on Smart rather than on `model`. */
+  smart?: boolean
+  /** Smart's fast model, for easy everyday requests; empty follows `model`. */
+  smartFast?: ModelRef
+  /** Smart's main model, for everything else; empty follows `model`. */
+  smartMain?: ModelRef
   theme: "dark" | "light" | "system"
   /* Which named palette the colours are generated from. */
   themeID: string
@@ -1157,6 +1170,8 @@ export type Request =
   | { type: "session.move"; sessionID: string; directory: string }
   | { type: "session.fork"; sessionID: string; messageID: string }
   | { type: "session.model"; sessionID: string; model: ModelRef }
+  /** Puts the conversation on Smart, to pick its model from the next first message. */
+  | { type: "session.smart"; sessionID: string }
   | { type: "session.effort"; sessionID: string; effort?: Effort }
   | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[] }
   | { type: "session.abort"; sessionID: string }
@@ -1323,6 +1338,7 @@ export interface ResponseMap {
   "session.move": { session: SessionInfo }
   "session.fork": { session: SessionInfo }
   "session.model": { session: SessionInfo }
+  "session.smart": { session: SessionInfo }
   "session.effort": { session: SessionInfo }
   "session.prompt": { messageID: string }
   "session.abort": Record<string, never>
