@@ -167,7 +167,11 @@ defineProps<{ bottomInset?: number }>()
    * a smudge, while the same value under a near-black one is barely a lift.
    */
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
-  scrollbar-width: thin;
+  /*
+   * No scrollbar-width here. Setting it switches Chromium over to the standard
+   * scrollbar for this element, which ignores the app's ::-webkit-scrollbar
+   * rules and drew the platform bar - arrows and a grey track - down the card.
+   */
 }
 
 .section + .section {
