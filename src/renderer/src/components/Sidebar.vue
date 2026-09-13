@@ -44,7 +44,6 @@ const emit = defineEmits<{
   select: [sessionID: string]
   batch: [action: "archive" | "move" | "delete" | "cancel"]
   newTask: []
-  plugins: []
   search: []
   back: []
   forward: []
@@ -473,49 +472,49 @@ watch(picking, (on) => {
     -->
     <div v-if="collapsed" class="rail-tools">
       <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B', placement: 'bottom' }" @click="emit('toggle')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <rect x="3" y="3.5" width="14" height="13" rx="2" stroke="currentColor" />
-          <path d="M8 3.5V16.5" stroke="currentColor" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+          <path d="M9 2.5v19" />
         </svg>
       </button>
       <button class="ico" :disabled="!canBack" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M16 10H4.5M9 5L4 10L9 15" stroke="currentColor" stroke-linecap="square" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
       <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M4 10H15.5M11 5L16 10L11 15" stroke="currentColor" stroke-linecap="square" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
       <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K', placement: 'bottom' }" @click="emit('search')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <circle cx="9" cy="9" r="5.5" stroke="currentColor" />
-          <path d="M13 13L16.5 16.5" stroke="currentColor" stroke-linecap="square" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.9" />
+          <path d="m15.6 15.6 4.8 4.8" />
         </svg>
       </button>
     </div>
     <div class="top" :class="{ mac: app.platform === 'darwin' }">
       <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B', placement: 'bottom' }" @click="emit('toggle')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <rect x="3" y="3.5" width="14" height="13" rx="2" stroke="currentColor" />
-          <path d="M8 3.5V16.5" stroke="currentColor" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+          <path d="M9 2.5v19" />
         </svg>
       </button>
       <button class="ico" :disabled="!canBack" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M16 10H4.5M9 5L4 10L9 15" stroke="currentColor" stroke-linecap="square" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
       <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M4 10H15.5M11 5L16 10L11 15" stroke="currentColor" stroke-linecap="square" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
       <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K', placement: 'bottom' }" @click="emit('search')">
-        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <circle cx="9" cy="9" r="5.5" stroke="currentColor" />
-          <path d="M13 13L16.5 16.5" stroke="currentColor" stroke-linecap="square" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.9" />
+          <path d="m15.6 15.6 4.8 4.8" />
         </svg>
       </button>
       <!--
@@ -530,9 +529,9 @@ watch(picking, (on) => {
         v-tip="{ label: t(priority ? 'side.priorityOff' : 'side.priorityOn'), hint: 'Ctrl+Alt+U', placement: 'bottom' }"
         @click="emit('toggle-priority')"
       >
-        <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M5.5 13.5V9a4.5 4.5 0 0 1 9 0v4.5l1.5 1.5H4z" stroke="currentColor" stroke-linejoin="round" />
-          <path d="M8.3 16.6a1.8 1.8 0 0 0 3.4 0" stroke="currentColor" stroke-linecap="round" />
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6.2 16.6V11a5.8 5.8 0 0 1 11.6 0v5.6l1.8 1.9H4.4z" />
+          <path d="M10 21.2a2.1 2.1 0 0 0 4 0" />
         </svg>
       </button>
     </div>
@@ -550,20 +549,7 @@ watch(picking, (on) => {
         </svg>
         <span class="row-label">{{ t("side.newTask") }}</span>
       </button>
-      <button
-        class="row"
-        :class="{ on: page === 'plugins' }"
-        v-tip="collapsed ? { label: t('side.plugins'), placement: 'right' } : ''"
-        @click="emit('plugins')"
-      >
-        <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-          <path d="M8 3.5H12V6.5H15.5V16.5H4.5V6.5H8V3.5Z" stroke="currentColor" stroke-linejoin="round" />
-          <path d="M8 11H12" stroke="currentColor" stroke-linecap="square" />
-        </svg>
-        <span class="row-label">{{ t("side.plugins") }}</span>
-      </button>
-
-      <!-- Third, where MiMo keeps it: new task, plugins, then what came out. -->
+      <!-- MiMo's plugins row sits between these two; the user asked for it hidden. -->
       <button
         class="row"
         :class="{ on: page === 'artifacts' }"
@@ -984,6 +970,29 @@ watch(picking, (on) => {
 .ico:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/*
+ * The title-bar row in MiMo's icon colour: near the strongest text on a dark
+ * ground, and that text at 60% on a light one. Its glyphs are drawn on a 24
+ * grid with a 2-unit round stroke shown at 14px, the bell at 16 - about a
+ * 1.2px line, where the old 17px icons on a 20 grid came out near 0.85.
+ */
+.top .ico,
+.rail-tools .ico {
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .top .ico,
+  :root:not([data-theme="light"]) .rail-tools .ico {
+    color: var(--text-strong);
+  }
+}
+
+:root[data-theme="dark"] .top .ico,
+:root[data-theme="dark"] .rail-tools .ico {
+  color: var(--text-strong);
 }
 
 /* Nowhere to go back or forward to: MiMo leaves the arrow at a third, and it does nothing. */

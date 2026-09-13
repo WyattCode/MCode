@@ -105,8 +105,10 @@ function openMenu(event: MouseEvent) {
         conversation.
       -->
       <button class="ico options" v-tip="{ label: t('session.options'), placement: 'bottom' }" @click="openMenu">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M2.5 7.5H3.5V8.5H2.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M7.5 7.5H8.5V8.5H7.5V7.5Z" stroke="currentColor" stroke-width="1" /><path d="M12.5 7.5H13.5V8.5H12.5V7.5Z" stroke="currentColor" stroke-width="1" />
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="19" cy="12" r="1.7" />
         </svg>
       </button>
     </div>
@@ -154,11 +156,8 @@ function openMenu(event: MouseEvent) {
         v-tip="{ label: t('info.toggle'), placement: 'bottom' }"
         @click="emit('info')"
       >
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="3" cy="4" r="0.9" fill="currentColor" />
-          <circle cx="3" cy="8" r="0.9" fill="currentColor" />
-          <circle cx="3" cy="12" r="0.9" fill="currentColor" />
-          <path d="M6 4h7.5M6 8h7.5M6 12h7.5" stroke="currentColor" stroke-width="1.2" />
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9.5 6h11M9.5 12h11M9.5 18h11M4 6h.01M4 12h.01M4 18h.01" />
         </svg>
       </button>
 
@@ -174,9 +173,9 @@ function openMenu(event: MouseEvent) {
         v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J', placement: 'bottom' }"
         @click="emit('bottom')"
       >
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.2" />
-          <path d="M2 10h12" stroke="currentColor" stroke-width="1.2" />
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+          <path d="M2.5 15h19" />
         </svg>
       </button>
     </div>
@@ -300,12 +299,25 @@ function openMenu(event: MouseEvent) {
   letter-spacing: 0;
 }
 
-/* MiMo's title-bar buttons: 24 square, 7 round, in its title-bar icon colour. */
+/*
+ * MiMo's title-bar buttons: 24 square, 7 round, in its title-bar icon colour -
+ * near the strongest text on a dark ground, that text at 60% on a light one.
+ */
 .ico {
   width: 24px;
   height: 24px;
-  color: var(--text-base);
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
   border-radius: 7px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ico {
+    color: var(--text-strong);
+  }
+}
+
+:root[data-theme="dark"] .ico {
+  color: var(--text-strong);
 }
 
 /* Against the title, and never squeezed by a long one. */

@@ -3,8 +3,8 @@ import { label } from "./labels"
 import { applyZoom } from "./zoom"
 
 /**
- * Menu bar. Almost every command also lives in the command palette; this exists
- * for discoverability and to name the chord beside each item. Items that act on
+ * Menu bar. It exists for discoverability and to name the chord beside each
+ * item; the commands themselves are reached by their keys. Items that act on
  * the conversation forward to the focused window rather than reaching into the
  * backend, so the renderer stays the single place that knows the current session.
  */
@@ -111,7 +111,6 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
     {
       label: L("menu.view", "View"),
       submenu: [
-        { label: L("menu.palette", "Command Palette"), ...shown("CmdOrCtrl+K"), click: send("menu:palette") },
         { label: L("menu.terminal", "Toggle Terminal"), ...shown("CmdOrCtrl+`"), click: send("menu:terminal") },
         { label: L("menu.sidebar", "Toggle Sidebar"), ...shown("CmdOrCtrl+B"), click: send("menu:sidebar") },
         { label: L("menu.files", "Toggle File Tree"), ...shown("CmdOrCtrl+\\"), click: send("menu:files") },

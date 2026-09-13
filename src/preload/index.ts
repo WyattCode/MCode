@@ -170,7 +170,6 @@ const api = {
       "new-session",
       "open-project",
       "settings",
-      "palette",
       "terminal",
       "sidebar",
       "files",

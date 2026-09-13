@@ -5,38 +5,14 @@ import { sessionTitle, t } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 
-interface Command {
-  id: string
-  title: string
-  /**
-   * i18n key for the category this command belongs to. Not drawn here - the
-   * palette heads the whole run with one "Commands" title - but it orders the
-   * list and names the section the shortcuts page files it under.
-   */
-  group?: string
-  hint?: string
-  danger?: boolean
-  /**
-   * Kept out of the palette while staying bindable. Opening the palette from
-   * within the palette is the case this exists for.
-   */
-  hidden?: boolean
-  run: () => unknown
-}
-
 /**
- * What this palette is for.
- *
- * "all" is the command palette proper; the rest are the same surface opened on
- * one kind of thing, which is how the reference offers its file, session and
- * project pickers rather than building three dialogs.
+ * What this picker is for: one surface opened on one kind of thing, which is
+ * how the reference offers its file, session and project pickers rather than
+ * building three dialogs. MiMo has no command list, so there is no mixed mode.
  */
-export type PaletteMode = "all" | "files" | "sessions" | "projects" | "messages"
+export type PaletteMode = "files" | "sessions" | "projects" | "messages"
 
-const props = withDefaults(
-  defineProps<{ commands: Command[]; mode?: PaletteMode; projects?: string[] }>(),
-  { mode: "all", projects: () => [] },
-)
+const props = withDefaults(defineProps<{ mode: PaletteMode; projects?: string[] }>(), { projects: () => [] })
 const emit = defineEmits<{
   close: []
   file: [path: string]
@@ -85,28 +61,18 @@ async function loadFiles() {
 
 type Row =
   | { kind: "file"; id: string; path: string; rank: number }
-  | { kind: "command"; id: string; command: Command; rank: number }
   | { kind: "session"; id: string; sessionID: string; title: string; hint?: string; rank: number }
   | { kind: "project"; id: string; directory: string; title: string; rank: number }
   | { kind: "message"; id: string; messageID: string; text: string; title: string; rank: number }
 
-const FILE_LIMIT = 8
-
 /**
- * How many of one kind to show when the palette is opened for that kind alone.
- *
- * Higher than the mixed list allows, because nothing else is competing for the
- * room - opening the file picker to eight entries would be a worse file picker
- * than the one it replaced.
+ * How many of one kind to show. Nothing else competes for the room, so the
+ * file picker opens with its files rather than eight of them.
  */
 const SCOPED_LIMIT = 200
 
-const scoped = computed(() => props.mode !== "all")
-
-/** Says what is being searched, so a scoped palette explains itself. */
-const placeholder = computed(() =>
-  props.mode === "all" ? t("search.placeholder") : t(`search.in.${props.mode}`),
-)
+/** Says what is being searched, so the picker explains itself. */
+const placeholder = computed(() => t(`search.in.${props.mode}`))
 
 /** One flat, ranked list - the sections are only a rendering detail. */
 const rows = computed<Row[]>(() => {
@@ -116,20 +82,8 @@ const rows = computed<Row[]>(() => {
     .map((path) => ({ path, rank: score(path, needle) }))
     .filter((entry): entry is { path: string; rank: number } => entry.rank !== undefined)
     .sort((a, b) => a.rank - b.rank)
-    /*
-     * Files are the long tail; in the mixed list they would bury everything
-     * else, so they wait for a query. Asked for on their own, they are the
-     * whole point and show straight away.
-     */
-    .slice(0, props.mode === "files" ? SCOPED_LIMIT : needle ? FILE_LIMIT : 0)
+    .slice(0, SCOPED_LIMIT)
     .map<Row>((entry) => ({ kind: "file", id: `file:${entry.path}`, path: entry.path, rank: entry.rank }))
-
-  const commandRows = props.commands
-    .filter((command) => !command.hidden)
-    .map((command) => ({ command, rank: score(command.title, needle) }))
-    .filter((entry): entry is { command: Command; rank: number } => entry.rank !== undefined)
-    .sort((a, b) => a.rank - b.rank)
-    .map<Row>((entry) => ({ kind: "command", id: entry.command.id, command: entry.command, rank: entry.rank }))
 
   // Closing a project hides it everywhere else, so its sessions have no
   // business still being reachable from here.
@@ -139,7 +93,7 @@ const rows = computed<Row[]>(() => {
     .map((session) => ({ session, rank: score(sessionTitle(session.title), needle) }))
     .filter((entry): entry is { session: (typeof app.sessions)[number]; rank: number } => entry.rank !== undefined)
     .sort((a, b) => a.rank - b.rank)
-    .slice(0, props.mode === "sessions" ? SCOPED_LIMIT : 8)
+    .slice(0, SCOPED_LIMIT)
     .map<Row>((entry) => ({
       kind: "session",
       id: `open:${entry.session.id}`,
@@ -196,26 +150,14 @@ const rows = computed<Row[]>(() => {
           }))
       : []
 
-  /*
-   * A scoped palette shows only what it was opened for. The commands stay in
-   * the mixed list, which is the one a bare Ctrl+K opens.
-   */
+  // Only what it was opened for.
   if (props.mode === "messages") return messageRows
   if (props.mode === "files") return fileRows
   if (props.mode === "sessions") return sessionRows
-  if (props.mode === "projects") return projectRows
-  return [...fileRows, ...commandRows, ...sessionRows]
+  return projectRows
 })
 
-/**
- * Heading to draw above each row, if any.
- *
- * One heading per kind, and nothing finer. Commands used to be broken into
- * their own sub-groups while browsing, but the reference draws a single
- * "Commands" heading over the whole run - measured with its palette open, where
- * five commands spanning five different categories sat under one title. The
- * category a command belongs to still matters; it just is not shown here.
- */
+/** Heading to draw above each row, if any: one per kind, and nothing finer. */
 const headers = computed(() => {
   const labels = new Map<number, string>()
   const seenKind = new Set<string>()
@@ -232,7 +174,6 @@ const headers = computed(() => {
 const LABELS: Record<Row["kind"], string> = {
   file: "search.files",
   project: "search.projects",
-  command: "search.commands",
   session: "search.sessions",
   message: "search.messages",
 }
@@ -255,8 +196,7 @@ async function choose(index: number) {
   if (row.kind === "file") emit("file", row.path)
   emit("close")
   await nextTick()
-  if (row.kind === "command") await row.command.run()
-  else if (row.kind === "session") await app.open(row.sessionID)
+  if (row.kind === "session") await app.open(row.sessionID)
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -309,7 +249,7 @@ onMounted(() => {
 
           <button
             class="row"
-            :class="{ sel: index === active, danger: row.kind === 'command' && row.command.danger }"
+            :class="{ sel: index === active }"
             @mousemove="active = index"
             @click="choose(index)"
           >
@@ -318,11 +258,6 @@ onMounted(() => {
                 {{ fileBadge(row.path).label }}
               </span>
               <span class="title mono">{{ row.path }}</span>
-            </template>
-
-            <template v-else-if="row.kind === 'command'">
-              <span class="title">{{ row.command.title }}</span>
-              <span v-if="row.command.hint" class="hint">{{ row.command.hint }}</span>
             </template>
 
             <template v-else-if="row.kind === 'session'">
@@ -440,10 +375,6 @@ onMounted(() => {
    and no border - the row has none to colour now. */
 .row.sel {
   background: rgb(255 255 255 / 0.06);
-}
-
-.row.danger .title {
-  color: var(--error);
 }
 
 .badge {

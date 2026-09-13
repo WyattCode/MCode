@@ -11,9 +11,9 @@ import ArtifactPreview from "./ArtifactPreview.vue"
  * Everything the sessions have produced, in one page - MiMo's 产物中心, built
  * on what this app actually knows: the files each stored session wrote.
  *
- * The server reads the transcripts and stats each file, so a file that has
- * since been deleted is listed as gone rather than silently dropped: the
- * session did write it, and that is worth knowing.
+ * The server reads the transcripts and stats each file. A file that has since
+ * been moved or deleted is left out, as MiMo's page leaves it out: there is
+ * nothing to preview or download.
  */
 const app = useApp()
 const emit = defineEmits<{ open: [sessionID: string] }>()
@@ -29,7 +29,6 @@ interface Row {
   name: string
   folder: string
   at: number
-  exists: boolean
   size?: number
   kind: FileKind
   session: SessionArtifacts
@@ -40,6 +39,7 @@ const rows = computed<Row[]>(() => {
   const out: Row[] = []
   for (const group of groups.value) {
     for (const file of group.files) {
+      if (!file.exists) continue
       const cut = file.path.lastIndexOf("/")
       out.push({
         key: `${group.sessionID}:${file.path}`,
@@ -47,7 +47,6 @@ const rows = computed<Row[]>(() => {
         name: cut === -1 ? file.path : file.path.slice(cut + 1),
         folder: cut === -1 ? "" : file.path.slice(0, cut),
         at: file.at,
-        exists: file.exists,
         size: file.size,
         kind: fileKind(file.path),
         session: group,
@@ -127,37 +126,22 @@ function when(at: number): string {
 
 /** Handed to the desktop's own choice of app, the way the file tree's Open is. */
 async function open(row: Row) {
-  if (!row.exists) return
   const refused = await window.mcode.openFile(row.session.directory, row.path)
   if (refused) notifyFailure(t("info.openFailed"), refused)
 }
 
 /*
  * MiMo's three actions on every file: preview it here, download it, or go to
- * the conversation that wrote it. Pressing the file itself previews it, and a
- * file that is gone has nothing to preview, so it opens the conversation instead.
+ * the conversation that wrote it. Pressing the file itself previews it.
  */
 const previewing = ref<Row>()
 
-function activate(row: Row) {
-  if (row.exists) previewing.value = row
-  else emit("open", row.session.sessionID)
-}
-
 function preview(row: Row) {
-  if (!row.exists) {
-    notifyFailure(t("art.revealMissing"))
-    return
-  }
   previewing.value = row
 }
 
 /** MiMo's download hands the file over where it lies: its folder opens with it selected. */
 async function download(row: Row) {
-  if (!row.exists) {
-    notifyFailure(t("art.revealMissing"))
-    return
-  }
   await window.mcode.revealFile(row.session.directory, row.path)
 }
 
@@ -245,12 +229,11 @@ function enter(row: Row) {
           v-for="row in shown"
           :key="row.key"
           class="tile"
-          :class="{ gone: !row.exists }"
           :title="row.path"
           role="button"
           tabindex="0"
-          @click="activate(row)"
-          @keydown.enter="activate(row)"
+          @click="preview(row)"
+          @keydown.enter="preview(row)"
         >
           <div class="well">
             <svg class="well-mark" width="38" height="38" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -279,8 +262,7 @@ function enter(row: Row) {
           <div class="tile-body">
             <span class="file-name">{{ row.name }}</span>
             <span class="file-meta">
-              <span v-if="!row.exists" class="gone-tag">{{ t("art.missing") }}</span>
-              <span v-else-if="row.size !== undefined" class="file-size">{{ size(row.size) }}</span>
+              <span v-if="row.size !== undefined" class="file-size">{{ size(row.size) }}</span>
               <span class="file-when">{{ when(row.at) }}</span>
             </span>
           </div>
@@ -292,11 +274,10 @@ function enter(row: Row) {
           v-for="row in shown"
           :key="row.key"
           class="row"
-          :class="{ gone: !row.exists }"
           role="button"
           tabindex="0"
-          @click="activate(row)"
-          @keydown.enter="activate(row)"
+          @click="preview(row)"
+          @keydown.enter="preview(row)"
         >
           <span class="file" :title="row.path">
             <span class="file-box">
@@ -309,8 +290,7 @@ function enter(row: Row) {
               <span class="file-name">{{ row.name }}</span>
               <span class="file-meta">
                 <span v-if="row.folder" class="file-dir">{{ row.folder }}</span>
-                <span v-if="!row.exists" class="gone-tag">{{ t("art.missing") }}</span>
-                <span v-else-if="row.size !== undefined" class="file-size">{{ size(row.size) }}</span>
+                <span v-if="row.size !== undefined" class="file-size">{{ size(row.size) }}</span>
               </span>
             </span>
           </span>
@@ -572,11 +552,6 @@ function enter(row: Row) {
   font-weight: 600;
 }
 
-.tile.gone .file-name {
-  color: var(--text-weak);
-  text-decoration: line-through;
-}
-
 .file-when {
   flex-shrink: 0;
 }
@@ -681,11 +656,6 @@ function enter(row: Row) {
   white-space: nowrap;
 }
 
-.row.gone .file-name {
-  color: var(--text-weak);
-  text-decoration: line-through;
-}
-
 .file-meta {
   display: flex;
   gap: 8px;
@@ -699,11 +669,6 @@ function enter(row: Row) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.gone-tag {
-  flex-shrink: 0;
-  color: var(--error);
 }
 
 .file-size {

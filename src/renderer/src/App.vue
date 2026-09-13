@@ -358,7 +358,7 @@ provideRestoreDraft((message) => {
   }
   composer.value?.set(draftFromMessage(message))
 })
-const paletteMode = ref<PaletteMode>("all")
+const paletteMode = ref<PaletteMode>("files")
 
 /**
  * Starts a workspace: a second checkout of the project, on its own branch.
@@ -736,7 +736,7 @@ async function confirmDeleteMany() {
   selecting.value = undefined
 }
 
-function openPalette(mode: PaletteMode = "all") {
+function openPalette(mode: PaletteMode) {
   paletteMode.value = mode
   paletteOpen.value = true
 }
@@ -2788,13 +2788,6 @@ const bindableCommands = computed(() => {
       },
     },
     {
-      id: "app.plugins",
-      group: "key.groupGeneral",
-      title: t("side.plugins"),
-      hint: "Ctrl+Shift+P",
-      run: goPlugins,
-    },
-    {
       id: "app.shortcuts",
       group: "key.groupGeneral",
       title: t("key.showShortcuts"),
@@ -3202,8 +3195,6 @@ function onKeydown(event: KeyboardEvent) {
       // The scheme, then the palette. Stepping rather than opening a dialog is
       // what makes them worth a key: the answer is on screen immediately.
       s: () => void cycleScheme(),
-      // The plugins page, on the reference's own chord.
-      p: () => goPlugins(),
       // The browser panel, on the reference's own chord as well.
       b: () => (browserOpen.value = browserAllowed.value && !browserOpen.value),
       // And the list of all of these, which is a settings page here.
@@ -3299,7 +3290,6 @@ const menuCommands: Record<string, () => void> = {
   files: () => (fileTreeOpen.value = !fileTreeOpen.value),
   "open-project": () => void browse(),
   settings: openSettings,
-  palette: () => (paletteOpen.value = true),
   terminal: () => (terminalOpen.value = !terminalOpen.value),
   sidebar: () => (leftPanel.value = !leftPanel.value),
   abort: () => void app.abort(),
@@ -3683,9 +3673,9 @@ onBeforeUnmount(() => {
       v-tip="{ label: t('key.sidePanel'), hint: 'Ctrl+Alt+B', placement: 'bottom' }"
       @click="toggleSidePanel"
     >
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" />
-        <path d="M9.5 3v10" stroke="currentColor" stroke-width="1.2" />
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+        <path d="M15 2.5v19" />
       </svg>
     </button>
 
@@ -3714,7 +3704,6 @@ onBeforeUnmount(() => {
         :selecting="selecting"
         @select="toggleSelected"
         @batch="runBatch"
-        @plugins="goPlugins"
         @search="searchOpen = true"
         @back="back"
         @forward="forward"
@@ -3930,7 +3919,6 @@ onBeforeUnmount(() => {
 
     <CommandPalette
       v-if="paletteOpen"
-      :commands="commands"
       :mode="paletteMode"
       :projects="workspaceChoices.length ? workspaceChoices : openProjects"
       @close="paletteOpen = false; workspaceChoices = []"
@@ -4352,9 +4340,20 @@ onBeforeUnmount(() => {
   place-items: center;
   width: 24px;
   height: 24px;
-  color: var(--text-base);
+  /* MiMo's title-bar icon colour: near the strongest text on dark, 60% of it on light. */
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
   border-radius: 7px;
   -webkit-app-region: no-drag;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .side-panel-toggle {
+    color: var(--text-strong);
+  }
+}
+
+:root[data-theme="dark"] .side-panel-toggle {
+  color: var(--text-strong);
 }
 
 .side-panel-toggle:hover {
