@@ -794,7 +794,8 @@ function toggleProject(directory: string) {
   align-items: center;
   gap: 8px;
   height: 28px;
-  margin: 0 8px;
+  /* 4px below the controls row: everything under it moves down with it. */
+  margin: 4px 8px 0;
   padding-inline-start: 14px;
 }
 
