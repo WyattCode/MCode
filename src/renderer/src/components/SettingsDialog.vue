@@ -3903,7 +3903,11 @@ h3 {
   margin-inline-start: 0;
 }
 
+/* The name keeps its width up to half the row; the path is what gives way. */
 .wt-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 50%;
   overflow: hidden;
   color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
@@ -3912,8 +3916,10 @@ h3 {
 }
 
 .wt-path {
+  flex: 1 1 0;
   min-width: 0;
   margin-inline-start: auto;
+  text-align: end;
   overflow: hidden;
   color: var(--text-weak);
   font-size: calc(11px * var(--ui-font-scale, 1));
