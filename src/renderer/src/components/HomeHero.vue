@@ -21,7 +21,6 @@ import Composer from "./Composer.vue"
  * project that task will be created in.
  */
 const props = defineProps<{
-  commands?: { id: string; title: string; hint?: string; run: () => void }[]
   /** The project a task started from here should go into, when one was named. */
   directory?: string
 }>()
@@ -176,7 +175,6 @@ async function hop() {
       <div class="dock-slot">
         <Composer
           ref="box"
-          :commands="commands"
           :start-directory="scratch ? undefined : chosen"
           :start-scratch="scratch"
           fresh

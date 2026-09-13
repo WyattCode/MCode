@@ -41,7 +41,6 @@ const emit = defineEmits<{ terminal: []; "open-settings": []
  * the user is standing is not offered.
  */
 const props = defineProps<{
-  commands?: { id: string; title: string; hint?: string; run: () => void }[]
   /**
    * Which project a task started from the home screen goes into.
    *
@@ -690,66 +689,54 @@ function mention(path: string) {
 /* ------------------------------------------------------------ commands -- */
 
 /**
- * One row of the slash menu, from either of the two places a command lives.
+ * One row of the slash menu.
  *
- * The reference keeps the same two apart and concatenates them custom-first
- * (main-8t-QUXax.js @4533850): `[...custom, ...builtin]`, where `custom` comes
- * off the server's command list and `builtin` is its own command registry
- * filtered to the entries that declare a slash word. The two behave
- * differently on Enter, which is why the flag is carried rather than inferred.
+ * MiMo's slash menu lists only what a slash can name: the project's commands,
+ * its MCP prompts and its skills, each as a `/name` chip with its description
+ * and a badge for where it came from - plus, inside a conversation, the one
+ * command the session itself answers (`compact`). The app's own actions are
+ * not in it; they live in the command palette.
  */
 interface SlashEntry {
   id: string
-  /** The word typed after the slash. A UI command has none. */
-  trigger?: string
-  title: string
+  /** The word typed after the slash. */
+  trigger: string
   description?: string
-  hint?: string
-  /** The word the badge shows, or nothing when the reference draws no badge. */
+  /** Where it came from, or nothing for the session's own command. */
   badge?: string
-  /** The template a project command sends, absent for a UI command. */
-  template?: string
-  run: () => void
+  /** Run from the menu instead of written into the box. */
+  run?: () => void
 }
 
 function serverCommand(name: string): CommandInfo | undefined {
   return app.commands.find((entry) => entry.name === name)
 }
 
-/**
- * The project's own commands, its MCP prompts and its skills.
- *
- * ONE BADGE, DELIBERATELY. The reference's badge reads
- * `cmd.source === "skill" ? t("prompt.slash.badge.skill") : cmd.source ===
- * "mcp" ? …mcp : …custom` (@4486037) - but neither of the two places that
- * build its slash list passes `source` through. The first has the line
- * commented out in the shipped bundle (`type: "custom" // source: cmd.source,`
- * @4533850) and the second never had it (@4667943), so `cmd.source` is
- * undefined for every row, `undefined !== "command"` is true and v1.18.25
- * labels every server command "custom" whatever it actually is. That is what
- * is copied here. `source` still travels on the wire, so if the reference ever
- * reconnects its own field this becomes a one-line change.
- */
+const SOURCE_BADGE: Record<CommandInfo["source"], string> = {
+  command: "composer.slashCommand",
+  mcp: "composer.slashMcp",
+  skill: "composer.slashSkill",
+}
+
+/** The project's own commands, its MCP prompts and its skills, badged by source. */
 const serverEntries = computed<SlashEntry[]>(() =>
   app.commands.map((entry) => ({
     id: `custom.${entry.name}`,
     trigger: entry.name,
-    title: entry.name,
     description: entry.description,
-    badge: t("prompt.slash.badge.custom"),
-    template: entry.template,
-    run: () => {},
+    badge: t(SOURCE_BADGE[entry.source]),
   })),
 )
 
-const uiEntries = computed<SlashEntry[]>(() =>
-  (props.commands ?? []).map((entry) => ({
-    id: entry.id,
-    title: entry.title,
-    hint: entry.hint,
-    run: entry.run,
-  })),
-)
+/*
+ * The session's own command, listed ahead of the rest in a conversation as
+ * MiMo lists it. It has nothing to take, so choosing it runs it.
+ */
+const sessionEntries = computed<SlashEntry[]>(() => {
+  const id = sessionID.value
+  if (!id || serverCommand("compact")) return []
+  return [{ id: "session.compact", trigger: "compact", description: t("composer.compactDesc"), run: () => void app.compact(id) }]
+})
 
 /*
  * A slash at the very start opens the list, and only there: a slash inside a
@@ -776,15 +763,12 @@ const slashMatches = computed(() => {
   const query = slashQuery.value
   if (query === undefined) return []
   const needle = query.trim().toLowerCase()
-  const all = [...serverEntries.value, ...uiEntries.value]
-  // The reference filters on `["trigger", "title"]`; for its own commands the
-  // two are the slash word and the readable name, and matching only one of
-  // them makes half the menu unreachable by the thing it is called.
+  const all = [...sessionEntries.value, ...serverEntries.value]
   const found = needle
     ? all.filter(
         (entry) =>
-          entry.title.toLowerCase().includes(needle) ||
-          (entry.trigger?.toLowerCase().includes(needle) ?? false),
+          entry.trigger.toLowerCase().includes(needle) ||
+          (entry.description?.toLowerCase().includes(needle) ?? false),
       )
     : all
   // Enough to choose from without covering the conversation behind it.
@@ -809,7 +793,7 @@ async function runSlash(at: number) {
   const command = slashMatches.value[at]
   if (!command) return
   slashIndex.value = 0
-  if (command.trigger !== undefined) {
+  if (!command.run) {
     /*
      * A project command is not run from the menu. The reference writes
      * `/${trigger} ` into the editor, closes the popover and leaves the caret
@@ -828,7 +812,7 @@ async function runSlash(at: number) {
   }
   text.value = ""
   await nextTick(resize)
-  void command.run()
+  command.run()
 }
 
 /**
@@ -1534,29 +1518,18 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <div v-if="!slashMatches.length" class="slash-empty">
             {{ t("prompt.popover.emptyCommands") }}
           </div>
+          <!-- MiMo's row: the /name chip, what it does, and where it came from at the far end. -->
           <button
             v-for="(command, at) in slashMatches"
             :key="command.id"
-            class="slash-row"
+            class="slash-row command"
             :class="{ on: at === slashIndex }"
             @mouseenter="slashIndex = at"
             @mousedown.prevent="runSlash(at)"
           >
-            <!--
-              A project command leads with the word that runs it, the way the
-              reference's row does - its template puts the trigger straight
-              after a literal "/". This app's own commands have no slash word
-              at all, so those keep the readable title they are known by in the
-              palette.
-            -->
-            <span class="slash-left">
-              <span class="slash-title">{{ command.trigger ? `/${command.trigger}` : command.title }}</span>
-              <span v-if="command.description" class="slash-desc">{{ command.description }}</span>
-            </span>
-            <span class="slash-right">
-              <span v-if="command.badge" class="slash-badge">{{ command.badge }}</span>
-              <span v-if="command.hint" class="slash-hint">{{ command.hint }}</span>
-            </span>
+            <span class="slash-chip">/{{ command.trigger }}</span>
+            <span v-if="command.description" class="slash-desc">{{ command.description }}</span>
+            <span v-if="command.badge" class="slash-badge">{{ command.badge }}</span>
           </button>
         </div>
 
@@ -2062,34 +2035,68 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 <style scoped>
 /*
- * Sits above the text, inside the box, so the two read as one control. Its own
- * rule along the bottom separates it from what is being typed.
+ * The @ and slash menus float over the conversation just above the box, as
+ * MiMo's do: 8 in from either side and 6 clear of its top edge, on a 12px
+ * corner with the menu's frosted fill and shadow. The box is what they are
+ * placed against, so they move with it.
  */
+.box {
+  position: relative;
+}
+
 .slash {
+  position: absolute;
+  inset: auto 8px calc(100% + 6px);
+  z-index: 40;
   display: flex;
   flex-direction: column;
-  max-height: 232px;
-  margin: -2px 0 6px;
-  padding-bottom: 4px;
+  max-height: 320px;
+  padding: 5px;
   overflow-y: auto;
-  border-bottom: 1px solid var(--border-weaker);
+  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px) saturate(150%);
 }
 
 .slash-head {
-  padding: 4px 6px 6px;
+  padding: 4px 10px 2px;
   color: var(--text-weaker);
   font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 500;
+  font-weight: 400;
+  letter-spacing: 0.02em;
 }
 
 .slash-row {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 5px 6px;
   text-align: start;
   border-radius: 5px;
+}
+
+/* A command row: chip, sentence, badge, 9 apart on an 8px corner. */
+.slash-row.command {
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.slash-chip {
+  flex: none;
+  padding: 1.5px 7px;
+  color: var(--text-base);
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  border-radius: 6px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .slash-row.on {
@@ -2138,33 +2145,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 /*
- * The two halves of a command row, exactly as the reference splits it: what it
- * is called and what it does on the left (`flex items-center gap-2 min-w-0`),
- * what kind of thing it is and how else to reach it on the right (`flex
- * items-center gap-2 shrink-0`) - @4486900.
- */
-.slash-left {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.slash-right {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  gap: 8px;
-}
-
-/* Inside the left half the name is fixed and the sentence beside it yields. */
-.slash-left .slash-title {
-  flex: 0 0 auto;
-}
-
-/*
- * The one line a command carries about itself. It gives way to the name it
+ * The one line a command carries about itself. It gives way to the chip it
  * belongs to - a description can be a sentence, and it must never push the
  * word that runs the command off the row.
  */
@@ -2178,17 +2159,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   white-space: nowrap;
 }
 
-/*
- * The badge the reference puts on a command that came from the server. Its own
- * is `text-11-regular px-1.5 py-0.5 rounded bg-surface-base text-text-subtle`
- * (@4486000), which is 11px on a filled pill in the muted colour.
- */
+/* Where the command came from, at the far end in the chip's own tint. */
 .slash-badge {
-  flex-shrink: 0;
+  flex: none;
+  margin-inline-start: auto;
   padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--surface-hover);
-  color: var(--text-weaker);
+  color: var(--text-base);
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  border-radius: 5px;
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
 

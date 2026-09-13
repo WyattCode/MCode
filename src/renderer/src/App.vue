@@ -3672,7 +3672,6 @@ onBeforeUnmount(() => {
         <HomeHero
           v-else-if="isHome"
           :directory="homeDirectory"
-          :commands="commands"
           @open-settings="openSettings"
           @connect="connectOpen = true"
           @manage-models="manageModelsOpen = true"
@@ -3761,7 +3760,6 @@ onBeforeUnmount(() => {
           <Teleport :to="empty && !app.error ? '#hero-dock' : '#main-dock'">
             <Composer
               ref="composer"
-              :commands="commands"
               @open-settings="openSettings"
               @connect="connectOpen = true"
               @manage-models="manageModelsOpen = true"
