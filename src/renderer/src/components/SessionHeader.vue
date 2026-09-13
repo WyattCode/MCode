@@ -4,6 +4,7 @@ import { useApp } from "../stores/app"
 import ContextMenu from "./ContextMenu.vue"
 import { useOpenWith } from "../lib/open-with"
 import { sessionTitle, t } from "../lib/i18n"
+import { convoCard } from "../lib/convo-card"
 
 /**
  * The bar across the top of an open conversation.
@@ -26,6 +27,10 @@ defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean;
 const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; info: []; bottom: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
+
+/* MiMo's card over the title: the project, the folder and when it last changed. */
+const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames) : undefined))
+const pinned = computed(() => Boolean(app.current && app.isPinned(app.current.id)))
 
 /*
  * Renaming happens here, in the title itself.
@@ -86,6 +91,17 @@ function openMenu(event: MouseEvent) {
 <template>
   <div class="head" :class="{ 'after-rail': sideCollapsed }">
     <div class="left">
+      <!-- MiMo marks a pinned conversation before its title. -->
+      <span
+        v-if="pinned && !editing"
+        class="pin-mark"
+        :aria-label="t('header.pinnedTip')"
+        v-tip="{ label: t('header.pinnedTip'), placement: 'bottom' }"
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+        </svg>
+      </span>
       <input
         v-if="editing"
         ref="field"
@@ -96,7 +112,7 @@ function openMenu(event: MouseEvent) {
         @keydown.esc="cancel"
         @blur="commit"
       />
-      <h1 v-else class="title" :title="title" @click="begin">{{ title }}</h1>
+      <h1 v-else class="title" v-tip="card ? { card, placement: 'bottom' } : ''" @click="begin">{{ title }}</h1>
 
       <!--
         Beside the name rather than at the far end of the bar: it is this
@@ -105,7 +121,7 @@ function openMenu(event: MouseEvent) {
         conversation.
       -->
       <button class="ico options" v-tip="{ label: t('session.options'), placement: 'bottom' }" @click="openMenu">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="5" cy="12" r="1.7" />
           <circle cx="12" cy="12" r="1.7" />
           <circle cx="19" cy="12" r="1.7" />
@@ -200,7 +216,19 @@ function openMenu(event: MouseEvent) {
   display: flex;
   flex: 1;
   align-items: center;
+  /* MiMo's row: pin, title and menu 8 apart. */
+  gap: 8px;
   min-width: 0;
+}
+
+.pin-mark {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 14px;
+  height: 26px;
+  margin-inline-end: 2px;
+  color: var(--text-weak);
 }
 
 /*
@@ -243,9 +271,6 @@ function openMenu(event: MouseEvent) {
   cursor: text;
 }
 
-.title:hover {
-  background: var(--surface-hover);
-}
 
 .right {
   display: flex;
@@ -291,12 +316,27 @@ function openMenu(event: MouseEvent) {
   -webkit-app-region: drag;
 }
 
-/* 14 on regular weight, and the same 26px box the 4/8 padding makes of it. */
+/* MiMo's title: 14 on regular weight in a 26px line, no padding, at most 320 wide. */
 .title {
+  height: 26px;
+  max-width: 320px;
+  padding: 0;
+  border-radius: 0;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
-  line-height: 18px;
+  line-height: 26px;
   letter-spacing: 0;
+}
+
+/* Being renamed: MiMo's field, a faint line round the column's ground, 7 round. */
+.title.title-field {
+  box-sizing: border-box;
+  min-width: 100px;
+  padding: 0 8px;
+  background: var(--surface-base);
+  border: 1px solid color-mix(in srgb, var(--surface-base), var(--text-strong) 10%);
+  border-radius: 7px;
+  line-height: normal;
 }
 
 /*
@@ -311,19 +351,21 @@ function openMenu(event: MouseEvent) {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ico {
+  :root:not([data-theme="light"]) .ico:not(.options) {
     color: var(--text-strong);
   }
 }
 
-:root[data-theme="dark"] .ico {
+:root[data-theme="dark"] .ico:not(.options) {
   color: var(--text-strong);
 }
 
-/* Against the title, and never squeezed by a long one. */
-.options {
+/* Against the title, and never squeezed by a long one: MiMo's 26px menu in the muted colour. */
+.ico.options {
   flex-shrink: 0;
-  margin-inline-start: 2px;
+  width: 26px;
+  height: 26px;
+  color: var(--text-weak);
 }
 
 /*

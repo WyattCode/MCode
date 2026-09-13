@@ -2,6 +2,7 @@
 import type { SessionInfo } from "@shared/protocol"
 import { computed, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
+import { convoCard } from "../lib/convo-card"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import type { MenuItem } from "../lib/menu"
@@ -677,6 +678,7 @@ watch(picking, (on) => {
                 </svg>
                 <RowTitle
                   class="row-label task-label"
+                  v-tip="picking ? '' : { card: convoCard(session, app.config?.projectNames), placement: 'right' }"
                   :text="title(session.title)"
                   :cover="picking ? 0 : TITLE_COVER"
                   @rename="!picking && emit('rename', session.id)"
@@ -799,6 +801,7 @@ watch(picking, (on) => {
             <span class="stack">
               <RowTitle
                 class="row-label task-label"
+                v-tip="picking ? '' : { card: convoCard(entry.session, app.config?.projectNames), placement: 'right' }"
                 :text="title(entry.session.title)"
                 :cover="picking ? 0 : TITLE_COVER"
                 @rename="!picking && emit('rename', entry.session.id)"

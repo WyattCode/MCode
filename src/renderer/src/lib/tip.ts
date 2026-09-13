@@ -15,12 +15,19 @@ import type { App, DirectiveBinding } from "vue"
 type Placement = "right" | "top" | "bottom" | "left"
 
 interface Tip {
-  label: string
+  /** Optional when a card is given: the card's title names the control instead. */
+  label?: string
   /** Rendered dimmer beside the label, e.g. a shortcut. */
   hint?: string
   placement?: Placement
   /** A sentence rather than a name: wraps inside a fixed width instead of running on. */
   wrap?: boolean
+  /**
+   * MiMo's information card, as its conversation rows and title show one: a
+   * title in medium weight over a few quieter lines (project, folder, when it
+   * last changed). Empty lines are left out.
+   */
+  card?: { title: string; lines: (string | undefined)[] }
 }
 
 /** Distance from the control, and the closest a tip may sit to the window edge. */
@@ -30,17 +37,18 @@ const EDGE = 6
  * How long the pointer must rest before a tip appears.
  *
  * Short enough to feel answerable, long enough that crossing a toolbar on the
- * way somewhere else does not set off a trail of boxes. Matches the roughly
- * half-second the platform's own tooltips wait.
+ * way somewhere else does not set off a trail of boxes. MiMo's tooltips wait
+ * 200ms, which is what this now matches.
  */
-const DELAY = 500
+const DELAY = 200
 /**
  * Once one tip has been shown, neighbours follow immediately for this long.
  *
  * Waiting again at every button turns reading a toolbar into a sequence of
  * pauses; the first wait establishes that the user is looking for labels.
+ * MiMo keeps the window 300ms.
  */
-const WARM = 400
+const WARM = 300
 
 let node: HTMLElement | undefined
 let timer: ReturnType<typeof setTimeout> | undefined
@@ -114,10 +122,25 @@ function place(target: HTMLElement, tip: Tip) {
   const box = element()
   box.textContent = ""
   box.classList.toggle("wrap", Boolean(tip.wrap))
+  box.classList.toggle("card", Boolean(tip.card))
 
-  const label = document.createElement("span")
-  label.textContent = tip.label
-  box.appendChild(label)
+  if (tip.card) {
+    const title = document.createElement("div")
+    title.className = "app-tip-title"
+    title.textContent = tip.card.title
+    box.appendChild(title)
+    for (const text of tip.card.lines) {
+      if (!text) continue
+      const line = document.createElement("div")
+      line.className = "app-tip-line"
+      line.textContent = text
+      box.appendChild(line)
+    }
+  } else {
+    const label = document.createElement("span")
+    label.textContent = tip.label ?? ""
+    box.appendChild(label)
+  }
 
   /*
    * A shortcut is drawn as the keys you press, not as the string "Ctrl+K".
@@ -158,7 +181,7 @@ function place(target: HTMLElement, tip: Tip) {
 }
 
 function show(target: HTMLElement, tip: Tip) {
-  if (!tip.label) return
+  if (!tip.label && !tip.card?.title) return
   current = target
   if (timer) clearTimeout(timer)
   const warm = Date.now() - last < WARM
@@ -181,6 +204,7 @@ function show(target: HTMLElement, tip: Tip) {
  * alone.
  */
 function name(el: HTMLElement, tip: Tip) {
+  // A card describes something already named by its own text.
   if (!tip.label) return
   const own = el.getAttribute("aria-label")
   if (el.dataset.tipNamed !== "1" && (own || el.textContent?.trim())) return

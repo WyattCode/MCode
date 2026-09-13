@@ -1273,6 +1273,9 @@ const zhCN: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "打开位置",
+  "convoTip.project": "项目 {name}",
+  "convoTip.updatedAt": "更新于 {time}",
+  "header.pinnedTip": "已置顶",
   "header.openDirTip": "用 {name} 打开目录",
   "header.pickApp": "选择打开方式",
   "header.openedWith": "已用 {name} 打开",
@@ -2512,6 +2515,9 @@ const zhTW: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "開啟位置",
+  "convoTip.project": "專案 {name}",
+  "convoTip.updatedAt": "更新於 {time}",
+  "header.pinnedTip": "已置頂",
   "header.openDirTip": "用 {name} 開啟目錄",
   "header.pickApp": "選擇開啟方式",
   "header.openedWith": "已用 {name} 開啟",
@@ -3752,6 +3758,9 @@ const en: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Open location",
+  "convoTip.project": "Project {name}",
+  "convoTip.updatedAt": "Updated {time}",
+  "header.pinnedTip": "Pinned",
   "header.openDirTip": "Open folder in {name}",
   "header.pickApp": "Choose an app to open with",
   "header.openedWith": "Opened in {name}",
@@ -4954,6 +4963,9 @@ const ar: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "فتح الموقع",
+  "convoTip.project": "المشروع {name}",
+  "convoTip.updatedAt": "تم التحديث {time}",
+  "header.pinnedTip": "مثبّت",
   "header.openDirTip": "فتح المجلد في {name}",
   "header.pickApp": "اختر تطبيقًا للفتح",
   "header.openedWith": "تم الفتح في {name}",
@@ -6155,6 +6167,9 @@ const bs: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Otvori lokaciju",
+  "convoTip.project": "Projekt {name}",
+  "convoTip.updatedAt": "Ažurirano {time}",
+  "header.pinnedTip": "Prikvačeno",
   "header.openDirTip": "Otvori mapu u {name}",
   "header.pickApp": "Odaberi aplikaciju za otvaranje",
   "header.openedWith": "Otvoreno u {name}",
@@ -7356,6 +7371,9 @@ const da: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Åbn placering",
+  "convoTip.project": "Projekt {name}",
+  "convoTip.updatedAt": "Opdateret {time}",
+  "header.pinnedTip": "Fastgjort",
   "header.openDirTip": "Åbn mappe i {name}",
   "header.pickApp": "Vælg app at åbne med",
   "header.openedWith": "Åbnet i {name}",
@@ -8557,6 +8575,9 @@ const de: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Speicherort öffnen",
+  "convoTip.project": "Projekt {name}",
+  "convoTip.updatedAt": "Aktualisiert {time}",
+  "header.pinnedTip": "Angepinnt",
   "header.openDirTip": "Ordner in {name} öffnen",
   "header.pickApp": "App zum Öffnen wählen",
   "header.openedWith": "In {name} geöffnet",
@@ -9758,6 +9779,9 @@ const es: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Abrir ubicación",
+  "convoTip.project": "Proyecto {name}",
+  "convoTip.updatedAt": "Actualizado {time}",
+  "header.pinnedTip": "Fijado",
   "header.openDirTip": "Abrir carpeta en {name}",
   "header.pickApp": "Elegir app para abrir",
   "header.openedWith": "Abierto en {name}",
@@ -10959,6 +10983,9 @@ const fr: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Ouvrir l'emplacement",
+  "convoTip.project": "Projet {name}",
+  "convoTip.updatedAt": "Mis à jour {time}",
+  "header.pinnedTip": "Épinglé",
   "header.openDirTip": "Ouvrir le dossier dans {name}",
   "header.pickApp": "Choisir l'app d'ouverture",
   "header.openedWith": "Ouvert dans {name}",
@@ -12160,6 +12187,9 @@ const ja: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "場所を開く",
+  "convoTip.project": "プロジェクト {name}",
+  "convoTip.updatedAt": "{time}に更新",
+  "header.pinnedTip": "ピン留め済み",
   "header.openDirTip": "{name} でフォルダーを開く",
   "header.pickApp": "開くアプリを選択",
   "header.openedWith": "{name} で開きました",
@@ -13361,6 +13391,9 @@ const ko: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "위치 열기",
+  "convoTip.project": "프로젝트 {name}",
+  "convoTip.updatedAt": "{time} 업데이트됨",
+  "header.pinnedTip": "고정됨",
   "header.openDirTip": "{name}에서 폴더 열기",
   "header.pickApp": "열 앱 선택",
   "header.openedWith": "{name}에서 열었습니다",
@@ -14562,6 +14595,9 @@ const nb: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Åpne plassering",
+  "convoTip.project": "Prosjekt {name}",
+  "convoTip.updatedAt": "Oppdatert {time}",
+  "header.pinnedTip": "Festet",
   "header.openDirTip": "Åpne mappe i {name}",
   "header.pickApp": "Velg app å åpne med",
   "header.openedWith": "Åpnet i {name}",
@@ -15763,6 +15799,9 @@ const pl: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Otwórz lokalizację",
+  "convoTip.project": "Projekt {name}",
+  "convoTip.updatedAt": "Zaktualizowano {time}",
+  "header.pinnedTip": "Przypięto",
   "header.openDirTip": "Otwórz folder w {name}",
   "header.pickApp": "Wybierz aplikację do otwarcia",
   "header.openedWith": "Otwarto w {name}",
@@ -16964,6 +17003,9 @@ const ptBR: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Abrir local",
+  "convoTip.project": "Projeto {name}",
+  "convoTip.updatedAt": "Atualizado {time}",
+  "header.pinnedTip": "Fixado",
   "header.openDirTip": "Abrir pasta no {name}",
   "header.pickApp": "Escolher app para abrir",
   "header.openedWith": "Aberto no {name}",
@@ -18165,6 +18207,9 @@ const ru: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Открыть расположение",
+  "convoTip.project": "Проект {name}",
+  "convoTip.updatedAt": "Обновлено {time}",
+  "header.pinnedTip": "Закреплено",
   "header.openDirTip": "Открыть папку в {name}",
   "header.pickApp": "Выбрать приложение",
   "header.openedWith": "Открыто в {name}",
@@ -19366,6 +19411,9 @@ const th: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "เปิดตำแหน่ง",
+  "convoTip.project": "โปรเจกต์ {name}",
+  "convoTip.updatedAt": "อัปเดตเมื่อ {time}",
+  "header.pinnedTip": "ปักหมุดแล้ว",
   "header.openDirTip": "เปิดโฟลเดอร์ใน {name}",
   "header.pickApp": "เลือกแอปที่จะเปิด",
   "header.openedWith": "เปิดใน {name} แล้ว",
@@ -20567,6 +20615,9 @@ const tr: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Konumu aç",
+  "convoTip.project": "{name} Projesi",
+  "convoTip.updatedAt": "Güncellendi: {time}",
+  "header.pinnedTip": "Sabitlendi",
   "header.openDirTip": "Klasörü {name} ile aç",
   "header.pickApp": "Açılacak uygulamayı seç",
   "header.openedWith": "{name} ile açıldı",
@@ -21768,6 +21819,9 @@ const uk: Table = {
 
   /* Opening the project somewhere else. */
   "header.openLocation": "Відкрити розташування",
+  "convoTip.project": "Проєкт {name}",
+  "convoTip.updatedAt": "Оновлено {time}",
+  "header.pinnedTip": "Закріплено",
   "header.openDirTip": "Відкрити теку в {name}",
   "header.pickApp": "Вибрати застосунок",
   "header.openedWith": "Відкрито в {name}",
