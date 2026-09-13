@@ -191,7 +191,14 @@ function name(el: HTMLElement, tip: Tip) {
 
 export const tip = {
   mounted(el: HTMLElement, binding: DirectiveBinding<Tip | string>) {
-    const read = () => parse(binding.value)
+    /*
+     * Read at the moment of use, from the value last handed in. The binding
+     * this hook receives is not the one later updates carry, so a tip whose
+     * label only exists once something changes - a rail icon's name once the
+     * column is folded - stayed empty for good.
+     */
+    ;(el as unknown as { __tipValue?: Tip | string }).__tipValue = binding.value
+    const read = () => parse((el as unknown as { __tipValue?: Tip | string }).__tipValue ?? "")
     name(el, read())
     const enter = () => show(el, read())
     const leave = () => hide()
@@ -227,6 +234,7 @@ export const tip = {
   },
 
   updated(el: HTMLElement, binding: DirectiveBinding<Tip | string>) {
+    ;(el as unknown as { __tipValue?: Tip | string }).__tipValue = binding.value
     // Re-applied so the name follows a language change, not just the tooltip.
     name(el, parse(binding.value))
     if (current === el && node?.classList.contains("on")) place(el, parse(binding.value))

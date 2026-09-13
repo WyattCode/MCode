@@ -19,7 +19,8 @@ const app = useApp()
  * Whether the Context view this header's ring opens is currently up, and
  * whether the info card beside the conversation is.
  */
-defineProps<{ infoOpen?: boolean; bottomOpen?: boolean }>()
+/* `sideCollapsed`: the side column is folded to its rail, whose controls row floats over this header's start. */
+defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean }>()
 
 const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; info: []; bottom: [] }>()
 
@@ -82,7 +83,7 @@ function openMenu(event: MouseEvent) {
 </script>
 
 <template>
-  <div class="head">
+  <div class="head" :class="{ 'after-rail': sideCollapsed }">
     <div class="left">
       <input
         v-if="editing"
@@ -281,6 +282,7 @@ function openMenu(event: MouseEvent) {
   height: 46px;
   padding-block: 4px 0;
   /* Clear of the caption buttons, and of the side panel button App.vue keeps beside them. */
+  /* (the start is pushed past the rail's controls row by .after-rail, below) */
   padding-inline-end: calc(58px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   -webkit-app-region: drag;
 }
@@ -355,5 +357,10 @@ function openMenu(event: MouseEvent) {
 .left > *,
 .right {
   -webkit-app-region: no-drag;
+}
+
+/* The side column folded to its rail: the toggle, back, forward and search float over the start of this row. */
+.head.after-rail {
+  padding-inline-start: 132px;
 }
 </style>

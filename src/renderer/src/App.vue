@@ -2330,7 +2330,7 @@ const bindableCommands = computed(() => {
       group: "key.groupGeneral",
       title: leftPanel.value ? t("cmd.hideSessions") : t("cmd.showSessions"),
       hint: "Ctrl+B",
-      enabled: hasSession,
+      // On every screen, as MiMo's is: the home screen has a side column to fold too.
       run: () => (leftPanel.value = !leftPanel.value),
     },
     // MiMo's panel and browser chords.
@@ -3690,7 +3690,8 @@ onBeforeUnmount(() => {
       }"
     >
       <Sidebar
-        v-if="leftPanel && !onboarding"
+        v-if="!onboarding"
+        :collapsed="!leftPanel"
         :page="view"
         :priority="priorityFilter"
         @toggle-priority="priorityFilter = !priorityFilter"
@@ -3706,7 +3707,7 @@ onBeforeUnmount(() => {
         @search="searchOpen = true"
         @back="back"
         @forward="forward"
-        @toggle="leftPanel = false"
+        @toggle="leftPanel = !leftPanel"
         @browse="browse"
         @open="app.open($event)"
         @createIn="newSessionIn"
@@ -3764,6 +3765,7 @@ onBeforeUnmount(() => {
             ref="header"
             :info-open="infoShowing"
             :bottom-open="terminalUp"
+            :side-collapsed="!leftPanel"
             @info="toggleInfo"
             @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
             @menu="(x, y) => (sessionMenu = { x, y, header: true })"

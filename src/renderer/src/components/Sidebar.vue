@@ -23,6 +23,8 @@ import ContextMenu from "./ContextMenu.vue"
 const props = defineProps<{
   /** Which page the pane is showing, so the row that opened it stays lit. */
   page?: string
+  /** Folded to MiMo's 62px rail of icons, rather than taken off the screen. */
+  collapsed?: boolean
   /** The conversations ticked in selection mode; absent when not in it. */
   selecting?: string[]
   /** Whether MiMo's priority filter is on: attention first, then the week by day. */
@@ -421,7 +423,35 @@ function toggleProject(directory: string) {
 </script>
 
 <template>
-  <aside class="side">
+  <aside class="side" :class="{ rail: collapsed }">
+    <!--
+      Folded, MiMo keeps the column's controls just past the rail: the toggle
+      three in from its edge, then back, forward and search.
+    -->
+    <div v-if="collapsed" class="rail-tools">
+      <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B', placement: 'bottom' }" @click="emit('toggle')">
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <rect x="3" y="3.5" width="14" height="13" rx="2" stroke="currentColor" />
+          <path d="M8 3.5V16.5" stroke="currentColor" />
+        </svg>
+      </button>
+      <button class="ico" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M16 10H4.5M9 5L4 10L9 15" stroke="currentColor" stroke-linecap="square" />
+        </svg>
+      </button>
+      <button class="ico" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M4 10H15.5M11 5L16 10L11 15" stroke="currentColor" stroke-linecap="square" />
+        </svg>
+      </button>
+      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K', placement: 'bottom' }" @click="emit('search')">
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <circle cx="9" cy="9" r="5.5" stroke="currentColor" />
+          <path d="M13 13L16.5 16.5" stroke="currentColor" stroke-linecap="square" />
+        </svg>
+      </button>
+    </div>
     <div class="top" :class="{ mac: app.platform === 'darwin' }">
       <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B', placement: 'bottom' }" @click="emit('toggle')">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -470,14 +500,19 @@ function toggleProject(directory: string) {
     </div>
 
     <nav class="nav">
-      <button class="row" @click="emit('newTask')">
+      <button class="row" v-tip="collapsed ? { label: t('side.newTask'), placement: 'right' } : ''" @click="emit('newTask')">
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="10" cy="10" r="7" stroke="currentColor" />
           <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
         </svg>
         <span class="row-label">{{ t("side.newTask") }}</span>
       </button>
-      <button class="row" :class="{ on: page === 'plugins' }" @click="emit('plugins')">
+      <button
+        class="row"
+        :class="{ on: page === 'plugins' }"
+        v-tip="collapsed ? { label: t('side.plugins'), placement: 'right' } : ''"
+        @click="emit('plugins')"
+      >
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M8 3.5H12V6.5H15.5V16.5H4.5V6.5H8V3.5Z" stroke="currentColor" stroke-linejoin="round" />
           <path d="M8 11H12" stroke="currentColor" stroke-linecap="square" />
@@ -486,7 +521,12 @@ function toggleProject(directory: string) {
       </button>
 
       <!-- Third, where MiMo keeps it: new task, plugins, then what came out. -->
-      <button class="row" :class="{ on: page === 'artifacts' }" @click="emit('artifacts')">
+      <button
+        class="row"
+        :class="{ on: page === 'artifacts' }"
+        v-tip="collapsed ? { label: t('side.artifacts'), placement: 'right' } : ''"
+        @click="emit('artifacts')"
+      >
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path
             d="M2.9 11.5h3.4l1 1.9h5.4l1-1.9h3.4M2.9 11.5 5 4.6h10l2.1 6.9M2.9 11.5v3.9h14.2v-3.9"
@@ -762,7 +802,13 @@ function toggleProject(directory: string) {
         <span class="row-label plain">{{ themeLabel }}</span>
       </button>
 
-      <button class="row foot-menu" :aria-expanded="Boolean(footMenu)" aria-haspopup="menu" @click="openFootMenu">
+      <button
+        class="row foot-menu"
+        :aria-expanded="Boolean(footMenu)"
+        aria-haspopup="menu"
+        v-tip="collapsed ? { label: t('rail.settings'), placement: 'right' } : ''"
+        @click="openFootMenu"
+      >
         <span class="avatar" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
             <circle cx="10" cy="10" r="2.5" stroke="currentColor" />
@@ -1104,6 +1150,61 @@ function toggleProject(directory: string) {
 .foot {
   flex-shrink: 0;
   margin: 8px 8px 10px;
+}
+
+/*
+ * MiMo's folded column: a 62px rail holding only the destinations and the
+ * foot, icons centred, with the controls row floated just past its edge.
+ */
+.side.rail {
+  position: relative;
+  width: 62px;
+}
+
+.side.rail .top > *,
+.side.rail .brand,
+.side.rail .batch,
+.side.rail .lists {
+  display: none;
+}
+
+.side.rail .foot {
+  margin-top: auto;
+}
+
+.side.rail .nav,
+.side.rail .foot {
+  align-items: center;
+}
+
+.side.rail .nav {
+  margin-top: 36px;
+}
+
+.side.rail .row {
+  justify-content: center;
+  width: 46px;
+  padding: 0;
+  gap: 0;
+}
+
+.side.rail .row-label {
+  display: none;
+}
+
+.side.rail .avatar {
+  margin-inline-start: 0;
+}
+
+.rail-tools {
+  position: absolute;
+  top: 13px;
+  inset-inline-start: 65px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  -webkit-app-region: no-drag;
 }
 
 .avatar {

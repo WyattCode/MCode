@@ -142,7 +142,7 @@ const zhCN: Table = {
   "side.yesterday": "昨天",
   "side.noTasks": "暂无任务",
   "side.newProject": "新建项目",
-  "side.toggle": "切换侧栏",
+  "side.toggle": "切换边栏",
   "side.search": "搜索",
   "home.slogan": "今天想做点什么？",
   "home.describe": "描述任务…",
