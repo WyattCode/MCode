@@ -3625,10 +3625,7 @@ onBeforeUnmount(() => {
       <Sidebar
         v-if="leftPanel && !onboarding"
         :page="view"
-        :browser="browserOpen"
-        :browser-allowed="browserAllowed"
         :priority="priorityFilter"
-        @toggle-browser="browserOpen = browserAllowed && !browserOpen"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"
         @newTask="goHome"
