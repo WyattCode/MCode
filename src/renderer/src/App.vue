@@ -188,17 +188,26 @@ const showFileTree = computed(() => app.config?.showFileTree !== false)
  * the check.
  */
 const downloadedUpdate = ref<string>()
+/*
+ * Whether the ready dialog is up. Dismissing it keeps the download, as MiMo
+ * keeps its: the update page then offers 重启更新 in its version row.
+ */
+const updatePrompt = ref(false)
+/** A check in flight, so the update page can say 检查中… and not start another. */
+const updateChecking = ref(false)
 
 async function fetchUpdate(url: string, version: string, sha256: string) {
   try {
     await window.mcode.downloadUpdate(url, version, sha256)
     downloadedUpdate.value = version
+    updatePrompt.value = true
   } catch (err) {
     notifyFailure(t("update.failed"), reasonOf(err))
   }
 }
 
 async function installUpdate() {
+  updatePrompt.value = false
   try {
     await window.mcode.installUpdate()
   } catch (err) {
@@ -593,11 +602,13 @@ async function applyServer(answer: string) {
  * command says so rather than pretending to have checked.
  */
 async function checkForUpdates() {
+  if (updateChecking.value) return
   const feed = app.config?.updateFeed?.trim()
   if (!feed) {
     notifyFailure(t("update.noFeed"))
     return
   }
+  updateChecking.value = true
   try {
     /*
      * Asked of the main process rather than fetched here. This window is served
@@ -626,6 +637,8 @@ async function checkForUpdates() {
      * rather than about their feed. Only the reason is worth showing.
      */
     notifyFailure(t("update.failed"), reasonOf(err))
+  } finally {
+    updateChecking.value = false
   }
 }
 
@@ -4043,8 +4056,11 @@ onBeforeUnmount(() => {
       v-if="settingsOpen"
       :section="settingsSection"
       :commands="bindableCommands"
+      :update-checking="updateChecking"
+      :update-ready="downloadedUpdate"
       @close="settingsOpen = false"
       @check-updates="checkForUpdates"
+      @install-update="installUpdate"
     />
 
     <ProjectDialog
@@ -4061,12 +4077,12 @@ onBeforeUnmount(() => {
     the download it started on its own has finished.
   -->
   <ConfirmDialog
-    v-if="downloadedUpdate"
+    v-if="downloadedUpdate && updatePrompt"
     :title="t('update.readyTitle')"
     :body="t('update.readyBody', { version: downloadedUpdate })"
     :confirm-label="t('update.installRestart')"
     @confirm="installUpdate"
-    @close="downloadedUpdate = undefined"
+    @close="updatePrompt = false"
   />
 
   <ConfirmDialog

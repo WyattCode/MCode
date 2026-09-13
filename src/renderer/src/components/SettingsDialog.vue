@@ -29,7 +29,7 @@ import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure, notify } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
 
-const emit = defineEmits<{ close: []; "check-updates": [] }>()
+const emit = defineEmits<{ close: []; "check-updates": []; "install-update": [] }>()
 const app = useApp()
 
 /*
@@ -80,7 +80,14 @@ interface Bindable {
   hidden?: boolean
 }
 
-const props = defineProps<{ section?: Section; commands: Bindable[] }>()
+const props = defineProps<{
+  section?: Section
+  commands: Bindable[]
+  /** An update check in flight. */
+  updateChecking?: boolean
+  /** The version downloaded and waiting for a restart, if any. */
+  updateReady?: string
+}>()
 const section = ref<Section>(props.section ?? "general")
 
 /*
@@ -2155,25 +2162,29 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <template v-else-if="section === 'updates'">
           <h2>{{ t("set.nav.updates") }}</h2>
-          <p class="page-sub">{{ t("set.updatesSub") }}</p>
-          <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.version") }}</div>
-                <div class="line-sub">{{ t("set.versionSub") }}</div>
-              </div>
-              <span class="total-value small">v{{ app.version }}</span>
-            </div>
-          </div>
-
           <!--
-            Updates. opencode has this section too, with a Check now button and
-            an updater behind it. MCode has no update service, so the address to
-            look at has to be given here - without it the check could only ever
-            answer "no update feed is configured", which is what it did from all
-            three places that offer it.
+            MiMo's update page: one row for the version, whose button checks,
+            reads 检查中… while it does, and becomes 重启更新 once a new version
+            is downloaded. MCode has no update service, so the address to look at
+            is a second row; without it the check says so.
           -->
           <div class="card">
+            <div class="line" data-update-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.version") }}</div>
+                <div class="line-sub">
+                  MCode {{ app.version }}
+                  <span v-if="updateReady" class="update-hint" data-update-install-hint>{{ t("set.updateInstallHint") }}</span>
+                </div>
+              </div>
+              <button v-if="updateReady" class="ctl-btn update-install" data-update-install @click="emit('install-update')">
+                {{ t("set.restartUpdate") }}
+              </button>
+              <button v-else class="ctl-btn" data-check-update :disabled="updateChecking" @click="emit('check-updates')">
+                {{ t(updateChecking ? "set.checking" : "update.check") }}
+              </button>
+            </div>
+
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.updateFeed") }}</div>
@@ -2186,16 +2197,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 spellcheck="false"
                 @change="app.patchConfig({ updateFeed: ($event.target as HTMLInputElement).value.trim() })"
               />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("update.check") }}</div>
-                <div class="line-sub">{{ t("set.updateFeedSub") }}</div>
-              </div>
-              <button class="ctl-btn" :disabled="!app.config?.updateFeed?.trim()" @click="emit('check-updates')">
-                {{ t("set.checkNow") }}
-              </button>
             </div>
           </div>
 
@@ -2973,6 +2974,16 @@ h3 {
 .ctl-btn:disabled {
   color: var(--text-weaker);
   cursor: default;
+}
+
+/* MiMo's 重启更新 is its filled button, and the hint under the version a line of its own. */
+.ctl-btn.update-install {
+  color: var(--surface-base);
+  background: var(--text-strong);
+}
+
+.update-hint {
+  display: block;
 }
 
 .link-btn {
