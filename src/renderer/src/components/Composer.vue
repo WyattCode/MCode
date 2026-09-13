@@ -2290,10 +2290,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: none;
 }
 
-/* A dropped file has to look like it will land somewhere. */
+/* A dropped file has to look like it will land somewhere: MiMo's 2px ring of the accent at 35%. */
 .box.dropping {
-  box-shadow: var(--shadow-md), 0 0 0 1px var(--interactive);
-  background: color-mix(in srgb, var(--interactive) 6%, var(--surface-raised));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 35%, transparent);
 }
 
 .tiles-wrap {
@@ -3104,7 +3103,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .box.dropping {
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 1px var(--interactive);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 35%, transparent);
 }
 
 .input {

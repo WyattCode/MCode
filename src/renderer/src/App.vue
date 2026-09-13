@@ -213,6 +213,28 @@ const terminalOpen = ref(false)
 const drawerHeight = ref(0)
 
 /*
+ * MiMo's drop overlay: while files are dragged over the window, the main column
+ * says they will be added. Only files and links count, as in MiMo - dragged
+ * text is not a file - and not while a dialog or overlay has the window.
+ */
+const fileDrag = ref(false)
+
+function trackDrag(event: DragEvent) {
+  const types = [...(event.dataTransfer?.types ?? [])].map((type) => type.toLowerCase())
+  if (!types.includes("files") && !types.includes("text/uri-list")) return
+  fileDrag.value = !document.querySelector(".scrim, .overlay")
+}
+
+function leaveDrag(event: DragEvent) {
+  // Leaving one element for another inside the window is not leaving the window.
+  if (!event.relatedTarget) fileDrag.value = false
+}
+
+function endDrag() {
+  fileDrag.value = false
+}
+
+/*
  * What changed in the version now running, shown once.
  *
  * opencode's flow, step for step: remember the version last seen, and on the
@@ -3573,6 +3595,10 @@ onMounted(async () => {
    */
   window.addEventListener("dragover", swallowDrop)
   window.addEventListener("drop", swallowDrop)
+  window.addEventListener("dragover", trackDrag)
+  window.addEventListener("dragleave", leaveDrag)
+  window.addEventListener("drop", endDrag)
+  window.addEventListener("dragend", endDrag)
   window.addEventListener("keydown", onKeydown)
   window.addEventListener("keyup", endRecentWalk)
   window.addEventListener("blur", forgetRecentWalk)
@@ -3656,6 +3682,10 @@ watch(
 
 onBeforeUnmount(() => {
   window.removeEventListener("dragover", swallowDrop)
+  window.removeEventListener("dragover", trackDrag)
+  window.removeEventListener("dragleave", leaveDrag)
+  window.removeEventListener("drop", endDrag)
+  window.removeEventListener("dragend", endDrag)
   window.removeEventListener("drop", swallowDrop)
   window.removeEventListener("keydown", onKeydown)
   window.removeEventListener("keyup", endRecentWalk)
@@ -3877,6 +3907,11 @@ onBeforeUnmount(() => {
           @close="terminalOpen = false"
           @height="(px: number) => (drawerHeight = px)"
         />
+
+        <!-- MiMo's drop overlay over the main column; the drop itself is the composer's. -->
+        <div v-if="fileDrag && !onboarding" class="drop-overlay" data-drop-overlay aria-hidden="true">
+          <div class="drop-card">{{ t("composer.dropOverlay") }}</div>
+        </div>
       </main>
 
       <!--
@@ -4317,6 +4352,33 @@ onBeforeUnmount(() => {
 /* The composer's ordinary dock; `contents` keeps it out of the layout. */
 .main-dock {
   display: contents;
+}
+
+/*
+ * MiMo's: the column tinted 8% of the accent inside a 2px dashed line at 55%,
+ * and a card in the middle - 12 round, 10 by 18 of padding, 14px medium text
+ * in the accent - that lets the drop through to what is underneath.
+ */
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 250;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--interactive) 8%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--interactive) 55%, transparent);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.drop-card {
+  padding: 10px 18px;
+  color: var(--interactive);
+  background: var(--surface-base);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
 }
 
 /*
