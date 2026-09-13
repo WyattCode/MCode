@@ -27,6 +27,8 @@ const props = defineProps<{
   selecting?: string[]
   /** Whether the browser panel is up, so its button can say so. */
   browser?: boolean
+  /** Whether the in-app browser is switched on in settings; its button goes when it is not. */
+  browserAllowed?: boolean
   /** Whether MiMo's priority filter is on: attention first, then the week by day. */
   priority?: boolean
 }>()
@@ -393,6 +395,7 @@ function toggleProject(directory: string) {
         reachable only by a chord nobody is told about.
       -->
       <button
+        v-if="browserAllowed !== false"
         class="ico"
         :class="{ on: browser }"
         :aria-pressed="browser"

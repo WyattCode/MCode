@@ -15,6 +15,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
 import {
   act,
+  clearBrowsingData,
   closePanel,
   closeTab,
   navigate,
@@ -686,6 +687,16 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:browser-act", (event, what: "back" | "forward" | "reload" | "forceReload" | "stop") => {
     const window = BrowserWindow.fromWebContents(event.sender)
     return window ? act(window, what) : undefined
+  })
+
+  // Settings' clear-browsing-data: an empty answer is success, anything else is the reason.
+  ipcMain.handle("mcode:browser-clear-data", async () => {
+    try {
+      await clearBrowsingData()
+      return ""
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
   })
 
   ipcMain.handle("mcode:browser-tab", (event, what: "new" | "select" | "close", id?: string) => {

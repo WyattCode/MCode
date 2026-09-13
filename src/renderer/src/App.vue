@@ -1009,6 +1009,7 @@ function toggleReviewPanel() {
 
 /* Ctrl+T, MiMo's: a new page in the browser panel, which opens with one if it was shut. */
 async function openBrowserTab() {
+  if (!browserAllowed.value) return
   if (!browserOpen.value) {
     browserOpen.value = true
     return
@@ -1841,6 +1842,12 @@ function goArtifacts() {
  */
 const browserOpen = ref(false)
 
+/* The in-app browser, unless it has been switched off in settings - which also puts it away. */
+const browserAllowed = computed(() => app.config?.browserEnabled !== false)
+watch(browserAllowed, (allowed) => {
+  if (!allowed) browserOpen.value = false
+})
+
 /*
  * A side chat: a second conversation beside the open one, as MiMo has it.
  *
@@ -2283,7 +2290,8 @@ const bindableCommands = computed(() => {
       group: "key.groupGeneral",
       title: t("key.browserPanel"),
       hint: "Ctrl+Shift+B",
-      run: () => (browserOpen.value = !browserOpen.value),
+      enabled: browserAllowed.value,
+      run: () => (browserOpen.value = browserAllowed.value && !browserOpen.value),
     },
     { id: "browser.tab", group: "key.groupGeneral", title: t("key.browserTab"), hint: "Ctrl+T", run: () => void openBrowserTab() },
     { id: "browser.address", group: "key.groupGeneral", title: t("key.browserAddress"), hint: "Ctrl+L", run: focusBrowserAddress },
@@ -3130,7 +3138,7 @@ function onKeydown(event: KeyboardEvent) {
       // The plugins page, on the reference's own chord.
       p: () => goPlugins(),
       // The browser panel, on the reference's own chord as well.
-      b: () => (browserOpen.value = !browserOpen.value),
+      b: () => (browserOpen.value = browserAllowed.value && !browserOpen.value),
       // And the list of all of these, which is a settings page here.
       "?": () => {
         settingsSection.value = "keys"
@@ -3599,8 +3607,9 @@ onBeforeUnmount(() => {
         v-if="leftPanel && !onboarding"
         :page="view"
         :browser="browserOpen"
+        :browser-allowed="browserAllowed"
         :priority="priorityFilter"
-        @toggle-browser="browserOpen = !browserOpen"
+        @toggle-browser="browserOpen = browserAllowed && !browserOpen"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"
         @newTask="goHome"
@@ -3773,7 +3782,7 @@ onBeforeUnmount(() => {
         at beside the conversation is the point, and a panel that covered the
         conversation would defeat it.
       -->
-      <BrowserPanel v-if="browserOpen" ref="browserPanel" class="browser-panel" @close="browserOpen = false" />
+      <BrowserPanel v-if="browserOpen && browserAllowed" ref="browserPanel" class="browser-panel" @close="browserOpen = false" />
 
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />

@@ -142,6 +142,8 @@ const api = {
     ipcRenderer.invoke("mcode:browser-act", what),
   browserTab: (what: "new" | "select" | "close", id?: string) =>
     ipcRenderer.invoke("mcode:browser-tab", what, id),
+  /** Clears the browser panel's site data and cache; resolves to "" or the reason it failed. */
+  browserClearData: (): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-data"),
   onBrowserState: (handler: (state: unknown) => void): (() => void) => {
     const listener = (_event: unknown, state: unknown) => handler(state)
     ipcRenderer.on("mcode:browser-state", listener)

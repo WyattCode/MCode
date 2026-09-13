@@ -301,6 +301,18 @@ export function panelState(window: BrowserWindow): BrowserState | undefined {
   return panel ? stateOf(panel) : undefined
 }
 
+/**
+ * Clears what sites have stored in the panel's partition, and its cache.
+ *
+ * Settings' clear-browsing-data. The partition is the panel's own, so the
+ * app's session - its storage, its socket to the backend - is not touched.
+ */
+export async function clearBrowsingData(): Promise<void> {
+  const partition = session.fromPartition(PARTITION)
+  await partition.clearStorageData()
+  await partition.clearCache()
+}
+
 export function hasPanel(window: BrowserWindow): boolean {
   return panels.has(window.id)
 }

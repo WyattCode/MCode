@@ -688,6 +688,8 @@ export interface AppConfig {
   smartFast?: ModelRef
   /** Smart's main model, for everything else; empty follows `model`. */
   smartMain?: ModelRef
+  /** Whether the in-app browser is offered at all; absent is on. */
+  browserEnabled?: boolean
   theme: "dark" | "light" | "system"
   /* Which named palette the colours are generated from. */
   themeID: string

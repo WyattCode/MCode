@@ -19,11 +19,12 @@ import {
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
+import ConfirmDialog from "./ConfirmDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AppPath, AppPaths, UsageSummary, Worktree } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, isBindable } from "../lib/keys"
-import { notifyFailure } from "../lib/toast"
+import { notifyFailure, notify } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
 
 const emit = defineEmits<{ close: []; "check-updates": [] }>()
@@ -784,6 +785,16 @@ function setSmartModel(field: "smartFast" | "smartMain", value: string) {
   const at = value.indexOf("/")
   const chosen = at > 0 ? { provider: value.slice(0, at), model: value.slice(at + 1) } : { provider: "", model: "" }
   void app.patchConfig(field === "smartFast" ? { smartFast: chosen } : { smartMain: chosen })
+}
+
+/* Clearing what the in-app browser has stored, after a confirmation, as MiMo asks for one. */
+const confirmingClear = ref(false)
+
+async function clearBrowsing() {
+  confirmingClear.value = false
+  const reason = await window.mcode.browserClearData()
+  if (reason) notifyFailure(t("set.browsingDataFailed", { error: reason }))
+  else notify(t("set.browsingDataCleared"))
 }
 
 /**
@@ -1587,6 +1598,43 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
           </div>
+
+          <!-- MiMo's browser group: the in-app browser itself, and what it has stored. -->
+          <h3>{{ t("set.browser") }}</h3>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.browserPlugin") }}</div>
+                <div class="line-sub">{{ t("set.browserPluginSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.browserEnabled !== false }"
+                role="switch"
+                :aria-checked="app.config?.browserEnabled !== false"
+                @click="app.patchConfig({ browserEnabled: app.config?.browserEnabled === false })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.browsingData") }}</div>
+                <div class="line-sub">{{ t("set.browsingDataSub") }}</div>
+              </div>
+              <button class="ctl-btn clear-browsing" @click="confirmingClear = true">{{ t("set.clearBrowsingData") }}</button>
+            </div>
+          </div>
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="confirmingClear"
+              :title="t('set.clearBrowsingTitle')"
+              :body="t('set.clearBrowsingBody')"
+              :confirm-label="t('set.clearBrowsingOk')"
+              @confirm="clearBrowsing"
+              @close="confirmingClear = false"
+            />
+          </Teleport>
 
           <!--
             What the title bar carries, and what a session offers. The bar
