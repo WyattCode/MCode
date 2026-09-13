@@ -127,13 +127,50 @@ function start(name: string) {
   box.value?.set({ text: `/${name} `, attachments: [], mentioned: new Set() })
   box.value?.focus()
 }
+
+/*
+ * The wordmark answers a press with a small hop - a lift, a drop past rest and a
+ * settle - and nothing more. A press while it is still in the air is ignored,
+ * and with reduced motion it stays put.
+ */
+const wordmark = ref<HTMLElement>()
+const hopping = ref(false)
+
+const HOP: Keyframe[] = [
+  { transform: "translateY(0) scale(1, 1)" },
+  { transform: "translateY(2px) scale(1.04, 0.92)", offset: 0.12 },
+  { transform: "translateY(-12px) scale(0.98, 1.04)", offset: 0.42 },
+  { transform: "translateY(0) scale(1.03, 0.95)", offset: 0.7 },
+  { transform: "translateY(-3px) scale(1, 1)", offset: 0.85 },
+  { transform: "translateY(0) scale(1, 1)" },
+]
+const HOP_MS = 560
+
+async function hop() {
+  const mark = wordmark.value
+  if (hopping.value || !mark || typeof mark.animate !== "function") return
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+  hopping.value = true
+  const animation = mark.animate(HOP, { duration: HOP_MS, easing: "ease-out" })
+  // `finished` can be held by a throttled page, so the hop also ends on its own clock.
+  await Promise.race([animation.finished.catch(() => undefined), new Promise((resolve) => setTimeout(resolve, HOP_MS + 120))])
+  animation.cancel()
+  hopping.value = false
+}
 </script>
 
 <template>
   <div class="home-hero">
     <div class="drag" aria-hidden="true" />
     <div class="column">
-      <div class="wordmark" role="img" aria-label="MCode" />
+      <div
+        ref="wordmark"
+        class="wordmark"
+        role="img"
+        aria-label="MCode"
+        :data-hopping="hopping ? 'true' : 'false'"
+        @click="hop"
+      />
       <p class="slogan">{{ t("home.slogan") }}</p>
 
       <div class="dock-slot">
@@ -217,6 +254,9 @@ function start(name: string) {
   height: 36px;
   background: var(--wordmark) center / contain no-repeat;
   opacity: 0.92;
+  cursor: pointer;
+  transform-origin: 50% 100%;
+  -webkit-app-region: no-drag;
 }
 
 /* 18/600/28.8 at 0.4px, measured on MiMo's greeting. */
