@@ -18,6 +18,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import ArtifactsView from "./components/ArtifactsView.vue"
 import PluginsView from "./components/PluginsView.vue"
 import BrowserPanel from "./components/BrowserPanel.vue"
+import RightLauncher from "./components/RightLauncher.vue"
 import SideChat from "./components/SideChat.vue"
 import RevertDock from "./components/RevertDock.vue"
 import FilePanel from "./components/FilePanel.vue"
@@ -1010,6 +1011,56 @@ function toggleReviewPanel() {
     return
   }
   rightPanel.value = true
+}
+
+/*
+ * MiMo's side panel, as its title bar's one button and Ctrl+Alt+B have it: with
+ * nothing showing on the right, opening it shows the launcher; with the review
+ * or the launcher up, the same press puts it away.
+ */
+const launcherOpen = ref(false)
+const sidePanelUp = computed(() => !onboarding.value && (reviewPanelUp.value || launcherOpen.value))
+const filePanel = ref<InstanceType<typeof FilePanel>>()
+
+watch(reviewPanelUp, (up) => {
+  if (up) launcherOpen.value = false
+})
+
+function toggleSidePanel() {
+  if (reviewPanelUp.value) {
+    toggleReviewPanel()
+    launcherOpen.value = false
+    return
+  }
+  launcherOpen.value = !launcherOpen.value
+}
+
+type LaunchTool = "review" | "files" | "chat" | "browser" | "terminal"
+
+/* What the current screen can hold: the review, files and side chat need a conversation; the terminal a workspace. */
+const launchAvailable = computed<Record<LaunchTool, boolean>>(() => {
+  const inConversation = !isHome.value && Boolean(app.currentID)
+  return {
+    review: inConversation && showFileTree.value,
+    files: inConversation && showFileTree.value,
+    chat: inConversation,
+    browser: browserAllowed.value,
+    terminal: !isHome.value,
+  }
+})
+
+async function launch(tool: LaunchTool) {
+  if (!launchAvailable.value[tool]) return
+  launcherOpen.value = false
+  if (tool === "review") openReviewTab()
+  else if (tool === "files") {
+    openReviewTab()
+    await nextTick()
+    filePanel.value?.showTab("files")
+  } else if (tool === "chat") {
+    if (!sideChat.value) await toggleSideChat()
+  } else if (tool === "browser") await openBrowserTab()
+  else terminalOpen.value = true
 }
 
 /* Ctrl+T, MiMo's: a new page in the browser panel, which opens with one if it was shut. */
@@ -2341,10 +2392,9 @@ const bindableCommands = computed(() => {
     {
       id: "view.right",
       group: "key.groupSession",
-      title: reviewPanelUp.value ? t("cmd.hideFiles") : t("cmd.showFiles"),
+      title: t("key.sidePanel"),
       hint: "Ctrl+Alt+B",
-      enabled: inWorkspace,
-      run: toggleReviewPanel,
+      run: toggleSidePanel,
     },
     {
       id: "view.terminal",
@@ -2977,11 +3027,11 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
-  /* The side panel, on MiMo's chord; its review tab is Ctrl+Shift+G. */
+  /* The side panel, on MiMo's chord and on every screen, as its title-bar button is; its review tab is Ctrl+Shift+G. */
   if (mod && event.altKey && event.key.toLowerCase() === "b") {
-    if (modalOpen.value || isHome.value) return
+    if (modalOpen.value) return
     event.preventDefault()
-    toggleReviewPanel()
+    toggleSidePanel()
     return
   }
 
@@ -3612,6 +3662,21 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="app">
+    <!-- MiMo's one title-bar button on the right, on every screen: the side panel. -->
+    <button
+      v-if="!onboarding"
+      class="side-panel-toggle"
+      :class="{ on: sidePanelUp }"
+      :aria-pressed="sidePanelUp"
+      :aria-label="t('key.sidePanel')"
+      v-tip="{ label: t('key.sidePanel'), hint: 'Ctrl+Alt+B', placement: 'bottom' }"
+      @click="toggleSidePanel"
+    >
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <rect x="2.5" y="3" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2" />
+        <path d="M9.5 3v10" stroke="currentColor" stroke-width="1.2" />
+      </svg>
+    </button>
 
     <div
       class="body"
@@ -3796,6 +3861,9 @@ onBeforeUnmount(() => {
       -->
       <BrowserPanel v-if="browserOpen && browserAllowed" ref="browserPanel" class="browser-panel" @close="browserOpen = false" />
 
+      <!-- MiMo's side panel with nothing chosen: a card for each thing it can hold. -->
+      <RightLauncher v-if="launcherOpen && !reviewPanelUp && !onboarding" :available="launchAvailable" @pick="launch" />
+
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />
 
@@ -3813,6 +3881,7 @@ onBeforeUnmount(() => {
       <div v-if="reviewPanelUp" class="column" :style="reviewWidth ? { width: `${reviewWidth}px` } : undefined">
       <FilePanel
         v-if="reviewPanelUp"
+        ref="filePanel"
         v-model:tree-open="fileTreeOpen"
         v-model:width="reviewWidth"
         v-model:context-tab="contextTab"
@@ -4246,5 +4315,30 @@ onBeforeUnmount(() => {
  */
 .browser-panel {
   flex-shrink: 0;
+}
+
+/* Left of the caption buttons where Windows draws them, level with the header's own row. */
+.side-panel-toggle {
+  position: fixed;
+  top: 9px;
+  inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 9px);
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-weak);
+  border-radius: 7px;
+  -webkit-app-region: no-drag;
+}
+
+.side-panel-toggle:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.side-panel-toggle.on {
+  color: var(--text-strong);
+  background: var(--surface-selected);
 }
 </style>

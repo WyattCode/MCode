@@ -280,7 +280,8 @@ function openMenu(event: MouseEvent) {
      on the same line as the side column's buttons. */
   height: 46px;
   padding-block: 4px 0;
-  padding-inline-end: calc(20px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  /* Clear of the caption buttons, and of the side panel button App.vue keeps beside them. */
+  padding-inline-end: calc(58px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   -webkit-app-region: drag;
 }
 

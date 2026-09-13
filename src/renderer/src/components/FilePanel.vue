@@ -128,6 +128,9 @@ function revealActiveTab() {
 
 watch([() => props.panelTab, () => props.contextTab, tab], revealActiveTab)
 
+/* The side panel's launcher opens this panel straight onto one of its tabs. */
+defineExpose({ showTab: (next: Tab) => pickReview(next) })
+
 /*
  * WHY THE WATCH ALONE WAS NOT ENOUGH, which is the whole of the defect.
  *
