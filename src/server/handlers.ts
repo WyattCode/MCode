@@ -17,6 +17,7 @@ import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory } from "./scratch"
+import { searchMessages } from "./search"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
@@ -147,6 +148,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "project.createBlank": {
       const directory = await blankProjectDirectory(request.name, runtime.config.get().projectRoot)
       return { directory } satisfies Handled<"project.createBlank">
+    }
+
+    case "search.messages": {
+      const sessions = await runtime.sessions.list()
+      const limit = Math.max(1, Math.min(200, request.limit ?? 50))
+      const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit)
+      return { hits } satisfies Handled<"search.messages">
     }
 
     case "session.get": {

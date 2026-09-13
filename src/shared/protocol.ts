@@ -159,6 +159,16 @@ export interface ArtifactFile {
   modified?: number
 }
 
+/** Where a search found its words inside one conversation, as the overlay draws it. */
+export interface MessageHit {
+  sessionID: string
+  messageID: string
+  /** A single line around the words, with ellipses where it was cut. */
+  text: string
+  /** Where the words sit inside `text`. */
+  ranges: { start: number; end: number }[]
+}
+
 /** What one stored session produced, newest file first. */
 export interface SessionArtifacts {
   sessionID: string
@@ -1152,6 +1162,8 @@ export type Request =
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
   /* An empty folder for a new project, named by the user, under the default project location. */
   | { type: "project.createBlank"; name: string }
+  /* The conversations whose messages hold the query, one hit each, for the search overlay. */
+  | { type: "search.messages"; query: string; limit?: number }
   | { type: "session.get"; sessionID: string }
   /**
    * The instructions the model is given ahead of the conversation.
@@ -1331,6 +1343,7 @@ export interface ResponseMap {
   "artifact.list": { artifacts: SessionArtifacts[] }
   "session.create": { session: SessionInfo }
   "project.createBlank": { directory: string }
+  "search.messages": { hits: MessageHit[] }
   "session.get": { session: SessionInfo; messages: Message[] }
   "session.systemPrompt": { prompt: string }
   /**

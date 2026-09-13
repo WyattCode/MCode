@@ -33,6 +33,7 @@ import TerminalDrawer from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
 import ConnectDialog from "./components/ConnectDialog.vue"
+import SearchOverlay from "./components/SearchOverlay.vue"
 import EditMenu from "./components/EditMenu.vue"
 import McpDialog from "./components/McpDialog.vue"
 import Onboarding from "./components/Onboarding.vue"
@@ -297,6 +298,8 @@ onMounted(() => {
 onBeforeUnmount(() => find.unmount())
 const mcpOpen = ref(false)
 const paletteOpen = ref(false)
+/* MiMo's search over conversations, projects and artifacts: the side column's magnifier and Ctrl+K. */
+const searchOpen = ref(false)
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
 const settingsSection = ref<"general" | "keys" | "server" | "models">()
@@ -2751,7 +2754,9 @@ const bindableCommands = computed(() => {
       title: t("key.palette"),
       hint: "Ctrl+K",
       hidden: true,
-      run: () => openPalette("all"),
+      run: () => {
+        searchOpen.value = true
+      },
     },
     {
       id: "terminal.close",
@@ -3171,7 +3176,7 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   const handlers: Record<string, () => void> = {
-    k: () => (paletteOpen.value ? (paletteOpen.value = false) : openPalette("all")),
+    k: () => (searchOpen.value = !searchOpen.value),
     // The reference's file picker, session search and attach, on its keys.
     p: () => openPalette("files"),
     f: () => openPalette("sessions"),
@@ -3634,7 +3639,7 @@ onBeforeUnmount(() => {
         @select="toggleSelected"
         @batch="runBatch"
         @plugins="goPlugins"
-        @search="paletteOpen = true"
+        @search="searchOpen = true"
         @back="back"
         @forward="forward"
         @toggle="leftPanel = false"
@@ -3841,6 +3846,13 @@ onBeforeUnmount(() => {
       @file="composer?.mention($event)"
       @project="pickedProject"
       @message="app.forkFrom($event)"
+    />
+
+    <SearchOverlay
+      v-if="searchOpen"
+      @close="searchOpen = false"
+      @open="openFromArtifacts"
+      @project="startIn"
     />
 
     <ServerPopover

@@ -27,6 +27,7 @@ import { startBackend } from "../src/server/index"
 import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
 import { readTask, smartRoute } from "../src/shared/smart"
 import { chimeOf, longTask } from "../src/shared/chime"
+import { findInMessages, searchMessages, snippetAround } from "../src/server/search"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
@@ -171,6 +172,43 @@ async function main() {
   )
   check("a taken blank project name is numbered, not reused", path.basename(blankAgain.directory) === "Probe project (2)", blankAgain.directory)
   check("a blank project name Windows would refuse is cleaned", path.basename(blankOdd.directory) === "a b c", blankOdd.directory)
+
+  /*
+   * The search overlay's transcript search: a line around the words with them
+   * marked, what was said rather than reasoned, and one hit per conversation
+   * with archived ones and side chats left out.
+   */
+  const cut = snippetAround("x".repeat(60) + "zebra" + "\ny".repeat(60), 60, 5)
+  check(
+    "a search snippet is one line around the words, cut with ellipses, the words marked",
+    cut.text.startsWith("…") && cut.text.endsWith("…") && !cut.text.includes("\n") &&
+      cut.text.slice(cut.ranges[0].start, cut.ranges[0].end) === "zebra",
+    cut,
+  )
+  const said = [
+    { id: "u1", sessionID: "s", role: "user", text: "Where is the Zebra?", attachments: [], time: { created: 1 } },
+    {
+      id: "a1", sessionID: "s", role: "assistant", model: { provider: "p", model: "m" }, agent: "build",
+      parts: [{ type: "reasoning", id: "r", text: "hidden giraffe", time: { created: 1 } }, { type: "text", id: "t", text: "By the giraffe." }],
+      time: { created: 2 },
+    },
+  ] as unknown as Parameters<typeof findInMessages>[0]
+  const zebra = findInMessages(said, "zebra")
+  check("search finds the words in what was asked, whatever their case", zebra?.messageID === "u1" && zebra.text.slice(zebra.ranges[0].start, zebra.ranges[0].end) === "Zebra", zebra)
+  check("search reads what was answered", findInMessages(said, "by the giraffe")?.messageID === "a1")
+  check("search does not read reasoning", findInMessages(said, "hidden") === undefined)
+  const sessionsForSearch = [
+    { id: "old", updated: 1 },
+    { id: "new", updated: 3 },
+    { id: "gone", updated: 2, archived: true },
+    { id: "side", updated: 4, sideOf: "new" },
+  ] as unknown as Parameters<typeof searchMessages>[0]
+  const found = await searchMessages(sessionsForSearch, async () => said, "zebra")
+  check(
+    "search gives one hit per conversation, newest first, without archived ones or side chats",
+    found.map((hit) => hit.sessionID).join(",") === "new,old",
+    found,
+  )
   await call({ type: "session.delete", sessionID: loose.session.id })
   await call({ type: "session.delete", sessionID: looseAgain.session.id })
 
