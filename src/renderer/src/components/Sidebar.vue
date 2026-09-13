@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SessionInfo } from "@shared/protocol"
-import { computed, ref } from "vue"
+import { computed, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import type { MenuItem } from "../lib/menu"
@@ -419,7 +419,42 @@ function toggleProject(directory: string) {
   if (next.has(directory)) next.delete(directory)
   else next.add(directory)
   expanded.value = next
+  // Folding or opening a project puts its list back to the first few, as MiMo does.
+  if (allTasks.value.has(directory)) {
+    const shown = new Set(allTasks.value)
+    shown.delete(directory)
+    allTasks.value = shown
+  }
 }
+
+/* MiMo lists five tasks under a project until asked for the rest. */
+const PROJECT_TASKS = 5
+const allTasks = ref(new Set<string>())
+const tasksOf = (project: { directory: string; sessions: typeof app.sessions }) => {
+  const rows = byPinned(project.sessions)
+  return allTasks.value.has(project.directory) ? rows : rows.slice(0, PROJECT_TASKS)
+}
+function showAllTasks(directory: string) {
+  allTasks.value = new Set(allTasks.value).add(directory)
+}
+
+/*
+ * MiMo pages its projects: five, then ten, then ten more a press, with a way
+ * back to five once past the first page. Selection shows them all.
+ */
+const PROJECT_PAGE = 5
+const PROJECT_STEP = 10
+const projectsShown = ref(PROJECT_PAGE)
+const shownProjects = computed(() => (picking.value ? projects.value : projects.value.slice(0, projectsShown.value)))
+const projectsLeft = computed(() => projects.value.length - shownProjects.value.length)
+const projectsPaged = computed(() => !picking.value && projectsShown.value > PROJECT_PAGE && projects.value.length > PROJECT_PAGE)
+function moreProjects() {
+  const shown = projectsShown.value
+  projectsShown.value = Math.min(projects.value.length, shown <= PROJECT_PAGE ? PROJECT_STEP : shown + PROJECT_STEP)
+}
+watch(picking, (on) => {
+  if (on) projectsShown.value = PROJECT_PAGE
+})
 </script>
 
 <template>
@@ -566,7 +601,7 @@ function toggleProject(directory: string) {
         </button>
       </div>
       <template v-if="projectsOpen && !priority">
-        <template v-for="project in projects" :key="project.directory">
+        <template v-for="project in shownProjects" :key="project.directory">
           <div
             class="row project"
             :class="{ on: app.current?.directory === project.directory && !isExpanded(project.directory) }"
@@ -631,7 +666,7 @@ function toggleProject(directory: string) {
           </div>
           <template v-if="isExpanded(project.directory)">
             <div
-              v-for="session in byPinned(project.sessions).slice(0, 8)"
+              v-for="session in tasksOf(project)"
               :key="session.id"
               class="row task"
               :class="{ on: app.currentID === session.id }"
@@ -673,8 +708,25 @@ function toggleProject(directory: string) {
                 </button>
               </span>
             </div>
+            <button
+              v-if="project.sessions.length > PROJECT_TASKS && !allTasks.has(project.directory)"
+              class="project-show-all"
+              :data-project-show-all="project.directory"
+              aria-expanded="false"
+              @click.stop="showAllTasks(project.directory)"
+            >
+              {{ t("side.showAllTasks") }}
+            </button>
           </template>
         </template>
+        <div v-if="!picking && (projectsLeft > 0 || projectsPaged)" class="projects-pages" data-projects-pagination>
+          <button v-if="projectsLeft > 0" class="pages-more" data-projects-show-more :aria-expanded="projectsPaged" @click="moreProjects">
+            {{ projectsPaged ? t("side.moreProjectsLeft", { count: projectsLeft }) : t("side.moreProjects") }}
+          </button>
+          <button v-if="projectsPaged" class="pages-collapse" data-projects-collapse @click="projectsShown = PROJECT_PAGE">
+            {{ t("side.collapseProjects") }}
+          </button>
+        </div>
       </template>
 
       <div v-if="!priority" class="section recent-head" :class="{ held: Boolean(recentMenu) }">
@@ -1149,6 +1201,54 @@ function toggleProject(directory: string) {
 .show-more:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/* Under a project's first five: 12px in the secondary colour, in line with the task names. */
+.project-show-all {
+  width: 100%;
+  padding-block: 5px;
+  padding-inline: 46px 9px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  /* MiMo's buttons keep the body's 22px line, which makes the row 32 tall. */
+  line-height: calc(22px * var(--ui-font-scale, 1));
+  text-align: start;
+}
+
+.project-show-all:hover {
+  color: var(--text-strong);
+}
+
+/* MiMo's pages row under the projects: more on the left, collapse on the right. */
+.projects-pages {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 5px 9px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: calc(22px * var(--ui-font-scale, 1));
+}
+
+.projects-pages button {
+  padding: 0;
+  color: var(--text-weak);
+  font-size: inherit;
+  text-align: start;
+}
+
+.projects-pages button:hover {
+  color: var(--text-strong);
+}
+
+.pages-more {
+  flex: 1;
+  min-width: 0;
+}
+
+.pages-collapse {
+  flex: none;
+  margin-inline-start: auto;
 }
 
 /* The priority filter's bell: sixth in the left-aligned controls row, lit while on. */
