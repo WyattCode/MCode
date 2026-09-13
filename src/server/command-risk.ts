@@ -42,26 +42,42 @@ function program(token: string): string {
 
 export type CommandRisk = "delete" | "elevate" | "kill" | "rights" | "system" | "publish" | "reset"
 
+/** Risks only a person settles: they throw away work that cannot be brought back. */
+export const LOST_WORK: readonly CommandRisk[] = ["delete", "reset"]
+
+function pieceRisk(piece: string): CommandRisk | undefined {
+  const lowered = piece.toLowerCase()
+  if (/-verb\s+runas\b/.test(lowered)) return "elevate"
+  // Environment assignments in front of the program (`FOO=1 rm x`) are not the program.
+  const tokens = piece.split(/\s+/).filter((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
+  const first = program(tokens[0] ?? "")
+  if (!first) return undefined
+  if (DELETE.has(first)) return "delete"
+  if (ELEVATE.has(first)) return "elevate"
+  if (KILL.has(first)) return "kill"
+  if (RIGHTS.has(first)) return "rights"
+  if (SYSTEM.has(first)) return "system"
+  const sub = (tokens.slice(1).find((token) => !token.startsWith("-")) ?? "").toLowerCase()
+  if (SUBCOMMANDS[first]?.includes(sub)) return first === "git" && sub === "clean" ? "delete" : "publish"
+  if (first === "git" && sub === "reset" && /--hard\b/.test(lowered)) return "reset"
+  return undefined
+}
+
+/*
+ * The whole chain is read, not just up to the first risk. What decides who
+ * answers is the worst piece: `git push && rm -rf dist` is a delete, and a
+ * delete is never left to the model however harmless the push in front of it.
+ */
 export function commandRisk(command: string): CommandRisk | undefined {
   const pieces = command
     .split(/&&|\|\||[;|\n`]|\$\(|\(|\)/)
     .map((piece) => piece.trim())
     .filter(Boolean)
+  let found: CommandRisk | undefined
   for (const piece of pieces) {
-    const lowered = piece.toLowerCase()
-    if (/-verb\s+runas\b/.test(lowered)) return "elevate"
-    // Environment assignments in front of the program (`FOO=1 rm x`) are not the program.
-    const tokens = piece.split(/\s+/).filter((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
-    const first = program(tokens[0] ?? "")
-    if (!first) continue
-    if (DELETE.has(first)) return "delete"
-    if (ELEVATE.has(first)) return "elevate"
-    if (KILL.has(first)) return "kill"
-    if (RIGHTS.has(first)) return "rights"
-    if (SYSTEM.has(first)) return "system"
-    const sub = (tokens.slice(1).find((token) => !token.startsWith("-")) ?? "").toLowerCase()
-    if (SUBCOMMANDS[first]?.includes(sub)) return first === "git" && sub === "clean" ? "delete" : "publish"
-    if (first === "git" && sub === "reset" && /--hard\b/.test(lowered)) return "reset"
+    const risk = pieceRisk(piece)
+    if (risk && LOST_WORK.includes(risk)) return risk
+    found ??= risk
   }
-  return undefined
+  return found
 }

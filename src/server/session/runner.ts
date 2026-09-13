@@ -15,7 +15,8 @@ import { Identifier } from "@shared/id"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
 import type { Permissions } from "../permission"
-import { PermissionDenied } from "../permission"
+import type { CommandRisk } from "../command-risk"
+import { PermissionDenied, REVIEW_TIMEOUT_MS } from "../permission"
 import type { Storage } from "../storage"
 import { findTool, reachOf, toolsFor } from "../tool/registry"
 import { Questions } from "../tool/question"
@@ -45,6 +46,25 @@ import { systemPrompt, titleFrom } from "./prompt"
  * What the summary is for: the next turn reads it instead of the conversation,
  * so it has to carry decisions and state rather than read as a recap.
  */
+/*
+ * The instruction for reviewing one risky command on the user's behalf. Its
+ * own short request with no tools: the model is asked for a verdict, not to
+ * carry on with the work.
+ */
+const REVIEW_SYSTEM = [
+  "You check one shell command before a coding assistant runs it.",
+  "The user has chosen to let this check settle risky commands instead of being asked about each one.",
+  "Approve only when the command is plainly a needed step of what the user asked for, and its effects go no further than that request needs.",
+  "Reject when it reaches beyond the request, affects the machine or other programs broadly, publishes or sends work somewhere, or when you are not sure.",
+  "Reply with a single word: APPROVE or REJECT.",
+].join("\n")
+
+/** Room for a one-word verdict, and for a model that reasons before giving it. */
+const REVIEW_OUTPUT_TOKENS = 2048
+
+/** The latest request is quoted from its end, where the instruction usually is. */
+const REVIEW_REQUEST_CHARS = 4000
+
 const COMPACT_SYSTEM = [
   "You are compacting a coding session so it can continue in a smaller context.",
   "Write a dense summary of everything that still matters: what the user asked for,",
@@ -141,6 +161,81 @@ export class SessionRunner {
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
     this.questions = new Questions(bus)
+    permissions.useReviewer((input) => this.reviewCommand(input))
+  }
+
+  /**
+   * The session's own model, asked whether a risky command should run.
+   *
+   * It sees what the user last asked for, where the work is and the command,
+   * and answers with one word. Only an answer that starts with APPROVE counts;
+   * `Permissions` asks the user for everything else, and for anything that
+   * takes longer than its timeout, which also ends the request here.
+   */
+  private async reviewCommand(input: { sessionID: string; command: string; risk: CommandRisk }): Promise<boolean> {
+    const session = await this.store.get(input.sessionID)
+    if (!session) return false
+    const definition = this.config.definition(session.model.provider)
+    if (!definition) return false
+    const adapter: ProviderAdapter =
+      definition.kind === "anthropic"
+        ? AnthropicAdapter
+        : definition.kind === "chatgpt"
+          ? ChatGPTSubscription
+          : OpenAICompatible
+    const apiKey = this.config.apiKey(definition.id) ?? ""
+    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const stored = await this.store.messages(session.id)
+    const request = [...stored].reverse().find((message) => message.role === "user")?.text ?? ""
+    const text = [
+      "The user's latest request:",
+      request.slice(-REVIEW_REQUEST_CHARS) || "(none)",
+      "",
+      `Working directory: ${session.directory}`,
+      `Flagged as: ${input.risk}`,
+      "",
+      "Command:",
+      input.command,
+    ].join("\n")
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), REVIEW_TIMEOUT_MS)
+    let answer = ""
+    try {
+      await adapter.stream(
+        {
+          apiKey: tokens?.access ?? apiKey,
+          model: session.model,
+          system: REVIEW_SYSTEM,
+          history: [
+            {
+              id: `${session.id}:command-review`,
+              sessionID: session.id,
+              role: "user",
+              text,
+              attachments: [],
+              time: { created: Date.now() },
+            },
+          ],
+          tools: [],
+          effort: "low",
+          showReasoning: false,
+          signal: controller.signal,
+          baseURL: definition.baseURL,
+          headers: definition.headers,
+          accountId: tokens?.accountId,
+          maxOutput: REVIEW_OUTPUT_TOKENS,
+        },
+        (event) => {
+          if (event.type === "text.delta") answer += event.text
+        },
+      )
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+    return /^[^a-z]*approve/i.test(answer.trim())
   }
 
   useMcp(mcp: { tools: () => ToolDefinition[] }): void {

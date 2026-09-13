@@ -158,9 +158,10 @@ async function main() {
    * a file change and a safe command itself and still asks about a delete.
    */
   section("Access: approve for me")
-  const risky = ["rm -rf build", "Remove-Item dist -Recurse", "sudo apt install x", "taskkill /F /IM node.exe", "git push origin main", "npm run build && rm -rf dist", "echo $(rm -rf /)", "chmod 777 run.sh", "git clean -fdx", "Start-Process pwsh -Verb RunAs", "git reset --hard HEAD~1"]
+  const risky = ["git push origin main && rm -rf dist", "rm -rf build", "Remove-Item dist -Recurse", "sudo apt install x", "taskkill /F /IM node.exe", "git push origin main", "npm run build && rm -rf dist", "echo $(rm -rf /)", "chmod 777 run.sh", "git clean -fdx", "Start-Process pwsh -Verb RunAs", "git reset --hard HEAD~1"]
   const everyday = ["git status", "npm test", "npm run build", "ls -la", "git diff --stat", "node scripts/check.js", "git log --oneline -5"]
   check("every risky command is caught", risky.every((command) => commandRisk(command) !== undefined), risky.filter((command) => commandRisk(command) === undefined))
+  check("a delete anywhere in a chain is what the chain counts as", commandRisk("git push origin main && rm -rf dist") === "delete", commandRisk("git push origin main && rm -rf dist"))
   check("no everyday command is", everyday.every((command) => commandRisk(command) === undefined), everyday.filter((command) => commandRisk(command) !== undefined))
 
   const raised: string[] = []
@@ -175,9 +176,38 @@ async function main() {
   check("on approve-for-me a file change asks nothing", (await settled(askAbout("edit", "src/app.ts"))) === "ran" && raised.length === 0, raised)
   check("and neither does an everyday command", (await settled(askAbout("bash", "npm test"))) === "ran" && raised.length === 0, raised)
   check("but a delete still asks", (await settled(askAbout("bash", "rm -rf build"))) === "waiting" && raised.includes("permission.requested"), raised)
+
+  /* The model's review of the other risky commands. */
+  const reviewed: string[] = []
+  let verdict: "approve" | "reject" | "fail" | "hang" = "approve"
+  gate.useReviewer(async ({ command }) => {
+    reviewed.push(command)
+    if (verdict === "fail") throw new Error("no model")
+    if (verdict === "hang") return new Promise<boolean>(() => {})
+    return verdict === "approve"
+  }, 40)
+  const waited = async (promise: Promise<void>) =>
+    Promise.race([promise.then(() => "ran"), new Promise((resolve) => setTimeout(() => resolve("waiting"), 250))])
+  raised.length = 0
+  check("a risky command the model approves asks nothing", (await waited(askAbout("bash", "sudo apt install x"))) === "ran" && raised.length === 0 && reviewed.includes("sudo apt install x"), { raised, reviewed })
+  verdict = "reject"
+  check("one it rejects is asked about", (await waited(askAbout("bash", "taskkill /F /IM node.exe"))) === "waiting" && raised.includes("permission.requested") && reviewed.includes("taskkill /F /IM node.exe"), { raised, reviewed })
+  verdict = "fail"
+  raised.length = 0
+  check("so is one the model cannot review", (await waited(askAbout("bash", "chmod 777 run.sh"))) === "waiting" && raised.includes("permission.requested"), raised)
+  verdict = "hang"
+  raised.length = 0
+  check("and one it takes too long over", (await waited(askAbout("bash", "git push origin main"))) === "waiting" && raised.includes("permission.requested"), raised)
+  verdict = "approve"
+  raised.length = 0
+  reviewed.length = 0
+  check("a delete is never put to the model", (await waited(askAbout("bash", "git push origin main && rm -rf dist"))) === "waiting" && raised.includes("permission.requested") && reviewed.length === 0, { raised, reviewed })
+  check("nor is a hard reset", (await waited(askAbout("bash", "git reset --hard HEAD~1"))) === "waiting" && reviewed.length === 0, reviewed)
+
   level = "ask"
   raised.length = 0
   check("while the default level still asks about the file change", (await settled(askAbout("edit", "src/other.ts"))) === "waiting" && raised.includes("permission.requested"), raised)
+  check("and puts no command to the model", (await waited(askAbout("bash", "sudo reboot"))) === "waiting" && reviewed.length === 0, reviewed)
 
   /* A side chat is a session of its own that remembers the conversation it sits beside. */
   const sideChat = await call({ type: "session.create", directory: project, title: "Side chat 1", sideOf: sessionID })
@@ -1315,6 +1345,74 @@ async function main() {
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
     await call({ type: "config.set", patch: { providerEndpoints: {} } })
     flaky.close()
+  }
+
+  section("Approve for me: the model's review on the wire")
+  {
+    /*
+     * The real path, not a stub reviewer: the runner asks the session's own
+     * model through its provider, with no tools, and only an APPROVE lets the
+     * command run. Anything else raises the ordinary question.
+     */
+    let verdict = "APPROVE"
+    let seen: any
+    const judge = createServer((request, response) => {
+      if ((request.url ?? "").includes("/models")) {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ data: [{ id: "qwen/qwen3.8-27b" }] }))
+        return
+      }
+      let raw = ""
+      request.on("data", (chunk) => (raw += chunk))
+      request.on("end", () => {
+        seen = JSON.parse(raw)
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.end(
+          `data: ${JSON.stringify({ choices: [{ delta: { content: verdict } }] })}\n\n` +
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n` +
+            "data: [DONE]\n\n",
+        )
+      })
+    })
+    await new Promise<void>((resolve) => judge.listen(8797, "127.0.0.1", resolve))
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8797/v1" }, accessLevel: "auto" } })
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
+    const judged = await call({ type: "session.create", directory: project })
+    const judgedID: string = judged.session.id
+    await call({ type: "session.model", sessionID: judgedID, model: { provider: "lmstudio", model: "qwen/qwen3.8-27b" } })
+
+    const gateOf = backend.runtime.permissions
+    const within = async (promise: Promise<void>, ms: number) =>
+      Promise.race([promise.then(() => "ran", () => "refused"), new Promise((resolve) => setTimeout(() => resolve("waiting"), ms))])
+    const askRun = (subject: string) =>
+      gateOf.ask({ sessionID: judgedID, messageID: "msg_judge", callID: `call_judge_${subject.length}`, kind: "bash", title: subject, subject })
+
+    const before = events.length
+    check("a risky command the model approves runs", (await within(askRun("sudo apt install x"), 10_000)) === "ran", seen)
+    check("the model was asked with no tools", Array.isArray(seen?.tools) ? seen.tools.length === 0 : seen?.tools === undefined, seen?.tools)
+    const sent = JSON.stringify(seen?.messages ?? [])
+    check("and was shown the command and what it is flagged as", sent.includes("sudo apt install x") && sent.includes("Flagged as: elevate"), sent.slice(0, 400))
+    check("and told to answer in one word", sent.includes("APPROVE or REJECT"), sent.slice(0, 400))
+    check(
+      "and nothing was asked of the user",
+      !events.slice(before).some((event) => event.type === "permission.requested" && event.request.sessionID === judgedID),
+      events.slice(before).map((event) => event.type),
+    )
+
+    verdict = "REJECT"
+    const rejected = askRun("taskkill /F /IM node.exe")
+    check("one the model rejects waits for the user", (await within(rejected, 3_000)) === "waiting")
+    const question = events
+      .slice(before)
+      .find((event) => event.type === "permission.requested" && event.request.subject === "taskkill /F /IM node.exe")
+    check("with the ordinary question", Boolean(question), events.slice(before).map((event) => event.type))
+    if (question) gateOf.respond((question as any).request.id, "reject")
+    await rejected.catch(() => {})
+
+    await call({ type: "session.delete", sessionID: judgedID })
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
+    await call({ type: "config.set", patch: { providerEndpoints: {}, accessLevel: "ask" } })
+    judge.close()
   }
 
   section("Plan mode")

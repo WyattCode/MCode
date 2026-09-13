@@ -6,7 +6,8 @@ import type {
 } from "@shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
 import { Identifier } from "@shared/id"
-import { commandRisk } from "./command-risk"
+import type { CommandRisk } from "./command-risk"
+import { LOST_WORK, commandRisk } from "./command-risk"
 import path from "node:path"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
@@ -49,6 +50,17 @@ export function autoAllows(kind: PermissionKind, subject: string): boolean {
   if (kind === "bash") return commandRisk(subject) === undefined
   return false
 }
+
+/**
+ * A second opinion on a risky command, from the model working in that session.
+ *
+ * Resolves true only for a clear yes. Anything else - a no, an answer that is
+ * neither, a failure - leaves the question to the user.
+ */
+export type CommandReviewer = (input: { sessionID: string; command: string; risk: CommandRisk }) => Promise<boolean>
+
+/** How long a review may take before the user is asked instead. */
+export const REVIEW_TIMEOUT_MS = 30_000
 
 function bucketOf(kind: string): PermissionKind | undefined {
   return (PERMISSION_KINDS as readonly string[]).includes(kind) ? (kind as PermissionKind) : undefined
@@ -93,6 +105,8 @@ export class Permissions {
   private readonly approved = new Set<string>()
   /** Directories outside the project that the user let this session reach. */
   private readonly outsideRoots = new Map<string, Set<string>>()
+  private reviewer?: CommandReviewer
+  private reviewTimeout = REVIEW_TIMEOUT_MS
 
   constructor(
     private readonly bus: Bus,
@@ -102,6 +116,37 @@ export class Permissions {
       if (event.type !== "config.updated") return
       this.drainDecided()
     })
+  }
+
+  /** The session runner hands this over once it exists; it owns the models. */
+  useReviewer(reviewer: CommandReviewer, timeout = REVIEW_TIMEOUT_MS): void {
+    this.reviewer = reviewer
+    this.reviewTimeout = timeout
+  }
+
+  /*
+   * The rest of "approve for me": a command that elevates, ends processes,
+   * changes rights, touches the system or sends work away is put to the model
+   * first. Losing work - a delete, a hard reset - is never put to it. A model
+   * that says no, says something else, fails or takes too long hands the
+   * question back to the user, so the review can only ever save a question.
+   */
+  private async reviewed(sessionID: string, command: string): Promise<boolean> {
+    const risk = commandRisk(command)
+    if (!risk || LOST_WORK.includes(risk) || !this.reviewer) return false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        this.reviewer({ sessionID, command, risk }).then((approved) => approved === true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), this.reviewTimeout)
+        }),
+      ])
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private key(sessionID: string, kind: string) {
@@ -164,7 +209,10 @@ export class Permissions {
     if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
     if (action === "allow") return
     // The middle access level. A refusal set in settings has already won above.
-    if (this.config.get().accessLevel === "auto" && autoAllows(input.kind, input.subject)) return
+    if (this.config.get().accessLevel === "auto") {
+      if (autoAllows(input.kind, input.subject)) return
+      if (input.kind === "bash" && (await this.reviewed(input.sessionID, input.subject))) return
+    }
     if (input.scope && this.allowsOutside(input.sessionID, input.scope)) return
     if (!input.scope && this.approved.has(this.key(input.sessionID, input.kind))) return
 
