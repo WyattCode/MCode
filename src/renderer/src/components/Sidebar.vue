@@ -573,7 +573,21 @@ function toggleProject(directory: string) {
             @contextmenu.prevent="openProjectMenu(project.directory, $event)"
           >
             <button class="project-toggle" v-tip="{ label: project.directory, placement: 'right' }" @click="toggleProject(project.directory)">
-              <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <!-- Open while its tasks are listed under it, as MiMo draws an expanded project. -->
+              <svg
+                v-if="isExpanded(project.directory)"
+                class="row-ico"
+                data-folder="open"
+                width="18"
+                height="18"
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path d="M3.5 15V5.5H8L9.5 7H15V9" stroke="currentColor" stroke-linejoin="round" />
+                <path d="M3.5 15 5.6 9H17.4L15.3 15H3.5Z" stroke="currentColor" stroke-linejoin="round" />
+              </svg>
+              <svg v-else class="row-ico" data-folder="closed" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M3.5 5.5H8L9.5 7H16.5V15H3.5V5.5Z" stroke="currentColor" stroke-linejoin="round" />
               </svg>
               <span class="row-label plain">{{ name(project.directory) }}</span>
@@ -590,24 +604,30 @@ function toggleProject(directory: string) {
                 <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
               </span>
             </button>
-            <!-- MiMo's pair on a project row: its menu, then a new task in it. -->
-            <button
-              class="row-menu"
-              :aria-label="t('side.projectOptions')"
-              v-tip="{ label: t('side.projectOptions') }"
-              @click.stop="openProjectMenu(project.directory, $event)"
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <circle cx="3" cy="8" r="1.1" fill="currentColor" />
-                <circle cx="8" cy="8" r="1.1" fill="currentColor" />
-                <circle cx="13" cy="8" r="1.1" fill="currentColor" />
-              </svg>
-            </button>
-            <button class="ico inline" :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask') }" @click="emit('createIn', project.directory)">
-              <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-                <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-linecap="square" />
-              </svg>
-            </button>
+            <!--
+              MiMo's pair on a project row: its menu, then a new task in it. Laid
+              over the row's end on hover, as a task row's are, so the project's
+              name has the whole row until then.
+            -->
+            <span class="row-actions">
+              <button
+                class="row-menu"
+                :aria-label="t('side.projectOptions')"
+                v-tip="{ label: t('side.projectOptions') }"
+                @click.stop="openProjectMenu(project.directory, $event)"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                  <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                  <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+                </svg>
+              </button>
+              <button class="ico inline" :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask') }" @click="emit('createIn', project.directory)">
+                <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                  <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-linecap="square" />
+                </svg>
+              </button>
+            </span>
           </div>
           <template v-if="isExpanded(project.directory)">
             <div
@@ -1417,7 +1437,8 @@ function toggleProject(directory: string) {
  * actions: out of the flow, so the title and the live mark have the whole row
  * until the pointer arrives, and on the row's own background when they show.
  */
-.row.task {
+.row.task,
+.row.project {
   position: relative;
 }
 
@@ -1428,7 +1449,12 @@ function toggleProject(directory: string) {
   display: flex;
   align-items: center;
   padding-inline-start: 8px;
-  background: inherit;
+  /*
+   * Solid, not inherited: the row's hover tint is translucent, and inheriting it
+   * left the end of a long name showing through under the buttons laid over it.
+   * The same tint, laid on the column's own ground.
+   */
+  background: linear-gradient(var(--surface-hover), var(--surface-hover)), var(--surface-base);
   border-radius: inherit;
   opacity: 0;
   pointer-events: none;
@@ -1436,13 +1462,20 @@ function toggleProject(directory: string) {
 }
 
 .row.task:hover .row-actions,
+.row.project:hover .row-actions,
 .row-actions:focus-within {
   opacity: 1;
   pointer-events: auto;
 }
 
 .row-actions .row-pin,
-.row-actions .row-menu {
+.row-actions .row-menu,
+.row-actions .ico.inline {
   opacity: 1;
+}
+
+/* On the open row the overlay wears that row's selected tint instead. */
+.row.on .row-actions {
+  background: linear-gradient(var(--surface-selected), var(--surface-selected)), var(--surface-base);
 }
 </style>
