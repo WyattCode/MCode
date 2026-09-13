@@ -781,11 +781,20 @@ function toggleProject(directory: string) {
 }
 
 .section + .row,
-.section + /* A day's heading inside the list, quieter than a section's own. */
+.section + .empty {
+  margin-top: 6px;
+}
+
+/*
+ * A day's heading inside the list: MiMo's 12/500 in the secondary colour, 9 in
+ * from the inset, 6 above and 3 below. Its own rule - it had been spliced into
+ * the one above, which left every heading but the first unstyled and gave the
+ * first row under a section a heading's padding.
+ */
 .day-head {
-  padding: 10px 14px 4px;
+  padding: 6px 9px 3px;
   color: var(--text-weak);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 16px;
 }
@@ -808,10 +817,6 @@ function toggleProject(directory: string) {
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.empty {
-  margin-top: 6px;
 }
 
 .section-head {
