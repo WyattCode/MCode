@@ -16,6 +16,8 @@ const props = defineProps<{
   items: MenuItem[]
   /** Opened from the keyboard, so it should take focus and be navigable. */
   keyboard?: boolean
+  /** `y` is the menu's bottom edge: for a control at the foot of the window. */
+  above?: boolean
 }>()
 const emit = defineEmits<{ pick: [key: string]; close: [] }>()
 
@@ -28,6 +30,7 @@ onMounted(async () => {
   const rect = box.value?.getBoundingClientRect()
   if (!rect) return
   const margin = 8
+  if (props.above) at.value.y = Math.max(margin, props.y - rect.height)
   /*
    * Flipped to the other side of the pointer rather than merely pushed back,
    * so the pointer never lands on top of the first item.

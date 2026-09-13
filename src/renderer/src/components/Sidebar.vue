@@ -332,6 +332,35 @@ function pickPriorityMenu(key: string) {
 }
 
 /*
+ * The footer's menu, where MiMo keeps its account menu: settings, then quitting
+ * the app below a rule. MCode has no account, so the profile, usage and sign-out
+ * rows have nothing to stand for.
+ */
+const footMenu = ref<{ x: number; y: number }>()
+
+const footMenuItems = computed<MenuItem[]>(() => [
+  {
+    key: "settings",
+    label: t("rail.settings"),
+    hint: "Ctrl+,",
+    icon: "M8 6a2 2 0 1 1 0 4a2 2 0 1 1 0-4M8 2.5v1.5M8 12v1.5M2.5 8H4M12 8h1.5M4.1 4.1l1.1 1.1M10.8 10.8l1.1 1.1M4.1 11.9l1.1-1.1M10.8 5.2l1.1-1.1",
+  },
+  { key: "quit", label: t("side.quitApp"), divided: true, icon: "M8 2.5v5M4.8 4.6a4.8 4.8 0 1 0 6.4 0" },
+])
+
+/** Opens above the row, since the row sits at the bottom of the window: y is the menu's bottom edge. */
+function openFootMenu(event: MouseEvent) {
+  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  footMenu.value = { x: Math.round(from.left), y: Math.round(from.top - 4) }
+}
+
+function pickFootMenu(key: string) {
+  footMenu.value = undefined
+  if (key === "settings") emit("settings")
+  else if (key === "quit") window.mcode.quitApp()
+}
+
+/*
  * The three answers, in the order the button walks them. "Follow the machine"
  * leads because it is the default, and a reader who presses once is most
  * likely trying to pin down what the machine is currently doing.
@@ -708,7 +737,7 @@ function toggleProject(directory: string) {
         <span class="row-label plain">{{ themeLabel }}</span>
       </button>
 
-      <button class="row" @click="emit('settings')">
+      <button class="row foot-menu" :aria-expanded="Boolean(footMenu)" aria-haspopup="menu" @click="openFootMenu">
         <span class="avatar" aria-hidden="true">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
             <circle cx="10" cy="10" r="2.5" stroke="currentColor" />
@@ -718,6 +747,15 @@ function toggleProject(directory: string) {
         <span class="row-label plain">{{ t("rail.settings") }}</span>
       </button>
     </div>
+    <ContextMenu
+      v-if="footMenu"
+      :x="footMenu.x"
+      :y="footMenu.y"
+      :items="footMenuItems"
+      above
+      @pick="pickFootMenu"
+      @close="footMenu = undefined"
+    />
     <ContextMenu
       v-if="priorityMenu"
       :x="priorityMenu.x"

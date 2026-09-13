@@ -562,6 +562,16 @@ app.whenReady().then(async () => {
    */
   ipcMain.on("mcode:relaunch", () => relaunch())
 
+  /*
+   * Quits from the footer menu. Said to be intended first, like the tray's Quit,
+   * so the recovery handlers do not take the closing windows for a crash; the
+   * quit itself still goes through before-quit, which waits for the terminals.
+   */
+  ipcMain.on("mcode:quit", () => {
+    beginIntentionalQuit()
+    app.quit()
+  })
+
   ipcMain.on("mcode:view", (event, action: "reload" | "devtools" | "fullscreen") => {
     const contents = event.sender
     if (action === "reload") {

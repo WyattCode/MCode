@@ -92,6 +92,8 @@ const api = {
    * backend on the way through.
    */
   relaunch: (): void => ipcRenderer.send("mcode:relaunch"),
+  /** The footer menu's Quit app: every window, the backend and its terminals. */
+  quitApp: (): void => ipcRenderer.send("mcode:quit"),
 
   /** Both take a project root and a path relative to it; see the main process. */
   revealFile: (directory: string, relative: string): Promise<void> =>
