@@ -5,7 +5,7 @@ import type { Ref } from "vue"
 import type { Attachment, CommandInfo, Effort, ModelInfo } from "@shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { preview, readFiles } from "../lib/attach"
+import { preview, readFiles, MAX_BYTES } from "../lib/attach"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 import { findModel, resolveVariant, withoutLatest } from "../lib/model"
@@ -192,12 +192,31 @@ async function onPicked(event: Event) {
   input.value = ""
 }
 
+/*
+ * MiMo's large paste: this many characters or more go in as a text file
+ * attached to the message rather than as lines in the box, and a toast says so.
+ */
+const PASTE_AS_FILE = 256 * 1024
+
 async function onPaste(event: ClipboardEvent) {
   const files = [...(event.clipboardData?.files ?? [])]
-  if (!files.length) return
-  // Only when the clipboard actually carries a file; plain text still pastes.
+  if (files.length) {
+    // The clipboard carries a file: it is attached, and nothing is typed.
+    event.preventDefault()
+    await take(files)
+    return
+  }
+  const pasted = event.clipboardData?.getData("text/plain") ?? ""
+  // Anything shorter pastes as text, the way it always has.
+  if (pasted.length < PASTE_AS_FILE) return
   event.preventDefault()
-  await take(files)
+  const name = `mcode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`
+  if (new Blob([pasted]).size > MAX_BYTES) {
+    notifyFailure(t("attach.tooLarge"), name)
+    return
+  }
+  attachments.value = [...attachments.value, { path: name, mime: "text/plain", data: pasted }]
+  notify(t("composer.pasteAttached"))
 }
 
 /**
