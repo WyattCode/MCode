@@ -116,3 +116,20 @@ export function chime(name: ChimeName): void {
     // As above: silence is the right failure.
   }
 }
+
+/*
+ * The conversation navigator's scale: the major pentatonic, climbing two octaves
+ * from the first turn to the last, so where the pointer is can be heard. Passing
+ * over a tick is a light touch; pressing one rings fuller.
+ */
+const PENTATONIC = [261.63, 293.66, 329.63, 392.0, 440.0]
+
+export function spineNote(index: number, count: number, strong = false): void {
+  try {
+    const step = count > 1 ? Math.round((index / (count - 1)) * PENTATONIC.length * 2) : 0
+    const from = PENTATONIC[step % PENTATONIC.length] * 2 ** Math.floor(step / PENTATONIC.length)
+    sound(audio(), { from, at: 0, seconds: strong ? 0.7 : 0.32, gain: strong ? 0.12 : 0.05, type: "triangle" })
+  } catch {
+    // As above: silence is the right failure.
+  }
+}

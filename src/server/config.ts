@@ -88,6 +88,7 @@ function defaults(): AppConfig {
     defaultServer: "",
     updateFeed: "",
     taskDoneSound: "settle",
+    spineSound: true,
     projectRoot: "",
     soundPermission: false,
     soundError: false,

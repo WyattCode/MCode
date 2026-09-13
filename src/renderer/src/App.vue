@@ -10,6 +10,7 @@ import SessionHeader from "./components/SessionHeader.vue"
 import ContextMenu from "./components/ContextMenu.vue"
 import AppMenu from "./components/AppMenu.vue"
 import MessageStream from "./components/MessageStream.vue"
+import SessionSpine from "./components/SessionSpine.vue"
 import Composer from "./components/Composer.vue"
 import TodoDock from "./components/TodoDock.vue"
 import InfoPanel from "./components/InfoPanel.vue"
@@ -3705,6 +3706,7 @@ onBeforeUnmount(() => {
 
           <SessionHero v-if="empty && !app.error" />
           <MessageStream v-else ref="stream" />
+          <SessionSpine v-if="!(empty && !app.error)" :scroller="stream?.scroller" />
           <InfoPanel v-if="infoShowing" :bottom-inset="terminalUp ? drawerHeight : 0" />
 
           <!--

@@ -525,7 +525,8 @@ function stepMessage(by: 1 | -1) {
   target?.scrollIntoView({ block: "start", behavior: "smooth" })
 }
 
-defineExpose({ stepMessage })
+// The scroller is exposed for the conversation navigator, which stands beside it.
+defineExpose({ stepMessage, scroller })
 </script>
 
 <template>

@@ -1581,6 +1581,20 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               />
             </div>
 
+            <div class="line spine-sound">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.spineSound") }}</div>
+                <div class="line-sub">{{ t("set.spineSoundSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.spineSound !== false }"
+                @click="app.patchConfig({ spineSound: app.config?.spineSound === false })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.soundPermission") }}</div>

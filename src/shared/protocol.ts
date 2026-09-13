@@ -739,6 +739,8 @@ export interface AppConfig {
   updateFeed: string
   /** The chime a task that ran past a minute makes when it ends. */
   taskDoneSound: "off" | "settle" | "triple" | "sweep" | "duet" | "zen"
+  /** Whether moving along or pressing the conversation navigator plays a scale. On by default. */
+  spineSound: boolean
   /**
    * Where a task with no project gets its folder. Empty means MCodeProjects
    * in the home directory.
