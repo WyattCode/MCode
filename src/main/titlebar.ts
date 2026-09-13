@@ -3,8 +3,11 @@ import { BrowserWindow, nativeTheme, type WebContents } from "electron"
 /**
  * The band the title bar occupies, and the height the OS draws its caption
  * buttons at. The renderer reserves the same room at the right-hand end.
+ *
+ * MiMo's 50: the buttons' middle falls at 25, the line its header row and the
+ * side column's controls are centred on. At 40 they sat 5px above them.
  */
-export const TITLEBAR_HEIGHT = 40
+export const TITLEBAR_HEIGHT = 50
 
 /**
  * How the OS draws the caption buttons into our own title bar.
@@ -22,7 +25,8 @@ export function captionOverlay(zoom = 1, mode?: "dark" | "light") {
   const dark = mode ? mode === "dark" : nativeTheme.shouldUseDarkColors
   return {
     color: "#00000000",
-    symbolColor: dark ? "white" : "black",
+    // MiMo's glyph greys rather than pure white and black.
+    symbolColor: dark ? "#ececec" : "#2b2b2b",
     height: Math.max(TITLEBAR_HEIGHT, Math.round(TITLEBAR_HEIGHT * zoom)),
   }
 }
