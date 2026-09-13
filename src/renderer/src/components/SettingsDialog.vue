@@ -17,13 +17,13 @@ import {
   EFFORTS,
 } from "@shared/protocol"
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
-import { projectName } from "../lib/project"
+import { folderName, projectName } from "../lib/project"
 import SelectMenu from "./SelectMenu.vue"
 import { chime } from "../lib/sound"
 import { CHIMES, chimeOf, type Chime } from "@shared/chime"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
-import type { AppPath, AppPaths, UsageSummary, Worktree } from "@shared/protocol"
+import type { AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, isBindable } from "../lib/keys"
 import { notifyFailure, notify } from "../lib/toast"
@@ -153,21 +153,105 @@ function tokens(count: number): string {
   return String(count)
 }
 
-/* The worktrees of whichever project is open. */
-const trees = ref<Worktree[]>([])
-const treesFor = ref("")
+/*
+ * The environment page, laid out as MiMo's: the projects, each of which can be
+ * configured or removed, then every worktree those projects have beyond their
+ * main checkout. MCode's projects are the folders its conversations live in, so
+ * adding one reopens a closed folder or starts a conversation there, and
+ * removing one closes it the way the side column does - its conversations stay.
+ */
+const envProjects = computed(() => {
+  const closed = new Set(app.config?.closedProjects ?? [])
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const session of [...app.sessions].sort((a, b) => b.updated - a.updated)) {
+    if (session.archived || session.scratch || closed.has(session.directory) || seen.has(session.directory)) continue
+    seen.add(session.directory)
+    out.push(session.directory)
+  }
+  return out
+})
+
+const removingProject = ref<string>()
+/** The project whose environment is open, or none for the list. */
+const configuring = ref<string>()
+const envName = ref("")
+const envDirty = computed(
+  () => Boolean(configuring.value) && envName.value.trim() !== (app.config?.projectNames?.[configuring.value ?? ""] ?? ""),
+)
+
+async function addProject() {
+  const [directory] = await window.mcode.pickDirectory(t("set.addProject"), false)
+  if (!directory) return
+  const closed = app.config?.closedProjects ?? []
+  if (closed.includes(directory)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
+  // A folder with no conversation is not yet a project here; one is started so it can be.
+  if (!app.sessions.some((session) => session.directory === directory && !session.archived && !session.scratch)) {
+    await app.create(directory)
+  }
+  void loadTrees()
+}
+
+async function removeProject() {
+  const directory = removingProject.value
+  removingProject.value = undefined
+  if (!directory) return
+  const closed = app.config?.closedProjects ?? []
+  if (!closed.includes(directory)) await app.patchConfig({ closedProjects: [...closed, directory] })
+  void loadTrees()
+}
+
+function configure(directory: string) {
+  configuring.value = directory
+  envName.value = app.config?.projectNames?.[directory] ?? ""
+}
+
+/** The name is the project's display name, the same one renaming it in the side column sets. */
+async function saveEnv() {
+  const directory = configuring.value
+  if (!directory) return
+  const names = { ...(app.config?.projectNames ?? {}) }
+  const name = envName.value.trim()
+  if (name) names[directory] = name
+  else delete names[directory]
+  await app.patchConfig({ projectNames: names })
+  notify(t("set.envSaved"))
+}
+
+interface TreeRow {
+  directory: string
+  name: string
+  branch?: string
+  /** The project's folder; its name is looked up when drawn, so a rename shows at once. */
+  project: string
+}
+
+/* Every project's worktrees beyond its main checkout, each listed once. */
+const trees = ref<TreeRow[]>([])
+const treesLoaded = ref(false)
 
 async function loadTrees() {
-  const directory = app.current?.directory ?? app.config?.directory ?? ""
-  treesFor.value = directory
-  if (!directory) {
-    trees.value = []
-    return
-  }
-  const listed = await app.client
-    ?.request({ type: "workspace.list", directory })
-    .catch(() => undefined)
-  trees.value = listed?.worktrees ?? []
+  const lists = await Promise.all(
+    envProjects.value.map(async (directory) => {
+      const listed = await app.client?.request({ type: "workspace.list", directory }).catch(() => undefined)
+      return (listed?.worktrees ?? [])
+        .filter((tree) => !tree.main)
+        .map((tree) => ({
+          directory: tree.directory,
+          name: folderName(tree.directory),
+          branch: tree.branch,
+          project: directory,
+        }))
+    }),
+  )
+  const seen = new Set<string>()
+  trees.value = lists.flat().filter((row) => !seen.has(row.directory) && Boolean(seen.add(row.directory)))
+  treesLoaded.value = true
+}
+
+async function refreshTrees() {
+  await loadTrees()
+  notify(t("set.worktreesRefreshed"))
 }
 
 /*
@@ -179,6 +263,7 @@ watch(
   (next: Section) => {
     if (next === "files") void loadPaths()
     if (next === "environment") void loadTrees()
+    else configuring.value = undefined
     if (next === "usage") void loadUsage()
   },
   { immediate: true },
@@ -1848,29 +1933,128 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           </div>
         </template>
 
-        <template v-else-if="section === 'environment'">
-          <h2>{{ t("set.environment") }}</h2>
-          <p class="page-sub">{{ t("set.environmentSub") }}</p>
+        <template v-else-if="section === 'environment' && configuring">
+          <button class="env-back" @click="configuring = undefined">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M10 4 6 8l4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            {{ t("set.envBack") }}
+          </button>
+          <h3>{{ t("set.localEnv") }}</h3>
           <div class="card">
-            <div class="line">
+            <div class="line env-local">
               <div class="line-text">
-                <div class="line-title">{{ t("set.project") }}</div>
-                <div class="line-sub path">{{ treesFor || t("set.noProject") }}</div>
-              </div>
-            </div>
-            <div v-for="tree in trees" :key="tree.directory" class="line">
-              <div class="line-text">
-                <div class="line-title">{{ tree.branch || t("set.detached") }}</div>
-                <div class="line-sub path">{{ tree.directory }}</div>
-              </div>
-              <span v-if="tree.main" class="tag">{{ t("set.mainTree") }}</span>
-            </div>
-            <div v-if="treesFor && !trees.length" class="line">
-              <div class="line-text">
-                <div class="line-sub">{{ t("set.noWorktrees") }}</div>
+                <div class="line-title">{{ projectName(configuring, app.config?.projectNames) }}</div>
+                <div class="line-sub path">{{ configuring }}</div>
               </div>
             </div>
           </div>
+          <h3>{{ t("set.envName") }}</h3>
+          <input v-model="envName" class="env-input" :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
+          <div class="env-save-row">
+            <button class="ctl-btn env-save" :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
+          </div>
+        </template>
+
+        <template v-else-if="section === 'environment'">
+          <h2>{{ t("set.environment") }}</h2>
+          <p class="page-sub">{{ t("set.environmentSub") }}</p>
+
+          <div class="sec-row">
+            <h3>{{ t("set.selectProject") }}</h3>
+            <button class="ctl-btn add-project" @click="addProject">{{ t("set.addProject") }}</button>
+          </div>
+          <div class="card env-projects">
+            <div v-for="directory in envProjects" :key="directory" class="line env-project">
+              <div class="line-text">
+                <div class="line-title env-project-name">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M1.9 4.2c0-.6.5-1.1 1.1-1.1h2.6l1.3 1.5h6.1c.6 0 1.1.5 1.1 1.1v6.1c0 .6-.5 1.1-1.1 1.1H3c-.6 0-1.1-.5-1.1-1.1z"
+                      stroke="currentColor"
+                      stroke-width="1.2"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                  {{ projectName(directory, app.config?.projectNames) }}
+                </div>
+                <div class="line-sub path">{{ directory }}</div>
+              </div>
+              <button
+                class="ctl-btn env-icon"
+                data-act="remove"
+                :aria-label="t('set.removeProject')"
+                v-tip="{ label: t('set.removeProject') }"
+                @click="removingProject = directory"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+              <button
+                class="ctl-btn env-icon"
+                data-act="configure"
+                :aria-label="t('set.configureProject')"
+                v-tip="{ label: t('set.configureProject') }"
+                @click="configure(directory)"
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
+            <div v-if="!envProjects.length" class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.noProjects") }}</div>
+                <div class="line-sub">{{ t("set.noProjectsSub") }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="sec-row">
+            <h3>{{ t("set.worktrees") }}</h3>
+            <button
+              class="env-refresh"
+              :aria-label="t('set.refreshWorktrees')"
+              v-tip="{ label: t('set.refreshWorktrees') }"
+              @click="refreshTrees"
+            >
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
+          <p v-if="!treesLoaded" class="page-sub wt-loading">{{ t("set.loading") }}</p>
+          <div v-else-if="!trees.length" class="card">
+            <div class="line wt-empty">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.noWorktreesTitle") }}</div>
+                <div class="line-sub">{{ t("set.noWorktreesSub") }}</div>
+              </div>
+            </div>
+          </div>
+          <template v-else>
+            <p class="page-sub wt-count">{{ t("set.worktreeCount", { n: String(trees.length) }) }}</p>
+            <div class="card wt-list">
+              <div v-for="tree in trees" :key="tree.directory" class="line wt-row">
+                <span class="wt-name" :title="tree.name">{{ tree.name }}</span>
+                <span class="tag">{{ tree.branch || t("set.detached") }}</span>
+                <span class="tag">{{ t("set.worktreeProject", { name: projectName(tree.project, app.config?.projectNames) }) }}</span>
+                <span class="wt-path" :title="tree.directory">{{ tree.directory }}</span>
+              </div>
+            </div>
+          </template>
+
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="removingProject"
+              :title="t('set.removeProject')"
+              :body="t('set.removeProjectBody', { name: projectName(removingProject, app.config?.projectNames) })"
+              :confirm-label="t('set.removeProjectOk')"
+              @confirm="removeProject"
+              @close="removingProject = undefined"
+            />
+          </Teleport>
         </template>
 
         <template v-else-if="section === 'usage'">
@@ -3650,5 +3834,135 @@ h3 {
   padding: 8px 11px;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+/*
+ * The environment page, as MiMo lays it out: a section title with its action at
+ * the far end, the projects as rows with two framed icon buttons, then the
+ * worktrees with a count line and a name, two tags and the path on each row.
+ */
+.sec-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 27px 0 4px;
+}
+
+.sec-row h3 {
+  margin: 0;
+}
+
+.env-project-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.env-project-name svg {
+  flex-shrink: 0;
+  color: var(--text-weak);
+}
+
+.env-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  padding: 0;
+}
+
+.env-icon + .env-icon {
+  margin-inline-start: 6px;
+}
+
+.env-refresh {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  color: var(--text-base);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+
+.env-refresh:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.wt-count {
+  margin: 4px 0 8px;
+}
+
+.wt-row {
+  gap: 8px;
+}
+
+.wt-row .tag {
+  flex-shrink: 0;
+  margin-inline-start: 0;
+}
+
+.wt-name {
+  overflow: hidden;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wt-path {
+  min-width: 0;
+  margin-inline-start: auto;
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.env-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 8px 0 4px;
+  color: var(--text-base);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.env-back:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.env-input {
+  width: 100%;
+  height: 36px;
+  margin-top: 8px;
+  padding: 0 12px;
+  color: var(--text-strong);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  outline: none;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.env-input:focus {
+  border-color: var(--border-strong, var(--border-weak));
+}
+
+.env-save-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.env-save:disabled {
+  opacity: 0.5;
 }
 </style>
