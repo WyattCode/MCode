@@ -64,7 +64,6 @@ type Section =
   | "usage"
   | "updates"
   | "server"
-  | "providers"
   | "models"
 
 /** Which page to land on - the title bar's server button aims straight at it. */
@@ -110,6 +109,9 @@ async function loadPaths() {
     .then((result) => result.paths)
     .catch(() => undefined)
 }
+
+/* The file the models page names as where providers and their models are kept. */
+const configFile = computed(() => paths.value?.files.find((file) => file.name === "config.json"))
 
 function revealPath(file: AppPath) {
   const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
@@ -262,7 +264,7 @@ async function refreshTrees() {
 watch(
   section,
   (next: Section) => {
-    if (next === "files") void loadPaths()
+    if (next === "files" || next === "models") void loadPaths()
     if (next === "environment") void loadTrees()
     else configuring.value = undefined
     if (next === "usage") void loadUsage()
@@ -344,7 +346,6 @@ const NAV_LABELS: Record<Section, string> = {
   appearance: "set.appearance",
   files: "set.nav.files",
   models: "set.models",
-  providers: "set.providers",
   server: "set.server",
   personal: "set.personal",
   keys: "set.shortcuts",
@@ -770,7 +771,6 @@ function chooseChime(value: string) {
 
 
 
-const modelQuery = ref("")
 /** Which provider row has its key field open. Only one at a time. */
 /**
  * The vendor whose connect dialog is open.
@@ -886,11 +886,6 @@ const connected = computed(() => app.providers.filter((provider) => provider.con
 const listedProviders = computed(() =>
   app.providers.filter((provider) => provider.configured || provider.custom),
 )
-const available = computed(() =>
-  [...app.providers]
-    .filter((provider) => !provider.configured)
-    .sort((a, b) => a.order - b.order || a.name.localeCompare(b.name)),
-)
 
 /**
  * Whether a variable in the user's shell is the only thing connecting this
@@ -911,18 +906,6 @@ function fromEnvironment(provider: ProviderStatus): boolean {
   return Boolean(provider.environment) && !provider.authenticated
 }
 
-/** Every model across connected providers, filtered by the search box. */
-const modelGroups = computed(() => {
-  const needle = modelQuery.value.trim().toLowerCase()
-  return connected.value
-    .map((provider) => ({
-      provider,
-      models: provider.models.filter(
-        (model) => !needle || model.name.toLowerCase().includes(needle) || model.id.toLowerCase().includes(needle),
-      ),
-    }))
-    .filter((group) => group.models.length > 0)
-})
 
 function key(provider: string, model: string) {
   return `${provider}/${model}`
@@ -1070,7 +1053,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           MiMo's four groups, in its order. MCode's own server and provider pages
           sit beside Models, which they feed.
         -->
-        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('providers') || navShows('server') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('server') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
         <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1116,17 +1099,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             />
           </svg>
           {{ t("set.models") }}
-        </button>
-
-        <button v-show="navShows('providers')" class="nav-item" :class="{ on: section === 'providers' }" @click="section = 'providers'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path
-              d="M10.0001 4.37562V2.875M13 4.37793V2.87793M7.00014 4.37793V2.875M10 17.1279V15.6279M13 17.1279V15.6279M7 17.1279V15.6279M15.625 13.0029H17.125M15.625 7.00293H17.125M15.625 10.0029H17.125M2.875 10.0029H4.375M2.875 13.0029H4.375M2.875 7.00293H4.375M4.375 4.37793H15.625V15.6279H4.375V4.37793ZM12.6241 10.0022C12.6241 11.4519 11.4488 12.6272 9.99908 12.6272C8.54934 12.6272 7.37408 11.4519 7.37408 10.0022C7.37408 8.55245 8.54934 7.3772 9.99908 7.3772C11.4488 7.3772 12.6241 8.55245 12.6241 10.0022Z"
-              stroke="currentColor"
-              stroke-linecap="square"
-            />
-          </svg>
-          {{ t("set.providers") }}
         </button>
 
         <button v-show="navShows('server')" class="nav-item" :class="{ on: section === 'server' }" @click="section = 'server'">
@@ -2389,135 +2361,128 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <!-- Providers -->
-        <template v-else-if="section === 'providers'">
-          <h2>{{ t("set.providers") }}</h2>
-          <p class="note">{{ t("set.providersNote") }}</p>
+        <!--
+          Models, laid out as MiMo's page: quick add, what has been added, and the
+          file it is kept in. A provider is where MCode's models come from, so
+          connecting one happens here; each added provider carries the switches
+          for which of its models the chat menu offers.
+        -->
+        <template v-else>
+          <h2>{{ t("set.models") }}</h2>
+          <p class="note">{{ t("set.models.intro") }}</p>
           <div v-if="notice && !notice.id" class="notice">{{ notice.text }}</div>
 
-          <template v-if="listedProviders.length">
-            <h3>{{ t("set.connectedProviders") }}</h3>
-            <div class="card">
-              <template v-for="provider in listedProviders" :key="provider.id">
-              <div class="prow">
-                <ProviderIcon :id="provider.id" :name="provider.name" />
-                <div class="ptext">
-                  <div class="pname">
-                    {{ provider.name }}
-                    <span v-if="provider.custom" class="tag">{{ t("settings.providers.tag.custom") }}</span>
-                    <span v-else-if="fromEnvironment(provider)" class="tag">
-                      {{ t("provider.environment") }}
-                    </span>
-                  </div>
-                  <div class="pdesc">
-                    {{ provider.models.length ? t("provider.modelCount", { n: provider.models.length }) : t("provider.noModels") }}
-                  </div>
-                </div>
-                <!--
-                  Never on a custom provider. Its models are the ones that were
-                  typed in, so there is nothing to refresh from - and asking
-                  /models anyway is how a working provider ends up with an
-                  empty picker. The row is left with Remove, which is the one
-                  thing that can be done about it.
-                -->
-                <button
-                  v-if="provider.kind === 'openai-compatible' && provider.configured && !provider.custom"
-                  class="pbtn"
-                  :disabled="busy === provider.id"
-                  @click="refresh(provider.id)"
-                >
-                  {{ t("provider.refresh") }}
-                </button>
-                <!--
-                  Where the Disconnect link would be, on a row the app cannot
-                  disconnect: the variable is the user's to unset, and saying so
-                  is the only useful thing this corner of the row can do.
-                -->
-                <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
-                  {{ t("provider.fromEnvironment") }}
-                </span>
-                <button
-                  v-else
-                  class="plink"
-                  @click="provider.custom ? removeCustom(provider.id) : disconnect(provider.id)"
-                >
-                  {{ provider.custom ? t("provider.remove") : t("set.disconnect") }}
-                </button>
-              </div>
-
-              <div v-if="provider.kind === 'openai-compatible' && !provider.custom" class="pform">
-                <input
-                  :value="endpointValue(provider)"
-                  class="key-in"
-                  :placeholder="t('set.baseURL')"
-                  spellcheck="false"
-                  @input="endpoints[provider.id] = ($event.target as HTMLInputElement).value"
-                  @keydown.enter="saveEndpoint(provider.id)"
-                />
-                <button
-                  class="ctl-btn"
-                  :disabled="!endpointChanged(provider)"
-                  @click="saveEndpoint(provider.id)"
-                >
-                  {{ t("set.save") }}
-                </button>
-              </div>
-              <div v-if="noticeFor(provider.id)" class="pnotice standalone">{{ noticeFor(provider.id) }}</div>
-              </template>
-            </div>
-          </template>
-
-          <h3>{{ t("set.available") }}</h3>
-          <div class="card">
-            <!--
-              One row per vendor, not per endpoint. A ChatGPT subscription and
-              the metered OpenAI API are separate providers underneath, but to
-              someone connecting an account they are one name with a choice
-              behind it - the dialog asks which.
-            -->
-            <div v-for="group in availableGroups" :key="group.id" class="prow">
-              <ProviderIcon :id="group.entries[0].id" :name="group.name" />
-              <div class="ptext">
-                <div class="pname">
-                  {{ group.name }}
-                  <span v-if="group.recommended" class="tag">{{ t("provider.recommended") }}</span>
-                </div>
-                <div class="pdesc">{{ groupDescription(group) }}</div>
-              </div>
-              <button class="pbtn" @click="openConnect(group)">
-                <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true">
-                  <path d="M7 2.6v8.8M2.6 7h8.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-                </svg>
-                {{ t("set.connect") }}
-              </button>
-            </div>
-
-            <div class="prow">
-              <span class="pmark">+</span>
-              <div class="ptext">
-                <div class="pname">
-                  {{ t("provider.custom.title") }}
-                  <span class="tag">{{ t("settings.providers.tag.custom") }}</span>
-                </div>
-                <div class="pdesc">{{ t("settings.providers.custom.description") }}</div>
-              </div>
-              <button class="pbtn" @click="customOpen = !customOpen">
-                <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true">
-                  <path d="M7 2.6v8.8M2.6 7h8.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-                </svg>
-                {{ t("set.connect") }}
-              </button>
-            </div>
-
-            <div v-if="customOpen" class="cpanel">
-              <CustomProviderForm @connected="customOpen = false" />
-            </div>
+          <h3>{{ t("set.models.quickAdd") }}</h3>
+          <div class="presets">
+            <button
+              v-for="group in availableGroups"
+              :key="group.id"
+              class="preset"
+              :data-preset="group.id"
+              @click="openConnect(group)"
+            >
+              <ProviderIcon :id="group.entries[0].id" :name="group.name" class="preset-mark" />
+              <span>{{ group.name }}</span>
+            </button>
+            <button class="preset" :class="{ on: customOpen }" data-preset="custom" @click="customOpen = !customOpen">
+              <svg class="preset-plus" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 3v10M3 8h10" />
+              </svg>
+              <span>{{ t("set.models.custom") }}</span>
+            </button>
           </div>
-        </template>
+          <div v-if="customOpen" class="card cpanel">
+            <CustomProviderForm @connected="customOpen = false" />
+          </div>
 
-        <!-- Models -->
-        <template v-else>
-          <h2>{{ t("model.manage") }}</h2>
-          <p class="note">{{ t("model.manageSub") }}</p>
+          <h3>{{ t("set.models.added") }}</h3>
+          <div v-if="!listedProviders.length" class="card empty-card">
+            <div class="empty-title">{{ t("set.models.emptyTitle") }}</div>
+            <div class="empty-desc">{{ t("set.models.emptyDesc") }}</div>
+          </div>
+          <div v-else class="card">
+            <template v-for="provider in listedProviders" :key="provider.id">
+            <div class="prow">
+              <ProviderIcon :id="provider.id" :name="provider.name" />
+              <div class="ptext">
+                <div class="pname">
+                  {{ provider.name }}
+                  <span v-if="provider.custom" class="tag">{{ t("settings.providers.tag.custom") }}</span>
+                  <span v-else-if="fromEnvironment(provider)" class="tag">
+                    {{ t("provider.environment") }}
+                  </span>
+                </div>
+                <div class="pdesc">
+                  {{ provider.models.length ? t("provider.modelCount", { n: provider.models.length }) : t("provider.noModels") }}
+                </div>
+              </div>
+              <!--
+                Never on a custom provider. Its models are the ones that were
+                typed in, so there is nothing to refresh from - and asking
+                /models anyway is how a working provider ends up with an
+                empty picker. The row is left with Remove, which is the one
+                thing that can be done about it.
+              -->
+              <button
+                v-if="provider.kind === 'openai-compatible' && provider.configured && !provider.custom"
+                class="pbtn"
+                :disabled="busy === provider.id"
+                @click="refresh(provider.id)"
+              >
+                {{ t("provider.refresh") }}
+              </button>
+              <!--
+                Where the Disconnect link would be, on a row the app cannot
+                disconnect: the variable is the user's to unset, and saying so
+                is the only useful thing this corner of the row can do.
+              -->
+              <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
+                {{ t("provider.fromEnvironment") }}
+              </span>
+              <button
+                v-else
+                class="plink"
+                @click="provider.custom ? removeCustom(provider.id) : disconnect(provider.id)"
+              >
+                {{ provider.custom ? t("provider.remove") : t("set.disconnect") }}
+              </button>
+            </div>
+
+            <div v-if="provider.kind === 'openai-compatible' && !provider.custom" class="pform">
+              <input
+                :value="endpointValue(provider)"
+                class="key-in"
+                :placeholder="t('set.baseURL')"
+                spellcheck="false"
+                @input="endpoints[provider.id] = ($event.target as HTMLInputElement).value"
+                @keydown.enter="saveEndpoint(provider.id)"
+              />
+              <button
+                class="ctl-btn"
+                :disabled="!endpointChanged(provider)"
+                @click="saveEndpoint(provider.id)"
+              >
+                {{ t("set.save") }}
+              </button>
+            </div>
+            <div v-if="noticeFor(provider.id)" class="pnotice standalone">{{ noticeFor(provider.id) }}</div>
+              <template v-if="provider.configured">
+                <div v-for="model in provider.models" :key="model.id" class="line model-line">
+                  <div class="line-title">{{ model.name }}</div>
+                  <button
+                    class="switch"
+                    :class="{ on: modelEnabled(provider.id, model.id) }"
+                    role="switch"
+                    :aria-checked="modelEnabled(provider.id, model.id)"
+                    :aria-label="model.name"
+                    @click="toggleModel(provider.id, model.id)"
+                  >
+                    <span class="knob" />
+                  </button>
+                </div>
+              </template>
+            </template>
+          </div>
 
           <!-- Smart's two models, which the composer's Smart row picks between. -->
           <h3>{{ t("model.smart") }}</h3>
@@ -2547,26 +2512,17 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
           </div>
 
-          <input v-model="modelQuery" class="search-in" :placeholder="t('model.search')" spellcheck="false" />
-
-          <div v-if="connected.length === 0" class="empty-note">{{ t("model.needProvider") }}</div>
-          <div v-else-if="modelGroups.length === 0" class="empty-note">{{ t("model.none") }}</div>
-
-          <template v-for="group in modelGroups" :key="group.provider.id">
-            <h3>{{ group.provider.name }}</h3>
-            <div class="card">
-              <div v-for="model in group.models" :key="model.id" class="line">
-                <div class="line-title">{{ model.name }}</div>
-                <button
-                  class="switch"
-                  :class="{ on: modelEnabled(group.provider.id, model.id) }"
-                  @click="toggleModel(group.provider.id, model.id)"
-                >
-                  <span class="knob" />
-                </button>
+          <h3>{{ t("set.models.configFile") }}</h3>
+          <div class="card">
+            <div class="line config-file">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.models.configFileTitle") }}</div>
+                <div class="line-sub path">{{ configFile?.path ?? "" }}</div>
               </div>
+              <button v-if="configFile?.exists" class="ctl-btn" @click="openPath(configFile)">{{ t("files.open") }}</button>
+              <button v-if="configFile" class="ctl-btn" @click="revealPath(configFile)">{{ t("set.reveal") }}</button>
             </div>
-          </template>
+          </div>
         </template>
             </div>
     </div>
@@ -3507,29 +3463,6 @@ h3 {
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
-.search-in {
-  /*
-   * No border. opencode's shared `text-input-v2` is a 60% fill of bg-layer-02
-   * that goes solid on focus, at radius 6 - `--surface-layer` and
-   * `--radius-md` here. Focus used to move a border colour that no longer
-   * exists.
-   */
-  width: 100%;
-  height: 34px;
-  margin-bottom: 6px;
-  padding: 0 12px;
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
-  border: 0;
-  border-radius: var(--radius-md);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  outline: none;
-}
-
-.search-in:focus {
-  background: var(--surface-layer);
-}
-
 .empty-note {
   padding: 18px 2px;
   color: var(--text-weak);
@@ -3552,20 +3485,6 @@ h3 {
 
 .prow:last-child {
   border-bottom: none;
-}
-
-.pmark {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
-  color: var(--text-base);
-  background: var(--surface-raised-hover);
-  border-radius: var(--radius-md);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
 }
 
 .pmark.on {
@@ -3691,6 +3610,77 @@ h3 {
 .cpanel {
   padding: 4px 16px 16px;
   border-bottom: 1px solid var(--border-weaker);
+}
+
+/* MiMo's quick-add chips: 34 tall on a hairline, a small mark and the vendor's name. */
+.presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.preset {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 10px;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.preset:hover,
+.preset.on {
+  background: var(--surface-hover);
+}
+
+.preset-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+}
+
+.preset-mark :deep(.glyph) {
+  width: 14px;
+  height: 14px;
+}
+
+.preset-plus {
+  width: 16px;
+  height: 16px;
+  color: var(--text-weak);
+}
+
+.preset-plus path {
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+}
+
+.empty-card {
+  padding: 18px 16px;
+}
+
+.empty-title {
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.empty-desc {
+  margin-top: 4px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+}
+
+.model-line .line-title {
+  font-weight: 400;
 }
 
 /*

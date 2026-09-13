@@ -299,7 +299,7 @@ const mcpOpen = ref(false)
 const paletteOpen = ref(false)
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<"general" | "keys" | "server" | "providers" | "models">()
+const settingsSection = ref<"general" | "keys" | "server" | "models">()
 
 /** The server control opens its own panel rather than general settings. */
 const serverPanel = ref(false)
