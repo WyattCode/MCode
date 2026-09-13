@@ -24,6 +24,7 @@ import os from "node:os"
 import path from "node:path"
 import { WebSocket } from "ws"
 import { startBackend } from "../src/server/index"
+import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
@@ -1413,6 +1414,18 @@ async function main() {
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
     await call({ type: "config.set", patch: { providerEndpoints: {}, accessLevel: "ask" } })
     judge.close()
+  }
+
+  section("Session links")
+  {
+    const link = sessionLink("ses_abc 1", "/work/My project & more")
+    check("a link names the session under the app's own scheme", link.startsWith("mcode://open-session?") && link.includes("session=ses_abc%201"), link)
+    const back = parseSessionLink(link)
+    check("and reads back to the same session and project", back?.sessionID === "ses_abc 1" && back?.directory === "/work/My project & more", back)
+    check("a link without a session opens nothing", parseSessionLink("mcode://open-session?directory=x") === undefined)
+    check("nor does another scheme", parseSessionLink("https://open-session?session=x") === undefined)
+    check("nor another action", parseSessionLink("mcode://delete-session?session=x") === undefined)
+    check("the link is found among launch arguments", linkInArgs(["MCode.exe", "--flag", link]) === link && linkInArgs(["MCode.exe", "--flag"]) === undefined)
   }
 
   section("Plan mode")

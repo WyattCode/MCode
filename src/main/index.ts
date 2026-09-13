@@ -6,6 +6,7 @@ import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
+import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
 import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
@@ -61,6 +62,53 @@ let backend: Backend | undefined
  */
 let installerPath: string | undefined
 const windows = new Set<BrowserWindow>()
+
+/*
+ * A session link that arrived before a window could show it: the one the app
+ * was started with, or one handed over while it was still starting. The window
+ * asks for it once it has connected.
+ */
+let pendingLink: string | undefined = linkInArgs(process.argv)
+
+/*
+ * One running copy per profile, so a link clicked while the app is open lands
+ * in that copy instead of starting a second one beside it. Packaged builds
+ * only: a development build shares its profile with the installed app and must
+ * not quit because the installed one happens to be open.
+ */
+if (app.isPackaged && !app.requestSingleInstanceLock()) app.exit(0)
+
+function raise(window: BrowserWindow) {
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
+
+/** Shows a linked session in the window that is up, or keeps it for the first one. */
+function deliverLink(raw: string) {
+  const target = parseSessionLink(raw)
+  if (!target) return
+  const window = [...windows].find((entry) => !entry.isDestroyed())
+  if (!window || window.webContents.isLoading()) {
+    pendingLink = raw
+    return
+  }
+  raise(window)
+  window.webContents.send("mcode:open-link", target)
+}
+
+app.on("second-instance", (_event, argv) => {
+  const raw = linkInArgs(argv)
+  if (raw) return deliverLink(raw)
+  const window = [...windows].find((entry) => !entry.isDestroyed())
+  if (window) raise(window)
+})
+
+// macOS delivers links as an event rather than as arguments.
+app.on("open-url", (event, url) => {
+  event.preventDefault()
+  deliverLink(url)
+})
 
 /** Files written through the save dialog, and so safe to show in the shell. */
 const savedFiles = new Set<string>()
@@ -263,6 +311,8 @@ app.whenReady().then(async () => {
    */
   captureConsole()
   wireProcessRecovery()
+  // Packaged only: a development build would register the bare Electron binary.
+  if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
 
   backend = await startBackend(app.getPath("userData"))
 
@@ -346,6 +396,13 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle("mcode:clipboard-text", () => clipboard.readText())
+
+  // The link the app was started with, handed over once, when the window has connected.
+  ipcMain.handle("mcode:take-link", () => {
+    const raw = pendingLink
+    pendingLink = undefined
+    return raw ? parseSessionLink(raw) : undefined
+  })
 
   ipcMain.on("mcode:clipboard-write", (_event, text: string) => clipboard.writeText(text))
 

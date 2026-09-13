@@ -186,6 +186,14 @@ export const useApp = defineStore("app", () => {
   const closedTabs = ref<{ sessionID: string; at: number }[]>([])
 
   /**
+   * Conversations, the most recently viewed first, for Ctrl+Tab.
+   *
+   * In memory only: the order things were looked at in belongs to this sitting,
+   * not to something worth restoring tomorrow.
+   */
+  const recent = ref<string[]>([])
+
+  /**
    * Puts back the last tab that was closed.
    *
    * Sessions outlive their tabs, so this is only about the strip - but a
@@ -785,6 +793,7 @@ export const useApp = defineStore("app", () => {
       unseen.value = next
     }
     track(sessionID)
+    recent.value = [sessionID, ...recent.value.filter((id) => id !== sessionID)].slice(0, 50)
     messages.value = result.messages
     partIndex.clear()
     result.messages.forEach(reindex)
@@ -1386,6 +1395,7 @@ export const useApp = defineStore("app", () => {
     failed,
     clearPermission,
     reopenTab,
+    recent,
     forkFrom,
     isPinned,
     togglePinned,

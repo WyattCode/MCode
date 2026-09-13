@@ -36,6 +36,16 @@ const api = {
     return () => ipcRenderer.off("mcode:notify-click", listener)
   },
 
+  /** A session link clicked while the app was already open. */
+  onOpenLink: (handler: (link: { sessionID: string; directory?: string }) => void): (() => void) => {
+    const listener = (_event: unknown, link: { sessionID: string; directory?: string }) => handler(link)
+    ipcRenderer.on("mcode:open-link", listener)
+    return () => ipcRenderer.off("mcode:open-link", listener)
+  },
+
+  /** The session link the app was started with, if any; asked once, after connecting. */
+  takeLink: (): Promise<{ sessionID: string; directory?: string } | undefined> => ipcRenderer.invoke("mcode:take-link"),
+
   clipboardText: (): Promise<string> => ipcRenderer.invoke("mcode:clipboard-text"),
   setClipboardText: (text: string): void => ipcRenderer.send("mcode:clipboard-write", text),
 

@@ -53,6 +53,7 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { closeTab, openTab, readStrip, stripKey, writeStrip } from "./lib/session-tabs"
 import { notify, notifyFailure } from "./lib/toast"
+import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
 import { projectName } from "./lib/project"
 import { renderMarkdown } from "./lib/markdown"
@@ -287,6 +288,8 @@ onMounted(() => {
     if (sessionID && sessionID !== app.currentID) void app.open(sessionID)
   })
   onBeforeUnmount(off)
+  const offLink = window.mcode.onOpenLink(receiveLink)
+  onBeforeUnmount(offLink)
 })
 onBeforeUnmount(() => find.unmount())
 const mcpOpen = ref(false)
@@ -1908,6 +1911,67 @@ async function stepUnread(by: 1 | -1) {
   }
 }
 
+/*
+ * A link that opens this conversation from anywhere else, as MiMo copies one:
+ * the session and the project it sits in, under this app's own scheme.
+ */
+function copySessionLink() {
+  const session = app.current
+  if (!session) return
+  window.mcode.setClipboardText(sessionLink(session.id, session.directory))
+  notify(t("menu.copiedLink"))
+}
+
+/* A link that arrives before the app has connected waits for it. */
+let linksReady = false
+let queuedLink: SessionLinkTarget | undefined
+
+function receiveLink(link: SessionLinkTarget) {
+  if (!linksReady) {
+    queuedLink = link
+    return
+  }
+  void openLink(link)
+}
+
+async function openLink(link: SessionLinkTarget) {
+  try {
+    if (link.sessionID !== app.currentID) await app.open(link.sessionID)
+    view.value = "session"
+  } catch {
+    notifyFailure(t("menu.linkMissing"))
+  }
+}
+
+/*
+ * Ctrl+Tab walks the conversations in the order they were last viewed: a quick
+ * press goes back to the previous one, and pressing Tab again with Ctrl still
+ * held goes further back. The order is taken when the walk starts and kept
+ * until the modifiers are let go, because every step opens a conversation and
+ * would otherwise reshuffle the list being walked.
+ */
+let recentWalk: { order: string[]; at: number } | undefined
+
+async function stepRecent(by: 1 | -1) {
+  if (!recentWalk) {
+    const live = new Set(app.sessions.filter((session) => !session.archived).map((session) => session.id))
+    const order = app.recent.filter((id) => live.has(id))
+    if (order.length < 2) return
+    recentWalk = { order, at: app.currentID ? Math.max(0, order.indexOf(app.currentID)) : 0 }
+  }
+  const walk = recentWalk
+  walk.at = (walk.at + by + walk.order.length) % walk.order.length
+  const target = walk.order[walk.at]
+  if (target !== app.currentID) await app.open(target)
+  view.value = "session"
+}
+
+function endRecentWalk(event?: KeyboardEvent) {
+  if (event && (event.ctrlKey || event.metaKey || event.altKey)) return
+  recentWalk = undefined
+}
+const forgetRecentWalk = () => endRecentWalk()
+
 async function stepSession(by: 1 | -1) {
   const tabs = app.tabs
   if (tabs.length < 2) return
@@ -2600,6 +2664,34 @@ const bindableCommands = computed(() => {
       },
     },
     {
+      id: "session.copyLink",
+      group: "key.groupSession",
+      title: t("key.copyLink"),
+      hint: "Ctrl+Alt+L",
+      enabled: hasSession,
+      run: copySessionLink,
+    },
+    {
+      id: "session.nextRecent",
+      group: "key.groupSession",
+      title: t("key.nextRecent"),
+      hint: "Ctrl+Tab",
+      run: async () => {
+        await stepRecent(1)
+        endRecentWalk()
+      },
+    },
+    {
+      id: "session.prevRecent",
+      group: "key.groupSession",
+      title: t("key.prevRecent"),
+      hint: "Ctrl+Shift+Tab",
+      run: async () => {
+        await stepRecent(-1)
+        endRecentWalk()
+      },
+    },
+    {
       id: "app.plugins",
       group: "key.groupGeneral",
       title: t("side.plugins"),
@@ -2784,6 +2876,17 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
+   * Ctrl+Tab and Ctrl+Shift+Tab, through the recently viewed conversations.
+   * Ctrl rather than Cmd: on a Mac, Cmd+Tab belongs to the system.
+   */
+  if (event.ctrlKey && !event.altKey && event.key === "Tab") {
+    if (modalOpen.value) return
+    event.preventDefault()
+    void stepRecent(event.shiftKey ? -1 : 1)
+    return
+  }
+
+  /*
    * Alt+arrow walks the visit history. The bar used to carry a pair of arrow
    * buttons for this; the new one is a row of tabs, and the shortcut is what
    * keeps the history reachable now that they are gone.
@@ -2889,6 +2992,13 @@ function onKeydown(event: KeyboardEvent) {
     event.preventDefault()
     window.mcode.setClipboardText(app.currentID)
     notify(t("menu.copiedID"))
+    return
+  }
+
+  if (mod && event.altKey && event.key.toLowerCase() === "l") {
+    if (modalOpen.value || !app.current) return
+    event.preventDefault()
+    copySessionLink()
     return
   }
 
@@ -3346,6 +3456,8 @@ onMounted(async () => {
   window.addEventListener("dragover", swallowDrop)
   window.addEventListener("drop", swallowDrop)
   window.addEventListener("keydown", onKeydown)
+  window.addEventListener("keyup", endRecentWalk)
+  window.addEventListener("blur", forgetRecentWalk)
   schemeQuery.addEventListener("change", onSchemeChange)
   window.addEventListener("wheel", onWheel, { passive: false })
   offMenu = window.mcode.onMenu(runMenuCommand)
@@ -3374,6 +3486,11 @@ async function boot() {
     await app.patchConfig({ onboarded: true })
   }
   if (app.currentID) view.value = "session"
+
+  linksReady = true
+  const link = queuedLink ?? (await window.mcode.takeLink().catch(() => undefined))
+  queuedLink = undefined
+  if (link) await openLink(link)
 }
 
 /*
@@ -3423,6 +3540,8 @@ onBeforeUnmount(() => {
   window.removeEventListener("dragover", swallowDrop)
   window.removeEventListener("drop", swallowDrop)
   window.removeEventListener("keydown", onKeydown)
+  window.removeEventListener("keyup", endRecentWalk)
+  window.removeEventListener("blur", forgetRecentWalk)
   schemeQuery.removeEventListener("change", onSchemeChange)
   window.removeEventListener("wheel", onWheel)
   offMenu?.()
