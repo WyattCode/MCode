@@ -797,7 +797,7 @@ watch(picking, (on) => {
         <div v-else-if="entry.head" class="day-head">{{ entry.head }}</div>
         <div
           v-else-if="entry.session"
-          class="row task"
+          class="row task recent"
           :class="{ on: app.currentID === entry.session.id, noted: Boolean(entry.note) }"
           @contextmenu.prevent="openMenu(entry.session.id, $event)"
         >
@@ -1114,10 +1114,55 @@ watch(picking, (on) => {
   line-height: 16px;
 }
 
-/* A row carrying a project underneath is two lines, so it cannot be one. */
-.row.task.noted {
-  min-height: 44px;
+/*
+ * MiMo's compact rows for projects and conversations, unlike the 38px
+ * destinations above them: 34 tall from 6 above and below a 22px line, 6 round.
+ * The padding sits inside the row's button so the whole row still opens it.
+ * A project is a 46px icon cell and its name, 9 from the end; a conversation
+ * under it starts at 46, one in Recent at 9.
+ */
+.row.task,
+.row.project {
+  align-items: stretch;
+  min-height: 0;
+  padding-block: 0;
+  border-radius: 6px;
 }
+
+.row.task > .row-open,
+.row.project > .project-toggle {
+  min-height: 34px;
+  padding-block: 6px;
+}
+
+.row.project {
+  gap: 0;
+  padding-inline: 0 9px;
+}
+
+.row.project > .project-toggle {
+  gap: 0;
+}
+
+/* The folder centred in MiMo's 46px cell, so the name starts at 46. */
+.row.project > .project-toggle > .row-ico {
+  margin-inline: 14px;
+}
+
+.row.task {
+  padding-inline: 46px 9px;
+}
+
+.row.task.recent {
+  padding-inline: 9px;
+}
+
+/* The open conversation's name, in medium as MiMo sets it. */
+.row.task.on :deep(.title-txt) {
+  font-weight: 500;
+}
+
+/* A row carrying a project underneath is two lines: MiMo's 22px line each, so 56 tall. */
 
 .stack {
   display: flex;
@@ -1128,8 +1173,8 @@ watch(picking, (on) => {
 .row-note {
   overflow: hidden;
   color: var(--text-weak);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
-  line-height: 15px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 22px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
