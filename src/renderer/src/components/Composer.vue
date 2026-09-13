@@ -1019,6 +1019,33 @@ const accessChoices = computed(() =>
 /* Set while the question before full access is on screen. */
 const confirmingFull = ref(false)
 
+/* Each level's mark, on the chip and in the menu: a raised hand, a pencil, a shield with a warning in it. */
+const ACCESS_ICONS: Record<Access, string[]> = {
+  ask: [
+    "M5.4 8.6V4.1a.95.95 0 0 1 1.9 0v3.4",
+    "M7.3 7.2V3.2a.95.95 0 0 1 1.9 0v4",
+    "M9.2 7.3V3.9a.95.95 0 0 1 1.9 0v3.8",
+    "M11.1 7.6V5.6a.95.95 0 0 1 1.9 0v4.1a4.6 4.6 0 0 1-4.6 4.6h-.5a4 4 0 0 1-3.1-1.5L2.7 10a.95.95 0 0 1 1.4-1.3l1.3 1.2",
+  ],
+  auto: ["M2.8 13.4h10.4", "M10.4 2.4l2.2 2.2-6.8 6.8H3.6V9.2z"],
+  full: ["M8 1.8 13 3.7v4c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5v-4z", "M8 5.3v2.9", "M8 10.6h.01"],
+}
+
+/*
+ * The menu opens below its chip, as MiMo's does. On the home screen that is
+ * always so; under a conversation the box sits at the window's foot, and a menu
+ * that would run within 60px of the bottom opens above instead.
+ */
+const accessMenu = ref<HTMLElement>()
+const accessUp = ref(false)
+watch(menu, async (value) => {
+  accessUp.value = false
+  if (value !== "access" || props.fresh) return
+  await nextTick()
+  const rect = accessMenu.value?.getBoundingClientRect()
+  if (rect && rect.bottom > window.innerHeight - 60) accessUp.value = true
+})
+
 /**
  * Full turns every bucket that is not denied to allow, and keeps the map it
  * replaced; back from full puts that map back, so answers the user gave in
@@ -1644,46 +1671,36 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               :class="{ open: menu === 'access', full: access === 'full' }"
               @click="toggle('access')"
             >
-              <svg v-if="access === 'full'" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2" />
-                <path d="M8 4.6v4.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-                <circle cx="8" cy="11.1" r="0.8" fill="currentColor" />
-              </svg>
-              <svg v-else-if="access === 'auto'" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M2.8 13.4h10.4M10.4 2.4l2.2 2.2-6.8 6.8H3.6V9.2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-              </svg>
-              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M8 1.8 13 3.7v4c0 3.1-2.1 5.4-5 6.5-2.9-1.1-5-3.4-5-6.5v-4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path v-for="d in ACCESS_ICONS[access]" :key="d" :d="d" />
               </svg>
               <span>{{ t(`composer.access.${access}`) }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
               </svg>
             </button>
-            <div v-if="menu === 'access'" class="menu access-menu">
+            <!--
+              MiMo's menu: icon, name, and a check at the far end of the chosen
+              row. What each level does is on hover, beside the row, rather than
+              under every name.
+            -->
+            <div v-if="menu === 'access'" ref="accessMenu" class="menu access-menu" :class="{ up: accessUp }">
               <button
                 v-for="entry in accessChoices"
                 :key="entry"
+                v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', wrap: true }"
                 class="item access-item"
                 :class="{ on: entry === access }"
+                :data-access="entry"
                 @click="chooseAccess(entry)"
               >
-                <span class="tick">
-                  <svg
-                    v-show="entry === access"
-                    width="12"
-                    height="12"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    aria-hidden="true"
-                  >
-                    <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1.2" />
-                  </svg>
-                </span>
-                <span class="access-text">
-                  <span class="item-name">{{ t(`composer.access.${entry}`) }}</span>
-                  <span class="access-hint">{{ t(`composer.access.${entry}Hint`) }}</span>
-                </span>
+                <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path v-for="d in ACCESS_ICONS[entry]" :key="d" :d="d" />
+                </svg>
+                <span class="item-name">{{ t(entry === "full" ? "composer.access.fullItem" : `composer.access.${entry}`) }}</span>
+                <svg class="access-check" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3.5 8.2 6.4 11.1 12.5 5" />
+                </svg>
               </button>
             </div>
           </div>
@@ -3169,31 +3186,60 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   inset-inline-end: 0;
 }
 
+/* MiMo's permission menu: below the chip, 210 wide, 32px rows of icon, name and check. */
 .access-menu {
-  min-width: 248px;
+  top: calc(100% + 4px);
+  bottom: auto;
+  min-width: 210px;
+  padding: 4px;
+  border-radius: 12px;
+}
+
+.access-menu.up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.access-icon {
+  flex: none;
+}
+
+.access-icon path,
+.access-check path {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .access-item {
-  align-items: flex-start;
-  height: auto;
-  padding: 7px 12px;
+  gap: 9px;
+  height: 32px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-weight: 400;
 }
 
-.access-item .tick {
-  margin-top: 1px;
+.access-item.on {
+  color: var(--text-strong);
+  font-weight: 400;
+  background: var(--surface-selected);
 }
 
-.access-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+.access-item .access-icon {
+  width: 17px;
+  height: 17px;
+  color: color-mix(in srgb, var(--text-base) 87%, transparent);
 }
 
-.access-hint {
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 16px;
-  white-space: normal;
+.access-check {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--text-strong);
+  opacity: 0;
+}
+
+.access-item.on .access-check {
+  opacity: 1;
 }
 </style>

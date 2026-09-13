@@ -440,6 +440,15 @@ kbd {
     transform 0.12s ease;
 }
 
+/* A description rather than a name: a fixed measure, broken into lines. */
+.app-tip.wrap {
+  width: max-content;
+  max-width: 260px;
+  padding: 6px 8px;
+  line-height: 1.45;
+  white-space: normal;
+}
+
 .app-tip[data-side="right"] {
   transform: translateX(-4px);
 }

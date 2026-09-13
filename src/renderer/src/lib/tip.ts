@@ -19,6 +19,8 @@ interface Tip {
   /** Rendered dimmer beside the label, e.g. a shortcut. */
   hint?: string
   placement?: Placement
+  /** A sentence rather than a name: wraps inside a fixed width instead of running on. */
+  wrap?: boolean
 }
 
 /** Distance from the control, and the closest a tip may sit to the window edge. */
@@ -111,6 +113,7 @@ function fit(anchor: DOMRect, self: DOMRect, preferred: Placement) {
 function place(target: HTMLElement, tip: Tip) {
   const box = element()
   box.textContent = ""
+  box.classList.toggle("wrap", Boolean(tip.wrap))
 
   const label = document.createElement("span")
   label.textContent = tip.label
