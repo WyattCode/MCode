@@ -16,7 +16,7 @@ import { sessionFiles } from "@shared/session-files"
 import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
 import { discoverModels } from "./provider/discover"
-import { scratchDirectory } from "./scratch"
+import { blankProjectDirectory, scratchDirectory } from "./scratch"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
@@ -142,6 +142,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         title: request.title,
       })
       return { session } satisfies Handled<"session.create">
+    }
+
+    case "project.createBlank": {
+      const directory = await blankProjectDirectory(request.name, runtime.config.get().projectRoot)
+      return { directory } satisfies Handled<"project.createBlank">
     }
 
     case "session.get": {

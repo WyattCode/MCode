@@ -2,7 +2,10 @@
 import { computed, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
-import SelectMenu from "./SelectMenu.vue"
+import { notify, notifyFailure } from "../lib/toast"
+import ProjectPicker from "./ProjectPicker.vue"
+import type { PickerProject } from "./ProjectPicker.vue"
+import RenameDialog from "./RenameDialog.vue"
 import Composer from "./Composer.vue"
 
 /**
@@ -52,14 +55,13 @@ const projects = computed(() => {
 const picked = ref<string>()
 
 /*
- * The picker's two rows that are not projects, as the reference has them under
- * its list: one to bring a folder in, one to start with none. Neither value can
- * be an absolute path, so neither can collide with a project.
+ * "No project" is a pick of its own rather than the absence of one, so it
+ * outlasts the fallbacks below. It cannot be an absolute path, so it cannot
+ * collide with a project.
  */
-const ADD_PROJECT = "mcode:add-project"
 const NO_PROJECT = "mcode:no-project"
 
-/** A folder brought in from here, listed until it has a task of its own. */
+/** A folder brought in or made from here, listed until it has a task of its own. */
 const added = ref<string>()
 
 /*
@@ -78,24 +80,71 @@ watch(
 /* Whether the task this screen starts works in a folder of its own. */
 const scratch = computed(() => chosen.value === NO_PROJECT)
 
-const options = computed(() => {
+const segments = (directory: string) => directory.split(/[\\/]+/).filter(Boolean)
+
+/*
+ * For projects that share a name, the fewest parent folders that tell each
+ * apart - "dupA" and "dupB" rather than two full paths - joined the way a path
+ * reads. A group that never separates (the same path twice) says nothing.
+ */
+function hints(group: string[]): Map<string, string> {
+  const parents = group.map((directory) => segments(directory).slice(0, -1))
+  const deepest = Math.max(...parents.map((parts) => parts.length))
+  const result = new Map<string, string>()
+  for (let depth = 1; depth <= deepest; depth++) {
+    const tails = parents.map((parts) => parts.slice(-depth).join("/"))
+    if (new Set(tails).size === tails.length) {
+      group.forEach((directory, index) => result.set(directory, tails[index]))
+      return result
+    }
+  }
+  return result
+}
+
+/* The picker's rows, most recent first; two that share a name each say where they live. */
+const pickerProjects = computed<PickerProject[]>(() => {
   const listed = [...projects.value]
   for (const extra of [props.directory, added.value]) {
     if (extra && !listed.includes(extra)) listed.unshift(extra)
   }
-  return [
-    ...listed.map((entry) => ({ value: entry, label: name(entry) })),
-    { value: ADD_PROJECT, label: t("home.newProject"), divider: listed.length > 0 },
-    { value: NO_PROJECT, label: t("home.noProject") },
-  ]
+  const groups = new Map<string, string[]>()
+  for (const entry of listed) groups.set(name(entry), [...(groups.get(name(entry)) ?? []), entry])
+  const hinted = new Map<string, string>()
+  for (const group of groups.values()) {
+    if (group.length > 1) for (const [directory, hint] of hints(group)) hinted.set(directory, hint)
+  }
+  return listed.map((entry) => ({ directory: entry, name: name(entry), hint: hinted.get(entry) }))
 })
 
-async function pick(value: string) {
-  if (value !== ADD_PROJECT) {
-    picked.value = value
-    return
+function choose(directory: string) {
+  picked.value = directory
+  box.value?.focus()
+}
+
+function none() {
+  picked.value = NO_PROJECT
+  notify(t("home.noProjectSet"))
+}
+
+/* Set while the blank project's name is being asked for. */
+const naming = ref(false)
+
+/* A new empty folder under the default project location, which the next task goes into. */
+async function createBlank(title: string) {
+  naming.value = false
+  try {
+    const made = await app.client?.request({ type: "project.createBlank", name: title })
+    if (!made) return
+    added.value = made.directory
+    picked.value = made.directory
+    box.value?.focus()
+  } catch (err) {
+    notifyFailure(t("home.blankFailed"), err instanceof Error ? err.message : String(err))
   }
-  const [directory] = await window.mcode.pickDirectory(t("home.newProject"), false)
+}
+
+async function existing() {
+  const [directory] = await window.mcode.pickDirectory(t("home.useExisting"), false)
   if (!directory) return
   // Bringing back a folder that was closed opens it again, as opening it does.
   const closed = app.config?.closedProjects ?? []
@@ -172,39 +221,41 @@ async function hop() {
       />
       <p class="slogan">{{ t("home.slogan") }}</p>
 
-      <div class="dock-slot">
-        <Composer
-          ref="box"
-          :start-directory="scratch ? undefined : chosen"
-          :start-scratch="scratch"
-          fresh
-          @open-settings="emit('open-settings')"
-          @connect="emit('connect')"
-          @manage-models="emit('manage-models')"
-          @shell="emit('shell', $event)"
-          @terminal="emit('terminal')"
-        />
+      <!-- MiMo's tray: the box, and fastened under it a 40px strip holding the project chip. -->
+      <div class="tray">
+        <div class="dock-slot">
+          <Composer
+            ref="box"
+            :start-directory="scratch ? undefined : chosen"
+            :start-scratch="scratch"
+            fresh
+            @open-settings="emit('open-settings')"
+            @connect="emit('connect')"
+            @manage-models="emit('manage-models')"
+            @shell="emit('shell', $event)"
+            @terminal="emit('terminal')"
+          />
+        </div>
+        <div class="scope">
+          <ProjectPicker
+            :projects="pickerProjects"
+            :chosen="scratch ? undefined : chosen"
+            @choose="choose"
+            @none="none"
+            @existing="existing"
+            @blank="naming = true"
+          />
+        </div>
       </div>
 
-      <div class="enter">
-        <SelectMenu
-          :model-value="chosen ?? ''"
-          :options="options"
-          :aria-label="t('home.enterProject')"
-          @update:model-value="pick"
-        >
-          <template #icon>
-            <svg class="folder" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path
-                d="M1.9 4.2c0-.6.5-1.1 1.1-1.1h2.6l1.3 1.5h6.1c.6 0 1.1.5 1.1 1.1v6.1c0 .6-.5 1.1-1.1 1.1H3c-.6 0-1.1-.5-1.1-1.1z"
-                stroke="currentColor"
-                stroke-width="1.2"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </template>
-        </SelectMenu>
-      </div>
+      <RenameDialog
+        v-if="naming"
+        :value="t('home.blankDefault')"
+        :heading="t('home.blankTitle')"
+        :confirm="t('home.blankCreate')"
+        @close="naming = false"
+        @submit="createBlank"
+      />
 
       <!-- Under the project row, which is the order MiMo reads in: the box,
            what it points at, and then what you might start with. -->
@@ -268,6 +319,13 @@ async function hop() {
   text-align: center;
 }
 
+/* The tray the box sits in: a darker plate of the same corner, with the project strip at its foot. */
+.tray {
+  width: 100%;
+  background: color-mix(in srgb, var(--surface-sunken) 50%, transparent);
+  border-radius: 20px;
+}
+
 /* Where the box lands on this screen; the composer brings its own shape. */
 .dock-slot {
   display: flex;
@@ -275,9 +333,19 @@ async function hop() {
   width: 100%;
 }
 
-.enter {
-  align-self: flex-start;
-  margin-top: 12px;
+.tray :deep(.composer) {
+  padding: 0;
+}
+
+.scope {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  box-sizing: border-box;
+  height: 40px;
+  padding-block: 0;
+  padding-inline: 6px 10px;
 }
 
 /* Under the box, as MiMo keeps them: a row each, parted by a dashed rule. */
@@ -319,11 +387,6 @@ async function hop() {
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 20px;
-}
-
-.folder {
-  flex-shrink: 0;
-  color: var(--text-weak);
 }
 
 .starter-note {

@@ -1150,6 +1150,8 @@ export type Request =
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
+  /* An empty folder for a new project, named by the user, under the default project location. */
+  | { type: "project.createBlank"; name: string }
   | { type: "session.get"; sessionID: string }
   /**
    * The instructions the model is given ahead of the conversation.
@@ -1328,6 +1330,7 @@ export interface ResponseMap {
   }
   "artifact.list": { artifacts: SessionArtifacts[] }
   "session.create": { session: SessionInfo }
+  "project.createBlank": { directory: string }
   "session.get": { session: SessionInfo; messages: Message[] }
   "session.systemPrompt": { prompt: string }
   /**

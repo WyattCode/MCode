@@ -151,6 +151,26 @@ async function main() {
     [loose.session.directory, looseAgain.session.directory],
   )
   check("a task in a project is not marked as having none", created.session.scratch === undefined, created.session)
+
+  /*
+   * "Create blank project" on the home picker: an empty folder of the given
+   * name under the same root, a taken name numbered rather than reused, and a
+   * name Windows would refuse cleaned into one it accepts.
+   */
+  const blank = await call({ type: "project.createBlank", name: "Probe project" })
+  const blankAgain = await call({ type: "project.createBlank", name: "Probe project" })
+  const blankOdd = await call({ type: "project.createBlank", name: '  a<b>:c?.  ' })
+  const blankStat = await fs.stat(blank.directory).catch(() => undefined)
+  check(
+    "a blank project is an empty folder of that name under the project location",
+    path.dirname(blank.directory) === process.env.MCODE_SCRATCH_ROOT &&
+      path.basename(blank.directory) === "Probe project" &&
+      blankStat?.isDirectory() === true &&
+      (await fs.readdir(blank.directory)).length === 0,
+    blank.directory,
+  )
+  check("a taken blank project name is numbered, not reused", path.basename(blankAgain.directory) === "Probe project (2)", blankAgain.directory)
+  check("a blank project name Windows would refuse is cleaned", path.basename(blankOdd.directory) === "a b c", blankOdd.directory)
   await call({ type: "session.delete", sessionID: loose.session.id })
   await call({ type: "session.delete", sessionID: looseAgain.session.id })
 
