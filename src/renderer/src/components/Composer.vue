@@ -109,12 +109,123 @@ const modelName = computed(() => {
   return found ? withoutLatest(found.name) : chosen.model
 })
 
+/*
+ * MiMo's resizable box. The handle along its top edge drags the writing area
+ * taller or shorter - between 44px and 480px or half the window, whichever is
+ * less - once the pointer has moved more than 6px; the height is remembered
+ * (the home screen's box apart from the conversation's, which the side chat
+ * shares), and a double-click hands it back to the text. Without a set height
+ * the box fits its text, and holds at 200px once the text is 3000 characters
+ * or 30 lines long.
+ */
+const RESIZE_MIN = 44
+const RESIZE_MAX = 480
+const RESIZE_SHARE = 0.5
+const RESIZE_SLOP = 6
+const PINNED_HEIGHT = 200
+const PINNED_CHARS = 3000
+const PINNED_LINES = 30
+const DOCK_HEIGHT_EVENT = "mcode:composer-dock-height"
+
+const heightKey = computed(() => `composer.manualHeight.${props.fresh ? "home" : "dock"}`)
+
+function storedHeight(key: string): number | null {
+  try {
+    const value = Number(localStorage.getItem(key))
+    return Number.isFinite(value) && value > 0 ? Math.round(value) : null
+  } catch {
+    return null
+  }
+}
+
+function clampHeight(value: number) {
+  const ceiling = Math.min(RESIZE_MAX, Math.round(window.innerHeight * RESIZE_SHARE))
+  return Math.min(Math.max(Math.round(value), RESIZE_MIN), ceiling)
+}
+
+const manualHeight = ref<number | null>(storedHeight(heightKey.value))
+
+function keepHeight(value: number | null) {
+  try {
+    if (value === null) localStorage.removeItem(heightKey.value)
+    else localStorage.setItem(heightKey.value, String(value))
+  } catch {
+    // Remembered for this window only.
+  }
+  if (!props.fresh) window.dispatchEvent(new Event(DOCK_HEIGHT_EVENT))
+}
+
+function pinned(value: string) {
+  if (value.length >= PINNED_CHARS) return true
+  let lines = 1
+  for (let at = 0; at < value.length; at++) {
+    if (value.charCodeAt(at) === 10 && ++lines >= PINNED_LINES) return true
+  }
+  return false
+}
+
 function resize() {
   const element = input.value
   if (!element) return
+  if (manualHeight.value !== null) {
+    element.style.height = `${clampHeight(manualHeight.value)}px`
+    return
+  }
+  if (pinned(element.value)) {
+    element.style.height = `${PINNED_HEIGHT}px`
+    return
+  }
   element.style.height = "auto"
-  element.style.height = `${Math.min(element.scrollHeight, 260)}px`
+  element.style.height = `${element.scrollHeight}px`
 }
+
+let drag: { y: number; height: number; before: number | null; moved: boolean } | null = null
+
+function startResize(event: PointerEvent) {
+  const element = input.value
+  if (!element) return
+  drag = { y: event.clientY, height: element.getBoundingClientRect().height, before: manualHeight.value, moved: false }
+  try {
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  } catch {
+    // A pointer the browser is not tracking cannot be captured; the drag still works.
+  }
+}
+
+function moveResize(event: PointerEvent) {
+  if (!drag) return
+  if (!drag.moved && Math.abs(event.clientY - drag.y) <= RESIZE_SLOP) return
+  drag.moved = true
+  manualHeight.value = clampHeight(drag.height + (drag.y - event.clientY))
+}
+
+function endResize(event: PointerEvent) {
+  if (!drag) return
+  const done = drag
+  drag = null
+  if (!done.moved) {
+    manualHeight.value = done.before
+    return
+  }
+  const value = clampHeight(done.height + (done.y - event.clientY))
+  manualHeight.value = value
+  keepHeight(value)
+}
+
+function resetResize() {
+  drag = null
+  manualHeight.value = null
+  keepHeight(null)
+}
+
+/* The conversation's box and the side chat's share one height: either one moving tells the other. */
+function followDockHeight() {
+  if (!props.fresh) manualHeight.value = storedHeight(heightKey.value)
+}
+
+watch(manualHeight, () => void nextTick(resize))
+onMounted(() => window.addEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
+onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
 
 /**
  * A menu closed with Escape, until the next thing typed.
@@ -1495,8 +1606,19 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
     <div class="shell">
       <div
         class="box"
-        :class="{ busy: busyHere, dropping: dragging, filled: attachments.length > 0 }"
+        :class="{ busy: busyHere, dropping: dragging, filled: attachments.length > 0, resized: manualHeight !== null }"
       >
+        <!-- MiMo's handle along the top edge: drag to resize, double-click to reset. -->
+        <div
+          class="resize-handle"
+          data-resize-handle
+          v-tip="{ label: t('composer.resizeHandle'), placement: 'top' }"
+          @pointerdown="startResize"
+          @pointermove="moveResize"
+          @pointerup="endResize"
+          @pointercancel="endResize"
+          @dblclick="resetResize"
+        />
         <!--
           What was gathered, above the text it belongs to.
 
@@ -2278,7 +2400,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
    * put half the room above the first line and centre the text in the box.
    */
   min-height: 60px;
-  max-height: 180px;
+  /* MiMo's cap while the box fits its text; a set height has its own, below. */
+  max-height: 200px;
   padding: 16px 16px 8px;
   color: var(--text-strong);
   resize: none;
@@ -3135,6 +3258,42 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .input::placeholder {
   color: var(--text-weak);
+}
+
+/* A height set by dragging may go past the fitted cap, to 480px or half the window, and down to MiMo's 44. */
+.box.resized .input {
+  min-height: 44px;
+  max-height: min(480px, 50vh);
+  overflow-y: auto;
+}
+
+/* MiMo's handle: a 10px strip across the top edge, 12 in from each side, over everything in the box. */
+.resize-handle {
+  position: absolute;
+  top: -5px;
+  inset-inline: 12px;
+  z-index: 3;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+/* A 36 by 3 bar that shows while the handle is hovered. */
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  inset-inline: 0;
+  width: 36px;
+  height: 3px;
+  margin-inline: auto;
+  background: transparent;
+  border-radius: 2px;
+  transition: background var(--motion-fast, 0.12s);
+}
+
+.resize-handle:hover::after {
+  background: var(--border-weak);
 }
 
 .tiles {
