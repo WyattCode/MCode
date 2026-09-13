@@ -237,6 +237,33 @@ function attentionOf(sessionID: string): Attention | undefined {
 }
 
 /*
+ * The live mark at the end of a row, as MiMo keeps one: a pill when a
+ * conversation is waiting for your confirmation, a spinner while its turn runs,
+ * a dot when it finished (or failed) while you were elsewhere. One mark per row,
+ * the most urgent. The conversation on screen never says it is waiting - its own
+ * prompt is already in front of you.
+ */
+type RowStatus = "waiting" | "running" | "unread"
+const STATUS_RANK: Record<RowStatus, number> = { waiting: 0, running: 1, unread: 2 }
+
+function statusOf(sessionID: string): RowStatus | undefined {
+  if (app.pendingPermissions.has(sessionID) && app.currentID !== sessionID) return "waiting"
+  if (app.running.has(sessionID)) return "running"
+  if (app.unseen.has(sessionID) || app.failed(sessionID)) return "unread"
+  return undefined
+}
+
+/** A collapsed project speaks for the conversations it is hiding. */
+function projectStatus(sessions: { id: string }[]): RowStatus | undefined {
+  let best: RowStatus | undefined
+  for (const session of sessions) {
+    const status = statusOf(session.id)
+    if (status && (!best || STATUS_RANK[status] < STATUS_RANK[best])) best = status
+  }
+  return best
+}
+
+/*
  * The priority view's first section: every conversation that wants something
  * - a question to answer, a turn that finished or failed while you were away,
  * a turn still running - the most urgent first and the newest within that.
@@ -538,6 +565,15 @@ function toggleProject(directory: string) {
               <svg v-if="pinnedProject(project.directory)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>
+              <span
+                v-if="!isExpanded(project.directory) && projectStatus(project.sessions)"
+                class="row-status"
+                :data-status="projectStatus(project.sessions)"
+              >
+                <span v-if="projectStatus(project.sessions) === 'running'" class="status-spin" aria-hidden="true" />
+                <span v-else-if="projectStatus(project.sessions) === 'unread'" class="status-dot" aria-hidden="true" />
+                <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+              </span>
             </button>
             <!-- MiMo's pair on a project row: its menu, then a new task in it. -->
             <button
@@ -576,24 +612,31 @@ function toggleProject(directory: string) {
                   <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
                 <span class="row-label task-label">{{ title(session.title) }}</span>
+                <span v-if="statusOf(session.id)" class="row-status" :data-status="statusOf(session.id)">
+                  <span v-if="statusOf(session.id) === 'running'" class="status-spin" aria-hidden="true" />
+                  <span v-else-if="statusOf(session.id) === 'unread'" class="status-dot" aria-hidden="true" />
+                  <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+                </span>
               </button>
-              <button
-                class="row-pin"
-                :class="{ on: app.isPinned(session.id) }"
-                :aria-label="t(app.isPinned(session.id) ? 'menu.unpin' : 'menu.pin')"
-                @click.stop="app.togglePinned(session.id)"
-              >
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <circle cx="3" cy="8" r="1.1" fill="currentColor" />
-                  <circle cx="8" cy="8" r="1.1" fill="currentColor" />
-                  <circle cx="13" cy="8" r="1.1" fill="currentColor" />
-                </svg>
-              </button>
+              <span class="row-actions">
+                <button
+                  class="row-pin"
+                  :class="{ on: app.isPinned(session.id) }"
+                  :aria-label="t(app.isPinned(session.id) ? 'menu.unpin' : 'menu.pin')"
+                  @click.stop="app.togglePinned(session.id)"
+                >
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+                  </svg>
+                </button>
+                <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                    <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                    <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+                  </svg>
+                </button>
+              </span>
             </div>
           </template>
         </template>
@@ -672,24 +715,31 @@ function toggleProject(directory: string) {
               <!-- Which project it is in, which the tree above would have said. -->
               <span v-if="entry.note" class="row-note">{{ entry.note }}</span>
             </span>
+            <span v-if="statusOf(entry.session.id)" class="row-status" :data-status="statusOf(entry.session.id)">
+              <span v-if="statusOf(entry.session.id) === 'running'" class="status-spin" aria-hidden="true" />
+              <span v-else-if="statusOf(entry.session.id) === 'unread'" class="status-dot" aria-hidden="true" />
+              <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+            </span>
           </button>
-          <button
-            class="row-pin"
-            :class="{ on: app.isPinned(entry.session.id) }"
-            :aria-label="t(app.isPinned(entry.session.id) ? 'menu.unpin' : 'menu.pin')"
-            @click.stop="app.togglePinned(entry.session.id)"
-          >
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-            </svg>
-          </button>
-          <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(entry.session.id, $event)">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <circle cx="3" cy="8" r="1.1" fill="currentColor" />
-              <circle cx="8" cy="8" r="1.1" fill="currentColor" />
-              <circle cx="13" cy="8" r="1.1" fill="currentColor" />
-            </svg>
-          </button>
+          <span class="row-actions">
+            <button
+              class="row-pin"
+              :class="{ on: app.isPinned(entry.session.id) }"
+              :aria-label="t(app.isPinned(entry.session.id) ? 'menu.unpin' : 'menu.pin')"
+              @click.stop="app.togglePinned(entry.session.id)"
+            >
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
+              </svg>
+            </button>
+            <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(entry.session.id, $event)">
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+                <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+              </svg>
+            </button>
+          </span>
         </div>
         </template>
         <button v-if="!priority && recentLeft > 0" class="show-more" @click="recentShown += RECENT_PAGE">
@@ -1227,5 +1277,96 @@ function toggleProject(directory: string) {
 .row-pin:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+/*
+ * A row's live mark, as MiMo draws them: a 12px spinner with a 1.6px ring open
+ * at the top, a 7px dot in the interactive colour, or a 17px grey pill with
+ * 10px white text. The mark gives way when the row is hovered and its actions
+ * come in.
+ */
+.row-status {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  margin-inline-start: auto;
+  padding-inline-start: 8px;
+  transition: opacity 0.12s;
+}
+
+.row:hover .row-status {
+  opacity: 0;
+}
+
+.status-spin {
+  width: 12px;
+  height: 12px;
+  border: 1.6px solid var(--text-weak);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: row-status-spin 0.8s linear infinite;
+}
+
+@keyframes row-status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-spin {
+    animation-duration: 2.4s;
+  }
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  background: var(--text-interactive);
+  border-radius: 50%;
+}
+
+.status-pill {
+  height: 17px;
+  padding: 0 7px;
+  color: #fff;
+  background: #6b7280;
+  border-radius: 999px;
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: 17px;
+  white-space: nowrap;
+}
+/*
+ * A conversation row's pin and menu, laid over its end as MiMo lays its row
+ * actions: out of the flow, so the title and the live mark have the whole row
+ * until the pointer arrives, and on the row's own background when they show.
+ */
+.row.task {
+  position: relative;
+}
+
+.row-actions {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 8px;
+  display: flex;
+  align-items: center;
+  padding-inline-start: 8px;
+  background: inherit;
+  border-radius: inherit;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.row.task:hover .row-actions,
+.row-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.row-actions .row-pin,
+.row-actions .row-menu {
+  opacity: 1;
 }
 </style>

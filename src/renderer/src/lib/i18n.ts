@@ -75,6 +75,8 @@ type Table = Record<string, string>
 const zhCN: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任务",
+  "side.awaitingPill": "待确认",
+  "side.awaitingConfirm": "这个任务在等你确认后才能继续",
   "side.plugins": "插件",
   "composer.access.full": "完全访问",
   "composer.access.ask": "默认权限",
@@ -1292,6 +1294,8 @@ const zhCN: Table = {
 const zhTW: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任務",
+  "side.awaitingPill": "待確認",
+  "side.awaitingConfirm": "這個任務在等你確認後才能繼續",
   "side.plugins": "外掛程式",
   "composer.access.full": "完全存取",
   "composer.access.ask": "預設權限",
@@ -2488,6 +2492,8 @@ const zhTW: Table = {
 const en: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "New task",
+  "side.awaitingPill": "Confirm",
+  "side.awaitingConfirm": "This task is waiting for your confirmation",
   "side.plugins": "Plugins",
   "composer.access.full": "Full access",
   "composer.access.ask": "Default permissions",
@@ -3687,6 +3693,8 @@ const en: Table = {
 const ar: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "مهمة جديدة",
+  "side.awaitingPill": "بانتظار التأكيد",
+  "side.awaitingConfirm": "هذه المهمة بانتظار تأكيدك لتتابع",
   "side.plugins": "الإضافات",
   "composer.access.full": "وصول كامل",
   "composer.access.ask": "الأذونات الافتراضية",
@@ -4845,6 +4853,8 @@ const ar: Table = {
 const bs: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Novi zadatak",
+  "side.awaitingPill": "Potvrdi",
+  "side.awaitingConfirm": "Ovaj zadatak čeka vašu potvrdu da nastavi",
   "side.plugins": "Dodaci",
   "composer.access.full": "Potpuni pristup",
   "composer.access.ask": "Zadane dozvole",
@@ -6003,6 +6013,8 @@ const bs: Table = {
 const da: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny opgave",
+  "side.awaitingPill": "Bekræft",
+  "side.awaitingConfirm": "Opgaven venter på din bekræftelse",
   "side.plugins": "Plugins",
   "composer.access.full": "Fuld adgang",
   "composer.access.ask": "Standardtilladelser",
@@ -7161,6 +7173,8 @@ const da: Table = {
 const de: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Neue Aufgabe",
+  "side.awaitingPill": "Bestätigen",
+  "side.awaitingConfirm": "Diese Aufgabe wartet auf deine Bestätigung",
   "side.plugins": "Plugins",
   "composer.access.full": "Vollzugriff",
   "composer.access.ask": "Standardberechtigungen",
@@ -8319,6 +8333,8 @@ const de: Table = {
 const es: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nueva tarea",
+  "side.awaitingPill": "Confirmar",
+  "side.awaitingConfirm": "Esta tarea espera tu confirmación para seguir",
   "side.plugins": "Complementos",
   "composer.access.full": "Acceso total",
   "composer.access.ask": "Permisos predeterminados",
@@ -9477,6 +9493,8 @@ const es: Table = {
 const fr: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nouvelle tâche",
+  "side.awaitingPill": "À confirmer",
+  "side.awaitingConfirm": "Cette tâche attend votre confirmation pour continuer",
   "side.plugins": "Plugins",
   "composer.access.full": "Accès complet",
   "composer.access.ask": "Autorisations par défaut",
@@ -10635,6 +10653,8 @@ const fr: Table = {
 const ja: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新しいタスク",
+  "side.awaitingPill": "確認待ち",
+  "side.awaitingConfirm": "このタスクは続行のためにあなたの確認を待っています",
   "side.plugins": "プラグイン",
   "composer.access.full": "フルアクセス",
   "composer.access.ask": "デフォルトの権限",
@@ -11793,6 +11813,8 @@ const ja: Table = {
 const ko: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "새 작업",
+  "side.awaitingPill": "확인 필요",
+  "side.awaitingConfirm": "이 작업은 계속하려면 확인이 필요합니다",
   "side.plugins": "플러그인",
   "composer.access.full": "전체 권한",
   "composer.access.ask": "기본 권한",
@@ -12951,6 +12973,8 @@ const ko: Table = {
 const nb: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny oppgave",
+  "side.awaitingPill": "Bekreft",
+  "side.awaitingConfirm": "Oppgaven venter på bekreftelsen din",
   "side.plugins": "Programtillegg",
   "composer.access.full": "Full tilgang",
   "composer.access.ask": "Standardtillatelser",
@@ -14109,6 +14133,8 @@ const nb: Table = {
 const pl: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nowe zadanie",
+  "side.awaitingPill": "Potwierdź",
+  "side.awaitingConfirm": "To zadanie czeka na Twoje potwierdzenie",
   "side.plugins": "Wtyczki",
   "composer.access.full": "Pełny dostęp",
   "composer.access.ask": "Domyślne uprawnienia",
@@ -15267,6 +15293,8 @@ const pl: Table = {
 const ptBR: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nova tarefa",
+  "side.awaitingPill": "Confirmar",
+  "side.awaitingConfirm": "Esta tarefa aguarda sua confirmação para continuar",
   "side.plugins": "Plugins",
   "composer.access.full": "Acesso total",
   "composer.access.ask": "Permissões padrão",
@@ -16425,6 +16453,8 @@ const ptBR: Table = {
 const ru: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Новая задача",
+  "side.awaitingPill": "Подтвердить",
+  "side.awaitingConfirm": "Задача ждёт вашего подтверждения, чтобы продолжить",
   "side.plugins": "Плагины",
   "composer.access.full": "Полный доступ",
   "composer.access.ask": "Разрешения по умолчанию",
@@ -17583,6 +17613,8 @@ const ru: Table = {
 const th: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "งานใหม่",
+  "side.awaitingPill": "รอยืนยัน",
+  "side.awaitingConfirm": "งานนี้รอให้คุณยืนยันก่อนจึงจะทำต่อ",
   "side.plugins": "ปลั๊กอิน",
   "composer.access.full": "เข้าถึงเต็มรูปแบบ",
   "composer.access.ask": "สิทธิ์เริ่มต้น",
@@ -18741,6 +18773,8 @@ const th: Table = {
 const tr: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Yeni görev",
+  "side.awaitingPill": "Onayla",
+  "side.awaitingConfirm": "Bu görev devam etmek için onayınızı bekliyor",
   "side.plugins": "Eklentiler",
   "composer.access.full": "Tam erişim",
   "composer.access.ask": "Varsayılan izinler",
@@ -19899,6 +19933,8 @@ const tr: Table = {
 const uk: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Нове завдання",
+  "side.awaitingPill": "Підтвердити",
+  "side.awaitingConfirm": "Завдання чекає вашого підтвердження, щоб продовжити",
   "side.plugins": "Плагіни",
   "composer.access.full": "Повний доступ",
   "composer.access.ask": "Типові дозволи",
