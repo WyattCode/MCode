@@ -228,7 +228,7 @@ console.log(`component events checked: ${checkedEvents}`)
 const ringSource = (() => {
   const file = path.join(componentDir, "ContextRing.vue")
   if (!fs.existsSync(file)) {
-    problems.push("ContextRing.vue is gone, so the ring the header and the Context tab share has no home")
+    problems.push("ContextRing.vue is gone, so the ring the composer and the Context tab share has no home")
     return ""
   }
   return fs.readFileSync(file, "utf8")
@@ -253,12 +253,12 @@ if (ringSource) {
 }
 
 /*
- * Both call sites, with the geometry each one is supposed to have. The header
- * passes neither prop and takes the component's 14/1.5 defaults; the tab has to
- * ask for 16/2, so that is what is checked for.
+ * Both call sites, with the geometry each one is supposed to have. The composer
+ * draws MiMo's 18px ring on a 2.4 stroke; the tab asks for 16/2. The header held
+ * one too until it took MiMo's bottom panel toggle in that place instead.
  */
 const ringSites: [string, string[]][] = [
-  ["SessionHeader.vue", ["<ContextRing"]],
+  ["Composer.vue", ["<ContextRing", ':size="18"', ':stroke="2.4"']],
   ["FilePanel.vue", ["<ContextRing", ':size="16"', ':stroke="2"']],
 ]
 for (const [file, needles] of ringSites) {

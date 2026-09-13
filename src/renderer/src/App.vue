@@ -3672,12 +3672,12 @@ onBeforeUnmount(() => {
           -->
           <SessionHeader
             ref="header"
-            :context-open="contextShowing"
             :info-open="infoShowing"
+            :bottom-open="terminalUp"
             @info="toggleInfo"
             @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
             @menu="(x, y) => (sessionMenu = { x, y, header: true })"
-            @context="toggleContext"
+            @bottom="terminalOpen = !terminalOpen"
           />
 
           <SessionHero v-if="empty && !app.error" />

@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue"
 import { useApp } from "../stores/app"
-import ContextRing from "./ContextRing.vue"
-import { language, sessionTitle, t } from "../lib/i18n"
-import { readContext } from "./session-context"
+import { sessionTitle, t } from "../lib/i18n"
 
 /**
  * The bar across the top of an open conversation.
@@ -19,9 +17,9 @@ const app = useApp()
  * Whether the Context view this header's ring opens is currently up, and
  * whether the info card beside the conversation is.
  */
-defineProps<{ contextOpen?: boolean; infoOpen?: boolean }>()
+defineProps<{ infoOpen?: boolean; bottomOpen?: boolean }>()
 
-const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; context: []; info: [] }>()
+const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; info: []; bottom: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
 
@@ -60,69 +58,6 @@ function cancel() {
 
 defineExpose({ begin })
 
-/**
- * How full the model's context is.
- *
- * The arithmetic is shared with the Context view the ring opens, so the two
- * cannot come to different answers about the same session.
- *
- * Undefined until a turn has reported usage against a model whose window is
- * known. The readout is drawn anyway, at zero - which is what opencode does:
- * every figure it renders is `context()?.usage ?? 0`, `info()?.cost ?? 0`,
- * `total.toLocaleString() ?? "0"`. This app used to hide the whole control
- * until the first turn finished, so a new session had no ring at all where the
- * reference shows US$0.00 / 0% / 0 from the moment it opens.
- */
-const context = computed(() => {
-  const reading = readContext(app.messages, app.providers)
-  if (!reading?.window || reading.percent === undefined) return undefined
-  return { used: reading.used, window: reading.window, percent: reading.percent }
-})
-
-/** Read out here rather than in the template, so the ring takes a plain number. */
-const percent = computed(() => context.value?.percent ?? 0)
-
-/*
- * Money and thousands separators in the language the app is set to, not the
- * one the machine happens to be in. Someone who has put this interface into
- * German is reading German, and 1.234 is how German writes that number however
- * the operating system is configured; Arabic goes further and wants its own
- * digits. The language ids are already BCP-47 tags, which is what Intl asks
- * for.
- *
- * Dollars whatever the language, because the number is dollars: providers
- * price in them and nothing here converts it. Dressing it as the reader's own
- * currency would change what it says without changing what it is.
- */
-const money = computed(
-  () => new Intl.NumberFormat(language.value, { style: "currency", currency: "USD" }),
-)
-
-/**
- * What the readout says when the pointer rests on it.
- *
- * Cost is the session's running total rather than the last turn's, because
- * that is the number anyone asking "what has this cost me" means; the other
- * two describe the turn the ring is drawn from.
- */
-const rows = computed(() => {
-  const reading = context.value
-  return [
-    { key: "cost", name: t("context.usage.cost"), value: money.value.format(app.current?.usage.cost ?? 0) },
-    { key: "usage", name: t("context.usage.usage"), value: `${reading?.percent ?? 0}%` },
-    { key: "tokens", name: t("context.usage.tokens"), value: (reading?.used ?? 0).toLocaleString(language.value) },
-  ]
-})
-
-/**
- * What the button points its description at.
- *
- * A constant rather than a generated id because exactly one session header is
- * ever on screen; two of them would need two ids and this would be the thing
- * that broke.
- */
-const TIP_ID = "session-context-figures"
-
 function openMenu(event: MouseEvent) {
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
   emit("menu", rect.right, rect.bottom + 4)
@@ -160,8 +95,9 @@ function openMenu(event: MouseEvent) {
     <div class="right">
       <!-- The info card beside the conversation; lit while it is up, as MiMo's toggle is. -->
       <button
-        class="ico"
+        class="ico info"
         :aria-pressed="Boolean(infoOpen)"
+        :aria-label="t('info.toggle')"
         v-tip="{ label: t('info.toggle'), placement: 'bottom' }"
         @click="emit('info')"
       >
@@ -172,53 +108,22 @@ function openMenu(event: MouseEvent) {
       </button>
 
       <!--
-        A control again, and this time one with somewhere to go.
-
-        It spent a while as a plain readout: it had been a button with a hover
-        fill and no click handler, which invited a press and swallowed it, and
-        the honest answer at the time was to stop looking like a button, because
-        the Context view the reference opens from here did not exist. It does
-        now, so the press is real - and the tooltip says so on its last line, in
-        the reference's own words.
+        The bottom panel, MiMo's second tool here: the terminal docked under the
+        conversation, also on Ctrl+J. The context ring this slot used to hold
+        lives in the composer, where MiMo keeps it.
       -->
       <button
-        class="readout"
-        :aria-label="t('context.usage.view')"
-        :aria-describedby="TIP_ID"
-        :aria-pressed="Boolean(contextOpen)"
-        @click="emit('context')"
+        class="ico bottom"
+        :aria-pressed="Boolean(bottomOpen)"
+        :aria-label="t('key.bottomPanel')"
+        v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J', placement: 'bottom' }"
+        @click="emit('bottom')"
       >
-        <!--
-          The header's geometry, which the reference keeps deliberately smaller
-          than the same ring in the Context tab: 14px on a 1.5 stroke here,
-          16px on a 2 stroke there. Those are this component's defaults, so
-          they are not repeated at the call.
-        -->
-        <ContextRing :percent="percent" />
-
-        <!--
-          Left in the page rather than mounted on hover, and so left in the
-          accessibility tree: the ring itself is a picture, and this is the only
-          statement of what it is a picture of. Someone who cannot bring a
-          pointer to rest on it still gets the three numbers read out.
-
-          Reached by aria-describedby rather than simply by being inside the
-          button, because the button carries an aria-label and a label replaces
-          whatever a control contains: without this the figures would have gone
-          silent the moment the ring became pressable again. The id can be a
-          fixed string because there is one session header on screen.
-        -->
-        <div :id="TIP_ID" class="tip">
-          <div v-for="row in rows" :key="row.key" class="tip-row">
-            <span class="tip-name">{{ row.name }}</span>
-            <span class="tip-value">{{ row.value }}</span>
-          </div>
-          <!-- What pressing it does, which is the one thing the three figures
-               above do not say. -->
-          <div class="tip-hint">{{ t("context.usage.clickToView") }}</div>
-        </div>
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="2" y="2.5" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.2" />
+          <path d="M2 10h12" stroke="currentColor" stroke-width="1.2" />
+        </svg>
       </button>
-
     </div>
   </div>
 </template>
@@ -312,137 +217,6 @@ function openMenu(event: MouseEvent) {
 }
 
 /*
- * The same 28px box as the button beside it, and now the same behaviour: the
- * fill on hover is what tells a reader the ring can be pressed, which is the
- * whole difference between this and the readout it was while there was nothing
- * behind it.
- */
-.readout {
-  position: relative;
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
-  transition: background 0.12s;
-}
-
-.readout:hover,
-/* Held open, so the control stays lit while the view it opened is on screen. */
-.readout[aria-pressed="true"] {
-  background: var(--surface-hover);
-}
-
-/*
- * Built here rather than through v-tip, which draws one line in a box that
- * never wraps and so cannot hold a column of name-and-value rows.
- *
- * The box itself is the reference's, measured: 5px by 6px of padding, a 4px
- * radius, 11px type at weight 530 on a 12px line, and the whole thing 120px
- * wide with 8px between rows. That is also all but exactly what v-tip draws,
- * so the two do not read as coming from different applications.
- *
- * What it does not share is v-tip's warm window - move here straight from the
- * button beside it and this one still waits its half second, where two v-tips
- * in a row would not.
- */
-.tip {
-  position: absolute;
-  z-index: 300;
-  /* Clear of the ring by the same gap v-tip leaves its own controls. */
-  inset-block-start: calc(100% + 8px);
-  /* Anchored to the end of the row, growing inwards: the ring sits against the
-     window's edge, and a box hung from its start would leave the window. */
-  inset-inline-end: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  width: 120px;
-  padding: 5px 6px;
-  color: var(--text-strong);
-  background: var(--surface-raised-hover);
-  border-radius: 4px;
-  box-shadow: var(--shadow-lg);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 12px;
-  letter-spacing: 0.05px;
-  /* Figures that change as a turn runs, so the columns must not shift under
-     them as digits swap. */
-  font-variant-numeric: tabular-nums;
-  /* Nothing here is a control, so nothing here should look selectable. */
-  user-select: none;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.12s ease;
-}
-
-/*
- * The pause matches the half second v-tip waits, which is roughly what the
- * platform's own tooltips wait: long enough that a pointer crossing the header
- * on its way elsewhere does not set the box off. Only on the way in - a tip
- * that lingered after the pointer left would follow it down the page.
- */
-.readout:hover .tip {
-  opacity: 1;
-  transition-delay: 0.5s;
-}
-
-/*
- * No pause for the keyboard. The delay exists to keep a pointer crossing the
- * header from setting off a trail of boxes; arriving here by Tab is a decision,
- * not a passing-through, and waiting half a second after it looks broken.
- */
-.readout:focus-visible .tip {
-  opacity: 1;
-}
-
-.tip-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-width: 0;
-}
-
-.tip-name {
-  flex-shrink: 0;
-  color: var(--text-base);
-}
-
-/*
- * Pushed to the far end so the three values line up as a column, and cut with
- * an ellipsis rather than allowed to widen the box: a currency some locale
- * writes long would otherwise stretch the tooltip out of shape.
- */
-.tip-value {
-  overflow: hidden;
-  min-width: 0;
-  margin-inline-start: auto;
-  color: var(--text-strong);
-  text-align: end;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/*
- * Set below the figures by a rule, because it is not one of them: the three
- * rows above describe the session, and this one describes the control. Allowed
- * to wrap - it is a sentence, and cutting it off is worse than two lines.
- */
-.tip-hint {
-  padding-block-start: 6px;
-  color: var(--text-weak);
-  border-block-start: 1px solid var(--border-weaker);
-  /* The rows above are single lines and take the box's tight 12px leading. A
-     sentence that wraps needs the room between the two lines that a row does
-     not, or the descenders of the first sit on the second. */
-  line-height: 1.35;
-  text-align: start;
-}
-
-/*
  * 2.0 has no title strip, so the conversation's own header is what drags the
  * window, and it has to stay clear of the caption buttons Windows draws over
  * its top-right corner. env(titlebar-area-*) describes exactly that band when
@@ -468,8 +242,7 @@ function openMenu(event: MouseEvent) {
   letter-spacing: 0;
 }
 
-.ico,
-.readout {
+.ico {
   width: 26px;
   height: 26px;
   border-radius: 7px;
@@ -481,7 +254,7 @@ function openMenu(event: MouseEvent) {
   margin-inline-start: 2px;
 }
 
-/* A toggle that is on stays lit, the way the readout does while its view is up. */
+/* A toggle that is on stays lit while its panel is up. */
 .ico[aria-pressed="true"] {
   color: var(--text-strong);
   background: var(--surface-hover);
