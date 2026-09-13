@@ -2544,14 +2544,16 @@ const bindableCommands = computed(() => {
       id: "session.previous",
       group: "key.groupSession",
       title: t("key.prevSession"),
-      hint: "Alt+↑",
+      // MiMo's chord; Alt+Up still steps as well.
+      hint: "Ctrl+Shift+[",
       run: () => void stepSession(-1),
     },
     {
       id: "session.next",
       group: "key.groupSession",
       title: t("key.nextSession"),
-      hint: "Alt+↓",
+      // MiMo's chord; Alt+Down still steps as well.
+      hint: "Ctrl+Shift+]",
       run: () => void stepSession(1),
     },
     {
@@ -3075,6 +3077,18 @@ function onKeydown(event: KeyboardEvent) {
   }
   if (event.key === "g" && stepFind(event.shiftKey ? -1 : 1, event)) {
     event.preventDefault()
+    return
+  }
+
+  /*
+   * MiMo's previous and next chat. Read by where the key sits rather than by
+   * what it types: with Shift held a bracket prints a brace on some layouts
+   * and something else entirely on others.
+   */
+  if (mod && event.shiftKey && !event.altKey && (event.code === "BracketLeft" || event.code === "BracketRight")) {
+    if (modalOpen.value) return
+    event.preventDefault()
+    void stepSession(event.code === "BracketLeft" ? -1 : 1)
     return
   }
 

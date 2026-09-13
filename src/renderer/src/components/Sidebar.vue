@@ -54,7 +54,9 @@ const emit = defineEmits<{
 
 const app = useApp()
 
-const RECENT_LIMIT = 12
+/* MiMo pages Recent fifty at a time. */
+const RECENT_PAGE = 50
+const recentShown = ref(RECENT_PAGE)
 
 const name = (directory: string) =>
   app.config?.projectNames?.[directory] || directory.split(/[\\/]/).filter(Boolean).pop() || directory
@@ -119,13 +121,71 @@ const projects = computed(() => {
  * whose project has been closed still belongs here: it is the only place left
  * that can reach it.
  */
-const recent = computed(() => {
+/* How Recent is ordered, chosen from its heading's menu and remembered, as MiMo does. */
+const SORT_KEY = "mcode.recentSort"
+const recentSort = ref<"recent" | "name">(
+  (() => {
+    try {
+      return localStorage.getItem(SORT_KEY) === "name" ? "name" : "recent"
+    } catch {
+      return "recent"
+    }
+  })(),
+)
+
+function setRecentSort(mode: "recent" | "name") {
+  recentSort.value = mode
+  try {
+    localStorage.setItem(SORT_KEY, mode)
+  } catch {}
+}
+
+const recentAll = computed(() => {
   const listed = new Set(projects.value.map((project) => project.directory))
-  return app.sessions
-    .filter((session) => !session.archived && !listed.has(session.directory))
-    .sort((a, b) => b.updated - a.updated)
-    .slice(0, RECENT_LIMIT)
+  const rows = app.sessions.filter((session) => !session.archived && !listed.has(session.directory))
+  return recentSort.value === "name"
+    ? rows.sort((a, b) => title(a.title).localeCompare(title(b.title), language.value))
+    : rows.sort((a, b) => b.updated - a.updated)
 })
+
+/*
+ * A page at a time, stretched as MiMo stretches it so that the open
+ * conversation and any running one are never left below the fold.
+ */
+const recent = computed(() => {
+  const all = recentAll.value
+  const reach = (sessionID?: string) => {
+    const at = sessionID ? all.findIndex((session) => session.id === sessionID) : -1
+    return at < 0 ? 0 : Math.ceil((at + 1) / RECENT_PAGE) * RECENT_PAGE
+  }
+  let running = 0
+  for (const sessionID of app.running) running = Math.max(running, reach(sessionID))
+  return all.slice(0, Math.min(all.length, Math.max(recentShown.value, reach(app.currentID), running)))
+})
+
+const recentLeft = computed(() => recentAll.value.length - recent.value.length)
+
+/* Recent's heading menu: archive everything, and how the list is ordered. */
+const recentMenu = ref<{ x: number; y: number }>()
+
+const recentMenuItems = computed<MenuItem[]>(() => [
+  { key: "archive", label: t("side.archiveAll"), icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2" },
+  { key: "sort", label: t("side.sortBy"), heading: true, divided: true },
+  { key: "sort-recent", label: t("side.sortRecent"), checked: recentSort.value === "recent" },
+  { key: "sort-name", label: t("side.sortName"), checked: recentSort.value === "name" },
+])
+
+function openRecentMenu(event: MouseEvent) {
+  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  recentMenu.value = { x: Math.round(from.left), y: Math.round(from.bottom + 4) }
+}
+
+function pickRecentMenu(key: string) {
+  recentMenu.value = undefined
+  if (key === "archive") emit("archive-all")
+  else if (key === "sort-recent") setRecentSort("recent")
+  else if (key === "sort-name") setRecentSort("name")
+}
 
 /**
  * Every conversation by when it was last touched, in days.
@@ -507,13 +567,38 @@ function toggleProject(directory: string) {
         </template>
       </template>
 
-      <div v-if="!priority" class="section">
+      <div v-if="!priority" class="section recent-head" :class="{ held: Boolean(recentMenu) }">
         <button class="section-head" :aria-expanded="recentOpen" @click="recentOpen = !recentOpen">
           <span>{{ t("side.recent") }}</span>
           <svg class="chev" :class="{ shut: !recentOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
           </svg>
         </button>
+        <!-- MiMo's two heading actions, out of sight until the heading is hovered. -->
+        <span class="sec-actions">
+          <button
+            class="ico add recent-more"
+            :aria-label="t('side.priorityMore')"
+            v-tip="{ label: t('side.priorityMore') }"
+            @click.stop="openRecentMenu"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="3" cy="8" r="1.1" fill="currentColor" />
+              <circle cx="8" cy="8" r="1.1" fill="currentColor" />
+              <circle cx="13" cy="8" r="1.1" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            class="ico add recent-new"
+            :aria-label="t('side.newTask')"
+            v-tip="{ label: t('side.newTask'), hint: 'Ctrl+N' }"
+            @click.stop="emit('newTask')"
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-linecap="square" />
+            </svg>
+          </button>
+        </span>
       </div>
       <template v-if="priority || recentOpen">
         <div v-if="!listed.length" class="empty">{{ t("side.noTasks") }}</div>
@@ -575,6 +660,9 @@ function toggleProject(directory: string) {
           </button>
         </div>
         </template>
+        <button v-if="!priority && recentLeft > 0" class="show-more" @click="recentShown += RECENT_PAGE">
+          {{ t("side.showMore", { count: recentLeft }) }}
+        </button>
       </template>
     </div>
 
@@ -634,6 +722,14 @@ function toggleProject(directory: string) {
       :items="priorityMenuItems"
       @pick="pickPriorityMenu"
       @close="priorityMenu = undefined"
+    />
+    <ContextMenu
+      v-if="recentMenu"
+      :x="recentMenu.x"
+      :y="recentMenu.y"
+      :items="recentMenuItems"
+      @pick="pickRecentMenu"
+      @close="recentMenu = undefined"
     />
   </aside>
 </template>
@@ -882,6 +978,37 @@ function toggleProject(directory: string) {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 19.2px;
+}
+
+/* Recent's heading actions, which MiMo keeps hidden until the heading is hovered. */
+.sec-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast, 0.12s);
+}
+
+.recent-head:hover .sec-actions,
+.recent-head:focus-within .sec-actions,
+.recent-head.held .sec-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* MiMo's show-more row: 12px in the secondary colour, 9 by 7 of padding. */
+.show-more {
+  width: 100%;
+  padding: 7px 9px;
+  color: var(--text-weak);
+  border-radius: 6px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  text-align: start;
+}
+
+.show-more:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 /* The priority filter's bell, pushed to the far end of the controls row. */
