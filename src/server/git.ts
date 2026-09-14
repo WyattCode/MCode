@@ -1,7 +1,8 @@
 import { execFile } from "node:child_process"
+import fs from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
-import type { BranchState, CheckoutResult } from "@shared/protocol"
+import type { BranchState, CheckoutResult, CommitResult, CommitState, GitFileLines, GitSummary, PushResult } from "@shared/protocol"
 
 const run = promisify(execFile)
 
@@ -492,4 +493,330 @@ export async function checkout(
 /** Removes a checkout, leaving its branch behind. */
 export async function removeWorktree(directory: string, target: string): Promise<void> {
   await run("git", ["worktree", "remove", target, "--force"], { cwd: directory })
+}
+
+// ------------------------------------------------------------ the info card
+
+/** `git diff --numstat` rows; a binary file reports "-" and counts as no lines. */
+function numstat(out: string): GitFileLines[] {
+  const rows: GitFileLines[] = []
+  for (const line of out.split("\n")) {
+    const columns = line.split("\t")
+    if (columns.length < 3) continue
+    rows.push({
+      path: columns.slice(2).join("\t").trim(),
+      additions: Number(columns[0]) || 0,
+      deletions: Number(columns[1]) || 0,
+    })
+  }
+  return rows
+}
+
+/** Files larger than this are counted as changed but not read for their lines. */
+const LINE_COUNT_LIMIT = 4 * 1024 * 1024
+
+/** Lines in a file git has never seen, the way a diff against nothing counts them. */
+async function untrackedLines(file: string): Promise<number> {
+  const stat = await fs.stat(file).catch(() => undefined)
+  if (!stat?.isFile() || stat.size === 0 || stat.size > LINE_COUNT_LIMIT) return 0
+  const bytes = await fs.readFile(file)
+  // A NUL early on is how git itself decides a file is binary.
+  if (bytes.subarray(0, 8000).includes(0)) return 0
+  let lines = 0
+  for (const byte of bytes) if (byte === 10) lines += 1
+  return bytes[bytes.length - 1] === 10 ? lines : lines + 1
+}
+
+/** The tree git compares against when a repository has no commit yet. */
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+/**
+ * What the info card's 变更 row says: how many files differ from HEAD under the
+ * project, and by how many lines each.
+ *
+ * Scoped to the project directory, as the review is, so the count here and the
+ * list the row opens agree. Untracked files count as wholly added.
+ */
+export async function summary(directory: string): Promise<GitSummary> {
+  const none: GitSummary = { repo: false, ok: false, detached: false, fileCount: 0, additions: 0, deletions: 0, files: [] }
+  const inside = (await git(directory, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")).trim()
+  if (inside !== "true") return none
+  const head = (await git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim()
+  const detached = !head || head === "HEAD"
+  const base: GitSummary = { ...none, repo: true, detached, ...(detached ? {} : { branch: head }) }
+  try {
+    const changed = await status(directory)
+    const hasHead = await git(directory, ["rev-parse", "--verify", "--quiet", "HEAD"]).then(
+      () => true,
+      () => false,
+    )
+    // --relative keeps both the paths and the comparison inside the project directory.
+    const tracked = numstat(await git(directory, ["diff", "--numstat", "--relative", hasHead ? "HEAD" : EMPTY_TREE]))
+    const others = (await git(directory, ["ls-files", "--others", "--exclude-standard"]))
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+    const fresh = await Promise.all(
+      others.map(async (file) => ({ path: file, additions: await untrackedLines(path.join(directory, file)), deletions: 0 })),
+    )
+    const files = [...tracked, ...fresh]
+    return {
+      ...base,
+      ok: true,
+      fileCount: changed.entries.length,
+      additions: files.reduce((sum, file) => sum + file.additions, 0),
+      deletions: files.reduce((sum, file) => sum + file.deletions, 0),
+      files,
+    }
+  } catch {
+    return base
+  }
+}
+
+/** Every path `git status` reports, relative to the repository root. */
+function porcelainPaths(porcelain: string): { staged: boolean; path: string }[] {
+  return porcelain
+    .split("\n")
+    .filter((line) => line.trim())
+    .map((line) => {
+      const rest = line.slice(3)
+      const raw = rest.includes(" -> ") ? (rest.split(" -> ")[1] ?? rest) : rest
+      return { staged: line[0] !== " " && line[0] !== "?", path: raw.replace(/^"|"$/g, "") }
+    })
+}
+
+async function remotes(root: string): Promise<string[]> {
+  return (await git(root, ["remote"]).catch(() => ""))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+/**
+ * What the commit or push card needs to decide which of its buttons may be
+ * pressed: the whole repository's state, since a commit takes in the whole
+ * index whichever folder the project was opened on.
+ */
+export async function commitState(directory: string): Promise<CommitState> {
+  const blank: CommitState = {
+    ok: false,
+    isDetached: false,
+    hasHead: false,
+    hasChanges: false,
+    hasStaged: false,
+    stagedAdditions: 0,
+    stagedDeletions: 0,
+    hasUpstream: false,
+    ahead: 0,
+    behind: 0,
+    hasOrigin: false,
+    hasOriginBranch: false,
+    changedPaths: [],
+  }
+  try {
+    const root = await toplevel(directory)
+    const entries = porcelainPaths(await git(root, ["status", "--porcelain=v1", "-uall"]))
+    const staged = numstat(await git(root, ["diff", "--cached", "--numstat"]).catch(() => ""))
+    // symbolic-ref names the branch even before its first commit, and fails only when detached.
+    const branch = (await git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "")).trim()
+    const hasHead = await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]).then(
+      () => true,
+      () => false,
+    )
+    const upstream = branch
+      ? (await git(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).catch(() => "")).trim()
+      : ""
+    const hasOrigin = (await remotes(root)).includes("origin")
+    const hasOriginBranch =
+      Boolean(branch && hasOrigin) &&
+      (await git(root, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`]).then(
+        () => true,
+        () => false,
+      ))
+    // Measured against what a push would update: the upstream when one is set, else origin's branch of that name.
+    const against = upstream || (hasOriginBranch ? `origin/${branch}` : "")
+    let ahead = 0
+    let behind = 0
+    if (against && hasHead) {
+      const counts = (await git(root, ["rev-list", "--left-right", "--count", `${against}...HEAD`]).catch(() => ""))
+        .trim()
+        .split(/\s+/)
+      behind = Number(counts[0]) || 0
+      ahead = Number(counts[1]) || 0
+    }
+    return {
+      ok: true,
+      ...(branch ? { branch } : {}),
+      isDetached: !branch,
+      hasHead,
+      hasChanges: entries.length > 0,
+      hasStaged: entries.some((entry) => entry.staged),
+      stagedAdditions: staged.reduce((sum, file) => sum + file.additions, 0),
+      stagedDeletions: staged.reduce((sum, file) => sum + file.deletions, 0),
+      hasUpstream: Boolean(upstream),
+      ...(upstream ? { upstream } : {}),
+      ahead,
+      behind,
+      hasOrigin,
+      hasOriginBranch,
+      changedPaths: entries.map((entry) => entry.path),
+    }
+  } catch (err) {
+    return { ...blank, error: stderrOf(err) }
+  }
+}
+
+/** Everything git said, since "nothing to commit" arrives on stdout rather than stderr. */
+function outputOf(err: unknown): string {
+  const stdout = (err as { stdout?: unknown })?.stdout
+  return `${typeof stdout === "string" ? stdout : ""}\n${stderrOf(err)}`
+}
+
+function firstLine(text: string): string {
+  const line = text.split("\n").map((entry) => entry.trim()).find(Boolean) ?? ""
+  return line.replace(/^(error|fatal):\s*/i, "")
+}
+
+export function commitFailure(err: unknown): CommitResult {
+  const text = outputOf(err)
+  if (/nothing (added )?to commit|no changes added to commit/i.test(text)) return { ok: false, code: "nothing-to-commit" }
+  if (/please tell me who you are|author identity unknown|user\.name|user\.email/i.test(text)) {
+    return { ok: false, code: "ident-missing" }
+  }
+  if (/(pre-commit|commit-msg|prepare-commit-msg) hook|hook (failed|declined|exited)/i.test(text)) {
+    return { ok: false, code: "hook-rejected" }
+  }
+  return { ok: false, error: firstLine(stderrOf(err)) }
+}
+
+/**
+ * Commits, with everything in the working tree first when asked.
+ *
+ * The user's hooks and signing settings run as they would in a terminal; nothing
+ * here skips them.
+ */
+export async function commit(directory: string, message: string, includeUnstaged: boolean): Promise<CommitResult> {
+  const text = message.trim()
+  if (!text) return { ok: false, error: "empty commit message" }
+  try {
+    const root = await toplevel(directory)
+    if (includeUnstaged) await git(root, ["add", "-A"])
+    await git(root, ["commit", "-m", text])
+    const hash = (await git(root, ["rev-parse", "--short", "HEAD"])).trim()
+    return { ok: true, hash }
+  } catch (err) {
+    return commitFailure(err)
+  }
+}
+
+export function pushFailure(err: unknown): PushResult {
+  const text = outputOf(err)
+  if (
+    /authentication failed|permission denied \(publickey|could not read (username|password)|terminal prompts disabled|host key verification failed|returned error: 40[13]|HTTP 40[13]/i.test(
+      text,
+    )
+  ) {
+    return { ok: false, code: "auth" }
+  }
+  if (/non-fast-forward|fetch first|\[rejected\]|failed to push some refs/i.test(text)) return { ok: false, code: "rejected" }
+  if (/no configured push destination|does not appear to be a git repository/i.test(text)) return { ok: false, code: "no-remote" }
+  if ((err as { killed?: boolean })?.killed) return { ok: false, error: "timed out" }
+  return { ok: false, error: firstLine(stderrOf(err)) }
+}
+
+const PUSH_TIMEOUT_MS = 60_000
+
+/**
+ * Pushes the checked-out branch, and only it, never forced.
+ *
+ * With an upstream configured the branch goes exactly there. Without one it is
+ * published to origin under its own name and that becomes its upstream, which
+ * is what MiMo's button does for a new branch. Git is told not to stop and ask
+ * for a password: there is no terminal for it to ask in, so a push that needs
+ * one fails and says so instead of hanging.
+ */
+export async function push(directory: string): Promise<PushResult> {
+  try {
+    const root = await toplevel(directory)
+    const branch = (await git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "")).trim()
+    if (!branch) return { ok: false, error: "not on a branch" }
+    const known = await remotes(root)
+    const remote = (await git(root, ["config", "--get", `branch.${branch}.remote`]).catch(() => "")).trim()
+    const merge = (await git(root, ["config", "--get", `branch.${branch}.merge`]).catch(() => "")).trim()
+    let args: string[]
+    if (remote && known.includes(remote) && merge.startsWith("refs/heads/")) {
+      args = ["push", remote, `refs/heads/${branch}:${merge}`]
+    } else {
+      if (!known.includes("origin")) return { ok: false, code: "no-remote" }
+      args = ["push", "-u", "origin", `refs/heads/${branch}:refs/heads/${branch}`]
+    }
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+    // Batch mode for ssh, unless the user already chose how git reaches ssh.
+    const sshCommand = (await git(root, ["config", "--get", "core.sshCommand"]).catch(() => "")).trim()
+    if (!env.GIT_SSH_COMMAND && !env.GIT_SSH && !sshCommand) env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes"
+    await run("git", args, { cwd: root, windowsHide: true, maxBuffer: 8 * 1024 * 1024, timeout: PUSH_TIMEOUT_MS, env })
+    return { ok: true }
+  } catch (err) {
+    return pushFailure(err)
+  }
+}
+
+// ------------------------------------------------------ commit message text
+
+/** How long the model is given before the card falls back to its own wording. */
+export const COMMIT_MESSAGE_TIMEOUT_MS = 8_000
+const MESSAGE_PATHS = 50
+const MESSAGE_DIFFS = 5
+const MESSAGE_DIFF_LINES = 200
+const MESSAGE_MAX = 200
+
+export const COMMIT_MESSAGE_SYSTEM = [
+  "You name a set of code changes for a git history.",
+  "Answer with one subject line of at most 72 characters and nothing else - no body, no quotes, no markdown, no full stop at the end.",
+  "Start with a conventional prefix (feat:, fix:, docs:, refactor:, test:, chore:) only when the diff makes the kind of change obvious.",
+  "Keep file, function and identifier names exactly as they are spelled.",
+  "Write in the language the changed code's own comments and text are written in.",
+].join(" ")
+
+/** The changed paths and the start of their diffs, as the model is shown them. */
+export function commitMessagePrompt(paths: readonly string[], diffs: readonly string[]): string {
+  const listed = paths.slice(0, MESSAGE_PATHS)
+  const more = paths.length > listed.length ? [`... and ${paths.length - listed.length} more`] : []
+  const lines = diffs.join("\n").split("\n").slice(0, MESSAGE_DIFF_LINES)
+  return [`Changed files (${paths.length}):`, ...listed.map((file) => `- ${file}`), ...more, "", "Diff:", ...lines].join("\n")
+}
+
+/** Reads the model's answer down to one usable line, or nothing. */
+export function cleanCommitMessage(raw: string): string {
+  const withoutThinking = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "")
+  const line = withoutThinking
+    .split("\n")
+    .map((entry) => entry.trim())
+    .find(Boolean)
+  const text = (line ?? "").replace(/^["'`“”]+/, "").replace(/["'`“”]+$/, "").trim()
+  return text.length > MESSAGE_MAX ? `${text.slice(0, MESSAGE_MAX - 3)}...` : text
+}
+
+/** What a commit is called when no model answered: MiMo's `update …` rule. */
+export function fallbackCommitMessage(paths: readonly string[]): string {
+  const clean = paths.map((entry) => String(entry || "").trim()).filter(Boolean)
+  if (!clean.length) return "update"
+  if (clean.length === 1) {
+    const segments = clean[0].split("/").filter(Boolean)
+    return `update ${segments[segments.length - 1] || clean[0]}`
+  }
+  const tops = new Set(clean.map((entry) => (entry.includes("/") ? entry.split("/")[0] : "")))
+  const [only] = [...tops]
+  return tops.size === 1 && only ? `update ${only}/ (${clean.length} files)` : `update ${clean.length} files`
+}
+
+/** The prompt for a repository's pending changes; paths are relative to its root. */
+export async function commitMessageInput(directory: string, paths: readonly string[]): Promise<string> {
+  const root = await toplevel(directory).catch(() => directory)
+  const diffs: string[] = []
+  for (const file of paths.slice(0, MESSAGE_DIFFS)) {
+    const patch = await diff(root, file).catch(() => "")
+    if (patch) diffs.push(patch)
+  }
+  return commitMessagePrompt(paths, diffs)
 }

@@ -2404,6 +2404,110 @@ async function main() {
 
   await fs.rm(repoRoot, { recursive: true, force: true })
 
+  // ------------------------------------------------ info card: git ------
+  // The info card's line counts, commit and push, all against throwaway
+  // repositories and a bare "origin" in the temp folder - never a real remote.
+  const cardTemp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-card-"))
+  const cardRepo = path.join(cardTemp, "work")
+  const cardOrigin = path.join(cardTemp, "origin.git")
+  const cardOther = path.join(cardTemp, "other")
+  const hooksOff = path.join(cardTemp, "no-hooks")
+  await fs.mkdir(cardRepo)
+  await fs.mkdir(hooksOff)
+  const gitIn = (cwd: string, args: string[]) => runGit("git", args, { cwd, windowsHide: true })
+  // Local settings only, so the machine's own identity, signing and hooks stay out of it.
+  const quiet = async (cwd: string) => {
+    await gitIn(cwd, ["config", "user.email", "t@example.com"])
+    await gitIn(cwd, ["config", "user.name", "t"])
+    await gitIn(cwd, ["config", "commit.gpgsign", "false"])
+    await gitIn(cwd, ["config", "core.hooksPath", hooksOff])
+  }
+
+  check("a plain folder has no summary", !(await gitOps.summary(cardRepo)).repo)
+  await gitIn(cardRepo, ["init"])
+  await quiet(cardRepo)
+  const unborn = await gitOps.commitState(cardRepo)
+  check("before the first commit there is a branch but no HEAD", unborn.ok && !unborn.hasHead && !unborn.isDetached && Boolean(unborn.branch), unborn)
+  await fs.writeFile(path.join(cardRepo, "base.txt"), "one\ntwo\nthree\n")
+  await gitIn(cardRepo, ["add", "-A"])
+  await gitIn(cardRepo, ["commit", "-m", "base"])
+  const cardBranch = (await gitIn(cardRepo, ["symbolic-ref", "--short", "HEAD"])).stdout.trim()
+
+  await fs.writeFile(path.join(cardRepo, "base.txt"), "one\n2\nthree\n")
+  await fs.writeFile(path.join(cardRepo, "fresh.txt"), "a\nb")
+  const counted = await gitOps.summary(cardRepo)
+  check(
+    "the summary counts an edit and an untracked file in lines",
+    counted.repo && counted.ok && counted.fileCount === 2 && counted.additions === 3 && counted.deletions === 1,
+    counted,
+  )
+  check("and per file", counted.files.find((file) => file.path === "fresh.txt")?.additions === 2, counted.files)
+  check("and names the branch", counted.branch === cardBranch, counted)
+
+  const cardPending = await gitOps.commitState(cardRepo)
+  check(
+    "commit state sees changes, nothing staged and no remote",
+    cardPending.ok && cardPending.hasChanges && !cardPending.hasStaged && !cardPending.hasOrigin && cardPending.changedPaths.length === 2,
+    cardPending,
+  )
+  check("committing only the staged part of nothing says so", (await gitOps.commit(cardRepo, "x", false)).code === "nothing-to-commit")
+  await gitIn(cardRepo, ["add", "base.txt"])
+  const stagedState = await gitOps.commitState(cardRepo)
+  check("staged lines are counted", stagedState.hasStaged && stagedState.stagedAdditions === 1 && stagedState.stagedDeletions === 1, stagedState)
+  const committed = await gitOps.commit(cardRepo, "card: both files", true)
+  const headHash = (await gitIn(cardRepo, ["rev-parse", "--short", "HEAD"])).stdout.trim()
+  check("commit takes everything when asked and returns the short hash", committed.ok && committed.hash === headHash, committed)
+  check("and leaves a clean tree", !(await gitOps.commitState(cardRepo)).hasChanges)
+  check("an empty message is refused before git is asked", !(await gitOps.commit(cardRepo, "  ", true)).ok)
+  check("push without a remote says so", (await gitOps.push(cardRepo)).code === "no-remote")
+
+  await gitIn(cardTemp, ["init", "--bare", cardOrigin])
+  await gitIn(cardRepo, ["remote", "add", "origin", cardOrigin])
+  const unpublished = await gitOps.commitState(cardRepo)
+  check("a new remote has no branch yet", unpublished.hasOrigin && !unpublished.hasOriginBranch && !unpublished.hasUpstream, unpublished)
+  const published = await gitOps.push(cardRepo)
+  check("the first push publishes the branch", published.ok, published)
+  const tracking = await gitOps.commitState(cardRepo)
+  check("and makes origin its upstream", tracking.hasUpstream && tracking.hasOriginBranch && tracking.ahead === 0, tracking)
+
+  await fs.writeFile(path.join(cardRepo, "base.txt"), "one\n2\n3\n")
+  await gitOps.commit(cardRepo, "card: again", true)
+  check("a local commit is one ahead", (await gitOps.commitState(cardRepo)).ahead === 1)
+  check("and pushes to the upstream", (await gitOps.push(cardRepo)).ok)
+  const originHead = (await gitIn(cardOrigin, ["rev-parse", `refs/heads/${cardBranch}`])).stdout.trim()
+  const localHead = (await gitIn(cardRepo, ["rev-parse", "HEAD"])).stdout.trim()
+  check("origin now has it", originHead === localHead, { originHead, localHead })
+
+  await gitIn(cardTemp, ["clone", cardOrigin, cardOther])
+  await quiet(cardOther)
+  await fs.writeFile(path.join(cardOther, "theirs.txt"), "theirs\n")
+  await gitIn(cardOther, ["add", "-A"])
+  await gitIn(cardOther, ["commit", "-m", "theirs"])
+  await gitIn(cardOther, ["push", "origin", cardBranch])
+  await fs.writeFile(path.join(cardRepo, "mine.txt"), "mine\n")
+  await gitOps.commit(cardRepo, "card: mine", true)
+  const behindPush = await gitOps.push(cardRepo)
+  check("a push behind the remote is reported as rejected, not forced", !behindPush.ok && behindPush.code === "rejected", behindPush)
+  check("and origin keeps their commit", (await gitIn(cardOrigin, ["rev-parse", `refs/heads/${cardBranch}`])).stdout.trim() !== (await gitIn(cardRepo, ["rev-parse", "HEAD"])).stdout.trim())
+  await fs.rm(cardTemp, { recursive: true, force: true })
+
+  check("an identity error is named", gitOps.commitFailure({ stderr: "*** Please tell me who you are." }).code === "ident-missing")
+  check("an auth error is named", gitOps.pushFailure({ stderr: "fatal: Authentication failed for 'https://x'" }).code === "auth")
+  check("no files is plain update", gitOps.fallbackCommitMessage([]) === "update")
+  check("one file is named", gitOps.fallbackCommitMessage(["src/a/b.ts"]) === "update b.ts")
+  check("one folder is named with a count", gitOps.fallbackCommitMessage(["src/a.ts", "src/b.ts"]) === "update src/ (2 files)")
+  check("several folders are counted", gitOps.fallbackCommitMessage(["a.ts", "src/b.ts"]) === "update 2 files")
+  check(
+    "a model answer is cut to its first real line",
+    gitOps.cleanCommitMessage('<think>hmm</think>\n\n"fix: keep the card open"\nbody') === "fix: keep the card open",
+  )
+  check("a long answer is capped", gitOps.cleanCommitMessage("x".repeat(400)).length === 200)
+  const shown = gitOps.commitMessagePrompt(
+    Array.from({ length: 60 }, (_, i) => `f${i}.ts`),
+    [Array.from({ length: 300 }, (_, i) => `+line ${i}`).join("\n")],
+  )
+  check("the prompt lists 50 paths and 200 diff lines", shown.includes("f49.ts") && !shown.includes("f50.ts") && shown.includes("+line 199") && !shown.includes("+line 200"))
+
   // ------------------------------------------------- chatgpt adapter ------
   // The Codex wire format had no coverage at all: no subscription to call, so
   // nothing exercised the SSE parsing, the tool pairing or the usage figures.

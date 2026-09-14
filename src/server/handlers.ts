@@ -21,6 +21,10 @@ import { searchMessages } from "./search"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
+import { AnthropicAdapter } from "./provider/anthropic"
+import { OpenAICompatible } from "./provider/openai"
+import { ChatGPTSubscription } from "./provider/chatgpt"
+import type { ProviderAdapter } from "./provider/types"
 import { listCommands } from "./command"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
@@ -823,6 +827,90 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "git.branches":
       return (await git.branchState(request.directory)) satisfies Handled<"git.branches">
+
+    case "git.summary":
+      return (await git.summary(request.directory)) satisfies Handled<"git.summary">
+
+    case "git.commitState":
+      return (await git.commitState(request.directory)) satisfies Handled<"git.commitState">
+
+    case "git.commit":
+      return (await git.commit(request.directory, request.message, request.includeUnstaged)) satisfies Handled<"git.commit">
+
+    case "git.push":
+      return (await git.push(request.directory)) satisfies Handled<"git.push">
+
+    case "git.commitMessage": {
+      const paths = request.paths.filter((entry) => typeof entry === "string")
+      const fallback = { message: git.fallbackCommitMessage(paths), generated: false } satisfies Handled<"git.commitMessage">
+      if (!paths.length) return fallback
+      const session = request.sessionID ? await runtime.sessions.get(request.sessionID) : undefined
+      const model = session?.model.provider ? session.model : runtime.config.get().model
+      const definition = runtime.config.definition(model.provider)
+      if (!definition || !runtime.config.usable(model.provider)) return fallback
+      const input = await git.commitMessageInput(request.directory, paths).catch(() => "")
+      if (!input) return fallback
+
+      /*
+       * One short request, the voice tidy's shape: a narrow instruction, no
+       * tools, and whatever does not come back in time is simply not used - the
+       * card commits under its own `update …` wording instead.
+       */
+      const adapter: ProviderAdapter =
+        definition.kind === "anthropic"
+          ? AnthropicAdapter
+          : definition.kind === "chatgpt"
+            ? ChatGPTSubscription
+            : OpenAICompatible
+      const apiKey = runtime.config.apiKey(definition.id) ?? ""
+      const tokens =
+        definition.kind === "chatgpt" ? await runtime.auth.accessToken(definition.id).catch(() => undefined) : undefined
+      const controller = new AbortController()
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let answer = ""
+      const asked = adapter
+        .stream(
+          {
+            apiKey: tokens?.access ?? apiKey,
+            model,
+            system: git.COMMIT_MESSAGE_SYSTEM,
+            history: [
+              {
+                id: `commit-message:${Date.now()}`,
+                sessionID: request.sessionID ?? "commit-message",
+                role: "user",
+                text: input,
+                attachments: [],
+                time: { created: Date.now() },
+              },
+            ],
+            tools: [],
+            effort: "low",
+            showReasoning: false,
+            signal: controller.signal,
+            baseURL: definition.baseURL,
+            headers: definition.headers,
+            accountId: tokens?.accountId,
+            maxOutput: 200,
+          },
+          (event) => {
+            if (event.type === "text.delta") answer += event.text
+          },
+        )
+        .then(() => true)
+        .catch(() => false)
+      // Raced as well as aborted, so an adapter slow to notice the abort still cannot hold the card.
+      const expired = new Promise<false>((resolve) => {
+        timer = setTimeout(() => {
+          controller.abort()
+          resolve(false)
+        }, git.COMMIT_MESSAGE_TIMEOUT_MS)
+      })
+      const finished = await Promise.race([asked, expired])
+      clearTimeout(timer)
+      const message = finished ? git.cleanCommitMessage(answer) : ""
+      return message ? ({ message, generated: true } satisfies Handled<"git.commitMessage">) : fallback
+    }
 
     case "git.checkout":
       return (await git.checkout(request.directory, request.branch, {

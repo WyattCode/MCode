@@ -295,6 +295,65 @@ export interface CheckoutResult {
   worktree?: { directory: string; name: string }
 }
 
+/** One changed file's line counts. */
+export interface GitFileLines {
+  path: string
+  additions: number
+  deletions: number
+}
+
+/** The info card's 环境信息: the project's changes against HEAD, counted in lines. */
+export interface GitSummary {
+  /** False outside a repository, or without git: the section is not drawn. */
+  repo: boolean
+  /** False when the repository was found but its changes could not be read. */
+  ok: boolean
+  branch?: string
+  detached: boolean
+  fileCount: number
+  additions: number
+  deletions: number
+  /** Per file, relative to the project directory; untracked files count as wholly added. */
+  files: GitFileLines[]
+}
+
+/** What the commit or push card decides its buttons from. */
+export interface CommitState {
+  ok: boolean
+  error?: string
+  /** Absent when detached. */
+  branch?: string
+  isDetached: boolean
+  hasHead: boolean
+  hasChanges: boolean
+  hasStaged: boolean
+  stagedAdditions: number
+  stagedDeletions: number
+  hasUpstream: boolean
+  upstream?: string
+  /** Commits HEAD has that the push target does not, and the other way round. */
+  ahead: number
+  behind: number
+  hasOrigin: boolean
+  hasOriginBranch: boolean
+  /** Every changed path, relative to the repository root. */
+  changedPaths: string[]
+}
+
+export interface CommitResult {
+  ok: boolean
+  /** The new commit's short hash. */
+  hash?: string
+  code?: "nothing-to-commit" | "ident-missing" | "hook-rejected"
+  error?: string
+}
+
+export interface PushResult {
+  ok: boolean
+  code?: "auth" | "rejected" | "no-remote"
+  error?: string
+}
+
 /** What taking one turn's file changes back did, file by file. */
 export interface TurnRevertResult {
   /** Edited files put back to how the turn found them. */
@@ -1444,6 +1503,13 @@ export type Request =
       scope?: "worktree" | "branch"
     }
   | { type: "git.revert"; directory: string; file: string }
+  /* The info card's 环境信息 and its commit or push card. */
+  | { type: "git.summary"; directory: string }
+  | { type: "git.commitState"; directory: string }
+  | { type: "git.commit"; directory: string; message: string; includeUnstaged: boolean }
+  | { type: "git.push"; directory: string }
+  /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
+  | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
   | { type: "file.list"; directory: string; query?: string }
   | { type: "file.read"; path: string }
   /* A text file saved from the right panel's files tab. */
@@ -1570,6 +1636,11 @@ export interface ResponseMap {
   "git.checkout": CheckoutResult
   "git.diff": { patch: string }
   "git.revert": GitStatus
+  "git.summary": GitSummary
+  "git.commitState": CommitState
+  "git.commit": CommitResult
+  "git.push": PushResult
+  "git.commitMessage": { message: string; generated: boolean }
   "file.list": { files: FileEntry[] }
   /**
    * One file, ready to show.
