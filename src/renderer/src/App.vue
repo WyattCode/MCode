@@ -671,7 +671,8 @@ const retiredChords = computed(() => {
   const out = new Set<string>()
   for (const command of bindableCommands.value) {
     const custom = binds[command.id]
-    if (!custom || !command.hint || custom === command.hint) continue
+    // Absent means untouched; an empty string means its built-in chord was deleted on the shortcuts page.
+    if (custom === undefined || !command.hint || custom === command.hint) continue
     if (claimed.has(command.hint)) continue
     out.add(command.hint)
   }
@@ -1396,7 +1397,11 @@ const HEADER_MENU: MenuRow[] = [
  * here and a command on the shortcuts page, so it is looked up by that name.
  */
 const hintFor = (entry: MenuRow) =>
-  entry.hint && (app.config?.keybinds?.[entry.id === "row.pin" ? "session.pin" : entry.id] || entry.hint)
+  entry.hint &&
+  ((binds, id) => (id in binds ? binds[id] : entry.hint))(
+    app.config?.keybinds ?? {},
+    entry.id === "row.pin" ? "session.pin" : entry.id,
+  )
 
 /*
  * The rows that are this menu's own rather than commands: they name a

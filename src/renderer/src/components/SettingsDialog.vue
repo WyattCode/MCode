@@ -787,44 +787,78 @@ function setSize(field: "uiFontSize" | "codeFontSize", event: Event, fallback: n
   if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
 }
 
-const capturing = ref<string>()
-
-/** The chord a row answers to: the user's if they set one, else the built-in. */
+/**
+ * The chord a row answers to: the user's if they set one, else the built-in.
+ * An empty string saved for a command means its built-in chord was deleted.
+ */
 function boundKeys(shortcut: { id: string; hint?: string }) {
-  return app.config?.keybinds?.[shortcut.id] || shortcut.hint || ""
+  const binds = app.config?.keybinds ?? {}
+  return shortcut.id in binds ? binds[shortcut.id] : shortcut.hint || ""
 }
 
-function beginCapture(command: string) {
-  capturing.value = command
-  const finish = () => {
-    window.removeEventListener("keydown", onCapture, true)
-    capturing.value = undefined
+/** Whether the user has changed this command's chord - set or deleted - so it can be reset. */
+function customBinding(command: string) {
+  return command in (app.config?.keybinds ?? {})
+}
+
+/*
+ * MiMo's recording: the pencil turns the binding into a pulsing box that takes
+ * the next chord pressed; 确认 saves it, 取消 or a press outside the row drops
+ * it, and a chord another command already answers to is refused in red with no
+ * 确认. Every command is checked, including those this page does not list,
+ * because a hidden command's chord is just as live.
+ */
+const recording = ref<string>()
+const recordChord = ref<string>()
+
+const recordConflict = computed(() => {
+  const chord = recordChord.value
+  if (!chord || !recording.value) return undefined
+  return props.commands.find((entry) => entry.id !== recording.value && boundKeys(entry) === chord)
+})
+
+function onRecordKey(event: KeyboardEvent) {
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  if (event.key === "Escape") {
+    cancelRecord()
+    return
   }
-  const onCapture = (event: KeyboardEvent) => {
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    if (event.key === "Escape") return finish()
-    const chord = chordOf(event)
-    if (!isBindable(chord)) return
-    /*
-     * Two commands cannot share a chord. The dispatcher keeps one of them - the
-     * last one written - so assigning a chord that is already in use silently
-     * took it away from whatever had it, with both rows still showing it. Every
-     * command is checked, including the ones this page does not list, because a
-     * hidden command's chord is just as live as a visible one's.
-     */
-    const clash = props.commands.filter((entry) => entry.id !== command && boundKeys(entry) === chord)
-    if (clash.length) {
-      notifyFailure(
-        t("key.conflict"),
-        t("key.conflictBody", { keybind: chord, titles: clash.map((entry) => entry.title).join(", ") }),
-      )
-      return finish()
-    }
-    void app.patchConfig({ keybinds: { ...(app.config?.keybinds ?? {}), [command]: chord } })
-    finish()
-  }
-  window.addEventListener("keydown", onCapture, true)
+  const chord = chordOf(event)
+  if (isBindable(chord)) recordChord.value = chord
+}
+
+function onRecordPress(event: MouseEvent) {
+  const inside = (event.target as HTMLElement | null)?.closest(`[data-shortcut-id="${recording.value}"]`)
+  if (!inside) cancelRecord()
+}
+
+function startRecord(command: string) {
+  cancelRecord()
+  recording.value = command
+  recordChord.value = undefined
+  window.addEventListener("keydown", onRecordKey, true)
+  document.addEventListener("mousedown", onRecordPress)
+}
+
+function cancelRecord() {
+  window.removeEventListener("keydown", onRecordKey, true)
+  document.removeEventListener("mousedown", onRecordPress)
+  recording.value = undefined
+  recordChord.value = undefined
+}
+
+function confirmRecord() {
+  const command = recording.value
+  const chord = recordChord.value
+  if (!command || !chord || recordConflict.value) return
+  void app.patchConfig({ keybinds: { ...(app.config?.keybinds ?? {}), [command]: chord } })
+  cancelRecord()
+}
+
+/* Deleting a built-in chord saves an empty one, so the default stops answering too. */
+function deleteBinding(command: string) {
+  void app.patchConfig({ keybinds: { ...(app.config?.keybinds ?? {}), [command]: "" } })
 }
 
 function resetBinding(command: string) {
@@ -832,6 +866,46 @@ function resetBinding(command: string) {
   delete next[command]
   void app.patchConfig({ keybinds: next })
 }
+
+async function resetAllBindings() {
+  await app.patchConfig({ keybinds: {} })
+  notify(t("set.keys.resetAllDone"))
+}
+
+/* MiMo's key search: while on, the next chord pressed is what the table is narrowed to; Escape clears it. */
+const keySearch = ref(false)
+const keySearchChord = ref<string>()
+
+function onKeySearchKey(event: KeyboardEvent) {
+  if (recording.value) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  if (event.key === "Escape") {
+    keySearchChord.value = undefined
+    return
+  }
+  const chord = chordOf(event)
+  if (chord) keySearchChord.value = chord
+}
+
+function toggleKeySearch() {
+  keySearch.value = !keySearch.value
+  keySearchChord.value = undefined
+  keyFilter.value = ""
+  if (keySearch.value) window.addEventListener("keydown", onKeySearchKey, true)
+  else window.removeEventListener("keydown", onKeySearchKey, true)
+}
+
+watch(section, (next) => {
+  if (next === "keys") return
+  cancelRecord()
+  if (keySearch.value) toggleKeySearch()
+})
+
+onBeforeUnmount(() => {
+  cancelRecord()
+  window.removeEventListener("keydown", onKeySearchKey, true)
+})
 
 const themeOptions = computed(() => [
   { value: "system", label: t("set.themeSystem") },
@@ -1002,32 +1076,27 @@ const SECTIONS = [
  */
 const keyFilter = ref("")
 
-const SHORTCUTS = computed(() => {
+/*
+ * MiMo's shortcut list: one table rather than groups, narrowed either by what
+ * is typed (a command's name or its chord) or, in key search, by the chord
+ * pressed. Ordered by group and then name, so related commands still sit
+ * together. A hidden command - one the palette does not offer - stays off it.
+ */
+const shortcutRows = computed(() => {
   const needle = keyFilter.value.trim().toLowerCase()
-  const bySection = new Map<string, { id: string; title: string; hint?: string }[]>()
-  for (const command of props.commands) {
-    /*
-     * A hidden command is one the palette does not offer, either because it is
-     * meaningless from where it would be chosen - opening the palette from
-     * inside the palette - or because it is one of nine numbered project rows
-     * that already appear as projects. opencode leaves them off this page for
-     * the same reason, and with the themes and languages here the page is long
-     * enough without ten rows nobody was looking for.
-     */
-    if (command.hidden) continue
-    if (needle && !`${command.title} ${boundKeys(command)}`.toLowerCase().includes(needle)) continue
-    const section = command.group ?? "key.groupGeneral"
-    const rows = bySection.get(section) ?? []
-    rows.push({ id: command.id, title: command.title, hint: command.hint })
-    bySection.set(section, rows)
+  const chord = keySearchChord.value?.toLowerCase()
+  const rows = props.commands.filter((command) => {
+    if (command.hidden) return false
+    if (keySearch.value) return !chord || boundKeys(command).toLowerCase() === chord
+    return !needle || `${command.title} ${boundKeys(command)}`.toLowerCase().includes(needle)
+  })
+  const rank = (group?: string) => {
+    const at = (SECTIONS as readonly string[]).indexOf(group ?? "key.groupGeneral")
+    return at < 0 ? SECTIONS.length : at
   }
-  // Within a group, by name. The order they are declared in is the order the
-  // command list happens to build them, which is not an order anyone can use to
-  // find something.
-  for (const rows of bySection.values()) rows.sort((a, b) => a.title.localeCompare(b.title))
-  return SECTIONS.map((group) => ({ group, items: bySection.get(group) ?? [] })).filter(
-    (section) => section.items.length > 0,
-  )
+  return rows
+    .map((command) => ({ id: command.id, title: command.title, hint: command.hint, group: command.group }))
+    .sort((a, b) => rank(a.group) - rank(b.group) || a.title.localeCompare(b.title))
 })
 
 
@@ -2848,48 +2917,135 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <template v-else-if="section === 'keys'">
           <h2>{{ t("set.shortcuts") }}</h2>
-          <p class="note">{{ t("set.shortcutsSub") }}</p>
-          <div v-if="Object.keys(app.config?.keybinds ?? {}).length" class="confirm reset-all">
-            <button class="ctl-btn" @click="app.patchConfig({ keybinds: {} })">
-              {{ t("set.resetKeys") }}
+          <!--
+            MiMo's shortcut page: a search bar that searches by words or, with
+            the keyboard button, by the chord pressed; one table of commands and
+            their bindings; and reset-all at the foot.
+          -->
+          <div class="keys-search" data-shortcuts-searchbar>
+            <div v-if="keySearch" class="keys-search-capture" data-key-search-capture>
+              <span v-if="keySearchChord" class="keys-search-chord">{{ keySearchChord }}</span>
+              <template v-else>{{ t("set.keys.pressToSearch") }}</template>
+            </div>
+            <input
+              v-else
+              v-model="keyFilter"
+              class="keys-search-input"
+              :placeholder="t('key.search')"
+              spellcheck="false"
+              data-key-search-input
+            />
+            <button
+              v-if="keySearch ? keySearchChord : keyFilter"
+              type="button"
+              class="keys-search-clear"
+              :aria-label="t('set.keys.clear')"
+              v-tip="{ label: t('set.keys.clear'), placement: 'top' }"
+              data-key-search-clear
+              @click="keySearch ? (keySearchChord = undefined) : (keyFilter = '')"
+            >
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="keys-search-mode"
+              :class="{ on: keySearch }"
+              :aria-label="t(keySearch ? 'set.keys.useTextSearch' : 'set.keys.useKeySearch')"
+              v-tip="{ label: t(keySearch ? 'set.keys.useTextSearch' : 'set.keys.useKeySearch'), placement: 'top' }"
+              data-key-search-toggle
+              @click="toggleKeySearch"
+            >
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" aria-hidden="true">
+                <rect x="1.8" y="4.5" width="12.4" height="7.5" rx="1.6" />
+                <path d="M4.5 7.2h.5M7 7.2h2M11 7.2h.5M5 9.6h6" />
+              </svg>
             </button>
           </div>
 
-          <!--
-            Finding a row meant scrolling past every theme and every language,
-            which is what the reference's own search box is here to answer.
-          -->
-          <input v-model="keyFilter" class="field key-search" :placeholder="t('key.search')" spellcheck="false" />
-          <p v-if="!SHORTCUTS.length" class="note">{{ t("key.searchEmpty") }}</p>
-
-          <template v-for="group in SHORTCUTS" :key="group.group">
-            <h3>{{ t(group.group) }}</h3>
-            <div class="card keys-card">
-              <div v-for="shortcut in group.items" :key="shortcut.id" class="line">
-                <div class="line-title">{{ shortcut.title }}</div>
-                <div class="confirm">
-                  <button
-                    class="keys editable"
-                    :class="{ capturing: capturing === shortcut.id, unset: !boundKeys(shortcut) }"
-                    @click="beginCapture(shortcut.id)"
-                  >
-                    {{
-                      capturing === shortcut.id
-                        ? t("set.pressKeys")
-                        : boundKeys(shortcut) || t("key.unassigned")
-                    }}
-                  </button>
-                  <button
-                    v-if="app.config?.keybinds?.[shortcut.id]"
-                    class="plink"
-                    @click="resetBinding(shortcut.id)"
-                  >
-                    {{ t("set.reset") }}
-                  </button>
+          <div class="keys-table" data-shortcuts-list>
+            <div class="keys-cols">
+              <span class="keys-col-command">{{ t("set.keys.colCommand") }}</span>
+              <span>{{ t("set.keys.colBinding") }}</span>
+            </div>
+            <div v-for="shortcut in shortcutRows" :key="shortcut.id" class="keys-row" :data-shortcut-id="shortcut.id">
+              <div class="keys-command">{{ shortcut.title }}</div>
+              <div class="keys-binding">
+                <div v-if="recording === shortcut.id" class="keys-record">
+                  <div class="keys-record-line">
+                    <span class="keys-record-box" :class="{ conflict: recordConflict }" data-record-box>
+                      {{ recordChord || t("set.keys.pressKey") }}
+                    </span>
+                    <button
+                      v-if="recordChord && !recordConflict"
+                      type="button"
+                      class="keys-record-confirm"
+                      data-record-confirm
+                      @click="confirmRecord"
+                    >
+                      {{ t("set.keys.confirm") }}
+                    </button>
+                    <button type="button" class="keys-record-cancel" data-record-cancel @click="cancelRecord">
+                      {{ t("common.cancel") }}
+                    </button>
+                  </div>
+                  <span v-if="recordConflict" class="keys-record-conflict" data-record-conflict>
+                    {{ t("set.keys.conflict", { label: recordConflict.title }) }}
+                  </span>
                 </div>
+                <template v-else>
+                  <kbd v-if="boundKeys(shortcut)" class="keys-kbd" data-binding>{{ boundKeys(shortcut) }}</kbd>
+                  <span v-else class="keys-unassigned" data-binding-unassigned>{{ t("set.keys.unassigned") }}</span>
+                  <button
+                    type="button"
+                    class="keys-edit"
+                    :aria-label="t('set.keys.edit')"
+                    v-tip="{ label: t('set.keys.edit'), placement: 'top' }"
+                    data-edit-shortcut
+                    @click="startRecord(shortcut.id)"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M10.8 2.7l2.5 2.5L6 12.5H3.5V10zM2.5 14.5h11" />
+                    </svg>
+                  </button>
+                </template>
+              </div>
+              <div class="keys-end">
+                <button
+                  v-if="customBinding(shortcut.id)"
+                  type="button"
+                  class="keys-icon"
+                  :aria-label="t('set.keys.resetOne', { label: shortcut.title })"
+                  v-tip="{ label: t('set.keys.resetOne', { label: shortcut.title }), placement: 'top' }"
+                  data-reset-shortcut
+                  @click="resetBinding(shortcut.id)"
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 8.2a5 5 0 1 0 1.6-3.7M3.2 2.5v2.8H6" />
+                  </svg>
+                </button>
+                <button
+                  v-else-if="boundKeys(shortcut)"
+                  type="button"
+                  class="keys-icon danger"
+                  :aria-label="t('set.keys.delete')"
+                  v-tip="{ label: t('set.keys.delete'), placement: 'top' }"
+                  data-delete-shortcut
+                  @click="deleteBinding(shortcut.id)"
+                >
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.5 9h6l.5-9" />
+                  </svg>
+                </button>
               </div>
             </div>
-          </template>
+            <div v-if="!shortcutRows.length" class="keys-empty" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
+          </div>
+
+          <div class="keys-foot">
+            <button class="ctl-btn" data-reset-all-shortcuts @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
+          </div>
         </template>
 
         <!-- Archive -->
@@ -3774,6 +3930,285 @@ h3 {
   overflow-wrap: anywhere;
 }
 
+/*
+ * MiMo's shortcut page: a 12-round search bar on the card colour, a table of
+ * 42% command and the binding with 14px rows 20 in, a pencil that shows on the
+ * hovered row, a pulsing blue box while recording (red on a conflict), and the
+ * reset or delete control in a 28px column at the end.
+ */
+.keys-search {
+  display: flex;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
+  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-radius: 12px;
+}
+
+.keys-search-input,
+.keys-search-capture {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.keys-search-input {
+  padding: 0;
+  color: var(--text-strong);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.keys-search-input::placeholder,
+.keys-search-capture {
+  color: var(--text-weak);
+}
+
+.keys-search-chord {
+  color: var(--text-strong);
+}
+
+.keys-search-clear {
+  display: grid;
+  place-items: center;
+  margin-inline-end: 8px;
+  color: var(--text-weak);
+}
+
+.keys-search-clear:hover {
+  color: var(--text-strong);
+}
+
+.keys-search-clear svg {
+  width: 14px;
+  height: 14px;
+}
+
+.keys-search-mode {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-weak);
+  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-radius: 6px;
+}
+
+.keys-search-mode:hover {
+  color: var(--text-strong);
+  border-color: var(--text-strong);
+}
+
+.keys-search-mode.on {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--text-strong) 8%, var(--surface-menu));
+}
+
+.keys-search-mode svg {
+  width: 16px;
+  height: 16px;
+}
+
+.keys-table {
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
+  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-radius: 12px;
+}
+
+.keys-cols {
+  display: flex;
+  align-items: center;
+  padding: 10px 20px;
+  color: var(--text-weak);
+  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.keys-col-command,
+.keys-command {
+  width: 42%;
+}
+
+.keys-row {
+  display: flex;
+  align-items: center;
+  padding: 14px 20px;
+  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  transition: background-color 0.15s;
+}
+
+.keys-row:last-of-type {
+  border-bottom: 0;
+}
+
+.keys-row:hover {
+  background: color-mix(in srgb, var(--text-strong) 5%, var(--surface-menu));
+}
+
+.keys-command {
+  min-width: 0;
+  padding-inline-end: 16px;
+  color: var(--text-base);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.keys-binding {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.keys-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  border-radius: 6px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+  font-family: var(--font-sans);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.keys-unassigned {
+  color: var(--text-weak);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.keys-edit {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-weak);
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.keys-row:hover .keys-edit,
+.keys-edit:focus-visible {
+  opacity: 1;
+}
+
+.keys-edit:hover {
+  color: var(--text-strong);
+}
+
+.keys-edit svg,
+.keys-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.keys-record {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.keys-record-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.keys-record-box {
+  display: flex;
+  align-items: center;
+  min-width: 90px;
+  padding: 4px 12px;
+  color: var(--text-interactive);
+  background: color-mix(in srgb, var(--interactive) 5%, transparent);
+  border: 2px solid var(--interactive);
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  animation: keys-record-pulse 2s ease-in-out infinite;
+}
+
+.keys-record-box.conflict {
+  color: var(--text-critical);
+  background: color-mix(in srgb, var(--text-critical) 5%, transparent);
+  border-color: var(--text-critical);
+  animation: none;
+}
+
+@keyframes keys-record-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.keys-record-confirm,
+.keys-record-cancel {
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.keys-record-confirm {
+  color: #fff;
+  background: var(--interactive);
+}
+
+.keys-record-cancel {
+  color: var(--text-weak);
+  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+}
+
+.keys-record-cancel:hover {
+  color: var(--text-strong);
+}
+
+.keys-record-conflict {
+  color: var(--text-critical);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.keys-end {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  margin-inline-start: 12px;
+}
+
+.keys-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--text-weak);
+  border-radius: 4px;
+}
+
+.keys-icon:hover {
+  color: var(--text-strong);
+}
+
+.keys-icon.danger:hover {
+  color: var(--text-critical);
+}
+
+.keys-empty {
+  padding: 32px 20px;
+  color: var(--text-weak);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  text-align: center;
+}
+
+.keys-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
 /* MiMo's state tag on the AGENTS.md row: a 12px pill, green on its tint when loaded, quiet otherwise. */
 .agents-tag {
   display: inline-block;
@@ -4278,51 +4713,6 @@ h3 {
 }
 
 /*
- * opencode's `settings-v2-keybind-button`, measured: `46x23` for "Ctrl+,",
- * `padding: 6px 8px`, radius 2, transparent, no border, the chord at
- * `11px/530/11px` with `0.05px` of tracking in text-weak, set in the UI
- * face rather than the mono one. This was a 0.5px-bordered pill at
- * `2px 6px`, radius 4, in 13px text-base.
- */
-.keys.editable {
-  cursor: pointer;
-  border: 0;
-  border-radius: 2px;
-  padding: 6px 8px;
-}
-
-.keys.editable:hover {
-  background: var(--surface-hover);
-}
-
-/* While recording, the row says so rather than showing a stale chord. */
-.keys.capturing {
-  color: var(--text-accent);
-  border-color: var(--text-accent);
-}
-
-/* Full width, above the groups it narrows, with the same gap the cards use. */
-/*
- * The keybinds page, measured on opencode's. Its search field is full width
- * on the page's own surface with the value in text-strong; its rows are
- * `padding: 0 0 16px` inside a list padded 20 all round, stacked with no gap,
- * and their titles are `13px/440` - regular, where the general page's are
- * 530. The general `.line` and `.line-title` are right where they are used;
- * this page has its own rhythm.
- */
-.key-search {
-  width: 100%;
-  margin-bottom: 4px;
-  color: var(--text-strong);
-  background: var(--surface-raised);
-  letter-spacing: -0.04px;
-}
-
-.key-search::placeholder {
-  color: var(--text-weak);
-}
-
-/*
  * The servers list: padded 20 all round, its single row 20 tall with no
  * padding of its own, the dot 6x6 and 10 ahead of the name. Measured on
  * opencode's 服务器 tab.
@@ -4350,41 +4740,6 @@ h3 {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-}
-
-.keys-card {
-  padding: 20px;
-}
-
-/*
- * 29 tall: the reference's row is the height of its title line plus the 16
- * below, and the 23px chord sits centred on it and overflows by five each
- * way - which is what puts consecutive chords 22 apart. Letting the chord
- * size the row made it 40 and the chords 17 apart.
- */
-.keys-card .line {
-  box-sizing: border-box;
-  height: 29px;
-  padding: 0 0 16px;
-  overflow: visible;
-}
-
-.keys-card .line-title {
-  font-weight: 440;
-}
-
-.reset-all {
-  margin: -6px 0 14px;
-}
-
-.keys {
-  flex-shrink: 0;
-  color: var(--text-weak);
-  font-family: var(--font-sans);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 11px;
-  letter-spacing: 0.05px;
 }
 
 .status {
