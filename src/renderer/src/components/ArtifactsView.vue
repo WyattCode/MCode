@@ -1,11 +1,56 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
-import { fileKind, type FileKind } from "../lib/session-info"
 import ArtifactPreview from "./ArtifactPreview.vue"
+
+/* MiMo's three buckets: documents, pages that run as apps, and everything else. */
+type Category = "doc" | "app" | "other"
+
+const extension = (path: string) => {
+  const name = path.slice(path.lastIndexOf("/") + 1)
+  const dot = name.lastIndexOf(".")
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ""
+}
+
+const DOCS = new Set(["md", "markdown", "txt", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "rtf", "csv"])
+const APPS = new Set(["html", "htm"])
+
+function category(path: string): Category {
+  const ext = extension(path)
+  return DOCS.has(ext) ? "doc" : APPS.has(ext) ? "app" : "other"
+}
+
+/* The tile's badge names the kind of file, as MiMo's do, rather than its bucket. */
+const BADGES: Record<string, string> = {
+  doc: "art.badge.word",
+  docx: "art.badge.word",
+  ppt: "art.badge.ppt",
+  pptx: "art.badge.ppt",
+  xls: "art.badge.excel",
+  xlsx: "art.badge.excel",
+  csv: "art.badge.excel",
+  pdf: "art.badge.pdf",
+  md: "art.badge.text",
+  markdown: "art.badge.text",
+  txt: "art.badge.text",
+  rtf: "art.badge.text",
+  html: "art.badge.web",
+  htm: "art.badge.web",
+  png: "art.badge.image",
+  jpg: "art.badge.image",
+  jpeg: "art.badge.image",
+  gif: "art.badge.image",
+  webp: "art.badge.image",
+  svg: "art.badge.image",
+  bmp: "art.badge.image",
+  avif: "art.badge.image",
+  ico: "art.badge.image",
+}
+
+const badgeOf = (path: string) => BADGES[extension(path)] ?? "art.badge.file"
 
 /**
  * Everything the sessions have produced, in one page - MiMo's 产物中心, built
@@ -21,7 +66,18 @@ const emit = defineEmits<{ open: [sessionID: string] }>()
 const loaded = ref(false)
 const groups = ref<SessionArtifacts[]>([])
 const query = ref("")
-const kind = ref<FileKind | "all">("all")
+const kind = ref<Category | "all">("all")
+
+/* MiMo waits 150ms after the last key before searching; switching a tab applies at once. */
+const needle = ref("")
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(query, (value) => {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => (needle.value = value), 150)
+})
+onBeforeUnmount(() => {
+  if (searchTimer) clearTimeout(searchTimer)
+})
 
 interface Row {
   key: string
@@ -30,7 +86,8 @@ interface Row {
   folder: string
   at: number
   size?: number
-  kind: FileKind
+  kind: Category
+  badge: string
   session: SessionArtifacts
 }
 
@@ -48,7 +105,8 @@ const rows = computed<Row[]>(() => {
         folder: cut === -1 ? "" : file.path.slice(0, cut),
         at: file.at,
         size: file.size,
-        kind: fileKind(file.path),
+        kind: category(file.path),
+        badge: badgeOf(file.path),
         session: group,
       })
     }
@@ -58,10 +116,10 @@ const rows = computed<Row[]>(() => {
 
 /** What the search leaves, before the bucket is chosen - the counts are of this. */
 const found = computed(() => {
-  const needle = query.value.trim().toLocaleLowerCase()
-  if (!needle) return rows.value
+  const words = needle.value.trim().toLocaleLowerCase()
+  if (!words) return rows.value
   return rows.value.filter(
-    (row) => row.path.toLocaleLowerCase().includes(needle) || row.session.title.toLocaleLowerCase().includes(needle),
+    (row) => row.path.toLocaleLowerCase().includes(words) || row.session.title.toLocaleLowerCase().includes(words),
   )
 })
 
@@ -70,7 +128,7 @@ const shown = computed(() => (kind.value === "all" ? found.value : found.value.f
 const counts = computed(() => ({
   all: found.value.length,
   doc: found.value.filter((row) => row.kind === "doc").length,
-  code: found.value.filter((row) => row.kind === "code").length,
+  app: found.value.filter((row) => row.kind === "app").length,
   other: found.value.filter((row) => row.kind === "other").length,
 }))
 
@@ -96,13 +154,10 @@ function setLayout(mode: "grid" | "list") {
   } catch {}
 }
 
-/* The bucket a file falls in, named the way its filter chip names it. */
-const KIND_LABEL: Record<FileKind, string> = { doc: "art.docs", code: "art.code", other: "art.other" }
-
 const FILTERS = [
   { id: "all", label: "art.all" },
   { id: "doc", label: "art.docs" },
-  { id: "code", label: "art.code" },
+  { id: "app", label: "art.apps" },
   { id: "other", label: "art.other" },
 ] as const
 
@@ -240,7 +295,7 @@ function enter(row: Row) {
               <path d="M4 1.8h5.2L12.5 5v9.2H4z" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round" />
               <path d="M9 1.8V5.2h3.4" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round" />
             </svg>
-            <span class="badge">{{ t(KIND_LABEL[row.kind]) }}</span>
+            <span class="badge" :data-badge="row.badge">{{ t(row.badge) }}</span>
             <div class="acts">
               <button class="act" data-act="preview" :aria-label="t('art.preview')" v-tip="{ label: t('art.preview') }" @click.stop="preview(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -315,7 +370,10 @@ function enter(row: Row) {
         </div>
       </div>
 
-      <p v-else-if="loaded" class="empty">{{ t("art.empty") }}</p>
+      <!-- A search that found nothing says so, rather than claiming there is nothing at all. -->
+      <p v-else-if="loaded" class="empty" :data-empty="needle.trim() ? 'no-match' : 'none'">
+        {{ needle.trim() ? t("art.noMatch") : t("art.empty") }}
+      </p>
     </div>
     <ArtifactPreview
       v-if="previewing"
