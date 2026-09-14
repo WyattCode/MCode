@@ -229,19 +229,6 @@ const api = {
       "new-session",
       "open-project",
       "settings",
-      "terminal",
-      "sidebar",
-      "abort",
-      "model",
-      "delete-session",
-      "back",
-      "forward",
-      "prev-session",
-      "next-session",
-      "prev-project",
-      "next-project",
-      "shortcuts",
-      "check-updates",
     ]
     const listeners = commands.map((command) => {
       const channel = `menu:${command}`
