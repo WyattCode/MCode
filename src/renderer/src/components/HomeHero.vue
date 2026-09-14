@@ -5,7 +5,7 @@ import { t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
-import RenameDialog from "./RenameDialog.vue"
+import NewProjectDialog from "./NewProjectDialog.vue"
 import Composer from "./Composer.vue"
 
 /**
@@ -133,9 +133,24 @@ function none() {
 /* Set while the blank project's name is being asked for. */
 const naming = ref(false)
 
-/* A new empty folder under the default project location, which the next task goes into. */
-async function createBlank(title: string) {
+/*
+ * The dialog's answer: with a source folder, that folder under the name given;
+ * without, a new empty folder under the default project location. Either way
+ * the next task goes into it.
+ */
+async function createBlank(title: string, source?: string) {
   naming.value = false
+  if (source) {
+    const config = app.config
+    const closed = config?.closedProjects ?? []
+    if (closed.includes(source)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== source) })
+    const folderName = source.split(/[\\/]/).filter(Boolean).pop()
+    if (title !== folderName) await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
+    added.value = source
+    picked.value = source
+    box.value?.focus()
+    return
+  }
   try {
     const made = await app.client?.request({ type: "project.createBlank", name: title })
     if (!made) return
@@ -251,14 +266,7 @@ async function hop() {
         </div>
       </div>
 
-      <RenameDialog
-        v-if="naming"
-        :value="t('home.blankDefault')"
-        :heading="t('home.blankTitle')"
-        :confirm="t('home.blankCreate')"
-        @close="naming = false"
-        @submit="createBlank"
-      />
+      <NewProjectDialog v-if="naming" :value="t('home.blankDefault')" @close="naming = false" @submit="createBlank" />
 
       <!-- Under the project row, which is the order MiMo reads in: the box,
            what it points at, and then what you might start with. -->
