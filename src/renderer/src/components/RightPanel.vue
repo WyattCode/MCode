@@ -10,6 +10,7 @@ import RpChat from "./right/RpChat.vue"
 import RpBrowser from "./right/RpBrowser.vue"
 import RpTerminal from "./right/RpTerminal.vue"
 import RpDiff from "./right/RpDiff.vue"
+import FloatingChat from "./right/FloatingChat.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
 import { ADD_MENU_ORDER, LAUNCH_KEYS, LAUNCH_ORDER, MENU_KEYS, TOOL_INFO, iconOf } from "../lib/right-tools"
 import { useApp } from "../stores/app"
@@ -341,6 +342,9 @@ defineExpose({
         </div>
       </div>
     </div>
+
+    <!-- MiMo's floating chat: over the foot of the expanded panel, in a conversation. Always in the page, for the composer's dock. -->
+    <FloatingChat :shown="rp.open && rp.fullscreen && Boolean(sessionID)" />
 
     <ContextMenu v-if="tabMenu" :x="tabMenu.x" :y="tabMenu.y" :items="tabMenuItems" @pick="pickTabMenu" @close="tabMenu = undefined" />
     <ContextMenu v-if="addMenu" :x="addMenu.x" :y="addMenu.y" :items="addItems" @pick="pickAdd" @close="addMenu = undefined" />

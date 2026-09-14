@@ -946,6 +946,14 @@ function toggleSidePanel() {
 /* MiMo's tool shortcuts ask for a conversation: on the home screen they do nothing. */
 const inConversation = computed(() => !isHome.value && !onboarding.value && Boolean(app.currentID))
 
+/*
+ * The box goes into MiMo's floating chat while the panel is expanded over the
+ * conversation - the same composer, moved, so a draft and its attachments come
+ * along. `#float-dock` lives in the right panel and is always in the page, so
+ * the Teleport always finds it.
+ */
+const floatingComposer = computed(() => inConversation.value && rp.open && rp.fullscreen)
+
 /* Ctrl+Shift+G: another review tab. */
 function openReviewTab() {
   if (inConversation.value) rp.openTool("review")
@@ -3731,9 +3739,10 @@ onBeforeUnmount(() => {
             <LiveEditPill :expanded="liveEditShowing" @toggle="toggleLiveReview" />
           </div>
           <div id="main-dock" class="main-dock" />
-          <Teleport :to="empty && !app.error ? '#hero-dock' : '#main-dock'">
+          <Teleport :to="floatingComposer ? '#float-dock' : empty && !app.error ? '#hero-dock' : '#main-dock'">
             <Composer
               ref="composer"
+              :resizable="!floatingComposer"
               @open-settings="openSettings"
               @connect="connectOpen = true"
               @shell="runShellCommand"

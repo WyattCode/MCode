@@ -65,6 +65,8 @@ const props = defineProps<{
   fresh?: boolean
   /** This box speaks for the side chat in the side column, not the open conversation. */
   side?: boolean
+  /** Whether its top edge drags it taller; off where MiMo docks it without one, over an expanded panel. */
+  resizable?: boolean
 }>()
 
 const app = useApp()
@@ -167,7 +169,7 @@ function pinned(value: string) {
 function resize() {
   const element = input.value
   if (!element) return
-  if (manualHeight.value !== null) {
+  if (manualHeight.value !== null && props.resizable !== false) {
     element.style.height = `${clampHeight(manualHeight.value)}px`
     return
   }
@@ -1616,6 +1618,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
       >
         <!-- MiMo's handle along the top edge: drag to resize, double-click to reset. -->
         <div
+          v-if="resizable !== false"
           class="resize-handle"
           data-resize-handle
           v-tip="{ label: t('composer.resizeHandle'), placement: 'top' }"

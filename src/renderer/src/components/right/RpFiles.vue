@@ -679,6 +679,11 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   outline: none;
 }
 
+/* Expanded, the floating chat stands over the foot: MiMo leaves its height and 8 more below. */
+:global(.right-panel.fullscreen) .fv-view {
+  padding-bottom: calc(var(--fc-h, 96px) + 8px);
+}
+
 /* MiMo's find bar: 42 down, 14 in from the end. */
 .fv-find {
   position: absolute;
