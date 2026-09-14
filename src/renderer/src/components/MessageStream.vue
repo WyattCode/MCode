@@ -5,6 +5,7 @@ import TextPart from "./parts/TextPart.vue"
 import ReasoningPart from "./parts/ReasoningPart.vue"
 import ToolPart from "./parts/ToolPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
+import TextShimmer from "./parts/TextShimmer.vue"
 import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
 import { preview } from "../lib/attach"
 import { openImagePreview } from "../lib/image-preview"
@@ -473,6 +474,41 @@ function steerWaiting(turn: Turn, at: number, steer: Steer): boolean {
   return !shownMessages.value.some((message) => message.role === "assistant" && message.time.created > steer.created)
 }
 
+/** Whether this is the turn still being worked on. */
+function liveTurn(at: number): boolean {
+  return at === turns.value.length - 1 && shownBusy.value
+}
+
+/*
+ * MiMo's head time: whole seconds as "12s", past a minute "1m 5s" - not
+ * worded per language. It counts up once a second while the turn runs.
+ */
+function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000))
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+}
+
+const now = ref(Date.now())
+let ticker: ReturnType<typeof setInterval> | undefined
+watch(
+  shownBusy,
+  (busy) => {
+    clearInterval(ticker)
+    ticker = undefined
+    if (!busy) return
+    now.value = Date.now()
+    ticker = setInterval(() => (now.value = Date.now()), 1000)
+  },
+  { immediate: true },
+)
+onBeforeUnmount(() => clearInterval(ticker))
+
+function headTime(turn: Turn, at: number): string | undefined {
+  if (!turn.started) return undefined
+  if (liveTurn(at)) return formatDuration(now.value - turn.started)
+  return turn.completed ? formatDuration(turn.completed - turn.started) : undefined
+}
+
 function elapsed(turn: Turn): string | undefined {
   if (!turn.started || !turn.completed) return undefined
   const seconds = Math.max(1, Math.round((turn.completed - turn.started) / 1000))
@@ -912,28 +948,30 @@ defineExpose({ stepMessage, scroller })
             run of tool calls away - offered, not imposed, so an answer still
             arrives with its work visible.
           -->
-          <div v-if="turn.started" class="run">
-            <span class="run-label">{{ turn.completed ? t("turn.processed") : t("turn.processing") }}</span>
-            <span v-if="elapsed(turn)" class="run-time">{{ elapsed(turn) }}</span>
-            <button
-              v-if="hasTools(turn)"
-              class="run-fold"
-              :aria-expanded="opened.has(turn.id)"
-              :aria-label="t('turn.steps')"
-              @click="foldRun(turn.id)"
-            >
-              <svg
-                class="run-chev"
-                :class="{ open: opened.has(turn.id) }"
-                width="13"
-                height="13"
-                viewBox="0 0 16 16"
-                fill="none"
-                aria-hidden="true"
-              >
-                <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
+          <!--
+            MiMo's harness head. While the turn runs it reads 已处理 with a sweep
+            over the word and the time counting up; once done, a turn that did
+            work is one button - the words, the time and a chevron - that folds
+            its steps away.
+          -->
+          <button
+            v-if="turn.started && hasTools(turn) && !liveTurn(at)"
+            type="button"
+            class="run foldable"
+            data-turn-head
+            :aria-expanded="opened.has(turn.id)"
+            :aria-label="t('turn.steps')"
+            @click="foldRun(turn.id)"
+          >
+            <span class="run-label">{{ t("turn.processed") }}</span>
+            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
+            <svg class="run-chev" :class="{ open: opened.has(turn.id) }" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+          <div v-else-if="turn.started" class="run" data-turn-head :data-live="liveTurn(at) ? 'true' : undefined">
+            <span class="run-label"><TextShimmer :text="t('turn.processed')" :active="liveTurn(at)" /></span>
+            <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
           </div>
 
           <div v-for="row in shown(turn)" :key="row.id" class="part">
@@ -1775,24 +1813,27 @@ defineExpose({ stepMessage, scroller })
   line-height: 16px;
 }
 
-.run-fold {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  color: var(--text-weak);
-  border-radius: 6px;
+.run-time {
+  font-variant-numeric: tabular-nums;
 }
 
-.run-fold:hover {
-  color: var(--text-base);
-  background: var(--surface-hover);
+/* The finished head that folds: the whole line is the button. */
+.run.foldable {
+  width: fit-content;
+  padding: 2px 0;
+  font: inherit;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 /* Along the line while the steps are away, and down once they are opened. */
 .run-chev {
+  flex-shrink: 0;
+  opacity: 0.5;
   transform: rotate(0deg);
-  transition: transform 0.12s;
+  transition: transform 0.15s;
 }
 
 .run-chev.open {
