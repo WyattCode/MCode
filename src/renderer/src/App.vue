@@ -30,6 +30,7 @@ import ServerPopover from "./components/ServerPopover.vue"
 import ImagePreview from "./components/ImagePreview.vue"
 import LiveEditPill from "./components/LiveEditPill.vue"
 import { fileRequest, reviewRequest } from "./lib/review-request"
+import { foldedMatches } from "./lib/find-folded"
 import { imagePreview } from "./lib/image-preview"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
@@ -315,7 +316,7 @@ watch(
  * hands Ctrl+F to whichever one the focus is in.
  */
 const mainPane = ref<HTMLElement>()
-const find = createFind({ wrapper: () => mainPane.value })
+const find = createFind({ wrapper: () => mainPane.value, hidden: foldedMatches })
 onMounted(() => find.mount())
 
 /*

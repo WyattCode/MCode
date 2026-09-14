@@ -159,6 +159,11 @@ export interface FindOptions {
   wrapper: () => HTMLElement | undefined
   /** What to search. Defaults to the wrapper. */
   root?: () => HTMLElement | undefined
+  /**
+   * Matches in content that is folded away and so not in the DOM - MiMo counts
+   * them into the total and says how many are not shown.
+   */
+  hidden?: (needle: string) => number
 }
 
 export interface Find {
@@ -166,6 +171,8 @@ export interface Find {
   query: Ref<string>
   index: Ref<number>
   count: Ref<number>
+  /** Matches inside folded content, not stepped to. */
+  hidden: Ref<number>
   setQuery(value: string): void
   focus(): void
   close(): void
@@ -183,6 +190,7 @@ export function createFind(options: FindOptions): Find {
   const query = ref("")
   const index = ref(0)
   const count = ref(0)
+  const hidden = ref(0)
 
   let input: HTMLInputElement | undefined
   let hits: Range[] = []
@@ -321,6 +329,7 @@ export function createFind(options: FindOptions): Find {
   function clear(): void {
     hits = []
     count.value = 0
+    hidden.value = 0
     index.value = 0
     clearPainted()
     clearOverlay()
@@ -341,6 +350,7 @@ export function createFind(options: FindOptions): Find {
     const at = ranges.length ? Math.min(desired, ranges.length - 1) : 0
     hits = ranges
     count.value = ranges.length
+    hidden.value = options.hidden?.(needle) ?? 0
     index.value = at
     const active = ranges[at]
     if (mode === "highlights") {
@@ -414,6 +424,7 @@ export function createFind(options: FindOptions): Find {
     query,
     index,
     count,
+    hidden,
     setQuery(value: string) {
       query.value = value
       index.value = 0

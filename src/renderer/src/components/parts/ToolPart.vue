@@ -128,7 +128,7 @@ const subject = computed(() => {
 </script>
 
 <template>
-  <div class="tool" :class="part.status">
+  <div class="tool" :class="part.status" :data-tool-part="part.id">
     <button class="head" @click="open = !open">
       <span class="verb">
         <TextShimmer :text="label" :active="part.status === 'running'" />

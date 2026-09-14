@@ -14,6 +14,7 @@ import { questionParts } from "../lib/question-parts"
 import { renderMarkdown } from "../lib/markdown"
 import { notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
+import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -420,6 +421,31 @@ function foldRun(id: string) {
   if (!next.delete(id)) next.add(id)
   opened.value = next
 }
+
+/*
+ * For find in the conversation: the matches in step rows that are folded away
+ * - a turn's steps not opened, or a group of lookups not expanded - and so not
+ * on screen to be searched. A row shows its title once it is drawn, so a row
+ * that is not in the page counts its title here. Only the main conversation
+ * registers.
+ */
+function foldedMatchCount(needle: string): number {
+  let total = 0
+  for (const turn of turns.value) {
+    for (const part of turn.parts) {
+      if (part.type !== "tool") continue
+      if (document.querySelector(`[data-tool-part="${CSS.escape(part.id)}"]`)) continue
+      total += occurrences(part.title ?? "", needle)
+    }
+  }
+  return total
+}
+
+let releaseFoldedCounter: (() => void) | undefined
+onMounted(() => {
+  if (!props.side) releaseFoldedCounter = registerFoldedCounter(foldedMatchCount)
+})
+onBeforeUnmount(() => releaseFoldedCounter?.())
 
 /** Whether this turn did any work worth folding. */
 function hasTools(turn: Turn): boolean {
