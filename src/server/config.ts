@@ -1,5 +1,6 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import fs from "node:fs/promises"
+import { watch as watchFiles, type FSWatcher } from "node:fs"
 import path from "node:path"
 import os from "node:os"
 import type {
@@ -409,6 +410,45 @@ export class Config {
 
   get(): AppConfig {
     return this.current
+  }
+
+  private watcher?: FSWatcher
+
+  /**
+   * Hand edits to config.json take effect without reopening the app.
+   *
+   * MiMo's MCP page says an edited config file counts from the next
+   * conversation; this reloads the document whenever the file on disk comes to
+   * say something other than what this process holds, and announces it the
+   * way a change made in the window is announced - so MCP servers reconnect and
+   * the window redraws. The folder is watched rather than the file, because a
+   * save by rename (this app's own, and many editors') replaces the file a
+   * watcher would be holding. A file that does not parse is left alone until it
+   * does.
+   */
+  watch(): void {
+    if (this.watcher) return
+    const file = this.storage.fileOf("config")
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      this.watcher = watchFiles(path.dirname(file), (_event, name) => {
+        if (name && name.toString() !== path.basename(file)) return
+        clearTimeout(timer)
+        timer = setTimeout(() => void this.reloadFromDisk(), 150)
+      })
+      this.watcher.unref()
+    } catch {
+      // A folder that cannot be watched only means edits wait for the next launch.
+    }
+  }
+
+  private async reloadFromDisk(): Promise<void> {
+    const stored = await this.storage.read<Partial<AppConfig>>("config").catch(() => undefined)
+    if (!stored || typeof stored !== "object") return
+    if (JSON.stringify(stored) === JSON.stringify(this.current)) return
+    this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    this.current.autoApprove = allowed(this.current.permissions)
+    this.bus.publish({ type: "config.updated", config: this.current })
   }
 
   async set(patch: Partial<AppConfig>): Promise<AppConfig> {

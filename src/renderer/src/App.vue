@@ -3905,11 +3905,7 @@ onBeforeUnmount(() => {
             one shape on an empty session and another the moment they sent - and
             the composer was torn down and rebuilt on that first message.
           -->
-          <PermissionDialog
-            v-if="app.permission"
-            :request="app.permission"
-            :covered="modalOpen || paletteOpen"
-          />
+          <PermissionDialog v-if="app.permission" :request="app.permission" />
           <!--
             The plan, above the box it is being carried out from. Drawn only
             when a turn has recorded one, so an ordinary conversation is not

@@ -1,46 +1,782 @@
 import { appendFileSync } from "node:fs"
 import { exec } from "node:child_process"
-import { createServer, type Server } from "node:http"
-import type { AddressInfo } from "node:net"
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
+import { createConnection } from "node:net"
 import { createHash, randomBytes } from "node:crypto"
-import type { Storage } from "./storage"
+import type { McpOAuthConfig } from "@shared/protocol"
+import { writeAtomic, type Storage } from "./storage"
 
 /**
- * Signing in to a remote MCP server, as MiMo's 授权 does.
+ * Signing in to a remote MCP server, the way MiMo's engine does it.
  *
- * The MCP authorization flow is OAuth 2.1 with the discovery and dynamic client
- * registration the spec asks servers to offer: the server's 401 names its
- * protected-resource metadata, that names the authorization server, whose
- * metadata gives the endpoints. This registers MCode as a public client, sends
- * the reader's browser to the authorization page with a PKCE challenge, takes
- * the code on a loopback port that exists only for this attempt, and keeps the
- * tokens it is given - on this machine, in the app's own storage, never shown
- * to the window.
+ * MiMo's engine hands this to the MCP SDK's `auth()` with a provider of its
+ * own; this is the same flow written out here, so MCode keeps its no-SDK MCP
+ * client: protected-resource metadata (from the 401's WWW-Authenticate, then
+ * the path-aware well-known address, then the root one), authorization server
+ * metadata (OAuth, then OpenID, path-inserted before path-appended), dynamic
+ * client registration unless a client is configured, the refresh grant before
+ * a new authorization, and PKCE S256 with state on the fixed loopback callback
+ * http://127.0.0.1:19876/mcp/oauth/callback. An invalid client drops everything
+ * stored and starts again; an invalid grant drops the tokens and starts again.
+ *
+ * Tokens stay on this machine, in the app's storage with owner-only access,
+ * and never reach the window.
  */
 
-export interface McpOAuthRecord {
-  /** The server URL the tokens were issued for; a server pointed elsewhere asks again. */
-  url: string
-  clientId: string
-  clientSecret?: string
-  tokenEndpoint: string
-  resource: string
-  access: string
-  refresh?: string
-  /** Epoch ms. */
-  expires?: number
+export const OAUTH_CALLBACK_PORT = 19876
+export const OAUTH_CALLBACK_PATH = "/mcp/oauth/callback"
+const PROTOCOL_VERSION = "2025-11-25"
+const CALLBACK_TIMEOUT = 5 * 60 * 1000
+const KEY = "mcp-auth"
+
+export class UnauthorizedError extends Error {
+  constructor(message = "Unauthorized") {
+    super(message)
+    this.name = "UnauthorizedError"
+  }
 }
 
-const KEY = "mcp-auth"
-const TIMEOUT = 300_000
-/** Tokens are renewed this long before they run out rather than on the dot. */
-const EARLY = 60_000
+const OAUTH_ERROR_CODES = new Set([
+  "invalid_request",
+  "invalid_client",
+  "invalid_grant",
+  "unauthorized_client",
+  "unsupported_grant_type",
+  "invalid_scope",
+  "access_denied",
+  "server_error",
+  "temporarily_unavailable",
+  "unsupported_response_type",
+  "unsupported_token_type",
+  "invalid_token",
+  "method_not_allowed",
+  "too_many_requests",
+  "invalid_client_metadata",
+  "insufficient_scope",
+  "invalid_target",
+])
+
+/** An error the authorization server named; an unrecognised one counts as server_error. */
+export class OAuthError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(message || code)
+    this.name = "OAuthError"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// What is kept per server
+// ---------------------------------------------------------------------------
+
+export interface McpAuthTokens {
+  accessToken: string
+  refreshToken?: string
+  /** Epoch seconds. */
+  expiresAt?: number
+  scope?: string
+}
+
+export interface McpAuthClient {
+  clientId: string
+  clientSecret?: string
+  clientIdIssuedAt?: number
+  clientSecretExpiresAt?: number
+}
+
+export interface McpAuthEntry {
+  tokens?: McpAuthTokens
+  clientInfo?: McpAuthClient
+  codeVerifier?: string
+  oauthState?: string
+  /** The server the entry belongs to; a server pointed elsewhere starts over. */
+  serverUrl?: string
+}
+
+export class McpAuthStore {
+  private queue: Promise<void> = Promise.resolve()
+
+  constructor(private readonly storage: Storage) {}
+
+  async all(): Promise<Record<string, McpAuthEntry>> {
+    return (await this.storage.read<Record<string, McpAuthEntry>>(KEY).catch(() => undefined)) ?? {}
+  }
+
+  async get(name: string): Promise<McpAuthEntry | undefined> {
+    return (await this.all())[name]
+  }
+
+  async getForUrl(name: string, serverUrl: string): Promise<McpAuthEntry | undefined> {
+    const entry = await this.get(name)
+    return entry?.serverUrl && entry.serverUrl === serverUrl ? entry : undefined
+  }
+
+  /* One write at a time, each re-reading the file, so two updates cannot lose each other. */
+  private mutate(change: (all: Record<string, McpAuthEntry>) => void): Promise<void> {
+    const next = this.queue
+      .catch(() => {})
+      .then(async () => {
+        const all = await this.all()
+        change(all)
+        await writeAtomic(this.storage.fileOf(KEY), JSON.stringify(all, null, 2), 0o600)
+      })
+    this.queue = next
+    return next
+  }
+
+  set(name: string, entry: McpAuthEntry, serverUrl?: string): Promise<void> {
+    return this.mutate((all) => {
+      all[name] = serverUrl ? { ...entry, serverUrl } : entry
+    })
+  }
+
+  remove(name: string): Promise<void> {
+    return this.mutate((all) => {
+      delete all[name]
+    })
+  }
+
+  update<K extends keyof McpAuthEntry>(name: string, field: K, value: McpAuthEntry[K], serverUrl?: string): Promise<void> {
+    return this.mutate((all) => {
+      const entry = all[name] ?? {}
+      entry[field] = value
+      if (serverUrl) entry.serverUrl = serverUrl
+      all[name] = entry
+    })
+  }
+
+  clear(name: string, field: keyof McpAuthEntry): Promise<void> {
+    return this.mutate((all) => {
+      if (all[name]) delete all[name][field]
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The provider: what the flow asks of the app
+// ---------------------------------------------------------------------------
+
+interface ClientInformation {
+  client_id: string
+  client_secret?: string
+  client_id_issued_at?: number
+  client_secret_expires_at?: number
+  token_endpoint_auth_method?: string
+}
+
+interface TokenSet {
+  access_token: string
+  token_type?: string
+  refresh_token?: string
+  expires_in?: number
+  scope?: string
+}
+
+export class McpOAuthProvider {
+  constructor(
+    readonly name: string,
+    readonly serverUrl: string,
+    private readonly config: McpOAuthConfig,
+    private readonly onRedirect: (url: URL) => void | Promise<void>,
+    private readonly store: McpAuthStore,
+  ) {}
+
+  get redirectUrl(): string {
+    return this.config.redirectUri ?? `http://127.0.0.1:${OAUTH_CALLBACK_PORT}${OAUTH_CALLBACK_PATH}`
+  }
+
+  get clientMetadata() {
+    return {
+      redirect_uris: [this.redirectUrl],
+      client_name: "MCode",
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: this.config.clientSecret ? "client_secret_post" : "none",
+      ...(this.config.scope ? { scope: this.config.scope } : {}),
+    }
+  }
+
+  async clientInformation(): Promise<ClientInformation | undefined> {
+    if (this.config.clientId) return { client_id: this.config.clientId, client_secret: this.config.clientSecret }
+    const info = (await this.store.getForUrl(this.name, this.serverUrl))?.clientInfo
+    if (!info) return undefined
+    // A registration whose secret has run out is registered again.
+    if (info.clientSecretExpiresAt && info.clientSecretExpiresAt < Date.now() / 1000) return undefined
+    return { client_id: info.clientId, client_secret: info.clientSecret }
+  }
+
+  saveClientInformation(info: ClientInformation): Promise<void> {
+    return this.store.update(
+      this.name,
+      "clientInfo",
+      {
+        clientId: info.client_id,
+        ...(info.client_secret ? { clientSecret: info.client_secret } : {}),
+        ...(info.client_id_issued_at ? { clientIdIssuedAt: info.client_id_issued_at } : {}),
+        ...(info.client_secret_expires_at ? { clientSecretExpiresAt: info.client_secret_expires_at } : {}),
+      },
+      this.serverUrl,
+    )
+  }
+
+  async tokens(): Promise<TokenSet | undefined> {
+    const tokens = (await this.store.getForUrl(this.name, this.serverUrl))?.tokens
+    if (!tokens) return undefined
+    return {
+      access_token: tokens.accessToken,
+      token_type: "Bearer",
+      refresh_token: tokens.refreshToken,
+      expires_in: tokens.expiresAt ? Math.max(0, Math.floor(tokens.expiresAt - Date.now() / 1000)) : undefined,
+      scope: tokens.scope,
+    }
+  }
+
+  saveTokens(tokens: TokenSet): Promise<void> {
+    return this.store.update(
+      this.name,
+      "tokens",
+      {
+        accessToken: tokens.access_token,
+        ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+        ...(tokens.expires_in ? { expiresAt: Date.now() / 1000 + tokens.expires_in } : {}),
+        ...(tokens.scope ? { scope: tokens.scope } : {}),
+      },
+      this.serverUrl,
+    )
+  }
+
+  async redirectToAuthorization(url: URL): Promise<void> {
+    await this.onRedirect(url)
+  }
+
+  saveCodeVerifier(verifier: string): Promise<void> {
+    return this.store.update(this.name, "codeVerifier", verifier)
+  }
+
+  async codeVerifier(): Promise<string> {
+    const verifier = (await this.store.get(this.name))?.codeVerifier
+    if (!verifier) throw new Error(`No code verifier saved for MCP server: ${this.name}`)
+    return verifier
+  }
+
+  async state(): Promise<string> {
+    const stored = (await this.store.get(this.name))?.oauthState
+    if (stored) return stored
+    const fresh = randomBytes(32).toString("hex")
+    await this.store.update(this.name, "oauthState", fresh)
+    return fresh
+  }
+
+  async invalidateCredentials(scope: "all" | "client" | "tokens"): Promise<void> {
+    const entry = await this.store.get(this.name)
+    if (!entry) return
+    if (scope === "all") return this.store.remove(this.name)
+    const next = { ...entry }
+    if (scope === "client") delete next.clientInfo
+    else delete next.tokens
+    await this.store.set(this.name, next)
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The flow
+// ---------------------------------------------------------------------------
+
+interface ResourceMetadata {
+  resource: string
+  authorization_servers?: string[]
+  scopes_supported?: string[]
+}
+
+interface ServerMetadata {
+  authorization_endpoint: string
+  token_endpoint: string
+  registration_endpoint?: string
+  response_types_supported: string[]
+  code_challenge_methods_supported?: string[]
+  token_endpoint_auth_methods_supported?: string[]
+}
+
+export type AuthResult = "AUTHORIZED" | "REDIRECT"
+
+export interface AuthOptions {
+  serverUrl: string
+  authorizationCode?: string
+  scope?: string
+  resourceMetadataUrl?: URL
+}
+
+/** Signs in, renews, or sends the reader to the authorization page; retried once on a stale client or grant. */
+export async function auth(provider: McpOAuthProvider, options: AuthOptions): Promise<AuthResult> {
+  try {
+    return await authInternal(provider, options)
+  } catch (err) {
+    if (err instanceof OAuthError && (err.code === "invalid_client" || err.code === "unauthorized_client")) {
+      await provider.invalidateCredentials("all")
+      return authInternal(provider, options)
+    }
+    if (err instanceof OAuthError && err.code === "invalid_grant") {
+      await provider.invalidateCredentials("tokens")
+      return authInternal(provider, options)
+    }
+    throw err
+  }
+}
+
+async function authInternal(provider: McpOAuthProvider, options: AuthOptions): Promise<AuthResult> {
+  const { serverUrl, authorizationCode, scope, resourceMetadataUrl } = options
+  const info = await discoverServerInfo(serverUrl, resourceMetadataUrl)
+  const resource = selectResourceURL(serverUrl, info.resourceMetadata)
+
+  let client = await provider.clientInformation()
+  if (!client) {
+    if (authorizationCode !== undefined) {
+      throw new Error("Existing OAuth client information is required when exchanging an authorization code")
+    }
+    client = await registerClient(info.authorizationServerUrl, info.metadata, provider.clientMetadata)
+    await provider.saveClientInformation(client)
+  }
+
+  if (authorizationCode !== undefined) {
+    const params = new URLSearchParams({
+      grant_type: "authorization_code",
+      code: authorizationCode,
+      code_verifier: await provider.codeVerifier(),
+      redirect_uri: provider.redirectUrl,
+    })
+    const tokens = await tokenRequest(info.authorizationServerUrl, info.metadata, params, client, resource)
+    await provider.saveTokens(tokens)
+    return "AUTHORIZED"
+  }
+
+  const held = await provider.tokens()
+  if (held?.refresh_token) {
+    try {
+      const params = new URLSearchParams({ grant_type: "refresh_token", refresh_token: held.refresh_token })
+      const fresh = await tokenRequest(info.authorizationServerUrl, info.metadata, params, client, resource)
+      await provider.saveTokens({ refresh_token: held.refresh_token, ...fresh })
+      return "AUTHORIZED"
+    } catch (err) {
+      // A refusal the server spelled out is final; anything else falls through to a new sign-in.
+      if (err instanceof OAuthError && err.code !== "server_error") throw err
+    }
+  }
+
+  const state = await provider.state()
+  const { url, verifier } = startAuthorization(info.authorizationServerUrl, info.metadata, {
+    client,
+    redirectUrl: provider.redirectUrl,
+    scope: scope || info.resourceMetadata?.scopes_supported?.join(" ") || provider.clientMetadata.scope,
+    state,
+    resource,
+  })
+  await provider.saveCodeVerifier(verifier)
+  await provider.redirectToAuthorization(url)
+  return "REDIRECT"
+}
+
+/** The resource metadata address and scope a 401 names. */
+export function wwwAuthenticateParams(response: Response): { resourceMetadataUrl?: URL; scope?: string } {
+  const header = response.headers.get("www-authenticate")
+  if (!header) return {}
+  const [type, scheme] = header.split(" ")
+  if (type?.toLowerCase() !== "bearer" || !scheme) return {}
+  const field = (name: string) => {
+    const match = new RegExp(`${name}=(?:"([^"]+)"|([^\\s,]+))`).exec(header)
+    return match ? match[1] || match[2] : undefined
+  }
+  let resourceMetadataUrl: URL | undefined
+  const hinted = field("resource_metadata")
+  if (hinted) {
+    try {
+      resourceMetadataUrl = new URL(hinted)
+    } catch {
+      // Not an address; discovery goes on without it.
+    }
+  }
+  const scope = field("scope")
+  return { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) }
+}
+
+async function fetchMetadata(url: URL, headers?: Record<string, string>): Promise<Response | undefined> {
+  try {
+    return await fetch(url, headers ? { headers } : undefined)
+  } catch (err) {
+    if (err instanceof TypeError) return headers ? fetchMetadata(url, undefined) : undefined
+    throw err
+  }
+}
+
+function wellKnownPath(prefix: string, pathname: string): string {
+  const trimmed = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname
+  return `/.well-known/${prefix}${trimmed}`
+}
+
+async function discoverResourceMetadata(serverUrl: string, metadataUrl?: URL): Promise<ResourceMetadata> {
+  const issuer = new URL(serverUrl)
+  const headers = { "MCP-Protocol-Version": PROTOCOL_VERSION }
+  let url: URL
+  if (metadataUrl) {
+    url = new URL(metadataUrl)
+  } else {
+    url = new URL(wellKnownPath("oauth-protected-resource", issuer.pathname), issuer)
+    url.search = issuer.search
+  }
+  let response = await fetchMetadata(url, headers)
+  const retry = !response || (response.status >= 400 && response.status < 500 && issuer.pathname !== "/")
+  if (!metadataUrl && retry) {
+    await response?.body?.cancel().catch(() => {})
+    response = await fetchMetadata(new URL("/.well-known/oauth-protected-resource", issuer), headers)
+  }
+  if (!response || response.status === 404) {
+    await response?.body?.cancel().catch(() => {})
+    throw new Error("Resource server does not implement OAuth 2.0 Protected Resource Metadata.")
+  }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {})
+    throw new Error(`HTTP ${response.status} trying to load well-known OAuth protected resource metadata.`)
+  }
+  const body = (await response.json()) as ResourceMetadata
+  if (!body || typeof body.resource !== "string") throw new Error("Invalid OAuth protected resource metadata")
+  return body
+}
+
+function discoveryUrls(authorizationServerUrl: string): URL[] {
+  const url = new URL(authorizationServerUrl)
+  if (url.pathname === "/") {
+    return [new URL("/.well-known/oauth-authorization-server", url.origin), new URL("/.well-known/openid-configuration", url.origin)]
+  }
+  const pathname = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname
+  return [
+    new URL(`/.well-known/oauth-authorization-server${pathname}`, url.origin),
+    new URL(`/.well-known/openid-configuration${pathname}`, url.origin),
+    new URL(`${pathname}/.well-known/openid-configuration`, url.origin),
+  ]
+}
+
+async function discoverServerMetadata(authorizationServerUrl: string): Promise<ServerMetadata | undefined> {
+  const headers = { "MCP-Protocol-Version": PROTOCOL_VERSION, Accept: "application/json" }
+  for (const url of discoveryUrls(authorizationServerUrl)) {
+    const response = await fetchMetadata(url, headers)
+    if (!response) continue
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {})
+      if (response.status >= 400 && response.status < 500) continue
+      throw new Error(`HTTP ${response.status} trying to load authorization server metadata from ${url}`)
+    }
+    const body = (await response.json()) as ServerMetadata
+    if (
+      !body ||
+      typeof body.authorization_endpoint !== "string" ||
+      typeof body.token_endpoint !== "string" ||
+      !Array.isArray(body.response_types_supported)
+    ) {
+      throw new Error(`Invalid authorization server metadata from ${url}`)
+    }
+    return body
+  }
+  return undefined
+}
+
+async function discoverServerInfo(serverUrl: string, resourceMetadataUrl?: URL) {
+  let resourceMetadata: ResourceMetadata | undefined
+  let authorizationServerUrl: string | undefined
+  try {
+    resourceMetadata = await discoverResourceMetadata(serverUrl, resourceMetadataUrl)
+    authorizationServerUrl = resourceMetadata.authorization_servers?.[0]
+  } catch {
+    // A server without resource metadata is its own authorization server.
+  }
+  authorizationServerUrl ??= String(new URL("/", serverUrl))
+  const metadata = await discoverServerMetadata(authorizationServerUrl)
+  return { authorizationServerUrl, metadata, resourceMetadata }
+}
+
+function selectResourceURL(serverUrl: string, resourceMetadata?: ResourceMetadata): URL | undefined {
+  if (!resourceMetadata) return undefined
+  const requested = new URL(serverUrl)
+  requested.hash = ""
+  const configured = new URL(resourceMetadata.resource)
+  const requestedPath = requested.pathname.endsWith("/") ? requested.pathname : `${requested.pathname}/`
+  const configuredPath = configured.pathname.endsWith("/") ? configured.pathname : `${configured.pathname}/`
+  const allowed =
+    requested.origin === configured.origin &&
+    requested.pathname.length >= configured.pathname.length &&
+    requestedPath.startsWith(configuredPath)
+  if (!allowed) {
+    throw new Error(`Protected resource ${resourceMetadata.resource} does not match expected ${requested} (or origin)`)
+  }
+  return configured
+}
+
+async function errorFrom(response: Response): Promise<OAuthError> {
+  const body = await response.text().catch(() => "")
+  try {
+    const parsed = JSON.parse(body) as { error?: string; error_description?: string }
+    if (typeof parsed.error !== "string") throw new Error("no error field")
+    const code = OAUTH_ERROR_CODES.has(parsed.error) ? parsed.error : "server_error"
+    return new OAuthError(code, parsed.error_description || "")
+  } catch (err) {
+    return new OAuthError(
+      "server_error",
+      `HTTP ${response.status}: Invalid OAuth error response: ${err instanceof Error ? err.message : String(err)}. Raw body: ${body}`,
+    )
+  }
+}
+
+async function registerClient(
+  authorizationServerUrl: string,
+  metadata: ServerMetadata | undefined,
+  clientMetadata: Record<string, unknown>,
+): Promise<ClientInformation> {
+  let url: URL
+  if (metadata) {
+    if (!metadata.registration_endpoint) {
+      throw new Error("Incompatible auth server: does not support dynamic client registration")
+    }
+    url = new URL(metadata.registration_endpoint)
+  } else {
+    url = new URL("/register", authorizationServerUrl)
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(clientMetadata),
+  })
+  if (!response.ok) throw await errorFrom(response)
+  const info = (await response.json()) as ClientInformation
+  if (!info || typeof info.client_id !== "string") throw new Error("Client registration returned no client_id")
+  return info
+}
+
+function clientAuthMethod(client: ClientInformation, supported: string[]): string {
+  const hasSecret = client.client_secret !== undefined
+  if (supported.length === 0) return hasSecret ? "client_secret_post" : "none"
+  const own = client.token_endpoint_auth_method
+  if (own && ["client_secret_basic", "client_secret_post", "none"].includes(own) && supported.includes(own)) return own
+  if (hasSecret && supported.includes("client_secret_basic")) return "client_secret_basic"
+  if (hasSecret && supported.includes("client_secret_post")) return "client_secret_post"
+  if (supported.includes("none")) return "none"
+  return hasSecret ? "client_secret_post" : "none"
+}
+
+async function tokenRequest(
+  authorizationServerUrl: string,
+  metadata: ServerMetadata | undefined,
+  params: URLSearchParams,
+  client: ClientInformation,
+  resource?: URL,
+): Promise<TokenSet> {
+  const url = metadata?.token_endpoint ? new URL(metadata.token_endpoint) : new URL("/token", authorizationServerUrl)
+  const headers = new Headers({ "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" })
+  if (resource) params.set("resource", resource.href)
+  const method = clientAuthMethod(client, metadata?.token_endpoint_auth_methods_supported ?? [])
+  if (method === "client_secret_basic") {
+    if (!client.client_secret) throw new Error("client_secret_basic authentication requires a client_secret")
+    headers.set("Authorization", `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}`)
+  } else {
+    params.set("client_id", client.client_id)
+    if (method === "client_secret_post" && client.client_secret) params.set("client_secret", client.client_secret)
+  }
+  const response = await fetch(url, { method: "POST", headers, body: params })
+  if (!response.ok) throw await errorFrom(response)
+  const tokens = (await response.json()) as TokenSet
+  if (!tokens || typeof tokens.access_token !== "string") throw new Error("The token response carried no access_token")
+  return tokens
+}
+
+function startAuthorization(
+  authorizationServerUrl: string,
+  metadata: ServerMetadata | undefined,
+  input: { client: ClientInformation; redirectUrl: string; scope?: string; state: string; resource?: URL },
+): { url: URL; verifier: string } {
+  let url: URL
+  if (metadata) {
+    url = new URL(metadata.authorization_endpoint)
+    if (!metadata.response_types_supported.includes("code")) {
+      throw new Error("Incompatible auth server: does not support response type code")
+    }
+    if (metadata.code_challenge_methods_supported && !metadata.code_challenge_methods_supported.includes("S256")) {
+      throw new Error("Incompatible auth server: does not support code challenge method S256")
+    }
+  } else {
+    url = new URL("/authorize", authorizationServerUrl)
+  }
+  const verifier = randomBytes(32).toString("base64url")
+  const challenge = createHash("sha256").update(verifier).digest("base64url")
+  url.searchParams.set("response_type", "code")
+  url.searchParams.set("client_id", input.client.client_id)
+  url.searchParams.set("code_challenge", challenge)
+  url.searchParams.set("code_challenge_method", "S256")
+  url.searchParams.set("redirect_uri", input.redirectUrl)
+  url.searchParams.set("state", input.state)
+  if (input.scope) url.searchParams.set("scope", input.scope)
+  if (input.scope?.includes("offline_access")) url.searchParams.append("prompt", "consent")
+  if (input.resource) url.searchParams.set("resource", input.resource.href)
+  return { url, verifier }
+}
+
+// ---------------------------------------------------------------------------
+// The callback listener and the browser
+// ---------------------------------------------------------------------------
+
+interface PendingCallback {
+  resolve: (code: string) => void
+  reject: (error: Error) => void
+  timeout: ReturnType<typeof setTimeout>
+}
+
+let callbackServer: Server | undefined
+let currentPort = OAUTH_CALLBACK_PORT
+let currentPath = OAUTH_CALLBACK_PATH
+const pendingCallbacks = new Map<string, PendingCallback>()
+const stateByServer = new Map<string, string>()
+
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+}
+
+const PAGE_STYLE =
+  "body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#161616;color:#e8e8e8}main{text-align:center;padding:2rem}p{color:#9a9a9a}code{display:block;margin-top:1rem;padding:.75rem 1rem;border-radius:8px;background:#2a1b1b;color:#f0a8a8}"
+
+const PAGE_OK = `<!doctype html><html><head><meta charset="utf-8"><title>MCode</title><style>${PAGE_STYLE}</style></head><body><main><h1>Signed in</h1><p>You can close this tab and return to MCode.</p></main><script>setTimeout(() => window.close(), 2000)</script></body></html>`
+
+const pageFailed = (reason: string) =>
+  `<!doctype html><html><head><meta charset="utf-8"><title>MCode</title><style>${PAGE_STYLE}</style></head><body><main><h1>Sign-in did not complete</h1><p>Return to MCode and try again.</p><code>${escapeHtml(reason)}</code></main></body></html>`
+
+function forget(state: string) {
+  for (const [name, held] of stateByServer) {
+    if (held === state) {
+      stateByServer.delete(name)
+      break
+    }
+  }
+}
+
+function handleCallback(request: IncomingMessage, response: ServerResponse) {
+  const url = new URL(request.url || "/", `http://127.0.0.1:${currentPort}`)
+  if (url.pathname !== currentPath) {
+    response.writeHead(404).end("Not found")
+    return
+  }
+  const code = url.searchParams.get("code")
+  const state = url.searchParams.get("state")
+  const error = url.searchParams.get("error")
+  const html = (status: number, body: string) => response.writeHead(status, { "Content-Type": "text/html; charset=utf-8" }).end(body)
+  if (!state) {
+    html(400, pageFailed("Missing required state parameter"))
+    return
+  }
+  if (error) {
+    const reason = url.searchParams.get("error_description") || error
+    const pending = pendingCallbacks.get(state)
+    if (pending) {
+      clearTimeout(pending.timeout)
+      pendingCallbacks.delete(state)
+      forget(state)
+      pending.reject(new Error(reason))
+    }
+    html(200, pageFailed(reason))
+    return
+  }
+  if (!code) {
+    html(400, pageFailed("No authorization code provided"))
+    return
+  }
+  const pending = pendingCallbacks.get(state)
+  if (!pending) {
+    html(400, pageFailed("Invalid or expired state parameter"))
+    return
+  }
+  clearTimeout(pending.timeout)
+  pendingCallbacks.delete(state)
+  forget(state)
+  pending.resolve(code)
+  html(200, PAGE_OK)
+}
+
+function portInUse(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = createConnection(port, "127.0.0.1")
+    socket.on("connect", () => {
+      socket.destroy()
+      resolve(true)
+    })
+    socket.on("error", () => resolve(false))
+  })
+}
+
+function parseRedirectUri(redirectUri?: string): { port: number; path: string } {
+  if (!redirectUri) return { port: OAUTH_CALLBACK_PORT, path: OAUTH_CALLBACK_PATH }
+  try {
+    const url = new URL(redirectUri)
+    const port = url.port ? Number.parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80
+    return { port, path: url.pathname || OAUTH_CALLBACK_PATH }
+  } catch {
+    return { port: OAUTH_CALLBACK_PORT, path: OAUTH_CALLBACK_PATH }
+  }
+}
+
+/** Starts the callback listener on the redirect's port, unless something already answers there. */
+export async function ensureCallbackServer(redirectUri?: string): Promise<void> {
+  const { port, path } = parseRedirectUri(redirectUri)
+  if (callbackServer && (currentPort !== port || currentPath !== path)) await stopCallbackServer()
+  if (callbackServer) return
+  if (await portInUse(port)) return
+  currentPort = port
+  currentPath = path
+  const server = createServer(handleCallback)
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject)
+    server.listen(port, "127.0.0.1", () => resolve())
+  })
+  server.unref()
+  callbackServer = server
+}
+
+export function waitForCallback(state: string, name?: string): Promise<string> {
+  if (name) stateByServer.set(name, state)
+  return new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      if (!pendingCallbacks.has(state)) return
+      pendingCallbacks.delete(state)
+      if (name) stateByServer.delete(name)
+      reject(new Error("OAuth callback timeout - authorization took too long"))
+    }, CALLBACK_TIMEOUT)
+    pendingCallbacks.set(state, { resolve, reject, timeout })
+  })
+}
+
+export function cancelCallback(name: string): void {
+  const state = stateByServer.get(name)
+  const key = state ?? name
+  const pending = pendingCallbacks.get(key)
+  if (!pending) return
+  clearTimeout(pending.timeout)
+  pendingCallbacks.delete(key)
+  stateByServer.delete(name)
+  pending.reject(new Error("Authorization cancelled"))
+}
+
+export async function stopCallbackServer(): Promise<void> {
+  const server = callbackServer
+  callbackServer = undefined
+  if (server) await new Promise<void>((resolve) => server.close(() => resolve()))
+  for (const pending of pendingCallbacks.values()) {
+    clearTimeout(pending.timeout)
+    pending.reject(new Error("OAuth callback server stopped"))
+  }
+  pendingCallbacks.clear()
+  stateByServer.clear()
+}
 
 /*
  * The system browser, without Electron in the server layer. A test can name a
  * file to receive the address instead, so no browser opens during a probe.
  */
-function openInBrowser(url: string): void {
+export function openInBrowser(url: string): void {
   const log = process.env.MCODE_OAUTH_OPEN_FILE
   if (log) {
     appendFileSync(log, `${url}\n`)
@@ -50,245 +786,4 @@ function openInBrowser(url: string): void {
   if (process.platform === "win32") exec(`start "" "${quoted}"`)
   else if (process.platform === "darwin") exec(`open "${quoted}"`)
   else exec(`xdg-open "${quoted}"`)
-}
-
-async function readJSON<T>(url: string): Promise<T | undefined> {
-  try {
-    const response = await fetch(url, { headers: { accept: "application/json" } })
-    if (!response.ok) return undefined
-    return (await response.json()) as T
-  } catch {
-    return undefined
-  }
-}
-
-interface Endpoints {
-  resource: string
-  scopes?: string[]
-  authorize: string
-  token: string
-  register?: string
-}
-
-async function discover(serverURL: string, headers?: Record<string, string>): Promise<Endpoints> {
-  const target = new URL(serverURL)
-  let hint: string | undefined
-  try {
-    const probe = await fetch(serverURL, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream", ...(headers ?? {}) },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 0,
-        method: "initialize",
-        params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "MCode", version: "0" } },
-      }),
-    })
-    hint = /resource_metadata="([^"]+)"/i.exec(probe.headers.get("www-authenticate") ?? "")?.[1]
-    await probe.body?.cancel().catch(() => {})
-  } catch {
-    // A server that cannot be reached at all is found out by the lookups below.
-  }
-
-  const path = target.pathname.replace(/\/$/, "")
-  let resource: { resource?: string; authorization_servers?: string[]; scopes_supported?: string[] } | undefined
-  for (const candidate of [
-    hint,
-    `${target.origin}/.well-known/oauth-protected-resource${path}`,
-    `${target.origin}/.well-known/oauth-protected-resource`,
-  ]) {
-    if (!candidate) continue
-    resource = await readJSON(candidate)
-    if (resource) break
-  }
-
-  const issuer = new URL(resource?.authorization_servers?.[0] ?? target.origin)
-  const issuerPath = issuer.pathname.replace(/\/$/, "")
-  let meta: { authorization_endpoint?: string; token_endpoint?: string; registration_endpoint?: string } | undefined
-  for (const candidate of [
-    `${issuer.origin}/.well-known/oauth-authorization-server${issuerPath}`,
-    `${issuer.origin}/.well-known/openid-configuration${issuerPath}`,
-    issuerPath ? `${issuer.origin}${issuerPath}/.well-known/openid-configuration` : undefined,
-  ]) {
-    if (!candidate) continue
-    meta = await readJSON(candidate)
-    if (meta) break
-  }
-
-  return {
-    resource: resource?.resource ?? serverURL,
-    ...(resource?.scopes_supported?.length ? { scopes: resource.scopes_supported } : {}),
-    authorize: meta?.authorization_endpoint ?? `${issuer.origin}/authorize`,
-    token: meta?.token_endpoint ?? `${issuer.origin}/token`,
-    // Without metadata the spec's default path is tried; with metadata, only what it names.
-    register: meta ? meta.registration_endpoint : `${issuer.origin}/register`,
-  }
-}
-
-const PAGE_OK =
-  '<!doctype html><meta charset="utf-8"><title>MCode</title><p style="font:15px system-ui;margin:48px">Authorization complete. You can close this tab and return to MCode.</p>'
-const PAGE_FAILED =
-  '<!doctype html><meta charset="utf-8"><title>MCode</title><p style="font:15px system-ui;margin:48px">Authorization did not complete. Return to MCode and try again.</p>'
-
-/* A loopback listener for this one attempt, on whatever port is free. */
-async function loopback(state: string) {
-  let settle: (error?: Error, code?: string) => void = () => {}
-  const code = new Promise<string>((resolve, reject) => {
-    settle = (error, value) => (error ? reject(error) : resolve(value ?? ""))
-  })
-  const server: Server = createServer((request, response) => {
-    const url = new URL(request.url ?? "/", "http://127.0.0.1")
-    if (url.pathname !== "/callback") {
-      response.writeHead(404).end()
-      return
-    }
-    const error = url.searchParams.get("error")
-    const given = url.searchParams.get("code")
-    const matches = url.searchParams.get("state") === state
-    const ok = !error && Boolean(given) && matches
-    response.writeHead(ok ? 200 : 400, { "content-type": "text/html; charset=utf-8" }).end(ok ? PAGE_OK : PAGE_FAILED)
-    if (error) settle(new Error(url.searchParams.get("error_description") || error))
-    else if (!given || !matches) settle(new Error("the authorization reply did not belong to this request"))
-    else settle(undefined, given)
-  })
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject)
-    server.listen(0, "127.0.0.1", () => resolve())
-  })
-  const port = (server.address() as AddressInfo).port
-  const timer = setTimeout(() => settle(new Error("authorization timed out")), TIMEOUT)
-  // Settled already or not, nothing waits on it once the attempt ends.
-  code.catch(() => {})
-  return {
-    redirect: `http://127.0.0.1:${port}/callback`,
-    code,
-    close: () => {
-      clearTimeout(timer)
-      server.close()
-    },
-  }
-}
-
-async function tokenRequest(endpoint: string, body: URLSearchParams): Promise<Pick<McpOAuthRecord, "access" | "refresh" | "expires">> {
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-    body,
-  })
-  if (!response.ok) throw new Error(`token request failed (HTTP ${response.status})`)
-  const tokens = (await response.json()) as { access_token?: string; refresh_token?: string; expires_in?: number }
-  if (!tokens.access_token) throw new Error("the token response carried no access token")
-  return {
-    access: tokens.access_token,
-    ...(tokens.refresh_token ? { refresh: tokens.refresh_token } : {}),
-    ...(typeof tokens.expires_in === "number" ? { expires: Date.now() + tokens.expires_in * 1000 } : {}),
-  }
-}
-
-export class McpOAuthStore {
-  constructor(private readonly storage: Storage) {}
-
-  private async all(): Promise<Record<string, McpOAuthRecord>> {
-    return (await this.storage.read<Record<string, McpOAuthRecord>>(KEY)) ?? {}
-  }
-
-  async set(name: string, record: McpOAuthRecord): Promise<void> {
-    const all = await this.all()
-    all[name] = record
-    await this.storage.write(KEY, all)
-  }
-
-  /** The tokens to send to this server, renewed first when they are about to run out. */
-  async usable(name: string, url: string): Promise<McpOAuthRecord | undefined> {
-    const record = (await this.all())[name]
-    if (!record || record.url !== url) return undefined
-    if (record.refresh && record.expires !== undefined && record.expires - Date.now() < EARLY) {
-      return (await this.renew(name, record)) ?? record
-    }
-    return record
-  }
-
-  /** Trades the refresh token for new tokens; nothing when the server will not. */
-  async renew(name: string, record: McpOAuthRecord): Promise<McpOAuthRecord | undefined> {
-    if (!record.refresh) return undefined
-    try {
-      const body = new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: record.refresh,
-        client_id: record.clientId,
-        resource: record.resource,
-      })
-      if (record.clientSecret) body.set("client_secret", record.clientSecret)
-      const tokens = await tokenRequest(record.tokenEndpoint, body)
-      const next: McpOAuthRecord = { ...record, ...tokens, refresh: tokens.refresh ?? record.refresh }
-      await this.set(name, next)
-      return next
-    } catch {
-      return undefined
-    }
-  }
-}
-
-/** The whole sign-in for one server; resolves once its tokens are stored. */
-export async function authorizeMcpServer(
-  store: McpOAuthStore,
-  name: string,
-  url: string,
-  headers?: Record<string, string>,
-): Promise<void> {
-  const found = await discover(url, headers)
-  if (!found.register) throw new Error("this server offers no client registration")
-  const state = randomBytes(24).toString("base64url")
-  const verifier = randomBytes(48).toString("base64url")
-  const challenge = createHash("sha256").update(verifier).digest("base64url")
-  const callback = await loopback(state)
-  try {
-    const registered = await fetch(found.register, {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        client_name: "MCode",
-        redirect_uris: [callback.redirect],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-      }),
-    })
-    if (!registered.ok) throw new Error(`client registration failed (HTTP ${registered.status})`)
-    const client = (await registered.json()) as { client_id?: string; client_secret?: string }
-    if (!client.client_id) throw new Error("client registration returned no client id")
-
-    const page = new URL(found.authorize)
-    page.searchParams.set("response_type", "code")
-    page.searchParams.set("client_id", client.client_id)
-    page.searchParams.set("redirect_uri", callback.redirect)
-    page.searchParams.set("code_challenge", challenge)
-    page.searchParams.set("code_challenge_method", "S256")
-    page.searchParams.set("state", state)
-    page.searchParams.set("resource", found.resource)
-    if (found.scopes) page.searchParams.set("scope", found.scopes.join(" "))
-    openInBrowser(page.toString())
-
-    const code = await callback.code
-    const body = new URLSearchParams({
-      grant_type: "authorization_code",
-      code,
-      redirect_uri: callback.redirect,
-      client_id: client.client_id,
-      code_verifier: verifier,
-      resource: found.resource,
-    })
-    if (client.client_secret) body.set("client_secret", client.client_secret)
-    const tokens = await tokenRequest(found.token, body)
-    await store.set(name, {
-      url,
-      clientId: client.client_id,
-      ...(client.client_secret ? { clientSecret: client.client_secret } : {}),
-      tokenEndpoint: found.token,
-      resource: found.resource,
-      ...tokens,
-    })
-  } finally {
-    callback.close()
-  }
 }

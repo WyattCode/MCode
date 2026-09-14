@@ -1,18 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onMounted, ref, watch } from "vue"
 import type { PermissionRequest } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import DiffView from "./parts/DiffView.vue"
 import { t } from "../lib/i18n"
 
-const props = withDefaults(
-  defineProps<{
-    request: PermissionRequest
-    /** True while a dialog or the palette is open over this panel. */
-    covered?: boolean
-  }>(),
-  { covered: false },
-)
+const props = defineProps<{ request: PermissionRequest }>()
 const app = useApp()
 
 /** True from the moment a button is pressed until the server has the answer. */
@@ -161,33 +154,16 @@ function onDockPointer() {
 }
 
 /*
- * Escape refuses, from anywhere. Refusing is the safe direction, so it is the
- * one answer that does not need the dock to have been engaged first.
+ * No Escape. MiMo gives the card no key that answers it outright: a press
+ * meant for a popup or the composer would otherwise refuse the step the model
+ * is waiting on, and the buttons and arrow keys are already one move away.
  */
-function onKeydown(event: KeyboardEvent) {
-  if (event.key !== "Escape") return
-  // Whatever is open above owns Escape: dismissing a palette should not answer
-  // the request underneath it.
-  if (props.covered) return
-  if (reasoning.value && (event.target as HTMLElement).tagName === "INPUT") {
-    event.preventDefault()
-    reasoning.value = false
-    return
-  }
-  event.preventDefault()
-  void app.respond("reject")
-}
-
 watch(
   () => props.request.id,
   () => void nextTick(takeFocus),
 )
 
-onMounted(() => {
-  window.addEventListener("keydown", onKeydown, true)
-  takeFocus()
-})
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
+onMounted(takeFocus)
 </script>
 
 <template>

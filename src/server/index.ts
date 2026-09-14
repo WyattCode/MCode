@@ -44,6 +44,8 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"))
   const auth = new AuthManager(config, bus)
   await config.load()
+  // Hand edits to config.json take effect without reopening the app, as MiMo's do.
+  config.watch()
 
   const permissions = new Permissions(bus, config)
   const sessions = new SessionStore(storage, bus)

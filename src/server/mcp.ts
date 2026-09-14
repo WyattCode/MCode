@@ -3,7 +3,17 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
 import type { Storage } from "./storage"
-import { McpOAuthStore, authorizeMcpServer } from "./mcp-oauth"
+import { randomBytes } from "node:crypto"
+import {
+  McpAuthStore,
+  McpOAuthProvider,
+  UnauthorizedError,
+  auth,
+  ensureCallbackServer,
+  openInBrowser,
+  waitForCallback,
+  wwwAuthenticateParams,
+} from "./mcp-oauth"
 import type { McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
 import { ToolError, type ToolDefinition } from "./tool/types"
 
@@ -120,18 +130,48 @@ class Connection {
   private readonly pending = new Map<number, Pending>()
   private closed = false
 
+  /** A remote server's sign-in, unless its config turns OAuth off. */
+  private readonly provider?: McpOAuthProvider
+  /** The session a Streamable HTTP server handed out, sent back on every request. */
+  private sessionID?: string
+  /** A 401 after this connection already signed in once is not answered by signing in again. */
+  private signedIn = false
+  /** What the last 401 named, for finishing the sign-in it started. */
+  private resourceMetadataUrl?: URL
+  private scope?: string
+
   constructor(
     readonly name: string,
     private readonly config: McpServerConfig,
-    /** Where a remote server's sign-in tokens are kept, once 授权 has been done. */
-    private readonly oauth?: McpOAuthStore,
-  ) {}
+    auth?: McpAuthStore,
+    /** Where the authorization address goes when signing in needs the reader; a plain connect only notes it. */
+    onRedirect?: (url: URL) => void,
+  ) {
+    if (config.type === "remote" && config.url && config.oauth !== false && auth) {
+      const oauth = typeof config.oauth === "object" ? config.oauth : {}
+      this.provider = new McpOAuthProvider(name, config.url, oauth, onRedirect ?? (() => {}), auth)
+    }
+  }
+
+  /** Finishes a sign-in with the code the callback brought back. */
+  async finishAuth(code: string): Promise<void> {
+    if (!this.provider) throw new UnauthorizedError("No auth provider")
+    const result = await auth(this.provider, {
+      serverUrl: this.config.url!,
+      authorizationCode: code,
+      resourceMetadataUrl: this.resourceMetadataUrl,
+      scope: this.scope,
+    })
+    if (result !== "AUTHORIZED") throw new UnauthorizedError("Failed to authorize")
+  }
 
   async connect(): Promise<void> {
     this.closed = false
     this.status = "pending"
     this.error = undefined
     this.stderr = ""
+    this.sessionID = undefined
+    this.signedIn = false
     try {
       if (this.config.type === "remote") {
         if (!this.config.url) throw new Error("no url configured")
@@ -151,18 +191,25 @@ class Connection {
       this.tools = listed?.tools ?? []
       this.status = "connected"
     } catch (err) {
-      this.status = this.looksLikeAuth(err) ? "needs_auth" : "failed"
       const reason = err instanceof Error ? err.message : String(err)
       const printed = this.stderr.trim()
+      this.status = "failed"
       this.error = printed ? `${reason}: ${printed}` : reason
+      /*
+       * As MiMo's engine sorts it: a server that wants a sign-in waits for
+       * 授权, except one that cannot register a client, which needs a client
+       * id written into its config first.
+       */
+      if (this.provider && (err instanceof UnauthorizedError || reason.includes("OAuth"))) {
+        if (reason.includes("registration") || reason.includes("client_id")) {
+          this.error = "Server does not support dynamic client registration. Please provide clientId in config."
+        } else {
+          this.status = "needs_auth"
+          this.error = undefined
+        }
+      }
       this.stop()
     }
-  }
-
-  /** A 401 is a different problem from a crash, and the dialog says so. */
-  private looksLikeAuth(err: unknown) {
-    const text = err instanceof Error ? err.message : String(err)
-    return /\b401\b|unauthor/i.test(text)
   }
 
   disable(): void {
@@ -339,34 +386,47 @@ class Connection {
     })
   }
 
-  private async post(frame: string, handshake = false, renewed = false): Promise<string> {
+  private async post(frame: string, handshake = false): Promise<string> {
     const controller = new AbortController()
     const timer = setTimeout(
       () => controller.abort(),
       handshake ? CONNECT_TIMEOUT : CALL_TIMEOUT,
     )
     try {
-      const headers: Record<string, string> = {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...(this.config.headers ?? {}),
-      }
       /*
-       * A header written into the config wins; otherwise the tokens 授权 left
-       * behind are sent, and a 401 on them is answered by renewing once.
+       * The SDK transport's order: the stored token, the session, and then the
+       * config's own headers, which win - an Authorization written there is
+       * what gets sent.
        */
-      const explicit = Object.keys(headers).some((key) => key.toLowerCase() === "authorization")
-      const signedIn = !explicit && this.oauth ? await this.oauth.usable(this.name, this.config.url!) : undefined
-      if (signedIn) headers.authorization = `Bearer ${signedIn.access}`
+      const headers = new Headers({ "content-type": "application/json", accept: "application/json, text/event-stream" })
+      const tokens = this.provider ? await this.provider.tokens() : undefined
+      if (tokens) headers.set("authorization", `Bearer ${tokens.access_token}`)
+      if (this.sessionID) headers.set("mcp-session-id", this.sessionID)
+      for (const [key, value] of Object.entries(this.config.headers ?? {})) headers.set(key, value)
       const response = await fetch(this.config.url!, {
         method: "POST",
         headers,
         body: frame,
         signal: controller.signal,
       })
-      if (response.status === 401 && signedIn?.refresh && !renewed) {
+      const session = response.headers.get("mcp-session-id")
+      if (session) this.sessionID = session
+      if (response.status === 401 && this.provider) {
         await response.body?.cancel().catch(() => {})
-        if (await this.oauth!.renew(this.name, signedIn)) return this.post(frame, handshake, true)
+        if (this.signedIn) throw new Error("Server returned 401 after successful authentication")
+        const named = wwwAuthenticateParams(response)
+        this.resourceMetadataUrl = named.resourceMetadataUrl
+        this.scope = named.scope
+        // Renews with the refresh token when there is one, or leaves the authorization address for 授权.
+        const result = await auth(this.provider, {
+          serverUrl: this.config.url!,
+          resourceMetadataUrl: this.resourceMetadataUrl,
+          scope: this.scope,
+        })
+        if (result !== "AUTHORIZED") throw new UnauthorizedError()
+        this.signedIn = true
+        clearTimeout(timer)
+        return this.post(frame, handshake)
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const text = await response.text()
@@ -397,7 +457,7 @@ export class McpServers {
    */
   private fingerprint = ""
 
-  private readonly oauth?: McpOAuthStore
+  private readonly oauth?: McpAuthStore
   /** Servers whose sign-in is under way, so a second press does not start another. */
   private readonly authorizing = new Set<string>()
 
@@ -406,7 +466,7 @@ export class McpServers {
     private readonly config: Config,
     storage?: Storage,
   ) {
-    this.oauth = storage ? new McpOAuthStore(storage) : undefined
+    this.oauth = storage ? new McpAuthStore(storage) : undefined
     this.bus.subscribe((event) => {
       if (event.type !== "config.updated") return
       if (JSON.stringify(event.config.mcpServers ?? {}) === this.fingerprint) return
@@ -464,22 +524,58 @@ export class McpServers {
   }
 
   /**
-   * MiMo's 授权: signs in to a remote server that answered 401, then connects
-   * it again with the tokens. Resolves once the browser flow has finished and
-   * the reconnect has been tried; a failed sign-in rejects with why.
+   * MiMo's 授权, as its engine runs it: start the callback listener, keep a
+   * fresh state, try the server with a provider that catches the authorization
+   * address, open the browser on it, wait for the callback, check the state,
+   * exchange the code, then connect again. A server that turns out to need no
+   * sign-in is simply connected. Rejects with why when it cannot finish.
    */
   async authenticate(name: string): Promise<void> {
     const entry = this.config.get().mcpServers?.[name]
-    if (!entry) throw new Error("no such MCP server")
-    if (entry.type !== "remote" || !entry.url) throw new Error("only a remote server signs in")
+    if (!entry || entry.enabled === false) throw new Error(`MCP server ${name} not found or disabled`)
+    if (entry.type !== "remote" || !entry.url) throw new Error(`MCP server ${name} is not a remote server`)
+    if (entry.oauth === false) throw new Error(`MCP server ${name} has OAuth explicitly disabled`)
     if (!this.oauth) throw new Error("sign-in is not available")
     if (this.authorizing.has(name)) throw new Error("sign-in already in progress")
     this.authorizing.add(name)
     try {
-      await authorizeMcpServer(this.oauth, name, entry.url, entry.headers)
+      await this.signIn(name, entry, this.oauth)
     } finally {
       this.authorizing.delete(name)
     }
+  }
+
+  private async signIn(name: string, entry: McpServerConfig, store: McpAuthStore): Promise<void> {
+    const oauth = typeof entry.oauth === "object" ? entry.oauth : undefined
+    await ensureCallbackServer(oauth?.redirectUri)
+    const state = randomBytes(32).toString("hex")
+    await store.update(name, "oauthState", state)
+
+    let address: URL | undefined
+    const attempt = new Connection(name, entry, store, (url) => {
+      address = url
+    })
+    await attempt.connect()
+    if (attempt.status === "connected") {
+      await store.clear(name, "oauthState")
+      this.connections.get(name)?.stop()
+      this.connections.set(name, attempt)
+      this.publish()
+      return
+    }
+    if (attempt.status !== "needs_auth" || !address) {
+      throw new Error(attempt.error ?? "the server did not ask for a sign-in")
+    }
+
+    const callback = waitForCallback(state, name)
+    openInBrowser(address.toString())
+    const code = await callback
+    const stored = (await store.get(name))?.oauthState
+    await store.clear(name, "oauthState")
+    if (stored !== state) throw new Error("OAuth state mismatch - potential CSRF attack")
+    await attempt.finishAuth(code)
+    await store.clear(name, "codeVerifier")
+
     const connection = this.connections.get(name)
     if (connection) {
       connection.stop()

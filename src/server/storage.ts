@@ -52,6 +52,11 @@ export class Storage {
     return path.join(this.root, ...key.split("/")) + ".json"
   }
 
+  /** Where a key's document sits on disk, for something that has to watch it. */
+  fileOf(key: string): string {
+    return this.file(key)
+  }
+
   /**
    * Where a key's directory sits on disk, for data this store cannot hold.
    *

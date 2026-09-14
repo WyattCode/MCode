@@ -646,8 +646,24 @@ export interface McpServerConfig {
   /** Remote: where to POST, and anything the endpoint needs to let us in. */
   url?: string
   headers?: Record<string, string>
+  /**
+   * Remote: how to sign in, as MiMo's engine takes it. Absent means sign-in is
+   * detected from a 401 and done with dynamic client registration; an object
+   * supplies a registered client, scopes or a redirect; false turns it off.
+   */
+  oauth?: McpOAuthConfig | false
   /** Absent counts as on, so a server added by hand starts working. */
   enabled?: boolean
+}
+
+export interface McpOAuthConfig {
+  /** A client registered with the authorization server; without it one is registered dynamically. */
+  clientId?: string
+  clientSecret?: string
+  /** Scopes to ask for, space-separated. */
+  scope?: string
+  /** Default http://127.0.0.1:19876/mcp/oauth/callback. */
+  redirectUri?: string
 }
 
 /** One checkout of a repository - what this app calls a workspace. */
