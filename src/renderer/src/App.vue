@@ -28,7 +28,8 @@ import ImagePreview from "./components/ImagePreview.vue"
 import LiveEditPill from "./components/LiveEditPill.vue"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
-import { imagePreview } from "./lib/image-preview"
+import { imagePreview, videoPreview } from "./lib/image-preview"
+import VideoPreview from "./components/VideoPreview.vue"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
@@ -2806,6 +2807,7 @@ const commands = computed(() => bindableCommands.value.filter((command) => comma
 const modalOpen = computed(
   () =>
     Boolean(imagePreview.value) ||
+    Boolean(videoPreview.value) ||
     settingsOpen.value ||
     choosingServer.value ||
     managingServers.value ||
@@ -3813,7 +3815,8 @@ onBeforeUnmount(() => {
       <FindBar :find="find" :anchor="() => mainPane" />
 
       <!-- MiMo's annotation box, for a selection in a reply or the files tab's code, or a whole file. -->
-      <AnnotationComposer v-if="!onboarding" :scope="annotationScope" :disabled="modalOpen" />
+      <!-- The video preview is the one modal the box works over: its boxed regions are annotated with it. -->
+      <AnnotationComposer v-if="!onboarding" :scope="annotationScope" :disabled="modalOpen && !videoPreview" />
       <AnnotationMarkers v-if="!onboarding" :mainScope="annotationScope" :disabled="modalOpen" />
 
       <!-- MiMo's right panel: tabs beside the conversation, or its launcher while it holds none. -->
@@ -3911,6 +3914,7 @@ onBeforeUnmount(() => {
   </div>
   <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
   <ImagePreview />
+  <VideoPreview />
 
   <!--
     Fetched and ready. The reference offers exactly this, in these words, once

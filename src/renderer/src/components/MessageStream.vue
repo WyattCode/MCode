@@ -7,8 +7,8 @@ import ToolPart from "./parts/ToolPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
 import TextShimmer from "./parts/TextShimmer.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
-import { preview } from "../lib/attach"
-import { openImagePreview } from "../lib/image-preview"
+import { preview, videoUrl } from "../lib/attach"
+import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
 import { renderMarkdown } from "../lib/markdown"
@@ -834,6 +834,17 @@ defineExpose({ stepMessage, scroller })
               >
                 <img :src="preview(item)" :alt="item.path" />
               </button>
+              <button
+                v-else-if="videoUrl(item)"
+                type="button"
+                class="sent-tile picture"
+                :aria-label="t('stream.previewTip')"
+                v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                data-sent-video
+                @click="openVideoPreview(videoUrl(item) ?? '', { name: item.path })"
+              >
+                <video :src="videoUrl(item)" muted playsinline preload="metadata" />
+              </button>
               <span
                 v-else
                 class="sent-tile file"
@@ -1021,6 +1032,17 @@ defineExpose({ stepMessage, scroller })
                     @click="previewSent(item, row.steer.attachments)"
                   >
                     <img :src="preview(item)" :alt="item.path" />
+                  </button>
+                  <button
+                    v-else-if="videoUrl(item)"
+                    type="button"
+                    class="sent-tile picture"
+                    :aria-label="t('stream.previewTip')"
+                    v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                    data-sent-video
+                    @click="openVideoPreview(videoUrl(item) ?? '', { name: item.path })"
+                  >
+                    <video :src="videoUrl(item)" muted playsinline preload="metadata" />
                   </button>
                   <span v-else class="sent-tile file" :title="item.path">
                     <span class="sent-name">{{ item.path }}</span>
@@ -1590,7 +1612,8 @@ defineExpose({ stepMessage, scroller })
   content: "";
 }
 
-.sent-tile.picture img {
+.sent-tile.picture img,
+.sent-tile.picture video {
   width: 100%;
   height: 100%;
   object-fit: cover;

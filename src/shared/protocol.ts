@@ -197,7 +197,7 @@ export interface UserMessage {
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
 export interface Annotation {
   id: string
-  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html"
+  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html" | "video"
   /** The file's absolute path, for a file or code shown from one. */
   path?: string
   /** A PDF or Word selection's page, from 1. */
@@ -219,6 +219,8 @@ export interface Annotation {
   chartTitle?: string
   chartKind?: string
   dataRef?: string
+  /** A video frame: the moment, in seconds, whose region was boxed. */
+  timeSec?: number
   /** A web page module: the CSS selector that finds it and its tag. */
   selector?: string
   tag?: string

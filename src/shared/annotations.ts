@@ -29,6 +29,15 @@ function where(note: Annotation): string {
     const { fx, fy, fw, fh } = note.region
     return `${slide}, the region roughly from (${pct(fx)}%, ${pct(fy)}%) to (${pct(fx + fw)}%, ${pct(fy + fh)}%) of the slide`
   }
+  if (note.kind === "video") {
+    const pct = (value: number) => Math.max(0, Math.min(100, Math.round(value * 100)))
+    const seconds = Math.max(0, Math.floor(note.timeSec ?? 0))
+    const at = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+    const file = note.path ? `Video ${note.path}` : `An attached video${note.name ? ` (${note.name})` : ""}, whose local path is unknown`
+    if (!note.region) return `${file}, at ${at}`
+    const { fx, fy, fw, fh } = note.region
+    return `${file}, the region roughly from (${pct(fx)}%, ${pct(fy)}%) to (${pct(fx + fw)}%, ${pct(fy + fh)}%) of the frame at ${at}`
+  }
   if (note.kind === "html") {
     const quote = note.quote ? `, containing "${note.quote.length > 60 ? `${note.quote.slice(0, 60)}…` : note.quote}"` : ""
     return `Web page ${note.path ?? ""} (${note.name ?? ""}), the module matching CSS selector \`${note.selector ?? ""}\` <${note.tag ?? ""}>${quote}`

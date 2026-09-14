@@ -5,7 +5,8 @@ import type { Ref } from "vue"
 import type { Attachment, CommandInfo, Effort, ModelInfo } from "@shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { preview, readFiles, MAX_BYTES } from "../lib/attach"
+import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 import { findModel, resolveVariant, withoutLatest } from "../lib/model"
@@ -83,6 +84,13 @@ const busyHere = computed(() => (props.side ? app.sideBusy : app.busy))
 const annotations = useAnnotations()
 const annotationScope = computed(() => sessionID.value ?? (props.side ? SIDE_SCOPE : HOME_SCOPE))
 const waiting = computed(() => annotations.list(annotationScope.value))
+
+/* MiMo's attachment tile click: a video opens its preview, a document its tab; a picture does nothing here. */
+function onTileClick(item: Parameters<typeof videoUrl>[0]) {
+  const url = videoUrl(item)
+  if (url) openVideoPreview(url, { name: item.path })
+  else if (!preview(item) && item.path) openAttachment(item.path)
+}
 
 /* MiMo's file chip click: a document opens in the Office tab, anything else in the files tab. */
 function openAttachment(file: string) {
@@ -1671,11 +1679,21 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-for="(item, at) in attachments"
               :key="at"
               class="tile"
-              :class="{ picture: !!preview(item), openable: !preview(item) && Boolean(item.path) }"
+              :class="{ picture: !!preview(item) || !!videoUrl(item), openable: !preview(item) && (Boolean(videoUrl(item)) || Boolean(item.path)) }"
               data-attachment-tile
-              @click="!preview(item) && item.path && openAttachment(item.path)"
+              @click="onTileClick(item)"
             >
               <img v-if="preview(item)" :src="preview(item)" class="tile-image" alt="" />
+              <video
+                v-else-if="videoUrl(item)"
+                :src="videoUrl(item)"
+                class="tile-image"
+                data-attachment-video
+                muted
+                playsinline
+                preload="metadata"
+                v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+              />
               <svg v-else class="tile-mark" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path
                   d="M13.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9.5L13.5 3Z"

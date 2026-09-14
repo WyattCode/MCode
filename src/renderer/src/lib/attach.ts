@@ -88,6 +88,16 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
  */
 const previews = new WeakMap<Attachment, string>()
 
+/** A data URL for playing a video attachment back in the video preview. */
+export function videoUrl(attachment: Attachment): string | undefined {
+  if (!attachment.mime.startsWith("video/")) return undefined
+  const known = previews.get(attachment)
+  if (known) return known
+  const url = `data:${attachment.mime};base64,${attachment.data}`
+  previews.set(attachment, url)
+  return url
+}
+
 /** A data URL for showing an image attachment back to the user. */
 export function preview(attachment: Attachment): string | undefined {
   if (!attachment.mime.startsWith("image/")) return undefined

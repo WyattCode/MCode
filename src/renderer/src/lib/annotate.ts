@@ -40,6 +40,10 @@ export interface AnnotationRequest {
   sendNow?: (note: Annotation) => void
   /** The box was dismissed (Escape or a press elsewhere) rather than used. */
   onClose?: () => void
+  /** Drawn over a full-window preview (the video preview) rather than under it. */
+  above?: boolean
+  /** Enter with no note adds it without sending, as MiMo's video preview does. */
+  emptyEnterStashes?: boolean
 }
 
 export const annotationRequest = shallowRef<AnnotationRequest | null>(null)

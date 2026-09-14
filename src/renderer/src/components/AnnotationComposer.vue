@@ -155,7 +155,11 @@ function send() {
     current.sendNow(note)
     return
   }
-  if (!current || !value) return
+  if (!current) return
+  if (!value) {
+    if (current.emptyEnterStashes) stash()
+    return
+  }
   const scope = current.scope ?? props.scope
   if (current.index !== undefined) {
     store.update(scope, current.index, value)
@@ -322,7 +326,7 @@ watch(
       ref="box"
       class="ann-composer"
       data-annotation-composer
-      :class="{ shown, focused, closing }"
+      :class="{ shown, focused, closing, above: request.above }"
       :style="{ top: `${position?.top ?? -9999}px`, left: `${position?.left ?? -9999}px`, width: `${WIDTH}px` }"
     >
       <textarea
@@ -377,6 +381,10 @@ watch(
     transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 140ms ease;
   will-change: opacity, transform;
+}
+
+.ann-composer.above {
+  z-index: 320;
 }
 
 .ann-composer.shown {
