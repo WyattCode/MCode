@@ -60,6 +60,8 @@ export interface SessionInfo {
    * list shows: it lives in the side column of the conversation it belongs to.
    */
   sideOf?: string
+  /** The conversation this one was branched from, for the marker at its top. */
+  forkOf?: string
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */

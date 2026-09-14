@@ -123,6 +123,7 @@ export class SessionStore {
     smart?: boolean
     scratch?: boolean
     sideOf?: string
+    forkOf?: string
     title?: string
   }): Promise<SessionInfo> {
     const now = Date.now()
@@ -136,6 +137,7 @@ export class SessionStore {
       ...(input.smart ? { smart: true } : {}),
       ...(input.scratch ? { scratch: true } : {}),
       ...(input.sideOf ? { sideOf: input.sideOf } : {}),
+      ...(input.forkOf ? { forkOf: input.forkOf } : {}),
       created: now,
       updated: now,
       usage: emptyUsage(),
@@ -369,6 +371,8 @@ export class SessionStore {
       scratch: origin.scratch,
       // Named for what it came from, so the pair reads as a pair in the list.
       title: origin.title,
+      // Remembered so the branch can say where it came from and lead back there.
+      forkOf: origin.id,
     })
 
     for (const message of messages.slice(0, at + 1)) {

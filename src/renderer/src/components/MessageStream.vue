@@ -598,7 +598,17 @@ onBeforeUnmount(() => sizer?.disconnect())
  */
 async function branchReply(turn: Turn) {
   if (!turn.last?.id) return
-  await app.forkFrom(turn.last.id)
+  if (await app.forkFrom(turn.last.id)) notify(t("stream.branchedFromHere"))
+}
+
+/* The fork marker's link: back to the conversation this one came from, if it is still there. */
+async function backToSource(sourceID: string) {
+  if (!app.sessions.some((session) => session.id === sourceID)) {
+    notifyFailure(t("stream.sourceNotFound"))
+    return
+  }
+  await app.open(sourceID)
+  notify(t("stream.backToSource"))
 }
 
 /** True while a rollback is in flight, so a second press cannot race the first. */
@@ -772,6 +782,26 @@ defineExpose({ stepMessage, scroller })
 <template>
   <div ref="scroller" class="stream" @scroll="onScroll">
     <div ref="inner" class="inner">
+      <!--
+        MiMo's marker at the top of a branched conversation: a hairline either
+        side of a link back to the conversation it came from.
+      -->
+      <div v-if="!side && shownSession?.forkOf" class="fork-row" data-fork-row>
+        <div class="fork-line" />
+        <button type="button" class="fork-label" :data-fork-src="shownSession.forkOf" @click="backToSource(shownSession.forkOf)">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
+            <path
+              d="M6 3v12m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6zm12-6a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm0 0v3a6 6 0 0 1-6 6"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          {{ t("stream.forkedFrom") }}
+        </button>
+        <div class="fork-line" />
+      </div>
       <div v-for="(turn, at) in turns" :key="turn.id" class="turn" :data-turn="turn.id">
         <div
           v-if="turn.text !== undefined || turn.attachments?.length"
@@ -1221,6 +1251,33 @@ defineExpose({ stepMessage, scroller })
 .msg.assistant:hover .msg-time,
 .msg.assistant:focus-within .msg-time {
   opacity: 1;
+}
+
+/* MiMo's fork-row: 12 apart, 26 above the first question. */
+.fork-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 26px;
+}
+
+.fork-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border-weak);
+}
+
+.fork-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  color: var(--text-interactive);
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
 /*
