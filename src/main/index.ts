@@ -301,8 +301,33 @@ function createWindow(): BrowserWindow {
   })
 
   const devServer = process.env.ELECTRON_RENDERER_URL
+  const rendererPage = path.join(here, "../renderer/index.html")
+
+  /*
+   * This window holds the preload bridge, so its top frame only ever shows the
+   * app itself: the dev server's origin, or the packaged renderer page (its own
+   * reloads included). A served page or a link asking to take the window over
+   * is refused. Frames below it - the page preview - navigate as they like; they
+   * get no preload, and the frame CSP bounds where they can go.
+   */
+  const isAppPage = (target: string) => {
+    try {
+      const parsed = new URL(target)
+      if (devServer) return parsed.origin === new URL(devServer).origin
+      return parsed.protocol === "file:" && path.relative(rendererPage, fileURLToPath(parsed)) === ""
+    } catch {
+      return false
+    }
+  }
+  window.webContents.on("will-navigate", (event) => {
+    if (event.isMainFrame && !isAppPage(event.url)) event.preventDefault()
+  })
+  window.webContents.on("will-frame-navigate", (event) => {
+    if (event.isMainFrame && !isAppPage(event.url)) event.preventDefault()
+  })
+
   if (devServer) void window.loadURL(devServer)
-  else void window.loadFile(path.join(here, "../renderer/index.html"))
+  else void window.loadFile(rendererPage)
 
   windows.add(window)
   return window

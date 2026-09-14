@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto"
-import { statSync } from "node:fs"
+import { createReadStream, statSync } from "node:fs"
 import fs from "node:fs/promises"
 import http from "node:http"
 import path from "node:path"
@@ -13,10 +13,12 @@ import path from "node:path"
  * what was picked to the window. Nothing else is ever changed.
  *
  * MCode's tokens are random rather than MiMo's d1, d2, so another program on
- * the machine cannot guess a served folder.
+ * the machine cannot guess a served folder. Unlike MiMo's /d1/ paths, the token
+ * is the host name, so each folder is its own origin and one served page
+ * cannot read another's files or storage.
  */
 
-const SERVED = new Set([".xlsx", ".docx", ".pptx", ".pdf", ".html", ".htm"])
+const SERVED = new Set([".xlsx", ".docx", ".pptx", ".pdf", ".html", ".htm", ".mp4", ".m4v", ".webm", ".mov", ".ogv"])
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
@@ -146,6 +148,8 @@ function agentSource(nonce: string): string {
   document.addEventListener("mousedown", function (event) {
     if (!on) return;
     event.preventDefault();
+    // preventDefault keeps the page's own focus still, so the frame is focused by hand; the window only accepts a pick from a focused frame.
+    try { window.focus(); } catch (e) {}
     unpick();
     unbox();
     post({ type: "clear" });
@@ -199,47 +203,139 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     response.writeHead(code, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
     response.end(text)
   }
-  const url = new URL(request.url ?? "/", "http://127.0.0.1")
+  // Each folder is its own origin, <token>.localhost:<port>; any other Host (a bare address, a rebound name) is refused.
+  const host = /^([0-9a-f]{24})\.localhost:(\d+)$/.exec((request.headers.host ?? "").toLowerCase())
+  const dir = host && Number(host[2]) === port ? dirOfToken.get(host[1]) : undefined
+  if (!dir) return fail(404, "not found")
+  let url: URL
+  try {
+    url = new URL(request.url ?? "/", "http://localhost")
+  } catch {
+    return fail(400, "bad request")
+  }
   let pathname: string
   try {
     pathname = decodeURIComponent(url.pathname)
   } catch {
     return fail(404, "not found")
   }
-  const parts = pathname.replace(/^\/+/, "").split("/")
-  const dir = dirOfToken.get(parts.shift() ?? "")
-  if (!dir) return fail(404, "not found")
+  const parts = pathname.split(/[\\/]+/).filter(Boolean)
+  // Dotfiles and dot folders (.git, .env) are never handed out; this also catches "." and "..".
+  if (parts.some((part) => part.startsWith("."))) return fail(404, "not found")
   const target = path.resolve(dir, parts.join("/"))
-  if (target !== dir && !target.startsWith(dir + path.sep)) return fail(403, "forbidden")
-  let body: Buffer
+  // A relative path, not a prefix test: a folder at a drive root ends in its separator already.
+  const relative = path.relative(dir, target)
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return fail(403, "forbidden")
+  const extension = path.extname(target).toLowerCase()
+  const type = TYPES[extension] ?? "application/octet-stream"
+  const nonce = url.searchParams.get("__mcodeedit")
+  if ((extension === ".html" || extension === ".htm") && nonce && /^[\w-]{1,64}$/.test(nonce)) {
+    let html: string
+    try {
+      html = await fs.readFile(target, "utf8")
+    } catch {
+      return fail(404, "not found")
+    }
+    const script = `<script data-mcode-edit-agent>${agentSource(nonce)}</script>`
+    const at = html.search(/<\/body>/i)
+    response.writeHead(200, { "Content-Type": type, "Cache-Control": "no-store" })
+    response.end(at >= 0 ? `${html.slice(0, at)}${script}${html.slice(at)}` : `${html}${script}`)
+    return
+  }
+  let size: number
   try {
-    body = await fs.readFile(target)
+    const stat = await fs.stat(target)
+    if (!stat.isFile()) return fail(404, "not found")
+    size = stat.size
   } catch {
     return fail(404, "not found")
   }
-  const extension = path.extname(target).toLowerCase()
-  const nonce = url.searchParams.get("__mcodeedit")
-  if ((extension === ".html" || extension === ".htm") && nonce && /^[\w-]{1,64}$/.test(nonce)) {
-    const html = body.toString("utf8")
-    const script = `<script data-mcode-edit-agent>${agentSource(nonce)}</script>`
-    const at = html.search(/<\/body>/i)
-    body = Buffer.from(at >= 0 ? `${html.slice(0, at)}${script}${html.slice(at)}` : `${html}${script}`, "utf8")
+  // A video seeks by asking for byte ranges, so those are answered as ranges rather than the whole file each time.
+  const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? "")
+  const common = { "Content-Type": type, "Cache-Control": "no-store", "Accept-Ranges": "bytes" }
+  let start = 0
+  let end = size - 1
+  if (range && (range[1] || range[2])) {
+    start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]))
+    end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1
+    if (start >= size || start > end) {
+      response.writeHead(416, { ...common, "Content-Range": `bytes */${size}` })
+      response.end()
+      return
+    }
+    response.writeHead(206, { ...common, "Content-Length": String(end - start + 1), "Content-Range": `bytes ${start}-${end}/${size}` })
+  } else {
+    response.writeHead(200, { ...common, "Content-Length": String(size) })
   }
-  response.writeHead(200, { "Content-Type": TYPES[extension] ?? "application/octet-stream", "Cache-Control": "no-store" })
-  response.end(body)
+  if (request.method === "HEAD" || size === 0) {
+    response.end()
+    return
+  }
+  createReadStream(target, { start, end })
+    .on("error", () => response.destroy())
+    .pipe(response)
+}
+
+function serve(request: http.IncomingMessage, response: http.ServerResponse) {
+  handle(request, response).catch(() => {
+    // A request that failed half way must still end, or the socket hangs open.
+    if (!response.headersSent) {
+      response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+      response.end("error")
+    } else response.destroy()
+  })
+}
+
+function listen(server: http.Server, at: number, address: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const failed = (error: Error) => reject(error)
+    server.once("error", failed)
+    server.listen(at, address, () => {
+      server.off("error", failed)
+      const bound = server.address()
+      resolve(typeof bound === "object" && bound ? bound.port : 0)
+    })
+  })
+}
+
+const closed = (server: http.Server) => new Promise<void>((resolve) => server.close(() => resolve()))
+
+/*
+ * Chromium resolves <token>.localhost to both loopbacks and tries ::1 first, so
+ * the same port is taken on ::1 too. A port some other program already holds
+ * on ::1 would get those requests, so that port is given up and another tried;
+ * a machine with no IPv6 at all keeps 127.0.0.1 alone.
+ */
+async function bind(): Promise<number> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const v4 = http.createServer(serve)
+    let at: number
+    try {
+      at = await listen(v4, 0, "127.0.0.1")
+    } catch {
+      return 0
+    }
+    const v6 = http.createServer(serve)
+    try {
+      await listen(v6, at, "::1")
+      v6.unref()
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EADDRINUSE") {
+        await closed(v4)
+        continue
+      }
+    }
+    v4.unref()
+    return at
+  }
+  return 0
 }
 
 function start(): Promise<number> {
   if (port) return Promise.resolve(port)
-  starting ??= new Promise<number>((resolve) => {
-    const server = http.createServer((request, response) => void handle(request, response))
-    server.on("error", () => resolve(0))
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address()
-      port = typeof address === "object" && address ? address.port : 0
-      server.unref()
-      resolve(port)
-    })
+  starting ??= bind().then((at) => {
+    port = at
+    return at
   })
   return starting
 }
@@ -265,5 +361,5 @@ export async function servePreview(file: string): Promise<{ ok: true; url: strin
     tokenOfDir.set(dir, token)
     dirOfToken.set(token, dir)
   }
-  return { ok: true, url: `http://127.0.0.1:${listening}/${token}/${encodeURIComponent(path.basename(absolute))}` }
+  return { ok: true, url: `http://${token}.localhost:${listening}/${encodeURIComponent(path.basename(absolute))}` }
 }

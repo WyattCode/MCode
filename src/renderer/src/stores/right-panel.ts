@@ -45,6 +45,8 @@ export interface RightTab {
   source?: string
   /** Office: the document, its kind and size, the conversation it was opened from, and whether an old format is being converted. */
   filePath?: string
+  /** Office, old formats: the doc, xls or ppt the converted copy in `filePath` came from, so opening it again finds this tab. */
+  sourcePath?: string
   fileType?: OfficeType
   size?: number
   origin?: string
@@ -131,14 +133,14 @@ export const useRightPanel = defineStore("rightPanel", () => {
   }
 
   /** MiMo's Office tab: one per document, taken up again when the same file is opened. */
-  function openOffice(file: { path: string; name: string; fileType: OfficeType; size?: number }): RightTab {
-    const found = tabs.value.find((tab) => tab.type === "office" && tab.filePath === file.path)
+  function openOffice(file: { path: string; name: string; fileType: OfficeType; size?: number; sourcePath?: string }): RightTab {
+    const found = tabs.value.find((tab) => tab.type === "office" && (tab.filePath === file.path || (tab.sourcePath !== undefined && tab.sourcePath === file.path)))
     if (found) {
       update(found.id, { name: file.name, fileType: file.fileType, size: file.size ?? found.size, origin: scope ?? found.origin })
       show(found.id)
       return tabs.value.find((tab) => tab.id === found.id) ?? found
     }
-    return add("office", { name: file.name, filePath: file.path, fileType: file.fileType, size: file.size, origin: scope })
+    return add("office", { name: file.name, filePath: file.path, sourcePath: file.sourcePath, fileType: file.fileType, size: file.size, origin: scope })
   }
 
   /** MiMo's web page tab: one per page, taken up again (from this conversation) when the same page is opened; edit mode starts off. */

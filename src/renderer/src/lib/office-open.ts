@@ -54,8 +54,10 @@ export async function openDocument(file: { path: string; name?: string }, direct
   }
   const legacy = legacyTypeOf(name) ?? legacyTypeOf(file.path)
   if (legacy) {
-    const tab = rp.openOffice({ path: file.path, name, fileType: legacy, size: 0 })
-    rp.update(tab.id, { converting: true })
+    const tab = rp.openOffice({ path: file.path, sourcePath: file.path, name, fileType: legacy })
+    // A tab already showing the converted copy keeps it on screen while the (cached) conversion is checked.
+    const shown = tab.sourcePath === file.path && tab.filePath !== file.path && !tab.converting
+    if (!shown) rp.update(tab.id, { converting: true })
     const result = await window.mcode.officeConvertLegacy(file.path)
     if (!result.ok) {
       rp.close([tab.id])
@@ -64,7 +66,7 @@ export async function openDocument(file: { path: string; name?: string }, direct
       return
     }
     const size = await window.mcode.fileSize(result.output).catch(() => 0)
-    rp.update(tab.id, { converting: false, filePath: result.output, fileType: legacy, size, name })
+    rp.update(tab.id, { converting: false, filePath: result.output, sourcePath: file.path, fileType: legacy, size, name })
     return
   }
   openFileInViewer(file.path, directory)

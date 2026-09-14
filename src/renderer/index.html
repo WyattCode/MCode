@@ -18,12 +18,17 @@
       from here - the one thing that needed them, the update feed, is fetched by
       the main process instead.
 
-      Frames may show the main process's page preview server on loopback, and
-      media may play from data and blob addresses (an attached video).
+      Frames may show the main process's page preview server, which gives every
+      served folder its own origin at http://<token>.localhost:<port> (loopback,
+      as Chromium resolves any *.localhost name) - so one served page cannot
+      read another's files. Media may play from data and blob addresses (an
+      attached video), the preview server (a video file on disk) and the web (a
+      video link in a reply) - only ever once the video preview has been opened
+      by a press.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self' http://127.0.0.1:*; media-src 'self' data: blob:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
   </head>

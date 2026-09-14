@@ -315,13 +315,23 @@ function niceNumber(span: number, round: boolean): number {
 }
 
 function niceScale(low: number, high: number, ticks = 5, zeroBase = true) {
-  if (high === low) high = low + Math.abs(low || 1)
+  // A span that is only float noise (0.3 against 0.1 + 0.2) would give a step below float precision
+  if (Math.abs(high - low) <= 1e-9 * Math.max(Math.abs(high), Math.abs(low), 1)) high = low + Math.abs(low || 1)
   const step = niceNumber(niceNumber(high - low, false) / Math.max(2, ticks - 1), true)
   let min = Math.floor(low / step) * step
   const max = Math.ceil(high / step) * step
   // A floor far above zero would exaggerate differences, so start from 0 unless the values sit in a narrow band.
   if (zeroBase && min > 0 && high > 0 && (high - low) / high > 1 / 6) min = 0
   return { min, max: max > min ? max : min + step, step }
+}
+
+/** Ticks from `from` up to `to`, counted rather than accumulated so a step lost in float noise cannot stall; at most 50. */
+function ticksOf(from: number, to: number, step: number): number[] {
+  if (!(step > 0) || !Number.isFinite(from) || !Number.isFinite(to)) return []
+  const count = Math.min(50, Math.max(0, Math.floor((to + 1e-6 - from) / step) + 1))
+  const ticks: number[] = []
+  for (let index = 0; index < count; index++) ticks.push(from + index * step)
+  return ticks
 }
 
 function formatTick(value: number): string {
@@ -434,13 +444,13 @@ function drawAxisChart(chart: SheetChart, series: DrawSeries[], width: number, h
   const y2Of = y2 ? (value: number) => plotBottom - ((value - y2.min) / (y2.max - y2.min || 1)) * plotHeight : yOf
   const out: SVGElement[] = []
 
-  for (let tick = y1.min; tick <= y1.max + 1e-6; tick += y1.step) {
+  for (const tick of ticksOf(y1.min, y1.max, y1.step)) {
     const y = yOf(tick)
     out.push(node("line", { x1: left, y1: fix(y), x2: plotRight, y2: fix(y), stroke: "#d9d9d9" }))
     out.push(node("text", { x: left - 8, y: fix(y + 4), "text-anchor": "end", "font-size": 11, fill: "#000000" }, y1.format(tick)))
   }
   if (y2) {
-    for (let tick = y2.min; tick <= y2.max + 1e-6; tick += y2.step) {
+    for (const tick of ticksOf(y2.min, y2.max, y2.step)) {
       out.push(node("text", { x: plotRight + 8, y: fix(y2Of(tick) + 4), "text-anchor": "start", "font-size": 11, fill: "#000000" }, y2.format(tick)))
     }
     if (chart.secondaryTitle) {
@@ -457,7 +467,7 @@ function drawAxisChart(chart: SheetChart, series: DrawSeries[], width: number, h
     const xs = series.flatMap((entry) => entry.categories.map(parseLoose)).filter((value) => Number.isFinite(value))
     const xScale = niceScale(xs.length ? Math.min(...xs) : 0, xs.length ? Math.max(...xs) : 1, 6, false)
     xOf = (value) => left + ((value - xScale.min) / (xScale.max - xScale.min || 1)) * plotWidth
-    for (let tick = xScale.min; tick <= xScale.max + 1e-6; tick += xScale.step) {
+    for (const tick of ticksOf(xScale.min, xScale.max, xScale.step)) {
       out.push(node("text", { x: fix(xOf(tick)), y: plotBottom + 18, "text-anchor": "middle", "font-size": 11, fill: "#000000" }, formatTick(tick)))
     }
   } else if (!horizontal) {
@@ -620,7 +630,7 @@ function drawRadar(chart: SheetChart, series: DrawSeries[], width: number, heigh
   const at = (index: number, distance: number) => ({ x: cx + distance * Math.cos(angleOf(index)), y: cy + distance * Math.sin(angleOf(index)) })
   const out: SVGElement[] = []
 
-  for (let tick = step; tick <= max + 1e-6; tick += step) {
+  for (const tick of ticksOf(step, max, step)) {
     const distance = (tick / max) * radius
     const points = Array.from({ length: spokes }, (_, index) => {
       const point = at(index, distance)
@@ -632,7 +642,7 @@ function drawRadar(chart: SheetChart, series: DrawSeries[], width: number, heigh
     const end = at(index, radius)
     out.push(node("line", { x1: cx, y1: cy, x2: fix(end.x), y2: fix(end.y), stroke: "#d9d9d9" }))
   }
-  for (let tick = 0; tick <= max + 1e-6; tick += step) {
+  for (const tick of ticksOf(0, max, step)) {
     out.push(node("text", { x: cx + 4, y: fix(cy - (tick / max) * radius + 4), "font-size": 10, fill: "#595959" }, formatTick(tick)))
   }
   for (let index = 0; index < spokes; index++) {

@@ -154,33 +154,54 @@ export function slideIndexOfNode(node: Node | null | undefined, fallback: number
 
 /** MiMo's corrections to a rendered slide: a cropped full-bleed picture, and paragraphs pushed right that are left-aligned. */
 export function applyFixup(slide: HTMLElement, fixup: SlideFixup) {
-  const box = slide.getBoundingClientRect()
+  applyCropSoon(slide, fixup, 0)
+  applyAlignment(slide, fixup)
+}
+
+/*
+ * The crop needs the slide's box, which a slide rendered hidden (the next
+ * layer of a slide show) or not yet in the page (a new deck's entrance) does
+ * not have yet - so it is tried again a few times until the slide is laid out.
+ */
+function applyCropSoon(slide: HTMLElement, fixup: SlideFixup, tries: number) {
+  if (applyCrop(slide, fixup) || tries >= 5) return
+  setTimeout(() => applyCropSoon(slide, fixup, tries + 1), 16 * 2 ** tries)
+}
+
+/** True once there is nothing left to do: the crop is applied, or there is none. */
+function applyCrop(slide: HTMLElement, fixup: SlideFixup): boolean {
   const crop = fixup.crops[0]
-  if (crop && box.width > 1 && box.height > 1) {
-    for (const image of slide.querySelectorAll("img")) {
-      const parent = image.parentElement
-      if (!parent) continue
-      const rect = parent.getBoundingClientRect()
-      const fills = rect.width >= box.width * 0.85 && rect.height >= box.height * 0.85
-      const atOrigin = rect.left - box.left < box.width * 0.08 && rect.top - box.top < box.height * 0.08
-      if (!fills || !atOrigin) continue
-      if (getComputedStyle(parent).position === "static") parent.style.position = "relative"
-      parent.style.overflow = "hidden"
-      const width = Math.max(0.01, 1 - crop.l - crop.r)
-      const height = Math.max(0.01, 1 - crop.t - crop.b)
-      const set = (name: string, value: string) => image.style.setProperty(name, value, "important")
-      set("margin", "0")
-      set("position", "absolute")
-      set("width", `${(100 / width).toFixed(3)}%`)
-      set("height", `${(100 / height).toFixed(3)}%`)
-      set("left", `${((-crop.l / width) * 100).toFixed(3)}%`)
-      set("top", `${((-crop.t / height) * 100).toFixed(3)}%`)
-      set("max-width", "none")
-      set("max-height", "none")
-      set("object-fit", "fill")
-      break
-    }
+  if (!crop || slide.dataset.mcodeCropped) return true
+  const box = slide.getBoundingClientRect()
+  if (box.width <= 1 || box.height <= 1) return false
+  slide.dataset.mcodeCropped = "1"
+  for (const image of slide.querySelectorAll("img")) {
+    const parent = image.parentElement
+    if (!parent) continue
+    const rect = parent.getBoundingClientRect()
+    const fills = rect.width >= box.width * 0.85 && rect.height >= box.height * 0.85
+    const atOrigin = rect.left - box.left < box.width * 0.08 && rect.top - box.top < box.height * 0.08
+    if (!fills || !atOrigin) continue
+    if (getComputedStyle(parent).position === "static") parent.style.position = "relative"
+    parent.style.overflow = "hidden"
+    const width = Math.max(0.01, 1 - crop.l - crop.r)
+    const height = Math.max(0.01, 1 - crop.t - crop.b)
+    const set = (name: string, value: string) => image.style.setProperty(name, value, "important")
+    set("margin", "0")
+    set("position", "absolute")
+    set("width", `${(100 / width).toFixed(3)}%`)
+    set("height", `${(100 / height).toFixed(3)}%`)
+    set("left", `${((-crop.l / width) * 100).toFixed(3)}%`)
+    set("top", `${((-crop.t / height) * 100).toFixed(3)}%`)
+    set("max-width", "none")
+    set("max-height", "none")
+    set("object-fit", "fill")
+    break
   }
+  return true
+}
+
+function applyAlignment(slide: HTMLElement, fixup: SlideFixup) {
   if (!fixup.paras.length) return
   const fold = (text: string) => text.replace(/\s+/g, " ").trim()
   const used = new Set<number>()

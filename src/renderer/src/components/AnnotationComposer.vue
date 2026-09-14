@@ -48,9 +48,9 @@ const position = ref<{ top: number; left: number } | null>(null)
 
 const shown = computed(() => entered.value && Boolean(position.value) && !closing.value)
 
-/* The composer's top edge is the floor: the box never covers what is being typed. */
+/* The composer's top edge is the floor: the box never covers what is being typed. A box raised over an overlay (the video preview) has that composer hidden beneath it, so no floor. */
 function bounds() {
-  const composer = document.querySelector<HTMLElement>("#float-dock .composer, #main-dock .composer, #hero-dock .composer")
+  const composer = request.value?.above ? null : document.querySelector<HTMLElement>("#float-dock .composer, #main-dock .composer, #hero-dock .composer")
   const top = composer?.getBoundingClientRect().top ?? 0
   return { width: window.innerWidth, height: top > 0 ? Math.min(window.innerHeight, top - 8) : window.innerHeight }
 }

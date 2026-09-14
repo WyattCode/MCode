@@ -16,10 +16,46 @@ const ended = new Map<string, number>()
 const seen = new Set<string>()
 const created = new Set<string>()
 
-/** The file an edit or write just finished on, for views that follow the assistant's writes rather than the disk (MiMo's web page tab). */
-export const aiWrite = shallowRef<{ file: string; seq: number } | null>(null)
+/**
+ * The files edits and writes just finished on, for views that follow the
+ * assistant's writes rather than the disk (MiMo's web page tab). One batch holds
+ * every file noted in the same tick, so a watcher never misses all but the last.
+ */
+export const aiWrite = shallowRef<{ files: string[]; seq: number } | null>(null)
 
-const normal = (file: string) => file.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
+let pending: string[] = []
+
+function publish(file: string) {
+  if (!pending.length) {
+    queueMicrotask(() => {
+      const files = [...new Set(pending)]
+      pending = []
+      aiWrite.value = { files, seq: (aiWrite.value?.seq ?? 0) + 1 }
+    })
+  }
+  pending.push(file)
+}
+
+/** A path as compared: forward slashes, "." and ".." resolved, no doubled or trailing slash, lower case. */
+export function normalPath(file: string): string {
+  const slashed = file.replace(/\\/g, "/")
+  const lead = slashed.startsWith("//") ? "//" : slashed.startsWith("/") ? "/" : ""
+  const out: string[] = []
+  for (const segment of slashed.slice(lead.length).split("/")) {
+    if (!segment || segment === ".") continue
+    if (segment !== "..") {
+      out.push(segment)
+      continue
+    }
+    const last = out[out.length - 1]
+    // ".." stops at a root (a drive or a leading slash); a relative path keeps the ones it starts with.
+    if (last === undefined ? !lead : last === "..") out.push(segment)
+    else if (last !== undefined && !/^[a-z]:$/i.test(last)) out.pop()
+  }
+  return `${lead}${out.join("/")}`.toLowerCase()
+}
+
+const normal = normalPath
 const isAbsolute = (file: string) => /^([a-zA-Z]:)?[\\/]/.test(file)
 
 function contains(directory: string | undefined, file: string) {
@@ -47,7 +83,7 @@ export function noteToolWrites(message: Message, directory: string | undefined) 
       const absolute = isAbsolute(file) || !directory ? file : `${directory}/${file}`
       writes.set(normal(absolute), Date.now())
       if (made) created.add(normal(absolute))
-      aiWrite.value = { file: absolute, seq: (aiWrite.value?.seq ?? 0) + 1 }
+      publish(absolute)
     }
   }
 }

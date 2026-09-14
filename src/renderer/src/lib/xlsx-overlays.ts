@@ -25,6 +25,8 @@ export interface SheetLike {
   getRange(a1: string): RangeLike
   getScrollState?(): { sheetViewStartRow?: number; sheetViewStartColumn?: number; offsetX?: number; offsetY?: number }
   getFreeze?(): { xSplit?: number; ySplit?: number }
+  getMaxRows?(): number
+  getMaxColumns?(): number
   onScroll?(callback: () => void): { dispose(): void } | undefined
   getSkeleton?(): unknown
 }
@@ -147,6 +149,9 @@ export function parseA1(a1: string): { r1: number; c1: number; r2: number; c2: n
   const r2 = match[4] ? Number(match[4]) - 1 : r1
   return { r1: Math.min(r1, r2), c1: Math.min(c1, c2), r2: Math.max(r1, r2), c2: Math.max(c1, c2) }
 }
+
+// Data bars stop scanning after this many rows in a row without a cell box
+const MISSING_ROWS = 500
 
 function rectOf(sheet: SheetLike, row: number, column: number): Rect | null {
   try {
@@ -344,9 +349,13 @@ export function createSheetOverlays(options: Options): SheetOverlays {
     let used = 0
     options.dataBars.forEach((bar, at) => {
       if (bar.sheetIndex !== index) return
+      // A whole-column rule (A:A) reaches row 1048576; only the sheet's own rows and columns exist
+      const { startRow, startColumn } = bar.range
+      const endRow = Math.min(bar.range.endRow, (sheet.getMaxRows?.() ?? Infinity) - 1)
+      const endColumn = Math.min(bar.range.endColumn, (sheet.getMaxColumns?.() ?? Infinity) - 1)
+      if (endRow < startRow || endColumn < startColumn) return
       let data = barData[at]
       if (!data || !data.values.flat().some(Number.isFinite)) {
-        const { startRow, startColumn, endRow, endColumn } = bar.range
         let raw: unknown[][] = []
         try {
           raw = sheet.getRange(`${columnName(startColumn)}${startRow + 1}:${columnName(endColumn)}${endRow + 1}`).getValues() ?? []
@@ -356,19 +365,30 @@ export function createSheetOverlays(options: Options): SheetOverlays {
         const values = raw.map((row) => (row ?? []).map(numberOf))
         const finite = values.flat().filter(Number.isFinite)
         if (!finite.length) return
-        const min = Math.min(...finite)
-        const max = Math.max(...finite)
+        // Loops, not Math.min(...finite): spreading a large range overflows the call stack
+        let min = Infinity
+        let max = -Infinity
+        for (const value of finite) {
+          if (value < min) min = value
+          if (value > max) max = value
+        }
         data = { values, lo: bound(bar.min, finite, min, max), hi: bound(bar.max, finite, min, max) }
         barData[at] = data
       }
       const span = data.hi - data.lo
-      for (let row = bar.range.startRow; row <= bar.range.endRow; row++) {
-        const first = rectOf(sheet, row, bar.range.startColumn)
-        if (!first) continue
+      let missing = 0
+      for (let row = startRow; row <= endRow; row++) {
+        const first = rectOf(sheet, row, startColumn)
+        if (!first) {
+          // Hidden rows have no box either, but a long run of them means the range ran past the laid-out rows
+          if (++missing >= MISSING_ROWS) break
+          continue
+        }
+        missing = 0
         const top = first.top - offset.y
         if (top >= visibleHeight) break
         if (top + first.height <= 0) continue
-        for (let column = bar.range.startColumn; column <= bar.range.endColumn; column++) {
+        for (let column = startColumn; column <= endColumn; column++) {
           const value = data.values[row - bar.range.startRow]?.[column - bar.range.startColumn]
           if (value == null || !Number.isFinite(value)) continue
           const cell = column === bar.range.startColumn ? first : rectOf(sheet, row, column)

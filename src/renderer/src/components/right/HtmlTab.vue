@@ -6,7 +6,7 @@ import { useRightPanel } from "../../stores/right-panel"
 import { useOfficeVersions } from "../../stores/office-versions"
 import { annotationId, annotationRequest, requestAnnotation, type AnnotationRequest } from "../../lib/annotate"
 import { sendAnnotationNow } from "../../lib/annotation-send"
-import { aiTouch, aiWrite } from "../../lib/ai-touch"
+import { aiTouch, aiWrite, normalPath } from "../../lib/ai-touch"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 import LucideIcon from "../LucideIcon.vue"
@@ -32,7 +32,9 @@ const url = ref("")
 const failed = ref(false)
 const reloads = ref(0)
 const frame = ref<HTMLIFrameElement>()
-const nonce = `${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
+/* Whether the pointer is over the page, learned from the frame element's own enter and leave - which the page cannot fake. */
+const pointerOver = ref(false)
+const nonce =`${Math.random().toString(36).slice(2, 10)}${Date.now().toString(36)}`
 
 const origin = computed(() => {
   try {
@@ -43,21 +45,34 @@ const origin = computed(() => {
 })
 const src = computed(() => (url.value ? `${url.value}?__mcodeedit=${nonce}&__r=${reloads.value}` : ""))
 
-const splitPath = () => {
-  const cut = Math.max(path.value.lastIndexOf("/"), path.value.lastIndexOf("\\"))
-  return [path.value.slice(0, cut), path.value.slice(cut + 1)] as const
+const splitPath = (file = path.value) => {
+  const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"))
+  return [file.slice(0, cut), file.slice(cut + 1)] as const
 }
 
 let lastStat: { size: number; mtimeMs: number } | undefined
 let lastComment = ""
 
-async function initVersions() {
-  const [dir, base] = splitPath()
+async function runInit(file: string) {
+  const [dir, base] = splitPath(file)
   const read = await window.mcode.readFileBytes(dir, base)
   if (!read.ok || read.unchanged) return
-  lastStat = { size: read.size, mtimeMs: read.mtimeMs }
-  const { ai, prompt } = aiTouch(path.value, 60_000)
-  await versions.init(path.value, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+  if (file === path.value) lastStat = { size: read.size, mtimeMs: read.mtimeMs }
+  const { ai, prompt } = aiTouch(file, 60_000)
+  await versions.init(file, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+}
+
+/* One init per page at a time: opening the tab, making a note and sending it all ask, and would otherwise race. */
+const initing = new Map<string, Promise<void>>()
+
+function initVersions(): Promise<void> {
+  const file = path.value
+  let running = initing.get(file)
+  if (!running) {
+    running = runInit(file).finally(() => initing.delete(file))
+    initing.set(file, running)
+  }
+  return running
 }
 
 /* Versions exist before the first annotation, so the assistant's edit it leads to can be undone. */
@@ -154,32 +169,43 @@ function openBox(picked: Picked) {
 }
 
 function onMessage(event: MessageEvent) {
-  if (!origin.value || event.origin !== origin.value) return
+  // The nonce is in the page's own address, so the page could forge it: only this frame's window counts.
+  if (!origin.value || event.origin !== origin.value || !frame.value || event.source !== frame.value.contentWindow) return
   const data = event.data as { __mcodeEdit?: string; type?: string } & Partial<Picked>
   if (!data || data.__mcodeEdit !== nonce) return
   if (data.type === "ready") postEditMode()
   else if (data.type === "clear") dropBox()
-  else if (data.type === "select" && props.tab.htmlEdit && data.rect) {
+  /*
+   * A real pick is a press in the page, so the pointer is over the frame. The
+   * page can post on its own and even focus itself, but it cannot move the
+   * pointer onto the frame: a pick posted while the pointer is elsewhere (the
+   * user typing in the box, say) is ignored.
+   */
+  else if (data.type === "select" && props.tab.htmlEdit && data.rect && pointerOver.value) {
     openBox({ selector: String(data.selector ?? ""), tag: String(data.tag ?? ""), text: String(data.text ?? ""), rect: data.rect })
   }
 }
 
 /* ------------------------------------------------------------ the assistant's writes */
 
-const normal = (file: string) => file.replace(/\\/g, "/").toLowerCase()
-
+/* One batch can hold the page and files beside it: reload once, and keep a version when the page itself is among them. */
 watch(aiWrite, async (write) => {
   if (!write || !path.value) return
-  const file = normal(write.file)
-  const page = normal(path.value)
-  if (file !== page) {
-    if (file.startsWith(page.slice(0, page.lastIndexOf("/") + 1))) reloads.value += 1
+  const page = normalPath(path.value)
+  const folder = page.slice(0, page.lastIndexOf("/") + 1)
+  const files = write.files.map(normalPath)
+  const beside = files.some((file) => file !== page && file.startsWith(folder))
+  if (!files.includes(page)) {
+    if (beside) reloads.value += 1
     return
   }
   const [dir, base] = splitPath()
   try {
     const read = await window.mcode.readFileBytes(dir, base, lastStat)
-    if (read.ok && read.unchanged) return
+    if (read.ok && read.unchanged) {
+      if (beside) reloads.value += 1
+      return
+    }
     dropBox()
     if (read.ok) {
       lastStat = { size: read.size, mtimeMs: read.mtimeMs }
@@ -278,7 +304,18 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="tab.htmlEdit" class="html-hint" data-html-edit-hint>{{ t("html.editHint") }}</div>
       <div class="html-body">
-        <iframe v-if="src" ref="frame" class="rp-html-frame" :title="tab.name" :src="src" />
+        <!-- No top navigation and no popups: a served page must never be able to take over the app's window. -->
+        <iframe
+          v-if="src"
+          ref="frame"
+          class="rp-html-frame"
+          :title="tab.name"
+          :src="src"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-downloads"
+          :data-pointer-over="pointerOver ? 'true' : 'false'"
+          @mouseenter="pointerOver = true"
+          @mouseleave="pointerOver = false"
+        />
         <div v-else class="html-empty">{{ failed ? t("office.serveFailed") : t("office.loadingConvert") }}</div>
       </div>
       <VersionHistory v-if="history" :path="path" :anchor="history" @close="history = null" />

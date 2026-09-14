@@ -30,6 +30,7 @@ const live = ref<Box | null>(null)
 const kept = ref(new Map<string, { box: Box; t: number }>())
 let start: { x: number; y: number } | null = null
 let swallowClick = false
+let swallowTimer: ReturnType<typeof setTimeout> | undefined
 let ownRequest: AnnotationRequest | null = null
 
 const shown = computed(() => videoPreview.value)
@@ -129,6 +130,11 @@ function onPointerUp(event: PointerEvent) {
     return
   }
   swallowClick = true
+  // The click that ends the drag comes in this same task; any later click is a new one.
+  clearTimeout(swallowTimer)
+  swallowTimer = setTimeout(() => {
+    swallowClick = false
+  }, 0)
   live.value = box
   const rect = el.getBoundingClientRect()
   const content = contentOf(rect.width, rect.height, el.videoWidth, el.videoHeight)
@@ -165,7 +171,15 @@ function onPointerCancel() {
   live.value = null
 }
 
-/* A finished drag is followed by a click on the ground, which must not close the preview. */
+/*
+ * A finished drag is followed by a click, which must not close the preview. With
+ * the pointer captured that click lands on the video and stops at the column, so
+ * the flag is also dropped after the drag's task and on the next press.
+ */
+function onGroundPointerDown() {
+  swallowClick = false
+}
+
 function onGroundClick() {
   if (swallowClick) {
     swallowClick = false
@@ -222,6 +236,7 @@ function onSeek(event: Event) {
 onMounted(() => window.addEventListener("keydown", onKey, true))
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKey, true)
+  clearTimeout(swallowTimer)
   dropRequest()
 })
 </script>
@@ -229,7 +244,7 @@ onBeforeUnmount(() => {
 <template>
   <Teleport to="body">
     <div v-if="shown" class="vp-overlay" data-video-preview>
-      <div id="video-preview" class="vp-content" role="dialog" aria-modal="true" :aria-label="t('videoPreview.title')" @click="onGroundClick">
+      <div id="video-preview" class="vp-content" role="dialog" aria-modal="true" :aria-label="t('videoPreview.title')" @pointerdown.capture="onGroundPointerDown" @click="onGroundClick">
         <span class="vp-sr">{{ t("videoPreview.title") }}</span>
         <div class="vp-column" @click.stop>
           <div class="vp-frame">

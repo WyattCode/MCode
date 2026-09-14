@@ -133,8 +133,8 @@ async function load() {
   if (viewer && host.value && shownPath) saved = { path: shownPath, top: host.value.scrollTop }
   stopRestore?.()
   teardown()
+  // Taken only once this load has opened: a load overtaken by a newer one must leave the place for it.
   const top = saved && saved.path === props.path && saved.top > 0 ? saved.top : null
-  saved = null
   if (top !== null) {
     restoring.value = true
     if (host.value) host.value.style.visibility = "hidden"
@@ -159,14 +159,14 @@ async function load() {
     const { PptxViewer: Viewer } = await import("@aiden0z/pptx-renderer")
     if (mine !== generation || !host.value) return
     const data = decode(read.base64)
-    bytes = data
+    let loaded: SlideFixup[] = []
     try {
-      fixups = await parseFixups(await JSZip.loadAsync(data))
+      loaded = await parseFixups(await JSZip.loadAsync(data))
     } catch (err) {
       console.warn("[PptxView] fixup parse failed:", err)
-      fixups = []
     }
-    if (!echarts && fixups.some((fixup) => fixup.charts.length)) {
+    if (mine !== generation || !host.value) return
+    if (!echarts && loaded.some((fixup) => fixup.charts.length)) {
       try {
         echarts = (await import("echarts")) as unknown as Echarts
       } catch (err) {
@@ -175,20 +175,30 @@ async function load() {
     }
     if (mine !== generation || !host.value) return
     const el = host.value
-    el.innerHTML = ""
+    /*
+     * Each load draws into an element of its own: an older load that finishes
+     * after a newer one began destroys its viewer, and the renderer's destroy
+     * empties the element it was given - which must not be the newer deck's.
+     */
+    const deck = document.createElement("div")
+    deck.className = "pptx-deck"
+    el.replaceChildren(deck)
     const animate = takeCreated(props.path) && !reducedMotion()
-    const opened = await Viewer.open(data.buffer as ArrayBuffer, el, {
+    const opened = await Viewer.open(data.buffer as ArrayBuffer, deck, {
       fitMode: "contain",
       renderMode: "list",
       scrollContainer: el,
       listOptions: { windowed: !animate },
-      onSlideRendered: onSlideRendered,
+      onSlideRendered: (index, element) => onSlideRendered(index, element, loaded),
     })
     if (mine !== generation) {
       opened.destroy()
       return
     }
     viewer = opened
+    bytes = data
+    fixups = loaded
+    saved = null
     shownPath = props.path
     ;(opened as unknown as { teardownAdaptiveResize?: () => void }).teardownAdaptiveResize?.()
     loading.value = false
@@ -218,8 +228,8 @@ async function load() {
   }
 }
 
-function onSlideRendered(index: number, element: HTMLElement) {
-  const fixup = fixups[index]
+function onSlideRendered(index: number, element: HTMLElement, list: SlideFixup[]) {
+  const fixup = list[index]
   if (fixup) {
     try {
       applyFixup(element, fixup)
@@ -398,6 +408,9 @@ function closeNote() {
 
 function openFor(pick: Pick, rect: DOMRect, slide: HTMLElement, point: { x: number; y: number }) {
   picked = pick
+  // A piece or box replaces any text selection picked before it, with its marks.
+  pickedRange = null
+  selRects.value = []
   pickedRegion = regionOf(rect, slide)
   highlight.value = localOf(rect)
   autofocus.value = true
@@ -773,7 +786,8 @@ watch(
 
 /* Escape clears what this file sent. */
 function onEscape(event: KeyboardEvent) {
-  if (!props.active || event.key !== "Escape" || event.defaultPrevented || event.isComposing) return
+  // Escape while presenting ends the show; it must not also drop what was sent.
+  if (!props.active || present.value || event.key !== "Escape" || event.defaultPrevented || event.isComposing) return
   batch.clearFile(props.path)
 }
 
@@ -814,12 +828,43 @@ function relayout() {
   }
 }
 
+/* The slide at the top of the pane, and how far into it the pane is scrolled. */
+function readingPlace(): { index: number; fraction: number } | null {
+  const el = host.value
+  if (!el) return null
+  const frame = el.getBoundingClientRect()
+  for (const slide of el.querySelectorAll<HTMLElement>("[data-slide-index]")) {
+    const box = slide.getBoundingClientRect()
+    if (box.bottom <= frame.top) continue
+    const index = Number.parseInt(slide.getAttribute("data-slide-index") ?? "", 10)
+    return Number.isFinite(index) ? { index, fraction: box.height > 0 ? (frame.top - box.top) / box.height : 0 } : null
+  }
+  return null
+}
+
+function returnTo(place: { index: number; fraction: number }) {
+  const el = host.value
+  const slide = el?.querySelector(`[data-slide-index="${place.index}"]`)
+  if (!el || !slide) return
+  const box = slide.getBoundingClientRect()
+  if (box.height <= 0) return
+  el.scrollTop += box.top - el.getBoundingClientRect().top + place.fraction * box.height
+}
+
 let resizeTimer: ReturnType<typeof setTimeout> | undefined
 const resizer = new ResizeObserver(() => {
   clearTimeout(resizeTimer)
   resizeTimer = setTimeout(() => {
+    // The renderer draws the whole list again at the new width (and would dispose the charts a slide show is using).
+    if (present.value) return
+    const place = readingPlace()
     ;(viewer as unknown as { handleContainerResize?: () => void } | null)?.handleContainerResize?.()
-    for (const delay of [16, 120, 320]) setTimeout(relayout, delay)
+    for (const delay of [16, 120, 320, 700]) {
+      setTimeout(() => {
+        if (place) returnTo(place)
+        relayout()
+      }, delay)
+    }
   }, 180)
 })
 

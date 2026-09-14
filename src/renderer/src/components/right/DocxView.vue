@@ -77,10 +77,14 @@ let lastPath = ""
 let lastStat: { size: number; mtimeMs: number } | undefined
 let saved: { path: string; top: number } | null = null
 
+/* The folder keeps its trailing separator: "D:" alone resolves to the current directory on that drive, "D:\" to its root. */
 const splitPath = () => {
   const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
-  return [props.path.slice(0, cut), props.path.slice(cut + 1)] as const
+  return [props.path.slice(0, cut + 1), props.path.slice(cut + 1)] as const
 }
+
+/* The watcher answers with whichever spelling it was asked with; slashes and case still name one file. */
+const samePath = (a: string, b: string) => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase()
 
 const platform = (): "darwin" | "win32" | "linux" => (/Mac/i.test(navigator.userAgent) ? "darwin" : /Windows/i.test(navigator.userAgent) ? "win32" : "linux")
 
@@ -93,6 +97,10 @@ function decode(base64: string) {
 
 function unhide() {
   if (scroller.value) scroller.value.style.visibility = ""
+}
+
+function clearCommentHighlight() {
+  if (typeof CSS !== "undefined" && "highlights" in CSS) CSS.highlights.delete("docx-comments")
 }
 
 /* ------------------------------------------------------------ loading */
@@ -111,7 +119,8 @@ async function load() {
   const read = await window.mcode.readFileBytes(dir, base)
   if (mine !== generation) return
   if (!read.ok || read.unchanged) {
-    error.value = !read.ok && read.reason === "noent" ? t("office.fileMissing") : t("office.serveFailed")
+    const reason = read.ok ? "" : read.reason
+    error.value = reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : t("office.serveFailed")
     loading.value = false
     restoring.value = false
     unhide()
@@ -127,6 +136,8 @@ async function load() {
     if (!host || mine !== generation) return
     host.innerHTML = ""
     const bytes = decode(read.base64)
+    // docx-preview sets one global comment highlight per render and never drops it; the old ranges would outlive their pages.
+    clearCommentHighlight()
     await docx.renderAsync(bytes, host, undefined, {
       ignoreLastRenderedPageBreak: false,
       renderAltChunks: false,
@@ -164,6 +175,8 @@ async function load() {
     if (mine !== generation) return
     const { ai, prompt } = aiTouch(props.path, 60_000)
     await versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
+    // A newer load owns the scroll restore and the marks from here.
+    if (mine !== generation) return
     loading.value = false
     const top = saved && saved.path === props.path && saved.top > 0 ? saved.top : null
     saved = null
@@ -175,7 +188,9 @@ async function load() {
       }, 16)
     }
     await nextTick()
+    if (mine !== generation) return
     await reresolve(previous, read.base64)
+    if (mine !== generation) return
     measurePage()
     refreshMarks()
   } catch (err) {
@@ -235,11 +250,18 @@ function measurePage() {
   applyZoom()
 }
 
+/* A scrollbar coming and going moves the width by its own thickness; refitting on that flickers between two zooms. */
+const FIT_SLACK = 20
+let fitWidth = 0
+const hostWidth = () => docHost.value?.clientWidth || scroller.value?.clientWidth || 0
+const refits = (width: number) => !fitWidth || Math.abs(width - fitWidth) > FIT_SLACK
+
 function applyZoom() {
   const wrapper = docHost.value?.querySelector<HTMLElement>(".docx-wrapper")
   if (!wrapper) return
-  const hostWidth = docHost.value?.clientWidth || scroller.value?.clientWidth || 0
-  const fit = pageWidth.value > 0 && hostWidth > 0 ? Math.min(1, hostWidth / (pageWidth.value + 2 * FIT_PAD)) : 1
+  const width = hostWidth()
+  if (refits(width)) fitWidth = width
+  const fit = pageWidth.value > 0 && fitWidth > 0 ? Math.min(1, fitWidth / (pageWidth.value + 2 * FIT_PAD)) : 1
   wrapper.style.zoom = String(fit * zoom.value)
   void nextTick(() => {
     measureRail()
@@ -675,7 +697,10 @@ let deferReload = false
 
 async function sendNote() {
   const comment = noteText.value.trim()
-  if (!comment || !selectedText || !selectedRange) {
+  // Copied before the send: hideNote() (a click away, a reload) may clear the module's selection while it is out.
+  const text = selectedText
+  const range = selectedRange
+  if (!comment || !text || !range) {
     hideNote()
     return
   }
@@ -687,7 +712,7 @@ async function sendNote() {
   }
   localNote = `【选中文本】${comment}`
   localConvo = result.convoId ?? null
-  kept.set(note.id, paragraphRecord(selectedRange, selectedText, note.occ ?? 1))
+  if (range.startContainer.isConnected) kept.set(note.id, paragraphRecord(range, text, note.occ ?? 1))
   batch.setBatch([{ id: note.id, num: 0, kind: note.kind, path: props.path, name: props.name }])
   hideNote()
 }
@@ -833,7 +858,9 @@ watch(annotationFlash, (request) => {
 async function onDiskChange() {
   const { ai, prompt } = aiTouch(props.path)
   const aiRunning = ai && app.running.size > 0
-  if (aiRunning) deferReload = true
+  // A send from here is out: its run-end record carries the note and the diff, and recording these bytes first would make that one a duplicate by hash.
+  const pending = localConvo !== null
+  if (aiRunning || pending) deferReload = true
   const [dir, base] = splitPath()
   const read = await window.mcode.readFileBytes(dir, base, lastStat)
   if (!read.ok) return
@@ -842,8 +869,8 @@ async function onDiskChange() {
     return
   }
   const changed = read.base64 !== lastBase64
-  if (changed) await versions.record(props.path, read.base64, ai ? "ai_local" : "external", ai ? prompt : t("office.versionNoteExternal"))
-  if (!aiRunning) {
+  if (changed && !pending) await versions.record(props.path, read.base64, ai ? "ai_local" : "external", ai ? prompt : t("office.versionNoteExternal"))
+  if (!aiRunning && !pending) {
     lastStat = { size: read.size, mtimeMs: read.mtimeMs }
     reload()
   }
@@ -868,6 +895,8 @@ watch(
     const [dir, base] = splitPath()
     if (localConvo && ended.includes(localConvo)) {
       localConvo = null
+      // The reload below is the one that was deferred.
+      deferReload = false
       const read = await window.mcode.readFileBytes(dir, base)
       if (read.ok && !read.unchanged && read.base64 !== lastBase64) {
         const summary = diffSummary(await paragraphsOf(lastBase64), await paragraphsOf(read.base64))
@@ -917,11 +946,17 @@ function onScroll() {
 }
 
 const resizer = new ResizeObserver(() => {
-  applyZoom()
+  if (refits(hostWidth())) applyZoom()
+  else
+    void nextTick(() => {
+      measureRail()
+      refreshMarks()
+    })
   updateRailOpen()
 })
 
 let stopWatching: (() => void) | undefined
+let diskTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(() => {
   if (scroller.value) {
@@ -936,7 +971,12 @@ onMounted(() => {
   runningBefore = new Set(app.running)
   void window.mcode.watchFile(props.path)
   stopWatching = window.mcode.onFileChanged((changed) => {
-    if (changed === props.path) void onDiskChange()
+    // Several spellings of one file arrive together; one look at the disk is enough.
+    if (!samePath(changed, props.path) || diskTimer) return
+    diskTimer = setTimeout(() => {
+      diskTimer = undefined
+      void onDiskChange()
+    }, 0)
   })
   void load()
 })
@@ -950,11 +990,14 @@ onBeforeUnmount(() => {
   document.removeEventListener("pointercancel", onDocCancel, true)
   document.removeEventListener("keydown", onEscape)
   stopWatching?.()
+  clearTimeout(diskTimer)
   void window.mcode.unwatchFile(props.path)
   stopRestore?.()
   clearTimeout(flashTimer)
   clearTimeout(scrollTimer)
   if (typeof CSS !== "undefined" && "highlights" in CSS) CSS.highlights.delete("docx-editing")
+  // The highlight is global: another Word view still on the page keeps it.
+  if (document.querySelectorAll("[data-docx-view]").length <= 1) clearCommentHighlight()
 })
 
 const noteHost = () => wrap.value?.getBoundingClientRect()

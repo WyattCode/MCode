@@ -20,6 +20,7 @@ import { Client } from "../lib/client"
 import { t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
+import { endOfficeWatches } from "../lib/annotation-fx"
 
 export const useApp = defineStore("app", () => {
   const client = shallowRef<Client>()
@@ -483,6 +484,7 @@ export const useApp = defineStore("app", () => {
       }
       case "session.idle": {
         noteRunEnded(event.sessionID)
+        endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
         const began = turnStarted.get(event.sessionID)
         turnStarted.delete(event.sessionID)
@@ -497,6 +499,7 @@ export const useApp = defineStore("app", () => {
       }
       case "session.error":
         noteRunEnded(event.sessionID)
+        endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
         turnStarted.delete(event.sessionID)
         noteError(event.sessionID, event.error)

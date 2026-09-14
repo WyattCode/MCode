@@ -140,10 +140,23 @@ async function sheetPaths(zip: JSZip): Promise<string[]> {
   const rels = await text(zip, "xl/_rels/workbook.xml.rels")
   if (!workbook || !rels) return []
   const targets = relationships(rels)
-  return openTags(workbook, "sheet").map((open) => {
-    const target = (attrIn(open, "r:id") && targets.get(attrIn(open, "r:id") ?? "")) || ""
-    return target ? resolvePart("xl", target.replace(/^\/?xl\//, "")) : ""
-  })
+  const types = new Map<string, string>()
+  for (const open of openTags(rels, "Relationship")) {
+    const id = attrIn(open, "Id")
+    const type = attrIn(open, "Type")
+    if (id && type) types.set(id, type)
+  }
+  const paths: string[] = []
+  for (const open of openTags(workbook, "sheet")) {
+    const id = attrIn(open, "r:id") ?? ""
+    const target = targets.get(id) ?? ""
+    const type = types.get(id)
+    // exceljs drops chartsheets and dialog sheets, so only worksheets take an index
+    const worksheet = type ? /\/worksheet$/.test(type) : /(^|\/)worksheets\//.test(target)
+    if (!worksheet) continue
+    paths.push(target ? resolvePart("xl", target.replace(/^\/?xl\//, "")) : "")
+  }
+  return paths
 }
 
 interface SheetPart {
@@ -900,8 +913,11 @@ export async function parseXlsx(bytes: Uint8Array, fileName: string): Promise<Xl
     for (const range of bar.ranges) {
       const banding: Record<number, string> = {}
       if (matrix) {
-        for (let row = range.startRow; row <= range.endRow; row++) {
-          for (let col = range.startColumn; col <= range.endColumn; col++) {
+        // A whole-column rule reaches row 1048576; cells only exist inside the converted size
+        const endRow = Math.min(range.endRow, MAX_ROWS - 1)
+        const endColumn = Math.min(range.endColumn, MAX_COLS - 1)
+        for (let row = range.startRow; row <= endRow; row++) {
+          for (let col = range.startColumn; col <= endColumn; col++) {
             const style = matrix[row]?.[col]?.s
             const rgb = style && typeof style === "object" ? style.bg?.rgb : undefined
             if (!style || typeof style !== "object" || typeof rgb !== "string") continue

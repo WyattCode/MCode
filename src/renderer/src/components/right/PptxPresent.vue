@@ -42,6 +42,7 @@ const handles: Record<Slot, Handle | null> = { A: null, B: null }
 let effectAnimations: Animation[] = []
 let transitionAnimations: Animation[] = []
 let effectsPlaying = false
+let effectRun = 0
 let moving = false
 let effectsStarted = false
 const motions = new Map<number, SlideMotion | null>()
@@ -104,7 +105,9 @@ async function renderInto(at: number, slot: Slot): Promise<Handle | null> {
 }
 
 async function playEffects(at: number, slide: HTMLElement) {
+  const run = ++effectRun
   const motion = await motionOf(at)
+  if (run !== effectRun) return
   const nodes = slides()?.[at]?.nodes
   if (!motion?.effects.length || !nodes) return
   cancel(effectAnimations)
@@ -126,7 +129,8 @@ async function playEffects(at: number, slide: HTMLElement) {
   try {
     await Promise.all(effectAnimations.map((animation) => animation.finished.catch(() => undefined)))
   } finally {
-    effectsPlaying = false
+    // A run cancelled by a newer one must not clear the newer run's flag.
+    if (run === effectRun) effectsPlaying = false
   }
 }
 
@@ -158,14 +162,23 @@ async function goTo(at: number) {
   const nextEl = slotOf(nextSlot)
   if (!nextEl) return
   moving = true
+  effectRun += 1
+  cancel(effectAnimations)
+  effectAnimations = []
+  effectsPlaying = false
   try {
+    // Laid out, though not yet seen, while it renders, so its pictures and charts measure their real size.
+    nextEl.style.visibility = "hidden"
+    nextEl.style.display = "block"
     const handle = await renderInto(at, nextSlot)
     if (!handle) {
+      nextEl.style.display = "none"
+      nextEl.style.visibility = ""
       moving = false
       return
     }
     const motion = await motionOf(at)
-    nextEl.style.display = "block"
+    nextEl.style.visibility = ""
     nextEl.style.zIndex = "1"
     const { current, next, timing } = transitionAnimation(reduce ? undefined : motion?.transition)
     cancel(transitionAnimations)

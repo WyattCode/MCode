@@ -67,10 +67,14 @@ const pagesEl = ref<HTMLElement>()
 const layerEls: (HTMLElement | undefined)[] = []
 
 let lastBase64 = ""
+/* The folder keeps its trailing separator: "D:" alone resolves to the current directory on that drive, "D:\" to its root. */
 const splitPath = () => {
   const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
-  return [props.path.slice(0, cut), props.path.slice(cut + 1)] as const
+  return [props.path.slice(0, cut + 1), props.path.slice(cut + 1)] as const
 }
+/* The watcher answers with whichever spelling it was asked with; slashes and case still name one file. */
+const samePath = (a: string, b: string) => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase()
+let loadedPath = ""
 const doc = shallowRef<PDFDocumentProxy>()
 const count = ref(0)
 const ratios = ref<number[]>([])
@@ -140,12 +144,19 @@ async function load() {
   for (const key of Object.keys(sizes)) delete sizes[Number(key)]
   visible.value = [0, -1]
   current.value = 1
-  zoom.value = 1
+  // A reload of the same file keeps its zoom, as the saved scroll offset is measured at that zoom.
+  if (loadedPath !== props.path) {
+    zoom.value = 1
+    loadedPath = props.path
+  }
   try {
     const [dir, base] = splitPath()
     const [lib, read] = await Promise.all([library(), window.mcode.readFileBytes(dir, base)])
     if (mine !== generation) return
-    if (!read.ok || read.unchanged) return fail(!read.ok && read.reason === "noent" ? t("office.fileMissing") : t("office.serveFailed"))
+    if (!read.ok || read.unchanged) {
+      const reason = read.ok ? "" : read.reason
+      return fail(reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : t("office.serveFailed"))
+    }
     lastBase64 = read.base64
     const binary = atob(read.base64)
     const data = new Uint8Array(binary.length)
@@ -161,6 +172,9 @@ async function load() {
     })
     const pdf = await task.promise
     if (mine !== generation) return void pdf.destroy()
+    // The file as opened becomes the first version (or the next, when it changed while closed), so undo and history have something to hold.
+    const { ai, prompt } = aiTouch(props.path, 60_000)
+    void versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
     await loaded(pdf, mine)
   } catch (err) {
     if (mine === generation) fail(err)
@@ -839,6 +853,7 @@ function onEscape(event: KeyboardEvent) {
 /* ------------------------------------------------------------ lifecycle */
 
 let stopWatching: (() => void) | undefined
+let diskTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(() => {
   const el = scroller.value
@@ -853,7 +868,12 @@ onMounted(() => {
   document.addEventListener("keydown", onEscape)
   void window.mcode.watchFile(props.path)
   stopWatching = window.mcode.onFileChanged((changed) => {
-    if (changed === props.path) void onDiskChange()
+    // Several spellings of one file arrive together; one look at the disk is enough.
+    if (!samePath(changed, props.path) || diskTimer) return
+    diskTimer = setTimeout(() => {
+      diskTimer = undefined
+      void onDiskChange()
+    }, 0)
   })
   void load()
 })
@@ -867,6 +887,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", stopAlign)
   document.removeEventListener("keydown", onEscape)
   stopWatching?.()
+  clearTimeout(diskTimer)
   void window.mcode.unwatchFile(props.path)
   stopRestore?.()
   locateCancel?.()

@@ -55,6 +55,9 @@ const batch = useAnnotationBatch()
 const versions = useOfficeVersions()
 
 const SAVE_DELAY = 800
+// A failed write is tried again this many times, this far apart, while the load is current
+const SAVE_RETRIES = 3
+const SAVE_RETRY_DELAY = 3000
 const PILL_W = 116
 const PILL_H = 30
 
@@ -75,6 +78,12 @@ interface BookApi extends WorkbookLike {
 interface Command {
   id: string
   params?: unknown
+}
+interface CellChange {
+  sheetIndex: number
+  a1: string
+  before: string
+  after: string
 }
 interface SheetApiRoot extends UniverLike {
   getActiveWorkbook(): BookApi | null
@@ -97,7 +106,10 @@ let univer: { dispose(): void } | null = null
 let api: SheetApiRoot | null = null
 let parsed: XlsxParsed | null = null
 let overlays: SheetOverlays | null = null
-let bytes: Uint8Array | null = null
+// The file the grid shows, which props.path has already left behind by the time a switch tears it down
+let shownPath = ""
+// The current load's pending-edit flush, run on unmount or when another file replaces it
+let loaded: { path: string; flush: () => void } | null = null
 let lastStat: { size: number; mtimeMs: number } | undefined
 let savedView: { path: string; sheetName: string; row: number; col: number } | null = null
 let cleanups: (() => void)[] = []
@@ -133,7 +145,16 @@ function teardown() {
   try {
     const sheet = api?.getActiveWorkbook()?.getActiveSheet()
     const scroll = sheet?.getScrollState?.()
-    if (sheet && parsed) savedView = { path: props.path, sheetName: sheet.getSheetName(), row: scroll?.sheetViewStartRow ?? 0, col: scroll?.sheetViewStartColumn ?? 0 }
+    // The start row and column count from the freeze line, and scrollToCell takes the frozen part off again
+    const freeze = sheet?.getFreeze?.()
+    if (sheet && parsed) {
+      savedView = {
+        path: shownPath,
+        sheetName: sheet.getSheetName(),
+        row: (scroll?.sheetViewStartRow ?? 0) + (freeze?.ySplit ?? 0),
+        col: (scroll?.sheetViewStartColumn ?? 0) + (freeze?.xSplit ?? 0),
+      }
+    }
   } catch {
     /* the grid is already gone */
   }
@@ -155,7 +176,11 @@ function teardown() {
 }
 
 async function load() {
+  // Another file, not a reload of this one (AI writes, undo, restore): the edits still waiting are written first
+  if (loaded && loaded.path !== props.path) loaded.flush()
+  loaded = null
   const mine = ++generation
+  const path = props.path
   const loadedPath = savedView?.path
   teardown()
   const view = savedView && savedView.path === props.path ? savedView : null
@@ -182,9 +207,9 @@ async function load() {
   lastStat = { size: read.size, mtimeMs: read.mtimeMs }
   const { ai, prompt } = aiTouch(props.path, 60_000)
   void versions.init(props.path, read.base64, { assumeAi: ai, note: ai ? prompt.trim() : t("office.versionNoteExternal") })
-  bytes = decode(read.base64)
   const edits = new Map<string, CellEdit>()
-  const changes = new Map<string, { before: string; after: string }>()
+  // Keyed by sheet index and A1, so Sheet1!A1 and Sheet2!A1 stay two changes
+  const changes = new Map<string, CellChange>()
 
   let convert: typeof import("../../lib/xlsx-convert")
   let engine: typeof import("../../lib/univer-create")
@@ -212,6 +237,7 @@ async function load() {
   const root = created.univerAPI as unknown as SheetApiRoot
   api = root
   parsed = workbook
+  shownPath = path
   root.createWorkbook(workbook.data)
   convert.applyConditionalFormats(root, workbook)
   convert.fitRowHeights(root, workbook, alive)
@@ -248,49 +274,91 @@ async function load() {
 
   const known = [...workbook.sheetIds]
   const added = new Set<string>()
+  // This load's own bytes and stat: a job never patches the bytes of a later load
+  let current: Uint8Array = decode(read.base64)
+  let stat = { size: read.size, mtimeMs: read.mtimeMs }
   let chain: Promise<void> = Promise.resolve()
+  // Jobs that have not started yet are dropped once a reload, undo or restore has replaced this load
   const queue = (job: () => Promise<void>) => {
-    chain = chain.then(job).catch((err) => console.error("[XlsxView] save chain error:", err))
+    chain = chain.then(() => (alive() ? job() : undefined)).catch((err) => console.error("[XlsxView] save chain error:", err))
   }
-  const writeBytes = async (next: Uint8Array, note: string) => {
+  const writeBytes = async (next: Uint8Array, note: string, live: () => boolean = alive) => {
     const base64 = encode(next)
-    const result = await window.mcode.writeFileBytes(dir, base, base64)
-    if (!alive()) return false
-    if (!result.ok) {
-      status.value = "error"
-      return false
+    for (let attempt = 0; ; attempt++) {
+      // Checked right before the write: a newer file may have reached the disk while this job waited
+      if (!live()) return false
+      const result = await window.mcode.writeFileBytes(dir, base, base64).catch((err: unknown) => ({ ok: false as const, reason: String(err) }))
+      if (!live()) return false
+      if (result.ok) {
+        current = next
+        stat = { size: result.size, mtimeMs: result.mtimeMs }
+        if (alive()) {
+          lastStat = stat
+          status.value = "saved"
+        }
+        void versions.record(path, base64, "user", note)
+        return true
+      }
+      if (alive()) status.value = "error"
+      if (attempt >= SAVE_RETRIES) return false
+      // A file held open elsewhere (Excel, a sync client) often frees up shortly
+      await new Promise((resolve) => setTimeout(resolve, SAVE_RETRY_DELAY))
     }
-    bytes = next
-    lastStat = { size: result.size, mtimeMs: result.mtimeMs }
-    status.value = "saved"
-    void versions.record(props.path, base64, "user", note)
-    return true
   }
-  const saveEdits = async () => {
-    if (!bytes || !edits.size) return
-    status.value = "saving"
+  const saveEdits = async (live: () => boolean = alive) => {
+    if (!edits.size) return
+    // A snapshot: edits made while this save runs stay pending for the next one
+    const sent = [...edits.entries()]
+    const noted = [...changes.entries()]
+    if (alive()) status.value = "saving"
     try {
-      const entries = [...changes.entries()].map(([a1, change]) => ({ a1, ...change }))
-      if (await writeBytes(await writeCellEdits(bytes, [...edits.values()]), editsNote(entries))) {
-        edits.clear()
-        changes.clear()
+      const result = await writeCellEdits(current, sent.map(([, edit]) => edit))
+      if (result.applied < sent.length) {
+        // Some cells found nowhere to go in the XML: nothing is written and the edits wait
+        console.error(`[XlsxView] only ${result.applied} of ${sent.length} cell edits could be placed, not saved`)
+        if (alive()) status.value = "error"
+        return
+      }
+      if (await writeBytes(result.bytes, editsNote(noted.map(([, change]) => change)), live)) {
+        for (const [key, edit] of sent) if (edits.get(key) === edit) edits.delete(key)
+        for (const [key, change] of noted) if (changes.get(key) === change) changes.delete(key)
       }
     } catch (err) {
       console.error("[XlsxView] save failed:", err)
       if (alive()) status.value = "error"
     }
   }
-  const saveStructure = (change: (current: Uint8Array) => Promise<Uint8Array>, note: string) =>
+  const saveStructure = (change: (file: Uint8Array) => Promise<Uint8Array>, note: string, failed?: () => void) =>
     queue(async () => {
-      if (!bytes) return
       status.value = "saving"
+      let saved = false
       try {
-        await writeBytes(await change(bytes), note)
+        saved = await writeBytes(await change(current), note)
       } catch (err) {
         console.error("[XlsxView] sheet structural save failed:", err)
         if (alive()) status.value = "error"
       }
+      if (!saved && alive()) failed?.()
     })
+  // A sheet gone from the file: its pending edits and notes go, and later sheets move down one
+  const dropSheet = (index: number) => {
+    const moved = new Map<string, CellEdit>()
+    for (const edit of edits.values()) {
+      if (edit.sheetIndex === index) continue
+      const next = edit.sheetIndex > index ? { ...edit, sheetIndex: edit.sheetIndex - 1 } : edit
+      moved.set(`${next.sheetIndex}:${next.row0}:${next.col0}`, next)
+    }
+    edits.clear()
+    for (const [key, edit] of moved) edits.set(key, edit)
+    const notes = new Map<string, CellChange>()
+    for (const change of changes.values()) {
+      if (change.sheetIndex === index) continue
+      const next = change.sheetIndex > index ? { ...change, sheetIndex: change.sheetIndex - 1 } : change
+      notes.set(`${next.sheetIndex}!${next.a1}`, next)
+    }
+    changes.clear()
+    for (const [key, change] of notes) changes.set(key, change)
+  }
 
   const before = root.onBeforeCommandExecute((command) => {
     if (command.id !== "sheet.command.set-worksheet-name") return
@@ -319,7 +387,19 @@ async function load() {
       known.push(id)
       added.add(id)
       const name = params?.sheet?.name || "Sheet"
-      saveStructure((current) => addSheet(current, name), t("office.versionNoteAddSheet", { name }))
+      saveStructure(
+        (file) => addSheet(file, name),
+        t("office.versionNoteAddSheet", { name }),
+        () => {
+          // The file never got this sheet: forget it, or later removes and renames would aim one index off
+          const index = known.indexOf(id)
+          if (index >= 0) {
+            known.splice(index, 1)
+            dropSheet(index)
+          }
+          added.delete(id)
+        },
+      )
       return
     }
     if (command.id === "sheet.mutation.remove-sheet") {
@@ -333,16 +413,9 @@ async function load() {
       }
       known.splice(index, 1)
       added.delete(id)
-      const moved = new Map<string, CellEdit>()
-      for (const edit of edits.values()) {
-        if (edit.sheetIndex === index) continue
-        const next = edit.sheetIndex > index ? { ...edit, sheetIndex: edit.sheetIndex - 1 } : edit
-        moved.set(`${next.sheetIndex}:${next.row0}:${next.col0}`, next)
-      }
-      edits.clear()
-      for (const [key, edit] of moved) edits.set(key, edit)
+      dropSheet(index)
       const name = params?.subUnitName || ""
-      saveStructure((current) => removeSheet(current, index), t("office.versionNoteRemoveSheet", { name }))
+      saveStructure((file) => removeSheet(file, index), t("office.versionNoteRemoveSheet", { name }))
       return
     }
     if (command.id === "sheet.mutation.set-worksheet-name") {
@@ -351,7 +424,7 @@ async function load() {
       const index = id ? known.indexOf(id) : -1
       if (!id || !params?.name || index < 0 || !added.has(id)) return
       const name = params.name
-      saveStructure((current) => renameSheet(current, index, name), t("office.versionNoteRenameSheet", { name }))
+      saveStructure((file) => renameSheet(file, index, name), t("office.versionNoteRenameSheet", { name }))
       return
     }
     if (command.id !== "sheet.mutation.set-range-values") return
@@ -367,12 +440,16 @@ async function load() {
         const col0 = Number(colKey)
         if (original >= 0 && workbook.isFormula(original, row0, col0)) continue
         const cell = row[colKey]
+        // Style only (Ctrl+B sends {s: {bl: 1}}) has no v and leaves the value be; null or v: null is a clear
+        if (cell != null && !Object.prototype.hasOwnProperty.call(cell, "v")) continue
         const raw = cell == null ? null : (cell.v ?? null)
         const value = typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean" ? raw : raw == null ? null : String(raw)
         edits.set(`${index}:${row0}:${col0}`, { sheetIndex: index, row0, col0, value })
         const a1 = a1Of(row0, col0)
-        const prior = changes.get(a1)
-        changes.set(a1, { before: prior ? prior.before : original >= 0 ? describeValue(workbook.originalValue(original, row0, col0)) : "", after: describeValue(value) })
+        const key = `${index}!${a1}`
+        const prior = changes.get(key)
+        const before = prior ? prior.before : original >= 0 ? describeValue(workbook.originalValue(original, row0, col0)) : ""
+        changes.set(key, { sheetIndex: index, a1, before, after: describeValue(value) })
       }
     }
     if (!edits.size) return
@@ -386,6 +463,28 @@ async function load() {
     clearTimeout(valuesTimer)
     clearTimeout(placeTimer)
   })
+
+  let flushed = false
+  loaded = {
+    path,
+    // Runs after the generation has moved on, so it writes without alive(), but only over the file this load last saw
+    flush: () => {
+      if (flushed) return
+      flushed = true
+      clearTimeout(saveTimer)
+      chain = chain
+        .then(async () => {
+          if (!edits.size) return
+          const check = await window.mcode.readFileBytes(dir, base, stat)
+          if (!check.ok || !check.unchanged) {
+            console.warn("[XlsxView] pending edits not written, the file changed on disk:", path)
+            return
+          }
+          await saveEdits(() => true)
+        })
+        .catch((err) => console.error("[XlsxView] flush of pending edits failed:", err))
+    },
+  }
 }
 
 /* Back to the sheet and scroll position the grid was left at, tried until it holds or the reader moves. */
@@ -404,8 +503,13 @@ function restoreView(root: SheetApiRoot, view: { sheetName: string; row: number;
         }
         book.setActiveSheet(sheet)
         book.scrollToCell?.(view.row, view.col)
-        const scroll = book.getActiveSheet()?.getScrollState?.()
-        if (scroll?.sheetViewStartRow === view.row && scroll?.sheetViewStartColumn === view.col) done = true
+        const active = book.getActiveSheet()
+        const scroll = active?.getScrollState?.()
+        // view.row and view.col include the frozen part, the scroll state does not
+        const freeze = active?.getFreeze?.()
+        const row = scroll?.sheetViewStartRow
+        const col = scroll?.sheetViewStartColumn
+        if (row !== undefined && col !== undefined && row + (freeze?.ySplit ?? 0) === view.row && col + (freeze?.xSplit ?? 0) === view.col) done = true
       } catch (err) {
         // The early tries can come before the grid has drawn; only the last one's failure is worth a word.
         if (delay === 900) console.warn("[XlsxView] restore view failed:", err)
@@ -747,6 +851,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  loaded?.flush()
+  loaded = null
   generation += 1
   teardown()
   wrapResize.disconnect()

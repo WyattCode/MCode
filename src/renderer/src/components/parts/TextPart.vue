@@ -3,18 +3,57 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
 import type { TextPart } from "@shared/protocol"
 import { renderMarkdown } from "../../lib/markdown"
 import { highlightWithin } from "../../lib/highlight"
+import { openVideoPreview } from "../../lib/image-preview"
+import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 import { notifyFailure } from "../../lib/toast"
 
 const props = defineProps<{ part: TextPart }>()
+const app = useApp()
 
 // Safe to bind as HTML: renderMarkdown escapes the source before formatting it.
 const html = computed(() =>
   renderMarkdown(props.part.text, {
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
     tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
+    videoCards: { tip: t("markdown.previewAnnotateTip"), fallback: t("markdown.videoFallbackLabel") },
   }),
 )
+
+/*
+ * MiMo's video card: a web, data or blob address plays as it is; a file on
+ * this machine (a file: address, or an image path) is handed to the local
+ * preview server first, since the window cannot read the disk, and the
+ * preview then knows its path for the annotation.
+ */
+function localPathOf(url: string): string {
+  if (/^file:/i.test(url)) {
+    try {
+      const pathname = decodeURIComponent(new URL(url).pathname)
+      // file:///C:/a/b.mp4 is C:\a\b.mp4 on Windows, written the way the rest of the app writes paths there.
+      return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1).replace(/\//g, "\\") : pathname
+    } catch {
+      return ""
+    }
+  }
+  if (/^([A-Za-z]:)?[\\/]/.test(url)) return url
+  const directory = app.current?.directory
+  return directory ? `${directory}/${url}` : ""
+}
+
+async function openVideoCard(url: string, label: string) {
+  if (/^(https?:|data:|blob:)/i.test(url)) {
+    openVideoPreview(url, { name: label })
+    return
+  }
+  const file = localPathOf(url)
+  const served = file ? await window.mcode.officeServe(file) : null
+  if (!served?.ok) {
+    notifyFailure(t("office.fileMissing"))
+    return
+  }
+  openVideoPreview(served.url, { path: file, name: file.split(/[\\/]/).pop() || label })
+}
 
 /*
  * MiMo's syntax colours on the reply's code blocks, once each render has landed.
@@ -106,6 +145,11 @@ onBeforeUnmount(() => {
  */
 async function onClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
+  const videoCard = target?.closest<HTMLElement>("[data-video-url]")
+  if (videoCard) {
+    await openVideoCard(videoCard.dataset.videoUrl ?? "", videoCard.dataset.videoLabel ?? "")
+    return
+  }
   const tableCopy = target?.closest<HTMLElement>("[data-table-copy]")
   if (tableCopy) {
     await copyTable(tableCopy)
@@ -424,6 +468,58 @@ async function onClick(event: MouseEvent) {
   color: var(--text-weak);
   font-family: var(--font-mono);
   font-size: calc(11px * var(--code-font-scale, 1));
+}
+
+/* MiMo's video card in a reply: an inline plate with an orange play mark and the link's name. */
+.text .md-video-card {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 10px 0;
+  padding: 9px 12px;
+  color: var(--text-strong);
+  background: #f0f0f2;
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  vertical-align: middle;
+}
+
+.text .md-video-card:hover {
+  background: #f1f0ec;
+}
+
+.text .md-video-play {
+  flex-shrink: 0;
+  color: #ff6a2b;
+}
+
+.text .md-video-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-theme="dark"] .text .md-video-card {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .text .md-video-card:hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text .md-video-card {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .text .md-video-card:hover {
+    background: #ffffff0f;
+  }
 }
 
 /*

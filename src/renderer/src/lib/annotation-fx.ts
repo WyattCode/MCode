@@ -43,7 +43,24 @@ export function watchedFilesOf(convoId: string): string[] {
 
 /** What was last asked from a document into this conversation, for the version its reply makes. */
 export function promptOf(convoId: string): string {
-  return [...watches.value].reverse().find((entry) => entry.convoId === convoId)?.prompt ?? ""
+  return [...watches.value].reverse().find((entry) => entry.convoId === convoId)?.prompt ?? endedPrompts.get(convoId) ?? ""
+}
+
+/* Outlasts a mounted viewer's finish (850 + 500ms) and the views' own run-end reads, which run after the idle event. */
+const ENDED_GRACE_MS = 5000
+/* The prompt of a conversation whose watches were cleared, for a view that reloads and records a minute later. */
+const endedPrompts = new Map<string, string>()
+
+/** A conversation went idle or failed: its watches go, so no viewer opened later lights up for a run that is over. */
+export function endOfficeWatches(convoId: string) {
+  const ending = watches.value.filter((entry) => entry.convoId === convoId)
+  if (!ending.length) return
+  endedPrompts.set(convoId, ending[ending.length - 1].prompt)
+  const upTo = Math.max(...ending.map((entry) => entry.seq))
+  setTimeout(() => {
+    // Only what was there at the end: a send made into the same conversation meanwhile keeps its watch.
+    watches.value = watches.value.filter((entry) => entry.convoId !== convoId || entry.seq > upTo)
+  }, ENDED_GRACE_MS)
 }
 
 const IGNITE_MS = 550
@@ -90,7 +107,8 @@ export function useAnnotationFx(file: () => string) {
     () => [watches.value, app.running.size] as const,
     () => {
       if (convoId === null) {
-        const next = watches.value.find((entry) => entry.file === file() && entry.seq > armedSeq)
+        // A watch whose run is already over has nothing left to light.
+        const next = watches.value.find((entry) => entry.file === file() && entry.seq > armedSeq && app.running.has(entry.convoId))
         if (next) arm(next)
         return
       }

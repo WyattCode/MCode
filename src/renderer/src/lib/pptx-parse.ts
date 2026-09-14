@@ -50,14 +50,18 @@ export interface ChartSpec {
   yMax?: number
 }
 
+const MAX_POINTS = 100_000
+
 /** A cache's points by index, holes left undefined up to its count. */
 function cachedPoints(fragment: string | undefined): (string | undefined)[] {
   if (!fragment) return []
-  const count = Number(attr(fragment, "ptCount", "val", "\\d+") ?? 0)
+  // Counts and indexes come from the file, so both are capped: a crafted count must not allocate the renderer away.
+  const count = Math.min(MAX_POINTS, Number(attr(fragment, "ptCount", "val", "\\d+") ?? 0))
   const found: (string | undefined)[] = []
   for (const match of fragment.matchAll(new RegExp(`<${tag("pt")}\\b[^>]*\\bidx="(\\d+)"[^>]*>([\\s\\S]*?)</${tag("pt")}>`, "gi"))) {
+    const index = Number(match[1])
     const value = inner(match[2], "v")
-    if (value !== undefined) found[Number(match[1])] = decodeXml(value)
+    if (value !== undefined && index < MAX_POINTS) found[index] = decodeXml(value)
   }
   return Array.from({ length: Math.max(count, found.length) }, (_, index) => found[index])
 }

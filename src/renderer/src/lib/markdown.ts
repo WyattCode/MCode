@@ -15,7 +15,15 @@ function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;")
 }
 
-function inline(text: string): string {
+/** MiMo's test for a video address: one of its video extensions, before any query or fragment. */
+export function isVideoAddress(url: string): boolean {
+  return /^data:video\//i.test(url) || /\.(mp4|m4v|webm|mov|ogv)(?:[?#].*)?$/i.test(url)
+}
+
+const PLAY_ICON = '<svg class="md-video-play" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>'
+
+function inline(text: string, options: MarkdownOptions): string {
+  const cards = options.videoCards
   return (
     text
       // Inline code first: its contents must not be re-processed for emphasis.
@@ -23,9 +31,24 @@ function inline(text: string): string {
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/(^|[\s(])\*([^*\n]+)\*/g, "$1<em>$2</em>")
       .replace(/(^|[\s(])_([^_\n]+)_/g, "$1<em>$2</em>")
-      // Links render as text plus a dim URL: nothing in this pane should be a
-      // live navigation target the model chose.
-      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '$1 <span class="md-url">$2</span>')
+      /*
+       * Links render as text plus a dim URL: nothing in this pane should be a
+       * live navigation target the model chose. The one exception is MiMo's
+       * video card - a link with a web, data, blob or file address, or an
+       * image, whose address is a video - which opens the video preview only
+       * when pressed. Everything here is already escaped, so the address is
+       * safe inside a quoted attribute.
+       */
+      .replace(/(!?)\[([^\]]*)\]\(([^)\s]+)\)/g, (whole, bang: string, label: string, url: string) => {
+        if (cards && isVideoAddress(url) && (bang || /^(https?:|data:|blob:|file:)/i.test(url))) {
+          const name = label || cards.fallback
+          return (
+            `<button type="button" class="md-video-card" data-video-url="${url}" data-video-label="${name}" title="${escapeHtml(cards.tip)}">` +
+            `${PLAY_ICON}<span class="md-video-label">${name}</span></button>`
+          )
+        }
+        return label ? `${bang}${label} <span class="md-url">${url}</span>` : whole
+      })
   )
 }
 
@@ -75,6 +98,8 @@ export interface MarkdownOptions {
    * the caller; the clicks are the caller's to handle.
    */
   tableActions?: { label: string; preview: string; copy: string }
+  /** MiMo's video card for a video link in a reply: the hover tip, and the label for a link with none. */
+  videoCards?: { tip: string; fallback: string }
 }
 
 const COPY_ICON =
@@ -165,7 +190,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
         out.push('<blockquote class="md-quote">')
         quoting = true
       }
-      out.push(`<p class="md-p">${inline(quoted[1])}</p>`)
+      out.push(`<p class="md-p">${inline(quoted[1], options)}</p>`)
       continue
     }
     closeQuote()
@@ -185,7 +210,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
        */
       const rank = Math.min(4, heading[1].length)
       out.push(
-        `<h${level} class="md-h" data-level="${rank}">${inline(heading[2])}</h${level}>`,
+        `<h${level} class="md-h" data-level="${rank}">${inline(heading[2], options)}</h${level}>`,
       )
       continue
     }
@@ -217,7 +242,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
             : '<table class="md-table">',
         )
         out.push("<thead><tr>")
-        head.forEach((cell, column) => out.push(`<th${align(column)}>${inline(cell)}</th>`))
+        head.forEach((cell, column) => out.push(`<th${align(column)}>${inline(cell, options)}</th>`))
         out.push("</tr></thead>")
 
         at += 2
@@ -227,7 +252,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
           // Short rows are padded and long ones cut, the way GFM asks, so the
           // grid stays rectangular whatever the model wrote.
           const row = Array.from({ length: head.length }, (_, column) => cells[column] ?? "")
-          body.push("<tr>" + row.map((cell, column) => `<td${align(column)}>${inline(cell)}</td>`).join("") + "</tr>")
+          body.push("<tr>" + row.map((cell, column) => `<td${align(column)}>${inline(cell, options)}</td>`).join("") + "</tr>")
           at += 1
         }
         if (body.length) out.push("<tbody>" + body.join("") + "</tbody>")
@@ -252,7 +277,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
         out.push('<ul class="md-list">')
         listType = "ul"
       }
-      out.push(`<li>${inline(bullet[1])}</li>`)
+      out.push(`<li>${inline(bullet[1], options)}</li>`)
       continue
     }
 
@@ -263,7 +288,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
         out.push('<ol class="md-list">')
         listType = "ol"
       }
-      out.push(`<li>${inline(numbered[1])}</li>`)
+      out.push(`<li>${inline(numbered[1], options)}</li>`)
       continue
     }
 
@@ -279,7 +304,7 @@ export function renderMarkdown(source: string, options: MarkdownOptions = {}): s
     }
 
     closeList()
-    out.push(`<p class="md-p">${inline(line)}</p>`)
+    out.push(`<p class="md-p">${inline(line, options)}</p>`)
   }
 
   // An unterminated fence still has content worth showing - this is the normal
