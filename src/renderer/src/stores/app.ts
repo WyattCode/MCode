@@ -1135,6 +1135,11 @@ export const useApp = defineStore("app", () => {
   /** The request whose answer is in flight, so the panel can disable itself. */
   const responding = ref<string>()
 
+  /** Takes one turn's file changes back out of the project; the card turns into its reverted form on the message update. */
+  async function revertTurn(sessionID: string, messageIDs: string[]) {
+    return api().request({ type: "session.revertTurn", sessionID, messageIDs })
+  }
+
   async function respond(response: PermissionResponse, reason?: string) {
     const request = permission.value
     if (!request || responding.value === request.id) return
@@ -1492,6 +1497,7 @@ export const useApp = defineStore("app", () => {
     refreshCommands,
     permission,
     permissionQueue,
+    revertTurn,
     responding,
     pendingPermissions,
     unseen,

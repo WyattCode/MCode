@@ -37,6 +37,8 @@ import { splitSendWord } from "../src/renderer/src/lib/voice"
 import { addressToURL, safeURL } from "../src/shared/web-address"
 import { ToolError } from "../src/server/tool/types"
 import { PermissionDenied, Permissions } from "../src/server/permission"
+import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
+import { revertTurnFiles } from "../src/server/session/turn-revert"
 import { Bus } from "../src/server/bus"
 import { unifiedDiff } from "../src/server/diff"
 import { globToRegExp } from "../src/server/tool/search"
@@ -578,6 +580,43 @@ async function main() {
   check("always on a delete is not remembered", againAsk?.forced === true, againAsk)
   if (againAsk) permissions.respond(againAsk.id, "reject")
   await again
+
+  // ------------------------------------------------------------- turn revert
+  section("Turn revert")
+  {
+    const before = "alpha\nbeta\ngamma\ndelta\n"
+    const after = "alpha\nBETA\ngamma\ndelta\nepsilon\n"
+    const turnDiff = unifiedDiff("notes.txt", before, after)
+    const parsed = parseUnifiedDiff(turnDiff)
+    check("a diff splits into its file", parsed.length === 1 && parsed[0]!.file === "notes.txt", parsed)
+    check("reversing a section restores the text", reverseSection(after, parsed[0]!) === before)
+    const later = "intro\n" + after
+    check("a hunk is found where later edits moved it", reverseSection(later, parsed[0]!) === "intro\n" + before)
+    check("a hunk whose lines are gone refuses", reverseSection("something else\n", parsed[0]!) === undefined)
+    const tricky = parseUnifiedDiff(unifiedDiff("a.txt", "-- x\n", "++ y\n") + "\n" + unifiedDiff("b.txt", "", "new\n"))
+    check("a removed '-- ' line is not read as a file header", tricky.map((s) => s.file).join(",") === "a.txt,b.txt", tricky)
+
+    const root = path.join(project, "turn-revert")
+    await fs.mkdir(root, { recursive: true })
+    await fs.writeFile(path.join(root, "kept.txt"), "one\ntwo\nthree\n")
+    await fs.writeFile(path.join(root, "made.txt"), "brand new\n")
+    const tool = (id: string, name: string, metadata: Record<string, unknown>) => ({
+      type: "tool" as const, id, callID: id, name, status: "completed" as const, input: {}, metadata, time: { created: 0 },
+    })
+    const turnMessage = {
+      id: "msg_turn", sessionID: "s", role: "assistant" as const, model: { provider: "p", model: "m" }, agent: "build" as const,
+      parts: [
+        tool("t1", "edit", { path: "kept.txt", diff: unifiedDiff("kept.txt", "one\n2\nthree\n", "one\ntwo\nthree\n") }),
+        tool("t2", "write", { path: "made.txt", created: true, diff: unifiedDiff("made.txt", "", "brand new\n") }),
+        tool("t3", "write", { path: "../escape.txt", diff: unifiedDiff("../escape.txt", "", "x\n") }),
+      ],
+      time: { created: 0 },
+    }
+    const reverted = await revertTurnFiles(root, [turnMessage])
+    check("a turn revert restores, removes and skips outside", reverted.restored === 1 && reverted.removed === 1 && reverted.outside === 1 && reverted.failed === 0, reverted)
+    check("the edited file is back to the turn's start", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\n2\nthree\n")
+    check("the created file is gone", !(await exists(path.join(root, "made.txt"))))
+  }
 
   // ------------------------------------------------------------------- units
   section("Units")

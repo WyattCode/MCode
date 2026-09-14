@@ -217,7 +217,24 @@ export interface AssistantMessage {
   /** i18n key for `error`, when the failure was one the app can phrase itself. */
   errorCode?: string
   errorParams?: Record<string, string>
+  /**
+   * The file changes of the turn this message ends were taken back out of the
+   * project with the card's 撤销. The transcript stays; only the files moved.
+   */
+  reverted?: boolean
   time: { created: number; completed?: number }
+}
+
+/** What taking one turn's file changes back did, file by file. */
+export interface TurnRevertResult {
+  /** Edited files put back to how the turn found them. */
+  restored: number
+  /** Files the turn created, deleted. */
+  removed: number
+  /** Files whose changed lines were no longer there, left alone. */
+  failed: number
+  /** Paths outside the project, skipped. */
+  outside: number
 }
 
 export type Message = UserMessage | AssistantMessage
@@ -1213,6 +1230,8 @@ export type Request =
   | { type: "session.compact"; sessionID: string }
   | { type: "session.undo"; sessionID: string }
   | { type: "session.redo"; sessionID: string }
+  /* One turn's file changes taken back out of the project; `messageIDs` are the turn's assistant messages. */
+  | { type: "session.revertTurn"; sessionID: string; messageIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
   | { type: "session.staged"; sessionID: string; staged: boolean }
@@ -1415,6 +1434,7 @@ export interface ResponseMap {
   "session.compact": { session: SessionInfo }
   "session.undo": { files: number; history: HistoryDepth }
   "session.redo": { files: number; history: HistoryDepth }
+  "session.revertTurn": TurnRevertResult
   "session.history": { history: HistoryDepth }
   "session.archive": { session: SessionInfo }
   "session.rename": { session: SessionInfo }

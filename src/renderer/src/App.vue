@@ -29,6 +29,7 @@ import ProjectDialog from "./components/ProjectDialog.vue"
 import ServerPopover from "./components/ServerPopover.vue"
 import ImagePreview from "./components/ImagePreview.vue"
 import LiveEditPill from "./components/LiveEditPill.vue"
+import { fileRequest, reviewRequest } from "./lib/review-request"
 import { imagePreview } from "./lib/image-preview"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
@@ -1143,6 +1144,13 @@ function toggleLiveReview() {
   if (reviewShowing.value) toggleReviewPanel()
   else openReviewTab()
 }
+
+/* The "edited N files" card at the end of a turn: 审阅 opens the review, a file name opens that file. */
+watch(reviewRequest, () => openReviewTab())
+watch(fileRequest, (asked) => {
+  const root = app.current?.directory
+  if (asked && root) void window.mcode.openFile(root, asked.path)
+})
 
 function copyWorkingDirectory() {
   const directory = app.current?.directory

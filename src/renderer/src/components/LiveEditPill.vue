@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue"
-import type { ToolPart } from "@shared/protocol"
 import { useApp } from "../stores/app"
+import { editedFiles } from "../lib/edited-files"
 import { t } from "../lib/i18n"
 
 /*
@@ -14,82 +14,18 @@ defineProps<{ expanded?: boolean }>()
 const emit = defineEmits<{ toggle: [] }>()
 const app = useApp()
 
-const EDITING = new Set(["edit", "write", "patch"])
-
-function isAbsolute(file: string) {
-  return file.startsWith("/") || file.startsWith("\\\\") || /^[a-zA-Z]:[\\/]/.test(file)
-}
-
-/* A path the model reached outside the project is not a change to it. */
-function inProject(file: string, directory?: string) {
-  if (file.startsWith("../") || file.startsWith("..\\")) return false
-  if (!isAbsolute(file)) return true
-  if (!directory) return true
-  const root = directory.replace(/[\\/]+$/, "")
-  const windows = root.includes("\\") || /^[a-zA-Z]:/.test(root)
-  return windows ? file.toLowerCase().startsWith(`${root.toLowerCase()}\\`) || file.toLowerCase().startsWith(`${root.toLowerCase()}/`) : file.startsWith(`${root}/`)
-}
-
-/*
- * Lines added and removed. Only lines inside a hunk count, and a new file
- * header ends the hunk before it, so a patch touching several files does not
- * count its second file's "--- a/" line as a removal.
- */
-function lineCounts(diff: string) {
-  let add = 0
-  let del = 0
-  let inHunk = false
-  const lines = diff.split("\n")
-  lines.forEach((line, index) => {
-    if (line.startsWith("@@")) {
-      inHunk = true
-      return
-    }
-    if (line.startsWith("diff --git ") || (line.startsWith("--- ") && lines[index + 1]?.startsWith("+++ "))) {
-      inHunk = false
-      return
-    }
-    if (!inHunk) return
-    if (line.startsWith("+")) add++
-    else if (line.startsWith("-")) del++
-  })
-  return { add, del }
-}
-
-const changes = computed(() => {
-  const files = new Set<string>()
-  let add = 0
-  let del = 0
-  const directory = app.current?.directory
-  for (const message of app.messages) {
-    if (message.role !== "assistant") continue
-    for (const part of message.parts) {
-      if (part.type !== "tool" || !EDITING.has(part.name)) continue
-      const tool = part as ToolPart
-      if (tool.status === "error") continue
-      const diff = typeof tool.metadata?.diff === "string" ? tool.metadata.diff : ""
-      if (!diff) continue
-      const named = Array.isArray(tool.metadata?.files)
-        ? (tool.metadata.files as unknown[]).filter((file): file is string => typeof file === "string")
-        : typeof tool.metadata?.path === "string"
-          ? [tool.metadata.path]
-          : []
-      const kept = named.filter((file) => file.trim() && inProject(file, directory))
-      if (!kept.length) continue
-      kept.forEach((file) => files.add(file))
-      const counted = lineCounts(diff)
-      add += counted.add
-      del += counted.del
-    }
-  }
-  return { files: files.size, add, del }
-})
+const changes = computed(() =>
+  editedFiles(
+    app.messages.flatMap((message) => (message.role === "assistant" ? message.parts : [])),
+    app.current?.directory,
+  ),
+)
 </script>
 
 <template>
-  <div v-if="changes.files > 0" class="live-edit-pill-wrap">
+  <div v-if="changes.files.length > 0" class="live-edit-pill-wrap">
     <button type="button" class="live-edit-pill" data-live-edit-pill :aria-expanded="expanded" @click="emit('toggle')">
-      <span class="live-edit-pill-text">{{ t("composer.filesChanged", { n: changes.files }) }}</span>
+      <span class="live-edit-pill-text">{{ t("composer.filesChanged", { n: changes.files.length }) }}</span>
       <span class="live-edit-pill-stats">
         <span class="live-edit-add">+{{ changes.add }}</span>
         {{ " " }}

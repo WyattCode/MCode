@@ -13,6 +13,7 @@ import { language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
 import { renderMarkdown } from "../lib/markdown"
 import { notifyFailure } from "../lib/toast"
+import EditedFilesCard from "./EditedFilesCard.vue"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -49,6 +50,8 @@ const shownBusy = computed(() => (props.side ? app.sideBusy : app.busy))
 const shownCompacting = computed(() => (props.side ? false : app.compacting))
 const shownSession = computed(() => (props.side ? app.side : app.current))
 const shownID = computed(() => (props.side ? app.sideID : app.currentID))
+/* The project the shown conversation works in; a side conversation shares the main one's. */
+const shownDirectory = computed(() => app.current?.directory)
 const shownStreaming = computed(() => (props.side ? app.sideStreaming : app.streaming))
 const shownError = computed(() => (props.side ? app.sideError : app.error))
 const scroller = ref<HTMLElement>()
@@ -143,6 +146,8 @@ interface Turn {
   asked?: number
   parts: AssistantPart[]
   steers: Steer[]
+  /** The assistant messages the turn is made of, which is how the server is told which turn to take back. */
+  messageIDs: string[]
   last?: AssistantMessage
   started?: number
   completed?: number
@@ -196,15 +201,17 @@ const turns = computed<Turn[]>(() => {
         asked: message.time.created,
         parts: [],
         steers: [],
+        messageIDs: [],
       }
       out.push(current)
       continue
     }
     if (!current) {
-      current = { id: message.id, parts: [], steers: [] }
+      current = { id: message.id, parts: [], steers: [], messageIDs: [] }
       out.push(current)
     }
     current.parts.push(...message.parts)
+    current.messageIDs.push(message.id)
     current.last = message
     current.started ??= message.time.created
     current.completed = message.time.completed
@@ -921,6 +928,20 @@ defineExpose({ stepMessage, scroller })
             <ToolPart v-else-if="row.part.type === 'tool'" :part="row.part" />
             <TextPart v-else :part="row.part" />
           </div>
+
+          <!--
+            MiMo's "edited N files" card, once the turn is over: what it changed,
+            with 撤销 and 审阅. A live turn has none - its files are still moving.
+          -->
+          <EditedFilesCard
+            v-if="!(at === turns.length - 1 && shownBusy)"
+            :parts="turn.parts"
+            :message-ids="turn.messageIDs"
+            :session-id="shownID"
+            :directory="shownDirectory"
+            :reverted="turn.last?.reverted === true"
+            :actions="!side"
+          />
 
           <!--
             Held back until the reply is under the pointer. Who answered and how

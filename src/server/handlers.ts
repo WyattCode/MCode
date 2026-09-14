@@ -24,6 +24,7 @@ import * as git from "./git"
 import { listCommands } from "./command"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
+import { revertTurnFiles } from "./session/turn-revert"
 import type { ShellOwner } from "./shell"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
@@ -753,6 +754,26 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         files,
         history: await runtime.sessions.historyDepth(request.sessionID),
       } satisfies Handled<"session.redo">
+    }
+
+    case "session.revertTurn": {
+      if (runtime.runner.isRunning(request.sessionID)) throw new Error("Wait for the current turn to finish")
+      const session = await runtime.sessions.require(request.sessionID)
+      const chosen = (await runtime.sessions.messages(request.sessionID)).filter(
+        (message) => message.role === "assistant" && request.messageIDs.includes(message.id),
+      )
+      if (!chosen.length) throw new Error("That turn is no longer in the conversation")
+      const result = await revertTurnFiles(session.directory, chosen)
+      /*
+       * The card remembers it on the turn's last message, and only when a file
+       * actually moved: a revert that touched nothing leaves the card offering
+       * the same 撤销 again, which is what someone who was told it failed wants.
+       */
+      const last = chosen[chosen.length - 1]
+      if (result.restored + result.removed > 0 && last?.role === "assistant") {
+        await runtime.sessions.saveMessage({ ...last, reverted: true })
+      }
+      return result satisfies Handled<"session.revertTurn">
     }
 
     case "session.history":
