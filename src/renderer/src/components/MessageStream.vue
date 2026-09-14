@@ -679,7 +679,7 @@ async function sendEdit(turn: Turn) {
   try {
     await app.revert(sessionID, turn.id)
     editingAsked.value = undefined
-    await app.send(text, message.attachments ?? [])
+    await app.send(text, message.attachments ?? [], undefined, message.annotations ?? [])
   } catch (failure) {
     /*
      * The server refuses rather than moving the transcript on its own when the
@@ -751,7 +751,7 @@ async function retry(turn: Turn) {
   reverting.value = true
   try {
     await app.revert(sessionID, turn.id)
-    await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined)
+    await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined, message.annotations ?? [])
   } catch (failure) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
@@ -785,7 +785,7 @@ defineExpose({ stepMessage, scroller })
 </script>
 
 <template>
-  <div ref="scroller" class="stream" :data-annotate-off="side ? '' : undefined" @scroll="onScroll">
+  <div ref="scroller" class="stream" @scroll="onScroll">
     <div ref="inner" class="inner">
       <!--
         MiMo's marker at the top of a branched conversation: a hairline either

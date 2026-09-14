@@ -7,6 +7,8 @@ import { t } from "../lib/i18n"
 
 /** The home screen's box, which has no conversation to keep them under yet. */
 export const HOME_SCOPE = "home"
+/** A side chat whose conversation has not been made yet. */
+export const SIDE_SCOPE = "side"
 
 const EMPTY: readonly Annotation[] = []
 

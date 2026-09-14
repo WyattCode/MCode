@@ -6,8 +6,8 @@ import type { Annotation } from "@shared/protocol"
  *
  * What can be annotated says so in the markup: `data-annotate="answer"` on a
  * reply's text, `data-annotate="code"` (with `data-annotate-path`) on the files
- * tab's code. Anything inside `data-annotate-off` - the side chat - is left out,
- * because its box is not the one the annotations would go to.
+ * tab's code. Inside `data-annotate-scope` - the side chat - they belong to that
+ * box rather than the main one, as MiMo keeps each box's annotations apart.
  */
 
 export interface AnnotationRect {
@@ -18,6 +18,8 @@ export interface AnnotationRect {
 }
 
 export interface AnnotationRequest {
+  /** Whose box it goes to, when not the main one's. */
+  scope?: string
   /** What the box is placed against. */
   rect: AnnotationRect
   /** Where that is now, for following a scroll; nothing when it has gone. */
@@ -37,6 +39,13 @@ export function requestAnnotation(request: AnnotationRequest | null) {
   annotationRequest.value = request
 }
 
+/** Asks the box that holds this scope's annotations to send its message now. */
+export const annotationSend = shallowRef<{ scope: string; seq: number } | null>(null)
+
+export function requestAnnotationSend(scope: string) {
+  annotationSend.value = { scope, seq: (annotationSend.value?.seq ?? 0) + 1 }
+}
+
 let counter = 0
 export function annotationId(): string {
   return `ann-${Date.now().toString(36)}-${++counter}`
@@ -44,13 +53,59 @@ export function annotationId(): string {
 
 export type AnnotatableKind = "answer" | "code"
 
-export function annotatableOf(node: Node | null): { el: HTMLElement; kind: AnnotatableKind; path?: string } | null {
+export function annotatableOf(
+  node: Node | null,
+): { el: HTMLElement; kind: AnnotatableKind; path?: string; scope?: string } | null {
   const start = node && node.nodeType === Node.ELEMENT_NODE ? (node as Element) : (node?.parentElement ?? null)
   const el = start?.closest<HTMLElement>("[data-annotate]")
-  if (!el || el.closest("[data-annotate-off]")) return null
+  if (!el) return null
   const kind = el.dataset.annotate
   if (kind !== "answer" && kind !== "code") return null
-  return { el, kind, path: el.dataset.annotatePath || undefined }
+  const scope = el.closest<HTMLElement>("[data-annotate-scope]")?.dataset.annotateScope || undefined
+  return { el, kind, path: el.dataset.annotatePath || undefined, scope }
+}
+
+/* The nearest ancestor that scrolls, which is what a jump moves. */
+export function scrollerOf(node: Node): HTMLElement | null {
+  for (let el = node.nodeType === Node.ELEMENT_NODE ? (node as HTMLElement) : node.parentElement; el; el = el.parentElement) {
+    if (el.scrollHeight > el.clientHeight + 1 && /^(auto|scroll|overlay)$/.test(getComputedStyle(el).overflowY)) return el
+  }
+  return null
+}
+
+const FLASH = "mcode-annotation-flash"
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+
+/**
+ * MiMo's click on a chip: the passage it points at is scrolled to the middle
+ * of its scroller and lit for 1.2s. Looked for in the box's own conversation -
+ * the side chat's when the chip is in the side chat - latest block first; code
+ * only while that file is open. False when it is not on screen.
+ */
+export function jumpToAnnotation(note: Annotation, origin: Element | null): boolean {
+  if ((note.kind !== "answer" && note.kind !== "code") || !note.quote) return false
+  const side = origin?.closest<HTMLElement>("[data-annotate-scope]") ?? null
+  const blocks = [...(side ?? document).querySelectorAll<HTMLElement>(`[data-annotate="${note.kind}"]`)]
+    .filter((el) => side || !el.closest("[data-annotate-scope]"))
+    .filter((el) => note.kind !== "code" || el.dataset.annotatePath === note.path)
+    .reverse()
+  for (const el of blocks) {
+    const range = locate(el, note.quote, note.occ)
+    if (!range) continue
+    const rect = range.getBoundingClientRect()
+    const scroller = scrollerOf(range.startContainer)
+    if (scroller && (rect.height > 0 || rect.width > 0)) {
+      const box = scroller.getBoundingClientRect()
+      scroller.scrollBy({ top: rect.top - box.top - box.height / 2 + rect.height / 2, behavior: "smooth" })
+    }
+    if (typeof CSS !== "undefined" && "highlights" in CSS) {
+      CSS.highlights.set(FLASH, new Highlight(range))
+      clearTimeout(flashTimer)
+      flashTimer = setTimeout(() => CSS.highlights.delete(FLASH), 1200)
+    }
+    return true
+  }
+  return false
 }
 
 /*

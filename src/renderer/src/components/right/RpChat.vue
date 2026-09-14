@@ -3,6 +3,7 @@ import { onMounted } from "vue"
 import MessageStream from "../MessageStream.vue"
 import Composer from "../Composer.vue"
 import { useApp } from "../../stores/app"
+import { SIDE_SCOPE } from "../../stores/annotations"
 import { t } from "../../lib/i18n"
 
 /**
@@ -37,7 +38,8 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="rp-chat" data-rp-chat>
+  <!-- Annotations made in here go to this tab's box, not the main one. -->
+  <div class="rp-chat" data-rp-chat :data-annotate-scope="app.sideID ?? SIDE_SCOPE">
     <div v-if="!app.sideMessages.length" class="rp-chat-empty">{{ t("rp.chat.empty") }}</div>
     <MessageStream v-else class="rp-chat-stream" side />
     <div class="rp-chat-dock">

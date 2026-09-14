@@ -2,6 +2,9 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
 import type { Annotation } from "@shared/protocol"
 import { useAnnotations } from "../stores/annotations"
+import { useApp } from "../stores/app"
+import { useRightPanel } from "../stores/right-panel"
+import { jumpToAnnotation } from "../lib/annotate"
 import { t } from "../lib/i18n"
 
 /**
@@ -43,6 +46,33 @@ function sourceOf(note: Annotation) {
   if (note.kind === "answer") return t("annotations.sourceAnswer")
   if (note.kind === "code") return t("annotations.sourceCode")
   return note.name ?? note.path ?? ""
+}
+
+/*
+ * MiMo's click on an annotation: a passage is scrolled to and lit where it is
+ * on screen; under a sent message, a whole file opens in the files tab.
+ */
+const app = useApp()
+const panel = useRightPanel()
+const root = ref<HTMLElement>()
+
+function openFile(note: Annotation) {
+  const folder = app.current?.directory
+  if (!folder || !note.path) return
+  const norm = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "")
+  const base = `${norm(folder)}/`
+  const full = norm(note.path)
+  if (!full.toLowerCase().startsWith(base.toLowerCase())) return
+  const tab = panel.openTool("files")
+  panel.update(tab.id, { viewFile: full.slice(base.length) })
+}
+
+function activate(note: Annotation) {
+  if (note.kind === "file") {
+    if (props.readOnly) openFile(note)
+    return
+  }
+  jumpToAnnotation(note, root.value ?? null)
 }
 
 function remove(items: readonly Entry[]) {
@@ -143,7 +173,7 @@ function onEditKey(event: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="ann-chips" :data-ann-chips="readOnly ? 'history' : 'composer'">
+  <div ref="root" class="ann-chips" :data-ann-chips="readOnly ? 'history' : 'composer'">
     <span v-if="notes.length" class="cchip" data-chip="annotations" @mouseenter="hover('notes', $event)" @mouseleave="leave">
       <svg class="cchip-mark" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true">
         <rect x="2" y="2" width="12" height="12" rx="2.5" />
@@ -154,8 +184,10 @@ function onEditKey(event: KeyboardEvent) {
     </span>
 
     <span v-for="entry in refsShown" :key="entry.note.id" class="cchip" data-chip="ann-ref" :data-ann-num="entry.num" v-tip="{ label: `${sourceOf(entry.note)} · ${rangeOf(entry.note)}`, placement: 'top' }">
-      <span class="ann-num">{{ entry.num }}</span>
-      <span class="cchip-name cchip-ref">{{ rangeOf(entry.note) }}</span>
+      <span class="cchip-go" role="button" tabindex="0" data-ann-go @click="activate(entry.note)" @keydown.enter.space.prevent="activate(entry.note)">
+        <span class="ann-num">{{ entry.num }}</span>
+        <span class="cchip-name cchip-ref">{{ rangeOf(entry.note) }}</span>
+      </span>
       <button v-if="!readOnly" type="button" class="cchip-rm" :data-ann-rm="entry.index" :aria-label="t('annotations.removeRef')" @click="remove([entry])">✕</button>
     </span>
 
@@ -167,6 +199,7 @@ function onEditKey(event: KeyboardEvent) {
     <Teleport to="body">
       <div v-if="open && shown.length" class="ann-pop" :data-ann-pop="open" :style="popStyle" @mouseenter="stay" @mouseleave="leave">
         <div v-for="entry in shown" :key="entry.note.id" class="ann-item">
+          <span class="ann-go" role="button" tabindex="0" data-ann-go @click="activate(entry.note)" @keydown.enter.space.self.prevent="activate(entry.note)">
           <span class="ann-num ann-num-list">{{ entry.num }}</span>
           <span class="ann-body">
             <span class="ann-title">{{ sourceOf(entry.note) }}</span>
@@ -185,11 +218,13 @@ function onEditKey(event: KeyboardEvent) {
               @input="grow($event.target as HTMLTextAreaElement)"
               @blur="saveEdit"
               @keydown="onEditKey"
+              @click.stop
             />
-            <span v-else class="ann-note ann-note-edit" :data-ann-edit="entry.index" v-tip="{ label: t('annotations.editHint'), placement: 'top' }" @click="startEdit(entry)">
+            <span v-else class="ann-note ann-note-edit" :data-ann-edit="entry.index" v-tip="{ label: t('annotations.editHint'), placement: 'top' }" @click.stop="startEdit(entry)">
               <template v-if="entry.note.text">{{ entry.note.text }}</template>
               <span v-else class="ann-muted">{{ t("annotations.editHint") }}</span>
             </span>
+          </span>
           </span>
           <button v-if="!readOnly" type="button" class="ann-rm" :aria-label="entry.note.text ? t('annotations.removeOne') : t('annotations.removeRef')" @click="remove([entry])">✕</button>
         </div>
@@ -230,6 +265,23 @@ function onEditKey(event: KeyboardEvent) {
 .cchip-name {
   color: var(--text-success);
   font-weight: 400;
+}
+
+.cchip-go {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.ann-go {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
 }
 
 .cchip-ref {

@@ -64,6 +64,7 @@ import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
+import AnnotationMarkers from "./components/AnnotationMarkers.vue"
 import { HOME_SCOPE } from "./stores/annotations"
 import { createFind, openFind, stepFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
@@ -3810,7 +3811,8 @@ onBeforeUnmount(() => {
       <FindBar :find="find" :anchor="() => mainPane" />
 
       <!-- MiMo's annotation box, for a selection in a reply or the files tab's code, or a whole file. -->
-      <AnnotationComposer v-if="!onboarding" :scope="annotationScope" :disabled="modalOpen" @send="composer?.submit()" />
+      <AnnotationComposer v-if="!onboarding" :scope="annotationScope" :disabled="modalOpen" />
+      <AnnotationMarkers v-if="!onboarding" :mainScope="annotationScope" :disabled="modalOpen" />
 
       <!-- MiMo's right panel: tabs beside the conversation, or its launcher while it holds none. -->
       <RightPanel

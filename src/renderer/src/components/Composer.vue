@@ -20,7 +20,8 @@ import {
 } from "../lib/mention"
 import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
-import { HOME_SCOPE, useAnnotations } from "../stores/annotations"
+import { HOME_SCOPE, SIDE_SCOPE, useAnnotations } from "../stores/annotations"
+import { annotationSend } from "../lib/annotate"
 import AnnotationChips from "./AnnotationChips.vue"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
@@ -77,10 +78,14 @@ const app = useApp()
 const sessionID = computed(() => (props.fresh ? undefined : props.side ? app.sideID : app.currentID))
 const session = computed(() => (props.fresh ? undefined : props.side ? app.side : app.current))
 const busyHere = computed(() => (props.side ? app.sideBusy : app.busy))
-/* MiMo's annotations wait in the main box only, kept per conversation; the side chat has none. */
+/* MiMo's annotations wait in the box they were made for, kept per conversation - the side chat's apart from the main one's. */
 const annotations = useAnnotations()
-const annotationScope = computed(() => (props.side ? undefined : (sessionID.value ?? HOME_SCOPE)))
-const waiting = computed(() => (annotationScope.value ? annotations.list(annotationScope.value) : []))
+const annotationScope = computed(() => sessionID.value ?? (props.side ? SIDE_SCOPE : HOME_SCOPE))
+const waiting = computed(() => annotations.list(annotationScope.value))
+// Enter in the annotation box sends this box's message with everything waiting.
+watch(annotationSend, (request) => {
+  if (request && request.scope === annotationScope.value) void submit()
+})
 const text = ref("")
 const input = ref<HTMLTextAreaElement>()
 /**

@@ -10,6 +10,7 @@ import {
   occurrenceOf,
   rectOf,
   requestAnnotation,
+  requestAnnotationSend,
   type AnnotationRect,
 } from "../lib/annotate"
 import { t } from "../lib/i18n"
@@ -26,7 +27,6 @@ import { t } from "../lib/i18n"
  * focus the passage stays lit, since the selection itself has to go.
  */
 const props = defineProps<{ scope: string; disabled: boolean }>()
-const emit = defineEmits<{ send: [] }>()
 const store = useAnnotations()
 
 const OPEN_DELAY = 300
@@ -126,13 +126,14 @@ function stash() {
   const current = request.value
   if (!current) return
   const value = text.value.trim()
+  const scope = current.scope ?? props.scope
   if (current.index !== undefined) {
-    store.update(props.scope, current.index, value)
+    store.update(scope, current.index, value)
     close()
     return
   }
   const note = current.make?.(value)
-  if (note && store.add(props.scope, note)) close()
+  if (note && store.add(scope, note)) close()
 }
 
 /** Enter, or the arrow: adds it and sends the message with everything waiting. */
@@ -140,16 +141,17 @@ function send() {
   const current = request.value
   const value = text.value.trim()
   if (!current || !value) return
+  const scope = current.scope ?? props.scope
   if (current.index !== undefined) {
-    store.update(props.scope, current.index, value)
+    store.update(scope, current.index, value)
     close()
-    emit("send")
+    requestAnnotationSend(scope)
     return
   }
   const note = current.make?.(value)
-  if (note && store.add(props.scope, note)) {
+  if (note && store.add(scope, note)) {
     close()
-    emit("send")
+    requestAnnotationSend(scope)
   }
 }
 
@@ -179,6 +181,7 @@ function fromSelection() {
   const { occ, occTotal } = occurrenceOf(host.el, range, quote)
   const kept = range.cloneRange()
   requestAnnotation({
+    scope: host.scope,
     rect,
     follow: () => rectOf(kept),
     range: kept,
@@ -230,7 +233,8 @@ function reopen(event: MouseEvent) {
   if (inside(event.target) || props.disabled) return
   const host = annotatableOf(event.target as Node)
   if (!host) return
-  const list = store.list(props.scope)
+  const scope = host.scope ?? props.scope
+  const list = store.list(scope)
   for (let index = list.length - 1; index >= 0; index--) {
     const note = list[index]
     if (note.kind !== host.kind || !note.quote) continue
@@ -244,7 +248,7 @@ function reopen(event: MouseEvent) {
     if (!rect) continue
     event.preventDefault()
     window.getSelection()?.removeAllRanges()
-    requestAnnotation({ rect, follow: () => rectOf(range), range, index, initialText: note.text })
+    requestAnnotation({ scope: host.scope, rect, follow: () => rectOf(range), range, index, initialText: note.text })
     return
   }
 }
@@ -430,5 +434,10 @@ watch(
   :root:not([data-theme="light"]) ::highlight(mcode-annotating) {
     background-color: #33518a;
   }
+}
+
+/* A chip's passage, lit for a moment when the chip is clicked (MiMo's flash). */
+::highlight(mcode-annotation-flash) {
+  background-color: rgba(50, 149, 251, 0.6);
 }
 </style>
