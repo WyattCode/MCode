@@ -2,6 +2,8 @@ import pkg from "../../package.json"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
+import type { Storage } from "./storage"
+import { McpOAuthStore, authorizeMcpServer } from "./mcp-oauth"
 import type { McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
 import { ToolError, type ToolDefinition } from "./tool/types"
 
@@ -121,6 +123,8 @@ class Connection {
   constructor(
     readonly name: string,
     private readonly config: McpServerConfig,
+    /** Where a remote server's sign-in tokens are kept, once 授权 has been done. */
+    private readonly oauth?: McpOAuthStore,
   ) {}
 
   async connect(): Promise<void> {
@@ -335,23 +339,35 @@ class Connection {
     })
   }
 
-  private async post(frame: string, handshake = false): Promise<string> {
+  private async post(frame: string, handshake = false, renewed = false): Promise<string> {
     const controller = new AbortController()
     const timer = setTimeout(
       () => controller.abort(),
       handshake ? CONNECT_TIMEOUT : CALL_TIMEOUT,
     )
     try {
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        ...(this.config.headers ?? {}),
+      }
+      /*
+       * A header written into the config wins; otherwise the tokens 授权 left
+       * behind are sent, and a 401 on them is answered by renewing once.
+       */
+      const explicit = Object.keys(headers).some((key) => key.toLowerCase() === "authorization")
+      const signedIn = !explicit && this.oauth ? await this.oauth.usable(this.name, this.config.url!) : undefined
+      if (signedIn) headers.authorization = `Bearer ${signedIn.access}`
       const response = await fetch(this.config.url!, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json, text/event-stream",
-          ...(this.config.headers ?? {}),
-        },
+        headers,
         body: frame,
         signal: controller.signal,
       })
+      if (response.status === 401 && signedIn?.refresh && !renewed) {
+        await response.body?.cancel().catch(() => {})
+        if (await this.oauth!.renew(this.name, signedIn)) return this.post(frame, handshake, true)
+      }
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const text = await response.text()
       /*
@@ -381,10 +397,16 @@ export class McpServers {
    */
   private fingerprint = ""
 
+  private readonly oauth?: McpOAuthStore
+  /** Servers whose sign-in is under way, so a second press does not start another. */
+  private readonly authorizing = new Set<string>()
+
   constructor(
     private readonly bus: Bus,
     private readonly config: Config,
+    storage?: Storage,
   ) {
+    this.oauth = storage ? new McpOAuthStore(storage) : undefined
     this.bus.subscribe((event) => {
       if (event.type !== "config.updated") return
       if (JSON.stringify(event.config.mcpServers ?? {}) === this.fingerprint) return
@@ -415,7 +437,7 @@ export class McpServers {
       const wanted = entry.enabled !== false
       let connection = this.connections.get(name)
       if (!connection) {
-        connection = new Connection(name, entry)
+        connection = new Connection(name, entry, this.oauth)
         this.connections.set(name, connection)
       }
       if (!wanted) {
@@ -439,6 +461,34 @@ export class McpServers {
     servers[name] = { ...entry, enabled: entry.enabled === false }
     await this.config.set({ mcpServers: servers })
     await this.sync()
+  }
+
+  /**
+   * MiMo's 授权: signs in to a remote server that answered 401, then connects
+   * it again with the tokens. Resolves once the browser flow has finished and
+   * the reconnect has been tried; a failed sign-in rejects with why.
+   */
+  async authenticate(name: string): Promise<void> {
+    const entry = this.config.get().mcpServers?.[name]
+    if (!entry) throw new Error("no such MCP server")
+    if (entry.type !== "remote" || !entry.url) throw new Error("only a remote server signs in")
+    if (!this.oauth) throw new Error("sign-in is not available")
+    if (this.authorizing.has(name)) throw new Error("sign-in already in progress")
+    this.authorizing.add(name)
+    try {
+      await authorizeMcpServer(this.oauth, name, entry.url, entry.headers)
+    } finally {
+      this.authorizing.delete(name)
+    }
+    const connection = this.connections.get(name)
+    if (connection) {
+      connection.stop()
+      this.publish()
+      await connection.connect()
+      this.publish()
+    } else {
+      await this.sync()
+    }
   }
 
   list(): McpServerState[] {

@@ -957,6 +957,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "mcp.tools":
       return runtime.mcp.toolsOf(request.name) satisfies Handled<"mcp.tools">
 
+    case "mcp.authenticate":
+      await runtime.mcp.authenticate(request.name)
+      return { servers: runtime.mcp.list() } satisfies Handled<"mcp.authenticate">
+
     case "mcp.importScan": {
       const found = await scanMcpImports(runtime.config.get().mcpServers ?? {})
       return { items: found.map(importItem) } satisfies Handled<"mcp.importScan">

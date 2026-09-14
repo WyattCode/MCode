@@ -1408,6 +1408,8 @@ export type Request =
   | { type: "mcp.list" }
   | { type: "mcp.toggle"; name: string }
   | { type: "mcp.tools"; name: string }
+  /* 授权: the browser sign-in for a remote server that answered 401; resolves when it has finished. */
+  | { type: "mcp.authenticate"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
   | { type: "agents.state" }
@@ -1545,6 +1547,7 @@ export interface ResponseMap {
   "mcp.toggle": { servers: McpServerState[] }
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }
+  "mcp.authenticate": { servers: McpServerState[] }
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }

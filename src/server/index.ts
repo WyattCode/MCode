@@ -49,7 +49,7 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   const sessions = new SessionStore(storage, bus)
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
   const shells = new Shells(bus)
-  const mcp = new McpServers(bus, config)
+  const mcp = new McpServers(bus, config, storage)
   runner.useMcp(mcp)
 
   const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp }

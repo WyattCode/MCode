@@ -232,6 +232,8 @@ const mcpEditing = ref<string>()
 const mcpForm = ref<McpForm>(blankMcpForm())
 const mcpRevealed = ref<Record<string, boolean>>({})
 const mcpToolsOpen = ref<string>()
+/** The server whose 授权 sign-in is under way. */
+const mcpAuthorizing = ref<string>()
 const mcpTools = ref<Record<string, "loading" | { tools?: McpToolInfo[]; error?: string }>>({})
 
 function blankMcpForm(): McpForm {
@@ -360,6 +362,22 @@ async function setMcpEnabled(name: string, enabled: boolean) {
     notifyFailure(t("set.mcp.toggleFailed"))
   }
   delete mcpTools.value[name]
+}
+
+/* MiMo's 授权 on a remote server that answered 401: the browser sign-in, then the row reconnects. */
+async function authorizeMcp(name: string) {
+  if (mcpAuthorizing.value) return
+  mcpAuthorizing.value = name
+  notify(t("set.mcp.authorizing"))
+  try {
+    await app.client?.request({ type: "mcp.authenticate", name })
+    notify(t("set.mcp.authorized"))
+  } catch (err) {
+    notifyFailure(t("set.mcp.authorizeFailed") + (err instanceof Error ? err.message : String(err)))
+  } finally {
+    mcpAuthorizing.value = undefined
+    delete mcpTools.value[name]
+  }
 }
 
 /* As in MiMo, removing asks nothing and says what went. */
@@ -2630,6 +2648,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     @click="setMcpEnabled(row.name, !row.enabled)"
                   >
                     <span class="knob" />
+                  </button>
+                  <button
+                    v-if="row.enabled && row.status === 'needs_auth'"
+                    class="ctl-btn"
+                    :data-mcp-auth="row.name"
+                    :disabled="mcpAuthorizing === row.name"
+                    @click="authorizeMcp(row.name)"
+                  >
+                    {{ mcpAuthorizing === row.name ? t("set.mcp.authorizing") : t("set.mcp.authorize") }}
                   </button>
                   <button class="ctl-btn" :data-mcp-tools="row.name" @click="toggleMcpTools(row.name)">{{ t("set.mcp.tools") }}</button>
                   <button class="ctl-btn" :data-mcp-edit="row.name" @click="editMcp(row.name)">{{ t("set.mcp.edit") }}</button>
