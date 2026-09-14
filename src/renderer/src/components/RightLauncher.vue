@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { computed, ref } from "vue"
+import type { MenuItem } from "../lib/menu"
+import ContextMenu from "./ContextMenu.vue"
 import { t } from "../lib/i18n"
 
 /**
@@ -9,23 +12,36 @@ import { t } from "../lib/i18n"
  * conversation. A card for something the current screen cannot hold - the
  * review on the home screen, say - stays in its place, greyed, rather than
  * leaving a gap that changes from screen to screen.
+ *
+ * Its head is MiMo's panel head: a plus at the start that lists the same tools
+ * in a menu, and at the end the button that expands the panel over the main
+ * column and puts it back.
  */
 type Tool = "review" | "files" | "chat" | "browser" | "terminal"
 
-defineProps<{ available: Record<Tool, boolean> }>()
-const emit = defineEmits<{ pick: [tool: Tool] }>()
+const props = defineProps<{ available: Record<Tool, boolean>; full?: boolean }>()
+const emit = defineEmits<{ pick: [tool: Tool]; fullscreen: [] }>()
 
 const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
   {
     id: "review",
     label: "launch.review",
-    icon: ["M4 2.5h8A1.5 1.5 0 0 1 13.5 4v8a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 12V4A1.5 1.5 0 0 1 4 2.5z", "M5.5 8.2 7.2 9.9 10.5 6.3"],
+    icon: [
+      "M8.5 13.5H4A1.5 1.5 0 0 1 2.5 12V4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v3.5",
+      "M5 5.5h6M5 8h3",
+      "M11 9a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
+      "M12.5 12.5 14 14",
+    ],
   },
   {
     id: "files",
     label: "launch.files",
     kbd: "Ctrl+P",
-    icon: ["M1.9 4.2c0-.6.5-1.1 1.1-1.1h2.6l1.3 1.5h6.1c.6 0 1.1.5 1.1 1.1v6.1c0 .6-.5 1.1-1.1 1.1H3c-.6 0-1.1-.5-1.1-1.1z"],
+    icon: [
+      "M8.2 12.9H3c-.6 0-1.1-.5-1.1-1.1V4.2c0-.6.5-1.1 1.1-1.1h2.6l1.3 1.5h6.1c.6 0 1.1.5 1.1 1.1v2",
+      "M11 8.5a2 2 0 1 0 0 4 2 2 0 0 0 0-4z",
+      "M12.5 12 14 13.5",
+    ],
   },
   {
     id: "chat",
@@ -48,11 +64,62 @@ const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
     icon: ["M3 3h10a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M4.8 6.2 6.8 8l-2 1.8", "M8.5 10h2.7"],
   },
 ]
+
+/* The plus's menu, opened under the button the way MiMo drops it from the head. */
+const addMenu = ref<{ x: number; y: number }>()
+
+function openAdd(event: MouseEvent) {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  addMenu.value = { x: rect.left, y: rect.bottom + 4 }
+}
+
+const addItems = computed<MenuItem[]>(() =>
+  TOOLS.map((tool) => ({
+    key: tool.id,
+    label: t(tool.label),
+    icon: tool.icon.join(" "),
+    hint: tool.kbd,
+    enabled: props.available[tool.id],
+  })),
+)
+
+function pickAdd(key: string) {
+  addMenu.value = undefined
+  emit("pick", key as Tool)
+}
 </script>
 
 <template>
-  <aside class="launcher" :aria-label="t('key.sidePanel')">
-    <div class="launcher-head" />
+  <aside class="launcher" :class="{ full }" :aria-label="t('key.sidePanel')">
+    <div class="launcher-head">
+      <button
+        type="button"
+        class="head-add"
+        data-launcher-add
+        :aria-label="t('launch.newTool')"
+        v-tip="{ label: t('launch.newTool'), placement: 'bottom' }"
+        @click="openAdd"
+      >
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+      </button>
+      <span class="head-spacer" />
+      <button
+        type="button"
+        class="head-expand"
+        data-launcher-expand
+        :aria-pressed="Boolean(full)"
+        :aria-label="t(full ? 'launch.restoreWidth' : 'launch.expand')"
+        v-tip="{ label: t(full ? 'launch.restoreWidth' : 'launch.expand'), placement: 'bottom' }"
+        @click="emit('fullscreen')"
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path v-if="full" d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6" />
+          <path v-else d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6" />
+        </svg>
+      </button>
+    </div>
     <div class="launcher-list">
       <button
         v-for="tool in TOOLS"
@@ -69,11 +136,13 @@ const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
         <kbd v-if="tool.kbd" class="card-kbd">{{ tool.kbd }}</kbd>
       </button>
     </div>
+
+    <ContextMenu v-if="addMenu" :x="addMenu.x" :y="addMenu.y" :items="addItems" @pick="pickAdd" @close="addMenu = undefined" />
   </aside>
 </template>
 
 <style scoped>
-/* MiMo's panel: 380 wide on its own surface, a 46px head the title bar's button sits over. */
+/* MiMo's panel: 380 wide on its own surface. */
 .launcher {
   display: flex;
   flex-direction: column;
@@ -84,10 +153,69 @@ const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
   border-inline-start: 1px solid var(--border-weak);
 }
 
+/* Expanded over the main column: the panel takes the room, rounded where it meets the side column. */
+.launcher.full {
+  flex: 1;
+  width: auto;
+  min-width: 0;
+  border-inline-start-width: 0;
+  border-start-start-radius: 16px;
+  border-end-start-radius: 20px;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 0.12);
+}
+
+/*
+ * MiMo's rp-head: 46 tall with its row four down, 10 in from the start, and at
+ * the end clear of the caption buttons and the side panel toggle over it, so
+ * the expand button ends 4px before that toggle.
+ */
 .launcher-head {
+  display: flex;
   flex: none;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 4px;
   height: 46px;
+  padding-block: 4px 0;
+  padding-inline: 10px calc(37px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   -webkit-app-region: drag;
+}
+
+.head-spacer {
+  flex: 1;
+  min-width: 0;
+}
+
+.head-add,
+.head-expand {
+  display: grid;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  -webkit-app-region: no-drag;
+}
+
+/* The plus: MiMo's 26px icon button in the muted colour. */
+.head-add {
+  width: 26px;
+  height: 26px;
+  color: var(--text-weak);
+}
+
+/* Expand: 24px in the title bar's icon colour, a 12px glyph. */
+.head-expand {
+  width: 24px;
+  height: 24px;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+}
+
+.head-add:hover,
+.head-expand:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 .launcher-list {
@@ -99,6 +227,7 @@ const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
   overflow: auto;
 }
 
+/* MiMo's launch-card: 14 by 16 of padding on a 22px line, 12 between icon, name and key. */
 .card {
   display: flex;
   align-items: center;
@@ -110,6 +239,7 @@ const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
   border: 0;
   border-radius: 12px;
   font: inherit;
+  line-height: 22px;
   cursor: default;
 }
 
@@ -128,9 +258,10 @@ const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
   margin: 0 2px;
 }
 
+/* MiMo draws these on a 24 grid at a 2 stroke; at 16px that is a third less than one and a half. */
 .card-icon path {
   stroke: currentColor;
-  stroke-width: 1.2;
+  stroke-width: 1.33;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -141,14 +272,16 @@ const TOOLS: { id: Tool; label: string; kbd?: string; icon: string[] }[] = [
   white-space: nowrap;
 }
 
+/* MiMo's key cap: 11px in the dim colour, 1 by 5 of padding inside a 1px line on a 5px corner. */
 .card-kbd {
   margin-inline-start: auto;
-  padding: 1px 6px;
+  padding: 1px 5px;
   color: var(--text-weak);
   background: var(--surface-layer);
   border: 1px solid var(--border-weak);
-  border-radius: 4px;
+  border-radius: 5px;
   font-family: inherit;
   font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 17px;
 }
 </style>

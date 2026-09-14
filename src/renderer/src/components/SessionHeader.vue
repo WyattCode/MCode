@@ -22,7 +22,8 @@ const app = useApp()
  */
 /* `sideCollapsed`: the side column is folded to its rail, whose controls row floats over this header's start. */
 /* `hasContent`: something has been said, which is when MiMo offers the info card at all. */
-defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean }>()
+/* `panelBeside`: a side panel stands to the right, so this row ends at the column instead of under the toggle. */
+defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean; panelBeside?: boolean }>()
 
 const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; info: []; bottom: [] }>()
 
@@ -89,7 +90,7 @@ function openMenu(event: MouseEvent) {
 </script>
 
 <template>
-  <div class="head" :class="{ 'after-rail': sideCollapsed }">
+  <div class="head" :class="{ 'after-rail': sideCollapsed, beside: panelBeside }">
     <div class="left">
       <!-- MiMo marks a pinned conversation before its title. -->
       <span
@@ -314,6 +315,11 @@ function openMenu(event: MouseEvent) {
   /* (the start is pushed past the rail's controls row by .after-rail, below) */
   padding-inline-end: calc(37px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
   -webkit-app-region: drag;
+}
+
+/* MiMo's topbar inset once a side panel stands beside the column: the toggle is over the panel now. */
+.head.beside {
+  padding-inline-end: 12px;
 }
 
 /* MiMo's title: 14 on regular weight in a 26px line, no padding, at most 320 wide. */

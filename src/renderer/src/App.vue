@@ -1075,6 +1075,20 @@ watch(reviewPanelUp, (up) => {
   if (up) launcherOpen.value = false
 })
 
+/* MiMo's 展开面板: the side panel over the whole of the main column, until put back or put away. */
+const sidePanelFull = ref(false)
+watch(launcherShown, (shown) => {
+  if (!shown) sidePanelFull.value = false
+})
+
+/*
+ * Something stands beside the main column on its right, so the column's title
+ * row ends at the column rather than under the side panel toggle.
+ */
+const panelBeside = computed(
+  () => launcherShown.value || reviewPanelUp.value || (browserOpen.value && browserAllowed.value) || (sideChat.value && Boolean(app.sideID)),
+)
+
 function toggleSidePanel() {
   if (reviewPanelUp.value) {
     toggleReviewPanel()
@@ -1094,7 +1108,8 @@ const launchAvailable = computed<Record<LaunchTool, boolean>>(() => {
     files: inConversation && showFileTree.value,
     chat: inConversation,
     browser: browserAllowed.value,
-    terminal: !isHome.value,
+    // The home screen's terminal opens in the project picked there.
+    terminal: isHome.value ? Boolean(homeShellDirectory.value) : true,
   }
 })
 
@@ -3778,29 +3793,12 @@ onBeforeUnmount(() => {
         <path d="M15 2.5v19" />
       </svg>
     </button>
-    <!--
-      MiMo's home screen keeps the bottom panel's button beside the side panel's;
-      a conversation has its own in the header. Unlit when pressed, as MiMo's is.
-    -->
-    <button
-      v-if="!onboarding && isHome"
-      class="side-panel-toggle home-bottom"
-      :aria-pressed="terminalUp"
-      :disabled="!homeShellDirectory"
-      :aria-label="t('key.bottomPanel')"
-      v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J', placement: 'bottom' }"
-      @click="terminalOpen = !terminalOpen"
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
-        <path d="M2.5 15h19" />
-      </svg>
-    </button>
-
     <div
       class="body"
       :class="{
         blank: !isHome && !onboarding && empty && !app.error,
+        /* The side panel expanded over the main column. */
+        'panel-full': sidePanelFull && launcherShown,
         /* Counts the panel whichever of its two tabs it is showing: it is the
            same column taking the same width either way. */
         'with-review': reviewPanelUp,
@@ -3834,7 +3832,7 @@ onBeforeUnmount(() => {
         @settings="openSettings"
       />
 
-      <main ref="mainPane" class="main" :class="{ 'info-open': infoShowing }">
+      <main ref="mainPane" class="main" :class="{ 'info-open': infoShowing, beside: panelBeside }">
         <!-- A turn can run for minutes; the bar is the only thing that says so
              without the user watching the transcript for movement. -->
         <div v-if="app.busy && !onboarding" class="progress"><span /></div>
@@ -3887,6 +3885,7 @@ onBeforeUnmount(() => {
             :info-open="infoShowing"
             :bottom-open="terminalUp"
             :side-collapsed="!leftPanel"
+            :panel-beside="panelBeside"
             :has-content="!empty"
             @info="toggleInfo"
             @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
@@ -3964,6 +3963,28 @@ onBeforeUnmount(() => {
         </template>
 
         <!--
+          MiMo's home screen keeps the bottom panel's button at the end of the
+          main column's title row (a conversation has its own in the header):
+          4px before the side panel toggle, or at the column's end once a panel
+          stands beside it. After the home strip in the document, so its no-drag
+          wins over that strip's drag. Unlit when pressed, as MiMo's is.
+        -->
+        <button
+          v-if="isHome && !onboarding"
+          class="home-bottom"
+          :aria-pressed="terminalUp"
+          :disabled="!homeShellDirectory"
+          :aria-label="t('key.bottomPanel')"
+          v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J', placement: 'bottom' }"
+          @click="terminalOpen = !terminalOpen"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
+            <path d="M2.5 15h19" />
+          </svg>
+        </button>
+
+        <!--
           The terminal, docked along the foot of the conversation the way MiMo
           has it: the full width of this column, under the composer, with its
           own edge to drag. Not in the right-hand column, which is the review's.
@@ -4012,7 +4033,13 @@ onBeforeUnmount(() => {
       />
 
       <!-- MiMo's side panel with nothing chosen: a card for each thing it can hold. -->
-      <RightLauncher v-if="launcherShown" :available="launchAvailable" @pick="launch" />
+      <RightLauncher
+        v-if="launcherShown"
+        :available="launchAvailable"
+        :full="sidePanelFull"
+        @pick="launch"
+        @fullscreen="sidePanelFull = !sidePanelFull"
+      />
 
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />
@@ -4451,17 +4478,17 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The same trap on the right: the side panel toggle and the home screen's
- * bottom panel button sit fixed at the end of the title bar, and the home
- * strip or the conversation header, later in the document, dragged over them.
- * Covers both - the toggle 9px from the caption buttons, the other 4px before it.
+ * The same trap on the right: the side panel toggle sits fixed at the end of
+ * the title bar, and the home strip, the conversation header or the side
+ * panel's own head, later in the document, dragged over it. Covers the toggle,
+ * 9px from the caption buttons.
  */
 .toggles-no-drag {
   position: fixed;
   top: 13px;
   inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 9px);
   z-index: 1;
-  width: 52px;
+  width: 24px;
   height: 24px;
   pointer-events: none;
   -webkit-app-region: no-drag;
@@ -4570,16 +4597,19 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .side-panel-toggle {
+  :root:not([data-theme="light"]) .side-panel-toggle,
+  :root:not([data-theme="light"]) .home-bottom {
     color: var(--text-strong);
   }
 }
 
-:root[data-theme="dark"] .side-panel-toggle {
+:root[data-theme="dark"] .side-panel-toggle,
+:root[data-theme="dark"] .home-bottom {
   color: var(--text-strong);
 }
 
-.side-panel-toggle:hover {
+.side-panel-toggle:hover,
+.home-bottom:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
 }
@@ -4589,15 +4619,44 @@ onBeforeUnmount(() => {
   background: var(--surface-selected);
 }
 
-/* The home screen's bottom panel button: MiMo's 4px before the side panel toggle. */
-.side-panel-toggle.home-bottom {
+/*
+ * The home screen's bottom panel button, in the main column's title row: MiMo's
+ * 4px before the side panel toggle, or 12 from the column's end with a panel beside it.
+ */
+.home-bottom {
+  position: absolute;
+  top: 13px;
   inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 37px);
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  border-radius: 7px;
+  -webkit-app-region: no-drag;
+}
+
+.main.beside .home-bottom {
+  inset-inline-end: 12px;
 }
 
 /* "No project" leaves the terminal nowhere to open. */
-.side-panel-toggle.home-bottom:disabled {
+.home-bottom:disabled {
   background: transparent;
   cursor: default;
   opacity: 0.35;
+}
+
+/*
+ * MiMo's expanded side panel: the main column folds to nothing and the panel
+ * takes its room.
+ */
+.body.panel-full > .main {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-inline-start-width: 0;
 }
 </style>
