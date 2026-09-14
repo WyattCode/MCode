@@ -28,6 +28,7 @@ import SettingsDialog from "./components/SettingsDialog.vue"
 import ProjectDialog from "./components/ProjectDialog.vue"
 import ServerPopover from "./components/ServerPopover.vue"
 import ImagePreview from "./components/ImagePreview.vue"
+import LiveEditPill from "./components/LiveEditPill.vue"
 import { imagePreview } from "./lib/image-preview"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
@@ -1132,6 +1133,15 @@ function focusBrowserAddress() {
 function openReviewTab() {
   panelTab.value = "review"
   rightPanel.value = true
+}
+
+/* Whether the review is what the side panel is showing, which the pill over the composer reports. */
+const reviewShowing = computed(() => reviewPanelUp.value && shownTab.value === "review")
+
+/* The pill over the composer: the review of what changed, opened or put away. */
+function toggleLiveReview() {
+  if (reviewShowing.value) toggleReviewPanel()
+  else openReviewTab()
 }
 
 function copyWorkingDirectory() {
@@ -3905,6 +3915,14 @@ onBeforeUnmount(() => {
             placeholder at the composer's ordinary position, so the layout of
             `main` is what it was when the box rendered here in place.
           -->
+          <!--
+            MiMo's "N files changed" pill, hung over the composer's top edge.
+            Zero tall, so it takes no room from the conversation; not drawn
+            while a permission card is up, which it would sit on top of.
+          -->
+          <div v-if="!empty && !app.permission" class="live-edit-anchor">
+            <LiveEditPill :expanded="reviewShowing" @toggle="toggleLiveReview" />
+          </div>
           <div id="main-dock" class="main-dock" />
           <Teleport :to="empty && !app.error ? '#hero-dock' : '#main-dock'">
             <Composer
@@ -4379,6 +4397,22 @@ onBeforeUnmount(() => {
 /* The composer's ordinary dock; `contents` keeps it out of the layout. */
 .main-dock {
   display: contents;
+}
+
+/*
+ * Laid over the composer's own box: its 4px top inset is added back so the
+ * pill hangs 8px clear of the box, and the info card's width is kept off the
+ * end the way the composer keeps it, so the two centre on the same column.
+ */
+.live-edit-anchor {
+  position: relative;
+  top: 4px;
+  flex: none;
+  height: 0;
+}
+
+.main.info-open .live-edit-anchor {
+  margin-inline-end: 262px;
 }
 
 /*

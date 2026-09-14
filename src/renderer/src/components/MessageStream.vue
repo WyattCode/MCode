@@ -1521,6 +1521,11 @@ defineExpose({ stepMessage, scroller })
   transform: translateX(-50%);
 }
 
+/* Lifted clear of the "files changed" pill while it hangs over the composer. */
+:global(.main:has([data-live-edit-pill])) .jump {
+  bottom: 48px;
+}
+
 /*
  * 2.0: MiMo's reading column - 764 wide with 28 each side, so its text runs
  * 708 wide, and it keeps that width on a large screen rather than growing.
