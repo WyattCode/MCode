@@ -4201,6 +4201,8 @@ onBeforeUnmount(() => {
 
   <Toasts />
 
+  <!-- Last in the document on purpose: see .rail-no-drag. -->
+  <div v-if="!leftPanel && !onboarding" class="rail-no-drag" aria-hidden="true" />
 </template>
 
 <style scoped>
@@ -4424,6 +4426,26 @@ onBeforeUnmount(() => {
 /* The composer's ordinary dock; `contents` keeps it out of the layout. */
 .main-dock {
   display: contents;
+}
+
+/*
+ * The folded column's controls row - toggle, back, forward, search - floats
+ * over the start of the main column, and the main column's own top strip (the
+ * home screen's, or the conversation header) is a window drag region. Electron
+ * works drag regions out in document order, so that strip, coming later, took
+ * the buttons back into the title bar and Windows swallowed every click on
+ * them. This patch is the last thing in the document, so its no-drag wins; it
+ * takes no pointer events, so the clicks still land on the buttons beneath.
+ */
+.rail-no-drag {
+  position: fixed;
+  top: 13px;
+  inset-inline-start: 65px;
+  z-index: 1;
+  width: 120px;
+  height: 24px;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
 }
 
 /*
