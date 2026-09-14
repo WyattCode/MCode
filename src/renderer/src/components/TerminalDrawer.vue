@@ -9,11 +9,8 @@ const app = useApp()
 
 const root = ref<HTMLElement>()
 
-/*
- * What the reference gives it under an open review panel: measured at `831x280`
- * against that panel's `831x575`, in a column 863 tall.
- */
-const height = ref(280)
+/* MiMo's bottom panel opens 240 tall. */
+const height = ref(240)
 
 /*
  * Told to the app so the info card can stop above the drawer. The card floats
@@ -259,44 +256,16 @@ function startResize(event: PointerEvent) {
       >
         <span class="tab-label">{{ label(term.id) }}</span>
         <span v-if="term.dead" class="dot" v-tip="{ label: t('term.exited'), placement: 'top' }" />
-        <span
-          class="tab-close"
-          role="button"
-          :aria-label="t('term.close')"
-          @click.stop="close(term.id)"
-        >
-          <svg width="8" height="8" viewBox="0 0 10 10" aria-hidden="true">
-            <path
-              d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5"
-              stroke="currentColor"
-              stroke-linecap="round"
-            />
-          </svg>
-        </span>
+        <span class="tab-close" role="button" :aria-label="t('term.close')" @click.stop="close(term.id)">×</span>
       </button>
 
-      <button
-        class="icon-btn"
-        v-tip="{ label: `${t('term.new')} · Ctrl+Alt+T`, placement: 'top' }"
-        @click="add()"
-      >
-        <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
-          <path d="M6 1 L6 11 M1 6 L11 6" stroke="currentColor" stroke-linecap="round" />
-        </svg>
-      </button>
+      <!-- MiMo's: a bare plus in the muted colour, named by the platform's own tooltip. -->
+      <button class="add" :title="t('term.new')" :aria-label="t('term.new')" @click="add()">+</button>
 
       <span class="gap" />
-      <button
-        class="icon-btn hide"
-        v-tip="{ label: t('term.hide'), placement: 'top' }"
-        @click="emit('close')"
-      >
-        <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-          <path
-            d="M0.5 0.5 L9.5 9.5 M9.5 0.5 L0.5 9.5"
-            stroke="currentColor"
-            stroke-linecap="round"
-          />
+      <button class="icon-btn hide" :title="t('term.hide')" :aria-label="t('term.hide')" @click="emit('close')">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12" />
         </svg>
       </button>
     </div>
@@ -349,7 +318,7 @@ function startResize(event: PointerEvent) {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-top: 0.5px solid var(--border-weak);
+  border-top: 1px solid var(--border-weak);
 }
 
 .resize {
@@ -378,37 +347,29 @@ function startResize(event: PointerEvent) {
 }
 
 /*
- * MiMo's tab: 70x28 for a two-character label and its close mark - an 11px
- * inline padding, 8 between the two, a 7px corner, 12px text.
+ * MiMo's tab: an 11px inline padding, 7 between the label and its close mark,
+ * a 7px corner, 12px text in the ordinary text colour.
  */
 .tab {
   display: flex;
   flex-shrink: 0;
   box-sizing: border-box;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   max-width: 180px;
   height: 28px;
   padding-block: 0;
   padding-inline: 11px;
-  color: var(--text-weak);
+  color: var(--text-strong);
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 18px;
 }
 
-.tab:hover {
-  background: var(--overlay-hover);
-}
-
-/*
- * The selected tab is the bar's own colour with a hairline round it - in MiMo
- * the outline is the whole difference between it and a tab at rest.
- */
+/* The selected tab carries a 1px line round it - the whole difference from a tab at rest. */
 .tab.on {
-  color: var(--text-strong);
-  box-shadow: inset 0 0 0 0.5px var(--border-weak);
+  box-shadow: inset 0 0 0 1px var(--border-weak);
 }
 
 .tab-label {
@@ -417,28 +378,35 @@ function startResize(event: PointerEvent) {
   white-space: nowrap;
 }
 
-/*
- * 24, not the 26 every other icon button in the app is. The reference's new
- * terminal button measures `24x24`; scoped here rather than changed on
- * `.icon-btn`, which is shared and whose size is right where it is used.
- */
-.head .icon-btn {
-  /*
-   * `flex-shrink` matters here: the head is a row, and without it the button
-   * was squeezed two pixels narrower than whatever it was given - which is why
-   * a 26px button measured 24, and setting 24 measured 22.
-   */
+/* MiMo's new terminal: a 14px plus, 5 by 8 of padding, muted until pointed at. */
+.add {
+  display: inline-flex;
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  /* MiMo's 7, the corner its tabs and the close at the far end share; the shared button's is 4. */
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
   border-radius: 7px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1;
 }
 
-/* Putting the panel away is MiMo's 26px button at the far end of the bar. */
+.add:hover {
+  color: var(--text-strong);
+}
+
+/*
+ * Putting the panel away is MiMo's 26px button at the far end of the bar.
+ * `flex-shrink` matters: the head is a row, and without it the button was
+ * squeezed narrower than whatever it was given.
+ */
 .head .icon-btn.hide {
+  flex-shrink: 0;
   width: 26px;
   height: 26px;
+  color: var(--text-weak);
   border-radius: 7px;
 }
 
@@ -454,24 +422,18 @@ function startResize(event: PointerEvent) {
   border-radius: 50%;
 }
 
+/* MiMo's close mark: a 13px ×, always there, muted, on a 4px corner. */
 .tab-close {
-  display: flex;
   flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  opacity: 0;
+  padding: 0 3px;
+  color: var(--text-weak);
   border-radius: 4px;
-}
-
-.tab:hover .tab-close,
-.tab.on .tab-close {
-  opacity: 0.7;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 18px;
 }
 
 .tab-close:hover {
-  opacity: 1;
+  color: var(--text-strong);
   background: var(--overlay-hover);
 }
 

@@ -73,8 +73,6 @@ let fit: FitAddon | undefined
 let resized: ResizeObserver | undefined
 let offEvents: (() => void) | undefined
 let offTheme: (() => void) | undefined
-let blinkOn: (() => void) | undefined
-let blinkOff: (() => void) | undefined
 let webgl: WebglAddon | undefined
 
 /** Whether the process is still running, which the drawer marks on the tab. */
@@ -195,19 +193,17 @@ onMounted(async () => {
       getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() ||
       "monospace",
     /*
-     * These are the reference's own values, read off its terminal construction
-     * (main-8t-QUXax.js:5435594): fontSize 14, a bar cursor, 10000 lines of
-     * scrollback, an opaque background, and no newline translation - a pty
-     * already sends CRLF, so converting again doubles it.
+     * MiMo's bottom terminal: 12px text on xterm's own line height, the default
+     * block cursor blinking, and no cursor at all once the terminal loses focus -
+     * an outline left in an idle pane reads as something waiting. An opaque
+     * background, and no newline translation: a pty already sends CRLF, so
+     * converting again doubles it.
      */
-    fontSize: 14,
-    lineHeight: 1.2,
-    cursorStyle: "bar",
+    fontSize: 12,
     cursorBlink: true,
+    cursorInactiveStyle: "none",
     allowTransparency: false,
     convertEol: false,
-    // The reference animates its scroll over 100ms; xterm jumps by default.
-    smoothScrollDuration: 100,
     /*
      * Required before `unicode.activeVersion` may be assigned below. Without
      * it that assignment throws, and because it throws inside onMounted the
@@ -303,27 +299,20 @@ onMounted(async () => {
 
   fit.fit()
 
-  /*
-   * A cursor blinking in a pane nobody is typing into reads as activity that
-   * is not there - and with several panes open, every one of them blinks. The
-   * reference switches the option on focus and off on blur; xterm's own
-   * cursor is drawn against its hidden textarea, so that is what to listen to.
-   */
-  const textarea = terminal.textarea
-  if (textarea) {
-    blinkOn = () => {
-      if (terminal) terminal.options.cursorBlink = true
-    }
-    blinkOff = () => {
-      if (terminal) terminal.options.cursorBlink = false
-    }
-    textarea.addEventListener("focus", blinkOn)
-    textarea.addEventListener("blur", blinkOff)
-    if (document.activeElement !== textarea) blinkOff()
-  }
-
   const client = app.client
   if (!client) return
+
+  /* True while replayed output is being parsed; see the attach below. */
+  let replaying = false
+  /*
+   * Until when a device-attributes answer is held back. The console host asks
+   * for one as a shell starts, and xterm's answer reaches it only after the
+   * output has crossed to this window - by which time the host has stopped
+   * waiting and hands the answer to the shell as typed text: "[?1;2c" at the
+   * very first prompt. A program asking later, once the shell is up, is
+   * answered as usual.
+   */
+  let quietUntil = Date.now() + 3000
 
   if (props.shellID) {
     /*
@@ -334,7 +323,18 @@ onMounted(async () => {
      */
     shellID.value = props.shellID
     const back = await client.request({ type: "shell.attach", shellID: props.shellID })
-    if (back.data) terminal.write(back.data)
+    /*
+     * The replay holds the shell's opening queries - a device-attributes
+     * request among them - and xterm answers every one it reads. Those answers
+     * belong to a start-up long past, so none is sent while the replay is
+     * parsed: the shell would take them as typed text, "[?1;2c" at the prompt.
+     */
+    if (back.data) {
+      replaying = true
+      terminal.write(back.data, () => {
+        replaying = false
+      })
+    }
     if (!back.alive) {
       shellID.value = undefined
       emit("exited")
@@ -369,8 +369,12 @@ onMounted(async () => {
     }
   })
 
+  // The shell is attached or open from here, so the start-up window counts from now.
+  quietUntil = Date.now() + 3000
   terminal.onData((data) => {
-    if (shellID.value) void client.request({ type: "shell.input", shellID: shellID.value, data })
+    if (replaying || !shellID.value) return
+    if (Date.now() < quietUntil && /^\x1b\[\?[\d;]*c$/.test(data)) return
+    void client.request({ type: "shell.input", shellID: shellID.value, data })
   })
 
   /*
@@ -463,11 +467,6 @@ onBeforeUnmount(() => {
   offTheme?.()
   offEvents?.()
   resized?.disconnect()
-  const textarea = terminal?.textarea
-  if (textarea && blinkOn && blinkOff) {
-    textarea.removeEventListener("focus", blinkOn)
-    textarea.removeEventListener("blur", blinkOff)
-  }
   /*
    * The GPU renderer goes first, and by hand.
    *
@@ -544,7 +543,8 @@ watch(
  * room for rows, so the last row ran past the bottom whenever the height came
  * close to a whole row - which a notice above the terminal made the usual case.
  */
+/* MiMo's terminal body: 6 above, 8 either side, 12 below. */
 .term :deep(.xterm) {
-  padding: 6px 8px;
+  padding: 6px 8px 12px;
 }
 </style>
