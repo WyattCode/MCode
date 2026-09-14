@@ -6,6 +6,7 @@ import { notify, notifyFailure } from "../lib/toast"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
 import NewProjectDialog from "./NewProjectDialog.vue"
+import BranchPicker from "./BranchPicker.vue"
 import Composer from "./Composer.vue"
 
 /**
@@ -123,6 +124,12 @@ const pickerProjects = computed<PickerProject[]>(() => {
 function choose(directory: string) {
   picked.value = directory
   box.value?.focus()
+}
+
+/* A branch already checked out in another worktree: the next task goes into that worktree. */
+function useWorktree(directory: string) {
+  added.value = directory
+  choose(directory)
 }
 
 function none() {
@@ -263,6 +270,7 @@ async function hop() {
             @existing="existing"
             @blank="naming = true"
           />
+          <BranchPicker :directory="scratch ? undefined : chosen" @worktree="useWorktree" />
         </div>
       </div>
 

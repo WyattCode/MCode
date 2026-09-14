@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import path from "node:path"
 import { promisify } from "node:util"
+import type { BranchState, CheckoutResult } from "@shared/protocol"
 
 const run = promisify(execFile)
 
@@ -359,6 +360,133 @@ export async function addWorktree(
     : ["worktree", "add", "-b", safe, target]
   await run("git", args, { cwd: root })
   return { directory: target, branch: safe }
+}
+
+/**
+ * The repository's local branches and the one checked out, as the home
+ * screen's branch chip needs them. A repository with no commit yet, or one on
+ * a detached HEAD, has no branch to show.
+ */
+export async function branchState(directory: string): Promise<BranchState> {
+  const inside = (await git(directory, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")).trim()
+  if (inside !== "true") return { repo: false, detached: false, branches: [] }
+  const head = (await git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim()
+  const branches = (await git(directory, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]).catch(() => ""))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const detached = !head || head === "HEAD"
+  return { repo: true, detached, ...(detached ? {} : { branch: head }), branches }
+}
+
+/**
+ * Why a new branch name would be refused, before git is asked: MiMo's own
+ * rules, which are git's check-ref-format rules for a branch.
+ */
+export function branchNameProblem(name: string, existing: string[]): "empty" | "exists" | "invalid" | undefined {
+  const trimmed = name.trim()
+  if (!trimmed) return "empty"
+  if (existing.includes(trimmed)) return "exists"
+  if (
+    /[\s~^:?*[\\]/.test(trimmed) ||
+    // eslint-disable-next-line no-control-regex
+    /[\x00-\x1f\x7f]/.test(trimmed) ||
+    trimmed.includes("..") ||
+    trimmed.includes("@{") ||
+    trimmed.includes("//") ||
+    trimmed.startsWith("-") ||
+    trimmed.startsWith(".") ||
+    trimmed.startsWith("/") ||
+    trimmed.endsWith(".") ||
+    trimmed.endsWith("/") ||
+    trimmed.endsWith(".lock") ||
+    trimmed === "@"
+  ) {
+    return "invalid"
+  }
+  return undefined
+}
+
+function stderrOf(err: unknown): string {
+  const stderr = (err as { stderr?: unknown })?.stderr
+  if (typeof stderr === "string" && stderr.trim()) return stderr
+  return err instanceof Error ? err.message : String(err)
+}
+
+function checkoutFailure(err: unknown): CheckoutResult {
+  const text = stderrOf(err)
+  if (/untracked working tree file/i.test(text) && /would be overwritten/i.test(text)) {
+    return { ok: false, code: "untracked-overwrite" }
+  }
+  if (/local changes to the following files would be overwritten/i.test(text)) return { ok: false, code: "local-overwrite" }
+  const line = text.split("\n").map((entry) => entry.trim()).find(Boolean) ?? ""
+  return { ok: false, error: line.replace(/^(error|fatal):\s*/i, "") }
+}
+
+async function hasConflicts(directory: string): Promise<boolean> {
+  const porcelain = await git(directory, ["status", "--porcelain"]).catch(() => "")
+  return porcelain.split("\n").some((line) => /^(DD|AU|UD|UA|DU|AA|UU) /.test(line))
+}
+
+/**
+ * Switches the checkout to another local branch, or makes a new one and
+ * switches to it, the way MiMo's branch chip does.
+ *
+ * An ordinary switch over uncommitted work stops and says so, so the reader can
+ * decide; forced, it carries the work across with `--merge`, which may leave
+ * conflict markers behind - the switch has still happened then, and says that
+ * it conflicted. A branch already checked out in another worktree is not
+ * switched to here; its worktree is named instead, since git refuses to have
+ * one branch in two checkouts.
+ */
+export async function checkout(
+  directory: string,
+  branch: string,
+  options: { force?: boolean; create?: boolean } = {},
+): Promise<CheckoutResult> {
+  const name = branch.trim()
+  const state = await branchState(directory)
+  if (!state.repo) return { ok: false, error: "not a git repository" }
+
+  if (options.create) {
+    const problem = branchNameProblem(name, state.branches)
+    if (problem === "exists") return { ok: false, code: "branch-exists" }
+    if (problem) return { ok: false, code: "branch-invalid" }
+    try {
+      await git(directory, ["checkout", "-b", name])
+      return { ok: true, branch: name }
+    } catch (err) {
+      return checkoutFailure(err)
+    }
+  }
+
+  if (!state.branches.includes(name)) return { ok: false, error: `no local branch named ${name}` }
+  if (name === state.branch) return { ok: true, branch: name }
+
+  const root = path.resolve(await toplevel(directory).catch(() => directory))
+  const elsewhere = (await worktrees(directory)).find(
+    (tree) => tree.branch === name && path.resolve(tree.directory) !== root,
+  )
+  if (elsewhere) {
+    const target = path.resolve(elsewhere.directory)
+    return { ok: false, worktree: { directory: target, name: path.basename(target) } }
+  }
+
+  if (!options.force) {
+    const porcelain = await git(directory, ["status", "--porcelain"]).catch(() => "")
+    if (porcelain.split("\n").some((line) => line.trim())) return { ok: false, dirty: true }
+  }
+
+  try {
+    await git(directory, options.force ? ["checkout", "--merge", name] : ["checkout", name])
+  } catch (err) {
+    // A merge that stopped on conflicts has still switched; anything else has not.
+    if (options.force && (await branchState(directory)).branch === name) {
+      return { ok: true, branch: name, conflicts: true }
+    }
+    return checkoutFailure(err)
+  }
+  return { ok: true, branch: name, ...(options.force && (await hasConflicts(directory)) ? { conflicts: true } : {}) }
 }
 
 /** Removes a checkout, leaving its branch behind. */

@@ -225,6 +225,29 @@ export interface AssistantMessage {
   time: { created: number; completed?: number }
 }
 
+/** A project's local branches, for the home screen's branch chip. */
+export interface BranchState {
+  repo: boolean
+  /** On a detached HEAD, or a repository with no commit yet: no branch to show. */
+  detached: boolean
+  branch?: string
+  branches: string[]
+}
+
+/** How a branch switch or creation went. */
+export interface CheckoutResult {
+  ok: boolean
+  branch?: string
+  /** Refused because the working tree has uncommitted changes; ask before forcing. */
+  dirty?: boolean
+  /** Forced across uncommitted changes, which left conflict markers. */
+  conflicts?: boolean
+  code?: "untracked-overwrite" | "local-overwrite" | "branch-exists" | "branch-invalid"
+  error?: string
+  /** The branch is checked out in this other worktree instead. */
+  worktree?: { directory: string; name: string }
+}
+
 /** What taking one turn's file changes back did, file by file. */
 export interface TurnRevertResult {
   /** Edited files put back to how the turn found them. */
@@ -1346,6 +1369,9 @@ export type Request =
     }
   | { type: "git.status"; directory: string; scope?: "worktree" | "branch" }
   | { type: "git.init"; directory: string }
+  /* The home screen's branch chip: the local branches, and switching or creating one. */
+  | { type: "git.branches"; directory: string }
+  | { type: "git.checkout"; directory: string; branch: string; force?: boolean; create?: boolean }
   /*
    * `context` is how many unchanged lines to keep either side of a change.
    * A very large number is how "show the whole file" is asked for, which is
@@ -1477,6 +1503,8 @@ export interface ResponseMap {
   "app.reset": { config: AppConfig; providers: ProviderStatus[] }
   "git.status": GitStatus
   "git.init": GitStatus
+  "git.branches": BranchState
+  "git.checkout": CheckoutResult
   "git.diff": { patch: string }
   "git.revert": GitStatus
   "file.list": { files: FileEntry[] }

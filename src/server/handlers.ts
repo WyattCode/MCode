@@ -820,6 +820,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "git.init":
       return (await git.init(request.directory)) satisfies Handled<"git.init">
 
+    case "git.branches":
+      return (await git.branchState(request.directory)) satisfies Handled<"git.branches">
+
+    case "git.checkout":
+      return (await git.checkout(request.directory, request.branch, {
+        force: request.force,
+        create: request.create,
+      })) satisfies Handled<"git.checkout">
+
     case "git.diff":
       return {
         patch: await git.diff(request.directory, request.file, request.context, request.scope),
