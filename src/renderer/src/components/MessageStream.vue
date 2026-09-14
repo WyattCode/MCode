@@ -259,9 +259,6 @@ function compactedAfter(turn: Turn): boolean {
   return turn.last?.id === mark || turn.id === mark
 }
 
-/** Which copy button is showing its tick, keyed by turn and by which one. */
-const copied = ref<string>()
-
 // MiMo's fold for a long question: past fourteen lines, or past 1200 characters
 // on fewer, not counting the newlines it ends on.
 const ASKED_LINES = 14
@@ -361,10 +358,7 @@ function completedAt(turn: Turn): string | undefined {
 async function copyAsked(turn: Turn) {
   if (!turn.text) return
   await navigator.clipboard.writeText(turn.text)
-  copied.value = `${turn.id}:asked`
-  setTimeout(() => {
-    if (copied.value === `${turn.id}:asked`) copied.value = undefined
-  }, 1600)
+  notify(t("stream.replyCopied"))
 }
 
 /** The reply itself, without the tool traffic that produced it. */
@@ -907,42 +901,42 @@ defineExpose({ stepMessage, scroller })
             answer's to state. Edit is offered on the last question only and
             edits it in place; the footer steps aside while it does.
           -->
-          <div v-if="editingAsked !== turn.id" class="footer user-footer">
-            <span class="when">{{ askedAt(turn) }}</span>
-            <button
-              class="copy"
-              :aria-label="t('stream.copyAsked')"
-              v-tip="{ label: t('stream.copyAsked'), placement: 'top' }"
-              @click="copyAsked(turn)"
-            >
-              <svg v-if="copied === `${turn.id}:asked`" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1" />
-              </svg>
-              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M4.14908 11.0081H1.76282V1.51758H9.1038V2.55588M14.2225 4.99681H6.75397V14.4873H14.2225V4.99681Z"
-                  stroke="currentColor"
-                  stroke-width="1"
-                />
-              </svg>
-            </button>
-            <button
-              v-if="!side && turn.id === lastAsked"
-              class="copy edit"
-              :disabled="reverting"
-              :aria-label="t('stream.edit')"
-              v-tip="{ label: t('stream.edit'), placement: 'top' }"
-              @click="startEdit(turn, false)"
-            >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M10.6 2.6l2.8 2.8L6 12.8H3.2V10zM9 4.2l2.8 2.8"
-                  stroke="currentColor"
-                  stroke-width="1.1"
-                  stroke-linejoin="round"
-                />
-              </svg>
-            </button>
+          <div v-if="editingAsked !== turn.id" class="user-meta" data-user-meta>
+            <span v-if="askedAt(turn)" class="user-time" data-user-time>{{ askedAt(turn) }}</span>
+            <div class="user-actions" data-user-actions>
+              <button
+                type="button"
+                class="msg-act"
+                data-msg-act="ucopy"
+                :aria-label="t('stream.copyAsked')"
+                v-tip="{ label: t('stream.copyAsked'), placement: 'top' }"
+                @click="copyAsked(turn)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
+                  <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
+                </svg>
+              </button>
+              <button
+                v-if="!side && turn.id === lastAsked"
+                type="button"
+                class="msg-act"
+                data-msg-act="edit"
+                :disabled="reverting"
+                :aria-label="t('stream.edit')"
+                v-tip="{ label: t('stream.edit'), placement: 'top' }"
+                @click="startEdit(turn, false)"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path
+                    d="M15.9 3.9a2.1 2.1 0 0 1 3 3L8 17.8l-4 1 1-4z"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linejoin="round"
+                  />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1156,44 +1150,6 @@ defineExpose({ stepMessage, scroller })
 </template>
 
 <style scoped>
-.footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 10px 0 2px;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  opacity: 0;
-  transition: opacity 0.12s;
-}
-
-/* focus-within so the copy button is reachable by keyboard, not just by mouse. */
-.msg.user:hover .footer,
-.msg.user:focus-within .footer {
-  opacity: 1;
-}
-
-/*
- * 24 on a 6px radius in --text-weak, which is what the reference's own message
- * actions measure - its undo, copy-message and copy-reply are all 24x24 around
- * a 14px icon in rgb(128,128,128). These were 20x20 on a 4px radius in
- * --avatar-gray, a size and two steps of colour below.
- */
-.copy {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  margin-inline-end: 2px;
-  color: var(--text-weak);
-  border-radius: 6px;
-}
-
-.copy:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
 /* MiMo's msg-actions: 2px apart, drawn a hair up into the reply above. */
 .msg-actions {
   display: flex;
@@ -1278,6 +1234,46 @@ defineExpose({ stepMessage, scroller })
   background: transparent;
   border: 0;
   cursor: pointer;
+}
+
+/*
+ * MiMo's user-meta under a question: the time, then copy and edit, 2px below
+ * the bubble; all of it out of sight, and the buttons out of reach, until the
+ * question is under the pointer or holds focus.
+ */
+.user-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.user-time {
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.user-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+
+.msg.user:hover .user-time,
+.msg.user:focus-within .user-time,
+.msg.user:hover .user-actions,
+.msg.user:focus-within .user-actions {
+  opacity: 1;
+}
+
+.msg.user:hover .user-actions,
+.msg.user:focus-within .user-actions {
+  pointer-events: auto;
 }
 
 /*
@@ -1423,36 +1419,6 @@ defineExpose({ stepMessage, scroller })
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-}
-
-/* Trails the bubble it belongs to, which sits against the right edge. */
-.user-footer {
-  justify-content: flex-end;
-  margin: 6px 2px 2px;
-}
-
-/*
- * MiMo's measure: the time six clear of two 26px buttons, those two apart by
- * two, each on a 7px corner around a 12px glyph.
- */
-.user-footer {
-  gap: 2px;
-}
-
-.user-footer .when {
-  margin-inline-end: 4px;
-}
-
-.user-footer .copy {
-  width: 26px;
-  height: 26px;
-  margin-inline: 0;
-  border-radius: 7px;
-}
-
-.user-footer .copy svg {
-  width: 12px;
-  height: 12px;
 }
 
 /*
