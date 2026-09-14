@@ -1021,10 +1021,15 @@ export const useApp = defineStore("app", () => {
 
   /** Returns false when the message was not accepted, so the draft can survive. */
   /* `to` names a side chat; without it the message goes to the open conversation. */
-  async function send(text: string, attachments: Attachment[] = [], to?: string): Promise<boolean> {
+  async function send(
+    text: string,
+    attachments: Attachment[] = [],
+    to?: string,
+    annotations: import("@shared/protocol").Annotation[] = [],
+  ): Promise<boolean> {
     const target = to ?? currentID.value
-    // An attachment with no words is still something to answer.
-    if (!target || (!text.trim() && !attachments.length)) return false
+    // An attachment, or a place pointed at, with no words is still something to answer.
+    if (!target || (!text.trim() && !attachments.length && !annotations.length)) return false
     const onSide = target === sideID.value
     const report = (message: string | undefined) => {
       if (onSide) sideError.value = message
@@ -1053,7 +1058,13 @@ export const useApp = defineStore("app", () => {
     running.value.add(target)
     if (!joined) turnStarted.set(target, Date.now())
     try {
-      await api().request({ type: "session.prompt", sessionID: target, text, attachments })
+      await api().request({
+        type: "session.prompt",
+        sessionID: target,
+        text,
+        attachments,
+        ...(annotations.length ? { annotations } : {}),
+      })
       return true
     } catch (err) {
       if (!joined) {

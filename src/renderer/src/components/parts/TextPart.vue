@@ -130,7 +130,7 @@ async function onClick(event: MouseEvent) {
 </script>
 
 <template>
-  <div ref="root" class="text" v-html="html" @click="onClick" />
+  <div ref="root" class="text" data-annotate="answer" v-html="html" @click="onClick" />
   <Teleport to="body">
     <div v-if="previewing" class="md-table-preview-overlay" data-table-preview-overlay @mousedown.self="closePreview">
       <div class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">

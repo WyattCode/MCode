@@ -1,4 +1,5 @@
 import type { Message } from "@shared/protocol"
+import { withAnnotations } from "@shared/annotations"
 import { estimateTokens } from "./overflow"
 
 /**
@@ -76,7 +77,7 @@ function truncate(value: string): string {
 export function serialize(message: Message): string {
   if (message.role === "user") {
     const files = message.attachments.map((file) => `[Attached ${file.mime}: ${file.path}]`)
-    return [`[User]: ${message.text}`, ...files].join("\n")
+    return [`[User]: ${withAnnotations(message.text, message.annotations)}`, ...files].join("\n")
   }
   return message.parts
     .flatMap((part) => {

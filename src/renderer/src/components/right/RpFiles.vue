@@ -7,6 +7,7 @@ import { useApp } from "../../stores/app"
 import { renderMarkdown } from "../../lib/markdown"
 import { openImagePreview } from "../../lib/image-preview"
 import { highlightLines, languageForFile } from "../../lib/highlight"
+import { annotationId, requestAnnotation } from "../../lib/annotate"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 
@@ -267,7 +268,7 @@ const menuItems = computed<MenuItem[]>(() => {
   const node = menu.value?.node
   if (!node) return []
   const items: MenuItem[] = []
-  if (!node.directory) items.push({ key: "open", label: t("rp.files.open") })
+  if (!node.directory) items.push({ key: "open", label: t("rp.files.open") }, { key: "annotate", label: t("rp.files.annotate") })
   items.push(
     { key: "reveal", label: t("files.reveal") },
     { key: "copyPath", label: t("rp.files.copyPath") },
@@ -276,11 +277,23 @@ const menuItems = computed<MenuItem[]>(() => {
   return items
 })
 
+/* MiMo's 添加批注: the whole file, with a note written in the annotation box at the pointer. */
+function annotateFile(rel: string, x: number, y: number) {
+  const path = absolute(rel)
+  const name = rel.split("/").pop() ?? rel
+  requestAnnotation({
+    rect: { left: x, right: x, top: y, bottom: y },
+    make: (text) => ({ id: annotationId(), kind: "file", path, name, text }),
+  })
+}
+
 function pickMenu(key: string) {
-  const node = menu.value?.node
+  const at = menu.value
+  const node = at?.node
   menu.value = undefined
-  if (!node) return
+  if (!node || !at) return
   if (key === "open") choose(node.path)
+  else if (key === "annotate") annotateFile(node.path, at.x, at.y)
   else if (key === "reveal") reveal(node.path)
   else if (key === "copyPath") copyPath(node.path, false)
   else if (key === "copyRelPath") copyPath(node.path, true)
@@ -478,7 +491,7 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
           </div>
           <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
           <div v-else-if="isMarkdown && !findOpen" class="fv-doc text" v-html="renderMarkdown(opened.content)" />
-          <div v-else class="fv-code" :class="{ shiki: showColoured }">
+          <div v-else class="fv-code" :class="{ shiki: showColoured }" data-annotate="code" :data-annotate-path="viewFile ? absolute(viewFile) : undefined">
             <div v-for="(text, line) in lines" :key="line" class="fv-line">
               <span class="fv-num">{{ line + 1 }}</span>
               <span v-if="showColoured" class="fv-text" v-html="colouredLines?.[line]" />

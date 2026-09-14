@@ -38,6 +38,7 @@ import { addressToURL, safeURL } from "../src/shared/web-address"
 import { ToolError } from "../src/server/tool/types"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
+import { annotationsBlock } from "../src/shared/annotations"
 import { revertTurnFiles } from "../src/server/session/turn-revert"
 import { Bus } from "../src/server/bus"
 import { unifiedDiff } from "../src/server/diff"
@@ -635,6 +636,32 @@ async function main() {
 
   // ---------------------------------------------------- provider conversion
   section("Provider conversion")
+  // MiMo's annotations reach the model after what was typed; the transcript keeps them beside it.
+  const annotated = toProviderMessages([
+    {
+      id: "msg_ann",
+      sessionID,
+      role: "user",
+      text: "tidy this",
+      attachments: [],
+      annotations: [
+        { id: "ann-1", kind: "answer", quote: "quick brown", occ: 2, occTotal: 3, text: "shorter" },
+        { id: "ann-2", kind: "file", path: "/p/a.ts", name: "a.ts", text: "" },
+      ],
+      time: { created: 1 },
+    },
+  ])
+  const annotatedText = ((annotated[0]?.content as any[]) ?? []).map((block) => block.text).join("\n")
+  check(
+    "annotations follow the typed text for the model",
+    annotatedText.startsWith("tidy this\n\n<annotations>") &&
+      annotatedText.includes('(occurrence 2 of 3): "quick brown"') &&
+      annotatedText.includes("Note: shorter") &&
+      annotatedText.includes("File /p/a.ts (the whole file)") &&
+      annotatedText.trimEnd().endsWith("</annotations>"),
+    annotatedText,
+  )
+  check("no annotations adds nothing", annotationsBlock([]) === "" && annotationsBlock(undefined) === "")
   // The API rejects a tool_use that is not answered by a tool_result with the
   // same id in the very next turn, so this mapping is where history bugs hide.
   const converted = toProviderMessages([

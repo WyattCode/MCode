@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import type { Message, ModelRef, Usage } from "@shared/protocol"
+import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
@@ -42,7 +43,8 @@ export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[
           content.push({ type: "text", text: `<file path="${attachment.path}">\n${attachment.data}\n</file>` })
         }
       }
-      if (message.text) content.push({ type: "text", text: message.text })
+      const text = withAnnotations(message.text, message.annotations)
+      if (text) content.push({ type: "text", text })
       if (content.length) out.push({ role: "user", content })
       continue
     }

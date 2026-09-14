@@ -266,6 +266,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         sessionID: request.sessionID,
         text: request.text,
         attachments: request.attachments,
+        annotations: request.annotations,
       })
       return { messageID } satisfies Handled<"session.prompt">
     }

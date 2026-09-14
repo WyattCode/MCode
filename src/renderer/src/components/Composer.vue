@@ -20,6 +20,8 @@ import {
 } from "../lib/mention"
 import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
+import { HOME_SCOPE, useAnnotations } from "../stores/annotations"
+import AnnotationChips from "./AnnotationChips.vue"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
 import ConfirmDialog from "./ConfirmDialog.vue"
@@ -75,6 +77,10 @@ const app = useApp()
 const sessionID = computed(() => (props.fresh ? undefined : props.side ? app.sideID : app.currentID))
 const session = computed(() => (props.fresh ? undefined : props.side ? app.side : app.current))
 const busyHere = computed(() => (props.side ? app.sideBusy : app.busy))
+/* MiMo's annotations wait in the main box only, kept per conversation; the side chat has none. */
+const annotations = useAnnotations()
+const annotationScope = computed(() => (props.side ? undefined : (sessionID.value ?? HOME_SCOPE)))
+const waiting = computed(() => (annotationScope.value ? annotations.list(annotationScope.value) : []))
 const text = ref("")
 const input = ref<HTMLTextAreaElement>()
 /**
@@ -578,10 +584,12 @@ async function submit() {
    * would only force the user to stop the model and lose its work in order to
    * say one more sentence.
    */
-  if (!value && !attachments.value.length) return
+  if (!value && !attachments.value.length && !waiting.value.length) return
   historyIndex.value = -1
   const sent = attachments.value
   const carried = mentioned.value
+  const scopeAtSend = annotationScope.value
+  const pointed = scopeAtSend ? annotations.take(scopeAtSend) : []
   /*
    * Emptied before anything is awaited. The mentioned files still have to be
    * read off disk, and leaving the draft on screen across that read would let
@@ -606,6 +614,7 @@ async function submit() {
       text.value = value
       attachments.value = sent
       mentioned.value = carried
+      if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
       await nextTick(resize)
       notifyFailure(t("home.startFailed"), err instanceof Error ? err.message : String(err))
       return
@@ -615,10 +624,13 @@ async function submit() {
   const named = await mentionAttachments(value, carried)
 
   // A rejected message should not cost the user what they typed, or gathered.
-  if (!(await app.send(outgoing(value), [...sent, ...named], props.side ? app.sideID : undefined))) {
+  if (!(await app.send(outgoing(value), [...sent, ...named], props.side ? app.sideID : undefined, pointed))) {
     text.value = value
     attachments.value = sent
     mentioned.value = carried
+    // Back into the conversation the message was meant for - on the home screen, the one just made.
+    const back = annotationScope.value
+    if (back && pointed.length) annotations.put(back, [...pointed, ...annotations.list(back)])
     await nextTick(resize)
   }
 }
@@ -1606,7 +1618,7 @@ function insert(fragment: string) {
   })
 }
 
-defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, set, setMode })
+defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, set, setMode, submit })
 </script>
 
 <template>
@@ -1637,6 +1649,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           scroll timeline). Wrapping made the box grow a row taller for every
           four files and pushed the conversation up the screen.
         -->
+        <AnnotationChips v-if="annotationScope && waiting.length" class="box-annotations" :list="waiting" :scope="annotationScope" />
         <div v-if="attachments.length" class="tiles-wrap">
           <span class="tiles-fade start" aria-hidden="true" />
           <span class="tiles-fade end" aria-hidden="true" />
@@ -2444,6 +2457,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 /* A dropped file has to look like it will land somewhere: MiMo's 2px ring of the accent at 35%. */
 .box.dropping {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 35%, transparent);
+}
+
+/* Annotations waiting to be sent, lined up with the file tiles. */
+.box-annotations {
+  padding: 12px 16px 0;
 }
 
 .tiles-wrap {

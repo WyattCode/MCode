@@ -44,6 +44,9 @@ import {
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 
+/** A message the user sent: its words, its files, and the places it points at. */
+type PromptInput = { sessionID: string; text: string; attachments?: Attachment[]; annotations?: UserMessage["annotations"] }
+
 /**
  * What the summary is for: the next turn reads it instead of the conversation,
  * so it has to carry decisions and state rather than read as a recap.
@@ -828,7 +831,7 @@ export class SessionRunner {
     }
   }
 
-  async prompt(input: { sessionID: string; text: string; attachments?: Attachment[] }): Promise<string> {
+  async prompt(input: PromptInput): Promise<string> {
     /*
      * A turn that is under way takes the message rather than a second turn
      * being started for it. This is checked before the busy test below, because
@@ -874,7 +877,7 @@ export class SessionRunner {
    */
   private join(
     steering: Steering,
-    input: { sessionID: string; text: string; attachments?: Attachment[] },
+    input: PromptInput,
   ): Promise<string> {
     const user: UserMessage = {
       id: Identifier.message(),
@@ -882,6 +885,7 @@ export class SessionRunner {
       role: "user",
       text: input.text,
       attachments: input.attachments ?? [],
+      ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       time: { created: Date.now() },
       // Marked, so the transcript can show it inside the turn it joined.
       steered: true,
@@ -1001,7 +1005,7 @@ export class SessionRunner {
   }
 
   private async begin(
-    input: { sessionID: string; text: string; attachments?: Attachment[] },
+    input: PromptInput,
     controller: AbortController,
   ): Promise<string> {
     let session = await this.store.require(input.sessionID)
@@ -1049,6 +1053,7 @@ export class SessionRunner {
       role: "user",
       text: input.text,
       attachments: input.attachments ?? [],
+      ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       time: { created: Date.now() },
     }
     await this.store.saveMessage(user)

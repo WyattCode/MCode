@@ -1,4 +1,5 @@
 import type { Message } from "@shared/protocol"
+import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { ProviderError } from "./types"
@@ -70,7 +71,7 @@ function toInput(history: Message[]): Record<string, unknown>[] {
       const files = attachments
         .filter((attachment) => !attachment.mime.startsWith("image/"))
         .map((attachment) => `<file path="${attachment.path}">\n${attachment.data}\n</file>`)
-      const text = [...files, message.text].filter(Boolean).join("\n\n")
+      const text = [...files, withAnnotations(message.text, message.annotations)].filter(Boolean).join("\n\n")
       const content = [
         ...(text ? [{ type: "input_text", text }] : []),
         ...images.map((image) => ({

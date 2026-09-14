@@ -63,6 +63,8 @@ import { projectName } from "./lib/project"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import FindBar from "./components/FindBar.vue"
+import AnnotationComposer from "./components/AnnotationComposer.vue"
+import { HOME_SCOPE } from "./stores/annotations"
 import { createFind, openFind, stepFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
 import { chimeOf, longTask } from "@shared/chime"
@@ -2809,6 +2811,9 @@ const modalOpen = computed(
     Boolean(editingProject.value),
 )
 
+/* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
+const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
+
 /** Steps to the next colour scheme, in the order the settings list them. */
 async function cycleScheme() {
   const order = ["system", "dark", "light"] as const
@@ -3803,6 +3808,9 @@ onBeforeUnmount(() => {
 
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />
+
+      <!-- MiMo's annotation box, for a selection in a reply or the files tab's code, or a whole file. -->
+      <AnnotationComposer v-if="!onboarding" :scope="annotationScope" :disabled="modalOpen" @send="composer?.submit()" />
 
       <!-- MiMo's right panel: tabs beside the conversation, or its launcher while it holds none. -->
       <RightPanel

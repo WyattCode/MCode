@@ -6,7 +6,7 @@ import ReasoningPart from "./parts/ReasoningPart.vue"
 import ToolPart from "./parts/ToolPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
 import TextShimmer from "./parts/TextShimmer.vue"
-import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
+import type { Annotation, Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
 import { preview } from "../lib/attach"
 import { openImagePreview } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
@@ -15,6 +15,7 @@ import { renderMarkdown } from "../lib/markdown"
 import { highlightWithin } from "../lib/highlight"
 import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
+import AnnotationChips from "./AnnotationChips.vue"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 
 /**
@@ -144,6 +145,8 @@ interface Turn {
   id: string
   text?: string
   attachments?: Attachment[]
+  /** The places the message pointed at, shown under it as MiMo does. */
+  annotations?: Annotation[]
   /** When the user sent it, for the footer under their own message. */
   asked?: number
   parts: AssistantPart[]
@@ -200,6 +203,7 @@ const turns = computed<Turn[]>(() => {
         id: message.id,
         text: message.text,
         attachments: message.attachments,
+        annotations: message.annotations,
         asked: message.time.created,
         parts: [],
         steers: [],
@@ -781,7 +785,7 @@ defineExpose({ stepMessage, scroller })
 </script>
 
 <template>
-  <div ref="scroller" class="stream" @scroll="onScroll">
+  <div ref="scroller" class="stream" :data-annotate-off="side ? '' : undefined" @scroll="onScroll">
     <div ref="inner" class="inner">
       <!--
         MiMo's marker at the top of a branched conversation: a hairline either
@@ -897,6 +901,7 @@ defineExpose({ stepMessage, scroller })
             <span class="asked-text" :class="{ folded: !openAsked.has(turn.id) }">{{ turn.text }}</span><button class="asked-expand" data-asked-expand @click="toggleAsked(turn.id)" @dblclick.stop>{{ openAsked.has(turn.id) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(turn.text) }) }}</button>
           </div>
           <div v-else-if="turn.text" class="user-bubble" @dblclick="startEdit(turn, true)">{{ turn.text }}</div>
+          <AnnotationChips v-if="turn.annotations?.length" class="asked-annotations" :list="turn.annotations" read-only />
 
           <!--
             The same footer the reply gets. What was asked is worth being able
@@ -1765,6 +1770,13 @@ defineExpose({ stepMessage, scroller })
  */
 .user-bubble[data-asked-parts] {
   white-space: normal;
+}
+
+/* The annotations a message carried, under it on its own side. */
+.asked-annotations {
+  justify-content: flex-end;
+  max-width: 78%;
+  padding-block: 6px 0;
 }
 
 /*

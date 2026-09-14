@@ -190,6 +190,25 @@ export interface UserMessage {
   time: { created: number }
   /** Sent into a turn that was already running (MiMo's 插话), so the transcript keeps it inside that turn. */
   steered?: boolean
+  /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
+  annotations?: Annotation[]
+}
+
+/** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
+export interface Annotation {
+  id: string
+  kind: "answer" | "code" | "file"
+  /** The file's absolute path, for a file or code shown from one. */
+  path?: string
+  /** The file's name, for a whole file. */
+  name?: string
+  /** The selected text, whitespace folded; absent for a whole file. */
+  quote?: string
+  /** Which occurrence of the quote in its block was selected, and how many there are. */
+  occ?: number
+  occTotal?: number
+  /** What the user wrote about it; empty when it is only pointed at. */
+  text: string
 }
 
 export interface Attachment {
@@ -1285,7 +1304,7 @@ export type Request =
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
   | { type: "session.effort"; sessionID: string; effort?: Effort }
-  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[] }
+  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[] }
   | { type: "session.abort"; sessionID: string }
   | {
       type: "permission.respond"
