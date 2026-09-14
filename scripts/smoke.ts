@@ -46,6 +46,8 @@ import { globToRegExp } from "../src/server/tool/search"
 import { discoverSubscriptionModels } from "../src/server/provider/discover"
 import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
+import { sessionArtifacts, sessionReferences } from "../src/shared/session-files"
+import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import type { TurnEvent } from "../src/server/provider/types"
 import { toProviderMessages, usageFrom } from "../src/server/provider/anthropic"
@@ -2507,6 +2509,55 @@ async function main() {
     [Array.from({ length: 300 }, (_, i) => `+line ${i}`).join("\n")],
   )
   check("the prompt lists 50 paths and 200 diff lines", shown.includes("f49.ts") && !shown.includes("f50.ts") && shown.includes("+line 199") && !shown.includes("+line 200"))
+
+  // ------------------------------------------ info card: transcript reading --
+  {
+    const root = "C:/work/proj"
+    const tool = (id: string, name: string, input: Record<string, unknown>, metadata: Record<string, unknown> = {}, at = 10): any => ({
+      type: "tool", id, callID: id, name, status: "completed", input, metadata, time: { created: at, completed: at },
+    })
+    const turn = (id: string, parts: any[], at: number): any => ({
+      id, sessionID: "s", role: "assistant", model: { provider: "p", model: "m" }, agent: "build", parts, time: { created: at },
+    })
+    const said: any[] = [
+      { id: "u1", sessionID: "s", role: "user", text: "go", attachments: [{ path: `${root}/brief.pdf`, mime: "application/pdf", data: "" }], time: { created: 1 } },
+      turn("a1", [
+        tool("w1", "write", { path: "report.docx" }, { created: true }, 11),
+        tool("w2", "write", { path: "report.pdf" }, { created: true }, 12),
+        tool("w3", "write", { path: "build.py" }, { created: true }, 13),
+        tool("w4", "write", { path: "renders/page_1.png" }, { created: true }, 14),
+        tool("w5", "write", { path: "README.md" }, { created: false }, 15),
+        tool("e1", "edit", { path: "src/app.ts" }, {}, 16),
+        tool("r1", "read", { path: "src/app.ts" }, {}, 17),
+        tool("r2", "read", { path: "docs/guide.md" }, {}, 18),
+        tool("r3", "read", { path: `${root}/brief.pdf` }, {}, 19),
+        tool("t1", "todowrite", {}, { todos: [
+          { id: "1", content: "plan", status: "completed" },
+          { id: "2", content: "build", status: "in_progress" },
+          { id: "3", content: "ship", status: "pending", parentId: "2" },
+        ] }, 20),
+      ], 10),
+    ]
+    const made = sessionArtifacts(said, root)
+    const role = (file: string) => made.find((entry) => entry.path === file)?.role
+    check("a created document is a deliverable", role("report.docx") === "deliverable", made)
+    check("a PDF made beside its document is intermediate", role("report.pdf") === "intermediate", made)
+    check("a created script is intermediate", role("build.py") === "intermediate", made)
+    check("a page render beside a document is intermediate", role("renders/page_1.png") === "intermediate", made)
+    check("an overwritten file that existed is not an artifact", role("README.md") === undefined && role("src/app.ts") === undefined, made)
+    const many = Array.from({ length: 12 }, (_, i) => ({ path: `n${i}.md`, at: i, role: "deliverable" as const, kind: "docx" as const }))
+    const grouped = artifactGroups(many)
+    check("ten deliverables are shown and the rest fold under More", grouped.shown.length === 10 && grouped.more.length === 2)
+
+    const refs = sessionReferences(said, root)
+    check("an attachment is an upload", refs.uploads.length === 1 && refs.uploads[0] === "brief.pdf", refs)
+    check("project files leave out what was written and what was uploaded", refs.project.join() === "docs/guide.md", refs)
+
+    const idle = infoTasks(said, false)
+    check("todowrite statuses read as MiMo's", idle.map((task) => task.status).join() === "done,stalled,open", idle)
+    check("a child is drawn under its parent", idle[2]?.depth === 1, idle)
+    check("in progress during the turn that wrote it stays in progress", infoTasks(said, true)[1]?.status === "in_progress")
+  }
 
   // ------------------------------------------------- chatgpt adapter ------
   // The Codex wire format had no coverage at all: no subscription to call, so

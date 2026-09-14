@@ -1,39 +1,191 @@
 import type { Message } from "@shared/protocol"
+import type { SessionArtifact } from "@shared/session-files"
 
 /**
- * The plan a conversation is working to.
+ * The plan a conversation is working to, and the info card's own bookkeeping.
  *
  * What it has produced and what it has read live in @shared/session-files,
  * which the server reads too - the artifacts page answers for every stored
  * session, and both sides have to count a file as produced the same way.
  */
-export { sessionFiles, projectRelative, fileKind } from "@shared/session-files"
-export type { FileTouch, SessionFiles, FileKind } from "@shared/session-files"
+export { sessionFiles, projectRelative, fileKind, sessionArtifacts, sessionReferences, artifactKind } from "@shared/session-files"
+export type { FileTouch, SessionFiles, FileKind, SessionArtifact, SessionReferences, ArtifactKind, ArtifactRole } from "@shared/session-files"
 
 /** One entry of the plan the todowrite tool records. */
 export interface Todo {
   id: string
   content: string
   status: string
+  /** Not written by todowrite today; honoured if a plan ever nests. */
+  parentId?: string
 }
 
 /**
- * The most recent plan in a conversation.
+ * The most recent plan in a conversation, with when it was written.
  *
  * Read from the transcript rather than asked for, because the tool's own result
  * carries it and the newest call is by definition the current plan - an earlier
  * one is a plan that has since been rewritten.
  */
-export function latestTodos(messages: readonly Message[]): Todo[] {
+export function latestTodoWrite(messages: readonly Message[]): { todos: Todo[]; at: number } {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     // Only an assistant turn runs tools; a user message has no parts at all.
     if (message?.role !== "assistant") continue
     const parts = message.parts
     for (let at = parts.length - 1; at >= 0; at -= 1) {
-      const found = (parts[at] as { metadata?: { todos?: Todo[] } }).metadata?.todos
-      if (found?.length) return found
+      const part = parts[at] as { metadata?: { todos?: Todo[] }; time?: { created?: number } }
+      const found = part.metadata?.todos
+      if (found?.length) return { todos: found, at: part.time?.created ?? message.time.created }
     }
   }
-  return []
+  return { todos: [], at: 0 }
+}
+
+export function latestTodos(messages: readonly Message[]): Todo[] {
+  return latestTodoWrite(messages).todos
+}
+
+/** MiMo's task statuses, with `stalled` derived for work a finished turn left open. */
+export type InfoTaskStatus = "open" | "in_progress" | "stalled" | "blocked" | "done" | "abandoned"
+
+export interface InfoTask {
+  id: string
+  summary: string
+  status: InfoTaskStatus
+  /** How far under its parent it is drawn; 0 at the top. */
+  depth: number
+}
+
+/** todowrite's four words in MiMo's vocabulary; `blocked` passes through should a plan carry it. */
+function mapStatus(status: string): InfoTaskStatus {
+  if (status === "completed" || status === "done") return "done"
+  if (status === "cancelled" || status === "abandoned") return "abandoned"
+  if (status === "in_progress") return "in_progress"
+  if (status === "blocked") return "blocked"
+  return "open"
+}
+
+/**
+ * The plan as the card lists it: parents before their children, and an item
+ * still marked in progress shown as stalled unless it was written during the
+ * turn running now - otherwise the turn that meant to finish it has ended.
+ */
+export function infoTasks(messages: readonly Message[], running: boolean): InfoTask[] {
+  const { todos, at } = latestTodoWrite(messages)
+  if (!todos.length) return []
+  let runStarted = Infinity
+  if (running) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]
+      // A message steered into a running turn is part of that turn, not its start.
+      if (message?.role === "user" && !message.steered) {
+        runStarted = message.time.created
+        break
+      }
+    }
+  }
+  const current = running && at >= runStarted
+  const byParent = new Map<string, Todo[]>()
+  const ids = new Set(todos.map((todo) => todo.id))
+  for (const todo of todos) {
+    const parent = todo.parentId && ids.has(todo.parentId) && todo.parentId !== todo.id ? todo.parentId : ""
+    byParent.set(parent, [...(byParent.get(parent) ?? []), todo])
+  }
+  const out: InfoTask[] = []
+  const seen = new Set<string>()
+  const walk = (parent: string, depth: number) => {
+    for (const todo of byParent.get(parent) ?? []) {
+      if (seen.has(todo.id)) continue
+      seen.add(todo.id)
+      const mapped = mapStatus(todo.status)
+      out.push({
+        id: todo.id,
+        summary: todo.content,
+        status: mapped === "in_progress" && !current ? "stalled" : mapped,
+        depth,
+      })
+      walk(todo.id, depth + 1)
+    }
+  }
+  walk("", 0)
+  // Anything caught in a parent loop is still listed, at the top.
+  for (const todo of todos) {
+    if (seen.has(todo.id)) continue
+    seen.add(todo.id)
+    out.push({ id: todo.id, summary: todo.content, status: mapStatus(todo.status), depth: 0 })
+  }
+  return out
+}
+
+/** Deliverables past this many are folded under 「更多」. */
+export const ARTIFACT_ROWS = 10
+
+export function artifactGroups(artifacts: readonly SessionArtifact[]) {
+  const deliverable = artifacts.filter((artifact) => artifact.role === "deliverable")
+  return {
+    shown: deliverable.slice(0, ARTIFACT_ROWS),
+    more: deliverable.slice(ARTIFACT_ROWS),
+    intermediate: artifacts.filter((artifact) => artifact.role === "intermediate"),
+  }
+}
+
+// ------------------------------------------------------ what stays folded
+
+export type InfoSectionKey = "environment" | "tasks" | "artifacts" | "sources"
+export type InfoSubgroupKey = "sources.upload" | "sources.project" | "artifacts.intermediate" | "artifacts.deliverable.more"
+
+const SECTION_DEFAULTS: Record<InfoSectionKey, boolean> = { environment: true, tasks: true, artifacts: true, sources: true }
+const SUBGROUP_DEFAULTS: Record<InfoSubgroupKey, boolean> = {
+  "sources.upload": true,
+  "sources.project": false,
+  "artifacts.intermediate": false,
+  "artifacts.deliverable.more": false,
+}
+
+const SECTIONS_STORE = "mcode.infoPanel.sections"
+const SUBGROUPS_STORE = "mcode.infoPanel.subgroups"
+
+/*
+ * Kept per machine, like the card's own open state. Storage can be missing or
+ * refuse; the defaults then hold for this run.
+ */
+function readOpen<K extends string>(store: string, defaults: Record<K, boolean>): Record<K, boolean> {
+  const out = { ...defaults }
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(store) ?? "{}")
+    if (parsed && typeof parsed === "object") {
+      for (const key of Object.keys(defaults) as K[]) {
+        const value = (parsed as Record<string, unknown>)[key]
+        if (typeof value === "boolean") out[key] = value
+      }
+    }
+  } catch {
+    // Unreadable: the defaults stand.
+  }
+  return out
+}
+
+function writeOpen(store: string, value: Record<string, boolean>): void {
+  try {
+    localStorage.setItem(store, JSON.stringify(value))
+  } catch {
+    // Remembered for this run only.
+  }
+}
+
+export const readSectionsOpen = () => readOpen(SECTIONS_STORE, SECTION_DEFAULTS)
+export const readSubgroupsOpen = () => readOpen(SUBGROUPS_STORE, SUBGROUP_DEFAULTS)
+export const writeSectionsOpen = (value: Record<InfoSectionKey, boolean>) => writeOpen(SECTIONS_STORE, value)
+export const writeSubgroupsOpen = (value: Record<InfoSubgroupKey, boolean>) => writeOpen(SUBGROUPS_STORE, value)
+
+/** The card's name and folder lines for a path. */
+export function baseName(file: string): string {
+  const at = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"))
+  return at === -1 ? file : file.slice(at + 1)
+}
+
+export function folderOf(file: string): string {
+  const at = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"))
+  return at === -1 ? "" : file.slice(0, at)
 }

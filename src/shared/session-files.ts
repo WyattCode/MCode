@@ -108,3 +108,167 @@ export function fileKind(path: string): FileKind {
   if (!extension && (name === "makefile" || name === "dockerfile")) return "code"
   return "other"
 }
+
+// ------------------------------------------------------------ the info card
+
+/** Something to hand over, or a step on the way to it. */
+export type ArtifactRole = "deliverable" | "intermediate"
+
+/** Which icon a produced file is drawn with. */
+export type ArtifactKind = "xlsx" | "docx" | "pptx" | "pdf" | "html" | "image" | "video" | "other"
+
+export interface SessionArtifact {
+  /** Project-relative where the file is inside the project, absolute otherwise. */
+  path: string
+  at: number
+  role: ArtifactRole
+  kind: ArtifactKind
+}
+
+const extensionOf = (file: string) => {
+  const name = file.slice(file.lastIndexOf("/") + 1).toLowerCase()
+  const dot = name.lastIndexOf(".")
+  return dot > 0 ? name.slice(dot + 1) : ""
+}
+
+const stemOf = (file: string) => {
+  const name = file.slice(file.lastIndexOf("/") + 1).toLowerCase()
+  const dot = name.lastIndexOf(".")
+  return dot > 0 ? name.slice(0, dot) : name
+}
+
+const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"])
+const VIDEO = new Set(["mp4", "webm", "mov", "m4v", "mkv"])
+const AUDIO = new Set(["mp3", "wav", "m4a", "ogg", "flac"])
+const OFFICE = new Set(["docx", "pptx", "xlsx"])
+const NOTEBOOK = new Set(["md", "markdown", "ipynb"])
+
+/*
+ * What a person opens rather than runs. MCode has no tool for presenting files,
+ * so this list stands in for the model saying "here is what I made".
+ */
+const DELIVERABLE = new Set([
+  ...OFFICE, "doc", "ppt", "xls", "pdf", "html", "htm", "md", "markdown", "ipynb", "csv", "tsv",
+  ...IMAGE, ...VIDEO, ...AUDIO,
+])
+
+export function artifactKind(file: string): ArtifactKind {
+  const extension = extensionOf(file)
+  if (extension === "xlsx" || extension === "xls" || extension === "csv" || extension === "tsv") return "xlsx"
+  if (extension === "docx" || extension === "doc" || extension === "md" || extension === "markdown") return "docx"
+  if (extension === "pptx" || extension === "ppt") return "pptx"
+  if (extension === "pdf") return "pdf"
+  if (extension === "html" || extension === "htm") return "html"
+  if (IMAGE.has(extension)) return "image"
+  if (VIDEO.has(extension)) return "video"
+  return "other"
+}
+
+/** Folders a render or a scratch step lands in, rather than a finished piece. */
+const WORK_FOLDERS = new Set([
+  "preview", "previews", "pages", "slides", "render", "renders", "rendered", "screenshot", "screenshots",
+  "thumbnail", "thumbnails", "tmp", "temp", "cache", ".cache",
+])
+
+/**
+ * MiMo's demotions, applied to one conversation's deliverables as a batch: the
+ * pictures and PDFs made on the way to a document are not handed over beside it.
+ */
+function demoted(file: string, batch: readonly string[]): boolean {
+  const extension = extensionOf(file)
+  const stem = stemOf(file)
+  const delivered = (set: ReadonlySet<string>) =>
+    batch.some((other) => other !== file && set.has(extensionOf(other)) && stemOf(other) === stem)
+  const hasDocument = batch.some((other) => OFFICE.has(extensionOf(other)) || extensionOf(other) === "pdf")
+  if (IMAGE.has(extension)) {
+    const folders = file.toLowerCase().split("/").slice(0, -1)
+    if (hasDocument && folders.some((folder) => WORK_FOLDERS.has(folder))) return true
+    const images = batch.filter((other) => IMAGE.has(extensionOf(other))).length
+    if (hasDocument && images >= 3 && /[_-]\d{1,3}$/.test(stem)) return true
+    if (delivered(OFFICE)) return true
+  }
+  if (extension === "pdf" && (delivered(OFFICE) || delivered(new Set(["html", "htm"])))) return true
+  if ((extension === "pdf" || extension === "html" || extension === "htm") && delivered(NOTEBOOK)) return true
+  return false
+}
+
+/**
+ * What a conversation produced, for the info card's 产物.
+ *
+ * The rule, since MCode has no present-files tool to say which files were
+ * meant for the reader:
+ * - only a file a completed `write` created counts; editing a file that was
+ *   already there is a change, and the review is where changes are shown;
+ * - a created document, sheet, deck, PDF, web page, markdown, notebook, table,
+ *   picture, video or recording is a deliverable; anything else created
+ *   (code, configuration, scripts, data, plain text) is intermediate;
+ * - a deliverable is demoted to intermediate by MiMo's rules for renders made
+ *   on the way to a document (see `demoted`).
+ * Newest first, each file once.
+ */
+export function sessionArtifacts(messages: readonly Message[], directory: string): SessionArtifact[] {
+  const created = new Map<string, number>()
+  const key = (file: string) => file.toLowerCase()
+  const shown = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    for (const raw of message.parts) {
+      const part = raw as Partial<ToolPart>
+      if (part.type !== "tool" || part.name !== "write" || part.status !== "completed") continue
+      if (part.metadata?.created !== true) continue
+      const target = part.input?.path
+      if (typeof target !== "string") continue
+      const file = projectRelative(directory, target)
+      if (!file) continue
+      created.set(key(file), part.time?.completed ?? part.time?.created ?? message.time.created)
+      shown.set(key(file), file)
+    }
+  }
+  // A later write to the same file moves it up without changing whether it was created here.
+  const touched = new Map(sessionFiles(messages, directory).written.map((entry) => [key(entry.path), entry.at]))
+  const files = [...created.keys()].map((id) => ({ path: shown.get(id) ?? id, at: Math.max(created.get(id) ?? 0, touched.get(id) ?? 0) }))
+  const candidates = files.filter((file) => DELIVERABLE.has(extensionOf(file.path))).map((file) => file.path)
+  return files
+    .map((file) => ({
+      ...file,
+      kind: artifactKind(file.path),
+      role: (candidates.includes(file.path) && !demoted(file.path, candidates) ? "deliverable" : "intermediate") as ArtifactRole,
+    }))
+    .sort((a, b) => b.at - a.at)
+}
+
+export interface SessionReferences {
+  /** What the user attached to their messages. */
+  uploads: string[]
+  /** Project files the session read that it did not also write, nor that were uploaded. */
+  project: string[]
+}
+
+/**
+ * The info card's 参考, split as MiMo splits it. A web address never appears:
+ * MiMo filters them out, so its 联网搜索 group is never drawn.
+ */
+export function sessionReferences(messages: readonly Message[], directory: string): SessionReferences {
+  const name = (file: string) => file.slice(file.lastIndexOf("/") + 1).toLowerCase()
+  const uploads: string[] = []
+  const seenUploads = new Set<string>()
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role !== "user") continue
+    for (const attachment of message.attachments ?? []) {
+      const file = projectRelative(directory, attachment.path ?? "")
+      if (!file || file.includes("://") || seenUploads.has(file.toLowerCase())) continue
+      seenUploads.add(file.toLowerCase())
+      uploads.push(file)
+    }
+  }
+  const { written, read } = sessionFiles(messages, directory)
+  const outputs = new Set(written.map((entry) => entry.path.toLowerCase()))
+  const outputNames = new Set(written.map((entry) => name(entry.path)))
+  const uploadNames = new Set(uploads.map(name))
+  const project = read
+    .map((entry) => entry.path)
+    .filter((file) => !file.includes("://"))
+    .filter((file) => !outputs.has(file.toLowerCase()) && !outputNames.has(name(file)) && !uploadNames.has(name(file)))
+  return { uploads, project }
+}
