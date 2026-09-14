@@ -1036,16 +1036,20 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
-   * Escape still stops the turn, but only from an empty box. Now that words can
-   * be typed while the model works, a draft in progress is exactly when Escape
-   * is most likely to be reached for by reflex, and stopping the turn would
-   * throw away everything it had done in order to do nothing. The Stop button
-   * is on the bar throughout, so nothing becomes unreachable.
+   * MiMo's stop keys while this conversation runs: Escape on its own, or Ctrl+C
+   * with nothing selected in the box - a selection still copies. A draft does
+   * not hold either back, and it stays in the box.
    */
-  if (event.key === "Escape" && busyHere.value && !text.value.trim()) {
-    event.preventDefault()
-    void app.abort(sessionID.value)
-    return
+  if (busyHere.value && !event.shiftKey && !event.metaKey && !event.altKey) {
+    const escape = event.key === "Escape" && !event.ctrlKey
+    const box = input.value
+    const selected = box ? box.selectionStart !== box.selectionEnd : false
+    const copy = (event.key === "c" || event.key === "C") && event.ctrlKey && !selected
+    if (escape || copy) {
+      event.preventDefault()
+      void app.abort(sessionID.value)
+      return
+    }
   }
 
   // Arrow history, but only from the edges of the text so it never fights
