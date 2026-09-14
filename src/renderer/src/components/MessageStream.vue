@@ -12,6 +12,7 @@ import { openImagePreview } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
 import { renderMarkdown } from "../lib/markdown"
+import { highlightWithin } from "../lib/highlight"
 import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
@@ -289,6 +290,12 @@ const partKey = (turnID: string, index: number) => `${turnID}:${index}`
 
 function codeFolds(code: string) {
   return askedLines(code) > ASKED_LINES
+}
+
+/* The code a question carries, in the same syntax colours as a reply's code blocks. */
+const vHighlight = {
+  mounted: (el: HTMLElement) => void highlightWithin(el),
+  updated: (el: HTMLElement) => void highlightWithin(el),
 }
 
 function codeHtml(code: string, lang: string | null) {
@@ -868,6 +875,7 @@ defineExpose({ stepMessage, scroller })
                 <div
                   class="text asked-code-body"
                   :class="{ folded: codeFolds(part.code) && !openAsked.has(partKey(turn.id, index)) }"
+                  v-highlight
                   @click="copyCode"
                   v-html="codeHtml(part.code, part.lang)"
                 />

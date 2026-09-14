@@ -689,6 +689,23 @@ html[data-wrap="on"] .md-code code {
 }
 
 /*
+ * Syntax colours carry GitHub's light and dark in each token (shiki's dual
+ * themes). The light is the token's own colour; under a dark theme - chosen, or
+ * followed from the system - the dark one takes over, as MiMo's stylesheet does.
+ */
+:root[data-theme="dark"] .shiki,
+:root[data-theme="dark"] .shiki span {
+  color: var(--shiki-dark) !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .shiki,
+  :root:not([data-theme="light"]) .shiki span {
+    color: var(--shiki-dark) !important;
+  }
+}
+
+/*
  * Text drawn the lighter way, or the way the platform draws everything else.
  *
  * On by default because this interface is mostly light text on a dark ground,

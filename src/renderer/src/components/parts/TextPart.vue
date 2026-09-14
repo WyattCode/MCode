@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
 import type { TextPart } from "@shared/protocol"
 import { renderMarkdown } from "../../lib/markdown"
+import { highlightWithin } from "../../lib/highlight"
 import { t } from "../../lib/i18n"
 import { notifyFailure } from "../../lib/toast"
 
@@ -13,6 +14,22 @@ const html = computed(() =>
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
     tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
   }),
+)
+
+/*
+ * MiMo's syntax colours on the reply's code blocks, once each render has landed.
+ * A reply still streaming renders on every word, so the pass waits for a pause
+ * of 120ms; blocks already coloured come back from the cache at once.
+ */
+const root = ref<HTMLElement>()
+let colourTimer: ReturnType<typeof setTimeout> | undefined
+watch(
+  html,
+  () => {
+    clearTimeout(colourTimer)
+    colourTimer = setTimeout(() => void nextTick(() => highlightWithin(root.value)), 120)
+  },
+  { immediate: true },
 )
 
 /*
@@ -77,7 +94,10 @@ watch(previewing, (open) => {
   else window.removeEventListener("keydown", onEscape)
 })
 
-onBeforeUnmount(() => window.removeEventListener("keydown", onEscape))
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onEscape)
+  clearTimeout(colourTimer)
+})
 
 /*
  * The copy button on a code block, as MiMo has it: the block's text goes to the
@@ -110,7 +130,7 @@ async function onClick(event: MouseEvent) {
 </script>
 
 <template>
-  <div class="text" v-html="html" @click="onClick" />
+  <div ref="root" class="text" v-html="html" @click="onClick" />
   <Teleport to="body">
     <div v-if="previewing" class="md-table-preview-overlay" data-table-preview-overlay @mousedown.self="closePreview">
       <div class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">

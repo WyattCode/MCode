@@ -6,6 +6,7 @@ import ContextMenu from "../ContextMenu.vue"
 import { useApp } from "../../stores/app"
 import { renderMarkdown } from "../../lib/markdown"
 import { openImagePreview } from "../../lib/image-preview"
+import { highlightLines, languageForFile } from "../../lib/highlight"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 
@@ -176,6 +177,19 @@ const isMarkdown = computed(() => ["md", "markdown", "mdx"].includes(extension.v
 const isHtml = computed(() => ["html", "htm"].includes(extension.value))
 const isText = computed(() => opened.value?.kind === "text")
 const lines = computed(() => (opened.value?.content ?? "").split("\n"))
+
+/* The same lines in MiMo's syntax colours, once the highlighter answers; plain until then, and while finding. */
+const colouredLines = ref<string[]>()
+watch(
+  () => [opened.value, props.viewFile] as const,
+  async ([file, rel]) => {
+    colouredLines.value = undefined
+    if (!file || file.kind !== "text") return
+    const coloured = await highlightLines(file.content, languageForFile(rel))
+    if (opened.value === file && coloured && coloured.length === lines.value.length) colouredLines.value = coloured
+  },
+)
+const showColoured = computed(() => Boolean(colouredLines.value) && !(findOpen.value && query.value))
 
 function refresh() {
   void loadTree()
@@ -464,10 +478,11 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
           </div>
           <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
           <div v-else-if="isMarkdown && !findOpen" class="fv-doc text" v-html="renderMarkdown(opened.content)" />
-          <div v-else class="fv-code">
+          <div v-else class="fv-code" :class="{ shiki: showColoured }">
             <div v-for="(text, line) in lines" :key="line" class="fv-line">
               <span class="fv-num">{{ line + 1 }}</span>
-              <span class="fv-text"><template v-for="(part, index) in segments(text, line)" :key="index"><mark v-if="part.mark" class="fv-mark" :class="{ current: part.current }">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+              <span v-if="showColoured" class="fv-text" v-html="colouredLines?.[line]" />
+              <span v-else class="fv-text"><template v-for="(part, index) in segments(text, line)" :key="index"><mark v-if="part.mark" class="fv-mark" :class="{ current: part.current }">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
             </div>
             <div v-if="opened.truncated" class="fv-note">{{ t("rp.files.errTooBig") }}</div>
           </div>
