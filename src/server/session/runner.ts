@@ -19,6 +19,7 @@ import type { Permissions } from "../permission"
 import type { CommandRisk } from "../command-risk"
 import { PermissionDenied, REVIEW_TIMEOUT_MS } from "../permission"
 import type { Storage } from "../storage"
+import { globalAgentsPath } from "../global-agents"
 import { findTool, reachOf, toolsFor } from "../tool/registry"
 import { Questions } from "../tool/question"
 import type { ToolDefinition } from "../tool/types"
@@ -173,6 +174,9 @@ export class SessionRunner {
    */
   readonly questions: Questions
 
+  /** Where the global AGENTS.md lives, next to the app's own config. */
+  private readonly globalAgents: string
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -182,6 +186,7 @@ export class SessionRunner {
     storage: Storage,
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
+    this.globalAgents = globalAgentsPath(storage.directory)
     this.questions = new Questions(bus)
     permissions.useReviewer((input) => this.reviewCommand(input))
   }
@@ -1156,6 +1161,7 @@ export class SessionRunner {
       agent: session.agent,
       staged: session.staged,
       instructions: config.instructions,
+      globalAgentsFile: this.globalAgents,
     })
 
     /*

@@ -23,6 +23,7 @@ import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
 import { listCommands } from "./command"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
+import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import type { ShellOwner } from "./shell"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
@@ -191,7 +192,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "session.systemPrompt": {
       const session = await runtime.sessions.require(request.sessionID)
       return {
-        prompt: await systemPrompt({ directory: session.directory, agent: session.agent }),
+        prompt: await systemPrompt({
+          directory: session.directory,
+          agent: session.agent,
+          globalAgentsFile: globalAgentsPath(runtime.storage.directory),
+        }),
       } satisfies Handled<"session.systemPrompt">
     }
 
@@ -866,6 +871,27 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.importApply":
       return { imported: await applyMcpImports(runtime.config, request.items) } satisfies Handled<"mcp.importApply">
+
+    case "agents.state": {
+      const file = globalAgentsPath(runtime.storage.directory)
+      return { path: file, state: await agentsState(file) } satisfies Handled<"agents.state">
+    }
+
+    case "agents.ensure": {
+      const file = globalAgentsPath(runtime.storage.directory)
+      return { path: file, state: await ensureAgents(file) } satisfies Handled<"agents.ensure">
+    }
+
+    case "agents.setEnabled": {
+      const file = globalAgentsPath(runtime.storage.directory)
+      return { path: file, state: await setAgentsEnabled(file, request.enabled) } satisfies Handled<"agents.setEnabled">
+    }
+
+    case "agents.delete": {
+      const file = globalAgentsPath(runtime.storage.directory)
+      await deleteAgents(file)
+      return { path: file, state: "none" } satisfies Handled<"agents.delete">
+    }
   }
 }
 

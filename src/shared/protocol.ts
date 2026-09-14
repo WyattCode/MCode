@@ -660,6 +660,9 @@ export interface AppPaths {
   files: AppPath[]
 }
 
+/** Where the global AGENTS.md stands: read into every conversation, switched off (renamed), or not written. */
+export type AgentsFileState = "loaded" | "disabled" | "none"
+
 export interface Worktree {
   directory: string
   branch?: string
@@ -1335,6 +1338,10 @@ export type Request =
   | { type: "mcp.tools"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
+  | { type: "agents.state" }
+  | { type: "agents.ensure" }
+  | { type: "agents.setEnabled"; enabled: boolean }
+  | { type: "agents.delete" }
 
 export type RequestType = Request["type"]
 export type RequestOf<T extends RequestType> = Extract<Request, { type: T }>
@@ -1463,6 +1470,11 @@ export interface ResponseMap {
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }
+  "agents.state": { path: string; state: AgentsFileState }
+  /** Writes a starting file when there is none. */
+  "agents.ensure": { path: string; state: AgentsFileState }
+  "agents.setEnabled": { path: string; state: AgentsFileState }
+  "agents.delete": { path: string; state: AgentsFileState }
 }
 
 // ---------------------------------------------------------------------------

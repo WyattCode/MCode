@@ -34,6 +34,8 @@ export interface PromptContext {
   agent: string
   /** The reader's standing instructions, if they have written any. */
   instructions?: string
+  /** The global AGENTS.md, read into every conversation while it is there (switched off, it has been renamed). */
+  globalAgentsFile?: string
   /** Whether the conversation works in stages. */
   staged?: boolean
 }
@@ -89,6 +91,15 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
   if (standing) {
     sections.push(
       `## Standing instructions\n\nThese are the user's own, and apply to every project they work in.\n\n${standing}`,
+    )
+  }
+
+  const global = context.globalAgentsFile
+    ? (await fs.readFile(context.globalAgentsFile, "utf8").catch(() => "")).trim()
+    : ""
+  if (global) {
+    sections.push(
+      `## Global instructions\n\nThese come from the user's global AGENTS.md and apply to every project; the project's own instructions below take precedence.\n\n${global}`,
     )
   }
 

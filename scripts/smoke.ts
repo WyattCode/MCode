@@ -32,6 +32,7 @@ import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shar
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
+import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
 import { splitSendWord } from "../src/renderer/src/lib/voice"
 import { addressToURL, safeURL } from "../src/shared/web-address"
 import { ToolError } from "../src/server/tool/types"
@@ -1693,6 +1694,39 @@ async function main() {
       instructions: "   " + String.fromCharCode(10) + "  ",
     })
     check("and neither does whitespace", !blankStanding.includes("## Standing instructions"))
+
+    /*
+     * The global AGENTS.md. Read into every conversation while it is there, not
+     * once it is switched off (renamed) or deleted, and placed before the
+     * project's own instructions, which win where the two disagree.
+     */
+    const globalAgents = path.join(root, "global", "AGENTS.md")
+    check("with no global file its state is none", (await agentsState(globalAgents)) === "none")
+    check("ensuring it writes a starting file", (await ensureAgents(globalAgents)) === "loaded" && (await exists(globalAgents)))
+    await fs.writeFile(globalAgents, "Prefer small commits.", "utf8")
+    const withGlobal = await systemPrompt({ directory: project, agent: "build", globalAgentsFile: globalAgents })
+    check(
+      "a global AGENTS.md reaches the prompt",
+      withGlobal.includes("## Global instructions") && withGlobal.includes("Prefer small commits."),
+    )
+    check(
+      "before the project's own instructions",
+      // Present first: a missing section's -1 would otherwise count as "before".
+      withGlobal.indexOf("## Global instructions") >= 0 &&
+        withGlobal.indexOf("## Global instructions") < withGlobal.indexOf("## Project instructions"),
+    )
+    check(
+      "switching it off renames it",
+      (await setAgentsEnabled(globalAgents, false)) === "disabled" &&
+        !(await exists(globalAgents)) &&
+        (await exists(globalAgents + ".disabled")),
+    )
+    const offGlobal = await systemPrompt({ directory: project, agent: "build", globalAgentsFile: globalAgents })
+    check("and takes it out of the prompt", !offGlobal.includes("Prefer small commits."))
+    check("switching it on brings it back", (await setAgentsEnabled(globalAgents, true)) === "loaded")
+    await setAgentsEnabled(globalAgents, false)
+    await deleteAgents(globalAgents)
+    check("deleting removes it even while it is off", (await agentsState(globalAgents)) === "none")
 
     /*
      * Staged mode. The section is there when asked for, names its stages, and

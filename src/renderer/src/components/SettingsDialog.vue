@@ -23,7 +23,7 @@ import { chime } from "../lib/sound"
 import { CHIMES, chimeOf, type Chime } from "@shared/chime"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
-import type { AppPath, AppPaths, UsageSummary } from "@shared/protocol"
+import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, isBindable } from "../lib/keys"
@@ -137,6 +137,52 @@ function openPath(file: AppPath) {
   const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
   if (cut < 0) return
   window.mcode.openFile(file.path.slice(0, cut), file.path.slice(cut + 1))
+}
+
+/*
+ * MiMo's 配置 page: the config file, and the global AGENTS.md with its state -
+ * read into every conversation, switched off, or not written - and what can be
+ * done with it from each state.
+ */
+const agents = ref<{ path: string; state: AgentsFileState }>()
+const confirmingAgentsDelete = ref(false)
+
+function reasonText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
+}
+
+async function loadAgents() {
+  agents.value = await app.client?.request({ type: "agents.state" }).catch(() => undefined)
+}
+
+async function openAgents() {
+  try {
+    const result = await app.client?.request({ type: "agents.ensure" })
+    if (!result) return
+    agents.value = result
+    const cut = Math.max(result.path.lastIndexOf("/"), result.path.lastIndexOf("\\"))
+    const failure = await window.mcode.openFile(result.path.slice(0, cut), result.path.slice(cut + 1))
+    if (failure) notifyFailure(t("set.agents.openFailed") + failure)
+  } catch (err) {
+    notifyFailure(t("set.agents.openFailed") + reasonText(err))
+  }
+}
+
+async function switchAgents(enabled: boolean) {
+  try {
+    agents.value = await app.client?.request({ type: "agents.setEnabled", enabled })
+  } catch (err) {
+    notifyFailure(t("set.agents.toggleFailed") + reasonText(err))
+  }
+}
+
+async function removeAgents() {
+  confirmingAgentsDelete.value = false
+  try {
+    agents.value = await app.client?.request({ type: "agents.delete" })
+  } catch (err) {
+    notifyFailure(t("set.agents.deleteFailed") + reasonText(err))
+  }
 }
 
 /*
@@ -548,6 +594,7 @@ watch(
   section,
   (next: Section) => {
     if (next === "files" || next === "models" || next === "mcp") void loadPaths()
+    if (next === "files") void loadAgents()
     if (next !== "mcp") mcpView.value = "list"
     if (next === "environment") void loadTrees()
     else configuring.value = undefined
@@ -2248,20 +2295,45 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <template v-else-if="section === 'files'">
           <h2>{{ t("set.nav.files") }}</h2>
-          <p class="page-sub">{{ t("set.filesSub") }}</p>
-          <div class="card">
-            <div v-for="file in paths?.files ?? []" :key="file.path" class="line">
+          <div class="card" data-config-page>
+            <div class="line">
               <div class="line-text">
-                <div class="line-title">{{ file.name }}</div>
-                <div class="line-sub path">{{ file.path }}</div>
+                <div class="line-title">{{ t("set.config.file") }}</div>
+                <div class="line-sub mcp-path" data-config-path :title="configFile?.path">{{ configFile?.path ?? "" }}</div>
               </div>
-              <span v-if="!file.exists" class="tag">{{ t("set.fileMissing") }}</span>
-              <button v-if="file.exists" class="ctl-btn" @click="openPath(file)">
-                {{ t("files.open") }}
-              </button>
-              <button class="ctl-btn" @click="revealPath(file)">{{ t("set.reveal") }}</button>
+            </div>
+            <div class="line" data-agents-row>
+              <div class="line-text">
+                <div class="line-title">AGENTS.md</div>
+                <div class="line-sub">{{ t("set.agents.desc") }}</div>
+              </div>
+              <div class="mcp-ctrl">
+                <span class="agents-tag" :class="{ off: agents?.state !== 'loaded' }" data-agents-state>
+                  {{ t(agents?.state === "loaded" ? "set.agents.loaded" : agents?.state === "disabled" ? "set.agents.disabled" : "set.agents.none") }}
+                </span>
+                <button v-if="agents?.state !== 'disabled'" class="ctl-btn" data-agents-open @click="openAgents">{{ t("files.open") }}</button>
+                <button v-if="agents?.state === 'loaded'" class="ctl-btn" data-agents-disable @click="switchAgents(false)">
+                  {{ t("set.agents.disable") }}
+                </button>
+                <button v-if="agents?.state === 'disabled'" class="ctl-btn" data-agents-enable @click="switchAgents(true)">
+                  {{ t("set.agents.enable") }}
+                </button>
+                <button v-if="agents && agents.state !== 'none'" class="ctl-btn" data-agents-delete @click="confirmingAgentsDelete = true">
+                  {{ t("set.agents.delete") }}
+                </button>
+              </div>
             </div>
           </div>
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="confirmingAgentsDelete"
+              :title="t('set.agents.deleteTitle')"
+              :body="t('set.agents.deleteBody')"
+              :confirm-label="t('set.agents.delete')"
+              @confirm="removeAgents"
+              @close="confirmingAgentsDelete = false"
+            />
+          </Teleport>
         </template>
 
         <template v-else-if="section === 'mcp' && mcpView === 'form'">
@@ -3649,6 +3721,22 @@ h3 {
 /* An import row's command or address wraps where it must, and the actions sit under the lists. */
 .mcp-summary {
   overflow-wrap: anywhere;
+}
+
+/* MiMo's state tag on the AGENTS.md row: a 12px pill, green on its tint when loaded, quiet otherwise. */
+.agents-tag {
+  display: inline-block;
+  padding: 3px 10px;
+  color: var(--text-success);
+  background: var(--surface-success);
+  border-radius: 999px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 400;
+}
+
+.agents-tag.off {
+  color: var(--text-weak);
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
 }
 
 .mcp-import-actions {
