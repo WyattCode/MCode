@@ -274,7 +274,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {} satisfies Handled<"session.abort">
 
     case "permission.respond":
-      runtime.permissions.respond(request.requestID, request.response)
+      runtime.permissions.respond(request.requestID, request.response, request.reason)
       return {} satisfies Handled<"permission.respond">
 
     /*

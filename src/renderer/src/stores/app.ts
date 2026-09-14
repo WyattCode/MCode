@@ -117,10 +117,40 @@ export const useApp = defineStore("app", () => {
    * conversation blocked on approval used to be invisible, which looked like
    * the model had simply stopped.
    */
-  const pendingPermissions = ref(new Map<string, PermissionRequest>())
+  /*
+   * A queue per session, oldest first. Tools can ask while another question is
+   * still up, and keeping only the latest stranded the earlier one: the server
+   * went on waiting for an answer to a request nothing on screen showed.
+   */
+  const pendingPermissions = ref(new Map<string, PermissionRequest[]>())
   const permission = computed(() =>
-    currentID.value ? pendingPermissions.value.get(currentID.value) : undefined,
+    currentID.value ? pendingPermissions.value.get(currentID.value)?.[0] : undefined,
   )
+  /** How many requests the current session has waiting, the one shown included. */
+  const permissionQueue = computed(() =>
+    currentID.value ? (pendingPermissions.value.get(currentID.value)?.length ?? 0) : 0,
+  )
+
+  function groupPermissions(requests: PermissionRequest[]) {
+    const grouped = new Map<string, PermissionRequest[]>()
+    for (const request of [...requests].sort((a, b) => a.time - b.time)) {
+      grouped.set(request.sessionID, [...(grouped.get(request.sessionID) ?? []), request])
+    }
+    return grouped
+  }
+
+  /** Takes one answered request out of its session's queue. */
+  function dropPermission(requestID: string) {
+    for (const [sessionID, queue] of pendingPermissions.value) {
+      if (!queue.some((request) => request.id === requestID)) continue
+      const next = new Map(pendingPermissions.value)
+      const rest = queue.filter((request) => request.id !== requestID)
+      if (rest.length) next.set(sessionID, rest)
+      else next.delete(sessionID)
+      pendingPermissions.value = next
+      return
+    }
+  }
 
   /**
    * Sessions that finished a turn while the user was looking elsewhere.
@@ -526,10 +556,14 @@ export const useApp = defineStore("app", () => {
         if (event.sessionID === currentID.value) error.value = event.error
         if (event.sessionID === sideID.value) sideError.value = event.error
         break
-      case "permission.requested":
-        pendingPermissions.value.set(event.request.sessionID, event.request)
-        pendingPermissions.value = new Map(pendingPermissions.value)
+      case "permission.requested": {
+        const queue = pendingPermissions.value.get(event.request.sessionID) ?? []
+        if (queue.some((request) => request.id === event.request.id)) break
+        const next = new Map(pendingPermissions.value)
+        next.set(event.request.sessionID, [...queue, event.request])
+        pendingPermissions.value = next
         break
+      }
       /*
        * MCP health, kept here rather than in whichever panel asked for it.
        *
@@ -555,15 +589,9 @@ export const useApp = defineStore("app", () => {
         if (changed && commandsFor) void refreshCommands(commandsFor)
         break
       }
-      case "permission.resolved": {
-        for (const [sessionID, request] of pendingPermissions.value) {
-          if (request.id !== event.requestID) continue
-          pendingPermissions.value.delete(sessionID)
-          pendingPermissions.value = new Map(pendingPermissions.value)
-          break
-        }
+      case "permission.resolved":
+        dropPermission(event.requestID)
         break
-      }
       case "config.updated": {
         /*
          * Some config lives inside the provider list too - an endpoint override
@@ -696,7 +724,7 @@ export const useApp = defineStore("app", () => {
      * which denies the question and kills the turn. The list answers with them
      * for the same reason it answers with which sessions are running.
      */
-    pendingPermissions.value = new Map(listed.permissions.map((request) => [request.sessionID, request]))
+    pendingPermissions.value = groupPermissions(listed.permissions)
     restoreTabs()
     booted = true
     /*
@@ -807,7 +835,7 @@ export const useApp = defineStore("app", () => {
       summarising.value = new Set(listed.compacting)
       // The same replay as on boot: a socket that dropped missed anything
       // published while it was down, a permission request included.
-      pendingPermissions.value = new Map(listed.permissions.map((request) => [request.sessionID, request]))
+      pendingPermissions.value = groupPermissions(listed.permissions)
       if (currentID.value) await open(currentID.value)
     } catch {
       // A socket that dropped again; the next open will bring another attempt.
@@ -836,7 +864,6 @@ export const useApp = defineStore("app", () => {
     result.messages.forEach(reindex)
     error.value = undefined
     noteError(sessionID, undefined)
-    clearPermission(sessionID)
     /*
      * Two of the three command sources are files under the session's own
      * directory, so the list belongs to the project rather than to the app.
@@ -1108,13 +1135,19 @@ export const useApp = defineStore("app", () => {
   /** The request whose answer is in flight, so the panel can disable itself. */
   const responding = ref<string>()
 
-  async function respond(response: PermissionResponse) {
+  async function respond(response: PermissionResponse, reason?: string) {
     const request = permission.value
     if (!request || responding.value === request.id) return
     responding.value = request.id
     try {
-      await api().request({ type: "permission.respond", requestID: request.id, response })
-      clearPermission(request.sessionID)
+      const said = response === "reject" ? reason?.trim() : undefined
+      await api().request({
+        type: "permission.respond",
+        requestID: request.id,
+        response,
+        ...(said ? { reason: said } : {}),
+      })
+      dropPermission(request.id)
     } catch (err) {
       // The request stays up: the tool is still waiting on an answer, and
       // clearing it here would strand the turn with nothing on screen.
@@ -1458,6 +1491,7 @@ export const useApp = defineStore("app", () => {
     commands,
     refreshCommands,
     permission,
+    permissionQueue,
     responding,
     pendingPermissions,
     unseen,

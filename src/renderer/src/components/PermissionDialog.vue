@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { PermissionRequest } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import DiffView from "./parts/DiffView.vue"
@@ -15,30 +15,178 @@ const props = withDefaults(
 )
 const app = useApp()
 
-const isDiff = computed(() => props.request.preview?.startsWith("--- a/") ?? false)
-
 /** True from the moment a button is pressed until the server has the answer. */
 const busy = computed(() => app.responding === props.request.id)
 
+const isBash = computed(() => props.request.kind === "bash")
+const isDiff = computed(() => props.request.preview?.startsWith("--- a/") ?? false)
+
+const VERBS: Record<string, string> = {
+  bash: "perm.verb.bash",
+  edit: "perm.verb.edit",
+  write: "perm.verb.write",
+  outside: "perm.verb.outside",
+  webfetch: "perm.verb.webfetch",
+}
+
+const verb = computed(() => {
+  if (props.request.forced) return t("perm.verb.bashDelete")
+  const key = VERBS[props.request.kind]
+  return t(key ?? "perm.verb.fallback")
+})
+
 /*
- * Escape only.
+ * The small chip after the verb. For a command it is the model's own one-line
+ * account of what the command is for; for a request the verb cannot name - an
+ * MCP tool, a read - it is the request's title, so nothing it said is lost.
+ */
+const chip = computed(() => {
+  const { request } = props
+  if (isBash.value) return request.title && request.title !== "Run command" ? request.title : ""
+  if (VERBS[request.kind]) return ""
+  return request.titleCode ? t(request.titleCode) : request.title
+})
+
+/** The command or subject in full, capped so a runaway argument cannot flood the dock. */
+const full = computed(() => (isBash.value ? `$ ${props.request.subject}` : props.request.subject).slice(0, 3000))
+
+/*
+ * One line at most, at most 120 characters of it. Anything longer, or anything
+ * past the first line, is folded behind the toggle at the end of the box.
+ */
+const folded = computed(() => {
+  const first = full.value.split("\n", 1)[0] ?? ""
+  const lossy = full.value.includes("\n") || first.length > 120
+  return { text: first.length > 120 ? `${first.slice(0, 120)}…` : first, lossy }
+})
+
+const showFull = ref(false)
+const showDiff = ref(false)
+const reasoning = ref(false)
+const reason = ref("")
+
+watch(
+  () => props.request.id,
+  () => {
+    showFull.value = false
+    showDiff.value = false
+    reasoning.value = false
+    reason.value = ""
+  },
+)
+
+const reasonInput = ref<HTMLInputElement>()
+watch(reasoning, (open) => {
+  if (open) void nextTick(() => reasonInput.value?.focus())
+})
+
+function rejectWithReason() {
+  if (reason.value.trim()) void app.respond("reject", reason.value)
+  else void app.respond("reject")
+}
+
+function onReasonKey(event: KeyboardEvent) {
+  if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  rejectWithReason()
+}
+
+/*
+ * The keyboard.
  *
- * There were y/a/n shortcuts on a capture-phase listener. That was survivable
- * while this was a modal, but the panel now sits above a usable composer: the
- * "a" in a sentence would have granted standing access to a directory, and the
- * keystroke never even reached the textarea. Approving a side effect has to
- * take a deliberate click. Escape stays because refusing is the safe direction.
+ * The dock takes focus when a request arrives, unless someone is part-way
+ * through writing in the composer. Arrow keys walk the buttons and Enter gives
+ * the primary answer - but only once the dock has really been engaged: focus
+ * that was borrowed from an empty composer goes straight back on the first
+ * other key, so a person who was about to type loses nothing and grants nothing.
+ */
+const root = ref<HTMLElement>()
+let engaged = false
+let borrowedFrom: HTMLElement | null = null
+
+function takeFocus() {
+  const el = root.value
+  if (!el) return
+  const active = document.activeElement
+  const field = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement
+  if (field && active.value.length > 0) {
+    engaged = false
+    borrowedFrom = null
+    return
+  }
+  engaged = !field
+  borrowedFrom = field ? active : null
+  el.focus()
+}
+
+function onDockKey(event: KeyboardEvent) {
+  const target = event.target as HTMLElement
+  if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") return
+  const el = root.value
+  if (!el) return
+  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
+    const buttons = [...el.querySelectorAll<HTMLButtonElement>("[data-cnav]")].filter((button) => !button.disabled)
+    if (!buttons.length) return
+    event.preventDefault()
+    engaged = true
+    borrowedFrom = null
+    const forward = event.key === "ArrowRight" || event.key === "ArrowDown"
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    const next = at === -1 ? (forward ? 0 : buttons.length - 1) : (at + (forward ? 1 : -1) + buttons.length) % buttons.length
+    buttons[next]!.focus()
+    return
+  }
+  if (event.key === "Tab") {
+    engaged = true
+    borrowedFrom = null
+    return
+  }
+  if (!engaged && borrowedFrom) {
+    const back = borrowedFrom
+    borrowedFrom = null
+    if (event.key === "Enter") event.preventDefault()
+    if (back.isConnected) back.focus()
+    return
+  }
+  if (event.key === "Enter" && !(document.activeElement instanceof HTMLButtonElement)) {
+    event.preventDefault()
+    if (!engaged) return
+    el.querySelector<HTMLButtonElement>("[data-cnav-primary]:not([disabled])")?.click()
+  }
+}
+
+function onDockPointer() {
+  engaged = true
+  borrowedFrom = null
+}
+
+/*
+ * Escape refuses, from anywhere. Refusing is the safe direction, so it is the
+ * one answer that does not need the dock to have been engaged first.
  */
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return
   // Whatever is open above owns Escape: dismissing a palette should not answer
   // the request underneath it.
   if (props.covered) return
+  if (reasoning.value && (event.target as HTMLElement).tagName === "INPUT") {
+    event.preventDefault()
+    reasoning.value = false
+    return
+  }
   event.preventDefault()
   void app.respond("reject")
 }
 
-onMounted(() => window.addEventListener("keydown", onKeydown, true))
+watch(
+  () => props.request.id,
+  () => void nextTick(takeFocus),
+)
+
+onMounted(() => {
+  window.addEventListener("keydown", onKeydown, true)
+  takeFocus()
+})
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
 </script>
 
@@ -49,54 +197,118 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
     that covers the transcript hides the very thing being judged.
   -->
   <div class="perm">
-    <!--
-      Two surfaces, not one card. The shell carries the question and the tray
-      carries the answer, and the tray is pulled up under the shell so the
-      question appears to rest on the buttons rather than to contain them.
-    -->
-    <div class="dock">
-      <div class="body">
-        <div class="header">
-          <div class="row head">
-            <span class="icon">
-              <svg width="20" height="20" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M8 2.2 14.4 13H1.6z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-                <path d="M8 6.4v3.1M8 11.2h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-              </svg>
+    <div
+      ref="root"
+      class="dock"
+      data-confirm-dock
+      tabindex="-1"
+      @keydown="onDockKey"
+      @pointerdown="onDockPointer"
+    >
+      <div class="card" data-confirm-perm>
+        <div class="head">
+          <span class="icon" aria-hidden="true">
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+              <path
+                d="M8 1.8 13 3.6v4.1c0 3-2.1 5.4-5 6.5-2.9-1.1-5-3.5-5-6.5V3.6z"
+                stroke="currentColor"
+                stroke-width="1.3"
+                stroke-linejoin="round"
+              />
+              <path d="M8 5.6v2.8M8 10.4h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </svg>
+          </span>
+          <span data-perm-title>{{ t("perm.request", { verb }) }}</span>
+          <span v-if="chip" class="chip" data-perm-chip>{{ chip }}</span>
+          <span class="queue-slot">
+            <span v-if="app.permissionQueue > 1" class="queue" data-confirm-queue :title="t('perm.queueTitle', { total: app.permissionQueue })">
+              1/{{ app.permissionQueue }}
             </span>
-            <div class="title">{{ request.titleCode ? t(request.titleCode) : request.title }}</div>
-          </div>
+          </span>
         </div>
 
-        <!--
-          Every body row repeats the header's two columns with the icon cell
-          left empty, so the subject and the preview hang under the title
-          instead of running back out to the edge of the shell.
-        -->
-        <div class="content">
-          <div class="row">
-            <span class="spacer" aria-hidden="true"></span>
-            <div class="subject">{{ request.subject }}</div>
-          </div>
-
-          <div v-if="request.preview" class="row">
-            <span class="spacer" aria-hidden="true"></span>
-            <div class="preview">
-              <DiffView v-if="isDiff" :diff="request.preview" />
-              <pre v-else class="cmd">{{ request.preview }}</pre>
-            </div>
-          </div>
+        <div class="cmd-wrap">
+          <pre class="cmd" :class="{ lossy: folded.lossy }" data-perm-cmd>{{ folded.lossy && !showFull ? folded.text : full }}</pre>
+          <button
+            v-if="folded.lossy"
+            type="button"
+            class="cmd-toggle"
+            data-perm-cmd-toggle
+            :title="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
+            :aria-label="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
+            :aria-expanded="showFull"
+            @click="showFull = !showFull"
+          >
+            <svg v-if="showFull" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="m5 2.5 3 3 3-3M5 13.5l3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="m5 5.5 3-3 3 3M5 10.5l3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
         </div>
-      </div>
 
-      <div class="tray">
-        <!-- The empty half of the split: the buttons are pushed to the end by
-             a leading cell rather than by an alignment on the row. -->
-        <div></div>
+        <template v-if="isDiff && request.preview">
+          <button type="button" class="diff-toggle" data-perm-diff-toggle :aria-expanded="showDiff" @click="showDiff = !showDiff">
+            {{ (showDiff ? "▾ " : "▸ ") + t(showDiff ? "perm.hideDiff" : "perm.viewDiff") }}
+          </button>
+          <div v-if="showDiff" class="diff" data-perm-diff>
+            <DiffView :diff="request.preview" />
+          </div>
+        </template>
+
+        <div v-if="request.forced" class="forced" data-perm-forced>{{ t("perm.forcedHint") }}</div>
+
         <div class="actions">
-          <button class="btn quiet" :disabled="busy" @click="app.respond('reject')">{{ t("perm.reject") }}</button>
-          <button class="btn" :disabled="busy" @click="app.respond('always')">{{ t("perm.alwaysShort") }}</button>
-          <button class="btn primary" :disabled="busy" @click="app.respond('once')">{{ t("perm.once") }}</button>
+          <button type="button" class="perm-btn" data-cnav data-perm-reject :disabled="busy" @click="app.respond('reject')">
+            {{ t("perm.reject") }}
+          </button>
+          <button
+            type="button"
+            class="perm-btn muted"
+            data-cnav
+            data-perm-reason-toggle
+            :disabled="busy"
+            @click="reasoning = !reasoning"
+          >
+            {{ t("perm.rejectWithReason") }}
+          </button>
+          <button
+            v-if="!request.forced"
+            type="button"
+            class="perm-btn"
+            data-cnav
+            data-perm-always
+            :disabled="busy"
+            @click="app.respond('always')"
+          >
+            {{ t("perm.alwaysShort") }}
+          </button>
+          <button
+            type="button"
+            class="perm-btn primary"
+            data-cnav
+            data-cnav-primary
+            data-perm-once
+            :disabled="busy"
+            @click="app.respond('once')"
+          >
+            {{ t("perm.once") }}
+          </button>
+        </div>
+
+        <div v-if="reasoning" class="reason" data-perm-reason>
+          <input
+            ref="reasonInput"
+            v-model="reason"
+            type="text"
+            class="reason-input"
+            :placeholder="t('perm.reasonPlaceholder')"
+            @keydown="onReasonKey"
+          />
+          <button type="button" class="perm-btn" data-perm-reason-submit :disabled="busy" @click="rejectWithReason">
+            {{ t("perm.submit") }}
+          </button>
         </div>
       </div>
     </div>
@@ -105,253 +317,223 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
 
 <style scoped>
 /*
- * The same column as the composer it sits on, to the pixel: 776px centred
- * inside a 24px inset, which is what Composer draws too. The reference states
- * the same column as an 800px cap on a box-sizing: border-box element carrying
- * 12px of its own side padding - the 776px of content that leaves is the number
- * that matters, and it is the one the box directly beneath this one uses.
- *
- * Nothing below it. The reference stacks this dock and the prompt input flush
- * and pads only the foot of the one region that holds them both, so an inset
- * here would open a seam through what is meant to read as a single surface.
+ * The same column as the composer it sits on: 776px centred inside a 24px
+ * inset, which is what Composer draws too.
  */
 .perm {
   padding: 0 24px;
 }
 
 /*
- * A cap rather than a size. Nothing here is tall enough to reach it in
- * practice, but every box down to the preview keeps min-height: 0 so that when
- * something does, the scroll lands in the preview and the buttons stay put.
+ * One surface, the composer's own, set a little above it. A tall request
+ * scrolls inside the dock rather than pushing the composer off the screen.
  */
 .dock {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
   max-width: 776px;
-  min-height: 0;
-  max-height: 100dvh;
-  margin: 0 auto;
-}
-
-.body {
-  position: relative;
-  z-index: 10;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 0;
-  /* No bottom inset: the tray's overlap supplies the space below the content. */
-  padding: 12px 12px 0;
-  overflow: clip;
+  max-height: 72vh;
+  margin: 0 auto 10px;
+  padding: 10px 14px;
+  overflow-y: auto;
   background: var(--surface-raised);
-  border-radius: var(--radius-2xl);
-  /*
-   * A dock's edge, not an input's. The two shadows differ by a hair of ring
-   * weight, but this surface is a card lying on the page rather than a field
-   * waiting to be typed in, and the reference draws it with the heavier ring.
-   */
-  box-shadow: var(--shadow-xs-border);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  outline: none;
 }
 
-.header {
-  padding: 0;
+.card {
+  min-width: 0;
 }
 
-.row {
-  display: grid;
-  grid-template-columns: 20px 1fr;
-  align-items: start;
-  column-gap: 8px;
-}
-
-.row.head {
+.head {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 10px;
+  color: var(--text-base);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1.5;
 }
 
 .icon {
-  display: inline-flex;
+  display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  color: var(--warning);
+  width: 16px;
+  color: var(--text-weak);
 }
 
-.title {
-  min-width: 0;
-  color: var(--text-strong);
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 150%;
+.chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 1px 6px;
+  color: var(--text-weak);
+  background: var(--surface-hover);
+  border-radius: 4px;
 }
 
-.content {
+.queue-slot {
   display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 4px;
-  min-height: 0;
+  flex: none;
+  align-items: center;
+  margin-inline-start: auto;
 }
 
-.subject {
-  color: var(--text-base);
-  font-family: var(--font-mono);
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  /*
-   * The same leading as the title above it. opencode gives both
-   * `line-height: var(--line-height-large)`, which is 150% there - so its title
-   * and its hint sit on one rhythm. This was 1.6, making the hint 22.4 against
-   * the title's 21 and the two lines fractionally out of step.
-   */
-  line-height: 150%;
-  overflow-wrap: anywhere;
+.queue {
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-/*
- * The shell carries no bottom inset, so the space under the question comes
- * from the last row of it - which is where the reference puts it too.
- */
-.content > .row:last-child {
-  margin-bottom: 16px;
-  padding-bottom: 8px;
-}
-
-.preview {
-  max-height: 220px;
-  min-height: 0;
-  margin-top: 8px;
-  overflow: auto;
-  border: 1px solid var(--border-weaker);
-  border-radius: var(--radius-md);
+.cmd-wrap {
+  position: relative;
+  margin-top: 6px;
 }
 
 .cmd {
+  max-height: 220px;
   margin: 0;
-  padding: 10px;
-  color: var(--text-base);
+  padding: 9px 12px;
+  overflow: auto;
+  color: var(--text-strong);
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1.5;
   white-space: pre-wrap;
-}
-
-/*
- * Drawn behind the shell and lifted into it, so its top edge never shows: the
- * 32px top inset is 24px of hidden overlap plus the 8px the buttons actually
- * sit on.
- */
-.tray {
-  position: relative;
-  z-index: 0;
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: -24px;
-  padding: 32px 8px 8px;
-  overflow: clip;
-  background: var(--surface-base);
+  overflow-wrap: anywhere;
+  background: var(--surface-sunken);
   border: 1px solid var(--border-weak);
-  border-radius: var(--radius-2xl);
+  border-radius: 8px;
 }
 
-.actions {
+.cmd.lossy {
+  padding-inline-end: 38px;
+}
+
+.cmd-toggle {
+  position: absolute;
+  inset-inline-end: 8px;
+  top: 50%;
   display: flex;
   align-items: center;
-  gap: 8px;
-}
-
-/*
- * Only what differs from the shared button: its lift. The size, padding and
- * type now come from `.btn` itself, which carries opencode's - they were
- * repeated here as 12px and 500 and had drifted from it.
- */
-.btn {
-  color: var(--text-strong);
-  /*
-   * Lifted off the tray rather than level with it. Both read --surface-base
-   * before, which in a dark theme left this button the same colour as the
-   * surface behind it - visible only as a one-pixel outline.
-   */
-  background: var(--surface-raised);
-  /*
-   * Its edge arrives with the shadow rather than from a border, because what
-   * this button wears is an elevation - the same one the shell above it rests
-   * on - and the ring is only the topmost layer of it. A drawn border gives
-   * the outline without the lift, and at this size the lift is the difference
-   * between a control and a rectangle.
-   */
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-xs-border);
-}
-
-.btn:hover {
-  /*
-   * The raised step, not the translucent overlay: --surface-hover is an alpha
-   * wash meant to sit on the page ground, and replacing a raised fill with it
-   * would make the button darker on hover rather than lighter.
-   */
-  background: var(--surface-raised-hover);
-}
-
-/* Nothing to lift: refusing is the quiet half of the row. */
-.btn.quiet {
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-weak);
   background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-  color: var(--text-strong);
+  border: 0;
+  border-radius: 6px;
+  transform: translateY(-50%);
+  cursor: pointer;
 }
 
-.btn.quiet:hover {
+.cmd-toggle:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
 }
 
-.btn.quiet:active {
-  background: var(--surface-selected);
+.diff-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 
-.btn.primary {
-  /*
-   * The label is the invert token rather than the page colour. Read as
-   * --surface-base it came out near-black on the light fill of a dark theme,
-   * where what the reference asks for is the softer step the rest of the app's
-   * primary buttons already carry.
-   */
-  color: var(--button-primary-text);
+.diff-toggle:hover {
+  color: var(--text-strong);
+}
+
+.diff {
+  max-height: 220px;
+  margin-top: 6px;
+  overflow: auto;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+}
+
+.forced {
+  margin-top: 6px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.perm-btn {
+  padding: 5px 12px;
+  color: var(--text-base);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: 1.5;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.perm-btn:hover {
+  background: var(--surface-hover);
+}
+
+.perm-btn.muted {
+  color: var(--text-weak);
+}
+
+.perm-btn.primary {
+  color: var(--surface-raised);
   background: var(--text-strong);
-  border-color: transparent;
-  box-shadow: none;
+  border-color: var(--text-strong);
 }
 
-/*
- * Hovered and pressed by laying the same overlays the other two buttons use
- * over the fill, rather than by fading it. Opacity blends this button towards
- * the tray behind it, which lightens it in the light theme and darkens it in
- * the dark one - wrong both times, since every state the reference gives this
- * button drives it further from the page rather than nearer.
- */
-.btn.primary:hover {
-  background-image: linear-gradient(var(--surface-hover), var(--surface-hover));
+.perm-btn.primary:hover {
+  background: var(--text-strong);
+  opacity: 0.9;
 }
 
-/*
- * Pressing and arriving by keyboard land on the same step, which is the one
- * the reference makes them share: both mean the button is about to act.
- */
-.btn.primary:active,
-.btn.primary:focus-visible {
-  background-image: linear-gradient(var(--surface-selected), var(--surface-selected));
+.perm-btn:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 1px;
 }
 
-/*
- * Inert while an answer is in flight. The panel stays up until the server has
- * it, so without this the three buttons still look pressable and a second
- * click would send a second answer for the same request.
- */
-.btn:disabled {
-  opacity: 0.55;
-  pointer-events: none;
+.perm-btn:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.reason {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.reason-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  outline: none;
+}
+
+.reason-input:focus {
+  border-color: var(--interactive);
 }
 </style>

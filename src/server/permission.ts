@@ -86,6 +86,8 @@ function subjectOf(tool: string, args: Record<string, unknown> | undefined): str
 interface Pending {
   request: PermissionRequest
   resolve: (response: PermissionResponse) => void
+  /** What the user said when refusing, if anything. */
+  reason?: string
 }
 
 /**
@@ -214,7 +216,14 @@ export class Permissions {
       if (input.kind === "bash" && (await this.reviewed(input.sessionID, input.subject))) return
     }
     if (input.scope && this.allowsOutside(input.sessionID, input.scope)) return
-    if (!input.scope && this.approved.has(this.key(input.sessionID, input.kind))) return
+    /*
+     * A command that loses work is asked about every time, whatever was said
+     * for the bucket before: "always run commands" was an answer about builds
+     * and tests, not about deleting things.
+     */
+    const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
+    const forced = risk !== undefined && LOST_WORK.includes(risk)
+    if (!input.scope && !forced && this.approved.has(this.key(input.sessionID, input.kind))) return
 
     const request: PermissionRequest = {
       id: Identifier.permission(),
@@ -226,15 +235,18 @@ export class Permissions {
       titleCode: input.titleCode,
       subject: input.subject,
       preview: input.preview,
+      ...(forced ? { forced: true } : {}),
       time: Date.now(),
     }
 
+    let entry: Pending | undefined
     const response = await new Promise<PermissionResponse>((resolve) => {
-      this.pending.set(request.id, { request, resolve })
+      entry = { request, resolve }
+      this.pending.set(request.id, entry)
       this.bus.publish({ type: "permission.requested", request })
     })
 
-    if (response === "always") {
+    if (response === "always" && !forced) {
       if (input.scope) this.allowOutside(input.sessionID, input.scope)
       else this.approved.add(this.key(input.sessionID, input.kind))
     }
@@ -247,6 +259,13 @@ export class Permissions {
        */
       if (this.action(input.kind) === "deny") {
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
+      }
+      const reason = entry?.reason?.trim()
+      if (reason) {
+        throw new PermissionDenied(
+          input.subject,
+          `Permission denied by the user: ${input.subject}\nThe user explained: ${reason}`,
+        )
       }
       throw new PermissionDenied(input.subject)
     }
@@ -315,10 +334,11 @@ export class Permissions {
     })
   }
 
-  respond(requestID: string, response: PermissionResponse): void {
+  respond(requestID: string, response: PermissionResponse, reason?: string): void {
     const pending = this.pending.get(requestID)
     if (!pending) return
     this.pending.delete(requestID)
+    if (response === "reject" && reason) pending.reason = reason
     pending.resolve(response)
     this.bus.publish({ type: "permission.resolved", requestID })
   }

@@ -544,6 +544,41 @@ async function main() {
   check("always suppresses the next prompt", permissions.outstanding().length === 0)
   check("both writes landed", (await exists(path.join(project, "a.txt"))) && (await exists(path.join(project, "b.txt"))))
 
+  // A refusal with a reason hands the reason on to the model.
+  const asking = (sessionID: string, kind: "write" | "bash", subject: string) =>
+    permissions
+      .ask({ sessionID, messageID: "m-perm", callID: `c-${subject}`, kind, title: "t", subject })
+      .then(() => "allowed", (err: Error) => err.message)
+  const reasoned = asking("s-reason", "write", "notes.md")
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  permissions.respond(permissions.outstanding()[0]!.id, "reject", "use the docs folder instead")
+  const reasonedResult = await reasoned
+  check(
+    "a refusal carries the user's reason",
+    reasonedResult.includes("Permission denied") && reasonedResult.includes("use the docs folder instead"),
+    reasonedResult,
+  )
+
+  // A delete is asked every time: "always" neither covers it nor is remembered for it.
+  const build = asking("s-forced", "bash", "npm test")
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const buildAsk = permissions.outstanding()[0]
+  check("an ordinary command is not forced", buildAsk?.forced === undefined, buildAsk)
+  permissions.respond(buildAsk!.id, "always")
+  await build
+  const removal = asking("s-forced", "bash", "rm -rf build")
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const removalAsk = permissions.outstanding()[0]
+  check("a delete asks despite an earlier always", removalAsk?.forced === true, removalAsk)
+  if (removalAsk) permissions.respond(removalAsk.id, "always")
+  check("the delete ran once approved", (await removal) === "allowed")
+  const again = asking("s-forced", "bash", "rm -rf build")
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const againAsk = permissions.outstanding()[0]
+  check("always on a delete is not remembered", againAsk?.forced === true, againAsk)
+  if (againAsk) permissions.respond(againAsk.id, "reject")
+  await again
+
   // ------------------------------------------------------------------- units
   section("Units")
   const diff = unifiedDiff("f.ts", "a\nb\nc\n", "a\nB\nc\n")

@@ -272,6 +272,11 @@ export interface PermissionRequest {
   subject: string
   /** Unified diff or command preview rendered inside the dialog. */
   preview?: string
+  /**
+   * A command that loses work. It is asked every time: no "always" is offered,
+   * and an earlier "always" for the bucket does not cover it.
+   */
+  forced?: boolean
   time: number
 }
 
@@ -1222,7 +1227,13 @@ export type Request =
   | { type: "session.effort"; sessionID: string; effort?: Effort }
   | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[] }
   | { type: "session.abort"; sessionID: string }
-  | { type: "permission.respond"; requestID: string; response: PermissionResponse }
+  | {
+      type: "permission.respond"
+      requestID: string
+      response: PermissionResponse
+      /** Why it was refused, passed on to the model with the refusal. */
+      reason?: string
+    }
   /**
    * The questions parked on an answer, across every session.
    *
