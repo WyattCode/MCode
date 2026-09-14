@@ -5,8 +5,8 @@ import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
 
-export function createClient(apiKey: string): Anthropic {
-  return new Anthropic({ apiKey, maxRetries: 2 })
+export function createClient(apiKey: string, maxRetries = 2): Anthropic {
+  return new Anthropic({ apiKey, maxRetries })
 }
 
 export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
@@ -195,7 +195,7 @@ export function reasoningRequest(
 
 export const AnthropicAdapter: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
-    const client = createClient(request.apiKey)
+    const client = createClient(request.apiKey, request.retries)
     /*
      * The reference's maxOutputTokens applies to every provider: the model's
      * own ceiling when known and smaller, else 32k. The thinking budgets below
