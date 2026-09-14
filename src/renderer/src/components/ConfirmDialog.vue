@@ -8,8 +8,12 @@ import { t } from "../lib/i18n"
  * Deleting a session was immediate from both the shortcut and the palette, and
  * a session is removed from disk outright - no archive, no recycle bin, nothing
  * to restore from. An action with no way back is worth one question.
+ *
+ * Drawn as MiMo's shared confirmation: 400 wide on a 16px corner, a 17px title
+ * over a 13px message that keeps its line breaks, and 14px buttons. The confirm
+ * button is light red for something destructive and plain otherwise.
  */
-defineProps<{ title: string; body: string; confirmLabel: string }>()
+withDefaults(defineProps<{ title: string; body: string; confirmLabel: string; danger?: boolean }>(), { danger: true })
 const emit = defineEmits<{ close: []; confirm: [] }>()
 
 /** Focus starts on Cancel, so a stray Enter or Space does not confirm. */
@@ -28,12 +32,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog">
-      <h2>{{ title }}</h2>
+    <div v-modal class="dialog" data-confirm-dialog role="alertdialog" aria-labelledby="confirm-title">
+      <h2 id="confirm-title">{{ title }}</h2>
       <p class="body">{{ body }}</p>
       <footer>
         <button ref="cancel" class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="danger" @click="emit('confirm')">{{ confirmLabel }}</button>
+        <button class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
       </footer>
     </div>
   </div>
@@ -52,51 +56,51 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .dialog {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  width: min(420px, 88vw);
-  padding: 20px 22px 18px;
+  box-sizing: border-box;
+  width: min(400px, 88vw);
+  padding: 22px 24px;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  border-radius: 16px;
+  box-shadow: var(--shadow-overlay);
 }
 
 h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: calc(15px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 20px;
-  letter-spacing: -0.13px;
+  font-size: calc(17px * var(--ui-font-scale, 1));
+  font-weight: 400;
 }
 
 .body {
-  margin: 0;
+  margin: 8px 0 0;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.6;
-  white-space: pre-line;
+  white-space: pre-wrap;
 }
 
 footer {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 4px;
+  gap: 10px;
+  margin-top: 20px;
 }
 
 .ghost,
-.danger {
-  height: 30px;
-  padding: 0 14px;
-  border-radius: var(--radius-md);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+.confirm {
+  padding: 8px 18px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  cursor: pointer;
 }
 
 .ghost {
   color: var(--text-base);
   background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  border-color: var(--border-weak);
 }
 
 .ghost:hover {
@@ -104,12 +108,51 @@ footer {
   background: var(--surface-hover);
 }
 
-.danger {
-  color: #fff;
-  background: var(--error);
+/* Not destructive: the app's primary button. */
+.confirm {
+  color: var(--button-primary-text);
+  background: var(--button-primary);
+  border-color: var(--button-primary);
 }
 
-.danger:hover {
-  filter: brightness(1.08);
+.confirm:hover {
+  opacity: 0.9;
+}
+
+/* MiMo's light red pair for an action that cannot be undone. */
+.confirm.danger {
+  color: #d93025;
+  background: #fdecea;
+  border-color: #fdecea;
+}
+
+.confirm.danger:hover {
+  background: #fadbd8;
+  border-color: #fadbd8;
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .confirm.danger {
+  color: #ff9b7f;
+  background: #3a2320;
+  border-color: #3a2320;
+}
+
+:root[data-theme="dark"] .confirm.danger:hover {
+  background: #4a2c27;
+  border-color: #4a2c27;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .confirm.danger {
+    color: #ff9b7f;
+    background: #3a2320;
+    border-color: #3a2320;
+  }
+
+  :root:not([data-theme="light"]) .confirm.danger:hover {
+    background: #4a2c27;
+    border-color: #4a2c27;
+  }
 }
 </style>
