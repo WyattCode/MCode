@@ -686,10 +686,25 @@ function previewSent(item: Attachment, all: Attachment[] | undefined) {
   openImagePreview(url, { name: item.path.split(/[\\/]/).pop(), group })
 }
 
+/** Whether the turn said or did anything a reader would call an answer. */
+function answered(turn: Turn): boolean {
+  return turn.parts.some((part) => (part.type === "text" && part.text.trim()) || part.type === "tool")
+}
+
+/*
+ * MiMo's think-only turn: the model reasoned and then stopped without an
+ * answer. MiMo writes it up as a failure, with the retry, rather than as an
+ * empty reply - there was output, just not the part that counts.
+ */
+function thinkOnly(turn: Turn): boolean {
+  if (!turn.finish || turn.error || turn.finish === "aborted" || answered(turn)) return false
+  return turn.parts.some((part) => part.type === "reasoning" && part.text.trim())
+}
+
 /** A turn that finished without saying or doing anything. */
 function emptyReply(turn: Turn): boolean {
   if (!turn.finish || turn.error || turn.finish === "aborted") return false
-  return !turn.parts.some((part) => (part.type === "text" && part.text.trim()) || part.type === "tool")
+  return !answered(turn) && !thinkOnly(turn)
 }
 
 /*
@@ -1016,12 +1031,14 @@ defineExpose({ stepMessage, scroller })
             A failure as MiMo shows one: a card with the reason and a retry at its
             end. A stopped or empty turn gets its line and a quiet retry under it.
           -->
-          <div v-if="turn.error" class="err-card" data-turn-error>
+          <div v-if="turn.error || thinkOnly(turn)" class="err-card" data-turn-error>
             <svg class="err-icon" width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2" />
               <path d="M8 4.8v3.8M8 11v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
             </svg>
-            <span class="err-text">{{ turn.errorCode ? t(turn.errorCode, turn.errorParams) : turn.error }}</span>
+            <span class="err-text">{{
+              !turn.error ? t("stream.thinkOnlyNoAnswer") : turn.errorCode ? t(turn.errorCode, turn.errorParams) : turn.error
+            }}</span>
             <button class="retry-pill" data-retry @click="retry(turn)">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.8v2.9h-2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
