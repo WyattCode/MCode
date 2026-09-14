@@ -1170,6 +1170,28 @@ function copyWorkingDirectory() {
  * keeps it. Resetting here would erase exactly what the map exists to hold.
  */
 
+/*
+ * Folders dropped onto the side column's Projects, as MiMo takes them: each
+ * becomes a project - brought back if it had been closed, given a first task
+ * if it has none, since a project here is a folder with a conversation - and
+ * the last one is opened. A drop that held no folder says so.
+ */
+async function addDroppedProjects(directories: string[]) {
+  if (!directories.length) {
+    notifyFailure(t("side.dropNotDir"))
+    return
+  }
+  const closed = app.config?.closedProjects ?? []
+  const kept = closed.filter((entry) => !directories.includes(entry))
+  if (kept.length !== closed.length) await app.patchConfig({ closedProjects: kept })
+  for (const directory of directories) {
+    if (!app.sessions.some((session) => session.directory === directory && !session.archived && !session.scratch)) {
+      await app.create(directory)
+    }
+  }
+  await openProject(directories[directories.length - 1]!)
+}
+
 async function openProject(directory: string) {
   // Opening a directory that was closed brings it - and its sessions - back.
   const closed = app.config?.closedProjects ?? []
@@ -3804,6 +3826,7 @@ onBeforeUnmount(() => {
         @forward="forward"
         @toggle="leftPanel = !leftPanel"
         @browse="browse"
+        @dropFolders="addDroppedProjects"
         @open="app.open($event)"
         @rename="renameFromSide"
         @createIn="newSessionIn"

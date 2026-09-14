@@ -45,6 +45,8 @@ const emit = defineEmits<{
   select: [sessionID: string]
   batch: [action: "archive" | "move" | "delete" | "cancel"]
   newTask: []
+  /* Folders dropped onto Projects; empty when what was dropped held none. */
+  dropFolders: [directories: string[]]
   search: []
   back: []
   forward: []
@@ -146,7 +148,164 @@ const pinnedProjectRows = computed(() =>
     .filter((project): project is ProjectRow => Boolean(project)),
 )
 
-const normalProjects = computed(() => projects.value.filter((project) => !pinnedProject(project.directory)))
+/*
+ * A dragged order, as MiMo keeps one: the items it names take the slots those
+ * same items already hold, in the order it gives, and anything it does not
+ * name - a project opened since - stays where recency put it.
+ */
+function inManualOrder<T>(items: T[], keyOf: (item: T) => string, manual?: string[]): T[] {
+  if (!manual?.length) return items
+  const byKey = new Map(items.map((item) => [keyOf(item), item]))
+  const placed = new Set<string>()
+  const ordered: T[] = []
+  for (const key of manual) {
+    const item = byKey.get(key)
+    if (!item || placed.has(key)) continue
+    placed.add(key)
+    ordered.push(item)
+  }
+  if (!ordered.length) return items
+  let next = 0
+  return items.map((item) => (placed.has(keyOf(item)) ? ordered[next++]! : item))
+}
+
+/* The dragged item set down just before the one it was dropped on. */
+function movedBefore(list: string[], moved: string, target: string): string[] {
+  if (moved === target || !list.includes(moved) || !list.includes(target)) return list
+  const rest = list.filter((key) => key !== moved)
+  rest.splice(rest.indexOf(target), 0, moved)
+  return rest
+}
+
+const normalProjects = computed(() =>
+  inManualOrder(
+    projects.value.filter((project) => !pinnedProject(project.directory)),
+    (project) => project.directory,
+    app.config?.projectOrder,
+  ),
+)
+
+/*
+ * Dragging a project or a task to a new place, as MiMo's side column allows:
+ * the row being carried fades, and a short line over the row under the pointer
+ * says it will land before it. Tasks move only among their own project's.
+ */
+const PROJECT_DRAG = "application/x-mcode-project"
+const TASK_DRAG = "application/x-mcode-task"
+const carried = ref<{ kind: "project" | "task"; key: string; group?: string }>()
+const dropBefore = ref<string>()
+
+function startCarry(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+  if (picking.value) {
+    event.preventDefault()
+    return
+  }
+  event.stopPropagation()
+  event.dataTransfer?.setData(kind === "project" ? PROJECT_DRAG : TASK_DRAG, key)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"
+  carried.value = { kind, key, group }
+}
+
+function carryOver(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+  const held = carried.value
+  if (!held || held.kind !== kind || held.group !== group) return
+  event.stopPropagation()
+  if (held.key === key) {
+    dropBefore.value = undefined
+    return
+  }
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "move"
+  dropBefore.value = key
+}
+
+function endCarry() {
+  carried.value = undefined
+  dropBefore.value = undefined
+}
+
+async function setDown(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+  const held = carried.value
+  endCarry()
+  if (!held || held.kind !== kind || held.group !== group || held.key === key) return
+  event.preventDefault()
+  event.stopPropagation()
+  if (kind === "project") {
+    const list = normalProjects.value.map((project) => project.directory)
+    const next = movedBefore(list, held.key, key)
+    if (next !== list) await app.patchConfig({ projectOrder: next })
+    return
+  }
+  const project = projects.value.find((entry) => entry.directory === group)
+  if (!project || !group) return
+  const list = inManualOrder(project.children, (session) => session.id, app.config?.taskOrder?.[group]).map((session) => session.id)
+  const next = movedBefore(list, held.key, key)
+  if (next !== list) await app.patchConfig({ taskOrder: { ...(app.config?.taskOrder ?? {}), [group]: next } })
+}
+
+const carrying = (kind: "project" | "task", key: string) => carried.value?.kind === kind && carried.value.key === key
+const landing = (kind: "project" | "task", key: string) => carried.value?.kind === kind && dropBefore.value === key
+
+/*
+ * Folders dropped onto the project list become projects, as MiMo takes them:
+ * the list is ringed in a dashed accent line while a drag of files is over it.
+ * The ring is drawn over the rows rather than around a wrapper, since the
+ * column's rows are one flat list; it is measured from the first and last row
+ * that belong to Projects when the drag arrives.
+ */
+const listsEl = ref<HTMLElement>()
+const folderRing = ref<{ top: number; height: number }>()
+
+function carriesFiles(event: DragEvent) {
+  const types = [...(event.dataTransfer?.types ?? [])].map((type) => type.toLowerCase())
+  return types.includes("files") || types.includes("text/uri-list")
+}
+
+function overProjects(event: DragEvent) {
+  return Boolean((event.target as HTMLElement | null)?.closest?.("[data-project-zone]"))
+}
+
+function ringProjects() {
+  const root = listsEl.value
+  if (!root) return
+  const parts = [...root.querySelectorAll<HTMLElement>("[data-project-zone]")]
+  if (!parts.length) return
+  const base = root.getBoundingClientRect()
+  const top = parts[0]!.getBoundingClientRect().top
+  const bottom = Math.max(...parts.map((part) => part.getBoundingClientRect().bottom))
+  folderRing.value = { top: top - base.top + root.scrollTop, height: bottom - top }
+}
+
+function folderOver(event: DragEvent) {
+  if (carried.value || !carriesFiles(event)) return
+  if (!overProjects(event)) {
+    folderRing.value = undefined
+    return
+  }
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = "copy"
+  if (!folderRing.value) ringProjects()
+}
+
+function folderLeave(event: DragEvent) {
+  const next = event.relatedTarget as Node | null
+  if (next && listsEl.value?.contains(next)) return
+  folderRing.value = undefined
+}
+
+async function folderDrop(event: DragEvent) {
+  const ringed = Boolean(folderRing.value)
+  folderRing.value = undefined
+  if (carried.value || !carriesFiles(event) || !(ringed || overProjects(event))) return
+  event.preventDefault()
+  const paths = [...(event.dataTransfer?.files ?? [])].map((file) => window.mcode.pathForFile(file)).filter(Boolean)
+  for (const line of (event.dataTransfer?.getData("text/uri-list") ?? "").split(/\r?\n/)) {
+    if (!line.startsWith("file:")) continue
+    const local = decodeURIComponent(line.slice("file:".length).replace(/^\/\/\/?(?=[a-zA-Z]:)/, "").replace(/^\/\//, "/"))
+    paths.push(/^\/[a-zA-Z]:/.test(local) ? local.slice(1) : local)
+  }
+  emit("dropFolders", await window.mcode.directoriesOf([...new Set(paths)]))
+}
 
 const pinnedOpen = ref(
   (() => {
@@ -532,7 +691,7 @@ function toggleProject(directory: string) {
 const PROJECT_TASKS = 5
 const allTasks = ref(new Set<string>())
 const tasksOf = (project: ProjectRow) => {
-  const rows = project.children
+  const rows = inManualOrder(project.children, (session) => session.id, app.config?.taskOrder?.[project.directory])
   return allTasks.value.has(project.directory) ? rows : rows.slice(0, PROJECT_TASKS)
 }
 function showAllTasks(directory: string) {
@@ -674,7 +833,14 @@ watch(picking, (on) => {
       <button class="batch-act" @click="emit('batch', 'cancel')">{{ t("common.cancel") }}</button>
     </div>
 
-    <div class="lists">
+    <div ref="listsEl" class="lists" @dragover="folderOver" @dragleave="folderLeave" @drop="folderDrop">
+      <div
+        v-if="folderRing"
+        class="folder-ring"
+        data-folder-ring
+        :style="{ top: `${folderRing.top}px`, height: `${folderRing.height}px` }"
+        aria-hidden="true"
+      />
       <template v-for="block in columnBlocks" :key="block.key">
         <!-- MiMo's 置顶 section: pinned conversations, then pinned projects. -->
         <div v-if="block.kind === 'pinned-head'" class="section pinned-head" data-pinned-section>
@@ -734,7 +900,7 @@ watch(picking, (on) => {
             </button>
           </span>
         </div>
-        <div v-else-if="block.kind === 'projects-head'" class="section">
+        <div v-else-if="block.kind === 'projects-head'" class="section" data-project-zone>
         <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -751,7 +917,18 @@ watch(picking, (on) => {
           <template v-for="project in [block.project]" :key="project.directory">
           <div
             class="row project"
-            :class="{ on: app.current?.directory === project.directory && !isExpanded(project.directory) }"
+            :class="{
+              on: app.current?.directory === project.directory && !isExpanded(project.directory),
+              carried: carrying('project', project.directory),
+              'lands-before': landing('project', project.directory),
+            }"
+            data-project-zone
+            :data-project-drag="project.directory"
+            :draggable="!picking"
+            @dragstart="startCarry($event, 'project', project.directory)"
+            @dragover="carryOver($event, 'project', project.directory)"
+            @drop="setDown($event, 'project', project.directory)"
+            @dragend="endCarry"
             @contextmenu.prevent="openProjectMenu(project.directory, $event)"
           >
             <button class="project-toggle" v-tip="{ label: project.directory, placement: 'right' }" @click="toggleProject(project.directory)">
@@ -813,7 +990,14 @@ watch(picking, (on) => {
               v-for="session in tasksOf(project)"
               :key="session.id"
               class="row task"
-              :class="{ on: app.currentID === session.id }"
+              :class="{ on: app.currentID === session.id, carried: carrying('task', session.id), 'lands-before': landing('task', session.id) }"
+              data-project-zone
+              :data-task-drag="session.id"
+              :draggable="!picking"
+              @dragstart="startCarry($event, 'task', session.id, project.directory)"
+              @dragover="carryOver($event, 'task', session.id, project.directory)"
+              @drop="setDown($event, 'task', session.id, project.directory)"
+              @dragend="endCarry"
               @contextmenu.prevent="openMenu(session.id, $event)"
             >
               <button class="row-open" @click="press(session.id)">
@@ -870,7 +1054,7 @@ watch(picking, (on) => {
           </template>
           </template>
         </template>
-        <div v-else-if="block.kind === 'projects-pages'" class="projects-pages" data-projects-pagination>
+        <div v-else-if="block.kind === 'projects-pages'" class="projects-pages" data-projects-pagination data-project-zone>
           <button v-if="projectsLeft > 0" class="pages-more" data-projects-show-more :aria-expanded="projectsPaged" @click="moreProjects">
             {{ projectsPaged ? t("side.moreProjectsLeft", { count: projectsLeft }) : t("side.moreProjects") }}
           </button>
@@ -1817,6 +2001,42 @@ watch(picking, (on) => {
 .row.task,
 .row.project {
   position: relative;
+}
+
+/* A row being dragged to a new place, and the line over the row it will land before. */
+.row.carried {
+  opacity: 0.5;
+}
+
+.row.lands-before {
+  position: relative;
+}
+
+.row.lands-before::before {
+  position: absolute;
+  inset-inline: 6px;
+  top: -1px;
+  z-index: 1;
+  height: 2px;
+  content: "";
+  background: var(--interactive);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+/* Folders being dropped onto Projects. */
+.lists {
+  position: relative;
+}
+
+.folder-ring {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 2;
+  border-radius: 8px;
+  outline: 2px dashed var(--interactive);
+  outline-offset: -2px;
+  pointer-events: none;
 }
 
 .row-actions {

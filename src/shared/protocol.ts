@@ -810,6 +810,10 @@ export interface AppConfig {
   pinnedTabs: string[]
   /** Project folders pinned to the top of the side column's project list. */
   pinnedProjects: string[]
+  /** The side column's project order as dragged; folders not in it keep their recency slot. */
+  projectOrder: string[]
+  /** Each project's task order as dragged, by project folder. */
+  taskOrder: Record<string, string[]>
   /** Model Context Protocol servers, by the name they are shown under. */
   mcpServers: Record<string, McpServerConfig>
   /** UI display language. Simplified Chinese is the default. */

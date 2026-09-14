@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from "electron"
+import { contextBridge, ipcRenderer, webUtils } from "electron"
 
 /**
  * The only surface the renderer gets. Everything else - sessions, files, the
@@ -10,6 +10,16 @@ const api = {
     ipcRenderer.invoke("mcode:bootstrap"),
 
   /** Every directory chosen, in order; empty when the dialog was dismissed. */
+  /** Where a dropped file lives on disk; empty for one that is not a file on disk. */
+  pathForFile: (file: File): string => {
+    try {
+      return webUtils.getPathForFile(file)
+    } catch {
+      return ""
+    }
+  },
+  /** Which of these paths are folders, for a drop onto the project list. */
+  directoriesOf: (paths: string[]): Promise<string[]> => ipcRenderer.invoke("mcode:directories-of", paths),
   pickDirectory: (title: string, multiple = false): Promise<string[]> =>
     ipcRenderer.invoke("mcode:pick-directory", title, multiple),
   saveText: (suggested: string, text: string): Promise<string | undefined> =>

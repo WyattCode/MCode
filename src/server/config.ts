@@ -82,6 +82,8 @@ function defaults(): AppConfig {
     mcpServers: {},
     pinnedTabs: [],
     pinnedProjects: [],
+    projectOrder: [],
+    taskOrder: {},
     keybinds: {},
     serverURL: "",
     servers: [],

@@ -338,6 +338,20 @@ app.whenReady().then(async () => {
    * (`pickDirectory({ multiple: true })`) and for one when it is setting a
    * single path, so the caller says which.
    */
+  /* Folders dropped onto the project list: only the paths that are directories come back. */
+  ipcMain.handle("mcode:directories-of", async (_event, paths: unknown) => {
+    if (!Array.isArray(paths)) return []
+    const found: string[] = []
+    for (const entry of paths) {
+      if (typeof entry !== "string" || !path.isAbsolute(entry)) continue
+      // Resolved, so a folder named with forward slashes is the same project as one named the native way.
+      const resolved = path.resolve(entry)
+      const stat = await fs.stat(resolved).catch(() => undefined)
+      if (stat?.isDirectory() && !found.includes(resolved)) found.push(resolved)
+    }
+    return found
+  })
+
   ipcMain.handle("mcode:pick-directory", async (event, title: string, multiple?: boolean) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
     const result = await dialog.showOpenDialog(owner!, {
