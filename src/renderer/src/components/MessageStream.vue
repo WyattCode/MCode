@@ -7,7 +7,6 @@ import ToolPart from "./parts/ToolPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
 import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
 import { preview } from "../lib/attach"
-import { useRestoreDraft } from "../lib/draft"
 import { withoutLatest } from "../lib/model"
 import { language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
@@ -52,8 +51,6 @@ const shownID = computed(() => (props.side ? app.sideID : app.currentID))
 const shownStreaming = computed(() => (props.side ? app.sideStreaming : app.streaming))
 const shownError = computed(() => (props.side ? app.sideError : app.error))
 const scroller = ref<HTMLElement>()
-/** Handed down by App.vue, which is the only thing that can see the composer. */
-const restoreDraft = useRestoreDraft()
 
 /** A message sent into a turn while it was running - MiMo's 插话 - and where among the turn's parts it landed. */
 interface Steer {
@@ -561,46 +558,89 @@ async function branchReply(turn: Turn) {
 /** True while a rollback is in flight, so a second press cannot race the first. */
 const reverting = ref(false)
 
-/**
- * Takes the conversation back to just before this message was sent.
- *
- * This message and everything after it leaves the transcript, and the project's
- * files go back to how that moment found them. Nothing is destroyed: what goes
- * out is listed in the dock above the composer until either it is put back or
- * something new is sent, which is the point at which the branch is abandoned
- * for good.
- *
- * And the sentence itself goes back in the box. That is the whole point of the
- * feature in the reference - its revert mutation is `roll(...)` immediately
- * followed by `prompt.set(draft(messageID))` (main-8t-QUXax.js @5578333) -
- * without which reverting reads as "delete what I said" rather than "let me
- * rephrase it", and the dock would be claiming the words are recoverable while
- * the one place they are useful stayed empty.
- *
- * Set after the request rather than optimistically before it: the reference
- * sets it early and puts the old prompt back in `runPromptRollbackMutation`'s
- * catch, and this app has already awaited the server by here, so both reach the
- * same end state in both outcomes. The difference is only visible to something
- * watching the box during a request that is going to fail.
+/*
+ * MiMo's in-place edit of the last question. Only the last one offers it; the
+ * bubble becomes a box holding the question, and sending takes the
+ * conversation back to just before it - files too, as a rollback does - and
+ * sends the new words. While a turn is running it says so rather than sending.
  */
-async function revert(turn: Turn) {
+const editingAsked = ref<string>()
+const editDraft = ref("")
+
+const lastAsked = computed(() => {
+  for (let at = turns.value.length - 1; at >= 0; at--) {
+    if (turns.value[at].text !== undefined) return turns.value[at].id
+  }
+  return undefined
+})
+
+// A question that stops being the last one (another was sent) is no longer editable.
+watch(lastAsked, (id) => {
+  if (editingAsked.value && editingAsked.value !== id) editingAsked.value = undefined
+})
+
+/** Grows with what is typed, up to half the window, then scrolls. */
+function fitEdit(field: HTMLTextAreaElement) {
+  field.style.height = "auto"
+  const cap = Math.round(window.innerHeight * 0.5)
+  field.style.height = `${Math.min(field.scrollHeight, cap)}px`
+  field.style.overflowY = field.scrollHeight > cap ? "auto" : "hidden"
+}
+
+/** From the edit button the caret goes to the end; from a double-click all of it is selected. */
+async function startEdit(turn: Turn, selectAll: boolean) {
+  if (props.side || turn.id !== lastAsked.value) return
+  window.getSelection()?.removeAllRanges()
+  editDraft.value = turn.text ?? ""
+  editingAsked.value = turn.id
+  await nextTick()
+  const field = scroller.value?.querySelector<HTMLTextAreaElement>("[data-asked-edit] textarea")
+  if (!field) return
+  field.focus({ preventScroll: true })
+  field.setSelectionRange(selectAll ? 0 : field.value.length, field.value.length)
+  fitEdit(field)
+}
+
+function cancelEdit() {
+  editingAsked.value = undefined
+}
+
+async function sendEdit(turn: Turn) {
+  const text = editDraft.value.trim()
+  if (!text) return
   const sessionID = app.currentID
-  if (!sessionID || reverting.value) return
+  const message = shownMessages.value.find((entry) => entry.id === turn.id)
+  if (!sessionID || shownBusy.value || reverting.value || message?.role !== "user") {
+    notifyFailure(t("stream.editBusy"))
+    return
+  }
   reverting.value = true
   try {
     await app.revert(sessionID, turn.id)
-    const message = app.messages.find((entry) => entry.id === turn.id)
-    if (message?.role === "user") restoreDraft(message)
+    editingAsked.value = undefined
+    await app.send(text, message.attachments ?? [])
   } catch (failure) {
     /*
      * The server refuses rather than moving the transcript on its own when the
-     * files cannot be made to follow - a turn still running, a snapshot that
-     * was never taken, a message older than the history reaches. The sentence
-     * it refuses with is the only explanation there is, so it is shown.
+     * files cannot be made to follow; the sentence it refuses with is the only
+     * explanation there is, so it is shown.
      */
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
     reverting.value = false
+  }
+}
+
+function onEditKey(event: KeyboardEvent, turn: Turn) {
+  if (event.key === "Escape") {
+    event.preventDefault()
+    cancelEdit()
+    return
+  }
+  // Enter sends and Shift+Enter breaks the line; an IME still composing keeps its Enter.
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+    event.preventDefault()
+    void sendEdit(turn)
   }
 }
 
@@ -664,7 +704,11 @@ defineExpose({ stepMessage, scroller })
   <div ref="scroller" class="stream" @scroll="onScroll">
     <div ref="inner" class="inner">
       <div v-for="(turn, at) in turns" :key="turn.id" class="turn" :data-turn="turn.id">
-        <div v-if="turn.text !== undefined || turn.attachments?.length" class="msg user">
+        <div
+          v-if="turn.text !== undefined || turn.attachments?.length"
+          class="msg user"
+          :class="{ editing: editingAsked === turn.id }"
+        >
           <div v-if="turn.attachments?.length" class="sent">
             <template v-for="(item, at) in turn.attachments" :key="at">
               <span v-if="preview(item)" class="sent-tile picture">
@@ -689,7 +733,30 @@ defineExpose({ stepMessage, scroller })
             button beneath that says how many lines there are. Kept on one line
             each - the bubble keeps its whitespace, so any between these shows.
           -->
-          <div v-if="turn.text && hasCode(turn.text)" class="user-bubble" data-asked-parts>
+          <div v-if="editingAsked === turn.id" class="asked-edit" data-asked-edit>
+            <textarea
+              v-model="editDraft"
+              rows="1"
+              :placeholder="t('stream.editPlaceholder')"
+              spellcheck="false"
+              @input="fitEdit($event.target as HTMLTextAreaElement)"
+              @keydown="onEditKey($event, turn)"
+            />
+            <div class="asked-edit-actions">
+              <span v-if="shownBusy" class="asked-edit-busy" data-edit-busy>{{ t("stream.editBusy") }}</span>
+              <button type="button" class="asked-edit-cancel" data-edit-cancel @click="cancelEdit">{{ t("common.cancel") }}</button>
+              <button
+                type="button"
+                class="asked-edit-send"
+                data-edit-send
+                :disabled="shownBusy || reverting || !editDraft.trim()"
+                @click="sendEdit(turn)"
+              >
+                {{ t("stream.editSend") }}
+              </button>
+            </div>
+          </div>
+          <div v-else-if="turn.text && hasCode(turn.text)" class="user-bubble" data-asked-parts @dblclick="startEdit(turn, true)">
             <template v-for="(part, index) in questionParts(turn.text)" :key="index">
               <div
                 v-if="part.type === 'code'"
@@ -717,10 +784,10 @@ defineExpose({ stepMessage, scroller })
               <div v-else class="asked-part">{{ part.text }}</div>
             </template>
           </div>
-          <div v-else-if="turn.text && foldable(turn.text)" class="user-bubble" data-asked-fold :data-folded="openAsked.has(turn.id) ? undefined : ''">
+          <div v-else-if="turn.text && foldable(turn.text)" class="user-bubble" data-asked-fold :data-folded="openAsked.has(turn.id) ? undefined : ''" @dblclick="startEdit(turn, true)">
             <span class="asked-text" :class="{ folded: !openAsked.has(turn.id) }">{{ turn.text }}</span><button class="asked-expand" data-asked-expand @click="toggleAsked(turn.id)" @dblclick.stop>{{ openAsked.has(turn.id) ? t("stream.collapseAsked") : t("stream.expandAsked", { count: askedLines(turn.text) }) }}</button>
           </div>
-          <div v-else-if="turn.text" class="user-bubble">{{ turn.text }}</div>
+          <div v-else-if="turn.text" class="user-bubble" @dblclick="startEdit(turn, true)">{{ turn.text }}</div>
 
           <!--
             The same footer the reply gets. What was asked is worth being able
@@ -730,10 +797,10 @@ defineExpose({ stepMessage, scroller })
           <!--
             MiMo's question footer: when it was asked, then copy, then edit.
             Branching lives under the answer, and the agent and model are the
-            answer's to state. Edit takes the conversation back to before this
-            question and puts it into the box to be changed and sent again.
+            answer's to state. Edit is offered on the last question only and
+            edits it in place; the footer steps aside while it does.
           -->
-          <div class="footer user-footer">
+          <div v-if="editingAsked !== turn.id" class="footer user-footer">
             <span class="when">{{ askedAt(turn) }}</span>
             <button
               class="copy"
@@ -753,12 +820,12 @@ defineExpose({ stepMessage, scroller })
               </svg>
             </button>
             <button
-              v-if="!side"
+              v-if="!side && turn.id === lastAsked"
               class="copy edit"
               :disabled="reverting"
               :aria-label="t('stream.edit')"
               v-tip="{ label: t('stream.edit'), placement: 'top' }"
-              @click="revert(turn)"
+              @click="startEdit(turn, false)"
             >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path
@@ -1183,6 +1250,86 @@ defineExpose({ stepMessage, scroller })
 .user-footer .copy svg {
   width: 12px;
   height: 12px;
+}
+
+/*
+ * MiMo's in-place edit: the row spans the column, the question's own bubble
+ * colour holds a box that grows with the words, and 取消 / 发送 sit under it at
+ * the end, with a quiet note on the left while a turn is running.
+ */
+.msg.user.editing {
+  align-items: flex-start;
+}
+
+.asked-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 13px;
+  background: color-mix(in srgb, var(--text-strong) 9.5%, var(--surface-raised));
+  border-radius: 16px;
+}
+
+.asked-edit textarea {
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: var(--text-strong);
+  background: transparent;
+  border: 0;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 20px;
+}
+
+.asked-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.asked-edit-busy {
+  margin-inline-end: auto;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.4;
+}
+
+.asked-edit-cancel,
+.asked-edit-send {
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.asked-edit-cancel {
+  color: var(--text-base);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+}
+
+.asked-edit-cancel:hover {
+  background: var(--surface-hover);
+}
+
+.asked-edit-send {
+  color: var(--surface-base);
+  background: var(--text-strong);
+  border: 0;
+}
+
+.asked-edit-send:hover {
+  opacity: 0.9;
+}
+
+.asked-edit-send:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 /*
