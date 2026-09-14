@@ -27,6 +27,8 @@ import PermissionDialog from "./components/PermissionDialog.vue"
 import SettingsDialog from "./components/SettingsDialog.vue"
 import ProjectDialog from "./components/ProjectDialog.vue"
 import ServerPopover from "./components/ServerPopover.vue"
+import ImagePreview from "./components/ImagePreview.vue"
+import { imagePreview } from "./lib/image-preview"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
@@ -2930,6 +2932,7 @@ const commands = computed(() => bindableCommands.value.filter((command) => comma
  */
 const modalOpen = computed(
   () =>
+    Boolean(imagePreview.value) ||
     settingsOpen.value ||
     choosingServer.value ||
     managingServers.value ||
@@ -4070,6 +4073,7 @@ onBeforeUnmount(() => {
 
   </div>
   <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
+  <ImagePreview />
 
   <!--
     Fetched and ready. The reference offers exactly this, in these words, once

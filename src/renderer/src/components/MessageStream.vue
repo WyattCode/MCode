@@ -7,6 +7,7 @@ import ToolPart from "./parts/ToolPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
 import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
 import { preview } from "../lib/attach"
+import { openImagePreview } from "../lib/image-preview"
 import { withoutLatest } from "../lib/model"
 import { language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
@@ -644,6 +645,14 @@ function onEditKey(event: KeyboardEvent, turn: Turn) {
   }
 }
 
+/* MiMo's sent pictures open in its image preview; the message's other pictures are its neighbours. */
+function previewSent(item: Attachment, all: Attachment[] | undefined) {
+  const url = preview(item)
+  if (!url) return
+  const group = (all ?? []).map((entry) => preview(entry)).filter((entry): entry is string => Boolean(entry))
+  openImagePreview(url, { name: item.path.split(/[\\/]/).pop(), group })
+}
+
 /** A turn that finished without saying or doing anything. */
 function emptyReply(turn: Turn): boolean {
   if (!turn.finish || turn.error || turn.finish === "aborted") return false
@@ -711,9 +720,17 @@ defineExpose({ stepMessage, scroller })
         >
           <div v-if="turn.attachments?.length" class="sent">
             <template v-for="(item, at) in turn.attachments" :key="at">
-              <span v-if="preview(item)" class="sent-tile picture">
+              <button
+                v-if="preview(item)"
+                type="button"
+                class="sent-tile picture"
+                :aria-label="t('stream.previewTip')"
+                v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                :data-preview-src="preview(item)"
+                @click="previewSent(item, turn.attachments)"
+              >
                 <img :src="preview(item)" :alt="item.path" />
-              </span>
+              </button>
               <span v-else class="sent-tile file" :title="item.path">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
@@ -880,9 +897,17 @@ defineExpose({ stepMessage, scroller })
             >
               <div v-if="row.steer.attachments?.length" class="sent">
                 <template v-for="(item, index) in row.steer.attachments" :key="index">
-                  <span v-if="preview(item)" class="sent-tile picture">
+                  <button
+                    v-if="preview(item)"
+                    type="button"
+                    class="sent-tile picture"
+                    :aria-label="t('stream.previewTip')"
+                    v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                    :data-preview-src="preview(item)"
+                    @click="previewSent(item, row.steer.attachments)"
+                  >
                     <img :src="preview(item)" :alt="item.path" />
-                  </span>
+                  </button>
                   <span v-else class="sent-tile file" :title="item.path">
                     <span class="sent-name">{{ item.path }}</span>
                   </span>
@@ -1372,11 +1397,15 @@ defineExpose({ stepMessage, scroller })
   border-color: var(--border-strong);
 }
 
+/* MiMo's sent picture: a 64px square on a 12px corner that opens the preview. */
 .sent-tile.picture {
   position: relative;
-  width: 58px;
-  height: 46px;
+  width: 64px;
+  height: 64px;
+  padding: 0;
   border: none;
+  border-radius: 12px;
+  cursor: pointer;
 }
 
 /* The ring is drawn inside, so it does not grow the plate. */
