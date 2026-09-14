@@ -60,9 +60,13 @@ export const DIFF_ICON = ["M4 2.5h5.5L12.5 5.5v8H4z", "M6.5 8h3M8 6.5v3M6.5 11h3
 /* A document tab's icon: a sheet with its corner turned and lines of text. */
 export const DOCUMENT_ICON = ["M9.5 2.5H4.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-7z", "M9.5 2.5v3h3", "M5.8 8.5h4.4M5.8 10.8h3"]
 
+/* A web page tab's icon: a globe with its meridian and equator. */
+export const PAGE_ICON = ["M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11z", "M2.5 8h11", "M8 2.5c1.6 1.6 2.3 3.4 2.3 5.5S9.6 11.9 8 13.5C6.4 11.9 5.7 10.1 5.7 8S6.4 4.1 8 2.5z"]
+
 export function iconOf(type: RightTabType): string[] {
   if (type === "diff") return DIFF_ICON
   if (type === "office") return DOCUMENT_ICON
+  if (type === "html") return PAGE_ICON
   return TOOL_INFO[type].icon
 }
 

@@ -197,7 +197,7 @@ export interface UserMessage {
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
 export interface Annotation {
   id: string
-  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx"
+  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx" | "xlsx" | "chart" | "html"
   /** The file's absolute path, for a file or code shown from one. */
   path?: string
   /** A PDF or Word selection's page, from 1. */
@@ -211,6 +211,17 @@ export interface Annotation {
   region?: { fx: number; fy: number; fw: number; fh: number }
   /** Drawn as a box on the slide rather than a picked piece. */
   boxed?: boolean
+  /** A spreadsheet's sheet by name and id, and the cell or range as A1 (for a chart, the sheet it sits on). */
+  sheet?: string
+  sheetId?: string
+  a1?: string
+  /** A chart's title, kind and the cell references its data comes from. */
+  chartTitle?: string
+  chartKind?: string
+  dataRef?: string
+  /** A web page module: the CSS selector that finds it and its tag. */
+  selector?: string
+  tag?: string
   /** Where the selection sits: PDF points from a PDF page's bottom-left corner, or CSS pixels from a Word page's top-left. */
   rect?: { x: number; y: number; w: number; h: number; pageW: number; pageH: number }
   /** The file's name, for a whole file. */

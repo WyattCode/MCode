@@ -36,6 +36,10 @@ export interface AnnotationRequest {
   initialText?: string
   /** A new annotation, from what was written. */
   make?: (text: string) => Annotation
+  /** Sends that annotation straight away instead of adding it to the box - even with no note - as MiMo's web page tab does. */
+  sendNow?: (note: Annotation) => void
+  /** The box was dismissed (Escape or a press elsewhere) rather than used. */
+  onClose?: () => void
 }
 
 export const annotationRequest = shallowRef<AnnotationRequest | null>(null)

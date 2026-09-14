@@ -6,6 +6,7 @@ import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { BrowserWindow, shell, type IpcMain } from "electron"
+import { servePreview } from "./preview-server"
 
 /*
  * The main-process half of MiMo's Office tab: reading a document's bytes (and
@@ -158,6 +159,26 @@ async function readFileBytes(root: string, rel: string | undefined, ifUnchanged?
     return { ok: true, base64: (await fs.readFile(target)).toString("base64"), size: stat.size, mtimeMs: stat.mtimeMs }
   } catch {
     return { ok: false, reason: "denied" }
+  }
+}
+
+export type WriteResult = { ok: true; size: number; mtimeMs: number } | { ok: false; reason: "denied" | "unsupported" | "writefail" }
+
+/* A spreadsheet the view edited, written back in place under the same rules as reading. */
+async function writeFileBytes(root: string, rel: string | undefined, base64: string): Promise<WriteResult> {
+  const base = path.resolve(root)
+  const target = rel ? path.resolve(base, rel) : base
+  if (rel) {
+    const relative = path.relative(base, target)
+    if (relative.startsWith("..") || path.isAbsolute(relative)) return { ok: false, reason: "denied" }
+  }
+  if (!RESTORE_EXTENSIONS.has(path.extname(target).toLowerCase()) || typeof base64 !== "string") return { ok: false, reason: "unsupported" }
+  try {
+    await fs.writeFile(target, Buffer.from(base64, "base64"))
+    const stat = await fs.stat(target)
+    return { ok: true, size: stat.size, mtimeMs: stat.mtimeMs }
+  } catch {
+    return { ok: false, reason: "writefail" }
   }
 }
 
@@ -317,6 +338,7 @@ export function registerOffice(ipcMain: IpcMain, userData: string) {
   ipcMain.handle("mcode:read-file-bytes", (_event, root: string, rel?: string, ifUnchanged?: { size: number; mtimeMs: number }) =>
     readFileBytes(root, rel, ifUnchanged),
   )
+  ipcMain.handle("mcode:write-file-bytes", (_event, root: string, rel: string | undefined, base64: string) => writeFileBytes(root, rel, base64))
   ipcMain.handle("mcode:file-size", async (_event, file: string) => {
     const stat = typeof file === "string" && path.isAbsolute(file) ? await fs.stat(file).catch(() => undefined) : undefined
     return stat?.isFile() ? stat.size : 0
@@ -339,6 +361,7 @@ export function registerOffice(ipcMain: IpcMain, userData: string) {
   })
   ipcMain.handle("mcode:office-version-restore", (_event, file: string, id: string) => versions.restore(file, id))
   ipcMain.handle("mcode:office-convert-legacy", (_event, file: string) => convertLegacy(userData, file))
+  ipcMain.handle("mcode:office-serve", (_event, file: string) => servePreview(file))
   ipcMain.handle("mcode:reveal-path", async (_event, file: string) => {
     if (typeof file !== "string" || !path.isAbsolute(file) || !existsSync(file)) return { ok: false, error: "not found" }
     shell.showItemInFolder(file)

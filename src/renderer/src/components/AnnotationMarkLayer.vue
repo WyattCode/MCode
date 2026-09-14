@@ -6,7 +6,8 @@ import { onBeforeUnmount, onMounted, ref } from "vue"
  * faint fill over every line of its passage, and its number on the first
  * line's top-left corner (7 out, kept 6 inside the layer). A flashed one fills
  * more and its number grows with a ring. A batch just sent carries number 0:
- * frames without a number.
+ * frames without a number. Over a spreadsheet the frames are MiMo's cell
+ * marks instead: 1px on a 10% fill, round 2, the number not kept inside.
  */
 export interface MarkItem {
   id: string
@@ -14,7 +15,7 @@ export interface MarkItem {
   rects: { left: number; top: number; w: number; h: number }[]
 }
 
-defineProps<{ items: MarkItem[]; flashId: string | null }>()
+const props = defineProps<{ items: MarkItem[]; flashId: string | null; cells?: boolean }>()
 
 const layer = ref<HTMLElement>()
 const size = ref({ w: 0, h: 0 })
@@ -29,6 +30,7 @@ onMounted(() => {
 onBeforeUnmount(() => observer.disconnect())
 
 function badgeAt(rect: { left: number; top: number }) {
+  if (props.cells) return { left: `${rect.left - 7}px`, top: `${rect.top - 7}px` }
   return {
     left: `${Math.min(Math.max(6, rect.left - 7), Math.max(6, size.value.w - 15 - 6))}px`,
     top: `${Math.min(Math.max(6, rect.top - 7), Math.max(6, size.value.h - 15 - 6))}px`,
@@ -43,7 +45,7 @@ function badgeAt(rect: { left: number; top: number }) {
         v-for="(rect, at) in item.rects"
         :key="`${item.id}-${at}`"
         class="mark"
-        :class="{ flash: item.id === flashId }"
+        :class="{ flash: item.id === flashId, cell: cells }"
         :data-ann-marker="item.num"
         :style="{ left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.w}px`, height: `${rect.h}px` }"
       />
@@ -77,6 +79,12 @@ function badgeAt(rect: { left: number; top: number }) {
 
 .mark.flash {
   background: rgba(50, 149, 251, 0.22);
+}
+
+.mark.cell {
+  background: rgba(50, 149, 251, 0.1);
+  border-width: 1px;
+  border-radius: 2px;
 }
 
 .badge {

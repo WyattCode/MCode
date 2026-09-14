@@ -20,7 +20,7 @@ import { computed, ref } from "vue"
  */
 
 export type RightTool = "review" | "files" | "chat" | "browser" | "terminal"
-export type RightTabType = RightTool | "diff" | "office"
+export type RightTabType = RightTool | "diff" | "office" | "html"
 export type OfficeType = "xlsx" | "docx" | "pptx" | "pdf"
 
 export interface RightTab {
@@ -49,6 +49,9 @@ export interface RightTab {
   size?: number
   origin?: string
   converting?: boolean
+  /** Web page: the .html file on show, and whether its edit mode (picking modules to annotate) is on. */
+  htmlPath?: string
+  htmlEdit?: boolean
 }
 
 interface Kept {
@@ -136,6 +139,23 @@ export const useRightPanel = defineStore("rightPanel", () => {
       return tabs.value.find((tab) => tab.id === found.id) ?? found
     }
     return add("office", { name: file.name, filePath: file.path, fileType: file.fileType, size: file.size, origin: scope })
+  }
+
+  /** MiMo's web page tab: one per page, taken up again (from this conversation) when the same page is opened; edit mode starts off. */
+  function openHtml(page: { path: string; title?: string }): RightTab {
+    const name = page.title || "网页"
+    const found = tabs.value.find((tab) => tab.type === "html" && tab.htmlPath === page.path)
+    if (found) {
+      update(found.id, { name, origin: scope ?? found.origin })
+      show(found.id)
+      return tabs.value.find((tab) => tab.id === found.id) ?? found
+    }
+    return add("html", { name, htmlPath: page.path, htmlEdit: false, origin: scope })
+  }
+
+  function toggleHtmlEdit(id: string) {
+    const tab = tabs.value.find((entry) => entry.id === id)
+    if (tab) update(id, { htmlEdit: !tab.htmlEdit })
   }
 
   /** A diff with a title of its own; a source's tab is updated rather than doubled. */
@@ -255,6 +275,8 @@ export const useRightPanel = defineStore("rightPanel", () => {
     setDisposer,
     openTool,
     openOffice,
+    openHtml,
+    toggleHtmlEdit,
     openDiff,
     toggleDiff,
     update,

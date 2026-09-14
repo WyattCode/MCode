@@ -41,6 +41,11 @@ function short(text: string, max = 24) {
 function rangeOf(note: Annotation) {
   if (note.kind === "file") return t("annotations.rangeFile")
   if (note.kind === "pdf") return t("annotations.rangePdf", { page: note.page ?? 1, text: short(note.quote ?? "") })
+  if (note.kind === "html") {
+    return note.quote ? t("annotations.rangeModule", { text: short(note.quote) }) : t("annotations.rangeModuleTag", { tag: note.tag ? `<${note.tag}>` : note.selector ?? "" })
+  }
+  if (note.kind === "xlsx") return t("annotations.rangeCell", { sheet: note.sheet ?? "", a1: note.a1 ?? "", text: short(note.quote ?? "") })
+  if (note.kind === "chart") return t("annotations.rangeChart", { sheet: note.sheet ?? "", title: note.chartTitle || t("annotations.untitledChart") })
   if (note.kind === "pptx") {
     const page = (note.slide ?? 0) + 1
     if (note.quote) return t("annotations.rangeSlide", { page, text: short(note.quote) })

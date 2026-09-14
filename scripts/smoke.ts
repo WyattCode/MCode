@@ -687,6 +687,20 @@ async function main() {
     { id: "ann-s1", kind: "pptx", path: "/p/deck.pptx", slide: 1, slideId: "257", shapeId: "4", shapeName: "Chart 3", quote: "Q3", occ: 1, occTotal: 1, region: { fx: 0.1, fy: 0.2, fw: 0.5, fh: 0.4 }, text: "" },
     { id: "ann-s2", kind: "pptx", path: "/p/deck.pptx", slide: 0, slideId: "256", region: { fx: 0.604, fy: 0.25, fw: 0.2, fh: 0.1 }, boxed: true, text: "move this" },
   ])
+  const sheetBlock = annotationsBlock([
+    { id: "ann-c", kind: "xlsx", path: "/p/b.xlsx", sheet: "Data", sheetId: "sheet_0_1", a1: "B2:C3", quote: "10 | 7", text: "" },
+    { id: "ann-g", kind: "chart", path: "/p/b.xlsx", sheet: "Data", chartKind: "column", dataRef: "Data!$A$2:$A$4 / Data!$B$2:$B$4", text: "recolour" },
+    { id: "ann-h", kind: "html", path: "/p/landing.html", name: "landing.html", selector: "#hero", tag: "h1", quote: "Grow faster", text: "bolder" },
+  ])
+  check(
+    "sheet, chart and web page annotations name their place",
+    sheetBlock.includes('Spreadsheet /p/b.xlsx, sheet "Data"!B2:C3') &&
+      sheetBlock.includes("Current cell values: 10 | 7") &&
+      sheetBlock.includes('chart "(untitled)" (column; Data!$A$2:$A$4 / Data!$B$2:$B$4)') &&
+      sheetBlock.includes("the module matching CSS selector `#hero` <h1>, containing \"Grow faster\"") &&
+      sheetBlock.includes("A web page module is found by its selector"),
+    sheetBlock,
+  )
   check(
     "a slide annotation names the shape it matched, or the region drawn",
     slideBlock.includes('Presentation /p/deck.pptx, slide 2 (slide id 257), shape "Chart 3" (shape id 4)') &&

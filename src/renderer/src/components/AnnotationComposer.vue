@@ -122,7 +122,11 @@ function close(after?: () => void) {
 }
 
 function dismiss() {
-  close(() => window.getSelection()?.removeAllRanges())
+  const current = request.value
+  close(() => {
+    window.getSelection()?.removeAllRanges()
+    current?.onClose?.()
+  })
 }
 
 /** The box's lower button: adds it (or changes its note) and leaves the message unsent. */
@@ -144,6 +148,13 @@ function stash() {
 function send() {
   const current = request.value
   const value = text.value.trim()
+  if (current?.sendNow) {
+    const note = current.make?.(value)
+    if (!note) return
+    close()
+    current.sendNow(note)
+    return
+  }
   if (!current || !value) return
   const scope = current.scope ?? props.scope
   if (current.index !== undefined) {
@@ -229,7 +240,8 @@ function press(event: MouseEvent) {
       selection.removeAllRanges()
     }
   }
-  if (request.value) close()
+  const current = request.value
+  if (current) close(() => current.onClose?.())
 }
 
 /* Double-clicking a passage already annotated opens its note again. */

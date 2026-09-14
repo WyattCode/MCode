@@ -29,6 +29,15 @@ function where(note: Annotation): string {
     const { fx, fy, fw, fh } = note.region
     return `${slide}, the region roughly from (${pct(fx)}%, ${pct(fy)}%) to (${pct(fx + fw)}%, ${pct(fy + fh)}%) of the slide`
   }
+  if (note.kind === "html") {
+    const quote = note.quote ? `, containing "${note.quote.length > 60 ? `${note.quote.slice(0, 60)}…` : note.quote}"` : ""
+    return `Web page ${note.path ?? ""} (${note.name ?? ""}), the module matching CSS selector \`${note.selector ?? ""}\` <${note.tag ?? ""}>${quote}`
+  }
+  if (note.kind === "xlsx") return `Spreadsheet ${note.path ?? note.name ?? ""}, sheet "${note.sheet ?? ""}"!${note.a1 ?? ""}`
+  if (note.kind === "chart") {
+    const detail = [note.chartKind || "chart", note.dataRef].filter(Boolean).join("; ")
+    return `Spreadsheet ${note.path ?? note.name ?? ""}, sheet "${note.sheet ?? ""}", chart "${note.chartTitle || "(untitled)"}" (${detail})`
+  }
   return "A passage of an earlier assistant reply in this conversation"
 }
 
@@ -37,7 +46,8 @@ export function annotationsBlock(list: readonly Annotation[] | undefined): strin
   if (!list?.length) return ""
   const entries = list.map((note, index) => {
     const lines = [`${index + 1}. ${where(note)}`]
-    if (note.quote) {
+    if (note.kind === "xlsx") lines.push(`   Current cell values: ${note.quote || "(empty)"}`)
+    else if (note.quote) {
       const nth = note.occTotal && note.occTotal > 1 ? ` (occurrence ${note.occ ?? 1} of ${note.occTotal})` : ""
       lines.push(`   Selected text${nth}: "${note.quote}"`)
     }
@@ -58,6 +68,7 @@ export function annotationsBlock(list: readonly Annotation[] | undefined): strin
     `While writing this message the user marked ${list.length} place(s). Take each into account together with the message:`,
     "",
     entries.join("\n\n"),
+    ...(list.some((note) => note.kind === "html") ? ["", "A web page module is found by its selector in that page's own file; change the file so the module reads and behaves as asked."] : []),
     "</annotations>",
   ].join("\n")
 }

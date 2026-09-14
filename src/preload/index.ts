@@ -179,6 +179,12 @@ const api = {
     | { ok: true; unchanged?: undefined; base64: string; size: number; mtimeMs: number }
     | { ok: false; reason: string }
   > => ipcRenderer.invoke("mcode:read-file-bytes", root, rel, ifUnchanged),
+  /** Writes a document the view edited back in place, answering its new size and time. */
+  writeFileBytes: (
+    root: string,
+    rel: string | undefined,
+    base64: string,
+  ): Promise<{ ok: true; size: number; mtimeMs: number } | { ok: false; reason: string }> => ipcRenderer.invoke("mcode:write-file-bytes", root, rel, base64),
   fileSize: (target: string): Promise<number> => ipcRenderer.invoke("mcode:file-size", target),
   officeVersionInit: (target: string, base64: string, assumeAi: boolean, note: string): Promise<OfficeVersionResult> =>
     ipcRenderer.invoke("mcode:office-version-init", target, base64, assumeAi, note),
@@ -189,6 +195,8 @@ const api = {
   officeConvertLegacy: (target: string): Promise<{ ok: true; output: string; cached: boolean } | { ok: false; error: string }> =>
     ipcRenderer.invoke("mcode:office-convert-legacy", target),
   revealPath: (target: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("mcode:reveal-path", target),
+  /** A loopback address a web page is served at, with its folder beside it. */
+  officeServe: (target: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:office-serve", target),
   /** Watches an open document so its view can reload when it changes on disk. */
   watchFile: (target: string): Promise<boolean> => ipcRenderer.invoke("mcode:watch-file", target),
   unwatchFile: (target: string): Promise<void> => ipcRenderer.invoke("mcode:unwatch-file", target),

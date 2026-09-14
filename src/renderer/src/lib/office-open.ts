@@ -3,7 +3,7 @@ import { notifyFailure } from "./toast"
 import { t } from "./i18n"
 
 /*
- * Where MiMo sends a document: xlsx, docx, pptx and pdf to the Office tab; the
+ * Where MiMo sends a document: a web page to its own tab; xlsx, docx, pptx and pdf to the Office tab; the
  * old doc, xls and ppt there too, once LibreOffice has turned them into the
  * new forms (the tab says it is converting meanwhile, and gives way to the
  * files tab if that fails); anything else to the files tab.
@@ -42,6 +42,10 @@ export function openFileInViewer(file: string, directory?: string) {
 export async function openDocument(file: { path: string; name?: string }, directory?: string) {
   const rp = useRightPanel()
   const name = file.name || nameOf(file.path)
+  if (/\.html?$/i.test(file.path)) {
+    rp.openHtml({ path: file.path, title: name })
+    return
+  }
   const type = officeTypeOf(name) ?? officeTypeOf(file.path)
   if (type) {
     const size = await window.mcode.fileSize(file.path).catch(() => 0)

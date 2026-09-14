@@ -1,3 +1,4 @@
+import { shallowRef } from "vue"
 import type { Message } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { promptOf } from "./annotation-fx"
@@ -14,6 +15,9 @@ const writes = new Map<string, number>()
 const ended = new Map<string, number>()
 const seen = new Set<string>()
 const created = new Set<string>()
+
+/** The file an edit or write just finished on, for views that follow the assistant's writes rather than the disk (MiMo's web page tab). */
+export const aiWrite = shallowRef<{ file: string; seq: number } | null>(null)
 
 const normal = (file: string) => file.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
 const isAbsolute = (file: string) => /^([a-zA-Z]:)?[\\/]/.test(file)
@@ -43,6 +47,7 @@ export function noteToolWrites(message: Message, directory: string | undefined) 
       const absolute = isAbsolute(file) || !directory ? file : `${directory}/${file}`
       writes.set(normal(absolute), Date.now())
       if (made) created.add(normal(absolute))
+      aiWrite.value = { file: absolute, seq: (aiWrite.value?.seq ?? 0) + 1 }
     }
   }
 }
