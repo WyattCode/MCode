@@ -2043,20 +2043,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           -->
           <h3>{{ t("set.advanced") }}</h3>
           <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.fileTree") }}</div>
-                <div class="line-sub">{{ t("set.fileTreeSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showFileTree }"
-                @click="app.patchConfig({ showFileTree: !app.config?.showFileTree })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
             <!-- The bottom-panel toggle in the bar, which a reader can take away. -->
             <div class="line">
               <div class="line-text">

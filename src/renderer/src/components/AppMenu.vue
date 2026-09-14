@@ -64,7 +64,6 @@ const groups = computed<Group[]>(() => [
     items: [
       { key: "sidebar", label: t("menu.sidebar"), hint: "Ctrl+B", divided: true },
       { key: "terminal", label: t("menu.terminal"), hint: "Ctrl+`" },
-      { key: "files", label: t("menu.files"), hint: "Ctrl+\\" },
       { key: "reload", label: t("menu.reload"), divided: true },
       { key: "devtools", label: t("menu.devTools") },
       { key: "zoom-reset", label: t("menu.resetZoom"), hint: "Ctrl+0", divided: true },

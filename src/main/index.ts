@@ -17,14 +17,17 @@ import { applyZoom } from "./zoom"
 import {
   act,
   clearBrowsingData,
+  clearSiteData,
   closePanel,
   closeTab,
   navigate,
   newTab,
   openPanel,
   panelState,
+  screenshot,
   selectTab,
   setBounds,
+  type BrowserAct,
   type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
@@ -712,9 +715,24 @@ app.whenReady().then(async () => {
     return window ? navigate(window, String(input)) : undefined
   })
 
-  ipcMain.handle("mcode:browser-act", (event, what: "back" | "forward" | "reload" | "forceReload" | "stop") => {
+  ipcMain.handle("mcode:browser-act", (event, what: BrowserAct) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     return window ? act(window, what) : undefined
+  })
+
+  ipcMain.handle("mcode:browser-screenshot", async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    return window ? screenshot(window).catch(() => false) : false
+  })
+
+  // The page menu's clears: an empty answer is success, anything else is the reason.
+  ipcMain.handle("mcode:browser-clear-site", async (_event, what: "cookies" | "cache") => {
+    try {
+      await clearSiteData(what === "cookies" ? "cookies" : "cache")
+      return ""
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err)
+    }
   })
 
   // Settings' clear-browsing-data: an empty answer is success, anything else is the reason.

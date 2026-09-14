@@ -1,4 +1,4 @@
-import { BrowserWindow, WebContentsView, shell, session } from "electron"
+import { BrowserWindow, WebContentsView, clipboard, shell, session } from "electron"
 import { addressToURL, safeURL } from "@shared/web-address"
 
 /**
@@ -53,11 +53,16 @@ export interface BrowserState {
   canGoForward: boolean
   tabs: BrowserTab[]
   active: string
+  /** The open page's zoom, in percent. */
+  zoom: number
+  /** Why the open page did not load, until the next load starts. */
+  error?: { code: number; url: string }
 }
 
 interface Tab {
   id: string
   view: WebContentsView
+  failure?: { code: number; url: string }
 }
 
 interface Panel {
@@ -78,6 +83,7 @@ const EMPTY: BrowserState = {
   canGoForward: false,
   tabs: [],
   active: "",
+  zoom: 100,
 }
 
 function tabOf(panel: Panel, id: string): Tab | undefined {
@@ -109,6 +115,8 @@ function stateOf(panel: Panel): BrowserState {
     canGoForward: contents?.navigationHistory.canGoForward() ?? false,
     tabs: panel.tabs.map(describe),
     active: tab?.id ?? "",
+    zoom: Math.round((contents?.getZoomFactor() ?? 1) * 100),
+    ...(tab?.failure ? { error: tab.failure } : {}),
   }
 }
 
@@ -143,7 +151,6 @@ function makeTab(panel: Panel): Tab {
   for (const event of [
     "did-navigate",
     "did-navigate-in-page",
-    "did-start-loading",
     "did-stop-loading",
     "page-title-updated",
   ] as const) {
@@ -151,7 +158,19 @@ function makeTab(panel: Panel): Tab {
   }
 
   counter += 1
-  return { id: `tab-${counter}`, view }
+  const tab: Tab = { id: `tab-${counter}`, view }
+  /* A new load forgets the last failure; a failed main frame is kept for the tab to say so. */
+  contents.on("did-start-loading", () => {
+    tab.failure = undefined
+    panel.publish()
+  })
+  contents.on("did-fail-load", (_event, code, _description, url, isMainFrame) => {
+    // -3 is a load the page itself abandoned for another, which is not a failure.
+    if (!isMainFrame || code === -3) return
+    tab.failure = { code, url }
+    panel.publish()
+  })
+  return tab
 }
 
 /** Draws the open tab and only the open tab. */
@@ -170,11 +189,16 @@ export function openPanel(
   bounds: BrowserBounds,
   onState: (state: BrowserState) => void,
 ): BrowserState {
+  /*
+   * A page for a browser tab of the right panel. Each tab there holds a page of
+   * its own, so asking again - once the panel is up - adds one rather than
+   * handing back the page some other tab already holds.
+   */
   const existing = panels.get(window.id)
   if (existing) {
     existing.publish = () => onState(stateOf(existing))
-    setBounds(window, bounds)
-    return stateOf(existing)
+    existing.bounds = bounds
+    return newTab(window) ?? stateOf(existing)
   }
 
   const partition = session.fromPartition(PARTITION)
@@ -280,10 +304,14 @@ export function navigate(window: BrowserWindow, input: string): BrowserState | u
   return stateOf(panel)
 }
 
-export function act(
-  window: BrowserWindow,
-  what: "back" | "forward" | "reload" | "forceReload" | "stop",
-): BrowserState | undefined {
+export type BrowserAct = "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset"
+
+/* Zoom moves in tenths, from a quarter of the page to five times it. */
+const ZOOM_STEP = 0.1
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 5
+
+export function act(window: BrowserWindow, what: BrowserAct): BrowserState | undefined {
   const panel = panels.get(window.id)
   if (!panel) return undefined
   const contents = activeTab(panel)?.view.webContents
@@ -293,7 +321,30 @@ export function act(
   if (what === "reload") contents.reload()
   if (what === "forceReload") contents.reloadIgnoringCache()
   if (what === "stop") contents.stop()
+  if (what === "zoomIn" || what === "zoomOut") {
+    const next = contents.getZoomFactor() + (what === "zoomIn" ? ZOOM_STEP : -ZOOM_STEP)
+    contents.setZoomFactor(Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)) * 10) / 10)
+  }
+  if (what === "zoomReset") contents.setZoomFactor(1)
   return stateOf(panel)
+}
+
+/** The open page, as it is drawn, onto the clipboard. False when there is nothing to take. */
+export async function screenshot(window: BrowserWindow): Promise<boolean> {
+  const panel = panels.get(window.id)
+  const contents = panel ? activeTab(panel)?.view.webContents : undefined
+  if (!contents) return false
+  const image = await contents.capturePage()
+  if (image.isEmpty()) return false
+  clipboard.writeImage(image)
+  return true
+}
+
+/** One of MiMo's two clears from the page's own menu: the cookies, or the cache. */
+export async function clearSiteData(what: "cookies" | "cache"): Promise<void> {
+  const partition = session.fromPartition(PARTITION)
+  if (what === "cookies") await partition.clearStorageData({ storages: ["cookies"] })
+  else await partition.clearCache()
 }
 
 export function panelState(window: BrowserWindow): BrowserState | undefined {

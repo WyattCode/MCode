@@ -145,11 +145,17 @@ if (!connect) {
  */
 const componentDir = path.join(root, "src/renderer/src/components")
 const componentFiles = fs.readdirSync(componentDir).filter((name) => name.endsWith(".vue"))
+/* The right panel's tabs live in a folder of their own, and mount components as any other does. */
+const rightFiles = fs
+  .readdirSync(path.join(componentDir, "right"))
+  .filter((name) => name.endsWith(".vue"))
+  .map((name) => path.join("right", name))
 
 /** Everywhere a component could be used, including other components. */
 const consumers = [
   appSource,
   ...componentFiles.map((name) => fs.readFileSync(path.join(componentDir, name), "utf8")),
+  ...rightFiles.map((name) => fs.readFileSync(path.join(componentDir, name), "utf8")),
   ...fs
     .readdirSync(path.join(componentDir, "parts"), { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith(".vue"))
@@ -181,8 +187,8 @@ function tagEnd(source: string, from: number): number {
 }
 
 let checkedEvents = 0
-for (const file of componentFiles) {
-  const name = file.replace(/\.vue$/, "")
+for (const file of [...componentFiles, ...rightFiles]) {
+  const name = path.basename(file).replace(/\.vue$/, "")
   const source = fs.readFileSync(path.join(componentDir, file), "utf8")
 
   // What the component actually raises, rather than what it declares: a
@@ -254,12 +260,12 @@ if (ringSource) {
 
 /*
  * Both call sites, with the geometry each one is supposed to have. The composer
- * draws MiMo's 18px ring on a 2.4 stroke; the tab asks for 16/2. The header held
- * one too until it took MiMo's bottom panel toggle in that place instead.
+ * draws MiMo's 18px ring on a 2.4 stroke. The header held one too until it took
+ * MiMo's bottom panel toggle in that place instead, and the review panel's Context
+ * tab went with that panel.
  */
 const ringSites: [string, string[]][] = [
   ["Composer.vue", ["<ContextRing", ':size="18"', ':stroke="2.4"']],
-  ["FilePanel.vue", ["<ContextRing", ':size="16"', ':stroke="2"']],
 ]
 for (const [file, needles] of ringSites) {
   const source = fs.readFileSync(path.join(componentDir, file), "utf8")
@@ -269,103 +275,7 @@ for (const [file, needles] of ringSites) {
   }
 }
 
-// ------------------------------------------------------------ the large-diff guard
-/*
- * A guard that shows its message and renders anyway is not a guard.
- *
- * The expensive half is the parse and the DOM, not the sentence, so the check
- * is that `rows` actually refuses - and that the escape hatch is still there,
- * because a refusal with no way through is the reader unable to see their own
- * diff.
- */
-const patchSource = fs.readFileSync(path.join(componentDir, "ReviewPatch.vue"), "utf8")
-if (!/const MAX_CHANGED_LINES = 500\b/.test(patchSource)) {
-  problems.push("ReviewPatch.vue no longer sets the reference's 500-changed-line limit")
-}
-if (!/if \(tooLarge\.value\) return \[\]/.test(patchSource)) {
-  problems.push("ReviewPatch.vue shows the large-diff message but still parses the diff behind it")
-}
-/*
- * The button has to be wired, not merely labelled.
- *
- * Searching for the bare word "renderAnyway" was the first attempt and it was a
- * check that could not fail: the i18n key is
- * `ui.sessionReview.largeDiff.renderAnyway`, so the word is in the file whether
- * or not anything handles the click. Both halves of the seam are named here
- * instead - the handler and the binding that reaches it.
- */
-if (!/function renderAnyway\b/.test(patchSource)) {
-  problems.push("ReviewPatch.vue has no renderAnyway handler, so a large diff cannot be forced open")
-}
-if (!/@click="renderAnyway"/.test(patchSource)) {
-  problems.push("ReviewPatch.vue's Render anyway button is not wired to renderAnyway")
-}
-
-/*
- * No `---` / `+++` test inside the hunk loop, in either the parser or the
- * counter.
- *
- * Both loops throw away everything before the first `@@`, and git writes the
- * two file headers before it, so past that point such a test can only match a
- * real changed line whose own text begins `--` or `++`. Driven in the app while
- * the test was still there: a patch that deleted `-- a sql comment` and added
- * `++i;` drew neither row and then numbered the rest of the hunk one short, so
- * a review note filed against the last line landed on the one above it.
- *
- * Written as "the strings do not appear anywhere in the file" rather than as a
- * regex over the loop, because the failure mode being guarded is somebody
- * re-adding the skip, and it can be re-added in either loop or in a helper.
- */
-for (const header of ['startsWith("---")', 'startsWith("+++")']) {
-  if (!patchSource.includes(header)) continue
-  problems.push(
-    `ReviewPatch.vue tests ${header} past the first hunk, which drops changed lines whose own text begins -- or ++`,
-  )
-}
-
-/*
- * The reference has exactly three strings in this family - title, meta and
- * renderAnyway - and no fourth. A `.description` or a `.button` invented to fill
- * out the block would be a hand-written string wearing a reference key's name,
- * which is the one thing no locale check can catch: it would be present in all
- * 18 tables and defined, and simply not be the reference's.
- */
-const LARGE_DIFF_KEYS = ["title", "meta", "renderAnyway"]
-for (const leaf of LARGE_DIFF_KEYS) {
-  if (patchSource.includes(`ui.sessionReview.largeDiff.${leaf}`)) continue
-  problems.push(`ReviewPatch.vue does not use ui.sessionReview.largeDiff.${leaf}`)
-}
-for (const used of patchSource.matchAll(/ui\.sessionReview\.largeDiff\.([A-Za-z]+)/g)) {
-  if (LARGE_DIFF_KEYS.includes(used[1])) continue
-  problems.push(
-    `ReviewPatch.vue reads ui.sessionReview.largeDiff.${used[1]}, which the reference does not have`,
-  )
-}
-
-/*
- * The Context tab's x says "Close tab", not "Close".
- *
- * Two different strings that both exist and both read plausibly, which is why
- * this went unnoticed: `common.close` is defined in all 18 tables, so no locale
- * check has anything to report about it.
- */
-/*
- * Both the name it is announced by and the name it is shown by, because the
- * reference uses the key for both - `aria-label` and the tooltip title on the
- * same control. Looking for the key anywhere in the block was the first
- * attempt, and it passed with the aria-label changed back to `common.close`,
- * because the tooltip beside it still carried the word.
- */
-const panelSource = fs.readFileSync(path.join(componentDir, "FilePanel.vue"), "utf8")
-const closeBlock = panelSource.slice(panelSource.indexOf('class="tab-close"'), panelSource.indexOf('class="tab-close"') + 400)
-for (const [attribute, pattern] of [
-  ["aria-label", /:aria-label="t\('common\.closeTab'\)"/],
-  ["tooltip", /v-tip="\{ label: t\('common\.closeTab'\)/],
-] as [string, RegExp][]) {
-  if (pattern.test(closeBlock)) continue
-  problems.push(`FilePanel.vue's Context tab close does not take its ${attribute} from common.closeTab`)
-}
-console.log("context ring and review guard: checked")
+console.log("context ring: checked")
 
 // -------------------------------------------------------- unreachable backend
 /*

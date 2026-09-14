@@ -18,7 +18,8 @@ import { fileURLToPath } from "node:url"
 import type { UserMessage } from "../src/shared/protocol"
 import { draftFromMessage, draftLine } from "../src/renderer/src/lib/draft"
 import { cycleVariant, isLatest, resolveVariant, withoutLatest } from "../src/renderer/src/lib/model"
-import { closeTab, openTab, readStrip, stripKey, stripKeys, writeStrip } from "../src/renderer/src/lib/session-tabs"
+import { createPinia, setActivePinia } from "pinia"
+import { useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { locateOffset } from "../src/renderer/src/lib/find"
 
 let passed = 0
@@ -114,63 +115,58 @@ console.log("\nThe Latest tag")
   check("and carries no tag", isLatest("Claude Haiku 4.5"), false)
 }
 
-// ------------------------------------------------------- the panel's tab strip
-console.log("\nThe right-hand panel, remembered per session")
+// ------------------------------------------------------- the right panel's tabs
+console.log("\nThe right panel's tabs, as MiMo keeps them")
 {
-  check("no session has no key", stripKey(undefined, "s1"), undefined)
-  check("and no directory has none either", stripKey("D:/proj", undefined), undefined)
-  const one = stripKey("D:/proj", "s1")
-  const two = stripKey("D:/other", "s1")
-  check("the same session in two projects is two keys", one !== two, true)
-  check("a non-ASCII path does not throw", typeof stripKey("D:/项目", "s1"), "string")
+  setActivePinia(createPinia())
+  const rp = useRightPanel()
+  const gone: string[] = []
+  rp.setDisposer((tab) => gone.push(tab.id))
 
-  check(
-    "an opened tab goes to the front",
-    openTab({ all: ["other"] }, "context"),
-    { all: ["context", "other"], active: "context" },
-  )
-  check(
-    "opening it twice does not repeat it",
-    openTab({ all: ["context", "other"], active: "other" }, "context"),
-    { all: ["context", "other"], active: "context" },
-  )
-  check(
-    "closing the only tab falls back to the review",
-    closeTab({ all: ["context"], active: "context" }, "context"),
-    { all: [], active: "review" },
-  )
-  check(
-    "closing one with a neighbour to its left lands there",
-    closeTab({ all: ["context", "other"], active: "other" }, "other"),
-    { all: ["context"], active: "context" },
-  )
+  rp.setScope("s1")
+  const review = rp.openTool("review")
+  check("a tool opens the panel on its own tab", [rp.open, rp.active], [true, review.id])
+  const second = rp.openTool("review")
+  check("asking again adds another, numbered", [rp.tabs.length, second.ord], [2, 2])
+  const files = rp.openTool("files")
+  check("the files tab is kept single", rp.openTool("files").id, files.id)
 
-  writeStrip(one, { all: ["context"], active: "context" })
-  writeStrip(two, { all: [], active: "review" })
-  check("what one session opened is there", [readStrip(one).all, readStrip(one).active], [["context"], "context"])
-  check("and the session next door is not affected", readStrip(two).all, [])
-  check("an unknown session reads as empty", readStrip("nothing/at-all").all, [])
-}
+  rp.activate(second.id)
+  rp.close([second.id])
+  check("closing the tab on show selects its right-hand neighbour", rp.active, files.id)
+  rp.close([files.id])
+  check("or, at the end of the row, the one to its left", rp.active, review.id)
+  rp.close([review.id])
+  check("closing the last tab shuts the panel", [rp.open, rp.tabs.length], [false, 0])
+  check("and every closed tab was let go of", gone.length, 3)
 
-console.log("\nThe map cannot grow without bound")
-{
-  /*
-   * The reference caps it at 50 keys and evicts by last touch, pinning the
-   * session that is open. The pause is because the stamp is a millisecond
-   * clock: without it every key in this loop is written in the same tick and
-   * "the oldest goes" has nothing to sort on.
-   */
-  const before = stripKeys().length
-  const oldest = stripKey("D:/aged", "s0")!
-  writeStrip(oldest, { all: ["context"], active: "context" })
-  await new Promise((done) => setTimeout(done, 4))
-  for (let index = 0; index < 60; index += 1) {
-    writeStrip(stripKey("D:/bulk", `s${index}`)!, { all: [], active: "review" })
-  }
-  check("the map stops at fifty keys", stripKeys().length, 50)
-  check("and the oldest entry is the one that went", readStrip(oldest).all, [])
-  check("while the session just written is kept", readStrip(stripKey("D:/bulk", "s59")!).active, "review")
-  check("which is fewer than were written", before + 61 > 50, true)
+  const terminal = rp.openTool("terminal")
+  rp.setScope("s2")
+  check("another conversation starts with no tabs and the panel shut", [rp.tabs.length, rp.open], [0, false])
+  rp.setScope("s1")
+  check("coming back hands the conversation its tabs", [rp.tabs.map((tab) => tab.id), rp.open], [[terminal.id], true])
+
+  rp.setScope(undefined)
+  rp.openTool("browser")
+  const before = gone.length
+  rp.setScope("s1")
+  check("tabs opened on the home screen go when a conversation is entered", gone.length, before + 1)
+
+  rp.toggleFullscreen()
+  check("the open panel expands", rp.fullscreen, true)
+  rp.toggleOpen()
+  check("and putting it away lets the expansion go", [rp.open, rp.fullscreen], [false, false])
+  rp.toggleFullscreen()
+  check("a shut panel does not expand", rp.fullscreen, false)
+
+  rp.openDiff("3 files", "@@ -1 +1 @@", "live-edit")
+  check("a diff opens as a tab of its own", rp.activeTab?.type, "diff")
+  rp.toggleDiff("3 files", "@@ -1 +1 @@", "live-edit")
+  check("asking for the same diff while it is on show puts the panel away", rp.open, false)
+  rp.toggleDiff("4 files", "@@ -2 +2 @@", "live-edit")
+  check("asking again brings back the same tab, updated", [rp.tabs.filter((tab) => tab.type === "diff").length, rp.activeTab?.name], [1, "4 files"])
+
+  rp.forget("s1")
 }
 
 // --------------------------------------------------------------- the seams
@@ -241,16 +237,6 @@ check(
 
 const app = read("src/renderer/src/App.vue")
 check("App.vue is what hands the composer down", app.includes("provideRestoreDraft("), true)
-check(
-  "the panel's tabs are read per session",
-  /const strip = computed\(\(\) => readStrip\(tabsKey\.value\)\)/.test(app),
-  true,
-)
-check(
-  "and nothing resets them on a session change",
-  /watch\(\s*\(\) => app\.current\?\.id,\s*\(\) => \{\s*contextTab\.value = false/.test(app),
-  false,
-)
 
 
 /*

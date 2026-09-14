@@ -152,8 +152,12 @@ const api = {
     ipcRenderer.send("mcode:browser-bounds", bounds),
   browserClose: (): void => ipcRenderer.send("mcode:browser-close"),
   browserNavigate: (input: string) => ipcRenderer.invoke("mcode:browser-navigate", input),
-  browserAct: (what: "back" | "forward" | "reload" | "forceReload" | "stop") =>
+  browserAct: (what: "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset") =>
     ipcRenderer.invoke("mcode:browser-act", what),
+  /** The open page onto the clipboard; false when there was nothing to take. */
+  browserScreenshot: (): Promise<boolean> => ipcRenderer.invoke("mcode:browser-screenshot"),
+  /** Clears the browser's cookies or its cache; resolves to "" or the reason it failed. */
+  browserClearSite: (what: "cookies" | "cache"): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-site", what),
   browserTab: (what: "new" | "select" | "close", id?: string) =>
     ipcRenderer.invoke("mcode:browser-tab", what, id),
   /** Clears the browser panel's site data and cache; resolves to "" or the reason it failed. */
@@ -184,7 +188,6 @@ const api = {
       "settings",
       "terminal",
       "sidebar",
-      "files",
       "abort",
       "model",
       "delete-session",

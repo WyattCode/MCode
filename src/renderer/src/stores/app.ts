@@ -20,15 +20,6 @@ import { Client } from "../lib/client"
 import { t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
 
-/** One reviewer's remark, against a file and a line in its diff. */
-export interface ReviewNote {
-  id: string
-  file: string
-  line: number
-  text: string
-  created: number
-}
-
 export const useApp = defineStore("app", () => {
   const client = shallowRef<Client>()
   const connected = ref(false)
@@ -368,55 +359,6 @@ export const useApp = defineStore("app", () => {
       pendingPermissions.value = next
     }
     noteError(sessionID, undefined)
-    if (notes.value.has(sessionID)) {
-      const next = new Map(notes.value)
-      next.delete(sessionID)
-      notes.value = next
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Review notes
-  // -------------------------------------------------------------------------
-
-  /**
-   * A remark against one line of a diff.
-   *
-   * These are the reviewer's working notes, not part of the conversation: they
-   * are written while reading a change and are meant to be handed to the model
-   * in one go. Kept in the window rather than on disk for that reason - once
-   * they have been sent they have served their purpose.
-   */
-  const notes = ref(new Map<string, ReviewNote[]>())
-
-  /** The notes on the open session, oldest first. */
-  const sessionNotes = computed(() => (currentID.value ? (notes.value.get(currentID.value) ?? []) : []))
-
-  function addNote(file: string, line: number, text: string) {
-    const session = currentID.value
-    const body = text.trim()
-    if (!session || !body) return
-    const list = notes.value.get(session) ?? []
-    notes.value.set(session, [
-      ...list,
-      { id: `n${Date.now()}${list.length}`, file, line, text: body, created: Date.now() },
-    ])
-    // A Map is not deeply reactive on its own; replacing it is what redraws.
-    notes.value = new Map(notes.value)
-  }
-
-  function removeNote(id: string) {
-    const session = currentID.value
-    if (!session) return
-    notes.value.set(session, (notes.value.get(session) ?? []).filter((note) => note.id !== id))
-    notes.value = new Map(notes.value)
-  }
-
-  function clearNotes() {
-    const session = currentID.value
-    if (!session) return
-    notes.value.delete(session)
-    notes.value = new Map(notes.value)
   }
 
   /** Puts the row back on boot, minus anything deleted while the app was shut. */
@@ -1444,6 +1386,21 @@ export const useApp = defineStore("app", () => {
     sideError.value = undefined
     sideMessages.value = []
     sidePartIndex.clear()
+    return chosen.id
+  }
+
+  /**
+   * Shows a side conversation that already exists: the one a right panel chat
+   * tab holds, coming back to it after another tab or another conversation.
+   */
+  async function showSide(sessionID: string) {
+    const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
+    if (!result) return
+    sideID.value = sessionID
+    sideError.value = undefined
+    sideMessages.value = result.messages
+    sidePartIndex.clear()
+    result.messages.forEach(sideReindex)
   }
 
   function closeSide() {
@@ -1483,10 +1440,6 @@ export const useApp = defineStore("app", () => {
     tabSessions,
     closeTab,
     moveTab,
-    sessionNotes,
-    addNote,
-    removeNote,
-    clearNotes,
     messages,
     busy,
     compacting,
@@ -1520,6 +1473,7 @@ export const useApp = defineStore("app", () => {
     sideStreaming,
     sideError,
     openSide,
+    showSide,
     closeSide,
     start,
     open,

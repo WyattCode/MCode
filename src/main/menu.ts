@@ -113,7 +113,6 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
       submenu: [
         { label: L("menu.terminal", "Toggle Terminal"), ...shown("CmdOrCtrl+`"), click: send("menu:terminal") },
         { label: L("menu.sidebar", "Toggle Sidebar"), ...shown("CmdOrCtrl+B"), click: send("menu:sidebar") },
-        { label: L("menu.files", "Toggle File Tree"), ...shown("CmdOrCtrl+\\"), click: send("menu:files") },
         { type: "separator" },
         /*
          * Shown, not claimed: MiMo gives Ctrl+R to the browser panel, and a role's

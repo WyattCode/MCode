@@ -890,6 +890,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       } satisfies Handled<"file.read">
     }
 
+    case "file.write": {
+      // Only over a file that is already there: the files tab edits, it does not create.
+      const resolved = path.resolve(request.path)
+      const existing = await fs.stat(resolved)
+      if (!existing.isFile()) throw new Error(`Not a file: ${resolved}`)
+      await fs.writeFile(resolved, request.content, "utf8")
+      return { path: resolved } satisfies Handled<"file.write">
+    }
+
     case "shell.open": {
       const group = await shellGroup(runtime, request)
       const cwd = request.cwd ? resolveInside(group.directory, request.cwd) : group.directory

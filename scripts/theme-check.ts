@@ -116,13 +116,9 @@ const PHYSICAL = /^\s*(padding-(?:left|right)|margin-(?:left|right)|border-(?:le
  * The title bar's are not the app's decision: Windows paints its caption buttons
  * at one end and reports where, and macOS puts its traffic lights on the left
  * whatever the language - so the room reserved for them has to be reserved on
- * the side the platform actually used. The file panel's pair is a bidi trick,
- * not a layout: a path is turned around so the ellipsis eats the front of it,
- * and the alignment has to be turned back by hand.
+ * the side the platform actually used.
  */
-const PHYSICAL_ALLOWED = new Set([
-  "FilePanel.vue:text-align",
-])
+const PHYSICAL_ALLOWED = new Set<string>([])
 
 // parts/ as well as components/ - a message part is as mirrored as a dialog is.
 const styledFiles = [

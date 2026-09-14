@@ -160,7 +160,6 @@ function defaults(): AppConfig {
     pinchZoom: false,
     releaseNotes: true,
     migrations: [],
-    showFileTree: true,
     showTerminal: true,
     shell: "",
     customProviders: [],

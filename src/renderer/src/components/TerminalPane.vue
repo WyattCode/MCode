@@ -61,7 +61,8 @@ const props = defineProps<{
   /** On the home screen, the project folder picked there, which the shell starts in. */
   directory?: string
 }>()
-const emit = defineEmits<{ exited: []; opened: [shellID: string, cwd: string] }>()
+/* `used`: something was typed into the shell for the first time, which MiMo asks about before closing it. */
+const emit = defineEmits<{ exited: []; opened: [shellID: string, cwd: string]; used: [] }>()
 
 const app = useApp()
 
@@ -313,6 +314,7 @@ onMounted(async () => {
    * answered as usual.
    */
   let quietUntil = Date.now() + 3000
+  let used = false
 
   if (props.shellID) {
     /*
@@ -374,6 +376,11 @@ onMounted(async () => {
   terminal.onData((data) => {
     if (replaying || !shellID.value) return
     if (Date.now() < quietUntil && /^\x1b\[\?[\d;]*c$/.test(data)) return
+    // Focus reports are the terminal talking, not the reader.
+    if (!used && data !== "\x1b[I" && data !== "\x1b[O") {
+      used = true
+      emit("used")
+    }
     void client.request({ type: "shell.input", shellID: shellID.value, data })
   })
 

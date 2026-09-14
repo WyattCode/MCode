@@ -909,8 +909,6 @@ export interface AppConfig {
    * its sessions are kept, so reopening the directory brings them all back.
    */
   closedProjects: string[]
-  /** How wide the browser panel is, when it has been dragged. */
-  browserWidth?: number
   /** Optional display name per project directory, keyed by absolute path. */
   projectNames: Record<string, string>
   /** Per-project badge artwork, stored as a data URL so it survives a move. */
@@ -1088,8 +1086,6 @@ export interface AppConfig {
    */
   migrations: string[]
 
-  /** Whether a session offers the review panel at all. */
-  showFileTree: boolean
   /**
    * The bottom-panel toggle in the bar, on to begin with.
    *
@@ -1405,6 +1401,8 @@ export type Request =
   | { type: "git.revert"; directory: string; file: string }
   | { type: "file.list"; directory: string; query?: string }
   | { type: "file.read"; path: string }
+  /* A text file saved from the right panel's files tab. */
+  | { type: "file.write"; path: string; content: string }
   /*
    * A conversation's shells work in its folder. The home screen's bottom panel
    * has no conversation yet, so it names the project folder it has picked.
@@ -1548,6 +1546,7 @@ export interface ResponseMap {
     mime?: string
     data?: string
   }
+  "file.write": { path: string }
   "shell.open": { shellID: string; cwd: string }
   "shell.input": Record<string, never>
   "shell.resize": Record<string, never>

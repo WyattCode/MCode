@@ -17,11 +17,8 @@ import InfoPanel from "./components/InfoPanel.vue"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import ArtifactsView from "./components/ArtifactsView.vue"
 import PluginsView from "./components/PluginsView.vue"
-import BrowserPanel from "./components/BrowserPanel.vue"
-import RightLauncher from "./components/RightLauncher.vue"
-import SideChat from "./components/SideChat.vue"
+import RightPanel from "./components/RightPanel.vue"
 import RevertDock from "./components/RevertDock.vue"
-import FilePanel from "./components/FilePanel.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
 import PermissionDialog from "./components/PermissionDialog.vue"
 import SettingsDialog from "./components/SettingsDialog.vue"
@@ -57,7 +54,8 @@ import { loadReleaseHighlights, normalizeVersion, type Highlight } from "./lib/c
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
-import { closeTab, openTab, readStrip, stripKey, writeStrip } from "./lib/session-tabs"
+import { useRightPanel } from "./stores/right-panel"
+import { editedFiles } from "./lib/edited-files"
 import { notify, notifyFailure } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
@@ -77,18 +75,11 @@ const app = useApp()
 const view = ref<"home" | "session" | "artifacts" | "plugins">("home")
 /** The 2.0 side column; up unless it has been put away. */
 const leftPanel = ref(true)
-/*
- * Shut to begin with, as opencode's is: a session opens on the conversation
- * alone and the review is asked for. This used to start open, so every new
- * window gave half its width to a panel that, on a project with no changes,
- * said only that there were none.
- */
 /* The project a task typed on the home screen will be created in. */
 const homeDirectory = ref<string>()
 /* The folder the home screen has picked, which its bottom panel's terminal opens in. */
 const homeShellDirectory = ref<string>()
 
-const rightPanel = ref(false)
 
 /*
  * The info card beside a conversation (2.0, after Xiaomi MiMo's): the plan,
@@ -120,68 +111,6 @@ function toggleInfo() {
 /* Only beside a conversation: the home screen and an empty session have nothing to list. */
 const infoShowing = computed(() => infoOpen.value && !isHome.value && !empty.value)
 
-/*
- * The file column inside the review panel. Its own thing, because opencode
- * gives it its own shortcut: Ctrl+Shift+R shows or hides the panel, Ctrl+\\
- * folds the column away inside it.
- */
-/*
- * Collapsed. This is the tree inside the review panel, and opencode's own
- * `showFileTree` default is false - a diff opens using the panel's whole
- * width, and the list is unfolded when someone wants to navigate by file.
- */
-const fileTreeOpen = ref(false)
-
-/*
- * How wide the review panel is, once someone has dragged the edge. Held here
- * rather than in the panel so it survives the panel being closed and reopened.
- */
-const reviewWidth = ref<number>()
-
-/*
- * The right-hand panel's tab strip: which tabs it offers, and which is up.
- *
- * Two bits rather than one. `contextTab` is whether Context is in the strip at
- * all - opencode puts it there only once something has asked for it and takes
- * it out again when it is closed - and `panelTab` is which of the two is being
- * read. Held apart because opencode leaves the Context tab in the strip while
- * the review is being read, so going back to the figures is one click on a tab
- * that is still there rather than a fresh trip through the ring.
- *
- * Both live here rather than in the panel because the ring in the session
- * header is what usually opens the Context tab, and the header is a sibling of
- * the panel: neither of the two can see the other, and only this can see both.
- *
- * Neither is a plain ref any more. They read and write one entry of a
- * per-session map (lib/session-tabs.ts), which is how the reference holds the
- * same state - so a Context tab opened in one conversation is still open when
- * that conversation is returned to, and is not there in the next one. What used
- * to do that job, a watch emptying both on every session change, is gone: the
- * map already answers per session, and the watch would now be erasing the very
- * thing that is being remembered.
- */
-/** The one tab this app has beside the permanent review. */
-const CONTEXT_TAB = "context"
-
-const tabsKey = computed(() => stripKey(app.current?.directory, app.current?.id))
-const strip = computed(() => readStrip(tabsKey.value))
-
-const contextTab = computed({
-  get: () => strip.value.all.includes(CONTEXT_TAB),
-  set: (open: boolean) =>
-    writeStrip(tabsKey.value, open ? openTab(strip.value, CONTEXT_TAB) : closeTab(strip.value, CONTEXT_TAB)),
-})
-
-const panelTab = computed<"review" | "context">({
-  get: () => (strip.value.active === CONTEXT_TAB ? "context" : "review"),
-  set: (tab) => writeStrip(tabsKey.value, { all: strip.value.all, active: tab }),
-})
-
-/*
- * Turned off entirely, the panel is not something a shortcut should be able to
- * bring back - the setting is the answer, not a suggestion.
- */
-const showFileTree = computed(() => app.config?.showFileTree !== false)
 /*
  * A version that has been fetched and is waiting to be run.
  *
@@ -311,9 +240,8 @@ watch(
  *
  * opencode mounts its find on the file and diff viewers; this app has one here
  * because the conversation is the long scrolling thing a reader most often
- * wants to search. FilePanel and ReviewPatch can each mount a second host in
- * two lines when someone owns those files - the module keeps a set of hosts and
- * hands Ctrl+F to whichever one the focus is in.
+ * wants to search. The module keeps a set of hosts and hands Ctrl+F to
+ * whichever one the focus is in, so another viewer can mount one of its own.
  */
 const mainPane = ref<HTMLElement>()
 const find = createFind({ wrapper: () => mainPane.value, hidden: foldedMatches })
@@ -683,7 +611,7 @@ const retiredChords = computed(() => {
 })
 
 const drawer = ref<InstanceType<typeof TerminalDrawer>>()
-const browserPanel = ref<InstanceType<typeof BrowserPanel>>()
+const rightPanel = ref<InstanceType<typeof RightPanel>>()
 /* Set while the project picker is standing in for a workspace picker. */
 const workspaceChoices = ref<string[]>([])
 
@@ -971,21 +899,6 @@ const isHome = computed(
 /** Empty transcript shows the hero instead of a blank scroller. */
 const empty = computed(() => app.messages.length === 0)
 
-/** Whether the review side of the right-hand panel is on offer at all. */
-const canReview = computed(() => rightPanel.value && showFileTree.value)
-
-/*
- * The panel is up when either of its tabs has been asked for.
- *
- * One expression, used both for mounting the panel and for the class that
- * drops the workspace panel out of a narrow row. Those were written out twice
- * and did not say quite the same thing, so the row could be told the panel was
- * there while nothing was mounted.
- */
-const reviewPanelUp = computed(
-  () => !isHome.value && !onboarding.value && (canReview.value || contextTab.value),
-)
-
 /*
  * The terminal docks along the foot of the main column. Not during onboarding;
  * on the home screen, as MiMo allows, once there is a project folder for it to
@@ -996,187 +909,131 @@ const terminalUp = computed(
 )
 
 /*
- * Which tab is actually up, as against the one last picked.
- *
- * Opencode resolves this the same way and in the same order: honour the active
- * tab while it is still in the strip, otherwise fall back to the review, and
- * only then to whatever is left. It matters because the review side can be
- * taken away underneath the reader - by the title bar's toggle, or by the file
- * tree setting - while `panelTab` still says "review".
+ * MiMo's right panel (stores/right-panel.ts, RightPanel.vue): one panel of tabs
+ * beside the conversation. Its tabs belong to the conversation on show - the
+ * home screen's to nothing - and it is put away on the artifacts and plugins
+ * pages, as MiMo's is on its own pages.
  */
-const shownTab = computed<"review" | "context">(() => {
-  if (panelTab.value === "context" && contextTab.value) return "context"
-  if (canReview.value) return "review"
-  return "context"
+const rp = useRightPanel()
+watch(
+  () => (isHome.value || onboarding.value ? undefined : app.currentID),
+  (scope) => rp.setScope(scope),
+  { immediate: true },
+)
+watch([isArtifacts, isPlugins], ([artifacts, plugins]) => {
+  if (artifacts || plugins) rp.setOpen(false)
 })
 
-/*
- * What the ring in the session header reports as pressed.
- *
- * The figures being up, not merely asked for: with the review showing over the
- * top of an open Context tab the ring is not what the reader is looking at, and
- * saying otherwise made the next press appear to do nothing.
- */
-const contextShowing = computed(() => reviewPanelUp.value && shownTab.value === "context")
+/* A conversation that is gone takes its tabs' shells and pages with it. */
+watch(
+  () => app.sessions.map((session) => session.id),
+  (now, before) => {
+    for (const id of before ?? []) if (!now.includes(id)) rp.forget(id)
+  },
+)
 
-/*
- * The ring, and the palette entry behind it.
- *
- * Pressing it while the figures are up puts the tab away; the panel goes with
- * it only when nothing else was holding the panel open, which is what opencode
- * does - it remembers whether the ring is what opened the panel and closes it
- * again only in that case. Here `canReview` is that memory: if the panel was
- * already up for the review, dropping the tab leaves the review showing.
- */
-function toggleContext() {
-  if (contextShowing.value) {
-    contextTab.value = false
-    panelTab.value = "review"
-    return
-  }
-  contextTab.value = true
-  panelTab.value = "context"
-}
+/* The panel on screen beside the main column, whose title row then ends at the column. */
+const panelBeside = computed(() => rp.open && !onboarding.value)
 
-/*
- * The title bar's button and Ctrl+Shift+R, which put the whole panel away.
- *
- * The Context tab goes with it. Opencode mounts its tab strip inside the review
- * panel, so closing the panel takes every tab with it - and without this the
- * button read as broken: with the figures up it would drop the review side and
- * leave the panel sitting there, having apparently done nothing.
- *
- * `rightPanel` alone is not the question any more, because the panel can be up
- * on the Context tab with `rightPanel` false. What is being toggled is whether
- * the panel is on screen at all.
- */
-function toggleReviewPanel() {
-  if (reviewPanelUp.value) {
-    rightPanel.value = false
-    contextTab.value = false
-    panelTab.value = "review"
-    return
-  }
-  rightPanel.value = true
-}
+/* What the panel's tools work in: the conversation's project, or the one picked on the home screen. */
+const panelDirectory = computed(() => (isHome.value ? homeShellDirectory.value : app.current?.directory))
 
-/*
- * MiMo's side panel, as its title bar's one button and Ctrl+Alt+B have it: with
- * nothing showing on the right, opening it shows the launcher; with the review
- * or the launcher up, the same press puts it away.
- */
-const launcherOpen = ref(false)
-const sidePanelUp = computed(() => !onboarding.value && (reviewPanelUp.value || launcherOpen.value))
-/* The launcher on screen: asked for, and not displaced by the review it gives way to. */
-const launcherShown = computed(() => launcherOpen.value && !reviewPanelUp.value && !onboarding.value)
-const filePanel = ref<InstanceType<typeof FilePanel>>()
-
-watch(reviewPanelUp, (up) => {
-  if (up) launcherOpen.value = false
-})
-
-/*
- * The panel standing under the side panel toggle at the window's right edge:
- * the last of the columns beside the conversation, in the order they are laid
- * out. It carries MiMo's expand button.
- */
-type EdgePanel = "launcher" | "review" | "browser" | "chat"
-const edgePanel = computed<EdgePanel | undefined>(() => {
-  if (reviewPanelUp.value) return "review"
-  if (launcherShown.value) return "launcher"
-  if (browserOpen.value && browserAllowed.value) return "browser"
-  if (sideChat.value && app.sideID) return "chat"
-  return undefined
-})
-
-/*
- * Something stands beside the main column on its right, so the column's title
- * row ends at the column rather than under the side panel toggle.
- */
-const panelBeside = computed(() => edgePanel.value !== undefined)
-
-/*
- * MiMo's 展开面板: that panel over the whole of the main column. It holds when
- * another tool takes the panel's place, as MiMo's does across its tabs, and
- * lets go once nothing stands beside the column.
- */
-const sidePanelFull = ref(false)
-const fullPanel = computed(() => (sidePanelFull.value ? edgePanel.value : undefined))
-
+/* The title bar's button and Ctrl+Alt+B: the panel, with its launcher while it holds no tabs. */
 function toggleSidePanel() {
-  if (reviewPanelUp.value) {
-    toggleReviewPanel()
-    launcherOpen.value = false
-    return
-  }
-  launcherOpen.value = !launcherOpen.value
+  if (!onboarding.value) rp.toggleOpen()
 }
 
-type LaunchTool = "review" | "files" | "chat" | "browser" | "terminal"
+/* MiMo's tool shortcuts ask for a conversation: on the home screen they do nothing. */
+const inConversation = computed(() => !isHome.value && !onboarding.value && Boolean(app.currentID))
 
-/* What the current screen can hold: the review, files and side chat need a conversation; the terminal a workspace. */
-const launchAvailable = computed<Record<LaunchTool, boolean>>(() => {
-  const inConversation = !isHome.value && Boolean(app.currentID)
-  return {
-    review: inConversation && showFileTree.value,
-    files: inConversation && showFileTree.value,
-    chat: inConversation,
-    browser: browserAllowed.value,
-    // The home screen's terminal opens in the project picked there.
-    terminal: isHome.value ? Boolean(homeShellDirectory.value) : true,
-  }
-})
+/* Ctrl+Shift+G: another review tab. */
+function openReviewTab() {
+  if (inConversation.value) rp.openTool("review")
+}
 
-async function launch(tool: LaunchTool) {
-  if (!launchAvailable.value[tool]) return
-  launcherOpen.value = false
-  if (tool === "review") openReviewTab()
-  else if (tool === "files") {
-    openReviewTab()
-    await nextTick()
-    filePanel.value?.showTab("files")
-  } else if (tool === "chat") {
-    if (!sideChat.value) await toggleSideChat()
-  } else if (tool === "browser") await openBrowserTab()
+/* Ctrl+P: the files tab, the one there is. */
+function openFilesTab() {
+  if (inConversation.value) rp.openTool("files")
+}
+
+/* Ctrl+Alt+S: another side chat. */
+function openSideChatTab() {
+  if (inConversation.value) rp.openTool("chat")
+}
+
+/* The composer's plus menu: MiMo opens its terminal as a tab of the panel. */
+function openTerminalTab() {
+  if (inConversation.value) rp.openTool("terminal")
   else terminalOpen.value = true
 }
 
-/* Ctrl+T, MiMo's: a new page in the browser panel, which opens with one if it was shut. */
-async function openBrowserTab() {
+/* Ctrl+T: another browser tab. */
+function openBrowserTab() {
+  if (inConversation.value && browserAllowed.value) rp.openTool("browser")
+}
+
+/*
+ * Ctrl+Shift+B, MiMo's browser toggle: put the panel away while a browser tab is
+ * the one on show; otherwise bring the browser tab there is forward, or open one.
+ */
+function toggleBrowserTab() {
   if (!browserAllowed.value) return
-  if (!browserOpen.value) {
-    browserOpen.value = true
+  if (rp.open && rp.activeTab?.type === "browser") {
+    rp.setOpen(false)
     return
   }
-  await browserPanel.value?.newTab()
+  const existing = rp.tabs.find((tab) => tab.type === "browser")
+  if (existing) {
+    rp.activate(existing.id)
+    rp.setOpen(true)
+  } else openBrowserTab()
 }
 
-/* Ctrl+L goes to the browser's address bar while there is one to type in, else to the box. */
+/* A browser tab on show, for the keys that reach into it. */
+const browserShowing = computed(() => rp.open && rp.activeTab?.type === "browser")
+
+/* Ctrl+L goes to the browser's address bar while a browser tab is showing, else to the box. */
 function focusBrowserAddress() {
-  if (browserOpen.value && browserPanel.value) {
-    browserPanel.value.focusAddress()
-    return
-  }
-  composer.value?.focus()
+  const pane = browserShowing.value ? rightPanel.value?.activeBrowser() : undefined
+  if (pane) pane.focusAddress()
+  else composer.value?.focus()
 }
 
-/* The review, as its own tab in the side panel, on MiMo's Ctrl+Shift+G. */
-function openReviewTab() {
-  panelTab.value = "review"
-  rightPanel.value = true
+function reloadBrowser(force = false) {
+  if (browserShowing.value) void rightPanel.value?.activeBrowser()?.reload(force)
 }
 
-/* Whether the review is what the side panel is showing, which the pill over the composer reports. */
-const reviewShowing = computed(() => reviewPanelUp.value && shownTab.value === "review")
+/*
+ * The pill over the composer: MiMo's diff of what this conversation's own tools
+ * changed, as a tab of its own - updated when asked again, put away when asked
+ * while it is the tab on show.
+ */
+const LIVE_EDIT = "live-edit"
+const liveEditShowing = computed(
+  () => rp.open && rp.activeTab?.type === "diff" && rp.activeTab.source === LIVE_EDIT,
+)
 
-/* The pill over the composer: the review of what changed, opened or put away. */
 function toggleLiveReview() {
-  if (reviewShowing.value) toggleReviewPanel()
-  else openReviewTab()
+  const parts = app.messages.flatMap((message) => (message.role === "assistant" ? message.parts : []))
+  const diffs: string[] = []
+  for (const part of parts) {
+    if (part.type !== "tool" || !["edit", "write", "patch"].includes(part.name) || part.status === "error") continue
+    const diff = part.metadata?.diff
+    if (typeof diff === "string" && diff) diffs.push(diff)
+  }
+  const count = editedFiles(parts, app.current?.directory).files.length
+  rp.toggleDiff(t("composer.filesChanged", { n: count }), diffs.join("\n"), LIVE_EDIT)
 }
 
-/* The "edited N files" card at the end of a turn: 审阅 opens the review, a file name opens that file. */
-watch(reviewRequest, () => openReviewTab())
+/* The "edited N files" card at the end of a turn: 审阅 brings the review tab there is forward, or opens one. */
+watch(reviewRequest, () => {
+  if (!inConversation.value) return
+  const review = rp.tabs.find((tab) => tab.type === "review")
+  if (review) {
+    rp.activate(review.id)
+    rp.setOpen(true)
+  } else rp.openTool("review")
+})
 watch(fileRequest, (asked) => {
   const root = app.current?.directory
   if (asked && root) void window.mcode.openFile(root, asked.path)
@@ -1985,85 +1842,17 @@ async function compactSession() {
   }
 }
 
-/**
- * Turns the review's notes into a message and hands it to the composer.
- *
- * Not sent outright: the notes are the reviewer's shorthand, and being able to
- * add a sentence before pressing enter is the difference between a list of
- * complaints and an instruction.
- */
-function sendNotes(notes: { file: string; line: number; text: string }[]) {
-  if (!notes.length) return
-  const byFile = new Map<string, typeof notes>()
-  for (const note of notes) byFile.set(note.file, [...(byFile.get(note.file) ?? []), note])
-
-  const lines: string[] = []
-  for (const [file, list] of byFile) {
-    lines.push(`${file}`)
-    for (const note of [...list].sort((a, b) => a.line - b.line)) {
-      lines.push(`  L${note.line}: ${note.text}`)
-    }
-  }
-  composer.value?.insert(lines.join("\n"))
-  app.clearNotes()
-  /* The notes are in the composer now, so the panel gets out of the way of
-     reading them - the whole panel, since a Context tab left open in the strip
-     would have held it on screen doing exactly what this is trying to undo. */
-  rightPanel.value = false
-  contextTab.value = false
-  panelTab.value = "review"
-}
-
 /* The artifacts page is a place, so it is worth being able to come back to. */
 function goArtifacts() {
   view.value = "artifacts"
   push({ view: "artifacts" })
 }
 
-/*
- * The browser panel, along the far side of the workspace.
- *
- * Not remembered across launches on purpose: it holds a live page, and an app
- * that reopened a website on its own every morning would be making a request
- * nobody asked for that morning.
- */
-const browserOpen = ref(false)
-
-/* The in-app browser, unless it has been switched off in settings - which also puts it away. */
+/* The in-app browser, unless it has been switched off in settings - which also closes its tabs. */
 const browserAllowed = computed(() => app.config?.browserEnabled !== false)
 watch(browserAllowed, (allowed) => {
-  if (!allowed) browserOpen.value = false
+  if (!allowed) rp.close(rp.tabs.filter((tab) => tab.type === "browser").map((tab) => tab.id))
 })
-
-/*
- * A side chat: a second conversation beside the open one, as MiMo has it.
- *
- * Opening it starts a conversation in the same project that no list shows -
- * or takes up an empty one this conversation already has - with its own
- * transcript and box, and the open conversation stays where it is in the
- * middle. Closing it puts the side chat away.
- */
-const sideChat = ref(false)
-
-/*
- * The expanded side panel lets go once nothing stands beside the main column.
- * Here rather than beside `sidePanelFull`: a watch reads its source at once,
- * and the browser and side chat state it reads is only declared above.
- */
-watch(edgePanel, (panel) => {
-  if (!panel) sidePanelFull.value = false
-})
-
-async function toggleSideChat() {
-  if (sideChat.value) {
-    sideChat.value = false
-    app.closeSide()
-    return
-  }
-  if (!app.currentID) return
-  sideChat.value = true
-  await app.openSide(app.currentID)
-}
 
 /*
  * MiMo's priority filter: the side column led by what wants attention, then
@@ -2369,20 +2158,6 @@ const bindableCommands = computed(() => {
       run: shareSession,
     },
     {
-      /*
-       * The Context view, without reaching for the ring.
-       *
-       * The ring is the way in that opencode gives, and it is only drawn once a
-       * turn has reported what it spent - so on a session that has not answered
-       * yet, and for anyone working without a pointer, this is the only door.
-       */
-      id: "session.context",
-      group: "key.groupSession",
-      title: t("context.usage.view"),
-      enabled: hasSession && app.messages.length > 0,
-      run: toggleContext,
-    },
-    {
       id: "session.export",
       group: "key.groupSession",
       title: t("cmd.export"),
@@ -2487,32 +2262,39 @@ const bindableCommands = computed(() => {
       title: t("key.browserPanel"),
       hint: "Ctrl+Shift+B",
       enabled: browserAllowed.value,
-      run: () => (browserOpen.value = browserAllowed.value && !browserOpen.value),
+      run: toggleBrowserTab,
     },
-    { id: "browser.tab", group: "key.groupGeneral", title: t("key.browserTab"), hint: "Ctrl+T", run: () => void openBrowserTab() },
+    {
+      id: "browser.tab",
+      group: "key.groupGeneral",
+      title: t("key.browserTab"),
+      hint: "Ctrl+T",
+      enabled: inConversation.value && browserAllowed.value,
+      run: openBrowserTab,
+    },
     { id: "browser.address", group: "key.groupGeneral", title: t("key.browserAddress"), hint: "Ctrl+L", run: focusBrowserAddress },
     {
       id: "browser.reload",
       group: "key.groupGeneral",
       title: t("key.browserReload"),
       hint: "Ctrl+R",
-      enabled: browserOpen.value,
-      run: () => void browserPanel.value?.reload(),
+      enabled: browserShowing.value,
+      run: () => reloadBrowser(),
     },
     {
       id: "browser.forceReload",
       group: "key.groupGeneral",
       title: t("key.browserForceReload"),
       hint: "Ctrl+Shift+R",
-      enabled: browserOpen.value,
-      run: () => void browserPanel.value?.reload(true),
+      enabled: browserShowing.value,
+      run: () => reloadBrowser(true),
     },
     {
       id: "view.review",
       group: "key.groupSession",
       title: t("key.reviewTab"),
       hint: "Ctrl+Shift+G",
-      enabled: inWorkspace,
+      enabled: inConversation.value,
       run: openReviewTab,
     },
     {
@@ -2639,13 +2421,9 @@ const bindableCommands = computed(() => {
       group: "key.groupNavigation",
       title: t("cmd.openFile"),
       hint: "Ctrl+P",
-      /*
-       * There is nothing to list without a project open. The palette's file
-       * mode reads the current session's directory, so on the launcher this
-       * offered a picker that came up empty and a choice that did nothing.
-       */
-      enabled: inWorkspace,
-      run: () => openPalette("files"),
+      // MiMo's: the right panel's files tab, which needs a conversation to hold it.
+      enabled: inConversation.value,
+      run: openFilesTab,
     },
     {
       id: "app.attachFile",
@@ -2797,14 +2575,6 @@ const bindableCommands = computed(() => {
       run: () => void stepProject(1),
     },
     {
-      id: "fileTree.toggle",
-      group: "key.groupNavigation",
-      title: t("key.toggleTree"),
-      hint: "Ctrl+\\",
-      enabled: inWorkspace,
-      run: () => (fileTreeOpen.value = !fileTreeOpen.value),
-    },
-    {
       id: "theme.cycle",
       group: "key.groupGeneral",
       title: t("cmd.cycleTheme"),
@@ -2857,8 +2627,8 @@ const bindableCommands = computed(() => {
       group: "key.groupSession",
       title: t("side.chat"),
       hint: "Ctrl+Alt+S",
-      enabled: hasSession,
-      run: toggleSideChat,
+      enabled: inConversation.value,
+      run: openSideChatTab,
     },
     {
       id: "view.priority",
@@ -3192,11 +2962,11 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
-  /* The conversation put aside, on the reference's own chord. */
+  /* A side chat tab, on MiMo's chord. */
   if (mod && event.altKey && event.key.toLowerCase() === "s") {
     if (modalOpen.value) return
     event.preventDefault()
-    toggleSideChat()
+    openSideChatTab()
     return
   }
 
@@ -3293,7 +3063,7 @@ function onKeydown(event: KeyboardEvent) {
   if (event.shiftKey) {
     const shifted: Record<string, () => void> = {
       // MiMo's: a reload that skips the cache, while there is a page to reload.
-      r: () => void browserPanel.value?.reload(true),
+      r: () => reloadBrowser(true),
       // MiMo's model picker and working directory.
       m: () => composer.value?.openModelMenu(),
       c: copyWorkingDirectory,
@@ -3325,8 +3095,8 @@ function onKeydown(event: KeyboardEvent) {
       // The scheme, then the palette. Stepping rather than opening a dialog is
       // what makes them worth a key: the answer is on screen immediately.
       s: () => void cycleScheme(),
-      // The browser panel, on the reference's own chord as well.
-      b: () => (browserOpen.value = browserAllowed.value && !browserOpen.value),
+      // MiMo's browser toggle.
+      b: toggleBrowserTab,
       // And the list of all of these, which is a settings page here.
       "?": () => {
         settingsSection.value = "keys"
@@ -3359,8 +3129,8 @@ function onKeydown(event: KeyboardEvent) {
 
   const handlers: Record<string, () => void> = {
     k: () => (searchOpen.value = !searchOpen.value),
-    // The reference's file picker, session search and attach, on its keys.
-    p: () => openPalette("files"),
+    // MiMo's files tab; the reference's session search and attach, on their keys.
+    p: openFilesTab,
     f: () => openPalette("sessions"),
     u: () => composer.value?.pick(),
     b: () => (leftPanel.value = !leftPanel.value),
@@ -3372,19 +3142,11 @@ function onKeydown(event: KeyboardEvent) {
     // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
     t: () => void openBrowserTab(),
     j: () => (terminalOpen.value = !terminalOpen.value),
-    r: () => {
-      if (browserOpen.value) void browserPanel.value?.reload()
-    },
+    r: () => reloadBrowser(),
     o: () => void browse(),
     w: () => {
       if (app.currentID) app.closeTab(app.currentID)
     },
-    /*
-     * Ctrl+backslash folds the file column, not the panel. Hiding the panel is
-     * Ctrl+Shift+R, below - the same split opencode makes, and the reason it
-     * needs two keys is that the two are genuinely different questions.
-     */
-    "\\": () => (fileTreeOpen.value = !fileTreeOpen.value),
     // The browser's address bar while it is open, else the box.
     l: focusBrowserAddress,
     // The model picker, on the key opencode uses for it. There is one picker
@@ -3417,7 +3179,6 @@ const menuCommands: Record<string, () => void> = {
   "next-session": () => void stepSession(1),
   "prev-project": () => void stepProject(-1),
   "next-project": () => void stepProject(1),
-  files: () => (fileTreeOpen.value = !fileTreeOpen.value),
   "open-project": () => void browse(),
   settings: openSettings,
   terminal: () => (terminalOpen.value = !terminalOpen.value),
@@ -3456,7 +3217,6 @@ const MENU_COMMAND_IDS: Record<string, string> = {
   "next-session": "session.next",
   "prev-project": "project.previous",
   "next-project": "project.next",
-  files: "fileTree.toggle",
   "open-project": "project.open",
   settings: "app.settings",
   palette: "command.palette",
@@ -3805,8 +3565,8 @@ onBeforeUnmount(() => {
     <button
       v-if="!onboarding"
       class="side-panel-toggle"
-      :class="{ on: sidePanelUp }"
-      :aria-pressed="sidePanelUp"
+      :class="{ on: rp.open }"
+      :aria-pressed="rp.open"
       :aria-label="t('key.sidePanel')"
       v-tip="{ label: t('key.sidePanel'), hint: 'Ctrl+Alt+B', placement: 'bottom' }"
       @click="toggleSidePanel"
@@ -3821,10 +3581,7 @@ onBeforeUnmount(() => {
       :class="{
         blank: !isHome && !onboarding && empty && !app.error,
         /* The side panel expanded over the main column. */
-        'panel-full': fullPanel !== undefined,
-        /* Counts the panel whichever of its two tabs it is showing: it is the
-           same column taking the same width either way. */
-        'with-review': reviewPanelUp,
+        'panel-full': rp.open && rp.fullscreen,
       }"
     >
       <Sidebar
@@ -3971,7 +3728,7 @@ onBeforeUnmount(() => {
             while a permission card is up, which it would sit on top of.
           -->
           <div v-if="!empty && !app.permission" class="live-edit-anchor">
-            <LiveEditPill :expanded="reviewShowing" @toggle="toggleLiveReview" />
+            <LiveEditPill :expanded="liveEditShowing" @toggle="toggleLiveReview" />
           </div>
           <div id="main-dock" class="main-dock" />
           <Teleport :to="empty && !app.error ? '#hero-dock' : '#main-dock'">
@@ -3980,7 +3737,7 @@ onBeforeUnmount(() => {
               @open-settings="openSettings"
               @connect="connectOpen = true"
               @shell="runShellCommand"
-              @terminal="terminalOpen = true"
+              @terminal="openTerminalTab"
             />
           </Teleport>
         </template>
@@ -4028,85 +3785,22 @@ onBeforeUnmount(() => {
         </div>
       </main>
 
-      <!--
-        The conversation, when it has been put aside. Before the browser, so
-        the two columns read left to right in the order they were opened.
-      -->
-      <SideChat
-        v-if="sideChat && app.sideID"
-        :class="{ 'side-full': fullPanel === 'chat' }"
-        :edge="edgePanel === 'chat'"
-        :full="fullPanel === 'chat'"
-        @fullscreen="sidePanelFull = !sidePanelFull"
-        @close="toggleSideChat"
-        @open-settings="openSettings"
-        @connect="connectOpen = true"
-        @shell="runShellCommand"
-        @terminal="terminalOpen = true"
-      />
-
-      <!--
-        The browser, in the workspace rather than over it: a page being looked
-        at beside the conversation is the point, and a panel that covered the
-        conversation would defeat it.
-      -->
-      <BrowserPanel
-        v-if="browserOpen && browserAllowed"
-        ref="browserPanel"
-        class="browser-panel"
-        :class="{ 'side-full': fullPanel === 'browser' }"
-        :edge="edgePanel === 'browser'"
-        :full="fullPanel === 'browser'"
-        @fullscreen="sidePanelFull = !sidePanelFull"
-        @close="browserOpen = false"
-      />
-
-      <!-- MiMo's side panel with nothing chosen: a card for each thing it can hold. -->
-      <RightLauncher
-        v-if="launcherShown"
-        :class="{ 'side-full': fullPanel === 'launcher' }"
-        :available="launchAvailable"
-        :full="fullPanel === 'launcher'"
-        @pick="launch"
-        @fullscreen="sidePanelFull = !sidePanelFull"
-      />
-
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
       <FindBar :find="find" :anchor="() => mainPane" />
 
-      <!--
-        One panel with two tabs, the way opencode has it, rather than two panels
-        taking turns in the same column. The two used to swap places here, which
-        meant opening the figures made the review vanish, closing them made it
-        reappear, and nothing on screen said the two were the same panel or
-        which of them was being read.
-      -->
-      <!--
-        The right column, which holds the review panel. The terminal used to be
-        stacked under it here; it now docks at the foot of the conversation.
-      -->
-      <div
-        v-if="reviewPanelUp"
-        class="column"
-        :class="{ 'side-full': fullPanel === 'review' }"
-        :style="reviewWidth && fullPanel !== 'review' ? { width: `${reviewWidth}px` } : undefined"
-      >
-      <FilePanel
-        v-if="reviewPanelUp"
-        ref="filePanel"
-        edge
-        :full="fullPanel === 'review'"
-        @fullscreen="sidePanelFull = !sidePanelFull"
-        v-model:tree-open="fileTreeOpen"
-        v-model:width="reviewWidth"
-        v-model:context-tab="contextTab"
-        :can-review="canReview"
-        :panel-tab="shownTab"
-        @update:panel-tab="panelTab = $event"
-        @notes="sendNotes"
-        @export="exportSessionData"
+      <!-- MiMo's right panel: tabs beside the conversation, or its launcher while it holds none. -->
+      <RightPanel
+        v-if="!onboarding"
+        ref="rightPanel"
+        :sessionID="isHome ? undefined : app.currentID"
+        :directory="panelDirectory"
+        :browserAllowed="browserAllowed"
+        :sidebarWidth="leftPanel ? 256 : 0"
+        @open-settings="openSettings"
+        @connect="connectOpen = true"
+        @shell="runShellCommand"
+        @terminal="openTerminalTab"
       />
-      </div>
     </div>
 
     <ReleaseNotesDialog
@@ -4369,54 +4063,8 @@ onBeforeUnmount(() => {
   margin: 8px;
 }
 
-/*
- * The right column. It carries the width; what is in it fills that width and
- * shares the height, 8 apart - the gutter the reference leaves between its
- * review and its terminal, and the same one this row leaves beside them.
- */
-.column {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 0;
-  /*
-   * Until it is dragged. Measured off opencode at two window sizes: 800px at
-   * 1279 and 839 at 1343, which is 62.5% of the window both times - of the
-   * window, note, not of the inset row this sits in, which is why the unit is
-   * vw. This lived on the panel before the terminal joined it in the column.
-   */
-  width: 62.5vw;
-  /*
-   * A floor, because the panel's own contents have one.
-   *
-   * This was 0, on the reasoning that a third minimum in the row could exceed
-   * the window. It could - but squeezing below this does not shrink what is
-   * inside: the file list is a fixed 240 and the diff needs room beside it, so
-   * the column went on drawing its full width inside a narrower box and `.body`
-   * clipped the overhang. Measured at 900x700 with the workspace panel also up,
-   * 16 controls ended up outside the window with no way to scroll to them.
-   *
-   * 360 is the file list's 240 plus somewhere for the diff to start. opencode
-   * gives the same list a 200 minimum and 480 maximum. The row not fitting is
-   * handled where the row is, in App.vue, by dropping the workspace panel.
-   *
-   * The floor yields once even it will not fit, because a floor that cannot be
-   * honoured is not a floor - min-width beats max-width in CSS, so an
-   * unconditional 360 here does not hold the panel open, it pushes the column's
-   * trailing edge off the window. Measured at the 721px minimum window: the
-   * panel ended 87px past the right edge with the open-in-app button out
-   * there with it, unreachable and unscrollable. opencode never meets this
-   * because its review panel is `width: auto` with `flex-1` and has no floor
-   * at all. Below this point the file list inside gives way instead.
-   */
-  min-width: min(360px, calc(100% - 450px));
-  /* The conversation still needs somewhere to be. */
-  max-width: calc(100% - 450px);
-}
-
 /* Each region is its own card. */
 .body > .main,
-.column > .panel,
 .body > .panel-host {
   overflow: hidden;
   background: var(--surface-raised);
@@ -4430,16 +4078,8 @@ onBeforeUnmount(() => {
  * that could not have been guessed: the panel sits above the conversation
  * rather than the two lying in the same plane.
  */
-.column > .panel,
 .body > .panel-host {
   box-shadow: var(--shadow-md);
-}
-
-/* The panel is the whole column. */
-.column > .panel {
-  flex: 1;
-  width: auto;
-  min-height: 0;
 }
 
 /* The docked terminal keeps the height it was dragged to; the transcript gives way. */
@@ -4455,25 +4095,6 @@ onBeforeUnmount(() => {
  */
 .body.blank {
   box-shadow: none;
-}
-
-/*
- * Three columns need more room than a small window has.
- *
- * The workspace panel, the conversation and the review panel each have a width
- * below which they stop working - 280, 440 and 360 - and 1080 plus the body's
- * own margins is more than a 1000px window. Something has to give, and it is
- * the workspace panel: the review panel is the work being looked at, the
- * conversation is where the work is done, and the project list is navigation
- * that the title bar and the home screen both still offer.
- *
- * Only when the review panel is actually up. On its own the workspace panel is
- * fine at any width the window can be.
- */
-@media (max-width: 1095px) {
-  .body.with-review .panel.docked {
-    display: none;
-  }
 }
 
 .main {
@@ -4609,13 +4230,6 @@ onBeforeUnmount(() => {
 .main.info-open :deep(.composer) {
   padding-inline-end: calc(24px + 262px);
 }
-/*
- * The browser's column. Its width belongs to the panel, which is what is
- * dragged and what remembers; this only keeps it from being squeezed.
- */
-.browser-panel {
-  flex-shrink: 0;
-}
 
 /* Left of the caption buttons where Windows draws them, level with the header's own row: MiMo's 24px in a 32px row 9 down. */
 .side-panel-toggle {
@@ -4695,22 +4309,5 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   border-inline-start-width: 0;
-}
-
-/*
- * The expanded panel takes the room the main column gave up, whatever its own
- * width was - the browser's is set inline and the review's on its column, so
- * these have to win over both - rounded and lifted where it meets the side column.
- */
-.side-full {
-  flex: 1 1 auto !important;
-  width: auto !important;
-  min-width: 0 !important;
-  max-width: none !important;
-  overflow: hidden;
-  border-inline-start-width: 0;
-  border-start-start-radius: 16px;
-  border-end-start-radius: 20px;
-  box-shadow: 0 4px 24px rgb(0 0 0 / 0.12);
 }
 </style>
