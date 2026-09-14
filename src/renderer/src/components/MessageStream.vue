@@ -9,11 +9,10 @@ import TextShimmer from "./parts/TextShimmer.vue"
 import type { Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
 import { preview } from "../lib/attach"
 import { openImagePreview } from "../lib/image-preview"
-import { withoutLatest } from "../lib/model"
 import { language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
 import { renderMarkdown } from "../lib/markdown"
-import { notifyFailure } from "../lib/toast"
+import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 
@@ -260,33 +259,6 @@ function compactedAfter(turn: Turn): boolean {
   return turn.last?.id === mark || turn.id === mark
 }
 
-/** The picker shows display names, so the footer has to agree with it. */
-/**
- * The step a turn ran at, or nothing.
- *
- * Nothing only for turns recorded before this was stored - every turn run since
- * carries a concrete step, because an unset session resolves to the app default
- * before the request goes out.
- */
-function effortName(message: AssistantMessage): string {
-  /*
-   * The raw id, capitalised by the stylesheet rather than by hand. The
-   * reference never translates a step and never spells one out either: it
-   * labels the option `x` and puts `capitalize` on the control
-   * (main-8t-QUXax.js @4574058), so its own reading is "Xhigh". The hand-built
-   * "XHigh" this replaces was the one word in the pair that was invented here.
-   */
-  return message.effort ?? ""
-}
-
-function modelName(message: AssistantMessage): string {
-  const provider = app.providers.find((entry) => entry.id === message.model.provider)
-  const found = provider?.models.find((entry) => entry.id === message.model.model)
-  // Stripped for the same reason the picker strips it: "(latest)" is a tag in
-  // the reference, and its model store hands out the name without the word.
-  return found ? withoutLatest(found.name) : message.model.model
-}
-
 /** Which copy button is showing its tick, keyed by turn and by which one. */
 const copied = ref<string>()
 
@@ -358,16 +330,23 @@ function toggleAsked(id: string) {
  * true. The day is written as well as the time: a conversation returned to
  * the next morning otherwise says "19:50" with nothing to say which evening.
  * Formatted in the interface's language rather than the machine's, so the
- * footer reads in the same language as the words beside it.
+ * footer reads in the same language as the words beside it. As MiMo does, a
+ * moment from another year carries its year in front.
  */
 function stamp(at: number): string {
-  return new Intl.DateTimeFormat(language.value, {
+  const date = new Date(at)
+  const clock = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`
+  const otherYear = date.getFullYear() !== new Date().getFullYear()
+  if (language.value.startsWith("zh")) {
+    const day = `${date.getMonth() + 1}月${date.getDate()}日`
+    return `${otherYear ? `${date.getFullYear()}年` : ""}${day} ${clock}`
+  }
+  const day = new Intl.DateTimeFormat(language.value, {
     month: "short",
     day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(at)
+    ...(otherYear ? { year: "numeric" as const } : {}),
+  }).format(date)
+  return `${day} ${clock}`
 }
 
 function askedAt(turn: Turn): string | undefined {
@@ -401,10 +380,7 @@ async function copyReply(turn: Turn) {
   const text = replyText(turn)
   if (!text) return
   await navigator.clipboard.writeText(text)
-  copied.value = turn.id
-  setTimeout(() => {
-    if (copied.value === turn.id) copied.value = undefined
-  }, 1600)
+  notify(t("stream.replyCopied"))
 }
 
 /*
@@ -1023,46 +999,40 @@ defineExpose({ stepMessage, scroller })
           />
 
           <!--
-            Held back until the reply is under the pointer. Who answered and how
-            long it took is worth having, but not worth a permanent grey line
-            under every message - and the copy button belongs with it.
+            MiMo's action row under a reply: copy and branch, always there, 26px
+            each; then the time it finished, which shows under the pointer only.
           -->
-          <div v-if="turn.finish && !turn.error && turn.last" class="footer">
-            <button v-if="!side" class="copy branch" v-tip="{ label: t('stream.fork'), placement: 'top' }" @click="branchReply(turn)">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <circle cx="4.5" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1" />
-                <circle cx="4.5" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1" />
-                <circle cx="11.5" cy="5.5" r="1.6" stroke="currentColor" stroke-width="1" />
-                <path d="M4.5 5.1v5.8M11.5 7.1c0 2.6-2.2 3.4-5.4 3.9" stroke="currentColor" stroke-width="1" stroke-linecap="round" />
+          <div v-if="turn.finish && !turn.error && turn.last" class="msg-actions" data-msg-actions>
+            <button
+              type="button"
+              class="msg-act"
+              data-msg-act="copy"
+              :aria-label="t('stream.replyCopy')"
+              v-tip="{ label: t('stream.replyCopy'), placement: 'top' }"
+              @click="copyReply(turn)"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="8" y="8" width="13" height="13" rx="2" stroke="currentColor" stroke-width="2.2" />
+                <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" stroke="currentColor" stroke-width="2.2" />
               </svg>
             </button>
-            <button class="copy" v-tip="{ label: t('stream.copy'), placement: 'top' }" @click="copyReply(turn)">
-              <svg v-if="copied === turn.id" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M3.53613 8.17857L6.39328 11.75L12.4647 4.25" stroke="currentColor" stroke-width="1" />
-              </svg>
-              <svg v-else width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path
-                  d="M4.14908 11.0081H1.76282V1.51758H9.1038V2.55588M14.2225 4.99681H6.75397V14.4873H14.2225V4.99681Z"
-                  stroke="currentColor"
-                  stroke-width="1"
-                />
+            <button
+              v-if="!side"
+              type="button"
+              class="msg-act"
+              data-msg-act="branch"
+              :aria-label="t('stream.replyBranch')"
+              v-tip="{ label: t('stream.replyBranch'), placement: 'top' }"
+              @click="branchReply(turn)"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <circle cx="6" cy="5" r="2.2" stroke="currentColor" stroke-width="2.2" />
+                <circle cx="6" cy="19" r="2.2" stroke="currentColor" stroke-width="2.2" />
+                <circle cx="18" cy="8" r="2.2" stroke="currentColor" stroke-width="2.2" />
+                <path d="M6 7.2v9.6M18 10.2c0 4-3.4 5.2-8.3 6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
               </svg>
             </button>
-            <span>{{ t(`agent.${turn.last.agent}`) }}</span>
-            <span class="dot">·</span>
-            <span>{{ modelName(turn.last) }}</span>
-            <template v-if="effortName(turn.last)">
-              <span class="dot">·</span>
-              <span class="level">{{ effortName(turn.last) }}</span>
-            </template>
-            <template v-if="elapsed(turn)">
-              <span class="dot">·</span>
-              <span>{{ elapsed(turn) }}</span>
-            </template>
-            <template v-if="completedAt(turn)">
-              <span class="dot">·</span>
-              <span class="when">{{ completedAt(turn) }}</span>
-            </template>
+            <span v-if="completedAt(turn)" class="msg-time" data-msg-time>{{ completedAt(turn) }}</span>
           </div>
 
           <!--
@@ -1169,9 +1139,7 @@ defineExpose({ stepMessage, scroller })
 
 /* focus-within so the copy button is reachable by keyboard, not just by mouse. */
 .msg.user:hover .footer,
-.msg.user:focus-within .footer,
-.msg.assistant:hover .footer,
-.msg.assistant:focus-within .footer {
+.msg.user:focus-within .footer {
   opacity: 1;
 }
 
@@ -1196,14 +1164,63 @@ defineExpose({ stepMessage, scroller })
   background: var(--surface-hover);
 }
 
-.footer .dot {
-  opacity: 0.6;
+/* MiMo's msg-actions: 2px apart, drawn a hair up into the reply above. */
+.msg-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: -2px;
 }
 
-/* The step a turn ran at, drawn from its own id. See effortName: the reference
-   capitalises the raw word in CSS rather than naming the steps anywhere. */
-.footer .level {
-  text-transform: capitalize;
+/* Under a card - the edited files, or the artifacts - it keeps its distance. */
+.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions) {
+  margin-top: 10px;
+}
+
+.msg-act {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.msg-act:hover {
+  color: var(--text-base);
+  background: var(--surface-hover);
+}
+
+.msg-act:active {
+  scale: 0.96;
+}
+
+/* The finish time: after a hairline, only while the pointer or focus is on the reply. */
+.msg-time {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-inline-start: 6px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.msg-time::before {
+  width: 1px;
+  height: 12px;
+  content: "";
+  background: var(--border-weak);
+}
+
+.msg.assistant:hover .msg-time,
+.msg.assistant:focus-within .msg-time {
+  opacity: 1;
 }
 
 /*
