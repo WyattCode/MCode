@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
 import type { Annotation } from "@shared/protocol"
 import { useAnnotations } from "../stores/annotations"
 import { useApp } from "../stores/app"
-import { useRightPanel } from "../stores/right-panel"
-import { jumpToAnnotation, requestPdfJump } from "../lib/annotate"
+import { jumpToAnnotation, requestAnnotationFlash, requestPdfLocate } from "../lib/annotate"
+import { officeTypeOf, openDocument } from "../lib/office-open"
 import { t } from "../lib/i18n"
 
 /**
@@ -55,32 +55,21 @@ function sourceOf(note: Annotation) {
  * on screen; under a sent message, a whole file opens in the files tab.
  */
 const app = useApp()
-const panel = useRightPanel()
 const root = ref<HTMLElement>()
 
-function openFile(note: Annotation) {
-  const folder = app.current?.directory
-  if (!folder || !note.path) return
-  const norm = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "")
-  const base = `${norm(folder)}/`
-  const full = norm(note.path)
-  if (!full.toLowerCase().startsWith(base.toLowerCase())) return
-  const tab = panel.openTool("files")
-  panel.update(tab.id, { viewFile: full.slice(base.length) })
-}
-
+/*
+ * MiMo's chip click: under a sent message a document (xlsx, docx, pptx, pdf)
+ * opens in the Office tab - a PDF passage is found again on its page; otherwise
+ * the view that holds the annotation scrolls to it and flashes it.
+ */
 function activate(note: Annotation) {
-  // A PDF passage: under a sent message the file opens and the text is found again; over the box its marker flashes.
-  if (note.kind === "pdf") {
-    if (props.readOnly) openFile(note)
-    requestPdfJump(note, Boolean(props.readOnly))
+  if (props.readOnly && note.path && officeTypeOf(note.path)) {
+    void openDocument({ path: note.path, name: note.name }, app.current?.directory)
+    if (note.kind === "pdf" && note.quote) requestPdfLocate({ path: note.path, snippet: note.quote, page: note.page, occ: note.occ })
     return
   }
-  if (note.kind === "file") {
-    if (props.readOnly) openFile(note)
-    return
-  }
-  jumpToAnnotation(note, root.value ?? null)
+  if (note.kind === "answer" || note.kind === "code") jumpToAnnotation(note, root.value ?? null)
+  requestAnnotationFlash(note.id)
 }
 
 function remove(items: readonly Entry[]) {

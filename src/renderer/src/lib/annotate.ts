@@ -54,11 +54,18 @@ export function requestAnnotationSend(scope: string) {
   annotationSend.value = { scope, seq: (annotationSend.value?.seq ?? 0) + 1 }
 }
 
-/** A PDF annotation to show: its frame flashed (from the box), or - from a sent message - found again in the page's text. */
-export const pdfJump = shallowRef<{ note: Annotation; locate: boolean; seq: number } | null>(null)
+/** MiMo's locate pulse: the document view holding this annotation scrolls to it and flashes its frame. */
+export const annotationFlash = shallowRef<{ id: string; seq: number } | null>(null)
 
-export function requestPdfJump(note: Annotation, locate: boolean) {
-  pdfJump.value = { note, locate, seq: (pdfJump.value?.seq ?? 0) + 1 }
+export function requestAnnotationFlash(id: string) {
+  annotationFlash.value = { id, seq: (annotationFlash.value?.seq ?? 0) + 1 }
+}
+
+/** MiMo's PDF locate: a PDF view of this file goes to the page (or searches for it) and marks the snippet. */
+export const pdfLocate = shallowRef<{ path: string; snippet: string; page?: number; occ?: number; seq: number } | null>(null)
+
+export function requestPdfLocate(target: { path: string; snippet: string; page?: number; occ?: number }) {
+  pdfLocate.value = { ...target, seq: (pdfLocate.value?.seq ?? 0) + 1 }
 }
 
 let counter = 0

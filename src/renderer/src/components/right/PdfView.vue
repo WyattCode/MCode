@@ -6,7 +6,9 @@ import type { Annotation } from "@shared/protocol"
 import { useApp } from "../../stores/app"
 import { useAnnotations } from "../../stores/annotations"
 import { useAnnotationBatch } from "../../stores/annotation-batch"
-import { annotationId, compact, mainAnnotationScope, normalize, pdfJump } from "../../lib/annotate"
+import { annotationFlash, annotationId, compact, mainAnnotationScope, normalize, pdfLocate } from "../../lib/annotate"
+import { useOfficeVersions } from "../../stores/office-versions"
+import { aiTouch } from "../../lib/ai-touch"
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { useAnnotationFx, type FxBox } from "../../lib/annotation-fx"
 import { notifyFailure } from "../../lib/toast"
@@ -31,10 +33,12 @@ import AnnotationFx from "../AnnotationFx.vue"
  * amber. Escape clears what was sent from here. The file reloads when it
  * changes on disk, keeping its place.
  */
-const props = withDefaults(defineProps<{ data: string; path: string; name: string; root?: string; active?: boolean }>(), {
+const props = withDefaults(defineProps<{ path: string; name: string; root?: string; origin?: string; active?: boolean }>(), {
   root: undefined,
+  origin: undefined,
   active: true,
 })
+const versions = useOfficeVersions()
 const app = useApp()
 const annotations = useAnnotations()
 const batch = useAnnotationBatch()
@@ -62,7 +66,11 @@ const scroller = ref<HTMLElement>()
 const pagesEl = ref<HTMLElement>()
 const layerEls: (HTMLElement | undefined)[] = []
 
-const bytes = ref(props.data)
+let lastBase64 = ""
+const splitPath = () => {
+  const cut = Math.max(props.path.lastIndexOf("/"), props.path.lastIndexOf("\\"))
+  return [props.path.slice(0, cut), props.path.slice(cut + 1)] as const
+}
 const doc = shallowRef<PDFDocumentProxy>()
 const count = ref(0)
 const ratios = ref<number[]>([])
@@ -134,8 +142,12 @@ async function load() {
   current.value = 1
   zoom.value = 1
   try {
-    const lib = await library()
-    const binary = atob(bytes.value)
+    const [dir, base] = splitPath()
+    const [lib, read] = await Promise.all([library(), window.mcode.readFileBytes(dir, base)])
+    if (mine !== generation) return
+    if (!read.ok || read.unchanged) return fail(!read.ok && read.reason === "noent" ? t("office.fileMissing") : t("office.serveFailed"))
+    lastBase64 = read.base64
+    const binary = atob(read.base64)
     const data = new Uint8Array(binary.length)
     for (let at = 0; at < binary.length; at++) data[at] = binary.charCodeAt(at)
     task = lib.getDocument({
@@ -210,26 +222,39 @@ function restoreScroll(el: HTMLElement, target: number): () => void {
   }
 }
 
-/* MiMo reloads a document when it changes on disk. */
-async function reloadFromDisk(changed: string) {
-  if (changed !== props.path || !app.client) return
+function reload() {
+  if (scroller.value) saved = { path: props.path, top: scroller.value.scrollTop }
+  void load()
+}
+
+/* A change on disk becomes a version - the assistant's when it touched the file - and the view reloads. */
+async function onDiskChange() {
+  const { ai, prompt } = aiTouch(props.path)
   try {
-    const result = await app.client.request({ type: "file.read", path: props.path })
-    if (result.kind !== "pdf" || !result.data) return
-    if (scroller.value) saved = { path: props.path, top: scroller.value.scrollTop }
-    bytes.value = result.data
-    void load()
-  } catch {
-    // Gone or unreadable: the view keeps what it had.
+    const [dir, base] = splitPath()
+    const read = await window.mcode.readFileBytes(dir, base)
+    if (read.ok && !read.unchanged && read.base64 !== lastBase64) {
+      lastBase64 = read.base64
+      await versions.record(props.path, read.base64, ai ? "ai_local" : "external", ai ? prompt.trim() : t("office.versionNoteExternal"))
+    }
+  } catch (err) {
+    console.error("[PdfView] fs-watch record error:", err)
   }
+  reload()
 }
 
 watch(
-  () => props.data,
-  (data) => {
-    if (scroller.value) saved = { path: props.path, top: scroller.value.scrollTop }
-    bytes.value = data
+  () => props.path,
+  (next, previous) => {
+    if (previous) void window.mcode.unwatchFile(previous)
+    void window.mcode.watchFile(next)
     void load()
+  },
+)
+watch(
+  () => versions.reloadTick[props.path] ?? 0,
+  (tick, before) => {
+    if (tick !== before) reload()
   },
 )
 
@@ -599,10 +624,10 @@ let lastLocate = 0
 let locateCancel: (() => void) | undefined
 
 async function locateRequest() {
-  const request = pdfJump.value
+  const request = pdfLocate.value
   const el = scroller.value
   const pdf = doc.value
-  if (!request || !request.locate || request.note.path !== props.path || !el || !count.value || !pdf || width.value <= 0 || lastLocate === request.seq) return
+  if (!request || request.path !== props.path || !el || !count.value || !pdf || width.value <= 0 || lastLocate === request.seq) return
   lastLocate = request.seq
   locateCancel?.()
   let cancelled = false
@@ -612,11 +637,10 @@ async function locateRequest() {
   const mine = generation
   locateRange = null
   locateRects.value = []
-  const note = request.note
   let page = 0
-  if (note.page && Number.isFinite(note.page)) page = Math.min(Math.max(Math.round(note.page), 1), count.value)
+  if (request.page && Number.isFinite(request.page)) page = Math.min(Math.max(Math.round(request.page), 1), count.value)
   else {
-    const wanted = (note.quote ?? "").replace(/\s+/g, " ").trim()
+    const wanted = request.snippet.replace(/\s+/g, " ").trim()
     for (let number = 1; number <= count.value; number++) {
       const content = await pdf
         .getPage(number)
@@ -638,7 +662,7 @@ async function locateRequest() {
     if (cancelled || mine !== generation) return
     realign()
     if (spansOf(page).length) {
-      const found = rangeFromSpans(page, note.quote ?? "", note.occ ?? 1)
+      const found = rangeFromSpans(page, request.snippet, request.occ ?? 1)
       if (found && found !== "pending") {
         locateRange = found
         locateRects.value = rectsOf(found)
@@ -652,20 +676,20 @@ async function locateRequest() {
 let flashTimer: ReturnType<typeof setTimeout> | undefined
 let flashRefresh: ReturnType<typeof setTimeout> | undefined
 function flashRequest() {
-  const request = pdfJump.value
-  if (!request || request.locate || !props.active) return
-  const entry = kept.get(request.note.id)
+  const request = annotationFlash.value
+  if (!request || !props.active) return
+  const entry = kept.get(request.id)
   if (!entry) return
   scroller.value?.scrollTo({ top: Math.max(0, (tops.value[entry.page - 1] ?? 0) - 4), behavior: "smooth" })
-  flashId.value = request.note.id
+  flashId.value = request.id
   clearTimeout(flashTimer)
   clearTimeout(flashRefresh)
   flashTimer = setTimeout(() => (flashId.value = null), 1200)
   flashRefresh = setTimeout(() => refreshMarks(), 400)
 }
 
-watch([pdfJump, count, doc, () => width.value > 0], () => void locateRequest())
-watch(pdfJump, flashRequest)
+watch([pdfLocate, count, doc, () => width.value > 0], () => void locateRequest())
+watch(annotationFlash, flashRequest)
 
 /* ------------------------------------------------------------ the note box */
 
@@ -779,7 +803,7 @@ async function sendNote() {
   const text = selectedText
   const range = selectedRange
   const note = buildNote(userText)
-  const result = await sendAnnotationNow(note, props.path, `${t("annotations.pdfPrefix", { page })}${userText}`, props.root)
+  const result = await sendAnnotationNow(note, props.path, `${t("annotations.pdfPrefix", { page })}${userText}`, { origin: props.origin, directory: props.root })
   if (!result.ok) {
     if (result.reason) notifyFailure(result.reason)
     return
@@ -828,7 +852,9 @@ onMounted(() => {
   window.addEventListener("keydown", stopAlign)
   document.addEventListener("keydown", onEscape)
   void window.mcode.watchFile(props.path)
-  stopWatching = window.mcode.onFileChanged((changed) => void reloadFromDisk(changed))
+  stopWatching = window.mcode.onFileChanged((changed) => {
+    if (changed === props.path) void onDiskChange()
+  })
   void load()
 })
 

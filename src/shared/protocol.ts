@@ -197,12 +197,12 @@ export interface UserMessage {
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
 export interface Annotation {
   id: string
-  kind: "answer" | "code" | "file" | "pdf"
+  kind: "answer" | "code" | "file" | "pdf" | "docx"
   /** The file's absolute path, for a file or code shown from one. */
   path?: string
-  /** A PDF selection's page, from 1. */
+  /** A PDF or Word selection's page, from 1. */
   page?: number
-  /** Where a PDF selection sits, in PDF points from the page's bottom-left corner. */
+  /** Where the selection sits: PDF points from a PDF page's bottom-left corner, or CSS pixels from a Word page's top-left. */
   rect?: { x: number; y: number; w: number; h: number; pageW: number; pageH: number }
   /** The file's name, for a whole file. */
   name?: string

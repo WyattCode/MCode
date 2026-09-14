@@ -1,5 +1,5 @@
 import fs from "node:fs/promises"
-import { existsSync, watch as watchPath, type FSWatcher } from "node:fs"
+import { existsSync } from "node:fs"
 import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
@@ -14,6 +14,7 @@ import { isKnownOpenWith } from "@shared/open-app"
 import { installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
+import { registerOffice } from "./office"
 import {
   act,
   clearBrowsingData,
@@ -623,48 +624,8 @@ app.whenReady().then(async () => {
     if (target) shell.showItemInFolder(target)
   })
 
-  /*
-   * A document a viewer has open, watched so the viewer can reload when it
-   * changes on disk (MiMo's document views do). Counted per path, so two views
-   * of one file share a watcher; changes are told to every window after a
-   * short settle, since a save is often several writes.
-   */
-  const watchedFiles = new Map<string, { watcher: FSWatcher; count: number; timer?: ReturnType<typeof setTimeout> }>()
-  ipcMain.handle("mcode:watch-file", (_event, target: string) => {
-    if (typeof target !== "string" || !path.isAbsolute(target)) return false
-    const existing = watchedFiles.get(target)
-    if (existing) {
-      existing.count += 1
-      return true
-    }
-    try {
-      const entry: { watcher: FSWatcher; count: number; timer?: ReturnType<typeof setTimeout> } = {
-        count: 1,
-        watcher: watchPath(target, () => {
-          clearTimeout(entry.timer)
-          entry.timer = setTimeout(() => {
-            for (const window of BrowserWindow.getAllWindows()) {
-              if (!window.isDestroyed()) window.webContents.send("mcode:file-changed", target)
-            }
-          }, 150)
-        }),
-      }
-      entry.watcher.on("error", () => undefined)
-      watchedFiles.set(target, entry)
-      return true
-    } catch {
-      return false
-    }
-  })
-  ipcMain.handle("mcode:unwatch-file", (_event, target: string) => {
-    const entry = watchedFiles.get(target)
-    if (!entry) return
-    entry.count -= 1
-    if (entry.count > 0) return
-    clearTimeout(entry.timer)
-    entry.watcher.close()
-    watchedFiles.delete(target)
-  })
+  // MiMo's Office tab: document bytes, watching, versions, legacy conversion.
+  registerOffice(ipcMain, app.getPath("userData"))
 
   /* Which open-with apps are installed, for the settings row and the open-location menu. */
   ipcMain.handle("mcode:installed-apps", () => installedOpenApps(process.platform))

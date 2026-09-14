@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
 
+export type OfficeVersionSource = "initial" | "ai" | "ai_local" | "user" | "external"
+export interface OfficeVersionState {
+  versions: { id: string; ts: number; source: OfficeVersionSource; note: string }[]
+  cursor: number
+}
+export type OfficeVersionResult = { ok: true; state: OfficeVersionState } | { ok: false; reason: string }
+
 /**
  * The only surface the renderer gets. Everything else - sessions, files, the
  * agent - travels over the WebSocket, which keeps the privileged bridge small
@@ -162,6 +169,26 @@ const api = {
     ipcRenderer.invoke("mcode:browser-tab", what, id),
   /** Clears the browser panel's site data and cache; resolves to "" or the reason it failed. */
   browserClearData: (): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-data"),
+  /** A document's bytes, or that they have not changed since `ifUnchanged`. */
+  readFileBytes: (
+    root: string,
+    rel?: string,
+    ifUnchanged?: { size: number; mtimeMs: number },
+  ): Promise<
+    | { ok: true; unchanged: true; size: number; mtimeMs: number }
+    | { ok: true; unchanged?: undefined; base64: string; size: number; mtimeMs: number }
+    | { ok: false; reason: string }
+  > => ipcRenderer.invoke("mcode:read-file-bytes", root, rel, ifUnchanged),
+  fileSize: (target: string): Promise<number> => ipcRenderer.invoke("mcode:file-size", target),
+  officeVersionInit: (target: string, base64: string, assumeAi: boolean, note: string): Promise<OfficeVersionResult> =>
+    ipcRenderer.invoke("mcode:office-version-init", target, base64, assumeAi, note),
+  officeVersionRecord: (target: string, base64: string, source: OfficeVersionSource, note: string): Promise<OfficeVersionResult> =>
+    ipcRenderer.invoke("mcode:office-version-record", target, base64, source, note),
+  officeVersionRestore: (target: string, id: string): Promise<OfficeVersionResult> =>
+    ipcRenderer.invoke("mcode:office-version-restore", target, id),
+  officeConvertLegacy: (target: string): Promise<{ ok: true; output: string; cached: boolean } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:office-convert-legacy", target),
+  revealPath: (target: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("mcode:reveal-path", target),
   /** Watches an open document so its view can reload when it changes on disk. */
   watchFile: (target: string): Promise<boolean> => ipcRenderer.invoke("mcode:watch-file", target),
   unwatchFile: (target: string): Promise<void> => ipcRenderer.invoke("mcode:unwatch-file", target),

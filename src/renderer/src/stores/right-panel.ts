@@ -20,7 +20,8 @@ import { computed, ref } from "vue"
  */
 
 export type RightTool = "review" | "files" | "chat" | "browser" | "terminal"
-export type RightTabType = RightTool | "diff"
+export type RightTabType = RightTool | "diff" | "office"
+export type OfficeType = "xlsx" | "docx" | "pptx" | "pdf"
 
 export interface RightTab {
   id: string
@@ -42,6 +43,12 @@ export interface RightTab {
   /** Diff: the patch on show and who asked for it, so asking again updates the same tab. */
   diff?: string
   source?: string
+  /** Office: the document, its kind and size, the conversation it was opened from, and whether an old format is being converted. */
+  filePath?: string
+  fileType?: OfficeType
+  size?: number
+  origin?: string
+  converting?: boolean
 }
 
 interface Kept {
@@ -118,6 +125,17 @@ export const useRightPanel = defineStore("rightPanel", () => {
       }
     }
     return add(type)
+  }
+
+  /** MiMo's Office tab: one per document, taken up again when the same file is opened. */
+  function openOffice(file: { path: string; name: string; fileType: OfficeType; size?: number }): RightTab {
+    const found = tabs.value.find((tab) => tab.type === "office" && tab.filePath === file.path)
+    if (found) {
+      update(found.id, { name: file.name, fileType: file.fileType, size: file.size ?? found.size, origin: scope ?? found.origin })
+      show(found.id)
+      return tabs.value.find((tab) => tab.id === found.id) ?? found
+    }
+    return add("office", { name: file.name, filePath: file.path, fileType: file.fileType, size: file.size, origin: scope })
   }
 
   /** A diff with a title of its own; a source's tab is updated rather than doubled. */
@@ -236,6 +254,7 @@ export const useRightPanel = defineStore("rightPanel", () => {
     activeTab,
     setDisposer,
     openTool,
+    openOffice,
     openDiff,
     toggleDiff,
     update,

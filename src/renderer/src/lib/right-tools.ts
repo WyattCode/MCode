@@ -57,8 +57,13 @@ export const TOOL_INFO: Record<RightTool, ToolInfo> = {
 /* A diff tab's icon: two sheets, one struck through with a change. */
 export const DIFF_ICON = ["M4 2.5h5.5L12.5 5.5v8H4z", "M6.5 8h3M8 6.5v3M6.5 11h3"]
 
+/* A document tab's icon: a sheet with its corner turned and lines of text. */
+export const DOCUMENT_ICON = ["M9.5 2.5H4.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-7z", "M9.5 2.5v3h3", "M5.8 8.5h4.4M5.8 10.8h3"]
+
 export function iconOf(type: RightTabType): string[] {
-  return type === "diff" ? DIFF_ICON : TOOL_INFO[type].icon
+  if (type === "diff") return DIFF_ICON
+  if (type === "office") return DOCUMENT_ICON
+  return TOOL_INFO[type].icon
 }
 
 /* MiMo's launcher order, and its plus menu's (which lists the terminal second). */

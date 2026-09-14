@@ -19,6 +19,7 @@ import type { Attachment, AgentName,
 import { Client } from "../lib/client"
 import { t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
+import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 
 export const useApp = defineStore("app", () => {
   const client = shallowRef<Client>()
@@ -435,6 +436,10 @@ export const useApp = defineStore("app", () => {
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
       case "message.updated": {
+        noteToolWrites(
+          event.message,
+          (sessions.value.find((session) => session.id === event.message.sessionID) ?? sideSessions.value.find((session) => session.id === event.message.sessionID))?.directory,
+        )
         if (event.message.sessionID === sideID.value) {
           const at = sideMessages.value.findIndex((message) => message.id === event.message.id)
           if (at === -1) sideMessages.value.push(event.message)
@@ -477,6 +482,7 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.idle": {
+        noteRunEnded(event.sessionID)
         running.value.delete(event.sessionID)
         const began = turnStarted.get(event.sessionID)
         turnStarted.delete(event.sessionID)
@@ -490,6 +496,7 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.error":
+        noteRunEnded(event.sessionID)
         running.value.delete(event.sessionID)
         turnStarted.delete(event.sessionID)
         noteError(event.sessionID, event.error)

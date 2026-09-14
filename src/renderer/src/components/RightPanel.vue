@@ -10,6 +10,7 @@ import RpChat from "./right/RpChat.vue"
 import RpBrowser from "./right/RpBrowser.vue"
 import RpTerminal from "./right/RpTerminal.vue"
 import RpDiff from "./right/RpDiff.vue"
+import OfficeTab from "./right/OfficeTab.vue"
 import FloatingChat from "./right/FloatingChat.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
 import { ADD_MENU_ORDER, LAUNCH_KEYS, LAUNCH_ORDER, MENU_KEYS, TOOL_INFO, iconOf } from "../lib/right-tools"
@@ -52,7 +53,7 @@ const tools = computed(() => LAUNCH_ORDER.filter((tool) => tool !== "browser" ||
 
 function title(tab: RightTab): string {
   if (tab.name) return tab.name
-  if (tab.type === "diff") return ""
+  if (tab.type === "diff" || tab.type === "office") return ""
   if (tab.type === "files") return t("rp.files.openFileTitle")
   const name = t(TOOL_INFO[tab.type].label)
   return tab.ord > 1 ? `${name} ${tab.ord}` : name
@@ -337,6 +338,7 @@ defineExpose({
           @exited="rp.update(tab.id, { used: false })"
           @openNew="rp.openTool('terminal')"
         />
+        <OfficeTab v-else-if="tab.type === 'office'" :tab="tab" :active="tab.id === rp.active && rp.open" />
         <div v-else-if="tab.type === 'diff'" class="rp-diff-pane">
           <RpDiff :diff="tab.diff ?? ''" />
         </div>

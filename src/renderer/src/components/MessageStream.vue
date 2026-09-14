@@ -16,6 +16,7 @@ import { highlightWithin } from "../lib/highlight"
 import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
 import AnnotationChips from "./AnnotationChips.vue"
+import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 
 /**
@@ -294,6 +295,13 @@ const partKey = (turnID: string, index: number) => `${turnID}:${index}`
 
 function codeFolds(code: string) {
   return askedLines(code) > ASKED_LINES
+}
+
+/* MiMo's sent file chip: a document opens in the Office tab, anything else in the files tab. */
+function openSentFile(file: string) {
+  const directory = shownSession.value?.directory
+  const absolute = /^([a-zA-Z]:)?[\\/]/.test(file) || !directory ? file : `${directory}/${file}`
+  void openDocument({ path: absolute }, directory)
 }
 
 /* The code a question carries, in the same syntax colours as a reply's code blocks. */
@@ -826,7 +834,14 @@ defineExpose({ stepMessage, scroller })
               >
                 <img :src="preview(item)" :alt="item.path" />
               </button>
-              <span v-else class="sent-tile file" :title="item.path">
+              <span
+                v-else
+                class="sent-tile file"
+                :class="{ openable: Boolean(item.path) }"
+                :title="item.path"
+                data-sent-file
+                @click="item.path && openSentFile(item.path)"
+              >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
                     d="M13.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9.5L13.5 3Z"
@@ -1770,6 +1785,14 @@ defineExpose({ stepMessage, scroller })
  */
 .user-bubble[data-asked-parts] {
   white-space: normal;
+}
+
+.sent-tile.file.openable {
+  cursor: pointer;
+}
+
+.sent-tile.file.openable:hover {
+  opacity: 0.8;
 }
 
 /* The annotations a message carried, under it on its own side. */

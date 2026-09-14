@@ -20,6 +20,7 @@ function where(note: Annotation): string {
   if (note.kind === "file") return `File ${note.path ?? note.name ?? ""} (the whole file)`
   if (note.kind === "code") return `Code in the file viewer${note.path ? `: ${note.path}` : ""}`
   if (note.kind === "pdf") return `PDF ${note.path ?? note.name ?? ""}, page ${note.page ?? 1}`
+  if (note.kind === "docx") return `Word document ${note.path ?? note.name ?? ""}${note.page ? `, around page ${note.page}` : ""}`
   return "A passage of an earlier assistant reply in this conversation"
 }
 
@@ -36,7 +37,9 @@ export function annotationsBlock(list: readonly Annotation[] | undefined): strin
       const n = (value: number) => Math.round(value * 10) / 10
       const { x, y, w, h, pageW, pageH } = note.rect
       lines.push(
-        `   Position: x ${n(x)}, y ${n(y)}, width ${n(w)}, height ${n(h)} (PDF points from the bottom-left corner of a ${n(pageW)} x ${n(pageH)} page)`,
+        note.kind === "pdf"
+          ? `   Position: x ${n(x)}, y ${n(y)}, width ${n(w)}, height ${n(h)} (PDF points from the bottom-left corner of a ${n(pageW)} x ${n(pageH)} page)`
+          : `   Position: x ${n(x)}, y ${n(y)}, width ${n(w)}, height ${n(h)} (pixels from the top-left corner of a ${n(pageW)} x ${n(pageH)} page as drawn)`,
       )
     }
     lines.push(note.text ? `   Note: ${note.text}` : "   Note: none; it is pointed at as context for the message.")

@@ -36,6 +36,16 @@ export function watchOfficeSend(convoId: string, file: string, annotatedIds: str
   watches.value = [...watches.value, { convoId, file, annotatedIds, prompt, seq: ++seq }]
 }
 
+/** The documents a conversation's run was sent from, so their views look again when it ends. */
+export function watchedFilesOf(convoId: string): string[] {
+  return watches.value.filter((entry) => entry.convoId === convoId).map((entry) => entry.file)
+}
+
+/** What was last asked from a document into this conversation, for the version its reply makes. */
+export function promptOf(convoId: string): string {
+  return [...watches.value].reverse().find((entry) => entry.convoId === convoId)?.prompt ?? ""
+}
+
 const IGNITE_MS = 550
 const FINISH_MS = 850
 const OUT_MS = 500

@@ -16,8 +16,10 @@ const props = defineProps<{
   host: () => DOMRect | undefined
   /** Whether a press landed in the viewer, which does not close the box. */
   inside: (target: Node) => boolean
+  /** A selection's box, which the note box sits above (right edges together) in place of the pointer. */
+  selectionRect?: { top: number; bottom: number; right: number } | null
 }>()
-const emit = defineEmits<{ send: [text: string]; stash: [text: string]; close: [] }>()
+const emit = defineEmits<{ send: [text: string]; stash: [text: string]; close: []; focus: [focused: boolean] }>()
 
 const MAX_FIELD = 132
 const WIDTH = 296
@@ -44,9 +46,10 @@ const position = computed(() => {
   if (!host) return null
   const gap = 8
   const inset = 4
-  let left = props.anchor.x - WIDTH
-  let top = props.anchor.y - height.value - gap
-  if (top < host.top + inset) top = props.anchor.y + gap
+  const rect = props.selectionRect
+  let left = (rect ? rect.right : props.anchor.x) - WIDTH
+  let top = (rect ? rect.top : props.anchor.y) - height.value - gap
+  if (top < host.top + inset) top = (rect ? rect.bottom : props.anchor.y) + gap
   left = Math.min(Math.max(left, host.left + inset), Math.max(host.left + inset, host.right - WIDTH - inset))
   top = Math.min(Math.max(top, host.top + inset), Math.max(host.top + inset, host.bottom - height.value - inset))
   return { left, top }
@@ -83,7 +86,7 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
       data-cell-affordance
       :style="{ left: `${position.left}px`, top: `${position.top}px` }"
     >
-      <textarea ref="field" v-model="text" rows="1" :placeholder="t('annotations.cellPlaceholder')" @keydown="onKey" />
+      <textarea ref="field" v-model="text" rows="1" :placeholder="t('annotations.cellPlaceholder')" @keydown="onKey" @focus="emit('focus', true)" @blur="emit('focus', false)" />
       <button
         v-if="text.trim()"
         type="button"

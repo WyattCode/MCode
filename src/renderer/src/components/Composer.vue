@@ -22,6 +22,7 @@ import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
 import { HOME_SCOPE, SIDE_SCOPE, useAnnotations } from "../stores/annotations"
 import { annotationSend } from "../lib/annotate"
+import { openDocument } from "../lib/office-open"
 import AnnotationChips from "./AnnotationChips.vue"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
@@ -82,6 +83,13 @@ const busyHere = computed(() => (props.side ? app.sideBusy : app.busy))
 const annotations = useAnnotations()
 const annotationScope = computed(() => sessionID.value ?? (props.side ? SIDE_SCOPE : HOME_SCOPE))
 const waiting = computed(() => annotations.list(annotationScope.value))
+
+/* MiMo's file chip click: a document opens in the Office tab, anything else in the files tab. */
+function openAttachment(file: string) {
+  const directory = session.value?.directory ?? props.startDirectory
+  const absolute = /^([a-zA-Z]:)?[\\/]/.test(file) || !directory ? file : `${directory}/${file}`
+  void openDocument({ path: absolute }, directory)
+}
 // Enter in the annotation box sends this box's message with everything waiting.
 watch(annotationSend, (request) => {
   if (request && request.scope === annotationScope.value) void submit()
@@ -1659,7 +1667,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <span class="tiles-fade start" aria-hidden="true" />
           <span class="tiles-fade end" aria-hidden="true" />
           <div class="tiles">
-            <div v-for="(item, at) in attachments" :key="at" class="tile" :class="{ picture: !!preview(item) }">
+            <div
+              v-for="(item, at) in attachments"
+              :key="at"
+              class="tile"
+              :class="{ picture: !!preview(item), openable: !preview(item) && Boolean(item.path) }"
+              data-attachment-tile
+              @click="!preview(item) && item.path && openAttachment(item.path)"
+            >
               <img v-if="preview(item)" :src="preview(item)" class="tile-image" alt="" />
               <svg v-else class="tile-mark" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path
@@ -1674,7 +1689,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <button
                 class="tile-x"
                 v-tip="{ label: t('attach.remove'), placement: 'top' }"
-                @click="remove(at)"
+                @click.stop="remove(at)"
               >
                 <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true">
                   <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
@@ -2462,6 +2477,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 /* A dropped file has to look like it will land somewhere: MiMo's 2px ring of the accent at 35%. */
 .box.dropping {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 35%, transparent);
+}
+
+.tile.openable {
+  cursor: pointer;
 }
 
 /* Annotations waiting to be sent, lined up with the file tiles. */
