@@ -41,6 +41,9 @@ const addressInput = ref<HTMLInputElement>()
 const servers = ref<LocalServer[]>([])
 const barWidth = ref(400)
 const menuOpen = ref(false)
+/* MiMo's annotate mode, which MiMo itself still ships as a frame and a "coming soon" hint. */
+const annotating = ref(false)
+const ANNOTATE_COMBO = "Ctrl+."
 
 const showingPage = computed(() => Boolean(state.value.url) && state.value.url !== "about:blank")
 /* MiMo's narrow bar: under 300 the secondary buttons give way. */
@@ -56,15 +59,26 @@ function apply(next: unknown) {
   remeasure()
 }
 
+/*
+ * The page is a native view drawn over this frame, so nothing here can paint on
+ * top of it. While annotating, the page steps back from the frame instead: in
+ * by the dashed outline on every side, and down below the hint, which sits in
+ * the strip it leaves.
+ */
+const ANNOTATE_INSET = 2
+const ANNOTATE_HINT_SPACE = 46
+
 function measure() {
   if (!props.active) return
   const box = stage.value?.getBoundingClientRect()
   const hidden = !box || !showingPage.value || Boolean(state.value.error)
+  const inset = !hidden && annotating.value ? ANNOTATE_INSET : 0
+  const top = !hidden && annotating.value ? ANNOTATE_HINT_SPACE : 0
   window.mcode.browserBounds({
-    x: hidden ? 0 : box.left,
-    y: hidden ? 0 : box.top,
-    width: hidden ? 0 : box.width,
-    height: hidden ? 0 : box.height,
+    x: hidden ? 0 : box.left + inset,
+    y: hidden ? 0 : box.top + top,
+    width: hidden ? 0 : Math.max(0, box.width - inset * 2),
+    height: hidden ? 0 : Math.max(0, box.height - top - inset),
   })
 }
 
@@ -117,7 +131,17 @@ onBeforeUnmount(() => {
 watch(() => props.active, (active) => {
   if (active) void claim()
 })
-watch([showingPage, () => state.value.error], () => remeasure())
+watch([showingPage, () => state.value.error, annotating], () => remeasure())
+
+function toggleAnnotate() {
+  annotating.value = !annotating.value
+}
+
+/* MiMo's device toolbar is a menu entry that, for now, only says it is coming. */
+function deviceToolbar() {
+  menuOpen.value = false
+  notify(t("rp.browser.toast.deviceToolbarWip"))
+}
 
 async function go() {
   editing.value = false
@@ -174,6 +198,7 @@ defineExpose({
     addressInput.value?.select()
   },
   reload: (force = false) => act(force ? "forceReload" : "reload"),
+  toggleAnnotate,
 })
 </script>
 
@@ -211,6 +236,19 @@ defineExpose({
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><circle cx="12" cy="12" r="3" /></svg>
         </button>
       </template>
+      <button
+        v-if="!mini"
+        type="button"
+        class="rb-annotate"
+        :class="{ active: annotating }"
+        data-rb-annotate
+        :aria-pressed="annotating"
+        v-tip="{ label: t('rp.browser.annotate', { combo: ANNOTATE_COMBO }), placement: 'bottom' }"
+        @click="toggleAnnotate"
+      >
+        <span>{{ t("rp.browser.annotateLabel") }}</span>
+        <kbd class="rb-annotate-kbd">{{ ANNOTATE_COMBO }}</kbd>
+      </button>
       <div class="rb-more-wrap">
         <button type="button" class="rb-round" data-rb-more :aria-label="t('rp.browser.more')" v-tip="{ label: t('rp.browser.more'), placement: 'bottom' }" @click="menuOpen = !menuOpen">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
@@ -219,6 +257,7 @@ defineExpose({
           <div class="rb-scrim" @mousedown="menuOpen = false" />
           <div class="rb-menu" role="menu" @keydown.esc="menuOpen = false">
             <button type="button" class="rb-item" :disabled="!showingPage" @click="menuOpen = false; act('forceReload')">{{ t("rp.browser.dotMenu.forceReload") }}</button>
+            <button type="button" class="rb-item" data-rb-device-toolbar :disabled="!showingPage" @click="deviceToolbar">{{ t("rp.browser.dotMenu.deviceToolbar") }}</button>
             <div class="rb-zoom">
               <span class="rb-zoom-label">{{ t("rp.browser.dotMenu.zoom") }}</span>
               <button type="button" class="rb-step" :disabled="!showingPage" aria-label="-" @click="act('zoomOut')">−</button>
@@ -236,7 +275,11 @@ defineExpose({
       </div>
     </div>
 
-    <div v-show="showingPage && !state.error" ref="stage" class="rb-frame" />
+    <div v-show="showingPage && !state.error" ref="stage" class="rb-frame">
+      <div v-if="annotating" class="rb-annotate-overlay" data-rb-annotate-overlay role="presentation">
+        <div class="rb-annotate-hint">{{ t("rp.browser.annotateHint", { combo: ANNOTATE_COMBO }) }}</div>
+      </div>
+    </div>
 
     <div v-if="state.error" class="rb-error" data-rb-error>
       <div class="rb-error-title">{{ t("rp.browser.error.title") }}</div>
@@ -411,13 +454,74 @@ defineExpose({
   background: var(--border-weak);
 }
 
+/* MiMo's annotate button: 34 high, a 1px line on an 8px corner, the chord in a key cap. */
+.rb-annotate {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  color: var(--text-base);
+  background: transparent;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.rb-annotate:hover {
+  background: var(--surface-hover);
+}
+
+.rb-annotate.active {
+  color: var(--interactive);
+  border-color: var(--interactive);
+}
+
+.rb-annotate-kbd {
+  padding: 0 5px;
+  color: inherit;
+  background: var(--surface-layer);
+  border: 1px solid var(--border-weak);
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--code-font-scale, 1));
+  line-height: 18px;
+}
+
 /* MiMo's page frame: 10 below the bar, 14 in, on a 10px corner. */
 .rb-frame {
+  position: relative;
   flex: 1;
   min-height: 0;
   margin: 10px 14px 14px;
   border-radius: 10px;
   overflow: hidden;
+}
+
+/* MiMo's annotate overlay: a dashed accent outline just inside the frame, the hint centred at its top. */
+.rb-annotate-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  outline: 2px dashed var(--interactive);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--interactive) 6%, transparent);
+  border-radius: 10px;
+  pointer-events: none;
+}
+
+.rb-annotate-hint {
+  margin-top: 10px;
+  padding: 4px 10px;
+  color: var(--interactive);
+  background: var(--surface-base);
+  border: 1px solid var(--interactive);
+  border-radius: 8px;
+  box-shadow: var(--shadow-md);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .rb-local {

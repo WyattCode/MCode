@@ -1011,6 +1011,13 @@ function reloadBrowser(force = false) {
   if (browserShowing.value) void rightPanel.value?.activeBrowser()?.reload(force)
 }
 
+/* Ctrl+period is MiMo's annotate while a browser tab is showing; elsewhere it steps the agent. */
+function annotateOrCycleAgent() {
+  const pane = browserShowing.value ? rightPanel.value?.activeBrowser() : undefined
+  if (pane) pane.toggleAnnotate()
+  else void cycleAgent(1)
+}
+
 /*
  * The pill over the composer: MiMo's diff of what this conversation's own tools
  * changed, as a tab of its own - updated when asked again, put away when asked
@@ -3160,8 +3167,8 @@ function onKeydown(event: KeyboardEvent) {
     // The model picker, on the key opencode uses for it. There is one picker
     // and it hangs off the pill, so both keys open the same menu.
     "'": () => composer.value?.openModelMenu(),
-    // Agents, forwards. Reverse is Ctrl+Shift+period.
-    ".": () => void cycleAgent(1),
+    // Annotate while a browser tab is showing, else agents forwards. Reverse is Ctrl+Shift+period.
+    ".": annotateOrCycleAgent,
     // The reference walks the visit history on these as well as on Alt+arrow.
     "[": back,
     "]": forward,
