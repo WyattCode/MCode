@@ -4204,6 +4204,7 @@ onBeforeUnmount(() => {
 
   <!-- Last in the document on purpose: see .rail-no-drag. -->
   <div v-if="!leftPanel && !onboarding" class="rail-no-drag" aria-hidden="true" />
+  <div v-if="!onboarding" class="toggles-no-drag" aria-hidden="true" />
 </template>
 
 <style scoped>
@@ -4444,6 +4445,23 @@ onBeforeUnmount(() => {
   inset-inline-start: 65px;
   z-index: 1;
   width: 120px;
+  height: 24px;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
+/*
+ * The same trap on the right: the side panel toggle and the home screen's
+ * bottom panel button sit fixed at the end of the title bar, and the home
+ * strip or the conversation header, later in the document, dragged over them.
+ * Covers both - the toggle 9px from the caption buttons, the other 4px before it.
+ */
+.toggles-no-drag {
+  position: fixed;
+  top: 13px;
+  inset-inline-end: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 9px);
+  z-index: 1;
+  width: 52px;
   height: 24px;
   pointer-events: none;
   -webkit-app-region: no-drag;
