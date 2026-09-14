@@ -11,6 +11,7 @@ import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
 import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
+import { installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
 import {
@@ -604,6 +605,9 @@ app.whenReady().then(async () => {
     const target = inside(directory, relative)
     if (target) shell.showItemInFolder(target)
   })
+
+  /* Which open-with apps are installed, for the settings row and the open-location menu. */
+  ipcMain.handle("mcode:installed-apps", () => installedOpenApps(process.platform))
 
   ipcMain.handle("mcode:open-file", async (_event, directory: string, relative: string, openWith?: unknown) => {
     const target = inside(directory, relative)

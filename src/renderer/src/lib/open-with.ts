@@ -23,8 +23,29 @@ const chosen = ref(
   })(),
 )
 
+/*
+ * The apps the main process found installed, asked once. Until it answers - or
+ * if it cannot - every app in the table is offered, which is what was offered
+ * before anything was checked.
+ */
+const installed = ref<string[]>()
+let askedInstalled = false
+
+function askInstalled() {
+  if (askedInstalled) return
+  askedInstalled = true
+  void window.mcode
+    .installedApps?.()
+    .then((ids) => (installed.value = ids))
+    .catch(() => undefined)
+}
+
 export function useOpenWith(platform: () => string) {
-  const apps = computed(() => openApps(platform()))
+  askInstalled()
+  /* As MiMo lists them: only the apps installed on this machine. */
+  const apps = computed(() =>
+    openApps(platform()).filter((entry) => !installed.value || installed.value.includes(entry.id)),
+  )
   const managerLabel = computed(() => t(fileManagerLabel(platform())))
 
   /* A remembered app this platform does not offer falls back to the file manager. */
@@ -50,15 +71,26 @@ export function useOpenWith(platform: () => string) {
     else notify(t("header.openedWith", { name }))
   }
 
+  /* Remembers an app as the one folders open with. */
+  function choose(id: string) {
+    chosen.value = id
+    try {
+      localStorage.setItem(OPEN_WITH_KEY, id)
+    } catch {}
+  }
+
   /* Picking an app remembers it and opens with it at once, as MiMo does. */
   async function pick(key: string, directory: string) {
     if (!key.startsWith("app.")) return
-    chosen.value = key.slice("app.".length)
-    try {
-      localStorage.setItem(OPEN_WITH_KEY, chosen.value)
-    } catch {}
+    choose(key.slice("app.".length))
     await open(directory)
   }
 
-  return { label, items, open, pick }
+  /* The same list for the settings row: the file manager, then what is installed. */
+  const options = computed(() => [
+    { value: FILE_MANAGER_ID, label: managerLabel.value },
+    ...apps.value.map((entry) => ({ value: entry.id, label: t(entry.label) })),
+  ])
+
+  return { label, items, open, pick, choice, choose, options }
 }

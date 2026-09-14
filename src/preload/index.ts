@@ -111,6 +111,8 @@ const api = {
    */
   openFile: (directory: string, relative: string, openWith?: string): Promise<string> =>
     ipcRenderer.invoke("mcode:open-file", directory, relative, openWith),
+  /** The ids from @shared/open-app of the apps actually installed here. */
+  installedApps: (): Promise<string[]> => ipcRenderer.invoke("mcode:installed-apps"),
 
   /** Shows a file the save dialog wrote; other paths are refused by the main process. */
   revealSaved: (target: string): Promise<void> => ipcRenderer.invoke("mcode:reveal-saved", target),

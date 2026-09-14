@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
+import { useOpenWith } from "../lib/open-with"
 import ConnectDialog from "./ConnectDialog.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
 import ProviderIcon from "./ProviderIcon.vue"
@@ -91,6 +92,9 @@ const props = defineProps<{
   updateReady?: string
 }>()
 const section = ref<Section>(props.section ?? "general")
+
+/* MiMo's 默认打开目标: the same remembered choice the title bar's open-location control uses. */
+const { options: openOptions, choice: openChoice, choose: chooseOpen } = useOpenWith(() => app.platform)
 
 /*
  * Standing instructions are edited in a box and saved on purpose rather than
@@ -1563,6 +1567,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <template v-if="section === 'general'">
           <h2>{{ t("set.nav.general") }}</h2>
           <div class="card">
+            <!-- MiMo's 默认打开目标: what 打开位置 opens a folder with, from the apps on this machine. -->
+            <div class="line" data-open-target>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.openTarget") }}</div>
+                <div class="line-sub">{{ t("set.openTargetSub") }}</div>
+              </div>
+              <SelectMenu :model-value="openChoice" :options="openOptions" @update:model-value="chooseOpen($event)" />
+            </div>
+
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.language") }}</div>
