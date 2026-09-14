@@ -60,6 +60,8 @@ import {
   pollDevice,
   type OAuthProvider,
 } from "../src/server/auth/oauth"
+import { filterMenu } from "../src/renderer/src/lib/menu"
+import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
 
 let passed = 0
 let failed = 0
@@ -237,6 +239,81 @@ async function main() {
   )
   await call({ type: "session.delete", sessionID: placed.session.id })
   await call({ type: "session.delete", sessionID: unplaced.session.id })
+
+  /*
+   * "Move out of project" from a conversation's menu: it leaves for a fresh
+   * folder of its own and is marked as having no project; moving it into a
+   * project again clears that mark, and a session that does not exist is
+   * refused before any folder is made.
+   */
+  const leaving = await call({ type: "session.create", directory: project })
+  const left = await call({ type: "session.moveOut", sessionID: leaving.session.id })
+  const leftStat = await fs.stat(left.session.directory).catch(() => undefined)
+  check(
+    "moving a conversation out of its project gives it a folder of its own",
+    left.session.id === leaving.session.id &&
+      left.session.scratch === true &&
+      path.dirname(left.session.directory) === process.env.MCODE_SCRATCH_ROOT &&
+      leftStat?.isDirectory() === true,
+    left.session,
+  )
+  const returned = await call({ type: "session.move", sessionID: leaving.session.id, directory: project })
+  check(
+    "moving it into a project again drops the no-project mark",
+    returned.session.scratch === undefined && returned.session.directory === project,
+    returned.session,
+  )
+  const foldersBefore = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
+  const moveOutRefused = await call({ type: "session.moveOut", sessionID: "ses_missing" }).then(
+    () => false,
+    () => true,
+  )
+  const foldersAfter = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
+  check("moving out a session that does not exist is refused and makes no folder", moveOutRefused && foldersAfter === foldersBefore, {
+    moveOutRefused,
+    foldersBefore,
+    foldersAfter,
+  })
+  await call({ type: "session.delete", sessionID: leaving.session.id })
+
+  /*
+   * The side column's menus and notices, which are plain logic under their
+   * components: a submenu's search keeps its sticky rows and counts only real
+   * matches, and a notice raised twice replaces itself rather than stacking.
+   */
+  const moveRows = [
+    { key: "out", label: "Move out", sticky: true },
+    { key: "a", label: "Alpha" },
+    { key: "b", label: "Beta" },
+  ]
+  const alpha = filterMenu(moveRows, "  ALP ")
+  check("a submenu search keeps sticky rows and matches labels without case", alpha.rows.map((row) => row.key).join(",") === "out,a" && alpha.matched === 1, alpha)
+  const none = filterMenu(moveRows, "zzz")
+  check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
+  check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
+
+  const noticeOnce = notify("Copied")
+  const noticeTwice = notify("Copied")
+  check("the same notice raised twice replaces itself", noticeOnce === noticeTwice && toasts.value.length === 1, toasts.value)
+  notifyFailure("Copied")
+  check("a notice of another level with the same title is a second notice", toasts.value.length === 2, toasts.value)
+  notify("One", { level: "success" })
+  notify("Two", { level: "warning" })
+  check("at most three notices are kept, the oldest dropped", toasts.value.length === 3 && toasts.value[0]?.title === "Copied" && toasts.value[0]?.level === "danger", toasts.value)
+  const linked = notice.info("Links", {
+    links: [
+      { label: "a", run: () => {} },
+      { label: "b", run: () => {} },
+    ],
+    action: { label: "c", run: () => {} },
+  })
+  check("a notice carries at most two links", toasts.value.find((entry) => entry.id === linked)?.links.length === 2)
+  check("a notice's identity is its level and its title", toastID("info", "x") === toastID("info", "x") && toastID("info", "x") !== toastID("danger", "x"))
+  const old = notify("Saved", "C:/log.txt", { label: "Show", run: () => {} })
+  const oldEntry = toasts.value.find((entry) => entry.id === old)
+  check("an older caller's body and action still arrive", oldEntry?.body === "C:/log.txt" && oldEntry.links[0]?.label === "Show" && oldEntry.level === "info", oldEntry)
+  for (const entry of [...toasts.value]) dismiss(entry.id)
+  check("dismissing every notice empties the stack", toasts.value.length === 0)
 
   /* The long-task chime: past a minute only, and an unknown choice plays the default. */
   check(

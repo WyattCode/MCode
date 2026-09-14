@@ -1325,6 +1325,8 @@ export type Request =
   | { type: "session.rename"; sessionID: string; title: string }
   /* Which project a conversation belongs to, which is the directory it works in. */
   | { type: "session.move"; sessionID: string; directory: string }
+  /* Out of its project, into a fresh folder of its own, as a task with no project works. */
+  | { type: "session.moveOut"; sessionID: string }
   | { type: "session.fork"; sessionID: string; messageID: string }
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
@@ -1532,6 +1534,7 @@ export interface ResponseMap {
   "session.archive": { session: SessionInfo }
   "session.rename": { session: SessionInfo }
   "session.move": { session: SessionInfo }
+  "session.moveOut": { session: SessionInfo }
   "session.fork": { session: SessionInfo }
   "session.model": { session: SessionInfo }
   "session.smart": { session: SessionInfo }
