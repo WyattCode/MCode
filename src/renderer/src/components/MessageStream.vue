@@ -3,10 +3,13 @@ import { computed, nextTick, onMounted, ref, watch, onBeforeUnmount } from "vue"
 import { useApp } from "../stores/app"
 import TextPart from "./parts/TextPart.vue"
 import ReasoningPart from "./parts/ReasoningPart.vue"
-import ToolPart from "./parts/ToolPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
+import QuestionCard from "./parts/QuestionCard.vue"
+import ErrorStep from "./parts/ErrorStep.vue"
+import RetryRow from "./parts/RetryRow.vue"
 import TextShimmer from "./parts/TextShimmer.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
+import { buildRows, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { preview, videoUrl } from "../lib/attach"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
@@ -70,76 +73,26 @@ interface Steer {
   at: number
 }
 
+/*
+ * A turn as MiMo's step list lays it out (see lib/step-rows): consecutive tool
+ * calls under one summary line until the model says something, questions on
+ * their own rows, and a steer where it landed. A group carries whether it is
+ * the one the live turn is working in, which is the group that starts open.
+ */
 type Row =
-  | { kind: "part"; id: string; part: AssistantPart }
+  | Exclude<StepRow, { kind: "group" }>
+  | { kind: "group"; id: string; items: StepItem[]; open: boolean }
   | { kind: "steer"; id: string; steer: Steer }
-  /** A run of lookups plus whatever the model said between them. */
-  | { kind: "tools"; id: string; parts: AssistantPart[] }
+  /** MiMo's 正在重新连接 N, while the provider request is being tried again. */
+  | { kind: "retry"; id: string; attempt: number }
 
-/**
- * Collapses runs of finished tool calls into one row.
- *
- * Rendered one card each, a dozen ordinary lookups bury the two sentences that
- * actually answer the question. Anything still running or failed stays on its
- * own, because that is exactly what the reader needs to see.
- */
-/**
- * Calls that only look at things.
- *
- * Several of these in a row are one act of looking around, and collapse into a
- * single line. Anything that acts - a command, an edit - keeps its own row:
- * what the model did is worth a line each, what it read is not.
- */
-const CONTEXT_TOOLS = new Set(["read", "glob", "grep", "list", "webfetch"])
-
-function rows(parts: AssistantPart[]): Row[] {
-  const out: Row[] = []
-  /** The current run, in order, including the notes written between calls. */
-  let run: AssistantPart[] = []
-  let tools = 0
-  /** Trailing reasoning: part of the run only if another lookup follows. */
-  let pending: AssistantPart[] = []
-
-  const flush = () => {
-    // Even one call collapses. Rendering the first as a card and folding it away
-    // once a second arrived made every step flash a box on and off.
-    if (tools >= 1) out.push({ kind: "tools", id: `g:${run[0].id}`, parts: run })
-    else for (const part of run) out.push({ kind: "part", id: part.id, part })
-    for (const part of pending) out.push({ kind: "part", id: part.id, part })
-    run = []
-    pending = []
-    tools = 0
-  }
-
-  for (const part of parts) {
-    // A reasoning part with nothing in it renders nothing, but an empty row
-    // still wraps it - a blank gap that appears and goes on every tool call.
-    if (part.type === "reasoning" && !part.text.trim()) continue
-
-    // Running calls belong in the group too: the count ticks up live, which is
-    // the progress report - a card that appears and then folds away reads as a
-    // glitch rather than as work happening.
-    // Pending counts too: a call waiting to start would otherwise appear as a
-    // card for an instant before the group swallowed it.
-    if (part.type === "tool" && part.status !== "error" && CONTEXT_TOOLS.has(part.name)) {
-      // Reasoning between two lookups does not end the run: the model narrates
-      // before every call, so treating that as a break meant nothing grouped.
-      // It is carried into the group rather than dropped - silently losing what
-      // the model said is worse than the wall of cards this replaced.
-      run.push(...pending, part)
-      pending = []
-      tools += 1
-      continue
-    }
-    if (part.type === "reasoning" && tools) {
-      pending.push(part)
-      continue
-    }
-    flush()
-    out.push({ kind: "part", id: part.id, part })
-  }
-  flush()
-  return out
+/** The rows for the parts between two points of the turn, with the errors that fell there. */
+function rows(turn: Turn, start: number, end: number): Row[] {
+  // An error exactly at a boundary belongs to the steps before it.
+  const errors = turn.errors
+    .filter((error) => error.at <= end && (start === 0 ? error.at >= 0 : error.at > start))
+    .map((error) => ({ ...error, at: error.at - start }))
+  return buildRows(turn.parts.slice(start, end), errors).map((row) => (row.kind === "group" ? { ...row, open: false } : row))
 }
 
 interface Turn {
@@ -152,6 +105,8 @@ interface Turn {
   asked?: number
   parts: AssistantPart[]
   steers: Steer[]
+  /** Errors from steps the turn went on past, drawn as MiMo's 错误：… where they happened. */
+  errors: InlineError[]
   /** The assistant messages the turn is made of, which is how the server is told which turn to take back. */
   messageIDs: string[]
   last?: AssistantMessage
@@ -208,14 +163,34 @@ const turns = computed<Turn[]>(() => {
         asked: message.time.created,
         parts: [],
         steers: [],
+        errors: [],
         messageIDs: [],
       }
       out.push(current)
       continue
     }
     if (!current) {
-      current = { id: message.id, parts: [], steers: [], messageIDs: [] }
+      current = { id: message.id, parts: [], steers: [], errors: [], messageIDs: [] }
       out.push(current)
+    }
+    /*
+     * An earlier step of this turn failed and the turn went on past it - a
+     * refusal for length answered by compacting and asking again. That failure
+     * is a step where it happened, not how the turn ended.
+     */
+    const previous = current.last
+    if (previous?.error) {
+      current.errors.push({
+        id: `err:${previous.id}`,
+        at: current.parts.length,
+        error: previous.error,
+        errorCode: previous.errorCode,
+        errorParams: previous.errorParams,
+      })
+      current.error = undefined
+      current.errorCode = undefined
+      current.errorParams = undefined
+      current.finish = undefined
     }
     current.parts.push(...message.parts)
     current.messageIDs.push(message.id)
@@ -437,21 +412,45 @@ onMounted(() => {
 })
 onBeforeUnmount(() => releaseFoldedCounter?.())
 
-/** Whether this turn did any work worth folding. */
+/** Whether this turn did any work worth folding. A question stays in view, so it is not such work. */
 function hasTools(turn: Turn): boolean {
-  return turn.parts.some((part) => part.type === "tool")
+  return turn.errors.length > 0 || turn.parts.some((part) => part.type === "tool" && part.name !== "question")
 }
 
-/** What the answer shows: its own words always, its steps once opened. */
-function shown(turn: Turn): Row[] {
+/*
+ * What the answer shows. While the turn runs, everything, with the group it is
+ * working in open; once it is done, its own words and questions always, and its
+ * steps when the head above them is opened.
+ */
+function shown(turn: Turn, at: number): Row[] {
   const all: Row[] = []
   let from = 0
   for (const steer of turn.steers) {
-    all.push(...rows(turn.parts.slice(from, steer.at)), { kind: "steer", id: steer.id, steer })
+    all.push(...rows(turn, from, steer.at), { kind: "steer", id: steer.id, steer })
     from = steer.at
   }
-  all.push(...rows(turn.parts.slice(from)))
-  return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "tools")
+  all.push(...rows(turn, from, turn.parts.length))
+
+  const live = liveTurn(at)
+  if (!live) return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "group" && row.kind !== "error")
+
+  const retry = turn.last?.retry
+  if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt })
+  // The last group with nothing said after it is the one being worked in.
+  for (let index = all.length - 1; index >= 0; index--) {
+    const row = all[index]!
+    if (row.kind === "part") break
+    if (row.kind === "group") {
+      row.open = true
+      break
+    }
+  }
+  return all
+}
+
+/** Rows that belong to MiMo's tight step column rather than the reply's paragraphs. */
+function isStep(row: Row): boolean {
+  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question"
 }
 
 /*
@@ -1013,7 +1012,7 @@ defineExpose({ stepMessage, scroller })
             <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
           </div>
 
-          <div v-for="row in shown(turn)" :key="row.id" class="part">
+          <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ step: isStep(row) }">
             <div
               v-if="row.kind === 'steer'"
               class="steer"
@@ -1052,9 +1051,11 @@ defineExpose({ stepMessage, scroller })
               <div v-if="row.steer.text" class="user-bubble steer-bubble">{{ row.steer.text }}</div>
               <span v-if="steerWaiting(turn, at, row.steer)" class="steer-note">{{ t("stream.steerWaiting") }}</span>
             </div>
-            <ToolGroup v-else-if="row.kind === 'tools'" :parts="row.parts" />
+            <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" />
+            <QuestionCard v-else-if="row.kind === 'question'" :part="row.part" />
+            <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
+            <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" />
             <ReasoningPart v-else-if="row.part.type === 'reasoning'" :part="row.part" />
-            <ToolPart v-else-if="row.part.type === 'tool'" :part="row.part" />
             <TextPart v-else :part="row.part" />
           </div>
 
@@ -1671,6 +1672,19 @@ defineExpose({ stepMessage, scroller })
 
 .part + .part {
   margin-top: 24px;
+}
+
+/*
+ * MiMo's steps sit in a column two apart, each row carrying its own 5px above
+ * and below; a paragraph of the reply keeps a clearer break from them.
+ */
+.part + .part.step,
+.part.step + .part {
+  margin-top: 12px;
+}
+
+.part.step + .part.step {
+  margin-top: 2px;
 }
 
 .err {
