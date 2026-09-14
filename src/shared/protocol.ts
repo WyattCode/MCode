@@ -1279,6 +1279,18 @@ export type Request =
       models: CustomModel[]
     }
   | { type: "provider.removeCustom"; provider: string }
+  | {
+      type: "provider.updateCustom"
+      id: string
+      name: string
+      baseURL: string
+      /** Blank keeps the key already held; `{env:VAR}` switches to a variable. */
+      apiKey: string
+      headers?: Record<string, string>
+      models: CustomModel[]
+    }
+  /** Copied in the backend so the stored key never travels to the window; `name` is the copy's, already worded. */
+  | { type: "provider.copyCustom"; provider: string; name: string }
   | { type: "auth.begin"; provider: string; method: AuthMethodKind }
   | { type: "auth.cancel"; provider: string }
   | { type: "auth.signOut"; provider: string }
@@ -1414,6 +1426,9 @@ export interface ResponseMap {
   "provider.discover": { providers: ProviderStatus[]; count: number }
   "provider.addCustom": { providers: ProviderStatus[] }
   "provider.removeCustom": { providers: ProviderStatus[] }
+  "provider.updateCustom": { providers: ProviderStatus[] }
+  /** The copy's id. */
+  "provider.copyCustom": { providers: ProviderStatus[]; id: string }
   /**
    * Where to send the user, plus the short code to type when the flow is the
    * device kind. Either way the outcome arrives later as an auth event.

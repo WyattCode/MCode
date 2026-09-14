@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue"
+import type { CustomProvider } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 
@@ -23,7 +24,15 @@ import { t } from "../lib/i18n"
  * `setField` rather than binding with v-model.
  */
 
-const props = defineProps<{ autofocus?: boolean }>()
+const props = defineProps<{
+  autofocus?: boolean
+  /**
+   * The provider being edited - MiMo's 编辑 on a saved custom model. Its id is
+   * locked, and the key field starts blank (the window is never sent the key)
+   * unless the key comes from a variable, which is only a name.
+   */
+  editing?: CustomProvider
+}>()
 const emit = defineEmits<{ connected: [] }>()
 
 const app = useApp()
@@ -53,13 +62,16 @@ const headerRow = (): HeaderRow => ({ key: "", value: "", err: {} })
  * one empty pair that may simply be left blank. That is what the reference
  * does; the empty row is skipped at validation rather than prevented.
  */
+const editing = props.editing
 const form = ref({
-  providerID: "",
-  name: "",
-  baseURL: "",
-  apiKey: "",
-  models: [modelRow()],
-  headers: [headerRow()],
+  providerID: editing?.id ?? "",
+  name: editing?.name ?? "",
+  baseURL: editing?.baseURL ?? "",
+  apiKey: editing?.environment ? `{env:${editing.environment}}` : "",
+  models: editing?.models?.length ? editing.models.map((model) => ({ ...modelRow(), id: model.id, name: model.name })) : [modelRow()],
+  headers: Object.keys(editing?.headers ?? {}).length
+    ? Object.entries(editing?.headers ?? {}).map(([key, value]) => ({ ...headerRow(), key, value }))
+    : [headerRow()],
   err: {} as { providerID?: string; name?: string; baseURL?: string },
 })
 
@@ -127,7 +139,7 @@ function validate(): Resolved | undefined {
       ? t("provider.custom.error.providerID.required")
       : !PROVIDER_ID.test(providerID)
         ? t("provider.custom.error.providerID.format")
-        : taken.has(providerID)
+        : !editing && taken.has(providerID)
           ? t("provider.custom.error.providerID.exists")
           : undefined,
     name: !name ? t("provider.custom.error.name.required") : undefined,
@@ -197,7 +209,8 @@ async function submit() {
   busy.value = true
   failure.value = undefined
   try {
-    await app.addCustomProvider(result)
+    if (editing) await app.updateCustomProvider(result)
+    else await app.addCustomProvider(result)
     emit("connected")
   } catch (err) {
     failure.value = err instanceof Error ? err.message : String(err)
@@ -233,6 +246,7 @@ async function submit() {
           id="cp-provider-id"
           class="cpin"
           :value="form.providerID"
+          :disabled="Boolean(editing)"
           :autofocus="props.autofocus !== false"
           :placeholder="t('provider.custom.field.providerID.placeholder')"
           spellcheck="false"
@@ -281,7 +295,7 @@ async function submit() {
           id="cp-api-key"
           class="cpin"
           :value="form.apiKey"
-          :placeholder="t('provider.custom.field.apiKey.placeholder')"
+          :placeholder="editing ? t('provider.custom.field.apiKey.keep') : t('provider.custom.field.apiKey.placeholder')"
           spellcheck="false"
           autocomplete="off"
           @input="setField('apiKey', ($event.target as HTMLInputElement).value)"
@@ -392,7 +406,7 @@ async function submit() {
     <div v-if="failure" class="cperror">{{ failure }}</div>
 
     <button class="cpsubmit" type="submit" :disabled="busy">
-      {{ busy ? t("common.saving") : t("common.submit") }}
+      {{ busy ? t("common.saving") : editing ? t("common.save") : t("common.submit") }}
     </button>
   </form>
 </template>

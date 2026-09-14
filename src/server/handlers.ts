@@ -655,6 +655,69 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { providers: runtime.config.providers() }
     }
 
+    /*
+     * MiMo's 编辑 on a saved custom model. The id stays - refs, the enabled
+     * list and the credential are keyed by it - and a blank key field keeps
+     * whatever the key came from before, because the window is never sent it.
+     */
+    case "provider.updateCustom": {
+      const config = runtime.config.get()
+      const existing = config.customProviders.find((entry) => entry.id === request.id)
+      if (!existing) throw new Error(`No custom provider with the id ${request.id}`)
+      const models = request.models.map((model) => ({ id: model.id.trim(), name: model.name.trim() }))
+      if (!models.length) throw new Error("A custom provider needs at least one model")
+      const typed = request.apiKey.trim()
+      const environment = /^\{env:([^}]+)\}$/.exec(typed)?.[1]?.trim()
+      const headers = Object.fromEntries(
+        Object.entries(request.headers ?? {})
+          .map(([key, value]) => [key.trim(), value.trim()])
+          .filter(([key, value]) => key && value),
+      )
+      const before = runtime.config.models(request.id).map((model) => model.id)
+      const keptEnvironment = environment ?? (!typed ? existing.environment : undefined)
+      await runtime.config.set({
+        customProviders: config.customProviders.map((entry) =>
+          entry.id === request.id
+            ? {
+                id: entry.id,
+                name: request.name.trim(),
+                baseURL: request.baseURL.trim(),
+                ...(Object.keys(headers).length ? { headers } : {}),
+                models,
+                ...(keptEnvironment ? { environment: keptEnvironment } : {}),
+              }
+            : entry,
+        ),
+      })
+      if (environment) await runtime.config.setApiKey(request.id, "")
+      else if (typed) await runtime.config.setApiKey(request.id, typed)
+      await keepModelsSelectable(runtime, request.id, before, false)
+      return { providers: runtime.config.providers() } satisfies Handled<"provider.updateCustom">
+    }
+
+    /*
+     * MiMo's 复制: the same provider under a free id and the name the window
+     * worded, with its key copied here so it never leaves the backend.
+     */
+    case "provider.copyCustom": {
+      const config = runtime.config.get()
+      const source = config.customProviders.find((entry) => entry.id === request.provider)
+      if (!source) throw new Error(`No custom provider with the id ${request.provider}`)
+      const taken = (id: string) =>
+        Boolean(runtime.config.definition(id)) || config.customProviders.some((entry) => entry.id === id)
+      let id = `${source.id}-copy`
+      for (let n = 2; taken(id); n++) id = `${source.id}-copy-${n}`
+      await runtime.config.set({
+        customProviders: [...config.customProviders, { ...source, id, name: request.name.trim() || source.name }],
+      })
+      if (!runtime.config.environmentKey(source.id)) {
+        const stored = runtime.config.apiKey(source.id)
+        if (stored) await runtime.config.setApiKey(id, stored)
+      }
+      await keepModelsSelectable(runtime, id, [], true)
+      return { providers: runtime.config.providers(), id } satisfies Handled<"provider.copyCustom">
+    }
+
     case "provider.removeCustom": {
       const config = runtime.config.get()
       await runtime.config.set({

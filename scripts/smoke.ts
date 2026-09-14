@@ -1052,6 +1052,63 @@ async function main() {
     )
     check("and the existing curation is left alone", curated.includes("anthropic/claude-opus-5"), curated)
 
+    /*
+     * Editing and copying, MiMo's 编辑 / 复制. An edit keeps the id; a blank key
+     * keeps whatever the key came from, and a typed one replaces it. A copy
+     * lands under a free id with the key copied in the backend.
+     */
+    await call({
+      type: "provider.updateCustom",
+      id: "mygateway",
+      name: "My Gateway Two",
+      baseURL: "https://gateway.example.com/v2",
+      apiKey: "",
+      headers: { "X-Route": "slow" },
+      models: [
+        { id: "big", name: "Big Model" },
+        { id: "tiny", name: "Tiny Model" },
+      ],
+    })
+    const edited = config.get().customProviders.find((entry) => entry.id === "mygateway")
+    check(
+      "an edit keeps the id and writes the new fields",
+      edited?.name === "My Gateway Two" &&
+        edited.baseURL === "https://gateway.example.com/v2" &&
+        edited.headers?.["X-Route"] === "slow" &&
+        edited.models?.map((m) => m.id).join() === "big,tiny",
+      edited,
+    )
+    check("a blank key keeps the variable it came from", edited?.environment === "SMOKE_CUSTOM_KEY", edited?.environment)
+    await call({
+      type: "provider.updateCustom",
+      id: "mygateway",
+      name: "My Gateway Two",
+      baseURL: "https://gateway.example.com/v2",
+      apiKey: "typed-key",
+      models: [{ id: "big", name: "Big Model" }],
+    })
+    const retyped = config.get().customProviders.find((entry) => entry.id === "mygateway")
+    check(
+      "a typed key replaces the variable",
+      !retyped?.environment && config.apiKey("mygateway") === "typed-key" && !config.environmentKey("mygateway"),
+      retyped,
+    )
+    const firstCopy = await call({ type: "provider.copyCustom", provider: "mygateway", name: "My Gateway Two copy" })
+    const copied = config.get().customProviders.find((entry) => entry.id === "mygateway-copy")
+    check(
+      "a copy lands under a free id with the fields and the key",
+      firstCopy.id === "mygateway-copy" &&
+        copied?.name === "My Gateway Two copy" &&
+        copied.baseURL === "https://gateway.example.com/v2" &&
+        copied.models?.map((m) => m.id).join() === "big" &&
+        config.apiKey("mygateway-copy") === "typed-key",
+      { firstCopy, copied },
+    )
+    const secondCopy = await call({ type: "provider.copyCustom", provider: "mygateway", name: "again" })
+    check("a second copy takes the next free id", secondCopy.id === "mygateway-copy-2", secondCopy.id)
+    await call({ type: "provider.removeCustom", provider: "mygateway-copy" })
+    await call({ type: "provider.removeCustom", provider: "mygateway-copy-2" })
+
     await call({ type: "provider.removeCustom", provider: "mygateway" })
     await config.set({ enabledModels: [] })
     delete process.env.SMOKE_CUSTOM_KEY

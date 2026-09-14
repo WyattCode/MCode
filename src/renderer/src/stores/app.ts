@@ -1356,6 +1356,25 @@ export const useApp = defineStore("app", () => {
     providers.value = (await api().request({ type: "provider.removeCustom", provider })).providers
   }
 
+  /** Saves an edited custom provider under its own id; a blank key keeps the one held. */
+  async function updateCustomProvider(entry: {
+    id: string
+    name: string
+    baseURL: string
+    apiKey: string
+    headers?: Record<string, string>
+    models: CustomModel[]
+  }) {
+    providers.value = (await api().request({ type: "provider.updateCustom", ...entry })).providers
+  }
+
+  /** Copies a custom provider under a free id, and answers that id. */
+  async function copyCustomProvider(provider: string, name: string): Promise<string> {
+    const result = await api().request({ type: "provider.copyCustom", provider, name })
+    providers.value = result.providers
+    return result.id
+  }
+
   /** The turn currently streaming, if any - used to anchor the scroll. */
   /**
    * Opens a side chat beside a conversation: a new, numbered conversation in
@@ -1506,5 +1525,7 @@ export const useApp = defineStore("app", () => {
     discoverModels,
     addCustomProvider,
     removeCustomProvider,
+    updateCustomProvider,
+    copyCustomProvider,
   }
 })

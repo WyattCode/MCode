@@ -1350,6 +1350,30 @@ async function refresh(provider: string) {
  * silently does nothing would leave the provider as stranded as it was before
  * it started being drawn at all.
  */
+/* MiMo's 编辑 / 复制 on a saved custom model; here on the custom provider that holds the models. */
+const editingCustom = ref<string>()
+
+function customEntry(id: string) {
+  return app.config?.customProviders?.find((entry) => entry.id === id)
+}
+
+function editCustom(id: string) {
+  if (!customEntry(id)) {
+    notifyFailure(t("set.models.editFailed"))
+    return
+  }
+  editingCustom.value = editingCustom.value === id ? undefined : id
+}
+
+async function copyCustom(provider: { id: string; name: string }) {
+  try {
+    await app.copyCustomProvider(provider.id, t("set.models.copyName", { name: provider.name }))
+    notify(t("set.models.copied"))
+  } catch {
+    notifyFailure(t("set.models.copyFailed"))
+  }
+}
+
 async function removeCustom(provider: string) {
   busy.value = provider
   notice.value = undefined
@@ -3068,13 +3092,27 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
                 {{ t("provider.fromEnvironment") }}
               </span>
-              <button
-                v-else
-                class="plink"
-                @click="provider.custom ? removeCustom(provider.id) : disconnect(provider.id)"
-              >
-                {{ provider.custom ? t("provider.remove") : t("set.disconnect") }}
-              </button>
+              <template v-else>
+                <!-- MiMo's 编辑 / 复制 on a saved custom model, before its 删除. -->
+                <template v-if="provider.custom">
+                  <button class="plink" :data-provider-edit="provider.id" @click="editCustom(provider.id)">
+                    {{ t("set.models.edit") }}
+                  </button>
+                  <button class="plink" :data-provider-copy="provider.id" @click="copyCustom(provider)">
+                    {{ t("set.models.copy") }}
+                  </button>
+                </template>
+                <button class="plink" @click="provider.custom ? removeCustom(provider.id) : disconnect(provider.id)">
+                  {{ provider.custom ? t("provider.remove") : t("set.disconnect") }}
+                </button>
+              </template>
+            </div>
+            <div
+              v-if="provider.custom && editingCustom === provider.id && customEntry(provider.id)"
+              class="card cpanel"
+              data-provider-edit-form
+            >
+              <CustomProviderForm :editing="customEntry(provider.id)" :autofocus="false" @connected="editingCustom = undefined" />
             </div>
 
             <div v-if="provider.kind === 'openai-compatible' && !provider.custom" class="pform">
