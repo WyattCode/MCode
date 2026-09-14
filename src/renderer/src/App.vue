@@ -104,17 +104,78 @@ function readInfoOpen(): boolean {
   }
 }
 
-function toggleInfo() {
-  infoOpen.value = !infoOpen.value
+function setInfoOpen(next: boolean) {
+  infoOpen.value = next
   try {
-    localStorage.setItem(INFO_KEY, infoOpen.value ? "1" : "0")
+    localStorage.setItem(INFO_KEY, next ? "1" : "0")
   } catch {
     // Remembered for this run only.
   }
 }
 
-/* Only beside a conversation: the home screen and an empty session have nothing to list. */
-const infoShowing = computed(() => infoOpen.value && !isHome.value && !empty.value)
+/*
+ * MiMo's two ways of showing the card. Beside the conversation while the main
+ * column is at least 790 wide - 480 of chat and the 310 the card takes - and
+ * floating over it below that. Floating is its own flag, never remembered,
+ * shut whenever the column crosses the line either way, and shut again by a
+ * click anywhere outside the card.
+ */
+const INFO_INLINE_MIN = 790
+const INFO_PANEL_WIDTH = 310
+const mainWidth = ref(0)
+const viewportWide = ref(false)
+const infoFloating = computed(() => mainWidth.value > 0 && mainWidth.value < INFO_INLINE_MIN)
+const infoOverlayOpen = ref(false)
+watch(infoFloating, () => (infoOverlayOpen.value = false))
+
+function toggleInfo() {
+  if (infoFloating.value) infoOverlayOpen.value = !infoOverlayOpen.value
+  else setInfoOpen(!infoOpen.value)
+}
+
+function closeInfo() {
+  if (infoFloating.value) infoOverlayOpen.value = false
+  else setInfoOpen(false)
+}
+
+/*
+ * Only beside a conversation: the home screen and an empty session have nothing
+ * to list. Not while the right panel is expanded over the conversation either,
+ * as MiMo draws nothing of the card then.
+ */
+const infoShowing = computed(
+  () =>
+    !isHome.value &&
+    !empty.value &&
+    !(rp.open && rp.fullscreen) &&
+    (infoFloating.value ? infoOverlayOpen.value : infoOpen.value),
+)
+const infoInline = computed(() => infoShowing.value && !infoFloating.value)
+
+/*
+ * How much of the column the card holds clear: only what keeps MiMo's 768
+ * reading column (1000 on a 2000px screen) out from under a 310 card, so a wide
+ * window gives up nothing at all.
+ */
+const infoInset = computed(() => {
+  if (!infoInline.value) return "0px"
+  const column = viewportWide.value ? 1000 : 768
+  const need = column + INFO_PANEL_WIDTH * 2 - mainWidth.value
+  return `${Math.max(0, Math.min(INFO_PANEL_WIDTH, need))}px`
+})
+
+let mainObserver: ResizeObserver | undefined
+onMounted(() => {
+  const pane = mainPane.value
+  if (!pane) return
+  mainObserver = new ResizeObserver(([entry]) => {
+    if (!entry) return
+    mainWidth.value = entry.contentRect.width
+    viewportWide.value = window.innerWidth >= 2000
+  })
+  mainObserver.observe(pane)
+})
+onBeforeUnmount(() => mainObserver?.disconnect())
 
 /*
  * A version that has been fetched and is waiting to be run.
@@ -3637,7 +3698,7 @@ onBeforeUnmount(() => {
         @settings="openSettings"
       />
 
-      <main ref="mainPane" class="main" :class="{ 'info-open': infoShowing, beside: panelBeside }">
+      <main ref="mainPane" class="main" :class="{ 'info-open': infoInline, 'info-shown': infoShowing, beside: panelBeside }">
         <!-- A turn can run for minutes; the bar is the only thing that says so
              without the user watching the transcript for movement. -->
         <div v-if="app.busy && !onboarding" class="progress"><span /></div>
@@ -3701,7 +3762,13 @@ onBeforeUnmount(() => {
           <SessionHero v-if="empty && !app.error" />
           <MessageStream v-else ref="stream" />
           <SessionSpine v-if="!(empty && !app.error)" :scroller="stream?.scroller" />
-          <InfoPanel v-if="infoShowing" :bottom-inset="terminalUp ? drawerHeight : 0" />
+          <InfoPanel
+            :visible="infoShowing"
+            :floating="infoFloating"
+            :bottom-inset="terminalUp ? drawerHeight : 0"
+            :escape-blocked="modalOpen || searchOpen || connectOpen || Boolean(sessionMenu) || Boolean(projectMenu) || Boolean(app.permission)"
+            @close="closeInfo"
+          />
 
           <!--
             The dock, which is the same region in every state a session can be
@@ -4197,7 +4264,7 @@ onBeforeUnmount(() => {
 }
 
 .main.info-open .live-edit-anchor {
-  margin-inline-end: 262px;
+  margin-inline-end: v-bind(infoInset);
 }
 
 /*
@@ -4250,17 +4317,23 @@ onBeforeUnmount(() => {
 }
 
 /*
- * With the info card up the conversation makes room for it the way MiMo's
- * does: 262 held clear at the inline end of the transcript and of the dock,
- * so the reading column and the composer centre in what is left and line up
- * with each other rather than with the window.
+ * With the info card beside it the conversation makes room the way MiMo's
+ * does: only as much as keeps the 768 reading column clear of the 310 card,
+ * held at the inline end of the transcript and of the dock, so the column and
+ * the composer centre in what is left - and the jump-to-bottom button, centred
+ * inside the transcript, moves with them. Floating, the card takes nothing.
  */
 .main.info-open :deep(.stream) {
-  padding-inline-end: 262px;
+  padding-inline-end: v-bind(infoInset);
 }
 
 .main.info-open :deep(.composer) {
-  padding-inline-end: calc(24px + 262px);
+  padding-inline-end: calc(24px + v-bind(infoInset));
+}
+
+/* MiMo moves the find bar clear of the card whenever the card is up: 20 plus its 310. */
+.main.info-shown ~ [data-find-bar] {
+  margin-inline-end: 310px;
 }
 
 /* Left of the caption buttons where Windows draws them, level with the header's own row: MiMo's 24px in a 32px row 9 down. */
