@@ -1075,19 +1075,33 @@ watch(reviewPanelUp, (up) => {
   if (up) launcherOpen.value = false
 })
 
-/* MiMo's 展开面板: the side panel over the whole of the main column, until put back or put away. */
-const sidePanelFull = ref(false)
-watch(launcherShown, (shown) => {
-  if (!shown) sidePanelFull.value = false
+/*
+ * The panel standing under the side panel toggle at the window's right edge:
+ * the last of the columns beside the conversation, in the order they are laid
+ * out. It carries MiMo's expand button.
+ */
+type EdgePanel = "launcher" | "review" | "browser" | "chat"
+const edgePanel = computed<EdgePanel | undefined>(() => {
+  if (reviewPanelUp.value) return "review"
+  if (launcherShown.value) return "launcher"
+  if (browserOpen.value && browserAllowed.value) return "browser"
+  if (sideChat.value && app.sideID) return "chat"
+  return undefined
 })
 
 /*
  * Something stands beside the main column on its right, so the column's title
  * row ends at the column rather than under the side panel toggle.
  */
-const panelBeside = computed(
-  () => launcherShown.value || reviewPanelUp.value || (browserOpen.value && browserAllowed.value) || (sideChat.value && Boolean(app.sideID)),
-)
+const panelBeside = computed(() => edgePanel.value !== undefined)
+
+/*
+ * MiMo's 展开面板: that panel over the whole of the main column. It holds when
+ * another tool takes the panel's place, as MiMo's does across its tabs, and
+ * lets go once nothing stands beside the column.
+ */
+const sidePanelFull = ref(false)
+const fullPanel = computed(() => (sidePanelFull.value ? edgePanel.value : undefined))
 
 function toggleSidePanel() {
   if (reviewPanelUp.value) {
@@ -2030,6 +2044,15 @@ watch(browserAllowed, (allowed) => {
  * middle. Closing it puts the side chat away.
  */
 const sideChat = ref(false)
+
+/*
+ * The expanded side panel lets go once nothing stands beside the main column.
+ * Here rather than beside `sidePanelFull`: a watch reads its source at once,
+ * and the browser and side chat state it reads is only declared above.
+ */
+watch(edgePanel, (panel) => {
+  if (!panel) sidePanelFull.value = false
+})
 
 async function toggleSideChat() {
   if (sideChat.value) {
@@ -3798,7 +3821,7 @@ onBeforeUnmount(() => {
       :class="{
         blank: !isHome && !onboarding && empty && !app.error,
         /* The side panel expanded over the main column. */
-        'panel-full': sidePanelFull && launcherShown,
+        'panel-full': fullPanel !== undefined,
         /* Counts the panel whichever of its two tabs it is showing: it is the
            same column taking the same width either way. */
         'with-review': reviewPanelUp,
@@ -4011,7 +4034,10 @@ onBeforeUnmount(() => {
       -->
       <SideChat
         v-if="sideChat && app.sideID"
-        :edge="!(browserOpen && browserAllowed) && !launcherShown && !reviewPanelUp"
+        :class="{ 'side-full': fullPanel === 'chat' }"
+        :edge="edgePanel === 'chat'"
+        :full="fullPanel === 'chat'"
+        @fullscreen="sidePanelFull = !sidePanelFull"
         @close="toggleSideChat"
         @open-settings="openSettings"
         @connect="connectOpen = true"
@@ -4028,15 +4054,19 @@ onBeforeUnmount(() => {
         v-if="browserOpen && browserAllowed"
         ref="browserPanel"
         class="browser-panel"
-        :edge="!launcherShown && !reviewPanelUp"
+        :class="{ 'side-full': fullPanel === 'browser' }"
+        :edge="edgePanel === 'browser'"
+        :full="fullPanel === 'browser'"
+        @fullscreen="sidePanelFull = !sidePanelFull"
         @close="browserOpen = false"
       />
 
       <!-- MiMo's side panel with nothing chosen: a card for each thing it can hold. -->
       <RightLauncher
         v-if="launcherShown"
+        :class="{ 'side-full': fullPanel === 'launcher' }"
         :available="launchAvailable"
-        :full="sidePanelFull"
+        :full="fullPanel === 'launcher'"
         @pick="launch"
         @fullscreen="sidePanelFull = !sidePanelFull"
       />
@@ -4055,11 +4085,18 @@ onBeforeUnmount(() => {
         The right column, which holds the review panel. The terminal used to be
         stacked under it here; it now docks at the foot of the conversation.
       -->
-      <div v-if="reviewPanelUp" class="column" :style="reviewWidth ? { width: `${reviewWidth}px` } : undefined">
+      <div
+        v-if="reviewPanelUp"
+        class="column"
+        :class="{ 'side-full': fullPanel === 'review' }"
+        :style="reviewWidth && fullPanel !== 'review' ? { width: `${reviewWidth}px` } : undefined"
+      >
       <FilePanel
         v-if="reviewPanelUp"
         ref="filePanel"
         edge
+        :full="fullPanel === 'review'"
+        @fullscreen="sidePanelFull = !sidePanelFull"
         v-model:tree-open="fileTreeOpen"
         v-model:width="reviewWidth"
         v-model:context-tab="contextTab"
@@ -4658,5 +4695,22 @@ onBeforeUnmount(() => {
   min-width: 0;
   overflow: hidden;
   border-inline-start-width: 0;
+}
+
+/*
+ * The expanded panel takes the room the main column gave up, whatever its own
+ * width was - the browser's is set inline and the review's on its column, so
+ * these have to win over both - rounded and lifted where it meets the side column.
+ */
+.side-full {
+  flex: 1 1 auto !important;
+  width: auto !important;
+  min-width: 0 !important;
+  max-width: none !important;
+  overflow: hidden;
+  border-inline-start-width: 0;
+  border-start-start-radius: 16px;
+  border-end-start-radius: 20px;
+  box-shadow: 0 4px 24px rgb(0 0 0 / 0.12);
 }
 </style>

@@ -2,6 +2,7 @@
 import { computed, ref } from "vue"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
+import PanelExpand from "./PanelExpand.vue"
 import { t } from "../lib/i18n"
 
 /**
@@ -90,7 +91,7 @@ function pickAdd(key: string) {
 </script>
 
 <template>
-  <aside class="launcher" :class="{ full }" :aria-label="t('key.sidePanel')">
+  <aside class="launcher" :aria-label="t('key.sidePanel')">
     <div class="launcher-head">
       <button
         type="button"
@@ -105,20 +106,7 @@ function pickAdd(key: string) {
         </svg>
       </button>
       <span class="head-spacer" />
-      <button
-        type="button"
-        class="head-expand"
-        data-launcher-expand
-        :aria-pressed="Boolean(full)"
-        :aria-label="t(full ? 'launch.restoreWidth' : 'launch.expand')"
-        v-tip="{ label: t(full ? 'launch.restoreWidth' : 'launch.expand'), placement: 'bottom' }"
-        @click="emit('fullscreen')"
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path v-if="full" d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6" />
-          <path v-else d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6" />
-        </svg>
-      </button>
+      <PanelExpand :full="full" @toggle="emit('fullscreen')" />
     </div>
     <div class="launcher-list">
       <button
@@ -153,17 +141,6 @@ function pickAdd(key: string) {
   border-inline-start: 1px solid var(--border-weak);
 }
 
-/* Expanded over the main column: the panel takes the room, rounded where it meets the side column. */
-.launcher.full {
-  flex: 1;
-  width: auto;
-  min-width: 0;
-  border-inline-start-width: 0;
-  border-start-start-radius: 16px;
-  border-end-start-radius: 20px;
-  box-shadow: 0 4px 24px rgb(0 0 0 / 0.12);
-}
-
 /*
  * MiMo's rp-head: 46 tall with its row four down, 10 in from the start, and at
  * the end clear of the caption buttons and the side panel toggle over it, so
@@ -186,34 +163,22 @@ function pickAdd(key: string) {
   min-width: 0;
 }
 
-.head-add,
-.head-expand {
+/* The plus: MiMo's 26px icon button in the muted colour. */
+.head-add {
   display: grid;
   flex: none;
   place-items: center;
+  width: 26px;
+  height: 26px;
   padding: 0;
+  color: var(--text-weak);
   background: transparent;
   border: 0;
   border-radius: 7px;
   -webkit-app-region: no-drag;
 }
 
-/* The plus: MiMo's 26px icon button in the muted colour. */
-.head-add {
-  width: 26px;
-  height: 26px;
-  color: var(--text-weak);
-}
-
-/* Expand: 24px in the title bar's icon colour, a 12px glyph. */
-.head-expand {
-  width: 24px;
-  height: 24px;
-  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
-}
-
-.head-add:hover,
-.head-expand:hover {
+.head-add:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
 }

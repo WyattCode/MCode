@@ -7,6 +7,7 @@ import ContextRing from "./ContextRing.vue"
 import ContextView from "./ContextView.vue"
 import { useApp } from "../stores/app"
 import ReviewPatch from "./ReviewPatch.vue"
+import PanelExpand from "./PanelExpand.vue"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 import { readContext } from "./session-context"
 import { t } from "../lib/i18n"
@@ -33,11 +34,14 @@ const props = defineProps<{
   canReview?: boolean
   /* At the window's right edge, where the caption buttons and the side panel button sit over the bar. */
   edge?: boolean
+  /* Expanded over the main column. */
+  full?: boolean
 }>()
 
 const emit = defineEmits<{
   notes: [notes: { file: string; line: number; text: string }[]]
   export: []
+  fullscreen: []
   "update:treeOpen": [open: boolean]
   "update:width": [width: number]
   "update:contextTab": [open: boolean]
@@ -856,12 +860,15 @@ onBeforeUnmount(() => observer?.disconnect())
       the pointer is on them.
     -->
     <div
+      v-if="!full"
       class="pane-grip"
       :class="{ on: splitting }"
       v-tip="{ label: t('files.resize'), placement: 'right' }"
       @pointerdown.prevent="beginSplit"
       @dblclick="resetSplit"
     />
+    <!-- MiMo's expand, level with the side panel toggle and 4px before it. -->
+    <PanelExpand v-if="edge" class="float-expand" :full="full" @toggle="emit('fullscreen')" />
     <!--
       The panel's own bar. The first control folds the file column away, which
       is what lets a diff use the whole width when the list is not being read.
@@ -1461,9 +1468,17 @@ onBeforeUnmount(() => observer?.disconnect())
   border-bottom: 1px solid var(--border-weaker);
 }
 
-/* Clear of the caption buttons, and of the side panel button beside them. */
+/* Clear of the caption buttons, the side panel button beside them and the expand button before that. */
 .head.edge {
-  padding-inline-end: calc(46px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  padding-inline-end: calc(65px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+}
+
+/* Level with the side panel toggle (13 down), ending 4px before it. */
+.float-expand {
+  position: absolute;
+  top: 13px;
+  inset-inline-end: calc(37px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  z-index: 31;
 }
 
 /* First in the bar, and set apart: it acts on the bar's own layout. */

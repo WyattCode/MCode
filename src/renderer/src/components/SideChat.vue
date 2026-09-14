@@ -3,6 +3,7 @@ import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
 import MessageStream from "./MessageStream.vue"
 import Composer from "./Composer.vue"
+import PanelExpand from "./PanelExpand.vue"
 
 /**
  * A side chat: a second conversation beside the open one, as MiMo has it.
@@ -15,9 +16,11 @@ import Composer from "./Composer.vue"
  */
 const app = useApp()
 /* At the window's right edge, where the caption buttons and the side panel button sit over its header. */
-defineProps<{ edge?: boolean }>()
+/* `full`: expanded over the main column. */
+defineProps<{ edge?: boolean; full?: boolean }>()
 const emit = defineEmits<{
   close: []
+  fullscreen: []
   "open-settings": [section?: "models"]
   connect: []
   shell: [command: string]
@@ -27,6 +30,8 @@ const emit = defineEmits<{
 
 <template>
   <aside class="side-chat" :aria-label="t('side.chat')">
+    <!-- MiMo's expand, level with the side panel toggle and 4px before it. -->
+    <PanelExpand v-if="edge" class="float-expand" :full="full" @toggle="emit('fullscreen')" />
     <header class="bar" :class="{ edge }">
       <span class="heading">
         <span class="title">{{ app.side ? sessionTitle(app.side.title) : t("side.chat") }}</span>
@@ -70,6 +75,7 @@ const emit = defineEmits<{
  * workspace keeps its room, wide enough that a paragraph is still a paragraph.
  */
 .side-chat {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -88,9 +94,17 @@ const emit = defineEmits<{
   padding: 0 8px 0 14px;
 }
 
-/* Clear of the caption buttons, and of the side panel button beside them. */
+/* Clear of the caption buttons, the side panel button beside them and the expand button before that. */
 .bar.edge {
-  padding-inline-end: calc(46px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  padding-inline-end: calc(65px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+}
+
+/* Level with the side panel toggle (13 down), ending 4px before it. */
+.float-expand {
+  position: absolute;
+  top: 13px;
+  inset-inline-end: calc(37px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  z-index: 31;
 }
 
 .heading {

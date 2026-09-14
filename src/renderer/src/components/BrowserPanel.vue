@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { LocalServer } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import PanelExpand from "./PanelExpand.vue"
 
 /**
  * The browser panel.
@@ -18,9 +19,10 @@ import { t } from "../lib/i18n"
  * shows through.
  */
 const app = useApp()
-const emit = defineEmits<{ close: [] }>()
+const emit = defineEmits<{ close: []; fullscreen: [] }>()
 /* At the window's right edge, where the caption buttons and the side panel button sit over its tab row. */
-defineProps<{ edge?: boolean }>()
+/* `full`: expanded over the main column. */
+defineProps<{ edge?: boolean; full?: boolean }>()
 
 interface Tab {
   id: string
@@ -242,11 +244,14 @@ async function scan() {
       see, the same handle the project panel uses.
     -->
     <div
+      v-if="!full"
       class="pane-grip"
       :class="{ on: dragging }"
       @pointerdown.prevent="beginResize"
       @dblclick="resetWidth"
     />
+    <!-- MiMo's expand, level with the side panel toggle and 4px before it. -->
+    <PanelExpand v-if="edge" class="float-expand" :full="full" @toggle="emit('fullscreen')" />
     <header class="tabs" :class="{ edge }">
       <div class="strip">
         <div
@@ -367,9 +372,17 @@ async function scan() {
   padding: 0 8px;
 }
 
-/* Clear of the caption buttons, and of the side panel button beside them. */
+/* Clear of the caption buttons, the side panel button beside them and the expand button before that. */
 .tabs.edge {
-  padding-inline-end: calc(46px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  padding-inline-end: calc(65px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+}
+
+/* Level with the side panel toggle (13 down), ending 4px before it. */
+.float-expand {
+  position: absolute;
+  top: 13px;
+  inset-inline-end: calc(37px + 100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  z-index: 31;
 }
 
 /* The row scrolls rather than squeezing: a tab too narrow to read is not a
