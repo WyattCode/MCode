@@ -5,7 +5,7 @@
 - 分支：`v2.0`（只在本地，从未推送）
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-14
+- 最近更新：2026-09-15
 
 ## 现在到哪了
 
@@ -292,6 +292,18 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
   - 新文案 `office.*` 42 个（14 种取自 MiMo `office.*` 对象；MiMo 各语言包缺的 11 个照 MiMo 回退英文；ar / bs / th / uk 自译）。
   - 验证：新探针 `mcode-office.cjs` 8 项全过（探针用 jszip 现做一个带批注、删除、插入的 docx；从已发送消息的文件卡片打开、头部、页面与修订标记、「修订 2 条」胶囊与修订栏卡片、插入悬停、选中暂存为 docx 注释且框在文字上、磁盘改写后重载 + 撤销可用 + 历史行「手动修改（外部程序）」+ 回溯恢复原文、缩放 110%、控制台无错误）；`mcode-pdf` 7 项、`mcode-annotations` 11 项重跑全过。
   - 与 MiMo 的差别 / 没做：用户编辑后的「变更通知」上下文（下次发送时告诉模型文件被改过）没做；MiMo 由产物索引驱动的自动打开交付物、产物卡片没有（MCode 没有这套产物服务）；旧格式转换依赖用户自己装的 LibreOffice。
+- [已完成] PPT 查看器 + 全屏演示（用户 2026-09-15「和 MiMo 仍不一样的地方，都改为一样，包括界面」；照 MiMo `RpOffice` 的 `Bi` / `Ei`，规格在 scratchpad `spec-pptx-xlsx.md` §A；@aiden0z/pptx-renderer 1.2.3、echarts 6.1.0）：
+  - `PptxView.vue`：渲染器列表模式（`fitMode: contain`、滚动容器即宿主、`teardownAdaptiveResize` 后自己 180ms 去抖调 `handleContainerResize`），幻灯片占满面板宽、间隔 20，无工具栏无缩放；加载 / 失败层；重载时隐藏宿主并恢复滚动位置（60 帧、用户滚动超过 8px 放弃）；链接只放行 http / mailto / tel。
+  - `lib/pptx-parse.ts`（照 MiMo `di` / `Js` / `ri` / `wi` / `Si` / `$i`，自己写的实现）：每页 `p:sldId`、铺满整页且带 `srcRect` 的图片裁切（含版式 / 母版）、左对齐段落、形状 id / 名称 / 文字、图表缓存数据 → echarts 配置（柱 / 条 / 折线 / 面积 / 饼 / 环 / 散点 / 气泡，雷达保留渲染器自己的）；首次打开入场时间表（每项 150ms、单页最多 12 步、页间 400ms、总长压到 18 秒）；演示用的 `p:transition` 与 `p:timing` 入场效果。
+  - `lib/pptx-dom.ts`：模块命中（从最外层非整页盒子往指针方向收，面积 ≥0.5% 且有 2 个以上可见子块才继续；有文字时取文字外框外扩 12 / 8）、框选文字（相交的顶层块用「 ⏎ 」连接）、区域按幻灯片比例存取、裁切与对齐修正、图表重画（按顺序对应渲染器的图表盒子，不够时 200 / 600 / 1400ms 重试，重画后隐藏旁边的图例和标题）。
+  - 交互照 MiMo：悬停模块描边（2px #3295fb、.08 底、圆角 3）；点击模块打开注释框并自动聚焦（`CellAffordance` 新增 `autofocus`）；在空白处拖动 ≥6px 画框（十字光标），小于 6px 清除本文件批次；选中文字画每行浅蓝框、不抢焦点；滚轮关闭；尺寸变化时按比例重新投影。
+  - 注释：新类型 `pptx`（`slide` / `slideId` / `shapeId` / `shapeName` / `region` / `boxed`，协议与 `annotationsBlock` 同步，模型读到「slide N (slide id X), shape "名称"」或「框选区域大致从 (x%, y%) 到 (x2%, y2%)」）；发送提示词「【PPT 第n页】…」，回复结束后记 AI 版本「【第n页·框选范围 / 选中模块】…」；标签范围新键 `annotations.rangeSlide` / `rangeSlideRegion` / `rangeSlideImage`（中文照 MiMo「第 n 页·选中『…』/ 框选区域 / 图片」，其他语言自译）；标记按区域比例画，重载后吸附到区域中心下的模块；点标签平滑滚到区域并闪亮；AI 运行时的水波纹同 Word。
+  - 刚由 AI 新建的文件（`ai-touch` 记录 write 工具的 `created`，`takeCreated` 只取一次）首次打开时逐页淡入、每块上浮进场，滚轮 / 按下 / 按键立即结束；减少动画（`data-motion`）时不播。
+  - `PptxPresent.vue`：头部「全屏演示」从当前页开始；黑底全屏、A / B 两层切换并播放该页切换效果（淡入 / 推进 / 擦除 / 分割 / 覆盖 / 无），之后播放入场动画（淡入 / 飞入 / 擦除 / 缩放 / 分割）；点击、→、空格、PageDown 下一页（入场未播完先播完），←、PageUp 上一页，Home / End，Esc、右上角按钮或退出全屏结束；按钮和「n / N」3 秒不动鼠标淡出。新文案 `office.pptxPresentExit` / `loadingConvert` / `previewFailed`（14 种取自 MiMo，zhTW / de / ja 缺的照 MiMo 回退英文，ar / bs / th / uk 自译）。
+  - 依赖整理：渲染进程才用的包（pptx-renderer、echarts、exceljs、jszip、docx-preview、pdfjs-dist、shiki、@fontsource、@univerjs）移到 devDependencies，打包不再带进 node_modules。
+  - 验证：新探针 `mcode-pptx.cjs` 8 项全过（jszip 现做两页 pptx，第二页柱状图 + 淡入切换；从已发送消息的文件卡片打开、两页渲染且图表重画、悬停描边、点击模块自动聚焦并暂存为带形状名和区域的注释且编号框在模块上、空白拖框暂存后标签「第 1 页·框选区域」、演示 1 / 2 → 2 / 2 → Esc 关闭、磁盘改写后重载且撤销可用标记仍在、控制台无错误），HEAD 上 7 项功能检查全败；`mcode-office` / `mcode-pdf` 重跑；smoke 373 项（新增幻灯片注释块一项）。
+  - 探针注意：`executeJavaScript` 里调 `requestFullscreen` 不算用户手势会被拒并打印错误（真实点击没问题），探针里过滤；指针移动后画的高亮要等 Vue 下一拍才出现。
+  - 剩下的：Excel（Univer 0.25.1 只读表格 + 单元格 / 图表注释）、HTML 预览标签（模块点选）、视频框选。
 - [已完成] 顶栏图标重画（小）——用户反馈顶栏图标不如 MiMo 好看、工整。实测 MiMo 顶栏图标规格（只读取尺寸和描边，不复制路径）：24 网格、2 单位圆头描边、显示 14px（线宽约 1.17px，字形约 10–11px）；铃铛 16px / 1.75 描边；信息卡列表 15px。MCode 原来是 17px、20 网格、1 单位方头描边（线宽约 0.85px、字形偏大）。重画侧栏顶部一排（切换侧栏 / 后退 / 前进 / 搜索 / 铃铛）、折叠后的同一排、聊天头「…」/ 列表 / 底部面板、侧边面板开关，全部自己画在 24 网格上。颜色按 MiMo 顶栏图标色：深色主题用最强文字色，浅色主题用它的 60%（用 `data-theme` / `prefers-color-scheme` 选择器，没有新 token）。探针 `mcode-topbar-icons.cjs` 5 项（尺寸 / 网格 / 线宽 / 圆头 / 在 24px 按钮里居中 / 深色颜色），换回旧代码时 4 项失败（居中本来就是对的）；`mcode-titlebar.cjs` 的颜色期望随之改为最强文字色。首页右上角的底部面板按钮见下一条
 - [已完成] 首页也能打开底部终端，首页右上角加底部面板按钮（小，用户同意）——MiMo 首页右上角有「底部面板 / 侧边面板」两个按钮。MCode 原来的底部终端只属于会话：`terminalUp` 排除首页，后端 `shell.open` 必须带 sessionID，所以首页的「终端」入口实际打不开。现在：协议 `shell.open` / `shell.list` 在没有 sessionID 时可以传绝对路径 `directory`，后端 `shellGroup` 以 `home:<目录>` 分组（Shells 里的 sessionID 本来就只是分组键），相对路径拒绝；HomeHero 把当前选中的项目目录 `emit('directory')` 给 App（「无项目」时为空）；TerminalDrawer / TerminalPane 改成用 `sessionID` / `directory` 属性，不再读 `app.currentID`（否则首页会开到上一个会话的目录）；App 在首页切换时按 `home:<目录>` 重新挂载抽屉；首页按钮 24px、在侧边面板开关左侧 4px、按下不高亮，无项目时禁用（0.35）。探针 `mcode-home-terminal.cjs` 5 项（真的在临时目录起一个本地 shell，随应用退出），换回旧代码时 4 项失败（相对路径被拒绝那项旧代码本来也拒绝）；`mcode-titlebar` / `mcode-topbar-icons` 重跑通过
 - [已完成] 会话悬停信息卡、标题栏置顶图钉、提示框样式（小）——核实 MiMo `fOe` 聊天头与 `Cz` / `q7e`：会话标题（向下）和侧栏会话标题（向右）悬停时出信息卡：标题（medium）+ 11px 弱色的「项目 名称」、目录、「更新于 MM月DD日 HH:MM」（中文补零，其他语言用 Intl 短月日 + 时分），卡片圆角 20、0.5px 边框、内边距 10 / 14、12px；普通提示 MiMo 是圆角 8、1px 边框、内边距 5 / 8、12px，出现延迟 200ms、连续悬停 300ms（原来 MCode 4px 圆角、无边框、11px、500 / 400ms）。标题栏：置顶的会话在标题前显示 14×26 弱色图钉（悬停「已置顶」）；标题去掉内边距和悬停底色，高 26、最宽 320；原地改名输入框按 MiMo 为 1px 细边框、圆角 7、左右 8；「…」按 MiMo 为 26px、弱色、14px 图标；左侧三者间距 8。实现：`lib/tip.ts` 新增 `card` 模式（标题 + 若干行，空行跳过），`lib/convo-card.ts` 生成卡片内容，新键 `convoTip.project` / `convoTip.updatedAt` / `header.pinnedTip`（18 张表，MiMo 有的语言照它的译法，ar / bs / th / uk 自译）。探针 `mcode-convo-card.cjs` 8 项（真实指针悬停；1.75 倍缩放下 1px 边框读出来是 0.571px，所以和同页的 1px 参照元素比），换回旧代码时 7 项失败；`mcode-topbar-icons` 的「…」期望改为 14px，和 `mcode-titlebar` / `mcode-row-title` / `mcode-hide-three` 一起重跑通过。注意：MiMo 渲染进程的各语言分包也用 `@electron/asar` 读不出来，同样要解析 asar 头部

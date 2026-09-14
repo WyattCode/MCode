@@ -7,6 +7,7 @@ import { t } from "../../lib/i18n"
 import LucideIcon from "../LucideIcon.vue"
 import PdfView from "./PdfView.vue"
 import DocxView from "./DocxView.vue"
+import PptxView from "./PptxView.vue"
 import OfficeFallback from "./OfficeFallback.vue"
 import VersionHistory from "./VersionHistory.vue"
 
@@ -114,6 +115,15 @@ async function reveal() {
       <div class="office-body">
         <PdfView v-if="type === 'pdf'" :path="path" :name="tab.name ?? ''" :origin="tab.origin" :active="active" />
         <DocxView v-else-if="type === 'docx' && !fallback.docx" :path="path" :name="tab.name ?? ''" :origin="tab.origin" :active="active" @fallback="fallback.docx = true" />
+        <PptxView
+          v-else-if="type === 'pptx' && !fallback.pptx"
+          ref="viewer"
+          :path="path"
+          :name="tab.name ?? ''"
+          :origin="tab.origin"
+          :active="active"
+          @fallback="fallback.pptx = true"
+        />
         <OfficeFallback v-else :type="type" />
       </div>
       <VersionHistory v-if="history" :path="path" :anchor="history" @close="history = null" />

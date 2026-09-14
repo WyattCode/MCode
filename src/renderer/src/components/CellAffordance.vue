@@ -18,6 +18,8 @@ const props = defineProps<{
   inside: (target: Node) => boolean
   /** A selection's box, which the note box sits above (right edges together) in place of the pointer. */
   selectionRect?: { top: number; bottom: number; right: number } | null
+  /** Take focus whenever it is placed, as for a picked slide piece; a text selection leaves focus with the page. */
+  autofocus?: boolean
 }>()
 const emit = defineEmits<{ send: [text: string]; stash: [text: string]; close: []; focus: [focused: boolean] }>()
 
@@ -40,6 +42,13 @@ function grow() {
 
 watch(text, () => void nextTick(grow))
 onMounted(() => void nextTick(grow))
+watch(
+  () => [props.autofocus, props.anchor],
+  () => {
+    if (props.autofocus) void nextTick(() => field.value?.focus())
+  },
+  { immediate: true },
+)
 
 const position = computed(() => {
   const host = props.host()

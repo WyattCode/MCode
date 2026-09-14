@@ -197,11 +197,20 @@ export interface UserMessage {
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
 export interface Annotation {
   id: string
-  kind: "answer" | "code" | "file" | "pdf" | "docx"
+  kind: "answer" | "code" | "file" | "pdf" | "docx" | "pptx"
   /** The file's absolute path, for a file or code shown from one. */
   path?: string
   /** A PDF or Word selection's page, from 1. */
   page?: number
+  /** A slide's index from 0, with its p:sldId id and the shape whose text the selection matched. */
+  slide?: number
+  slideId?: string
+  shapeId?: string
+  shapeName?: string
+  /** Where on the slide, as fractions of its box: left, top, width, height. */
+  region?: { fx: number; fy: number; fw: number; fh: number }
+  /** Drawn as a box on the slide rather than a picked piece. */
+  boxed?: boolean
   /** Where the selection sits: PDF points from a PDF page's bottom-left corner, or CSS pixels from a Word page's top-left. */
   rect?: { x: number; y: number; w: number; h: number; pageW: number; pageH: number }
   /** The file's name, for a whole file. */

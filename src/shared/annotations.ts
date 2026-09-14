@@ -21,6 +21,14 @@ function where(note: Annotation): string {
   if (note.kind === "code") return `Code in the file viewer${note.path ? `: ${note.path}` : ""}`
   if (note.kind === "pdf") return `PDF ${note.path ?? note.name ?? ""}, page ${note.page ?? 1}`
   if (note.kind === "docx") return `Word document ${note.path ?? note.name ?? ""}${note.page ? `, around page ${note.page}` : ""}`
+  if (note.kind === "pptx") {
+    const slide = `Presentation ${note.path ?? note.name ?? ""}, slide ${(note.slide ?? 0) + 1}${note.slideId ? ` (slide id ${note.slideId})` : ""}`
+    if (note.shapeId) return `${slide}, shape "${note.shapeName ?? ""}" (shape id ${note.shapeId})`
+    if (!note.region) return slide
+    const pct = (value: number) => Math.max(0, Math.min(100, Math.round(value * 100)))
+    const { fx, fy, fw, fh } = note.region
+    return `${slide}, the region roughly from (${pct(fx)}%, ${pct(fy)}%) to (${pct(fx + fw)}%, ${pct(fy + fh)}%) of the slide`
+  }
   return "A passage of an earlier assistant reply in this conversation"
 }
 

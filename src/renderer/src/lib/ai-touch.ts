@@ -13,6 +13,7 @@ import { promptOf } from "./annotation-fx"
 const writes = new Map<string, number>()
 const ended = new Map<string, number>()
 const seen = new Set<string>()
+const created = new Set<string>()
 
 const normal = (file: string) => file.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase()
 const isAbsolute = (file: string) => /^([a-zA-Z]:)?[\\/]/.test(file)
@@ -37,11 +38,18 @@ export function noteToolWrites(message: Message, directory: string | undefined) 
       ...(typeof input.path === "string" ? [input.path] : []),
       ...(Array.isArray(files) ? files.map((entry) => (typeof entry === "string" ? entry : (entry as { path?: string })?.path)).filter((entry): entry is string => typeof entry === "string") : []),
     ]
+    const made = part.name === "write" && (part.metadata as { created?: unknown } | undefined)?.created === true
     for (const file of paths) {
       const absolute = isAbsolute(file) || !directory ? file : `${directory}/${file}`
       writes.set(normal(absolute), Date.now())
+      if (made) created.add(normal(absolute))
     }
   }
+}
+
+/** Whether the assistant has just created this file; asked once, as MiMo plays a new deck's entrance only on its first open. */
+export function takeCreated(file: string): boolean {
+  return created.delete(normal(file))
 }
 
 export function noteRunEnded(sessionID: string) {

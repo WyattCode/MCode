@@ -683,6 +683,18 @@ async function main() {
       pdfBlock.includes("Position: x 72, y 700, width 120.3, height 24 (PDF points from the bottom-left corner of a 612 x 792 page)"),
     pdfBlock,
   )
+  const slideBlock = annotationsBlock([
+    { id: "ann-s1", kind: "pptx", path: "/p/deck.pptx", slide: 1, slideId: "257", shapeId: "4", shapeName: "Chart 3", quote: "Q3", occ: 1, occTotal: 1, region: { fx: 0.1, fy: 0.2, fw: 0.5, fh: 0.4 }, text: "" },
+    { id: "ann-s2", kind: "pptx", path: "/p/deck.pptx", slide: 0, slideId: "256", region: { fx: 0.604, fy: 0.25, fw: 0.2, fh: 0.1 }, boxed: true, text: "move this" },
+  ])
+  check(
+    "a slide annotation names the shape it matched, or the region drawn",
+    slideBlock.includes('Presentation /p/deck.pptx, slide 2 (slide id 257), shape "Chart 3" (shape id 4)') &&
+      slideBlock.includes('Selected text: "Q3"') &&
+      slideBlock.includes("Presentation /p/deck.pptx, slide 1 (slide id 256), the region roughly from (60%, 25%) to (80%, 35%) of the slide") &&
+      slideBlock.includes("Note: move this"),
+    slideBlock,
+  )
   // The API rejects a tool_use that is not answered by a tool_result with the
   // same id in the very next turn, so this mapping is where history bugs hide.
   const converted = toProviderMessages([
