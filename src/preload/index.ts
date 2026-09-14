@@ -162,6 +162,14 @@ const api = {
     ipcRenderer.invoke("mcode:browser-tab", what, id),
   /** Clears the browser panel's site data and cache; resolves to "" or the reason it failed. */
   browserClearData: (): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-data"),
+  /** Watches an open document so its view can reload when it changes on disk. */
+  watchFile: (target: string): Promise<boolean> => ipcRenderer.invoke("mcode:watch-file", target),
+  unwatchFile: (target: string): Promise<void> => ipcRenderer.invoke("mcode:unwatch-file", target),
+  onFileChanged: (handler: (target: string) => void): (() => void) => {
+    const listener = (_event: unknown, target: string) => handler(target)
+    ipcRenderer.on("mcode:file-changed", listener)
+    return () => ipcRenderer.off("mcode:file-changed", listener)
+  },
   onBrowserState: (handler: (state: unknown) => void): (() => void) => {
     const listener = (_event: unknown, state: unknown) => handler(state)
     ipcRenderer.on("mcode:browser-state", listener)

@@ -174,7 +174,7 @@ watch(
   height: 19px;
   padding: 0 4px;
   color: #fff;
-  background: var(--interactive);
+  background: rgb(50, 149, 251);
   border-radius: 999px;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
   font-size: 11px;

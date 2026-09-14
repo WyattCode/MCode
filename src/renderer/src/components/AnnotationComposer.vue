@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { collapse } from "@shared/annotations"
 import { useAnnotations } from "../stores/annotations"
 import {
   annotatableOf,
   annotationId,
   annotationRequest,
+  anchorRectOf,
   locate,
   occurrenceOf,
+  quoteOf,
   rectOf,
   requestAnnotation,
   requestAnnotationSend,
@@ -19,12 +20,13 @@ import { t } from "../lib/i18n"
  * MiMo's annotation box.
  *
  * Selecting text in a reply, or in code in the files tab, brings it up 300ms
- * after the selection settles, just above the selection's end; double-clicking
- * a passage already annotated reopens it with its note. The files tab asks for
- * it at the pointer to annotate a whole file. Enter (or the arrow) adds the
- * annotation and sends the message at once; the other button only adds it to
- * the box, and an empty note makes it a plain reference. While the note has
- * focus the passage stays lit, since the selection itself has to go.
+ * after the selection settles, above the first line of the selection with its
+ * right edge on that line's end; double-clicking a passage already annotated
+ * reopens it with its note. The files tab asks for it at the pointer to
+ * annotate a whole file. Enter (or the arrow) adds the annotation and sends the
+ * message at once; the other button only adds it to the box, and an empty note
+ * makes it a plain reference. While the note has focus the passage stays lit,
+ * since the selection itself has to go.
  */
 const props = defineProps<{ scope: string; disabled: boolean }>()
 const store = useAnnotations()
@@ -53,17 +55,17 @@ function bounds() {
   return { width: window.innerWidth, height: top > 0 ? Math.min(window.innerHeight, top - 8) : window.innerHeight }
 }
 
+/* MiMo's placement: 8 above the anchor (below it when that runs off the top), right edges together, 8 inside the room. */
 function place(rect: AnnotationRect) {
   const el = box.value
   if (!el) return
   const width = el.offsetWidth
   const height = el.offsetHeight
   const room = bounds()
-  let left = rect.right - width
-  let top = rect.top - height - 8
-  if (top < 4) top = rect.bottom + 8
-  left = Math.min(Math.max(left, 4), Math.max(4, room.width - width - 4))
-  top = Math.min(Math.max(top, 4), Math.max(4, room.height - height - 4))
+  const edge = 8
+  const above = rect.top - height - edge
+  const top = Math.min(Math.max(edge, above >= edge ? above : rect.bottom + edge), Math.max(edge, room.height - height - edge))
+  const left = Math.min(Math.max(edge, rect.right - width), Math.max(edge, room.width - width - edge))
   position.value = { top, left }
 }
 
@@ -91,11 +93,13 @@ watch(request, (next) => {
   })
 })
 
-watch(text, () => void nextTick(() => {
-  grow()
-  const current = request.value
-  if (current) place(current.follow?.() ?? current.rect)
-}))
+watch(text, () =>
+  void nextTick(() => {
+    grow()
+    const current = request.value
+    if (current) place(current.follow?.() ?? current.rect)
+  }),
+)
 
 /* The passage stays lit while its note is being written. */
 watch([focused, request], ([hasFocus, current]) => {
@@ -136,15 +140,11 @@ function stash() {
   if (note && store.add(scope, note)) close()
 }
 
-/** Enter, or the arrow: adds it and sends the message with everything waiting - or, from a PDF, sends just this one. */
-async function send() {
+/** Enter, or the arrow: adds it and sends the message with everything waiting. */
+function send() {
   const current = request.value
   const value = text.value.trim()
   if (!current || !value) return
-  if (current.sendNow && current.index === undefined) {
-    if (await current.sendNow(value)) close()
-    return
-  }
   const scope = current.scope ?? props.scope
   if (current.index !== undefined) {
     store.update(scope, current.index, value)
@@ -178,16 +178,16 @@ function fromSelection() {
   if (!selected.trim()) return null
   const range = selection.getRangeAt(0)
   const host = annotatableOf(range.startContainer)
-  if (!host || !host.el.contains(range.endContainer)) return null
-  const rect = rectOf(range)
+  if (!host) return null
+  const rect = anchorRectOf(range)
   if (!rect) return null
-  const quote = collapse(selected)
+  const quote = quoteOf(selected)
   const { occ, occTotal } = occurrenceOf(host.el, range, quote)
   const kept = range.cloneRange()
   requestAnnotation({
     scope: host.scope,
     rect,
-    follow: () => rectOf(kept),
+    follow: () => anchorRectOf(kept),
     range: kept,
     make: (note) => ({
       id: annotationId(),
@@ -248,24 +248,23 @@ function reopen(event: MouseEvent) {
     const hit = [...range.getClientRects()].some(
       (rect) => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom,
     )
-    const rect = hit ? rectOf(range) : null
+    const rect = hit ? (anchorRectOf(range) ?? rectOf(range)) : null
     if (!rect) continue
     event.preventDefault()
     window.getSelection()?.removeAllRanges()
-    requestAnnotation({ scope: host.scope, rect, follow: () => rectOf(range), range, index, initialText: note.text })
+    requestAnnotation({ scope: host.scope, rect, follow: () => anchorRectOf(range), range, index, initialText: note.text })
     return
   }
 }
 
-let followFrame = 0
+let followFrame: ReturnType<typeof setTimeout> | undefined
 function follow() {
   if (followFrame || !request.value) return
-  followFrame = requestAnimationFrame(() => {
-    followFrame = 0
-    const current = request.value
-    const rect = current?.follow?.()
+  followFrame = setTimeout(() => {
+    followFrame = undefined
+    const rect = request.value?.follow?.()
     if (rect) place(rect)
-  })
+  }, 16)
 }
 
 onMounted(() => {
@@ -286,7 +285,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", follow)
   clearTimeout(openTimer)
   clearTimeout(closeTimer)
-  cancelAnimationFrame(followFrame)
+  clearTimeout(followFrame)
   if (typeof CSS !== "undefined" && "highlights" in CSS) CSS.highlights.delete(HIGHLIGHT)
   requestAnnotation(null)
 })
@@ -311,7 +310,7 @@ watch(
       ref="box"
       class="ann-composer"
       data-annotation-composer
-      :class="{ shown, focused }"
+      :class="{ shown, focused, closing }"
       :style="{ top: `${position?.top ?? -9999}px`, left: `${position?.left ?? -9999}px`, width: `${WIDTH}px` }"
     >
       <textarea
@@ -323,7 +322,7 @@ watch(
         @blur="focused = false"
         @keydown="onKey"
       />
-      <button v-if="text.trim()" type="button" class="ann-send" data-ann-send :aria-label="t('composer.send')" @click="send">
+      <button v-if="text.trim()" type="button" class="ann-send" data-ann-send :aria-label="t('annotations.send')" :title="t('annotations.send')" @click="send">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
       </button>
       <button
@@ -331,7 +330,7 @@ watch(
         class="ann-stash"
         data-ann-stash
         :aria-label="t('annotations.stash')"
-        v-tip="{ label: `${t('annotations.stash')} · ${t('annotations.stashTip')}`, placement: 'top' }"
+        :title="`${t('annotations.stash')}\n${t('annotations.stashTip')}`"
         @click="stash"
       >
         <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -344,36 +343,59 @@ watch(
 </template>
 
 <style scoped>
-/* MiMo's annotation box: 296 wide, 5 / 6 / 5 / 10 in, a 1px line on a 10px corner. */
+/* MiMo's annotation box: 296 wide, 5 / 6 / 5 / 10 in, a 1px line on a 10px corner; lifts from a tip shadow to a menu shadow with focus. */
 .ann-composer {
   position: fixed;
-  z-index: 300;
+  z-index: 120;
   display: flex;
   align-items: center;
   gap: 5px;
   box-sizing: border-box;
   max-width: 92vw;
   padding: 5px 6px 5px 10px;
-  background: var(--surface-base);
+  background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: var(--shadow-xs-border);
+  box-shadow: 0 2px 8px #0000000d, 0 1px 2px #0000000a;
   opacity: 0;
   transform: translateY(-6px) scale(0.96);
   transform-origin: top center;
   transition:
-    opacity 160ms ease,
-    transform 160ms ease,
+    opacity 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 140ms ease;
+  will-change: opacity, transform;
 }
 
 .ann-composer.shown {
   opacity: 1;
-  transform: none;
+  transform: translateY(0) scale(1);
+}
+
+.ann-composer.closing {
+  pointer-events: none;
 }
 
 .ann-composer.focused {
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+}
+
+:root[data-theme="dark"] .ann-composer {
+  box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
+}
+
+:root[data-theme="dark"] .ann-composer.focused {
+  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ann-composer {
+    box-shadow: 0 2px 8px #0000004d, 0 1px 2px #00000040;
+  }
+
+  :root:not([data-theme="light"]) .ann-composer.focused {
+    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -413,12 +435,12 @@ watch(
 
 .ann-send {
   color: #fff;
-  background: var(--interactive);
+  background: #3295fb;
   border: none;
 }
 
 .ann-stash {
-  color: var(--interactive);
+  color: #3295fb;
   background: transparent;
   border: 1px solid var(--border-weak);
 }
@@ -443,5 +465,6 @@ watch(
 /* A chip's passage, lit for a moment when the chip is clicked (MiMo's flash). */
 ::highlight(mcode-annotation-flash) {
   background-color: rgba(50, 149, 251, 0.6);
+  border-radius: 3px;
 }
 </style>

@@ -324,7 +324,7 @@ function onEditKey(event: KeyboardEvent) {
   height: 14px;
   padding: 0 3px;
   color: #fff;
-  background: var(--interactive);
+  background: #3295fb;
   border-radius: 999px;
   font-size: 9px;
   font-weight: 700;
@@ -401,8 +401,8 @@ function onEditKey(event: KeyboardEvent) {
 
 .ann-note-edit:hover {
   background: var(--surface-base);
-  border-color: var(--interactive);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 18%, transparent);
+  border-color: #3295fb;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #3295fb 18%, transparent);
 }
 
 .ann-muted {
@@ -415,7 +415,7 @@ function onEditKey(event: KeyboardEvent) {
   padding: 3px 6px;
   color: var(--text-strong);
   background: var(--surface-base);
-  border: 1px solid var(--interactive);
+  border: 1px solid #3295fb;
   border-radius: 6px;
   outline: none;
   resize: none;

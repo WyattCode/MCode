@@ -66,6 +66,7 @@ import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
 import { HOME_SCOPE } from "./stores/annotations"
+import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind, stepFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
 import { chimeOf, longTask } from "@shared/chime"
@@ -2814,6 +2815,7 @@ const modalOpen = computed(
 
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
 const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
+watch(annotationScope, (scope) => (mainAnnotationScope.value = scope), { immediate: true })
 
 /** Steps to the next colour scheme, in the order the settings list them. */
 async function cycleScheme() {

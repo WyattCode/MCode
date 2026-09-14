@@ -3,6 +3,7 @@ import { ref } from "vue"
 import type { Annotation } from "@shared/protocol"
 import { ANNOTATION_LIMIT } from "@shared/annotations"
 import { notify, notifyFailure } from "../lib/toast"
+import { useAnnotationBatch } from "./annotation-batch"
 import { t } from "../lib/i18n"
 
 /** The home screen's box, which has no conversation to keep them under yet. */
@@ -37,6 +38,8 @@ export const useAnnotations = defineStore("annotations", () => {
       notifyFailure(t("composer.annotationLimit", { max: ANNOTATION_LIMIT }))
       return false
     }
+    // A document's sent batch for this file gives way to the annotation now waiting (as MiMo clears it).
+    if (note.path) useAnnotationBatch().clearFile(note.path)
     put(scope, [...current, note])
     notify(t("composer.annotationAdded"))
     return true
