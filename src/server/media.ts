@@ -8,7 +8,7 @@
  * `.gitignore`, a shell script) and plenty of binaries share one with a text
  * format.
  */
-export type FileKind = "text" | "image" | "audio" | "binary"
+export type FileKind = "text" | "image" | "audio" | "pdf" | "binary"
 
 const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "ico", "svg"])
 const AUDIO = new Set(["mp3", "wav", "ogg", "oga", "m4a", "aac", "flac", "opus"])
@@ -31,6 +31,7 @@ const MIME: Record<string, string> = {
   aac: "audio/aac",
   flac: "audio/flac",
   opus: "audio/opus",
+  pdf: "application/pdf",
 }
 
 /* Either separator, because a path from Windows carries the other one. */
@@ -71,5 +72,7 @@ export function kindFor(filePath: string, head: Buffer): FileKind {
   // so the picture wins.
   if (IMAGE.has(extension)) return "image"
   if (AUDIO.has(extension)) return "audio"
+  // MiMo's files tab shows a PDF in place, so its bytes travel like a picture's.
+  if (extension === "pdf") return "pdf"
   return looksBinary(head) ? "binary" : "text"
 }

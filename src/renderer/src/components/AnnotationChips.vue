@@ -4,7 +4,7 @@ import type { Annotation } from "@shared/protocol"
 import { useAnnotations } from "../stores/annotations"
 import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
-import { jumpToAnnotation } from "../lib/annotate"
+import { jumpToAnnotation, requestPdfJump } from "../lib/annotate"
 import { t } from "../lib/i18n"
 
 /**
@@ -39,7 +39,9 @@ function short(text: string, max = 24) {
 }
 
 function rangeOf(note: Annotation) {
-  return note.kind === "file" ? t("annotations.rangeFile") : t("annotations.rangeSelection", { text: short(note.quote ?? "") })
+  if (note.kind === "file") return t("annotations.rangeFile")
+  if (note.kind === "pdf") return t("annotations.rangePdf", { page: note.page ?? 1, text: short(note.quote ?? "") })
+  return t("annotations.rangeSelection", { text: short(note.quote ?? "") })
 }
 
 function sourceOf(note: Annotation) {
@@ -68,6 +70,12 @@ function openFile(note: Annotation) {
 }
 
 function activate(note: Annotation) {
+  // A PDF passage: under a sent message the file opens and the text is found again; over the box its marker flashes.
+  if (note.kind === "pdf") {
+    if (props.readOnly) openFile(note)
+    requestPdfJump(note, Boolean(props.readOnly))
+    return
+  }
   if (note.kind === "file") {
     if (props.readOnly) openFile(note)
     return

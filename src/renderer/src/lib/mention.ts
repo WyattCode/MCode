@@ -121,7 +121,7 @@ function textual(content: string): boolean {
  */
 export function mentionAttachment(
   path: string,
-  file: { kind: "text" | "image" | "audio" | "binary"; content: string; mime?: string; data?: string },
+  file: { kind: "text" | "image" | "audio" | "pdf" | "binary"; content: string; mime?: string; data?: string },
 ): Attachment | undefined {
   if (file.kind === "image") {
     if (!file.data || !file.mime) return undefined

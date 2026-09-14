@@ -8,6 +8,7 @@ import { renderMarkdown } from "../../lib/markdown"
 import { openImagePreview } from "../../lib/image-preview"
 import { highlightLines, languageForFile } from "../../lib/highlight"
 import { annotationId, requestAnnotation } from "../../lib/annotate"
+import PdfView from "./PdfView.vue"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 
@@ -483,6 +484,7 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
             <div class="fv-gutter" aria-hidden="true"><div v-for="(_, index) in draft.split('\n')" :key="index">{{ index + 1 }}</div></div>
             <textarea v-model="draft" class="fv-edit" spellcheck="false" />
           </div>
+          <PdfView v-else-if="opened.kind === 'pdf' && opened.data" :data="opened.data" :path="absolute(viewFile ?? '')" :name="(viewFile ?? '').split('/').pop() ?? ''" />
           <div v-else-if="opened.kind === 'image' && opened.data" class="fv-media">
             <img :src="`data:${opened.mime};base64,${opened.data}`" :alt="viewFile" @click="openImagePreview(`data:${opened.mime};base64,${opened.data}`, { name: viewFile })" />
           </div>

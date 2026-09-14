@@ -19,6 +19,7 @@ export function collapse(text: string): string {
 function where(note: Annotation): string {
   if (note.kind === "file") return `File ${note.path ?? note.name ?? ""} (the whole file)`
   if (note.kind === "code") return `Code in the file viewer${note.path ? `: ${note.path}` : ""}`
+  if (note.kind === "pdf") return `PDF ${note.path ?? note.name ?? ""}, page ${note.page ?? 1}`
   return "A passage of an earlier assistant reply in this conversation"
 }
 
@@ -30,6 +31,13 @@ export function annotationsBlock(list: readonly Annotation[] | undefined): strin
     if (note.quote) {
       const nth = note.occTotal && note.occTotal > 1 ? ` (occurrence ${note.occ ?? 1} of ${note.occTotal})` : ""
       lines.push(`   Selected text${nth}: "${note.quote}"`)
+    }
+    if (note.rect) {
+      const n = (value: number) => Math.round(value * 10) / 10
+      const { x, y, w, h, pageW, pageH } = note.rect
+      lines.push(
+        `   Position: x ${n(x)}, y ${n(y)}, width ${n(w)}, height ${n(h)} (PDF points from the bottom-left corner of a ${n(pageW)} x ${n(pageH)} page)`,
+      )
     }
     lines.push(note.text ? `   Note: ${note.text}` : "   Note: none; it is pointed at as context for the message.")
     return lines.join("\n")

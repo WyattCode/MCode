@@ -662,6 +662,27 @@ async function main() {
     annotatedText,
   )
   check("no annotations adds nothing", annotationsBlock([]) === "" && annotationsBlock(undefined) === "")
+  const pdfBlock = annotationsBlock([
+    {
+      id: "ann-pdf",
+      kind: "pdf",
+      path: "/p/doc.pdf",
+      name: "doc.pdf",
+      page: 2,
+      quote: "Second page",
+      occ: 1,
+      occTotal: 1,
+      rect: { x: 72, y: 700, w: 120.25, h: 24, pageW: 612, pageH: 792 },
+      text: "look here",
+    },
+  ])
+  check(
+    "a PDF annotation names its page and where on it",
+    pdfBlock.includes("PDF /p/doc.pdf, page 2") &&
+      pdfBlock.includes('Selected text: "Second page"') &&
+      pdfBlock.includes("Position: x 72, y 700, width 120.3, height 24 (PDF points from the bottom-left corner of a 612 x 792 page)"),
+    pdfBlock,
+  )
   // The API rejects a tool_use that is not answered by a tool_result with the
   // same id in the very next turn, so this mapping is where history bugs hide.
   const converted = toProviderMessages([

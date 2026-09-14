@@ -31,6 +31,15 @@ export interface AnnotationRequest {
   initialText?: string
   /** A new annotation, from what was written. */
   make?: (text: string) => Annotation
+  /** Sends it at once with its own words instead of waiting in the box (MiMo's PDF viewer); answers whether it went. */
+  sendNow?: (text: string) => boolean | Promise<boolean>
+}
+
+/** A PDF annotation to show: scrolled to and flashed, or - from a sent message - found again in the page's text. */
+export const pdfJump = shallowRef<{ note: Annotation; locate: boolean; seq: number } | null>(null)
+
+export function requestPdfJump(note: Annotation, locate: boolean) {
+  pdfJump.value = { note, locate, seq: (pdfJump.value?.seq ?? 0) + 1 }
 }
 
 export const annotationRequest = shallowRef<AnnotationRequest | null>(null)

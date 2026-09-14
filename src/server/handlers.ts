@@ -856,14 +856,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const bytes = await fs.readFile(resolved)
       const kind = kindFor(resolved, bytes.subarray(0, 4096))
 
-      if (kind === "image" || kind === "audio") {
+      if (kind === "image" || kind === "audio" || kind === "pdf") {
         const mime = mimeFor(resolved) ?? "application/octet-stream"
         /*
          * A cap, because this crosses the socket as text and base64 costs a
          * third again on top. Past it the reader is told the preview is not
-         * available rather than made to wait for one.
+         * available rather than made to wait for one. Documents run larger
+         * than pictures, so a PDF gets more room.
          */
-        const MEDIA_LIMIT = 8_000_000
+        const MEDIA_LIMIT = kind === "pdf" ? 40_000_000 : 8_000_000
         if (bytes.byteLength > MEDIA_LIMIT) {
           return { path: resolved, kind: "binary", content: "", truncated: false } satisfies Handled<"file.read">
         }

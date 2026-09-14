@@ -197,9 +197,13 @@ export interface UserMessage {
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
 export interface Annotation {
   id: string
-  kind: "answer" | "code" | "file"
+  kind: "answer" | "code" | "file" | "pdf"
   /** The file's absolute path, for a file or code shown from one. */
   path?: string
+  /** A PDF selection's page, from 1. */
+  page?: number
+  /** Where a PDF selection sits, in PDF points from the page's bottom-left corner. */
+  rect?: { x: number; y: number; w: number; h: number; pageW: number; pageH: number }
   /** The file's name, for a whole file. */
   name?: string
   /** The selected text, whitespace folded; absent for a whole file. */
@@ -1559,7 +1563,7 @@ export interface ResponseMap {
    */
   "file.read": {
     path: string
-    kind: "text" | "image" | "audio" | "binary"
+    kind: "text" | "image" | "audio" | "pdf" | "binary"
     content: string
     truncated: boolean
     mime?: string

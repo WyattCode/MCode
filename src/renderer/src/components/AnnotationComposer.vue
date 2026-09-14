@@ -136,11 +136,15 @@ function stash() {
   if (note && store.add(scope, note)) close()
 }
 
-/** Enter, or the arrow: adds it and sends the message with everything waiting. */
-function send() {
+/** Enter, or the arrow: adds it and sends the message with everything waiting - or, from a PDF, sends just this one. */
+async function send() {
   const current = request.value
   const value = text.value.trim()
   if (!current || !value) return
+  if (current.sendNow && current.index === undefined) {
+    if (await current.sendNow(value)) close()
+    return
+  }
   const scope = current.scope ?? props.scope
   if (current.index !== undefined) {
     store.update(scope, current.index, value)
