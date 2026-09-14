@@ -1029,6 +1029,16 @@ export const useApp = defineStore("app", () => {
     unseen.value = new Set(unseen.value).add(sessionID)
   }
 
+  /* The row menu's other half, as MiMo toggles it: the finished-while-away and the failed mark both go. */
+  function markRead(sessionID: string) {
+    if (unseen.value.has(sessionID)) {
+      const next = new Set(unseen.value)
+      next.delete(sessionID)
+      unseen.value = next
+    }
+    if (sessionErrors.value.has(sessionID)) noteError(sessionID, undefined)
+  }
+
   /** Returns false when the message was not accepted, so the draft can survive. */
   /* `to` names a side chat; without it the message goes to the open conversation. */
   async function send(
@@ -1503,6 +1513,7 @@ export const useApp = defineStore("app", () => {
     rename,
     move,
     markUnread,
+    markRead,
     archive,
     compact,
     history,
