@@ -1059,14 +1059,16 @@ defineExpose({ stepMessage, scroller })
       latest" in full, which is four times the width for a control that appears
       over the conversation it is covering.
     -->
-    <button v-if="!following" class="jump" :aria-label="t('stream.jump')" @click="toBottom(true)">
-      <svg width="13" height="13" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-        <path
-          d="M15.2083 11.6667L10 16.875L4.79167 11.6667M10 16.25V3.125"
-          stroke="currentColor"
-          stroke-width="1.25"
-          stroke-linecap="square"
-        />
+    <button
+      v-if="!following"
+      class="jump"
+      data-jump-to-bottom
+      :aria-label="t('stream.jumpToBottom')"
+      :title="t('stream.jumpToBottom')"
+      @click="toBottom(true)"
+    >
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 5v14M5 12l7 7 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     </button>
   </div>
@@ -1526,20 +1528,33 @@ defineExpose({ stepMessage, scroller })
  * This was an 80x35 fully-round pill with a hard fill, a border and a large
  * shadow - a lozenge where the reference has a quiet square.
  */
+/*
+ * MiMo's: a 34px round button with a hairline and a soft shadow, 14px above the
+ * foot of the conversation and centred on it. Centred by its margins rather
+ * than by an offset - a sticky element's inset is a threshold, not a shift -
+ * so it sits on the reading column even with the info card beside it.
+ */
 .jump {
   position: sticky;
-  bottom: 12px;
-  left: 50%;
+  bottom: 14px;
+  z-index: 10;
+  margin-inline: auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 22px;
+  width: 34px;
+  height: 34px;
   padding: 0;
+  color: var(--text-weak);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 999px;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+  transition: color 0.12s;
+}
+
+.jump:hover {
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
-  border-radius: 8px;
-  transform: translateX(-50%);
 }
 
 /* Lifted clear of the "files changed" pill while it hangs over the composer. */
