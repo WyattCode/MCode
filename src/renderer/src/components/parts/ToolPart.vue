@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { QuestionPrompt, ToolPart } from "@shared/protocol"
+import { parseUnifiedDiff } from "@shared/unified-diff"
 import DiffView from "./DiffView.vue"
 import TextShimmer from "./TextShimmer.vue"
 import QuestionForm from "./QuestionForm.vue"
@@ -68,6 +69,21 @@ const open = computed({
 })
 
 const diff = computed(() => (props.part.metadata?.diff as string) || undefined)
+
+/* Lines the step's diff added and removed, counted inside its hunks as MiMo counts them. */
+const diffstat = computed(() => {
+  let add = 0
+  let del = 0
+  if (diff.value) {
+    for (const section of parseUnifiedDiff(diff.value)) {
+      for (const hunk of section.hunks) {
+        add += hunk.added
+        del += hunk.removed
+      }
+    }
+  }
+  return { add, del }
+})
 const todos = computed(() => (props.part.metadata?.todos as { id: string; content: string; status: string }[]) || undefined)
 
 /*
@@ -134,6 +150,12 @@ const subject = computed(() => {
         <TextShimmer :text="label" :active="part.status === 'running'" />
       </span>
       <span class="subject">{{ subject }}</span>
+      <!-- MiMo's hs-diffstat: what the step added and took away, zeroes left out. -->
+      <span v-if="diffstat.add || diffstat.del" class="diffstat" data-diffstat>
+        <span v-if="diffstat.add" class="add">+{{ diffstat.add }}</span>
+        <template v-if="diffstat.add && diffstat.del">{{ " " }}</template>
+        <span v-if="diffstat.del" class="del">-{{ diffstat.del }}</span>
+      </span>
       <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
       </svg>
@@ -232,7 +254,7 @@ const subject = computed(() => {
 }
 
 .subject {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--text-base);
@@ -245,8 +267,27 @@ const subject = computed(() => {
   white-space: nowrap;
 }
 
+/* Twelve after the title, as MiMo sets it: the row's gap and four more. */
+.diffstat {
+  flex: none;
+  margin-inline-start: 4px;
+  font-family: var(--font-mono);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 21px;
+  white-space: pre;
+}
+
+.diffstat .add {
+  color: var(--diff-add);
+}
+
+.diffstat .del {
+  color: var(--diff-delete);
+}
+
 .caret {
   flex-shrink: 0;
+  margin-inline-start: auto;
   width: 24px;
   color: var(--text-weaker);
   transition: transform 0.12s, color 0.12s;
