@@ -224,6 +224,23 @@ const api = {
     ipcRenderer.on("mcode:browser-state", listener)
     return () => ipcRenderer.off("mcode:browser-state", listener)
   },
+  /** The chords the reader has bound, so the same keys pressed inside a page reach the window. */
+  browserKeys: (chords: string[]): void => ipcRenderer.send("mcode:browser-keys", chords),
+  /** A page opened a link in a new tab; the id is the page the main process already made for it. */
+  onBrowserOpenTab: (handler: (pageId: string) => void): (() => void) => {
+    const listener = (_event: unknown, pageId: string) => handler(pageId)
+    ipcRenderer.on("mcode:browser-open-tab", listener)
+    return () => ipcRenderer.off("mcode:browser-open-tab", listener)
+  },
+  /** One of the app's chords, pressed while a page had focus. */
+  onBrowserKey: (
+    handler: (key: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }) => void,
+  ): (() => void) => {
+    const listener = (_event: unknown, key: { key: string; code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }) =>
+      handler(key)
+    ipcRenderer.on("mcode:browser-key", listener)
+    return () => ipcRenderer.off("mcode:browser-key", listener)
+  },
 
   /** Whether to keep an icon in the system tray. */
   tray: (enabled: boolean): void => ipcRenderer.send("mcode:tray", enabled),
