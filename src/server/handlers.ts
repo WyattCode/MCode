@@ -886,6 +886,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ...(Object.keys(headers).length ? { headers } : {}),
             models,
             ...(environment ? { environment } : {}),
+            // A Claude-style gateway speaks the Messages API; absent stays OpenAI-compatible.
+            ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
           },
         ],
       })
@@ -932,6 +934,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 ...(Object.keys(headers).length ? { headers } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
+                ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
               }
             : entry,
         ),

@@ -28,7 +28,7 @@ import { execFileSync } from "node:child_process"
 import { attachmentParts, imageSize } from "../src/server/provider/attachment-parts"
 import { isSummary, touchedFiles } from "../src/server/session/summary"
 import { claudeCallID, forWire, mistralCallID } from "../src/server/provider/wire-ids"
-import { toProviderMessages } from "../src/server/provider/anthropic"
+import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -892,6 +892,39 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.idle(session.id)
       const assistantSent = (e.bodies.at(-1)?.messages as Record<string, any>[]).find((m) => m.role === "assistant")
       check("and sent back in reasoning_content", assistantSent?.reasoning_content === "thinking it over", assistantSent)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: a custom provider on the Anthropic protocol (E41)")
+  {
+    const e = await engine({ custom: { protocol: "anthropic" } })
+    try {
+      check("a custom provider marked anthropic is reached over the Messages API", e.config.definition("fake")?.kind === "anthropic", e.config.definition("fake")?.kind)
+      await e.config.set({ customProviders: [{ id: "plain", name: "Plain", baseURL: "http://127.0.0.1:1/v1", models: [{ id: "m", name: "M" }] }] })
+      check("one with no protocol stays OpenAI-compatible", e.config.definition("plain")?.kind === "openai-compatible")
+
+      // On the wire: the gateway's address, key and headers reach the Messages endpoint.
+      await AnthropicAdapter.stream(
+        {
+          apiKey: "gateway-key",
+          model: { provider: "gw", model: "claude-sonnet-5" },
+          system: "s",
+          history: [{ id: "u", sessionID: "s", role: "user", text: "hi", attachments: [], time: { created: 1 } }],
+          tools: [],
+          effort: "high",
+          showReasoning: false,
+          signal: new AbortController().signal,
+          baseURL: `http://127.0.0.1:${e.port}/v1/`,
+          headers: { "x-route": "claude" },
+          retries: 0,
+        },
+        () => {},
+      ).catch(() => undefined)
+      check("the request goes to the gateway's /v1/messages", e.paths.at(-1) === "/v1/messages", e.paths.at(-1))
+      check("with its key as x-api-key and its own headers", e.headers.at(-1)?.["x-api-key"] === "gateway-key" && e.headers.at(-1)?.["x-route"] === "claude", { key: Boolean(e.headers.at(-1)?.["x-api-key"]), route: e.headers.at(-1)?.["x-route"] })
+      check("and a Messages body", e.bodies.at(-1)?.model === "claude-sonnet-5" && Array.isArray(e.bodies.at(-1)?.messages) && e.bodies.at(-1)?.system?.[0]?.text === "s", e.bodies.at(-1))
     } finally {
       await e.close()
     }

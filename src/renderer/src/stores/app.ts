@@ -1694,6 +1694,7 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
+    protocol?: "openai" | "anthropic"
   }) {
     providers.value = (await api().request({ type: "provider.addCustom", ...entry })).providers
     await ensureUsableModel()
@@ -1711,6 +1712,7 @@ export const useApp = defineStore("app", () => {
     apiKey: string
     headers?: Record<string, string>
     models: CustomModel[]
+    protocol?: "openai" | "anthropic"
   }) {
     providers.value = (await api().request({ type: "provider.updateCustom", ...entry })).providers
   }

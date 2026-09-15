@@ -8,8 +8,22 @@ import { anthropicAdaptive, anthropicOpus45 } from "./variants"
 import { costOf } from "../session/usage"
 import { requestHistory } from "./history"
 
-export function createClient(apiKey: string, maxRetries = 2): Anthropic {
-  return new Anthropic({ apiKey, maxRetries })
+/**
+ * A Messages client, for Anthropic itself or a gateway that speaks its API.
+ *
+ * A gateway's address is written as MiMo's form takes it, ending in `/v1`; the
+ * SDK adds its own `/v1/messages`, so that ending is taken off. With no key, a
+ * gateway that authenticates by its own header is reached with that header
+ * alone.
+ */
+export function createClient(apiKey: string, maxRetries = 2, baseURL?: string, headers?: Record<string, string>): Anthropic {
+  const root = baseURL?.replace(/\/+$/, "").replace(/\/v1$/, "")
+  return new Anthropic({
+    apiKey: apiKey || null,
+    maxRetries,
+    ...(root ? { baseURL: root } : {}),
+    ...(headers && Object.keys(headers).length ? { defaultHeaders: headers } : {}),
+  })
 }
 
 export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
@@ -244,7 +258,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
 
 export const AnthropicAdapter: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
-    const client = createClient(request.apiKey, request.retries)
+    const client = createClient(request.apiKey, request.retries, request.baseURL, request.headers)
     const stream = client.messages.stream(messagesRequest(request), {
       signal: request.signal,
       // MiMo keeps a conversation's requests together with this header.

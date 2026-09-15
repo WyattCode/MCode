@@ -1500,6 +1500,12 @@ export interface CustomProvider {
    * and the value is read from the process at the moment it is needed.
    */
   environment?: string
+  /**
+   * Which API the gateway speaks. Absent is OpenAI-compatible, which every
+   * provider stored before this existed is; `anthropic` reaches a Claude-style
+   * gateway over the Messages API, as MiMo's `npm: @ai-sdk/anthropic` does.
+   */
+  protocol?: "openai" | "anthropic"
 }
 
 /**
@@ -1717,6 +1723,7 @@ export type Request =
       apiKey: string
       headers?: Record<string, string>
       models: CustomModel[]
+      protocol?: CustomProvider["protocol"]
     }
   | { type: "provider.removeCustom"; provider: string }
   | {
@@ -1728,6 +1735,7 @@ export type Request =
       apiKey: string
       headers?: Record<string, string>
       models: CustomModel[]
+      protocol?: CustomProvider["protocol"]
     }
   /** Copied in the backend so the stored key never travels to the window; `name` is the copy's, already worded. */
   | { type: "provider.copyCustom"; provider: string; name: string }

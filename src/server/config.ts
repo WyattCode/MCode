@@ -648,7 +648,8 @@ export class Config {
       .map<ProviderDefinition>((entry) => ({
         id: entry.id,
         name: entry.name,
-        kind: "openai-compatible",
+        // MiMo lets a custom provider name its SDK; here that is the protocol it speaks.
+        kind: entry.protocol === "anthropic" ? "anthropic" : "openai-compatible",
         description: "provider.desc.custom",
         baseURL: entry.baseURL,
         headers: entry.headers,
