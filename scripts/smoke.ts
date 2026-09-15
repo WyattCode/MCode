@@ -102,7 +102,7 @@ import { cardCut, latestTurnParts, stepPart, stickState, stoppedEmpty } from "..
 import type { AssistantPart, ToolPart } from "../src/shared/protocol"
 import { Bus } from "../src/server/bus"
 import { unifiedDiff } from "../src/server/diff"
-import { globToRegExp } from "../src/server/tool/search"
+import { globToRegExp } from "../src/server/tool/ignore"
 import { discoverSubscriptionModels } from "../src/server/provider/discover"
 import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
@@ -707,6 +707,42 @@ async function main() {
 
   const grep = await findTool("grep")!.execute({ pattern: "TODO" }, context("c3"))
   check("grep reports file:line", grep.output.includes("src/app.ts:1"), grep.output)
+
+  // E2: matched as ripgrep matches for MiMo - a name glob at any depth, hidden files searched, .git and ignored files not.
+  {
+    const tree = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-glob-"))
+    const put = async (rel: string, text: string) => {
+      await fs.mkdir(path.dirname(path.join(tree, rel)), { recursive: true })
+      await fs.writeFile(path.join(tree, rel), text)
+    }
+    await put(".git/HEAD", "ref: refs/heads/main\n")
+    await put(".git/config.ts", "needle\n")
+    await put(".gitignore", "ignored/\n*.log\n!keep.log\n")
+    await put("top.ts", "needle\n")
+    await put("src/deep/inner.ts", "needle\n")
+    await put("src/app.ts", "needle\n")
+    await put(".hidden/secret.ts", "needle\n")
+    await put("ignored/skip.ts", "needle\n")
+    await put("debug.log", "needle\n")
+    await put("keep.log", "needle\n")
+    const inTree = (callID: string) => ({ ...context(callID), directory: tree })
+    const any = await findTool("glob")!.execute({ pattern: "*.ts" }, inTree("g-e2-1"))
+    check("glob *.ts matches at any depth", ["top.ts", "src/deep/inner.ts", "src/app.ts"].every((file) => any.output.includes(file)), any.output)
+    check("hidden files are searched, .git and .gitignore'd files are not", any.output.includes(".hidden/secret.ts") && !any.output.includes("ignored/skip.ts") && !any.output.includes("config.ts"), any.output)
+    const sub = await findTool("glob")!.execute({ pattern: "*.ts", directory: "src" }, inTree("g-e2-2"))
+    check("a name glob inside a subdirectory finds its files", sub.output.includes("src/app.ts") && sub.output.includes("src/deep/inner.ts") && !sub.output.includes("top.ts"), sub.output)
+    const anchored = await findTool("glob")!.execute({ pattern: "src/*.ts" }, inTree("g-e2-3"))
+    check("a glob with a slash is anchored to the folder searched", anchored.output.includes("src/app.ts") && !anchored.output.includes("inner.ts"), anchored.output)
+    const logs = await findTool("glob")!.execute({ pattern: "*.log" }, inTree("g-e2-4"))
+    check("an ignore rule can be negated", logs.output.includes("keep.log") && !logs.output.includes("debug.log"), logs.output)
+    const found = await findTool("grep")!.execute({ pattern: "needle", include: "*.ts" }, inTree("g-e2-5"))
+    check(
+      "grep's include matches at any depth and skips ignored files",
+      found.output.includes("src/deep/inner.ts") && found.output.includes(".hidden/secret.ts") && !found.output.includes("ignored/") && !found.output.includes(".log"),
+      found.output,
+    )
+    await fs.rm(tree, { recursive: true, force: true })
+  }
 
   const list = await findTool("list")!.execute({}, context("c4"))
   check("list renders a tree", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)

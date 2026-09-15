@@ -3,67 +3,10 @@ import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { IGNORED, relative, resolvePath } from "./fs-util"
+import { globMatcher, walkFiles } from "./ignore"
 
 const MAX_RESULTS = 200
 const MAX_FILE_BYTES = 2_000_000
-
-/** Translates a glob into a regex. Supports *, **, ?, and {a,b} alternation. */
-export function globToRegExp(pattern: string): RegExp {
-  let out = ""
-  for (let i = 0; i < pattern.length; i++) {
-    const char = pattern[i]
-    if (char === "*") {
-      if (pattern[i + 1] === "*") {
-        // ** spans directory separators; **/ also matches zero directories.
-        i++
-        if (pattern[i + 1] === "/") {
-          i++
-          out += "(?:.*/)?"
-        } else {
-          out += ".*"
-        }
-      } else {
-        out += "[^/]*"
-      }
-    } else if (char === "?") out += "[^/]"
-    else if (char === "{") {
-      const close = pattern.indexOf("}", i)
-      if (close === -1) out += "\\{"
-      else {
-        const options = pattern.slice(i + 1, close).split(",")
-        out += `(?:${options.map((option) => option.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`
-        i = close
-      }
-    } else out += char.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-  }
-  return new RegExp(`^${out}$`)
-}
-
-async function walk(root: string, onFile: (absolute: string) => void | Promise<void>, signal: AbortSignal) {
-  const queue = [root]
-  while (queue.length) {
-    if (signal.aborted) return
-    const dir = queue.shift()!
-    let entries
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    for (const entry of entries) {
-      if (entry.name.startsWith(".") && entry.name !== ".env.example") {
-        if (entry.isDirectory()) continue
-      }
-      const absolute = path.join(dir, entry.name)
-      if (entry.isDirectory()) {
-        if (IGNORED.has(entry.name)) continue
-        queue.push(absolute)
-      } else if (entry.isFile()) {
-        await onFile(absolute)
-      }
-    }
-  }
-}
 
 export const GlobTool: ToolDefinition = {
   name: "glob",
@@ -83,16 +26,16 @@ export const GlobTool: ToolDefinition = {
     const root = input.directory
       ? await resolvePath(context, String(input.directory))
       : path.resolve(context.directory)
-    const regex = globToRegExp(String(input.pattern))
+    // Matched from the folder searched, as ripgrep's --glob is: `*.ts` at any depth, `src/*.ts` from there.
+    const matches = globMatcher(String(input.pattern))
     const found: { path: string; mtime: number }[] = []
 
-    await walk(
+    await walkFiles(
       root,
       async (absolute) => {
-        const rel = relative(context.directory, absolute)
-        if (!regex.test(rel)) return
+        if (!matches(relative(root, absolute))) return
         const stat = await fs.stat(absolute).catch(() => undefined)
-        found.push({ path: rel, mtime: stat?.mtimeMs ?? 0 })
+        found.push({ path: relative(context.directory, absolute), mtime: stat?.mtimeMs ?? 0 })
       },
       context.signal,
     )
@@ -137,17 +80,17 @@ export const GrepTool: ToolDefinition = {
     } catch (err) {
       throw new ToolError(`Invalid regular expression: ${(err as Error).message}`)
     }
-    const include = input.include ? globToRegExp(String(input.include)) : undefined
+    const include = input.include ? globMatcher(String(input.include)) : undefined
 
     const matches: { path: string; line: number; text: string }[] = []
     let files = 0
 
-    await walk(
+    await walkFiles(
       root,
       async (absolute) => {
         if (matches.length >= MAX_RESULTS) return
         const rel = relative(context.directory, absolute)
-        if (include && !include.test(rel)) return
+        if (include && !include(relative(root, absolute))) return
         const stat = await fs.stat(absolute).catch(() => undefined)
         if (!stat || stat.size > MAX_FILE_BYTES) return
         const content = await fs.readFile(absolute, "utf8").catch(() => undefined)
