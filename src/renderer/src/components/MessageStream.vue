@@ -1103,8 +1103,9 @@ defineExpose({ stepMessage, scroller })
         </div>
 
         <!-- One block answers with every assistant message of the turn: the first names it, and all of them are listed. -->
+        <!-- A retry drops what the failed attempt streamed, so a live turn retrying its first request has no parts yet and still shows its reconnecting row. -->
         <div
-          v-if="turn.parts.length || turn.error || turn.finish"
+          v-if="turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry)"
           class="msg assistant"
           :data-message-id="turn.messageIDs[0]"
           :data-message-ids="turn.messageIDs.join(' ')"
