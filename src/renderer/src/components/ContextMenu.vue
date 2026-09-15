@@ -264,7 +264,17 @@ onBeforeUnmount(() => {
         @mouseenter="enterRow(item, $event)"
         @click="pressRow(item, $event)"
       >
-        <svg v-if="item.icon" class="glyph" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <svg
+          v-if="item.icon"
+          class="glyph"
+          :class="{ tinted: Boolean(item.iconColor) }"
+          :style="item.iconColor ? { color: item.iconColor } : undefined"
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          aria-hidden="true"
+        >
           <path :d="item.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
         <span v-if="!item.checkEnd" class="tick" aria-hidden="true">
@@ -322,7 +332,17 @@ onBeforeUnmount(() => {
         @mousedown.prevent
         @click="emit('pick', child.key)"
       >
-        <svg v-if="child.icon" class="glyph" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <svg
+          v-if="child.icon"
+          class="glyph"
+          :class="{ tinted: Boolean(child.iconColor) }"
+          :style="child.iconColor ? { color: child.iconColor } : undefined"
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          aria-hidden="true"
+        >
           <path :d="child.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
         <span v-if="!child.checkEnd" class="tick" aria-hidden="true">

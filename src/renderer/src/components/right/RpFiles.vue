@@ -370,14 +370,16 @@ const menu = ref<{ x: number; y: number; node: MenuTarget }>()
 const menuItems = computed<MenuItem[]>(() => {
   const node = menu.value?.node
   if (!node) return []
+  // B23: the file and folder glyphs wear the tree's type colours (the vars live on .rp-files, which holds the menu).
+  const kind = fileCategory(node.name)
   const tail: MenuItem[] = [
-    { key: "reveal", label: revealTitle.value, icon: GLYPH.folder },
+    { key: "reveal", label: revealTitle.value, icon: GLYPH.folder, iconColor: "var(--ft-dir)" },
     { key: "copyPath", label: t("rp.files.copyPath"), icon: GLYPH.copy },
     { key: "copyRelPath", label: t("rp.files.copyRelPath"), icon: GLYPH.copy },
   ]
   if (node.directory) return tail
   const head: MenuItem[] = [
-    { key: "open", label: t("rp.files.open"), icon: GLYPH.file },
+    { key: "open", label: t("rp.files.open"), icon: GLYPH.file, iconColor: kind === "default" ? undefined : `var(--ft-${kind})` },
     { key: "annotate", label: t("rp.files.annotate"), icon: GLYPH.comment },
   ]
   if (/\.(html?|xhtml)$/i.test(node.name)) head.push({ key: "openBrowser", label: t("rp.files.openInBrowser"), icon: GLYPH.globe })
@@ -794,7 +796,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
       </div>
     </div>
 
-    <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @pick="pickMenu" @close="menu = undefined" />
+    <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" :min-width="180" @pick="pickMenu" @close="menu = undefined" />
   </div>
 </template>
 
