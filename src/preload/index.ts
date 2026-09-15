@@ -219,6 +219,9 @@ const api = {
   officeConvertLegacy: (target: string): Promise<{ ok: true; output: string; cached: boolean } | { ok: false; error: string }> =>
     ipcRenderer.invoke("mcode:office-convert-legacy", target),
   revealPath: (target: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("mcode:reveal-path", target),
+  /** MiMo's 下载副本: copies a file into Downloads, numbering the name when it is taken. */
+  saveCopy: (target: string): Promise<{ ok: true; savedPath: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-copy", target),
   /** A reply's path link: opens a file with its default program; executables and folders are refused there. */
   openNativePath: (target: string): Promise<{ ok: true } | { ok: false; code: string; error: string }> =>
     ipcRenderer.invoke("mcode:open-native-path", target),
