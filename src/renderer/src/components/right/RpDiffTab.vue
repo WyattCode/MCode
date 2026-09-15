@@ -197,7 +197,7 @@ async function reveal(index: number) {
   padding: 14px;
 }
 
-:global(:root[data-theme="dark"]) .dt {
+:root[data-theme="dark"] .dt {
   --d2h-bg: #0d1117;
   --d2h-color: #e6edf3;
   --d2h-dim: #6e7681;
@@ -217,7 +217,7 @@ async function reveal(index: number) {
 }
 
 @media (prefers-color-scheme: dark) {
-  :global(:root:not([data-theme="light"])) .dt {
+  :root:not([data-theme="light"]) .dt {
     --d2h-bg: #0d1117;
     --d2h-color: #e6edf3;
     --d2h-dim: #6e7681;
@@ -407,11 +407,11 @@ async function reveal(index: number) {
   transform: rotate(0);
 }
 
-:global([dir="rtl"]) .dt-name-wrap::before {
+[dir="rtl"] .dt-name-wrap::before {
   transform: rotate(-90deg);
 }
 
-:global([dir="rtl"]) .dt-file.collapsed .dt-name-wrap::before {
+[dir="rtl"] .dt-file.collapsed .dt-name-wrap::before {
   transform: rotate(0);
 }
 
@@ -505,12 +505,12 @@ async function reveal(index: number) {
 }
 
 /* The diff-marks setting, as MiMo reads it: colour alone keeps the prefix's room but blanks it. */
-:global(html[data-diff-marks="color"]) .dt-prefix {
+html[data-diff-marks="color"] .dt-prefix {
   visibility: hidden;
 }
 
-:global(html[data-diff-marks="signs"]) .dt-row.add,
-:global(html[data-diff-marks="signs"]) .dt-row.del {
+html[data-diff-marks="signs"] .dt-row.add,
+html[data-diff-marks="signs"] .dt-row.del {
   background: transparent;
 }
 

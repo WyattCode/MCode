@@ -47,7 +47,7 @@ const rows = computed(() => reviewRows(props.diff))
   line-height: 1.55;
 }
 
-:global(:root[data-theme="dark"]) .rp-diff {
+:root[data-theme="dark"] .rp-diff {
   --rv-bg: #1e1e1e;
   --rv-add-bg: #2ea04726;
   --rv-del-bg: #cf222e26;
@@ -55,7 +55,7 @@ const rows = computed(() => reviewRows(props.diff))
 }
 
 @media (prefers-color-scheme: dark) {
-  :global(:root:not([data-theme="light"])) .rp-diff {
+  :root:not([data-theme="light"]) .rp-diff {
     --rv-bg: #1e1e1e;
     --rv-add-bg: #2ea04726;
     --rv-del-bg: #cf222e26;
@@ -122,12 +122,12 @@ const rows = computed(() => reviewRows(props.diff))
 }
 
 /* The diff-marks setting: colour alone blanks the sign but keeps its column; signs alone drop the tint. */
-:global(html[data-diff-marks="color"]) .sign {
+html[data-diff-marks="color"] .sign {
   visibility: hidden;
 }
 
-:global(html[data-diff-marks="signs"]) .row.add,
-:global(html[data-diff-marks="signs"]) .row.del {
+html[data-diff-marks="signs"] .row.add,
+html[data-diff-marks="signs"] .row.del {
   background: transparent;
 }
 </style>

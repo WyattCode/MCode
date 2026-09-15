@@ -4709,7 +4709,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 /* Not under the floating chat's box, as in MiMo. */
-:global(#float-dock) .ai-note {
+#float-dock .ai-note {
   display: none;
 }
 
@@ -4998,15 +4998,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  * text, the permission chip, then the model and send - with anything else
  * (attachments, chips, annotations) on a full line above it.
  */
-:global(#float-dock) .composer {
+#float-dock .composer {
   padding: 0;
 }
 
-:global(#float-dock) .shell {
+#float-dock .shell {
   max-width: 100%;
 }
 
-:global(#float-dock) .box {
+#float-dock .box {
   flex-direction: row;
   flex-wrap: wrap;
   align-items: flex-end;
@@ -5014,23 +5014,23 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 6px 8px;
 }
 
-:global(#float-dock) .row,
-:global(#float-dock) .row-start,
-:global(#float-dock) .row-end {
+#float-dock .row,
+#float-dock .row-start,
+#float-dock .row-end {
   display: contents;
 }
 
-:global(#float-dock) .box > * {
+#float-dock .box > * {
   flex-basis: 100%;
   order: -1;
 }
 
-:global(#float-dock) .plus-wrap {
+#float-dock .plus-wrap {
   order: 0;
   margin-bottom: 4px;
 }
 
-:global(#float-dock) .input {
+#float-dock .input {
   flex: 1 1 0;
   order: 1;
   min-width: 0;
@@ -5039,17 +5039,17 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 8px 6px 8px 8px;
 }
 
-:global(#float-dock) .row-start > :not(.plus-wrap) {
+#float-dock .row-start > :not(.plus-wrap) {
   order: 2;
   margin-bottom: 4px;
 }
 
-:global(#float-dock) .row-end > * {
+#float-dock .row-end > * {
   order: 3;
   margin-bottom: 4px;
 }
 
-:global(#float-dock) .perm-label {
+#float-dock .perm-label {
   display: none;
 }
 </style>

@@ -1785,12 +1785,12 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* Lifted clear of the "files changed" pill while it hangs over the composer. */
-:global(.main:has([data-live-edit-pill])) .jump {
+.main:has([data-live-edit-pill]) .jump {
   bottom: 48px;
 }
 
 /* And the transcript's end kept clear of it, as MiMo pads its scroller by 66. */
-:global(.main:has([data-live-edit-pill])) .inner {
+.main:has([data-live-edit-pill]) .inner {
   padding-bottom: 66px;
 }
 

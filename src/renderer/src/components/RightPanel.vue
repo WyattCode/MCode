@@ -445,7 +445,7 @@ body.resizing webview {
 }
 
 .right-panel.resizing,
-:global(body.resizing) .right-panel {
+body.resizing .right-panel {
   transition: none;
 }
 

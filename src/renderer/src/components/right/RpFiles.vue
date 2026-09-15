@@ -820,7 +820,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   min-height: 0;
 }
 
-:global(:root[data-theme="dark"]) .rp-files {
+:root[data-theme="dark"] .rp-files {
   --ft-dim: #777;
   --ft-dir: #f0b850;
   --ft-code: #5a9cff;
@@ -833,7 +833,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 @media (prefers-color-scheme: dark) {
-  :global(:root:not([data-theme="light"])) .rp-files {
+  :root:not([data-theme="light"]) .rp-files {
     --ft-dim: #777;
     --ft-dir: #f0b850;
     --ft-code: #5a9cff;
@@ -1026,7 +1026,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
   transform: rotate(90deg);
 }
 
-:global([dir="rtl"]) .fv-row:not(.open) .fv-chev {
+[dir="rtl"] .fv-row:not(.open) .fv-chev {
   transform: scaleX(-1);
 }
 
@@ -1131,7 +1131,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 }
 
 /* Expanded, the floating chat stands over the foot: MiMo leaves its height and 8 more below. */
-:global(.right-panel.fullscreen) .fv-view {
+.right-panel.fullscreen .fv-view {
   padding-bottom: calc(var(--fc-h, 96px) + 8px);
 }
 
