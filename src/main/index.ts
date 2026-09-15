@@ -176,22 +176,36 @@ function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
     tray.on("double-click", open)
   } else tray.setImage(image)
 
+  /*
+   * MiMo's 配置切换 presentation: entries grouped (MiMo by app, here by the
+   * provider each key starts with) with a rule between groups.
+   */
+  const grouped = new Map<string, TrayProfile[]>()
+  for (const entry of trayProfiles) {
+    const provider = entry.key.slice(0, Math.max(0, entry.key.indexOf("/")))
+    grouped.set(provider, [...(grouped.get(provider) ?? []), entry])
+  }
   const profiles: Electron.MenuItemConstructorOptions[] = trayProfiles.length
-    ? trayProfiles.map((entry) => ({
-        label: entry.label,
-        type: "radio",
-        checked: entry.checked,
-        click: () => {
-          const window = BrowserWindow.getAllWindows()[0] ?? make()
-          window.webContents.send("mcode:tray-profile", entry.key)
-        },
-      }))
+    ? [...grouped.values()].flatMap((group, index): Electron.MenuItemConstructorOptions[] => [
+        ...(index > 0 ? [{ type: "separator" as const }] : []),
+        ...group.map((entry) => ({
+          label: entry.label,
+          type: "radio" as const,
+          checked: entry.checked,
+          click: () => {
+            const window = BrowserWindow.getAllWindows()[0] ?? make()
+            window.webContents.send("mcode:tray-profile", entry.key)
+          },
+        })),
+      ])
     : [{ label: label("tray.profilesEmpty", "(None)"), enabled: false }]
 
   tray.setToolTip(app.getName())
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: label("tray.open", "Open MCode"), click: open },
+      // MiMo puts a rule before 配置切换 as well as before quit.
+      { type: "separator" },
       { label: label("tray.profiles", "Switch Profile"), submenu: profiles },
       { type: "separator" },
       {
