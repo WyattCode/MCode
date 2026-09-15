@@ -6371,11 +6371,15 @@ async function mcpChecks(project: string) {
   const mcpContext = (callID: string, signal = new AbortController().signal) =>
     ({ sessionID: "ses_mcp", messageID: "msg_mcp", callID, directory: project, permissions: { ask: async () => {} }, signal, progress: () => {}, snapshot: async () => {} }) as never
   const named = (name: string) => mcp.tools().find((tool) => tool.name === name)
-  const run = (name: string, input: Record<string, unknown> = {}, signal?: AbortSignal) =>
-    named(name)!.execute(input, mcpContext(`m-${name}`, signal)).then(
+  // A tool that is not there is a failed check, not a crash that hides every check after it.
+  const run = async (name: string, input: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    const tool = named(name)
+    if (!tool) return `ERROR no tool named ${name}`
+    return tool.execute(input, mcpContext(`m-${name}`, signal)).then(
       (result) => result.output,
       (error: Error) => `ERROR ${error.message}`,
     )
+  }
   check("every configured server connects, both remote transports included", mcp.list().every((entry) => entry.status === "connected"), mcp.list())
 
   // E45
@@ -6424,14 +6428,21 @@ async function mcpChecks(project: string) {
   stopper.abort()
   const slowResult = await slow
   check("Stop settles an MCP call at once", slowResult === "ERROR The MCP call was stopped" && Date.now() - stoppedAt < 500, slowResult)
-  const cancelledIDs = JSON.parse(await run("my_server_cancelled")) as unknown[]
-  check("and the server is told to cancel it", cancelledIDs.length === 1, cancelledIDs)
+  const parsed = (text: string): unknown => {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return text
+    }
+  }
+  const cancelledIDs = parsed(await run("my_server_cancelled"))
+  check("and the server is told to cancel it", Array.isArray(cancelledIDs) && cancelledIDs.length === 1, cancelledIDs)
   const quickStart = Date.now()
   const timedOut = await run("quick_slow")
   check("a server's own timeout bounds its calls", timedOut === "ERROR tools/call timed out" && Date.now() - quickStart < 2000, { timedOut, ms: Date.now() - quickStart })
 
   // E49
-  const asked = JSON.parse(await run("my_server_ask-model")) as { content?: { text?: string } }
+  const asked = (parsed(await run("my_server_ask-model")) ?? {}) as { content?: { text?: string } }
   check(
     "a sampling request is answered, in the conversation whose call reached the server",
     asked.content?.text === "sampled" && sampled[0]?.server === "my.server" && sampled[0]?.sessionID === "ses_mcp",
