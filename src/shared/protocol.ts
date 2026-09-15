@@ -419,7 +419,18 @@ export interface GitSummary {
   deletions: number
   /** Per file, relative to the project directory; untracked files count as wholly added. */
   files: GitFileLines[]
+  /** Origin (or upstream) is a GitHub repository: the section ends with the pull-request row. */
+  github?: boolean
 }
+
+/** MiMo's pull-request row: the branch's newest pull request on GitHub, or why there is none to show. */
+export type PullRequestState =
+  | { ok: true; kind: "none" }
+  | { ok: true; kind: "open" | "draft" | "closed" | "merged"; number: number; title: string; url: string }
+  | {
+      ok: false
+      code: "not-a-repo" | "no-remote" | "detached" | "unsupported-remote" | "network" | "rate-limited" | "unauthorized" | "bad-response"
+    }
 
 /** What the commit or push card decides its buttons from. */
 export interface CommitState {
@@ -1712,6 +1723,8 @@ export type Request =
   | { type: "git.commitState"; directory: string }
   | { type: "git.commit"; directory: string; message: string; includeUnstaged: boolean }
   | { type: "git.push"; directory: string }
+  /* The current branch's pull request, asked of GitHub's public API; only for GitHub remotes. */
+  | { type: "git.pullRequest"; directory: string }
   /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
   | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
   | { type: "file.list"; directory: string; query?: string }
@@ -1901,6 +1914,7 @@ export interface ResponseMap {
   "git.commitState": CommitState
   "git.commit": CommitResult
   "git.push": PushResult
+  "git.pullRequest": PullRequestState
   "git.commitMessage": { message: string; generated: boolean }
   "file.list": { files: FileEntry[] }
   /* Folders first, then files, each by name; dot entries and the ignored folders left out. */

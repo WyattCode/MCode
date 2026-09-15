@@ -33,9 +33,10 @@ import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
-import { applyVoiceResult, editCue, isClearCommand, splitSendWord } from "../src/renderer/src/lib/voice"
+import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, transcribeFailure } from "../src/renderer/src/lib/voice"
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
+import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFile } from "../src/main/display-server"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
@@ -44,9 +45,19 @@ import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
 import { ago, t } from "../src/renderer/src/lib/i18n"
-import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, handle, parseVoiceEdit, voiceDraftOf, voiceEditMessages } from "../src/server/handlers"
+import {
+  VOICE_EDIT_MAX,
+  VOICE_EDIT_PROMPT,
+  handle,
+  parseVoiceEdit,
+  voiceDraftOf,
+  voiceEditMessages,
+  voiceFetchFailure,
+  voiceHttpFailure,
+} from "../src/server/handlers"
 import { PROJECT_LIST_MIGRATION, customModelOf } from "../src/server/config"
 import { listedProjects, projectsByRecency, reconciledProjects } from "../src/shared/projects"
+import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
 import { addressToURL, safeURL } from "../src/shared/web-address"
@@ -158,6 +169,15 @@ import { SUBAGENT_TIMERS, isStalled, noticeText, subagentAnswer, subagentOutput,
 import { COMPLETED_CAP, isPill, noticeStatus, pillStatus, subagentItems, subagentTime } from "../src/renderer/src/lib/subagents"
 import { stepTitle as subagentStepTitle, stepVerb as subagentStepVerb } from "../src/renderer/src/lib/tool-meta"
 import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStatus } from "../src/shared/protocol"
+// round 4: MiMo's built-in window tools and the pieces the window uses.
+import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
+import { LANGUAGE_IDS, bindDesktopSettings } from "../src/server/tool/desktop-settings"
+import { deliveredCard, deliveredFiles, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { stepTitle as deliveredStepTitle, toolIcon as deliveredToolIcon, toolVerb as deliveredToolVerb } from "../src/renderer/src/lib/tool-meta"
+import { LANGUAGES as INTERFACE_LANGUAGES } from "../src/renderer/src/lib/i18n"
+import { freeCopyName, saveCopy } from "../src/main/save-copy"
+import { subagentAnswer, subagentOutput, subagentTone } from "../src/shared/subagent"
+import { COMPLETED_CAP, isPill, pillStatus, subagentItems, subagentTime } from "../src/renderer/src/lib/subagents"
 import {
   WINDOW_MIN,
   badgeCount,
@@ -2565,6 +2585,27 @@ async function main() {
     check("nothing said is nothing sent", splitSendWord("   ").send === false)
   }
 
+  section("Display server (Linux)")
+  {
+    check("an unknown choice reads as auto", displayServerPref("gtk") === "auto" && displayServerPref(undefined) === "auto")
+    check("the three choices read as themselves", displayServerPref("wayland") === "wayland" && displayServerPref("x11") === "x11")
+    check("a missing or broken file is auto", readDisplayServerFile("") === "auto" && readDisplayServerFile("[1]") === "auto")
+    check("the written file reads back", readDisplayServerFile(JSON.stringify({ displayServer: "x11" })) === "x11")
+    check("auto follows a Wayland session", ozonePlatform("auto", { XDG_SESSION_TYPE: "wayland" }) === "wayland")
+    check("or a Wayland display", ozonePlatform("auto", { WAYLAND_DISPLAY: "wayland-0" }) === "wayland")
+    check("auto on X11 forces nothing", ozonePlatform("auto", { XDG_SESSION_TYPE: "x11" }) === undefined)
+    check("a choice overrides the session", ozonePlatform("x11", { XDG_SESSION_TYPE: "wayland" }) === "x11")
+    check("no switches off Linux", displaySwitches("win32", "wayland", {}).length === 0)
+    const onX11 = displaySwitches("linux", "auto", { XDG_SESSION_TYPE: "x11" })
+    check("X11 keeps GTK 3 and no platform", onX11.length === 1 && onX11[0]?.name === "gtk-version" && onX11[0]?.value === "3", onX11)
+    const onWayland = displaySwitches("linux", "wayland", {}).map((entry) => entry.name)
+    check(
+      "Wayland adds the platform and its input method, as MiMo does",
+      onWayland.join(",") === "gtk-version,ozone-platform,enable-wayland-ime,wayland-text-input-version",
+      onWayland,
+    )
+  }
+
   section("Composer menus and home starters")
   {
     check("a level the new model takes is kept", clampEffort(["low", "medium", "high"], "high") === "high")
@@ -2622,6 +2663,46 @@ async function main() {
     check("an edit that changed the box rewrote it", editCue("周五开会", "周四开会", true) === "rewritten")
     check("an edit that left nothing cleared it", editCue("周五开会", "", true) === "cleared")
     check("no change, or no edit, says nothing", editCue("a", "a", true) === undefined && editCue("a", "b", false) === undefined)
+  }
+
+  section("Voice failures (MiMo's messages)")
+  {
+    const dom = (name: string, message = "") => Object.assign(new Error(message), { name })
+    check("a refused microphone is micDenied and opens the OS page", JSON.stringify(micFailure(dom("NotAllowedError"))) === JSON.stringify({ key: "voice.micDenied", guide: true }))
+    check("a security refusal is the same denial", micFailure(dom("SecurityError")).key === "voice.micDenied")
+    check("no device, or none that fits, is micNotFound", micFailure(dom("NotFoundError")).key === "voice.micNotFound" && micFailure(dom("OverconstrainedError")).key === "voice.micNotFound")
+    check(
+      "a device another program holds is micInUse",
+      ["NotReadableError", "TrackStartError", "AbortError"].every((name) => micFailure(dom(name)).key === "voice.micInUse" && !micFailure(dom(name)).guide),
+    )
+    const other = micFailure(dom("TypeError", "boom"))
+    check("anything else is micAccessFailed with its words", other.key === "voice.micAccessFailed" && other.params?.msg === "boom" && !other.guide, other)
+    check("no recorder keeps its own message", micFailure(new Error("voice.noRecorder")).key === "voice.noRecorder")
+
+    const abort = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })
+    check("a timed-out request is voice.timeout", voiceFetchFailure(abort) === "voice.timeout")
+    const refused = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } })
+    check("a refused or unresolvable endpoint is voice.network", voiceFetchFailure(refused) === "voice.network" && voiceFetchFailure(Object.assign(new Error("x"), { code: "ENOTFOUND" })) === "voice.network")
+    check("a bare fetch TypeError is voice.network", voiceFetchFailure(new TypeError("fetch failed")) === "voice.network")
+    check("an unknown rejection keeps its own words", voiceFetchFailure(new Error("odd")) === "odd")
+    check("404 is the model being unavailable", voiceHttpFailure(404, "") === "voice.modelUnavailable")
+    check(
+      "a body naming an unknown model is too",
+      voiceHttpFailure(400, '{"error":{"message":"The model `whisper-9` does not exist"}}') === "voice.modelUnavailable" &&
+        voiceHttpFailure(400, "Invalid model: foo") === "voice.modelUnavailable",
+    )
+    check("other statuses carry their number", voiceHttpFailure(503, "Service Unavailable") === "voice.http:503" && voiceHttpFailure(400, "Invalid file format") === "voice.http:400")
+
+    const shown = (code: string) => transcribeFailure(new Error(code))
+    check("the window names each code with MiMo's key", shown("voice.timeout").key === "voice.timeout" && shown("voice.network").key === "voice.networkUnreachable" && shown("voice.modelUnavailable").key === "voice.modelUnavailable" && shown("voice.emptyResult").key === "voice.emptyResult")
+    check("an HTTP status is passed to its message", JSON.stringify(shown("voice.http:502")) === JSON.stringify({ key: "voice.serviceHttp", params: { status: "502" } }))
+    check("the configuration codes keep their own messages", shown("voice.notConfigured").key === "voice.notConfigured" && shown("voice.noEndpoint").key === "voice.noEndpoint")
+    const raw = shown("Lost connection to the backend")
+    check("anything else is MiMo's plain failure with the words under it", raw.key === "voice.failed" && raw.detail === "Lost connection to the backend", raw)
+    check("every key the failures name exists in zh-CN", [
+      "voice.micDenied", "voice.micNotFound", "voice.micInUse", "voice.micAccessFailed", "voice.timeout", "voice.networkUnreachable",
+      "voice.modelUnavailable", "voice.serviceHttp", "voice.emptyResult", "voice.failed", "composer.replacePending",
+    ].every((key) => t(key) !== key))
   }
 
   section("Voice smart edit")
@@ -4822,6 +4903,7 @@ async function main() {
   await subagentChecks(root, project)
   await sessionChatChecks(root, project)
   await projectListChecks()
+  await deliveredToolChecks(root)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -4842,6 +4924,89 @@ async function main() {
  * removing one keeps its conversations.
  */
 async function projectListChecks() {
+  section("Pull-request row (MiMo's GitHub lookup, stubbed: no network)")
+  {
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+    check("scp remote parses", same(githubRepository("git@github.com:octo/hello.git"), { owner: "octo", repo: "hello" }))
+    check("https remote parses, credentials ignored", same(githubRepository("https://user:secret@github.com/octo/hello.git"), { owner: "octo", repo: "hello" }))
+    check("ssh URL remote parses", same(githubRepository("ssh://git@github.com/octo/hello"), { owner: "octo", repo: "hello" }))
+    check("a trailing slash is fine", same(githubRepository("https://github.com/octo/hello/"), { owner: "octo", repo: "hello" }))
+    check("GitLab is not GitHub", githubRepository("git@gitlab.com:octo/hello.git") === null)
+    check("a look-alike host is not GitHub", githubRepository("https://github.com.evil.example/octo/hello") === null)
+    check("http (not https) is refused", githubRepository("http://github.com/octo/hello") === null)
+    check("three path parts are not a repository", githubRepository("https://github.com/octo/hello/tree") === null)
+    check("odd characters are refused", githubRepository("https://github.com/octo/hel%20lo") === null && githubRepository("git@github.com:octo/..") === null)
+    check("empty and junk are refused", githubRepository("") === null && githubRepository("not a url") === null)
+
+    const repo = { owner: "octo", repo: "hello" }
+    const item = (over: Record<string, unknown>) => ({ number: 7, title: "Fix it", html_url: "https://github.com/octo/hello/pull/7", state: "open", draft: false, merged_at: null, ...over })
+    check("an empty list is none", same(pullRequestFrom([], repo), { ok: true, kind: "none" }))
+    check("open maps to open", same(pullRequestFrom([item({})], repo), { ok: true, kind: "open", number: 7, title: "Fix it", url: "https://github.com/octo/hello/pull/7" }))
+    check("draft wins over open", (pullRequestFrom([item({ draft: true })], repo) as { kind: string }).kind === "draft")
+    check("closed with merged_at is merged", (pullRequestFrom([item({ state: "closed", merged_at: "2026-01-01T00:00:00Z" })], repo) as { kind: string }).kind === "merged")
+    check("closed without merged_at is closed", (pullRequestFrom([item({ state: "closed" })], repo) as { kind: string }).kind === "closed")
+    check("a page on another repository is refused", same(pullRequestFrom([item({ html_url: "https://github.com/evil/hello/pull/7" })], repo), { ok: false, code: "bad-response" }))
+    check("a page whose number differs is refused", same(pullRequestFrom([item({ html_url: "https://github.com/octo/hello/pull/8" })], repo), { ok: false, code: "bad-response" }))
+    check("a non-list body is refused", same(pullRequestFrom({ message: "x" }, repo), { ok: false, code: "bad-response" }))
+
+    const asked: { url: string; headers: Record<string, string> }[] = []
+    const answering = (status: number, body: unknown): FetchLike => async (url, init) => {
+      asked.push({ url, headers: init.headers })
+      return { ok: status >= 200 && status < 300, status, json: async () => body }
+    }
+    const open = await askGithub("git@github.com:octo/hello.git", "feature/x", answering(200, [item({})]))
+    check("askGithub maps the stubbed answer", (open as { kind?: string }).kind === "open", open)
+    const first = asked[0]
+    check(
+      "the request names the branch under the owner, with MiMo's query and no credentials",
+      !!first &&
+        first.url === "https://api.github.com/repos/octo/hello/pulls?state=all&head=octo%3Afeature%2Fx&per_page=10" &&
+        first.headers.Accept === "application/vnd.github+json" &&
+        !Object.keys(first.headers).some((name) => name.toLowerCase() === "authorization"),
+      first,
+    )
+    check("403 is rate-limited", same(await askGithub("git@github.com:octo/hello.git", "main", answering(403, {})), { ok: false, code: "rate-limited" }))
+    check("404 is unauthorized", same(await askGithub("git@github.com:octo/hello.git", "main", answering(404, {})), { ok: false, code: "unauthorized" }))
+    const throwing: FetchLike = async () => {
+      throw new Error("offline")
+    }
+    check("a thrown fetch is network", same(await askGithub("git@github.com:octo/hello.git", "main", throwing), { ok: false, code: "network" }))
+    let fetched = 0
+    const counting: FetchLike = async () => {
+      fetched++
+      return { ok: true, status: 200, json: async () => [] }
+    }
+    check("a GitLab remote is never fetched", same(await askGithub("git@gitlab.com:octo/hello.git", "main", counting), { ok: false, code: "unsupported-remote" }) && fetched === 0)
+
+    const gitWith = (answers: Record<string, string | Error>): GitRunner => async (_directory, args) => {
+      const answer = answers[args.join(" ")]
+      if (answer === undefined || answer instanceof Error) throw answer ?? new Error("unexpected")
+      return answer
+    }
+    const repoGit = (remotes: string, branch = "main") =>
+      gitWith({ "rev-parse --is-inside-work-tree": "true\n", "symbolic-ref --quiet --short HEAD": branch ? `${branch}\n` : new Error("detached"), "remote -v": remotes })
+    const originOnly = "origin\tgit@github.com:fork/hello.git (fetch)\norigin\tgit@github.com:fork/hello.git (push)\n"
+    check("hasGithubRemote sees a GitHub origin", hasGithubRemote(originOnly) && !hasGithubRemote("origin\thttps://gitlab.com/a/b.git (fetch)\n") && !hasGithubRemote(""))
+    fetched = 0
+    check("outside a repository nothing is fetched", same(await pullRequestState("x", { git: gitWith({}), fetch: counting }), { ok: false, code: "not-a-repo" }) && fetched === 0)
+    check("a detached HEAD is detached", same(await pullRequestState("x", { git: repoGit(originOnly, ""), fetch: counting }), { ok: false, code: "detached" }) && fetched === 0)
+    check("no origin is no-remote", same(await pullRequestState("x", { git: repoGit(""), fetch: counting }), { ok: false, code: "no-remote" }) && fetched === 0)
+    check(
+      "a non-GitHub origin is unsupported, unfetched",
+      same(await pullRequestState("x", { git: repoGit("origin\thttps://gitlab.com/a/b.git (fetch)\n"), fetch: counting }), { ok: false, code: "unsupported-remote" }) && fetched === 0,
+    )
+    asked.length = 0
+    const forked = `${originOnly}upstream\thttps://github.com/octo/hello.git (fetch)\n`
+    const upstreamHit: FetchLike = async (url, init) => {
+      asked.push({ url, headers: init.headers })
+      const body = url.includes("/repos/octo/hello/") ? [item({})] : []
+      return { ok: true, status: 200, json: async () => body }
+    }
+    const fork = await pullRequestState("x", { git: repoGit(forked, "topic"), fetch: upstreamHit })
+    check("a fork asks upstream first, with origin's owner as head", (fork as { kind?: string }).kind === "open" && asked.length === 1 && (asked[0]?.url.includes("head=fork%3Atopic") ?? false), asked)
+    check("none from every repository is none", same(await pullRequestState("x", { git: repoGit(originOnly), fetch: answering(200, []) }), { ok: true, kind: "none" }))
+  }
+
   section("Project list")
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-projects-"))
   const data = path.join(root, "data")
@@ -4973,6 +5138,176 @@ async function projectListChecks() {
     "recency ties keep the stored order",
     same(projectsByRecency({ projects: ["x", "y", "z"], closedProjects: ["y"], projectUsed: {} }, []), ["x", "z"]),
   )
+}
+
+async function deliveredToolChecks(root: string) {
+  section("Round 4: pdf_locate, present_files and the desktop settings tools")
+  const project = path.join(root, "delivered")
+  await fs.mkdir(path.join(project, "out"), { recursive: true })
+  await fs.writeFile(path.join(project, "out", "report.pdf"), "%PDF-1.4\n")
+  await fs.writeFile(path.join(project, "page.html"), "<h1>hi</h1>")
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-delivered-outside-"))
+  await fs.writeFile(path.join(outside, "elsewhere.pdf"), "x")
+  const context = (callID: string) =>
+    ({
+      sessionID: "ses_delivered",
+      messageID: "msg_delivered",
+      callID,
+      directory: project,
+      signal: new AbortController().signal,
+      progress: () => {},
+      snapshot: async () => {},
+    }) as never
+  const names = ["pdf_locate", "present_files", "get_desktop_settings", "set_desktop_setting"]
+
+  // The registry: appended after the task tool, no permission bucket, nothing to record in undo.
+  check("the four window tools are appended after task, keeping the cached prefix", TOOLS.slice(-5).map((tool) => tool.name).join(",") === ["task", ...names].join(","), TOOLS.map((tool) => tool.name))
+  check("none of them asks for permission, as MiMo asks none", names.every((name) => findTool(name)?.permission === undefined))
+  check("none of them counts as touching the project", names.every((name) => reachOf(name) === "reads"))
+
+  // pdf_locate: MiMo's parameters, a confirmation, and the target for the preview.
+  const locateTool = findTool("pdf_locate")!
+  const locate = await locateTool.execute({ file: "out/report.pdf", snippet: "x".repeat(80), page: 3 }, context("l1"))
+  check(
+    "pdf_locate resolves the file against the project and names the page it sent the preview to",
+    locate.metadata?.path === path.join(project, "out", "report.pdf") && locate.metadata?.page === 3 && locate.output.includes('"report.pdf"') && locate.output.includes("page 3"),
+    locate,
+  )
+  check("its title is the passage's first 60 characters", locate.title === "x".repeat(60), locate.title)
+  const unpaged = await locateTool.execute({ file: path.join(project, "gone.pdf"), snippet: "a" }, context("l2"))
+  check("a PDF that is not there is no failure (the preview ignores it) and no page is made up", unpaged.metadata?.page === undefined && !unpaged.output.includes("page"), unpaged)
+  check("pdf_locate without a snippet is refused before it runs", argumentProblems(locateTool.parameters, { file: "a.pdf" }).some((problem) => problem.includes("snippet")))
+  check("a page that is not a number is refused", argumentProblems(locateTool.parameters, { file: "a.pdf", snippet: "b", page: "3" }).length === 1)
+
+  // present_files: existing files inside the project, in order, each once; the rest skipped with a reason.
+  const presentTool = findTool("present_files")!
+  const presented = await presentTool.execute(
+    {
+      files: ["out/report.pdf", "page.html", "missing.docx", path.join(outside, "elsewhere.pdf"), "out", "https://example.com/a", "./out/report.pdf"],
+      cwd: project,
+      explanation: "probe",
+    },
+    context("p1"),
+  )
+  const shown = (presented.metadata?.files ?? []) as PresentedFile[]
+  const skipped = (presented.metadata?.skipped ?? []) as PresentSkip[]
+  check(
+    "present_files keeps the existing files and addresses, in the order given, each once",
+    shown.map((file) => ("path" in file ? path.basename(file.path) : file.url)).join(",") === "report.pdf,page.html,https://example.com/a",
+    shown,
+  )
+  check("it records each file's absolute path and size", "path" in shown[0] && shown[0].path === path.join(project, "out", "report.pdf") && shown[0].size === 9, shown[0])
+  check("a missing file, one outside the project and a folder are skipped, each with its reason", skipped.map((skip) => skip.reason).join(",") === "missing,outside,directory", skipped)
+  check("the model reads what was shown and what was skipped", presented.output.startsWith("Showed 3 files") && presented.output.includes('Skipped "missing.docx"'), presented.output)
+  const relative = await presentTool.execute({ files: ["report.pdf"], cwd: "out", explanation: "x" }, context("p2"))
+  check("a relative cwd is taken from the project folder", ((relative.metadata?.files ?? []) as PresentedFile[]).length === 1, relative.metadata)
+  const empty = await presentTool.execute({ files: [], cwd: project, explanation: "x" }, context("p3"))
+  check("nothing to present completes with no files", empty.output.startsWith("No files") && ((empty.metadata?.files ?? []) as PresentedFile[]).length === 0)
+  check("present_files needs files, cwd and explanation, as MiMo's does", argumentProblems(presentTool.parameters, { files: ["a"] }).length === 2)
+  const linked = path.join(project, "link")
+  // The link points only at `outside`, a fresh temp folder holding one file made above - never the repo or a real project.
+  const madeLink = await fs.symlink(outside, linked, "junction").then(() => true, () => false)
+  if (madeLink) {
+    try {
+      const through = await presentTool.execute({ files: ["link/elsewhere.pdf"], cwd: project, explanation: "x" }, context("p4"))
+      check("a link inside the project that leads out is judged by where it leads", ((through.metadata?.skipped ?? []) as PresentSkip[])[0]?.reason === "outside", through.metadata)
+    } finally {
+      /*
+       * Only the link entry is removed, never what it points at: unlink, or a
+       * non-recursive rmdir, both delete a junction itself. Then it is checked
+       * gone, and the run stops here if not, before any recursive delete below
+       * could walk through it.
+       */
+      await fs.unlink(linked).catch(() => fs.rmdir(linked)).catch(() => undefined)
+      const left = await fs.lstat(linked).then(() => true, () => false)
+      if (left) throw new Error(`smoke could not remove the junction ${linked}; stopping before any recursive delete`)
+    }
+    check("removing the link left what it pointed at alone", await exists(path.join(outside, "elsewhere.pdf")))
+  }
+
+  // The window's side: the cards' entries, sizes, kinds, the relative path the main process opens, the step row.
+  const part = (status: string, files: unknown, callID = "c") => ({ type: "tool", id: callID, callID, name: "present_files", status, input: {}, metadata: { files }, time: { created: 1, completed: 2 } })
+  const items = deliveredFiles([part("completed", shown, "a"), part("running", shown, "b"), part("completed", [shown[0]], "d")] as never)
+  check("the cards list a turn's completed present_files entries once each", items.map((item) => item.name).join(",") === "report.pdf,page.html,https://example.com/a", items)
+  check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,url", items.map(deliveredCard))
+  check("sizes read as MiMo writes them", sizeLabel(512) === "512 B" && sizeLabel(1536) === "1.5 KB" && sizeLabel(5 * 1024 * 1024) === "5.0 MB")
+  check("a delivered file opens with an app by its path under the project", relativeInside("C:\\p\\", "C:/P/out/a.pdf") === "out/a.pdf" && relativeInside("C:\\p", "D:/q/a.pdf") === "")
+  check("the step rows speak MiMo's verbs", deliveredToolVerb("present_files", "completed") !== "toolLabel.done.present_files" && deliveredToolVerb("pdf_locate", "running") !== "toolLabel.running.pdf_locate")
+  check(
+    "the step titles are the passage, the file names and the change",
+    deliveredStepTitle({ name: "pdf_locate", input: { snippet: "y".repeat(90) } } as never) === "y".repeat(60) &&
+      deliveredStepTitle({ name: "present_files", input: { files: ["C:\\p\\a.pdf", "b/c.html"] } } as never) === "a.pdf, c.html" &&
+      deliveredStepTitle({ name: "set_desktop_setting", input: { key: "theme", value: "dark" } } as never) === "theme → dark",
+  )
+  check("a locate step wears the read icon", deliveredToolIcon("pdf_locate") === "read")
+  const artifacts = sessionArtifacts(
+    [{ id: "m1", role: "assistant", sessionID: "s", parts: [part("completed", [{ path: path.join(project, "notes.txt"), name: "notes.txt", size: 1 }])], time: { created: 1 } }] as never,
+    project,
+  )
+  check("a presented file is a deliverable in the info card, whatever its kind", artifacts.length === 1 && artifacts[0].role === "deliverable", artifacts)
+
+  // 下载副本: into Downloads, numbered when the name is taken, never over a file.
+  const taken = new Set([path.join("D", "a.pdf"), path.join("D", "a (1).pdf")])
+  check("a copy takes the first free name", freeCopyName("D", "a.pdf", (file) => taken.has(file)) === path.join("D", "a (2).pdf"))
+  const downloads = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-downloads-"))
+  const first = await saveCopy(path.join(project, "out", "report.pdf"), downloads)
+  const second = await saveCopy(path.join(project, "out", "report.pdf"), downloads)
+  check(
+    "saving a copy twice keeps both",
+    first.ok && second.ok && path.basename(first.savedPath) === "report.pdf" && path.basename(second.savedPath) === "report (1).pdf",
+    { first, second },
+  )
+  const gone = await saveCopy(path.join(project, "gone.pdf"), downloads)
+  const folder = await saveCopy(project, downloads)
+  check("a missing file or a folder is not copied", !gone.ok && !folder.ok, { gone, folder })
+
+  // The desktop settings tools, on a config of their own.
+  const data = path.join(root, "delivered-data")
+  const settings = new SubagentConfig(new SubagentStorage(path.join(data, "storage")), new Bus(), path.join(data, "credentials.json"))
+  await settings.load()
+  const getTool = findTool("get_desktop_settings")!
+  const setTool = findTool("set_desktop_setting")!
+  bindDesktopSettings(undefined)
+  const unavailable = await getTool.execute({}, context("s0")).then(() => "ran", (error: Error) => error.name)
+  check("before the backend binds a config the tools say they are unavailable", unavailable === "ToolError", unavailable)
+  bindDesktopSettings(settings)
+  const snapshot = JSON.parse((await getTool.execute({}, context("s1"))).output)
+  check(
+    "get_desktop_settings answers MiMo's keys, with what each accepts",
+    snapshot.language === "system" && snapshot.ui_font_size === 14 && snapshot.code_font_size === 12 && snapshot.diff_style === "colored" && typeof snapshot.adjustable_keys?.theme === "string",
+    snapshot,
+  )
+  const set = (key: string, value: string) => setTool.execute({ key, value }, context(`s-${key}-${value}`))
+  const dark = await set("theme", "Dark")
+  check("set_desktop_setting changes the theme through the config patch", settings.get().theme === "dark" && dark.output.startsWith("Changed theme to dark") && dark.metadata?.applied === true, dark)
+  const big = await set("ui_font_size", "30")
+  const small = await set("code_font_size", "7.6")
+  check("font sizes past a bound take the bound", settings.get().uiFontSize === 24 && settings.get().codeFontSize === 9, { big: big.output, small: small.output })
+  const word = await set("ui_font_size", "large")
+  check("a font size that is not a number is rejected and nothing changes", word.output.startsWith("Not changed") && settings.get().uiFontSize === 24 && word.metadata?.applied === false, word.output)
+  await set("diff_style", "plus-minus")
+  const signs = settings.get().diffMarks
+  await set("diff_style", "colored")
+  check("diff_style maps plus-minus and colored onto MCode's marks", signs === "signs" && settings.get().diffMarks === "color")
+  await set("language", "en-US")
+  const english = settings.get().language
+  const ambiguous = await set("language", "zh")
+  await set("language", "system")
+  check("a regional tag reaches its language, an ambiguous one is refused, system follows the machine", english === "en" && ambiguous.output.startsWith("Not changed") && settings.get().language === "", { english, ambiguous: ambiguous.output })
+  const blue = await set("theme", "blue")
+  const model = await set("model", "gpt")
+  check("a bad theme is rejected with the values it accepts", blue.output.includes("light | dark | system") && settings.get().theme === "dark", blue.output)
+  check("a key the tool does not cover is rejected and points to Settings", model.output.startsWith("Not changed") && model.output.includes("Settings"), model.output)
+  const reread = new SubagentConfig(new SubagentStorage(path.join(data, "storage")), new Bus(), path.join(data, "credentials.json"))
+  await reread.load()
+  check("a change is saved, as the settings page saves it", reread.get().theme === "dark" && reread.get().uiFontSize === 24)
+  check("the tool's languages are the interface's", LANGUAGE_IDS.join(",") === INTERFACE_LANGUAGES.map((entry) => entry.id).join(","))
+  bindDesktopSettings(undefined)
+  // Plain temp folders this section made; the one link inside `project` was removed and checked gone above.
+  await fs.rm(outside, { recursive: true, force: true })
+  await fs.rm(downloads, { recursive: true, force: true })
+  await fs.rm(project, { recursive: true, force: true })
+  await fs.rm(data, { recursive: true, force: true })
 }
 
 async function subagentChecks(root: string, project: string) {
@@ -5470,7 +5805,12 @@ async function sessionChatChecks(root: string, project: string) {
   const first = cardLinks[0]
   if (typeof first === "object") first.action?.()
   check("the card lists a line per link; one whose peer exists jumps to it", cardLinks.length === 2 && jumped.join() === "ses_p" && typeof cardLinks[1] === "object" && !cardLinks[1].action)
-  check("the four tools are appended after the task tool, keeping the cached prefix", TOOLS.slice(-4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" && TOOLS.at(-5)?.name === "task")
+  check(
+    "the four tools are appended last, after every tool already there, keeping the cached prefix",
+    TOOLS.slice(-4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
+      TOOLS.findIndex((tool) => tool.name === "task") < TOOLS.length - 4,
+    TOOLS.map((tool) => tool.name),
+  )
   check("Plan keeps contacts and loses the three that act", toolsFor("plan").some((tool) => tool.name === "contacts") && !toolsFor("plan").some((tool) => ["talk_to_session", "create_session", "update_session"].includes(tool.name)))
   check("none of the four is recorded as touching project files", ["contacts", "talk_to_session", "create_session", "update_session"].every((name) => reachOf(name) === "reads"))
 

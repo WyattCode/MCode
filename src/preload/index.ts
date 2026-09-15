@@ -29,6 +29,9 @@ const api = {
   directoriesOf: (paths: string[]): Promise<string[]> => ipcRenderer.invoke("mcode:directories-of", paths),
   pickDirectory: (title: string, multiple = false): Promise<string[]> =>
     ipcRenderer.invoke("mcode:pick-directory", title, multiple),
+  /** MiMo's 选择或新建项目文件夹: the same dialog, opening at the default project location. */
+  pickProjectFolder: (title: string, multiple = false): Promise<string[]> =>
+    ipcRenderer.invoke("mcode:pick-directory", title, multiple, true),
   saveText: (suggested: string, text: string): Promise<string | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
 
@@ -89,6 +92,11 @@ const api = {
 
   /** Hands a link to the real browser. Only http and https survive the main process. */
   openExternal: (url: string): void => ipcRenderer.send("mcode:open-external", url),
+
+  /** MiMo's guide after a refused microphone: the OS privacy page for it, where the OS has one. */
+  openMicSettings: (): void => ipcRenderer.send("mcode:open-mic-settings"),
+  /** Whether the OS lets the app use the microphone; macOS asks the first time. */
+  micAccess: (): Promise<boolean> => ipcRenderer.invoke("mcode:mic-access"),
 
   /** Editing commands, which act on whatever the renderer has focused. */
   edit: (action: "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll"): void =>
@@ -169,8 +177,15 @@ const api = {
    */
   titlebarMode: (mode: "dark" | "light"): void => ipcRenderer.send("mcode:titlebar-mode", mode),
 
-  /** Which colourway the window and the taskbar should wear. */
-  appIcon: (id: string): void => ipcRenderer.send("mcode:app-icon", id),
+  /** Which colourway the window and the taskbar should wear; `ok` is false when the icon could not be applied. */
+  appIcon: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcode:app-icon", id),
+
+  /** MiMo's 显示服务器 (Linux): the saved choice and the backend it resolves to. */
+  displayServer: (): Promise<{ supported: boolean; pref: "auto" | "wayland" | "x11"; effective: "wayland" | "x11" | null }> =>
+    ipcRenderer.invoke("mcode:display-server"),
+  /** Takes effect at the next launch. */
+  setDisplayServer: (pref: "auto" | "wayland" | "x11"): Promise<{ ok: boolean; pref?: "auto" | "wayland" | "x11" }> =>
+    ipcRenderer.invoke("mcode:set-display-server", pref),
 
   /*
    * The browser panel. The window says where it goes and what to load; the
@@ -219,6 +234,9 @@ const api = {
   officeConvertLegacy: (target: string): Promise<{ ok: true; output: string; cached: boolean } | { ok: false; error: string }> =>
     ipcRenderer.invoke("mcode:office-convert-legacy", target),
   revealPath: (target: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("mcode:reveal-path", target),
+  /** MiMo's 下载副本: copies a file into Downloads, numbering the name when it is taken. */
+  saveCopy: (target: string): Promise<{ ok: true; savedPath: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-copy", target),
   /** A reply's path link: opens a file with its default program; executables and folders are refused there. */
   openNativePath: (target: string): Promise<{ ok: true } | { ok: false; code: string; error: string }> =>
     ipcRenderer.invoke("mcode:open-native-path", target),

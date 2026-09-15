@@ -8,6 +8,8 @@ import { QuestionTool } from "./question"
 import { ApplyPatchTool } from "./patch"
 import { InvalidTool } from "./invalid"
 import { TaskTool } from "./subagent"
+import { PdfLocateTool, PresentFilesTool } from "./present"
+import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
 
 /**
@@ -39,7 +41,12 @@ export const TOOLS: ToolDefinition[] = [
   WebFetchTool,
   // subagents: last, so the prefix every earlier request cached stays as it was.
   TaskTool,
-  // session chat: appended after it for the same reason.
+  // MiMo's built-in desktop tools: appended, for the same reason.
+  PdfLocateTool,
+  PresentFilesTool,
+  GetDesktopSettingsTool,
+  SetDesktopSettingTool,
+  // session chat: appended after those for the same reason.
   ContactsTool,
   TalkToSessionTool,
   CreateSessionTool,
@@ -110,8 +117,27 @@ export function findTool(name: string): ToolDefinition | undefined {
  * Tools that only ever read. `task` is here because it does nothing to files
  * itself: its subagent's own calls are recorded into the parent's turn.
  */
-// session chat: the four touch no project file; the target's own turn records its own changes.
-const READS = new Set(["read", "list", "glob", "grep", "todowrite", "webfetch", "question", "invalid", "task", "contacts", "talk_to_session", "create_session", "update_session"])
+const READS = new Set([
+  "read",
+  "list",
+  "glob",
+  "grep",
+  "todowrite",
+  "webfetch",
+  "question",
+  "invalid",
+  "task",
+  // They act on the window or the app's settings, never on the project's files.
+  "pdf_locate",
+  "present_files",
+  "get_desktop_settings",
+  "set_desktop_setting",
+  // session chat: the four touch no project file; the target's own turn records its own changes.
+  "contacts",
+  "talk_to_session",
+  "create_session",
+  "update_session",
+])
 
 /**
  * How much of what a tool does to the project can be seen from the runner.

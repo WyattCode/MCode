@@ -22,7 +22,7 @@ import { projectName } from "../lib/project"
 import { projectsByRecency } from "@shared/projects"
 import type { ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
-import { withoutLatest } from "../lib/model"
+import { findModel, withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 
@@ -68,6 +68,18 @@ export const useApp = defineStore("app", () => {
     for (const id of [...turnStarted.keys()]) if (!live.has(id)) turnStarted.delete(id)
   }
   const busy = computed(() => (currentID.value ? running.value.has(currentID.value) : false))
+  /**
+   * Conversations whose earlier message is being edited or retried: truncated,
+   * then sent again. As in MiMo, the composer refuses a send into one until the
+   * replacement has gone out, so a new message cannot land in between.
+   */
+  const replacing = ref(new Set<string>())
+  function markReplacing(sessionID: string, on: boolean) {
+    const next = new Set(replacing.value)
+    if (on) next.add(sessionID)
+    else next.delete(sessionID)
+    replacing.value = next
+  }
   /** Sessions whose transcript is being summarised right now. */
   const summarising = ref(new Set<string>())
   /**
@@ -1430,6 +1442,7 @@ export const useApp = defineStore("app", () => {
    */
   async function toggleComposeMode(home = false) {
     const session = home ? undefined : current.value
+    const before = modeOf(session?.id)
     const next = !(session ? (session.staged ?? false) : (config.value?.staged ?? false))
     if (next && (session?.agent ?? config.value?.agent) === "plan") {
       if (session) await setAgent("build")
@@ -1437,10 +1450,67 @@ export const useApp = defineStore("app", () => {
     }
     if (session) await setStaged(next)
     else await patchConfig({ staged: next })
+    announceMode(before, session?.id)
   }
 
-  async function patchConfig(patch: Partial<AppConfig>) {
-    config.value = (await api().request({ type: "config.set", patch })).config
+  /*
+   * MiMo's switch notices (store:composer): said once a pick has landed, never
+   * for a change the app made by itself. What was in force is read first, so
+   * picking it again says nothing.
+   */
+
+  /** The model a conversation, a side chat or (without an id) the next task is on; Smart is its own pick. */
+  function modelPick(to?: string): string {
+    const session = to ? (isSide(to) ? sideSessionOf(to) : sessions.value.find((entry) => entry.id === to)) : undefined
+    const smart = session ? session.smart : config.value?.smart
+    const model = session?.model ?? config.value?.model
+    return smart ? "smart" : model ? `${model.provider}/${model.model}` : ""
+  }
+
+  function announceModel(before: string, chosen: ModelRef | "smart") {
+    if ((chosen === "smart" ? "smart" : `${chosen.provider}/${chosen.model}`) === before) return
+    const name = chosen === "smart" ? t("model.smart") : (findModel(providers.value, chosen)?.name ?? chosen.model)
+    notify(t("toast.modelPrefix", { name }))
+  }
+
+  function announceAccess(level: "ask" | "auto" | "full") {
+    const key = level === "full" ? "composer.access.fullItem" : level === "auto" ? "composer.access.auto" : "composer.access.ask"
+    notify(t("toast.permPrefix", { perm: t(key) }))
+  }
+
+  /* MiMo's three modes, one at a time: 计划 is the plan agent, 编排 is staged, anything else builds. */
+  function modeOf(sessionID?: string): "build" | "plan" | "compose" {
+    const session = sessionID ? sessions.value.find((entry) => entry.id === sessionID) : undefined
+    const agent = session ? session.agent : (config.value?.agent ?? "build")
+    const staged = session ? (session.staged ?? false) : (config.value?.staged ?? false)
+    return agent === "plan" ? "plan" : staged ? "compose" : "build"
+  }
+
+  function announceMode(before: "build" | "plan" | "compose", sessionID?: string) {
+    const after = modeOf(sessionID)
+    if (after === before) return
+    const label = after === "plan" ? "composer.planMode" : after === "compose" ? "composer.staged" : "composer.buildMode"
+    notify(t("toast.switchedMode", { mode: t(label) }))
+  }
+
+  /*
+   * MiMo's pref writer: tried twice, and a second failure is said, naming the
+   * keys. The config on screen is only ever the server's answer, so a change
+   * that was not saved falls back to the value that was. `quiet` is for callers
+   * that say their own failure.
+   */
+  async function patchConfig(patch: Partial<AppConfig>, options: { quiet?: boolean } = {}) {
+    let failure: unknown
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        config.value = (await api().request({ type: "config.set", patch })).config
+        return
+      } catch (err) {
+        failure = err
+      }
+    }
+    if (!options.quiet) notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }))
+    throw failure
   }
 
   /* The project list the side column, the home picker and move-to-project read, most recent first. */
@@ -1798,6 +1868,8 @@ export const useApp = defineStore("app", () => {
     moveTab,
     messages,
     busy,
+    replacing,
+    markReplacing,
     compacting,
     error,
     config,
@@ -1880,6 +1952,11 @@ export const useApp = defineStore("app", () => {
     setAgent,
     setStaged,
     patchConfig,
+    modelPick,
+    announceModel,
+    announceAccess,
+    modeOf,
+    announceMode,
     projects,
     addProject,
     removeProjects,

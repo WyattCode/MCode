@@ -20,6 +20,8 @@ import { renderMarkdown } from "../lib/markdown"
 import { highlightWithin } from "../lib/highlight"
 import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
+import DeliveredFilesCard from "./DeliveredFilesCard.vue"
+import { followDeliveries } from "../lib/delivered"
 import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
@@ -77,6 +79,13 @@ const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.
 const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.error))
 /* round3-panel (P5-12/13): MiMo's side chat and floating card draw a reply with showActions false. */
 const bare = computed(() => Boolean(props.side || props.latest))
+/* MiMo's present_files and pdf_locate: the main stream opens what a completing call names in the right panel. */
+followDeliveries({
+  enabled: () => !props.side && !props.latest && !props.subagent,
+  session: () => shownID.value,
+  messages: () => shownMessages.value,
+  directory: () => shownDirectory.value,
+})
 const scroller = ref<HTMLElement>()
 
 /** A message sent into a turn while it was running - MiMo's 插话 - and where among the turn's parts it landed. */
@@ -716,6 +725,7 @@ async function sendEdit(turn: Turn) {
     return
   }
   resending.value = true
+  app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
     editingAsked.value = undefined
@@ -727,6 +737,7 @@ async function sendEdit(turn: Turn) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
     resending.value = false
+    app.markReplacing(sessionID, false)
   }
 }
 
@@ -809,6 +820,7 @@ async function retry(turn: Turn) {
     return
   }
   resending.value = true
+  app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
     const sent = await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined, message.annotations ?? [])
@@ -817,6 +829,7 @@ async function retry(turn: Turn) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
     resending.value = false
+    app.markReplacing(sessionID, false)
   }
 }
 
@@ -1123,7 +1136,8 @@ defineExpose({ stepMessage, scroller })
               <path d="m9 18 6-6-6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
-          <div v-else-if="turn.started" class="run" data-turn-head :data-live="liveTurn(at) ? 'true' : undefined">
+          <!-- P5-5: MiMo draws no head over a finished turn with neither steps nor words, so a failure card sits flush at the top. -->
+          <div v-else-if="turn.started && (liveTurn(at) || answered(turn))" class="run" data-turn-head :data-live="liveTurn(at) ? 'true' : undefined">
             <span class="run-label"><TextShimmer :text="t(subagent && liveTurn(at) ? 'subagentDetail.liveHead' : 'turn.processed')" :active="liveTurn(at)" /></span>
             <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
           </div>
@@ -1190,6 +1204,13 @@ defineExpose({ stepMessage, scroller })
             :directory="shownDirectory"
             :reverted="turn.last?.reverted === true"
             :actions="!side"
+          />
+
+          <!-- MiMo's delivered-file cards: what the turn's present_files calls handed over. -->
+          <DeliveredFilesCard
+            v-if="!(at === turns.length - 1 && shownBusy) && !playingOut(turn)"
+            :parts="turn.parts"
+            :directory="shownDirectory"
           />
 
           <!--

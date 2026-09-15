@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, type VoiceCue, type VoiceState } from "../lib/voice"
+import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, micFailure, transcribeFailure, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
-import { drafts, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
+import { drafts, homeFilled, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
@@ -391,6 +391,7 @@ async function take(files: readonly File[]) {
   if (!files.length) return
   const { attachments: taken, rejected } = await readFiles(files)
   attachments.value = [...attachments.value, ...taken]
+  if (taken.length) notify(t("toast.attachmentsAdded", { count: taken.length }))
   for (const item of rejected) {
     notifyFailure(t(item.reason === "too-large" ? "attach.tooLarge" : "attach.unreadable"), item.name)
   }
@@ -745,7 +746,7 @@ async function toggleVoice() {
       }
       if (edited) showCue(edited)
     } catch (err) {
-      if (run === voiceRun) notifyFailure(t("voice.failed"), reasonForVoice(err))
+      if (run === voiceRun) showVoiceFailure(transcribeFailure(err))
     } finally {
       if (run === voiceRun) voice.value = "idle"
     }
@@ -753,18 +754,20 @@ async function toggleVoice() {
   }
 
   if (!voiceConfigured.value) {
-    notifyFailure(t("voice.failed"), t("voice.notConfigured"))
+    notifyFailure(t("voice.notConfigured"))
     return
   }
   // MiMo's starting capsule, between the press and the microphone answering.
   voice.value = "starting"
   try {
+    // MiMo's micAccess before capture: a refusal from the OS is a denial like getUserMedia's.
+    if (!(await window.mcode.micAccess())) throw new DOMException("", "NotAllowedError")
     await recorder.start()
     voice.value = "recording"
     followLevel()
   } catch (err) {
     voice.value = "idle"
-    notifyFailure(t("voice.failed"), reasonForVoice(err))
+    showVoiceFailure(micFailure(err))
   }
 }
 
@@ -776,15 +779,10 @@ function cancelVoice() {
   cueOn.value = false
 }
 
-/** The app's own phrasing for the failures it can recognise. */
-function reasonForVoice(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err)
-  if (message.includes("voice.notConfigured")) return t("voice.notConfigured")
-  if (message.includes("voice.noEndpoint")) return t("voice.noEndpoint")
-  if (message.includes("voice.noRecorder")) return t("voice.noRecorder")
-  if (message.includes("NotAllowedError") || message.includes("Permission")) return t("voice.noPermission")
-  if (message.includes("NotFoundError")) return t("voice.noDevice")
-  return message
+/* MiMo's single danger toast; a denied microphone also opens the OS privacy page for it. */
+function showVoiceFailure(failure: VoiceFailure) {
+  notifyFailure(t(failure.key, failure.params), failure.detail)
+  if (failure.guide) window.mcode.openMicSettings()
 }
 
 /*
@@ -820,17 +818,16 @@ const staged = computed(() =>
 
 async function toggleStaged() {
   const next = !staged.value
+  const before = app.modeOf(sessionID.value)
   // MiMo's modes are one at a time: turning compose on leaves plan. The menu stays open.
   if (next && agent.value === "plan") {
     if (sessionID.value) await app.setAgent("build")
     else await app.patchConfig({ agent: "build" })
   }
   // A box starting a new task sets what that task will start with.
-  if (!sessionID.value) {
-    await app.patchConfig({ staged: next })
-    return
-  }
-  await app.setStaged(next)
+  if (!sessionID.value) await app.patchConfig({ staged: next })
+  else await app.setStaged(next)
+  app.announceMode(before, sessionID.value)
 }
 
 /* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
@@ -892,6 +889,11 @@ async function submit() {
     text.value = ""
     await nextTick(resize)
     emit("shell", value)
+    return
+  }
+  // MiMo: while an edit or retry is replacing this conversation's turn, a send is refused and the draft kept.
+  if (sessionID.value && !busyHere.value && app.replacing.has(sessionID.value)) {
+    notifyFailure(t("composer.replacePending"))
     return
   }
   // A waiting question takes plain text as the answer to its first question, as MiMo's composer does.
@@ -1338,6 +1340,14 @@ watch(
 watch(text, (value) => {
   if (props.fresh) keepHomeDraft(value)
 })
+
+watch(
+  () => [text.value.trim(), attachments.value.length, skills.value.length] as const,
+  ([words, files, chips]) => {
+    if (props.fresh) homeFilled.value = Boolean(words || files || chips)
+  },
+  { immediate: true },
+)
 
 onBeforeUnmount(() => saveDraft(draftKey.value))
 
@@ -1924,7 +1934,8 @@ async function applyAccess(next: Access) {
     accessBefore = undefined
   }
   try {
-    await app.patchConfig({ permissions, accessBefore, accessLevel: next })
+    await app.patchConfig({ permissions, accessBefore, accessLevel: next }, { quiet: true })
+    app.announceAccess(next)
   } catch (err) {
     notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
   }
@@ -1980,12 +1991,14 @@ const effortLabel = computed(() => {
  */
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
+  const before = app.modelPick(sessionID.value)
   if (!sessionID.value) {
     await app.patchConfig({ model: { provider, model }, smart: false, effort: level })
-    return
+  } else {
+    await app.setModel({ provider, model }, sessionID.value)
+    await app.setEffort(level)
   }
-  await app.setModel({ provider, model }, sessionID.value)
-  await app.setEffort(level)
+  app.announceModel(before, { provider, model })
 }
 
 /*
@@ -2288,17 +2301,17 @@ function toggle(which: "model" | "access" | "plus" | "context") {
 
 async function chooseAgent(next: (typeof AGENTS)[number]) {
   menu.value = undefined
+  const before = app.modeOf(sessionID.value)
   // No session on the home screen, so the choice is the app's default - which
   // is what the task this box creates will start as.
-  if (!sessionID.value) {
-    await app.patchConfig({ agent: next })
-    return
-  }
-  await app.setAgent(next)
+  if (!sessionID.value) await app.patchConfig({ agent: next })
+  else await app.setAgent(next)
+  app.announceMode(before, sessionID.value)
 }
 
 async function chooseModel(provider: string, model: string) {
   menu.value = undefined
+  const before = app.modelPick(sessionID.value)
   const variants = props.side ? [] : (findModel(app.providers, { provider, model })?.variants ?? [])
   /*
    * On the home screen there is no session to set it on, so the choice is the
@@ -2312,23 +2325,24 @@ async function chooseModel(provider: string, model: string) {
   if (!sessionID.value) {
     const effort = clampEffort(variants, app.config?.effort)
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
-    return
+  } else {
+    await app.setModel({ provider, model }, sessionID.value)
+    if (!props.side) {
+      const inForce = session.value?.effort ?? app.config?.effort
+      const effort = clampEffort(variants, inForce)
+      if (effort && effort !== inForce) await app.setEffort(effort)
+    }
   }
-  await app.setModel({ provider, model }, sessionID.value)
-  if (props.side) return
-  const inForce = session.value?.effort ?? app.config?.effort
-  const effort = clampEffort(variants, inForce)
-  if (effort && effort !== inForce) await app.setEffort(effort)
+  app.announceModel(before, { provider, model })
 }
 
 /* Smart: the model is picked from the conversation's first message. */
 async function chooseSmart() {
   menu.value = undefined
-  if (!sessionID.value) {
-    await app.patchConfig({ smart: true })
-    return
-  }
-  await app.setSmart(sessionID.value)
+  const before = app.modelPick(sessionID.value)
+  if (!sessionID.value) await app.patchConfig({ smart: true })
+  else await app.setSmart(sessionID.value)
+  app.announceModel(before, "smart")
 }
 
 function onPointerDown(event: MouseEvent) {

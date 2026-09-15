@@ -226,7 +226,7 @@ onBeforeUnmount(() => {
         :open="sections.environment"
         @toggle="toggleSection('environment')"
       >
-        <InfoEnvironment :directory="directory" :session-id="sessionId" :summary="summary" @mutated="nonce += 1" />
+        <InfoEnvironment :directory="directory" :session-id="sessionId" :summary="summary" :reload-key="refreshKey" @mutated="nonce += 1" />
       </InfoSection>
 
       <InfoSection
