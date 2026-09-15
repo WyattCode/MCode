@@ -1161,14 +1161,21 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:app-icon", (event, id: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || typeof id !== "string" || !/^[a-z][a-z0-9-]{0,30}$/.test(id)) return { ok: false }
-    // macOS takes its icon from the bundle; there is nothing to swap at run time.
-    if (process.platform === "darwin") return { ok: true }
     const file = app.isPackaged
       ? path.join(process.resourcesPath, "app-icons", id + ".png")
       : path.join(here, "../../resources/app-icons", id + ".png")
     if (!existsSync(file)) return { ok: false }
     const image = nativeImage.createFromPath(file)
     if (image.isEmpty()) return { ok: false }
+    /*
+     * MiMo's Dock icon follows the chosen icon (app.dock.setIcon). The window
+     * asks at load as well as on a change, so this covers startup too. A macOS
+     * window has no icon of its own, and its menu bar tray is left as it was.
+     */
+    if (process.platform === "darwin") {
+      app.dock?.setIcon(image)
+      return { ok: true }
+    }
     window.setIcon(image)
     /* The corner and the taskbar are the same app; they wear the same icon. */
     trayIcon = id
