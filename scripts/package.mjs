@@ -1,6 +1,7 @@
 /**
- * Packages the app: advances the version one step (see bump-version.mjs),
- * builds, and runs electron-builder with whatever flags follow the script
+ * Packages the app: places the verified score soundfont (see soundfont.mjs),
+ * advances the version one step (see bump-version.mjs), builds, and runs
+ * electron-builder with whatever flags follow the script
  * name (`--win`, `--mac`, or none for the host platform).
  *
  * The bump has to come first so the installer carries the new number - but a
@@ -16,7 +17,9 @@ const before = new Map(FILES.map((p) => [p, fs.readFileSync(p)]))
 
 const run = (cmd, args) => spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32" }).status ?? 1
 
-let status = run("node", ["scripts/bump-version.mjs"])
+// The score soundfont ships beside the asar and is not in git: place it and verify its size and hash, or stop here.
+let status = run("node", ["scripts/soundfont.mjs"])
+if (status === 0) status = run("node", ["scripts/bump-version.mjs"])
 if (status === 0) status = run("npx", ["electron-vite", "build"])
 if (status === 0) status = run("npx", ["electron-builder", ...process.argv.slice(2)])
 

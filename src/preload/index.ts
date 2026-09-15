@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron"
+import type { SoundfontReply } from "../shared/soundfont"
 
 export type OfficeVersionSource = "initial" | "ai" | "ai_local" | "user" | "external"
 export interface OfficeVersionState {
@@ -203,6 +204,9 @@ const api = {
 
   /** MiMo's setNativeTheme: native menus, dialogs and the window's first paint follow the app theme. */
   nativeTheme: (theme: "system" | "light" | "dark"): void => ipcRenderer.send("mcode:native-theme", theme),
+
+  /** The bundled score soundfont's bytes, only when they are exactly the verified file. */
+  soundfont: (): Promise<SoundfontReply> => ipcRenderer.invoke("mcode:soundfont"),
 
   /** Which colourway the window and the taskbar should wear; `ok` is false when the icon could not be applied. */
   appIcon: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcode:app-icon", id),
