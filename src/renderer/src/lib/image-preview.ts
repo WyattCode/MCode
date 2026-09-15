@@ -7,6 +7,8 @@ import { ref } from "vue"
 export interface ImagePreviewMeta {
   /** What a download is called. */
   name?: string
+  /** The file on disk, when the picture is one; the previews branch adds copy and reveal for it. */
+  path?: string
   /** The other pictures it sits with, in order, so the arrow keys can step through them. */
   group?: string[]
 }

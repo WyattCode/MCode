@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
-import type { FileEntry, ResponseMap } from "@shared/protocol"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import type { DirEntry, FileHit, ResponseMap } from "@shared/protocol"
 import type { MenuItem } from "../../lib/menu"
 import ContextMenu from "../ContextMenu.vue"
+import PdfView from "./PdfView.vue"
 import { useApp } from "../../stores/app"
+import { useRightPanel } from "../../stores/right-panel"
 import { renderMarkdown } from "../../lib/markdown"
 import { openImagePreview } from "../../lib/image-preview"
 import { highlightLines, languageForFile } from "../../lib/highlight"
 import { annotationId, requestAnnotation } from "../../lib/annotate"
-import PdfView from "./PdfView.vue"
+import { projectName } from "../../lib/project"
+import { fileManagerName } from "../../lib/path-open"
+import { crumbsFor, editCounts, fileCategory, rowIndent, saveFailureKey, treeRows, type TreeRow } from "../../lib/files-tab"
+import { centreRange, clearPaint, paintRanges, textRanges } from "../../lib/dom-find"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 
@@ -18,37 +23,292 @@ import { t } from "../../lib/i18n"
  * offers what can be done with it - edit a text file in place, open a page in
  * the browser, show it in the file manager - and a refresh.
  *
- * The tree filters by name as it is typed into, across the whole project. The
- * viewer draws code with its line numbers, renders markdown, shows pictures and
- * plays sound; Ctrl+F while it has focus finds text in it.
+ * The tree lists one folder at a time as it is opened, dot files included, and
+ * searches file names across the project as the filter is typed into. With no
+ * project it browses the default project location. The viewer draws code with
+ * its line numbers, renders markdown, shows pictures and plays sound and video;
+ * Ctrl+F anywhere in the open panel finds text in what is drawn.
+ *
+ * It reads again when the agent edits the open file, when the file changes on
+ * disk, and when a turn's edits land or are taken back - never while editing.
  */
 const props = defineProps<{ root?: string; viewFile?: string }>()
 const emit = defineEmits<{ view: [file: string] }>()
 const app = useApp()
+const rp = useRightPanel()
 
-/* MiMo's reveal title names the platform's file manager: 在 {manager} 中显示. */
-const revealTitle = computed(() =>
-  t("menu.revealIn", {
-    manager: t(
-      app.platform === "win32" ? "menu.fileManagerWin" : app.platform === "darwin" ? "menu.fileManagerMac" : "menu.fileManagerOther",
-    ),
-  }),
+/* MiMo's LLe: with no project the tab browses the default workspace directory. */
+const defaultDir = ref<string>()
+watch(
+  () => [props.root, app.client] as const,
+  async ([given, client]) => {
+    if (given || defaultDir.value || !client) return
+    defaultDir.value = await client
+      .request({ type: "file.defaultDir" })
+      .then((result) => result.directory)
+      .catch(() => undefined)
+  },
+  { immediate: true },
+)
+const root = computed(() => props.root || defaultDir.value)
+
+const revealTitle = computed(() => t("menu.revealIn", { manager: fileManagerName(app.platform) }))
+
+function absolute(rel: string) {
+  return `${(root.value ?? "").replace(/[\\/]+$/, "")}/${rel}`
+}
+
+function baseName(rel: string) {
+  return rel.split("/").pop() ?? rel
+}
+
+/* ---------------------------------------------------------------- the tree */
+
+const listing = ref<Record<string, DirEntry[]>>({})
+const expanded = ref(new Set<string>())
+const rootListed = ref(false)
+const treeOpen = ref(true)
+
+async function listDir(sub: string) {
+  const directory = root.value
+  if (!directory || !app.client) return
+  const entries = await app.client
+    .request({ type: "file.listDir", directory, sub, all: true })
+    .then((result) => result.entries)
+    .catch(() => [] as DirEntry[])
+  if (root.value !== directory) return
+  listing.value = { ...listing.value, [sub]: entries }
+  if (!sub) rootListed.value = true
+}
+
+/* MiMo's ke: the root and every open folder, listed again. */
+function relistExpanded() {
+  return Promise.all(["", ...expanded.value].map((sub) => listDir(sub)))
+}
+
+watch(
+  () => [root.value, app.client] as const,
+  ([directory, client], previous) => {
+    if (previous && previous[0] === directory && (previous[1] || !client)) return
+    if (!previous || previous[0] !== directory) {
+      expanded.value = new Set()
+      listing.value = {}
+      rootListed.value = false
+      editing.value = false
+    }
+    void listDir("")
+  },
+  { immediate: true },
 )
 
-const files = ref<FileEntry[]>([])
-const expanded = ref(new Set<string>())
+const rows = computed(() => treeRows(listing.value, expanded.value))
+
+function toggleFolder(path: string) {
+  const next = new Set(expanded.value)
+  if (next.has(path)) next.delete(path)
+  else {
+    next.add(path)
+    if (!listing.value[path]) void listDir(path)
+  }
+  expanded.value = next
+}
+
+/* ---------------------------------------------------------------- search */
+
 const filter = ref("")
-const results = ref<FileEntry[]>()
+const searching = computed(() => filter.value.trim().length > 0)
+/* Null while the answer is on its way: MiMo's 加载中…. */
+const results = ref<FileHit[] | null>(null)
+const resultsTruncated = ref(false)
 const searchFailed = ref(false)
-const treeOpen = ref(true)
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+let searchSeq = 0
+
+watch([filter, root], ([query]) => {
+  clearTimeout(searchTimer)
+  const seq = ++searchSeq
+  results.value = null
+  resultsTruncated.value = false
+  searchFailed.value = false
+  if (!query.trim()) return
+  searchTimer = setTimeout(async () => {
+    const directory = root.value
+    if (!directory || !app.client) return
+    try {
+      const found = await app.client.request({ type: "file.search", directory, query, nameOnly: true })
+      if (seq !== searchSeq) return
+      results.value = found.entries
+      resultsTruncated.value = found.truncated
+    } catch {
+      if (seq !== searchSeq) return
+      results.value = []
+      searchFailed.value = true
+    }
+  }, 150)
+})
+
+function choose(rel: string) {
+  emit("view", rel)
+}
+
+/* ---------------------------------------------------------------- the viewer */
 
 type Read = ResponseMap["file.read"]
 const opened = ref<Read>()
 const readError = ref<string>()
 const loadingFile = ref(false)
+/* A picture, sound or video plays from a local address; a failed load says it cannot be read. */
+const mediaUrl = ref<string>()
+const mediaFailed = ref(false)
+const mediaVersion = ref(0)
 const editing = ref(false)
 const draft = ref("")
 const saving = ref(false)
+let readSeq = 0
+
+async function mediaAddress(file: Read): Promise<string | undefined> {
+  const served = await window.mcode.officeServe(file.path).catch(() => undefined)
+  if (served?.ok) return served.url
+  if (file.video || !app.client) return undefined
+  // A format the local server does not carry still shows from its bytes, up to the old cap.
+  const bytes = await app.client.request({ type: "file.read", path: file.path }).catch(() => undefined)
+  return bytes?.data && bytes.mime ? `data:${bytes.mime};base64,${bytes.data}` : undefined
+}
+
+/* `quiet` is a refresh: the file on show stays until the new reading replaces it. */
+async function readFile(rel: string | undefined, quiet = false) {
+  const seq = ++readSeq
+  const directory = root.value
+  if (!rel || !directory || !app.client) {
+    opened.value = undefined
+    readError.value = undefined
+    loadingFile.value = false
+    return
+  }
+  if (!quiet) {
+    opened.value = undefined
+    readError.value = undefined
+    mediaUrl.value = undefined
+    loadingFile.value = true
+  }
+  try {
+    const file = await app.client.request({ type: "file.read", path: absolute(rel), preview: true })
+    const media = file.video || file.kind === "image" || file.kind === "audio"
+    const url = media ? await mediaAddress(file) : undefined
+    if (seq !== readSeq) return
+    opened.value = file
+    readError.value = undefined
+    mediaUrl.value = url
+    mediaFailed.value = media && !url
+    mediaVersion.value++
+  } catch (err) {
+    if (seq !== readSeq) return
+    const message = err instanceof Error ? err.message : String(err)
+    opened.value = undefined
+    readError.value = /ENOENT/.test(message) ? t("rp.files.errNoEnt") : t("rp.files.errCannotRead")
+  } finally {
+    if (seq === readSeq) loadingFile.value = false
+  }
+}
+
+watch(
+  () => [root.value, props.viewFile] as const,
+  ([, rel]) => {
+    editing.value = false
+    void readFile(rel)
+  },
+  { immediate: true },
+)
+
+const isMarkdown = computed(() => /\.(md|markdown)$/i.test(props.viewFile ?? ""))
+const isHtml = computed(() => /\.(html?|xhtml)$/i.test(props.viewFile ?? ""))
+const isText = computed(() => opened.value?.kind === "text" && !opened.value.tooBig)
+const lines = computed(() => (opened.value?.content ?? "").replace(/\n+$/, "").split("\n"))
+
+/* The same lines in MiMo's syntax colours, once the highlighter answers; plain until then. */
+const colouredLines = ref<string[]>()
+watch(
+  () => [opened.value, props.viewFile] as const,
+  async ([file, rel]) => {
+    colouredLines.value = undefined
+    if (!file || file.kind !== "text" || file.tooBig) return
+    const text = file.content.replace(/\n+$/, "")
+    const coloured = await highlightLines(text, languageForFile(rel))
+    if (opened.value === file && coloured && coloured.length === lines.value.length) colouredLines.value = coloured
+  },
+)
+
+/* MiMo's refresh: the listed folders again, then the open file, skipping the file while it is being edited. */
+const refreshing = ref(false)
+async function refresh() {
+  if (!root.value || refreshing.value) return
+  refreshing.value = true
+  try {
+    await relistExpanded()
+    if (props.viewFile && !editing.value) await readFile(props.viewFile, true)
+  } finally {
+    refreshing.value = false
+  }
+}
+
+/* ---------------------------------------------------------------- editing */
+
+function startEdit() {
+  if (!opened.value || !isText.value) return
+  draft.value = opened.value.content
+  editing.value = true
+}
+
+const draftLineCount = computed(() => draft.value.split("\n").length)
+const gutter = ref<HTMLElement>()
+
+function syncGutter(event: Event) {
+  if (gutter.value) gutter.value.scrollTop = (event.target as HTMLTextAreaElement).scrollTop
+}
+
+async function save() {
+  const rel = props.viewFile
+  if (!rel || !root.value || !app.client || saving.value) return
+  saving.value = true
+  try {
+    await app.client.request({ type: "file.write", path: absolute(rel), content: draft.value })
+    if (opened.value && props.viewFile === rel) opened.value = { ...opened.value, content: draft.value }
+    editing.value = false
+    notify(t("rp.files.saved"))
+  } catch (err) {
+    notifyFailure(t("rp.files.saveFailed", { reason: t(saveFailureKey(err instanceof Error ? err.message : String(err))) }))
+  } finally {
+    saving.value = false
+  }
+}
+
+/* ---------------------------------------------------------------- actions */
+
+async function reveal(rel: string | undefined) {
+  if (!root.value || !rel) return
+  const result = await window.mcode.revealPath(absolute(rel)).catch((err: unknown) => ({ ok: false, error: String(err) }))
+  if (result.ok) notify(t("menu.revealedIn", { manager: fileManagerName(app.platform) }))
+  else {
+    const error = result.error && result.error !== "not found" ? result.error : t("rp.files.pathNotExist")
+    notifyFailure(t("rp.files.revealFailed", { error }))
+  }
+}
+
+function openInBrowser(rel: string | undefined) {
+  if (!root.value || !rel) return
+  void window.mcode.openFile(root.value, rel).then((failure) => {
+    if (failure) notifyFailure(t("rp.files.openInBrowserFailed", { error: failure }))
+  })
+}
+
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    notify(t("rp.files.pathCopied"))
+  } catch {
+    notifyFailure(t("rp.files.copyPathFailed"))
+  }
+}
 
 /* The tree's width: MiMo's 160 to start and at least, remembered per machine. */
 const TREE_KEY = "mcode.ftw"
@@ -65,190 +325,6 @@ function readTreeWidth(): number {
   }
 }
 
-function absolute(rel: string) {
-  const root = props.root ?? ""
-  return `${root.replace(/[\\/]+$/, "")}/${rel}`
-}
-
-function baseName(rel: string) {
-  return rel.split("/").pop() ?? rel
-}
-
-async function loadTree() {
-  const root = props.root
-  if (!root || !app.client) {
-    files.value = []
-    return
-  }
-  files.value = await app.client
-    .request({ type: "file.list", directory: root })
-    .then((result) => result.files)
-    .catch(() => [])
-}
-
-watch(() => props.root, () => {
-  expanded.value = new Set()
-  void loadTree()
-}, { immediate: true })
-
-/* The paths as a tree: each folder's folders first, then its files, by name. */
-interface Node {
-  path: string
-  name: string
-  directory: boolean
-  depth: number
-}
-
-const children = computed(() => {
-  const map = new Map<string, Map<string, boolean>>()
-  const ensure = (dir: string) => {
-    let entry = map.get(dir)
-    if (!entry) map.set(dir, (entry = new Map()))
-    return entry
-  }
-  for (const file of files.value) {
-    const parts = file.path.split("/")
-    let parent = ""
-    for (let i = 0; i < parts.length; i++) {
-      const path = parts.slice(0, i + 1).join("/")
-      const directory = i < parts.length - 1
-      ensure(parent).set(path, directory || ensure(parent).get(path) === true)
-      parent = path
-    }
-  }
-  return map
-})
-
-const rows = computed<Node[]>(() => {
-  const out: Node[] = []
-  const walk = (dir: string, depth: number) => {
-    const entries = [...(children.value.get(dir) ?? new Map()).entries()].sort(([a, aDir], [b, bDir]) =>
-      aDir === bDir ? baseName(a).localeCompare(baseName(b)) : aDir ? -1 : 1,
-    )
-    for (const [path, directory] of entries) {
-      out.push({ path, name: baseName(path), directory, depth })
-      if (directory && expanded.value.has(path)) walk(path, depth + 1)
-    }
-  }
-  walk("", 0)
-  return out
-})
-
-function toggleFolder(path: string) {
-  const next = new Set(expanded.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  expanded.value = next
-}
-
-let searchTimer: ReturnType<typeof setTimeout> | undefined
-watch(filter, (query) => {
-  clearTimeout(searchTimer)
-  if (!query.trim()) {
-    results.value = undefined
-    return
-  }
-  searchTimer = setTimeout(async () => {
-    const root = props.root
-    if (!root || !app.client) return
-    try {
-      results.value = (await app.client.request({ type: "file.list", directory: root, query: query.trim() })).files
-      searchFailed.value = false
-    } catch {
-      searchFailed.value = true
-      results.value = []
-    }
-  }, 150)
-})
-
-function choose(rel: string) {
-  emit("view", rel)
-}
-
-async function readFile(rel: string | undefined) {
-  editing.value = false
-  opened.value = undefined
-  readError.value = undefined
-  if (!rel || !props.root || !app.client) return
-  loadingFile.value = true
-  try {
-    opened.value = await app.client.request({ type: "file.read", path: absolute(rel) })
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    readError.value = /ENOENT/.test(message) ? t("rp.files.errNoEnt") : t("rp.files.errCannotRead")
-  } finally {
-    loadingFile.value = false
-  }
-}
-
-watch(() => [props.root, props.viewFile] as const, ([, rel]) => void readFile(rel), { immediate: true })
-
-const extension = computed(() => (props.viewFile?.split(".").pop() ?? "").toLowerCase())
-const isMarkdown = computed(() => ["md", "markdown", "mdx"].includes(extension.value))
-const isHtml = computed(() => ["html", "htm"].includes(extension.value))
-const isText = computed(() => opened.value?.kind === "text")
-const lines = computed(() => (opened.value?.content ?? "").split("\n"))
-
-/* The same lines in MiMo's syntax colours, once the highlighter answers; plain until then, and while finding. */
-const colouredLines = ref<string[]>()
-watch(
-  () => [opened.value, props.viewFile] as const,
-  async ([file, rel]) => {
-    colouredLines.value = undefined
-    if (!file || file.kind !== "text") return
-    const coloured = await highlightLines(file.content, languageForFile(rel))
-    if (opened.value === file && coloured && coloured.length === lines.value.length) colouredLines.value = coloured
-  },
-)
-const showColoured = computed(() => Boolean(colouredLines.value) && !(findOpen.value && query.value))
-
-function refresh() {
-  void loadTree()
-  void readFile(props.viewFile)
-}
-
-/* Edit in place: MiMo's for markdown and code, which is every text file here. */
-function startEdit() {
-  if (!opened.value || !isText.value) return
-  draft.value = opened.value.content
-  editing.value = true
-}
-
-async function save() {
-  if (!props.viewFile || !app.client || saving.value) return
-  saving.value = true
-  try {
-    await app.client.request({ type: "file.write", path: absolute(props.viewFile), content: draft.value })
-    if (opened.value) opened.value = { ...opened.value, content: draft.value }
-    editing.value = false
-    notify(t("rp.files.saved"))
-  } catch (err) {
-    notifyFailure(t("rp.files.saveFailed", { reason: err instanceof Error ? err.message : String(err) }))
-  } finally {
-    saving.value = false
-  }
-}
-
-function reveal(rel: string | undefined) {
-  if (!props.root || !rel) return
-  void window.mcode.revealFile(props.root, rel).catch((err: unknown) => {
-    notifyFailure(t("rp.files.revealFailed", { error: err instanceof Error ? err.message : String(err) }))
-  })
-}
-
-function openInBrowser() {
-  if (!props.root || !props.viewFile) return
-  void window.mcode.openFile(props.root, props.viewFile).then((failure) => {
-    if (failure) notifyFailure(t("rp.files.openInBrowserFailed", { error: failure }))
-  })
-}
-
-function copyPath(rel: string, relative: boolean) {
-  window.mcode.setClipboardText(relative ? rel : absolute(rel))
-  notify(t("rp.files.pathCopied"))
-}
-
-/* The tree's drag edge. */
 function beginTreeResize(event: PointerEvent) {
   const target = event.currentTarget as HTMLElement
   const startX = event.clientX
@@ -272,25 +348,52 @@ function beginTreeResize(event: PointerEvent) {
   target.addEventListener("pointerup", done)
 }
 
-/* The row menu. */
-const menu = ref<{ x: number; y: number; node: Node }>()
+/* ---------------------------------------------------------------- the row menu */
+
+/* MiMo's menu glyphs, redrawn on the menu's 16px grid. */
+const GLYPH = {
+  file: "M8.67 1.33H4a1.33 1.33 0 0 0-1.33 1.34v10.66A1.33 1.33 0 0 0 4 14.67h8a1.33 1.33 0 0 0 1.33-1.34V6zM8.67 1.33V6h4.66",
+  comment: "M14 10a1.33 1.33 0 0 1-1.33 1.33H4.67L2 14V3.33A1.33 1.33 0 0 1 3.33 2h9.34A1.33 1.33 0 0 1 14 3.33zM8 5.33v4M6 7.33h4",
+  globe: "M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0zM2 8h12M8 2a10 10 0 0 1 0 12 10 10 0 0 1 0-12",
+  folder: "M2 4.67a1.33 1.33 0 0 1 1.33-1.34H6l1.33 1.34h5.34A1.33 1.33 0 0 1 14 6v5.33a1.33 1.33 0 0 1-1.33 1.34H3.33A1.33 1.33 0 0 1 2 11.33z",
+  copy: "M7.33 6h5.34A1.33 1.33 0 0 1 14 7.33v5.34A1.33 1.33 0 0 1 12.67 14H7.33A1.33 1.33 0 0 1 6 12.67V7.33A1.33 1.33 0 0 1 7.33 6zM3.33 10V3.33A1.33 1.33 0 0 1 4.67 2h6.66",
+}
+
+interface MenuTarget {
+  path: string
+  name: string
+  directory: boolean
+}
+
+const menu = ref<{ x: number; y: number; node: MenuTarget }>()
+
+/* MiMo's _Le: a folder can only be shown or copied; a page can also go to the browser. */
 const menuItems = computed<MenuItem[]>(() => {
   const node = menu.value?.node
   if (!node) return []
-  const items: MenuItem[] = []
-  if (!node.directory) items.push({ key: "open", label: t("rp.files.open") }, { key: "annotate", label: t("rp.files.annotate") })
-  items.push(
-    { key: "reveal", label: t("files.reveal") },
-    { key: "copyPath", label: t("rp.files.copyPath") },
-    { key: "copyRelPath", label: t("rp.files.copyRelPath") },
-  )
-  return items
+  const tail: MenuItem[] = [
+    { key: "reveal", label: revealTitle.value, icon: GLYPH.folder },
+    { key: "copyPath", label: t("rp.files.copyPath"), icon: GLYPH.copy },
+    { key: "copyRelPath", label: t("rp.files.copyRelPath"), icon: GLYPH.copy },
+  ]
+  if (node.directory) return tail
+  const head: MenuItem[] = [
+    { key: "open", label: t("rp.files.open"), icon: GLYPH.file },
+    { key: "annotate", label: t("rp.files.annotate"), icon: GLYPH.comment },
+  ]
+  if (/\.(html?|xhtml)$/i.test(node.name)) head.push({ key: "openBrowser", label: t("rp.files.openInBrowser"), icon: GLYPH.globe })
+  return [...head, ...tail]
 })
+
+function openMenu(event: MouseEvent, node: MenuTarget) {
+  if (!root.value) return
+  menu.value = { x: event.clientX, y: event.clientY, node }
+}
 
 /* MiMo's 添加批注: the whole file, with a note written in the annotation box at the pointer. */
 function annotateFile(rel: string, x: number, y: number) {
   const path = absolute(rel)
-  const name = rel.split("/").pop() ?? rel
+  const name = baseName(rel)
   requestAnnotation({
     rect: { left: x, right: x, top: y, bottom: y },
     make: (text) => ({ id: annotationId(), kind: "file", path, name, text }),
@@ -304,213 +407,390 @@ function pickMenu(key: string) {
   if (!node || !at) return
   if (key === "open") choose(node.path)
   else if (key === "annotate") annotateFile(node.path, at.x, at.y)
-  else if (key === "reveal") reveal(node.path)
-  else if (key === "copyPath") copyPath(node.path, false)
-  else if (key === "copyRelPath") copyPath(node.path, true)
+  else if (key === "openBrowser") openInBrowser(node.path)
+  else if (key === "reveal") void reveal(node.path)
+  else if (key === "copyPath") void copyText(absolute(node.path))
+  else if (key === "copyRelPath") void copyText(node.path)
 }
 
-/* Find, in the file on show. */
+/* ---------------------------------------------------------------- find */
+
+const FIND_ALL = "mcode-ft-find"
+const FIND_CURRENT = "mcode-ft-find-cur"
 const findOpen = ref(false)
 const query = ref("")
-const current = ref(0)
+const findIndex = ref(0)
+const findTotal = ref(0)
 const findInput = ref<HTMLInputElement>()
 const viewer = ref<HTMLElement>()
+const wrapper = ref<HTMLElement>()
+let found: Range[] = []
+let findObserver: MutationObserver | undefined
+let findFrame = 0
 
-const matches = computed(() => {
-  const needle = query.value.toLowerCase()
-  if (!findOpen.value || !needle || !isText.value) return [] as { line: number; start: number }[]
-  const found: { line: number; start: number }[] = []
-  lines.value.forEach((text, line) => {
-    const hay = text.toLowerCase()
-    let at = hay.indexOf(needle)
-    while (at >= 0) {
-      found.push({ line, start: at })
-      at = hay.indexOf(needle, at + needle.length)
-    }
+/* MiMo's domFind over what is drawn: every run starts again at the first match and centres it. */
+function runFind() {
+  const view = viewer.value
+  if (!findOpen.value || !view || !query.value.trim()) {
+    found = []
+    findTotal.value = 0
+    findIndex.value = 0
+    clearPaint(FIND_ALL, FIND_CURRENT)
+    return
+  }
+  found = textRanges(view, query.value)
+  findTotal.value = found.length
+  findIndex.value = 0
+  paintRanges(FIND_ALL, FIND_CURRENT, found, 0)
+  if (found[0]) centreRange(found[0])
+}
+
+function stepFind(by: number) {
+  if (!found.length) return
+  findIndex.value = (findIndex.value + by + found.length) % found.length
+  paintRanges(FIND_ALL, FIND_CURRENT, found, findIndex.value)
+  const range = found[findIndex.value]
+  if (range) centreRange(range)
+}
+
+function openFind() {
+  findOpen.value = true
+  void nextTick(() => {
+    findInput.value?.focus()
+    findInput.value?.select()
   })
-  return found
+}
+
+function closeFind() {
+  findOpen.value = false
+}
+
+watch([query, findOpen], () => runFind())
+watch(findOpen, (open) => {
+  findObserver?.disconnect()
+  cancelAnimationFrame(findFrame)
+  if (!open || !viewer.value) return
+  // A re-render under the bar - a refresh, the colours arriving - finds again.
+  findObserver = new MutationObserver(() => {
+    cancelAnimationFrame(findFrame)
+    findFrame = requestAnimationFrame(runFind)
+  })
+  findObserver.observe(viewer.value, { childList: true, subtree: true, characterData: true })
 })
 
-watch(matches, () => {
-  current.value = 0
-  void reveal_match()
-})
-
-async function reveal_match() {
-  await nextTick()
-  viewer.value?.querySelector(".fv-mark.current")?.scrollIntoView({ block: "center" })
-}
-
-function step(by: number) {
-  if (!matches.value.length) return
-  current.value = (current.value + by + matches.value.length) % matches.value.length
-  void reveal_match()
-}
-
-function segments(text: string, line: number) {
-  const hits = matches.value.map((match, index) => ({ ...match, index })).filter((match) => match.line === line)
-  if (!hits.length) return [{ text, mark: false, current: false }]
-  const out: { text: string; mark: boolean; current: boolean }[] = []
-  let at = 0
-  for (const hit of hits) {
-    out.push({ text: text.slice(at, hit.start), mark: false, current: false })
-    out.push({ text: text.slice(hit.start, hit.start + query.value.length), mark: true, current: hit.index === current.value })
-    at = hit.start + query.value.length
-  }
-  out.push({ text: text.slice(at), mark: false, current: false })
-  return out
-}
-
-function onViewerKey(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f" && isText.value && !editing.value) {
+function onFindKey(event: KeyboardEvent) {
+  if (event.key === "Escape") {
     event.preventDefault()
-    event.stopPropagation()
-    findOpen.value = true
-    void nextTick(() => findInput.value?.focus())
+    closeFind()
+    return
   }
+  if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  stepFind(event.shiftKey ? -1 : 1)
 }
 
-onBeforeUnmount(() => clearTimeout(searchTimer))
+const findCount = computed(() =>
+  findTotal.value === 0 && query.value.trim()
+    ? t("rp.files.findEmpty")
+    : t("rp.files.findCount", { cur: findTotal.value ? findIndex.value + 1 : 0, total: findTotal.value }),
+)
 
-const crumbs = computed(() => (props.viewFile ? props.viewFile.split("/") : []))
-const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g, "/").replace(/\/+$/, "")) : ""))
+/*
+ * MiMo's global Ctrl+F: whenever the panel is open on this tab and focus is not
+ * in the conversation, the chord toggles this bar - from the tree, the filter or
+ * anywhere else in the panel. Taken in the capture phase, before the window's
+ * own shortcuts see it.
+ */
+function onWindowKey(event: KeyboardEvent) {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return
+  const element = wrapper.value
+  if (!rp.open || !element || !element.offsetParent) return
+  if (document.querySelector("[aria-modal='true']")) return
+  const active = document.activeElement
+  if (active instanceof Element && active.closest("main.main")) return
+  event.preventDefault()
+  event.stopImmediatePropagation()
+  if (findOpen.value) closeFind()
+  else openFind()
+}
+
+/* Find closes when the conversation changes, as MiMo's does on a switch. */
+watch(() => app.currentID, () => closeFind())
+
+/* ---------------------------------------------------------------- reading again */
+
+/* The agent's edits: one to the open file reads it again, any finished edit re-lists the tree. */
+const counts = computed(() => editCounts(app.messages, root.value, props.viewFile))
+let seenOnFile = { file: props.viewFile, count: counts.value.onFile }
+watch(
+  () => [props.viewFile, counts.value.onFile] as const,
+  ([file, count]) => {
+    const before = seenOnFile
+    seenOnFile = { file, count }
+    if (before.file !== file || count <= before.count || !file || editing.value) return
+    void refresh()
+  },
+)
+watch(
+  () => counts.value.total,
+  (now, before) => {
+    if (now > before && root.value) void relistExpanded()
+  },
+)
+watch(
+  () => [counts.value.reverted, app.history.undo, app.history.redo] as const,
+  () => void refresh(),
+)
+
+/* The open file on disk: MiMo's watcher, the same one the document viewers use. */
+let watchedPath: string | undefined
+watch(
+  () => (root.value && props.viewFile ? absolute(props.viewFile) : undefined),
+  (next, previous) => {
+    if (previous) void window.mcode.unwatchFile(previous)
+    if (next) void window.mcode.watchFile(next)
+    watchedPath = next
+  },
+  { immediate: true },
+)
+const stopWatching = window.mcode.onFileChanged((changed) => {
+  if (watchedPath && changed === watchedPath && !editing.value) void refresh()
+})
+
+onMounted(() => window.addEventListener("keydown", onWindowKey, true))
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onWindowKey, true)
+  clearTimeout(searchTimer)
+  findObserver?.disconnect()
+  cancelAnimationFrame(findFrame)
+  clearPaint(FIND_ALL, FIND_CURRENT)
+  stopWatching()
+  if (watchedPath) void window.mcode.unwatchFile(watchedPath)
+})
+
+/* ---------------------------------------------------------------- the head */
+
+const rootLabel = computed(() => (root.value ? projectName(root.value, app.config?.projectNames) : ""))
+const crumbs = computed(() => crumbsFor(root.value, rootLabel.value, props.viewFile))
+
+function iconClass(name: string, directory: boolean) {
+  return `cat-${directory ? "dir" : fileCategory(name)}`
+}
+
+function searchMenuTarget(hit: FileHit): MenuTarget {
+  return { path: hit.rel, name: hit.name, directory: false }
+}
+
+function rowMenuTarget(row: TreeRow): MenuTarget {
+  return { path: row.path, name: row.name, directory: row.directory }
+}
 </script>
 
 <template>
-  <div class="rp-files" data-rp-files>
+  <div ref="wrapper" class="rp-files" data-rp-files>
     <div class="fv-head">
       <button
         type="button"
         class="fv-icon"
+        data-ft-tree-toggle
         :aria-pressed="treeOpen"
         :aria-label="t(treeOpen ? 'rp.files.collapseTree' : 'rp.files.expandTree')"
         :title="t(treeOpen ? 'rp.files.collapseTree' : 'rp.files.expandTree')"
         @click="treeOpen = !treeOpen"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="3" y="4" width="18" height="16" rx="3" /><path d="M9 4v16" />
+          <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path v-if="!treeOpen" d="m6 9 3 3-3 3" />
         </svg>
       </button>
-      <span class="fv-crumbs" :title="viewFile ? absolute(viewFile) : root">
-        <span>{{ rootName }}</span>
-        <template v-for="(part, index) in crumbs" :key="index">
-          <span class="fv-sep">›</span>
-          <span :class="{ last: index === crumbs.length - 1 }">{{ part }}</span>
-        </template>
+      <span class="fv-crumbs" data-ft-crumb :title="viewFile ? absolute(viewFile) : root">
+        <span v-for="(part, index) in crumbs" :key="index"><span v-if="index > 0" class="fv-sep"> › </span>{{ part }}</span>
       </span>
       <span class="fv-spacer" />
       <template v-if="editing">
-        <button type="button" class="fc-btn" :disabled="saving" @click="save">{{ saving ? t("rp.files.saving") : t("rp.files.save") }}</button>
-        <button type="button" class="fc-btn" :disabled="saving" @click="editing = false">{{ t("rp.files.cancel") }}</button>
+        <button type="button" class="fc-btn" data-ft-save :disabled="saving" @click="save">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M5 3h11l3 3v15H5z" /><path d="M8 3v6h7V3" /><path d="M8 21v-7h8v7" />
+          </svg>
+          {{ saving ? t("rp.files.saving") : t("rp.files.save") }}
+        </button>
+        <button type="button" class="fc-btn" data-ft-cancel @click="editing = false">{{ t("rp.files.cancel") }}</button>
       </template>
-      <template v-else-if="viewFile && opened">
-        <button v-if="isText" type="button" class="fv-icon" :aria-label="t('rp.files.edit')" :title="t('rp.files.edit')" @click="startEdit">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.9 3.9a2.1 2.1 0 0 1 3 3L8 17.8l-4 1 1-4z" /></svg>
+      <template v-else>
+        <button v-if="viewFile && isText" type="button" class="fc-btn" data-ft-edit :title="t('rp.files.edit')" @click="startEdit">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
+          </svg>
+          <span class="fc-tx">{{ t("rp.files.edit") }}</span>
         </button>
-        <button v-if="isHtml" type="button" class="fv-icon" :aria-label="t('rp.files.openInBrowser')" :title="t('rp.files.openInBrowser')" @click="openInBrowser">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.5 3.6 5.5 3.6 9s-1.1 6.5-3.6 9c-2.5-2.5-3.6-5.5-3.6-9S9.5 5.5 12 3z" /></svg>
+        <button v-if="viewFile && isHtml" type="button" class="fc-btn" data-ft-open-browser :title="t('rp.files.openInBrowser')" @click="openInBrowser(viewFile)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" /><path d="M3 12h18" /><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18" />
+          </svg>
+          <span class="fc-tx">{{ t("rp.files.openInBrowser") }}</span>
         </button>
-        <button type="button" class="fv-icon" :aria-label="revealTitle" :title="revealTitle" @click="reveal(viewFile)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+        <button v-if="viewFile" type="button" class="fc-btn" data-ft-reveal :title="revealTitle" @click="reveal(viewFile)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span class="fc-tx">{{ revealTitle }}</span>
         </button>
       </template>
-      <button type="button" class="fv-icon" :aria-label="t('rp.files.refresh')" :title="t('rp.files.refresh')" @click="refresh">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" /></svg>
+      <button
+        v-if="root"
+        type="button"
+        class="fv-icon"
+        data-ft-refresh
+        :disabled="refreshing"
+        :aria-label="t('rp.files.refresh')"
+        :title="t('rp.files.refresh')"
+        @click="refresh"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
+        </svg>
       </button>
     </div>
 
     <div ref="body" class="fv-body">
       <aside v-if="treeOpen" class="fv-tree" :style="{ width: `${treeWidth}px` }">
-        <input v-model="filter" class="fv-filter" spellcheck="false" :placeholder="t('rp.files.filterPlaceholder')" />
+        <div class="fv-filter">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+          </svg>
+          <input v-model="filter" data-ft-filter spellcheck="false" :placeholder="t('rp.files.filterPlaceholder')" />
+        </div>
         <div class="fv-rows">
           <div v-if="!root" class="fv-note">{{ t("rp.files.noProject") }}</div>
-          <template v-else-if="results">
+          <template v-else-if="searching">
             <div v-if="searchFailed" class="fv-note">{{ t("rp.files.searchFailed") }}</div>
+            <div v-else-if="results === null" class="fv-note">{{ t("rp.files.loading") }}</div>
             <div v-else-if="!results.length" class="fv-note">{{ t("rp.files.searchNoMatch") }}</div>
-            <button
-              v-for="entry in results"
-              :key="entry.path"
-              type="button"
-              class="fv-row"
-              :class="{ on: entry.path === viewFile }"
-              :title="entry.name"
-              @click="choose(entry.path)"
-              @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, node: { path: entry.path, name: entry.name, directory: false, depth: 0 } }"
-            >
-              <span class="fv-name">{{ entry.name }}</span>
-              <span class="fv-dir">{{ entry.path.slice(0, -entry.name.length).replace(/\/$/, "") }}</span>
-            </button>
+            <template v-else>
+              <button
+                v-for="hit in results"
+                :key="hit.rel"
+                type="button"
+                class="fv-row"
+                :class="{ on: hit.rel === viewFile }"
+                :data-ft-file="hit.rel"
+                :style="{ paddingInlineStart: '10px' }"
+                @click="choose(hit.rel)"
+                @contextmenu.prevent="openMenu($event, searchMenuTarget(hit))"
+              >
+                <svg class="fv-ic" :class="iconClass(hit.name, false)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M13 2v7h7" />
+                </svg>
+                <span class="fv-name">{{ hit.name }}</span>
+                <span v-if="hit.dir" class="fv-search-dir">{{ hit.dir }}</span>
+              </button>
+              <div v-if="resultsTruncated" class="fv-note truncated">{{ t("rp.files.searchTruncated", { count: results.length }) }}</div>
+            </template>
           </template>
-          <template v-else>
+          <template v-else-if="rows.length">
             <button
-              v-for="node in rows"
-              :key="node.path"
+              v-for="row in rows"
+              :key="row.path"
               type="button"
               class="fv-row"
-              :class="{ on: node.path === viewFile }"
-              :style="{ paddingInlineStart: `${8 + node.depth * 12}px` }"
-              :title="node.name"
-              @click="node.directory ? toggleFolder(node.path) : choose(node.path)"
-              @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, node }"
+              :class="{ on: !row.directory && row.path === viewFile, open: row.open }"
+              :data-ft-dir="row.directory ? row.path : undefined"
+              :data-ft-file="row.directory ? undefined : row.path"
+              :style="{ paddingInlineStart: `${rowIndent(row)}px` }"
+              @click="row.directory ? toggleFolder(row.path) : choose(row.path)"
+              @contextmenu.prevent="openMenu($event, rowMenuTarget(row))"
             >
-              <svg v-if="node.directory" class="fv-chev" :class="{ open: expanded.has(node.path) }" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
-              <span v-else class="fv-chev-space" />
-              <svg class="fv-ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <path v-if="node.directory" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                <path v-else d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5" />
+              <svg v-if="row.directory" class="fv-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              <svg class="fv-ic" :class="iconClass(row.name, row.directory)" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path v-if="row.directory" d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <template v-else><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M13 2v7h7" /></template>
               </svg>
-              <span class="fv-name">{{ node.name }}</span>
+              <span class="fv-name" :title="row.name">{{ row.name }}</span>
             </button>
           </template>
+          <div v-else-if="rootListed" class="fv-note" data-ft-empty-dir>{{ t("rp.files.emptyDir") }}</div>
         </div>
         <div class="fv-grip" :title="t('rp.files.resizeTree')" @pointerdown.prevent="beginTreeResize" />
       </aside>
 
-      <div ref="viewer" class="fv-view" tabindex="-1" @keydown="onViewerKey">
-        <div v-if="findOpen" class="fv-find">
-          <input
-            ref="findInput"
-            v-model="query"
-            class="fv-find-input"
-            :placeholder="t('rp.files.findPlaceholder')"
-            @keydown.enter.prevent="step($event.shiftKey ? -1 : 1)"
-            @keydown.esc.prevent="findOpen = false"
-          />
-          <span class="fv-find-count">{{ query && !matches.length ? t("rp.files.findEmpty") : matches.length ? t("rp.files.findCount", { cur: current + 1, total: matches.length }) : "" }}</span>
-          <button type="button" class="fv-icon small" :aria-label="t('rp.files.findPrev')" @click="step(-1)">‹</button>
-          <button type="button" class="fv-icon small" :aria-label="t('rp.files.findNext')" @click="step(1)">›</button>
-          <button type="button" class="fv-icon small" :aria-label="t('rp.files.findClose')" @click="findOpen = false">×</button>
+      <div class="fv-main">
+        <div v-if="findOpen" class="fv-find" data-ft-find-bar>
+          <svg class="fv-find-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+          </svg>
+          <input ref="findInput" v-model="query" class="fv-find-input" :placeholder="t('rp.files.findPlaceholder')" @keydown="onFindKey" />
+          <span class="fv-find-count" data-ft-find-count>{{ findCount }}</span>
+          <button type="button" class="fv-find-btn" :aria-label="t('rp.files.findPrev')" :disabled="findTotal === 0" @click="stepFind(-1)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
+          </button>
+          <button type="button" class="fv-find-btn" :aria-label="t('rp.files.findNext')" :disabled="findTotal === 0" @click="stepFind(1)">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+          </button>
+          <button type="button" class="fv-find-btn" :aria-label="t('rp.files.findClose')" @click="closeFind">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+          </button>
         </div>
 
-        <div v-if="!viewFile" class="fv-empty">
-          <div class="fv-empty-title">{{ t("rp.files.openFileTitle") }}</div>
-          <div class="fv-empty-desc">{{ root ? t("rp.files.openFileDescNoFile") : t("rp.files.openFileDescNoProject") }}</div>
-        </div>
-        <div v-else-if="loadingFile" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.loading") }}</div></div>
-        <div v-else-if="readError" class="fv-empty"><div class="fv-empty-desc">{{ readError }}</div></div>
-        <template v-else-if="opened">
-          <div v-if="editing" class="fv-code editing">
-            <div class="fv-gutter" aria-hidden="true"><div v-for="(_, index) in draft.split('\n')" :key="index">{{ index + 1 }}</div></div>
-            <textarea v-model="draft" class="fv-edit" spellcheck="false" />
+        <div ref="viewer" class="fv-view" :class="{ editing }" tabindex="-1">
+          <div v-if="!root" class="fv-empty">
+            <svg class="fv-empty-ic" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+            </svg>
+            <div class="fv-empty-title">{{ t("rp.files.openFileTitle") }}</div>
+            <div class="fv-empty-desc">{{ t("rp.files.openFileDescNoProject") }}</div>
           </div>
-          <PdfView v-else-if="opened.kind === 'pdf'" :path="absolute(viewFile ?? '')" :name="(viewFile ?? '').split('/').pop() ?? ''" :root="root" />
-          <div v-else-if="opened.kind === 'image' && opened.data" class="fv-media">
-            <img :src="`data:${opened.mime};base64,${opened.data}`" :alt="viewFile" @click="openImagePreview(`data:${opened.mime};base64,${opened.data}`, { name: viewFile })" />
+          <div v-else-if="!viewFile" class="fv-empty">
+            <svg class="fv-empty-ic" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M13 2v7h7" />
+            </svg>
+            <div class="fv-empty-title">{{ t("rp.files.openFileTitle") }}</div>
+            <div class="fv-empty-desc">{{ t("rp.files.openFileDescNoFile") }}</div>
           </div>
-          <div v-else-if="opened.kind === 'audio' && opened.data" class="fv-media">
-            <audio controls :src="`data:${opened.mime};base64,${opened.data}`" />
-          </div>
-          <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
-          <div v-else-if="isMarkdown && !findOpen" class="fv-doc text" v-html="renderMarkdown(opened.content)" />
-          <div v-else class="fv-code" :class="{ shiki: showColoured }" data-annotate="code" :data-annotate-path="viewFile ? absolute(viewFile) : undefined">
-            <div v-for="(text, line) in lines" :key="line" class="fv-line">
-              <span class="fv-num">{{ line + 1 }}</span>
-              <span v-if="showColoured" class="fv-text" v-html="colouredLines?.[line]" />
-              <span v-else class="fv-text"><template v-for="(part, index) in segments(text, line)" :key="index"><mark v-if="part.mark" class="fv-mark" :class="{ current: part.current }">{{ part.text }}</mark><template v-else>{{ part.text }}</template></template></span>
+          <div v-else-if="editing" class="fv-editor-wrap">
+            <div ref="gutter" class="fv-editor-ln" data-ft-editor-ln aria-hidden="true">
+              <div v-for="n in draftLineCount" :key="n">{{ n }}</div>
             </div>
-            <div v-if="opened.truncated" class="fv-note">{{ t("rp.files.errTooBig") }}</div>
+            <textarea v-model="draft" class="fv-editor" data-ft-editor spellcheck="false" wrap="off" @scroll="syncGutter" />
           </div>
-        </template>
+          <div v-else-if="loadingFile || (!opened && !readError)" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.loading") }}</div></div>
+          <div v-else-if="readError" class="fv-empty"><div class="fv-empty-desc">{{ readError }}</div></div>
+          <template v-else-if="opened">
+            <div v-if="opened.tooBig" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errTooBig") }}</div></div>
+            <div v-else-if="mediaFailed" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errCannotRead") }}</div></div>
+            <PdfView v-else-if="opened.kind === 'pdf'" :path="absolute(viewFile)" :name="baseName(viewFile)" :root="root" />
+            <div v-else-if="opened.kind === 'image' && mediaUrl" class="fv-media">
+              <img
+                :key="mediaVersion"
+                class="fv-img"
+                :src="mediaUrl"
+                :alt="baseName(viewFile)"
+                @error="mediaFailed = true"
+                @click="openImagePreview(mediaUrl, { name: baseName(viewFile), path: absolute(viewFile) })"
+              />
+            </div>
+            <div v-else-if="opened.video && mediaUrl" class="fv-media">
+              <video :key="mediaVersion" class="fv-video" data-ft-video :src="mediaUrl" controls preload="metadata" @error="mediaFailed = true" />
+            </div>
+            <div v-else-if="opened.kind === 'audio' && mediaUrl" class="fv-media" data-ft-audio>
+              <audio :key="mediaVersion" class="fv-audio" :src="mediaUrl" controls preload="metadata" @error="mediaFailed = true" />
+            </div>
+            <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
+            <div v-else-if="isMarkdown" class="fv-doc text" data-selectable="content" v-html="renderMarkdown(opened.content)" />
+            <div
+              v-else
+              class="fv-code"
+              :class="{ shiki: Boolean(colouredLines) }"
+              data-selectable="content"
+              data-annotate="code"
+              :data-annotate-path="absolute(viewFile)"
+            >
+              <div v-for="(text, line) in lines" :key="line" class="fv-line">
+                <span class="fv-num" data-find-skip>{{ line + 1 }}</span>
+                <span v-if="colouredLines" class="fv-text" v-html="colouredLines[line]" />
+                <span v-else class="fv-text">{{ text }}</span>
+              </div>
+            </div>
+          </template>
+        </div>
       </div>
     </div>
 
@@ -519,14 +799,54 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
 </template>
 
 <style scoped>
+/*
+ * MiMo's files colours: a dim grey for chevrons, separators and line numbers,
+ * and one hue per kind of file for the tree's icons, lighter under the dark
+ * theme.
+ */
 .rp-files {
+  --ft-dim: #151c1366;
+  --ft-dir: #e0a63b;
+  --ft-code: #2f6fed;
+  --ft-web: #ff6a2b;
+  --ft-data: #0d9488;
+  --ft-doc: #16a34a;
+  --ft-media: #ec4899;
+  --ft-shell: #a855f7;
+  --ft-archive: #b45309;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
 }
 
-/* MiMo's head: at least 36 tall, 8 by 12, a rule under it, 12px muted. */
+:global(:root[data-theme="dark"]) .rp-files {
+  --ft-dim: #777;
+  --ft-dir: #f0b850;
+  --ft-code: #5a9cff;
+  --ft-web: #ff8a52;
+  --ft-data: #2dd4bf;
+  --ft-doc: #4ade80;
+  --ft-media: #f472b6;
+  --ft-shell: #c084fc;
+  --ft-archive: #d9822b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(:root:not([data-theme="light"])) .rp-files {
+    --ft-dim: #777;
+    --ft-dir: #f0b850;
+    --ft-code: #5a9cff;
+    --ft-web: #ff8a52;
+    --ft-data: #2dd4bf;
+    --ft-doc: #4ade80;
+    --ft-media: #f472b6;
+    --ft-shell: #c084fc;
+    --ft-archive: #d9822b;
+  }
+}
+
+/* MiMo's head: at least 36 tall, 8 by 12, a rule under it, 12px muted, and a container for the narrow rule. */
 .fv-head {
   display: flex;
   flex: none;
@@ -537,29 +857,27 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   color: var(--text-weak);
   border-bottom: 1px solid var(--border-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
+  container: fthead / inline-size;
 }
 
+/* The crumb ellipsizes as one line; separators in the dim grey, 2px either side. */
 .fv-crumbs {
-  display: flex;
-  align-items: center;
-  gap: 4px;
   min-width: 0;
   overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.fv-crumbs .last {
-  color: var(--text-strong);
-}
-
 .fv-sep {
-  opacity: 0.6;
+  margin: 0 2px;
+  color: var(--ft-dim);
 }
 
 .fv-spacer {
   flex: 1;
 }
 
+/* MiMo's icon-btn xs. */
 .fv-icon {
   display: grid;
   flex: none;
@@ -573,29 +891,51 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   border-radius: 7px;
 }
 
-.fv-icon:hover {
+.fv-icon:hover:not(:disabled) {
   color: var(--text-strong);
   background: var(--surface-hover);
 }
 
-.fv-icon.small {
-  width: 22px;
-  height: 22px;
+.fv-icon:disabled {
+  opacity: 0.5;
 }
 
-/* MiMo's text buttons: 1px line, the page colour, 12px, 5 by 13 on an 8px corner. */
+/* MiMo's fc-btn: a 14px muted icon and a label, 1px line on the page colour, 5 by 13 on an 8px corner. */
 .fc-btn {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  gap: 6px;
   padding: 5px 13px;
-  color: var(--text-strong);
+  color: var(--text-base);
+  white-space: nowrap;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
+.fc-btn svg {
+  flex: none;
+  color: var(--text-weak);
+}
+
 .fc-btn:hover:not(:disabled) {
   background: var(--surface-hover);
+}
+
+.fc-btn:disabled {
+  opacity: 0.55;
+}
+
+@container fthead (max-width: 340px) {
+  .fc-btn {
+    padding: 5px 8px;
+  }
+
+  .fc-tx {
+    display: none;
+  }
 }
 
 .fv-body {
@@ -613,16 +953,32 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   border-inline-end: 1px solid var(--border-weak);
 }
 
-/* MiMo's filter: a 9px corner, 10 / 10 / 6 around it, 6 by 10 inside. */
+/* MiMo's filter: the line on the wrapper, a 14px dim magnifier 7 before the input. */
 .fv-filter {
+  display: flex;
   flex: none;
+  align-items: center;
+  gap: 7px;
   margin: 10px 10px 6px;
   padding: 6px 10px;
-  color: var(--text-strong);
-  background: transparent;
   border: 1px solid var(--border-weak);
   border-radius: 9px;
+}
+
+.fv-filter svg {
+  flex: none;
+  color: var(--ft-dim);
+}
+
+.fv-filter input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  color: var(--text-base);
+  background: transparent;
+  border: 0;
   outline: none;
+  font-family: inherit;
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
@@ -631,23 +987,25 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   flex: 1;
   flex-direction: column;
   min-height: 0;
-  padding: 0 6px 8px;
+  padding: 0 6px 10px;
   overflow: auto;
 }
 
+/* MiMo's ft-row: 4 by 8, 5 between the parts, 2 under each row. */
 .fv-row {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  margin-bottom: 2px;
   padding: 4px 8px;
-  color: var(--text-strong);
+  color: var(--text-base);
   text-align: start;
+  white-space: nowrap;
   background: transparent;
   border: 0;
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  white-space: nowrap;
 }
 
 .fv-row:hover {
@@ -660,17 +1018,16 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
 
 .fv-chev {
   flex: none;
-  color: var(--text-weak);
+  color: var(--ft-dim);
   transition: transform 0.12s;
 }
 
-.fv-chev.open {
+.fv-row.open .fv-chev {
   transform: rotate(90deg);
 }
 
-.fv-chev-space {
-  flex: none;
-  width: 12px;
+:global([dir="rtl"]) .fv-row:not(.open) .fv-chev {
+  transform: scaleX(-1);
 }
 
 .fv-ic {
@@ -678,18 +1035,56 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   color: var(--text-weak);
 }
 
+.fv-ic.cat-dir {
+  color: var(--ft-dir);
+}
+
+.fv-ic.cat-code {
+  color: var(--ft-code);
+}
+
+.fv-ic.cat-web {
+  color: var(--ft-web);
+}
+
+.fv-ic.cat-data {
+  color: var(--ft-data);
+}
+
+.fv-ic.cat-doc {
+  color: var(--ft-doc);
+}
+
+.fv-ic.cat-media {
+  color: var(--ft-media);
+}
+
+.fv-ic.cat-shell {
+  color: var(--ft-shell);
+}
+
+.fv-ic.cat-archive {
+  color: var(--ft-archive);
+}
+
 .fv-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.fv-dir {
+/* A search hit's folder, pushed to the end at 11px. */
+.fv-search-dir {
+  flex: 0 1 auto;
   min-width: 0;
-  margin-inline-start: 6px;
+  margin-inline-start: auto;
+  padding-inline-start: 8px;
   overflow: hidden;
-  color: var(--text-weaker);
+  color: var(--text-weak);
+  font-size: calc(11px * var(--ui-font-scale, 1));
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .fv-grip {
@@ -701,21 +1096,38 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   cursor: col-resize;
 }
 
+/* MiMo's ft-empty-d with its 10px padding, used for the tree's notes. */
 .fv-note {
-  padding: 8px;
+  padding: 10px;
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
-.fv-view {
+.fv-note.truncated {
+  padding: 6px 10px;
+}
+
+/* The viewer's frame: the find bar floats over it without scrolling away. */
+.fv-main {
   position: relative;
   display: flex;
   flex: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.fv-view {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   outline: none;
+}
+
+.fv-view.editing {
+  overflow: hidden;
 }
 
 /* Expanded, the floating chat stands over the foot: MiMo leaves its height and 8 more below. */
@@ -723,42 +1135,78 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   padding-bottom: calc(var(--fc-h, 96px) + 8px);
 }
 
-/* MiMo's find bar: 42 down, 14 in from the end. */
+/* MiMo's find bar: 42 down, 14 in from the end, 6 by 10 on a 10px corner. */
 .fv-find {
   position: absolute;
-  top: 8px;
+  top: 42px;
   inset-inline-end: 14px;
-  z-index: 3;
+  z-index: 10;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px;
-  background: var(--surface-menu);
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.14);
+}
+
+.fv-find-ic {
+  flex: none;
+  color: var(--text-weak);
 }
 
 .fv-find-input {
-  width: 160px;
-  padding: 2px 6px;
-  color: var(--text-strong);
+  width: 150px;
+  padding: 0;
+  color: var(--text-base);
   background: transparent;
   border: 0;
   outline: none;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-family: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.fv-find-input::placeholder {
+  color: var(--ft-dim);
 }
 
 .fv-find-count {
   min-width: 42px;
-  color: var(--text-weak);
+  color: var(--ft-dim);
   font-size: calc(11px * var(--ui-font-scale, 1));
+  font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
-/* Code: a 44px gutter of numbers, 12px mono on a 1.6 line. */
+.fv-find-btn {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.fv-find-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.fv-find-btn:disabled {
+  opacity: 0.4;
+}
+
+/* Code: 12px mono on a 1.6 line, 10 above and below, scrolling sideways rather than wrapping. */
 .fv-code {
-  padding: 8px 0;
+  box-sizing: border-box;
+  width: max-content;
+  min-width: 100%;
+  padding: 10px 0;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--code-font-scale, 1));
   line-height: 1.6;
@@ -769,59 +1217,60 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
 }
 
 .fv-num {
+  box-sizing: border-box;
   flex: none;
   width: 44px;
-  padding-inline-end: 10px;
-  color: var(--text-weaker);
+  padding-inline-end: 14px;
+  color: var(--ft-dim);
   text-align: end;
   user-select: none;
 }
 
 .fv-text {
-  min-width: 0;
-  padding-inline-end: 12px;
-  color: var(--text-strong);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  padding-inline-end: 14px;
+  color: var(--text-base);
+  white-space: pre;
 }
 
-.fv-mark {
-  color: inherit;
-  background: color-mix(in srgb, var(--text-warning) 30%, transparent);
-  border-radius: 2px;
-}
-
-.fv-mark.current {
-  background: color-mix(in srgb, var(--text-warning) 60%, transparent);
-}
-
-.fv-code.editing {
+/* MiMo's editor: a frame that does not scroll, the textarea scrolling and the gutter following it. */
+.fv-editor-wrap {
   display: flex;
-  flex: 1;
-  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
-.fv-gutter {
+.fv-editor-ln {
+  box-sizing: border-box;
   flex: none;
   width: 44px;
-  padding-inline-end: 10px;
-  color: var(--text-weaker);
+  padding: 10px 14px 10px 0;
+  overflow: hidden;
+  color: var(--ft-dim);
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--code-font-scale, 1));
+  line-height: 1.6;
   text-align: end;
+  white-space: pre;
   user-select: none;
 }
 
-.fv-edit {
+.fv-editor {
+  box-sizing: border-box;
   flex: 1;
-  min-height: 100%;
-  padding: 0 12px 0 0;
-  color: var(--text-strong);
+  min-width: 0;
+  height: 100%;
+  padding: 10px 14px 10px 4px;
+  overflow: auto;
+  color: var(--text-base);
+  white-space: pre;
   background: transparent;
   border: 0;
   outline: none;
   resize: none;
-  font: inherit;
-  line-height: inherit;
-  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--code-font-scale, 1));
+  line-height: 1.6;
 }
 
 /* Markdown as a document: 18 by 22. */
@@ -829,28 +1278,50 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
   padding: 18px 22px;
 }
 
+/* MiMo's ft-img-view: centred, 18 in, at least the viewer's height. */
 .fv-media {
-  display: grid;
-  flex: 1;
-  place-items: center;
-  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 18px;
 }
 
-.fv-media img {
+.fv-img {
   max-width: 100%;
   max-height: 100%;
+  object-fit: contain;
   cursor: zoom-in;
 }
 
+.fv-video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  outline: none;
+}
+
+.fv-audio {
+  width: min(100%, 480px);
+  max-width: 100%;
+  outline: none;
+}
+
+/* MiMo's ft-empty: over the whole viewer, a 40px icon, a 14px title, a 12px line, 8 apart. */
 .fv-empty {
+  position: absolute;
+  inset: 0;
   display: flex;
-  flex: 1;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 24px;
+  gap: 8px;
   text-align: center;
+}
+
+.fv-empty-ic {
+  color: var(--text-weak);
 }
 
 .fv-empty-title {
@@ -860,6 +1331,17 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
 
 .fv-empty-desc {
   color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+</style>
+
+<style>
+/* The find marks, registered by name: the highlight API's pseudo-elements cannot be scoped. */
+::highlight(mcode-ft-find) {
+  background: color-mix(in srgb, var(--text-interactive) 25%, transparent);
+}
+
+::highlight(mcode-ft-find-cur) {
+  background: color-mix(in srgb, var(--text-interactive) 55%, transparent);
 }
 </style>
