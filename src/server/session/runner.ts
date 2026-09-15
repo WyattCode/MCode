@@ -1092,11 +1092,12 @@ export class SessionRunner {
     return (await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents) })).skills
   }
 
-  /** skills: what a user message carries for the model beyond its words. */
+  /** skills: what a user message carries for the model beyond its words - skills it names, and the hint its office documents bring. */
   private async remindersFor(input: PromptInput, directory?: string): Promise<string[]> {
-    if (!input.text.includes("/")) return []
+    const attachments = input.attachments ?? []
+    if (!input.text.includes("/") && !attachments.length) return []
     const where = directory ?? (await this.store.get(input.sessionID))?.directory
-    return where ? skillReminders(input.text, await this.skillsFor(where)) : []
+    return where ? skillReminders(input.text, await this.skillsFor(where), attachments) : []
   }
 
   /** True while something the user typed is waiting to reach the model. */

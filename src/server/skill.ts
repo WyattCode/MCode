@@ -159,19 +159,71 @@ export function skillBlock(skill: SkillInfo): string {
 }
 
 /**
+ * MiMo's document triggers: an attachment of one of these types, by mime type or
+ * by name, points the model at the skill for that kind of file.
+ */
+export const OFFICE_TRIGGERS: { skill: string; mimes: string[]; names: RegExp }[] = [
+  { skill: "pdf", mimes: ["application/pdf"], names: /\.pdf$/i },
+  {
+    skill: "docx",
+    mimes: [
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.template",
+      "application/msword",
+    ],
+    names: /\.(docx|dotx)$/i,
+  },
+  {
+    skill: "xlsx",
+    mimes: [
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.template",
+      "application/vnd.ms-excel",
+      "application/vnd.ms-excel.sheet.macroenabled.12",
+      "text/csv",
+      "text/tab-separated-values",
+    ],
+    names: /\.(xlsx|xlsm|xltx|csv|tsv)$/i,
+  },
+  {
+    skill: "pptx",
+    mimes: ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.ms-powerpoint"],
+    names: /\.pptx$/i,
+  },
+]
+
+/** The hint an attached office document or PDF brings: which skills fit, and where their SKILL.md is. */
+export function officeSkillHint(attachments: readonly { path: string; mime: string }[], skills: readonly SkillInfo[]): string | undefined {
+  const matched = OFFICE_TRIGGERS.filter((trigger) =>
+    attachments.some((file) => trigger.mimes.includes(file.mime.toLowerCase()) || trigger.names.test(file.path)),
+  )
+    .map((trigger) => skills.find((skill) => skill.name === trigger.skill))
+    .filter((skill): skill is SkillInfo => Boolean(skill))
+  if (!matched.length) return undefined
+  return [
+    "<system-reminder>",
+    "This message attaches office documents or PDFs. These skills cover reading, producing and changing such files; read the matching SKILL.md when it fits the task, and prefer its way of working over improvising:",
+    ...matched.map((skill) => `- ${skill.name}: ${skill.location}`),
+    "</system-reminder>",
+  ].join("\n")
+}
+
+/**
  * What a user message carries for the model beyond its words.
  *
+ * An attached office document or PDF brings a hint naming the skills for it.
  * Skills named with `/name` are loaded into it, up to three; naming two or more
  * adds a note asking for a plan of how they combine before any work starts.
  * Kept on the message rather than rebuilt per request, as MiMo keeps them, so
  * the history the model reads does not change under it on a later turn.
  */
-export function skillReminders(text: string, skills: readonly SkillInfo[]): string[] {
+export function skillReminders(text: string, skills: readonly SkillInfo[], attachments: readonly { path: string; mime: string }[] = []): string[] {
+  const hint = officeSkillHint(attachments, skills)
   const mentioned = mentionedSkills(text, skills)
-  if (!mentioned.length) return []
+  if (!mentioned.length) return hint ? [hint] : []
   const loaded = mentioned.slice(0, MAX_AUTOLOAD)
   const left = mentioned.slice(MAX_AUTOLOAD)
-  const out = loaded.map((name) => skillBlock(skills.find((skill) => skill.name === name)!))
+  const out = [...(hint ? [hint] : []), ...loaded.map((name) => skillBlock(skills.find((skill) => skill.name === name)!))]
   if (mentioned.length >= 2) {
     out.push(
       [

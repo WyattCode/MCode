@@ -1380,13 +1380,13 @@ const SOURCE_BADGE: Record<CommandInfo["source"], string> = {
   skill: "composer.slashSkill",
 }
 
-/** The project's own commands, its MCP prompts and its skills, badged by source. */
+/** The project's own commands, its MCP prompts and its skills, badged by source; a skill shipped with the app says so. */
 const serverEntries = computed<SlashEntry[]>(() =>
   app.commands.map((entry) => ({
     id: `custom.${entry.name}`,
     trigger: entry.name,
     description: entry.description,
-    badge: t(SOURCE_BADGE[entry.source]),
+    badge: entry.source === "skill" && entry.builtin ? t("composer.slashBuiltinSkill") : t(SOURCE_BADGE[entry.source]),
   })),
 )
 

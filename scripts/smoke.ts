@@ -203,7 +203,7 @@ import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage }
 
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
-import { discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
+import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
 import { listCommands } from "../src/server/command"
 import { SEARCH, SKILL_FILE_SAMPLE, SkillSearchTool, SkillTool, searchSkills, searchTokens } from "../src/server/tool/skill"
 import { stepTitle as skillStepTitle, toolVerb as skillToolVerb } from "../src/renderer/src/lib/tool-meta"
@@ -5294,6 +5294,33 @@ async function skillChecks(root: string) {
   check("plan keeps both skill tools", toolsFor("plan").some((tool) => tool.name === "skill") && toolsFor("plan").some((tool) => tool.name === "skill_search"))
   const skillPart = (name: string, input: Record<string, unknown>): ToolPart => ({ type: "tool", id: name, callID: name, name, status: "completed", input, time: { created: 1 } })
   check("MiMo's step words and titles for a load and a search", skillToolVerb("skill", "completed") === translate("toolLabel.done.skill") && skillToolVerb("skill_search", "running") === translate("toolLabel.running.skill_search") && skillStepTitle(skillPart("skill", { name: "gamma" })) === "gamma" && skillStepTitle(skillPart("skill_search", { query: "make a deck" })) === "make a deck")
+
+  section("Skills (built-in, and the office document hint)")
+  const shippedRoot = builtinSkillsRoot()
+  const shipped = await discoverSkills({ directory: nested, storageDirectory: path.join(base, "no-storage") })
+  const shippedSkills = shipped.skills.filter((entry) => entry.builtin)
+  const shippedNames = shippedSkills.map((entry) => entry.name)
+  check("the app ships its own skills, Word, Excel, PowerPoint and PDF among them", Boolean(shippedRoot) && ["docx", "xlsx", "pptx", "pdf"].every((name) => shippedNames.includes(name)) && shippedNames.length >= 10, shippedNames)
+  check("every shipped skill loads without a problem", !shipped.problems.some((problem) => shippedRoot && problem.path.startsWith(shippedRoot)), shipped.problems)
+  const mentionedFiles = shippedSkills.flatMap((entry) =>
+    [...entry.content.matchAll(/(?<![\w/.-])((?:scripts|references|assets)\/[\w./-]+\w)/g)].map((match) => path.join(entry.directory, match[1]!)),
+  )
+  const absentFiles = (await Promise.all(mentionedFiles.map((file) => fs.access(file).then(() => "", () => file)))).filter(Boolean)
+  check("every script a shipped skill tells the model to run is shipped with it", mentionedFiles.length >= 6 && absentFiles.length === 0, absentFiles)
+  const hinted = skillReminders("please look", shippedSkills, [
+    { path: "C:/in/report.DOCX", mime: "" },
+    { path: "numbers.csv", mime: "text/plain" },
+    { path: "scan", mime: "application/pdf" },
+    { path: "notes.txt", mime: "text/plain" },
+  ])
+  check(
+    "attaching Word, a CSV and a PDF points the model at those skills' SKILL.md, and at nothing else",
+    hinted.length === 1 && /- docx: .*SKILL\.md/.test(hinted[0]!) && /- xlsx: /.test(hinted[0]!) && /- pdf: /.test(hinted[0]!) && !/- pptx: /.test(hinted[0]!),
+    hinted,
+  )
+  check("with no office document attached, no hint", skillReminders("hello", shippedSkills, [{ path: "a.png", mime: "image/png" }]).length === 0)
+  const hintThenSkill = skillReminders("/pdf now", shippedSkills, [{ path: "a.pptx", mime: "" }])
+  check("the hint comes before a skill the message loads", hintThenSkill.length === 2 && hintThenSkill[0]!.includes("- pptx:") && hintThenSkill[1]!.includes("loaded_skill"), hintThenSkill.length)
 }
 
 /**
@@ -6287,6 +6314,23 @@ async function subagentChecks(root: string) {
   check("a subagent keeps the task tool", childTools.some((names) => names.includes("task")))
   const taskRow = (await store.messages(eighteen.id)).flatMap((message) => (message.role === "assistant" ? message.parts : [])).find((part) => part.type === "tool" && part.name === "task")
   check("the transcript keeps the task call, but no step is drawn for it, as MiMo draws none", Boolean(taskRow) && buildRows([taskRow!]).length === 0)
+
+  section("Skills (through the runner)")
+  parentSteps = []
+  parentCalls = []
+  parentBodies.length = 0
+  const nineteen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: nineteen.id, text: "/pdf read this", attachments: [{ path: path.join(project, "brief.pdf"), mime: "application/pdf", data: "" }] })
+  await settled(nineteen.id)
+  const skillMessage = (await store.messages(nineteen.id)).find((message) => message.role === "user")
+  const carriedReminders = skillMessage?.role === "user" ? (skillMessage.reminders ?? []) : []
+  check(
+    "a message attaching a PDF and naming /pdf keeps its words, and carries the hint and the loaded skill",
+    skillMessage?.role === "user" && skillMessage.text === "/pdf read this" && carriedReminders.length === 2 && carriedReminders[0]!.includes("- pdf:") && carriedReminders[1]!.includes('loaded_skill name="pdf"'),
+    carriedReminders.map((entry) => entry.slice(0, 60)),
+  )
+  check("the model reads both after the message", parentBodies.some((body) => body.includes("/pdf read this") && body.includes("- pdf:") && body.includes('loaded_skill name=\\"pdf\\"')))
+  check("the system prompt lists the shipped skills", parentBodies.some((body) => body.includes("<name>docx</name>")))
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }
