@@ -255,6 +255,7 @@ export const BashTool: ToolDefinition = {
       messageID: context.messageID,
       callID: context.callID,
       kind: "bash",
+      directory: context.directory,
       title: description || "Run command",
       subject: command,
       preview: command,

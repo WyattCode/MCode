@@ -1113,6 +1113,7 @@ export class McpServers {
               messageID: context.messageID,
               callID: context.callID,
               kind: "mcp",
+              directory: context.directory,
               title: `${name}: ${tool.name}`,
               subject: JSON.stringify(input),
               preview: JSON.stringify(input, null, 2),

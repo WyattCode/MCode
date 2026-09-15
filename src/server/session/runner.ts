@@ -1908,6 +1908,7 @@ export class SessionRunner {
         tool: tool.name,
         kind: tool.permission ?? "",
         arguments: part.input,
+        directory: input.session.directory,
       })
       const result = await tool.execute(part.input, {
         sessionID: input.session.id,

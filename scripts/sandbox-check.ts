@@ -115,13 +115,14 @@ async function main(): Promise<void> {
   await resolvePath(approved, path.join(outside, "secret.txt")).catch(() => undefined)
   answer = "reject"
 
-  note("that directory no longer asks", permissions.allowsOutside(session, path.join(outside, "secret.txt")))
-  note(
-    "a sibling sharing its prefix is not covered",
-    !permissions.allowsOutside(session, path.join(root, "outsider", "secret.txt")),
-  )
-  note("an unrelated path is not covered", !permissions.allowsOutside(session, path.join(sibling, "secret.txt")))
-  note("another session is not covered", !permissions.allowsOutside("s3", path.join(outside, "secret.txt")))
+  // Approvals are kept per project, as MiMo's engine keeps them, and name the folder a path sits in.
+  const here = { directory: project, sessionID: session }
+  note("that directory no longer asks", permissions.allowsOutside(here, outside))
+  note("nor a folder below it", permissions.allowsOutside(here, path.join(outside, "deeper")))
+  note("a sibling sharing its prefix is not covered", !permissions.allowsOutside(here, path.join(root, "outsider")))
+  note("an unrelated path is not covered", !permissions.allowsOutside(here, sibling))
+  note("another conversation in the same project is covered", permissions.allowsOutside({ directory: project, sessionID: "s3" }, outside))
+  note("another project is not covered", !permissions.allowsOutside({ directory: sibling, sessionID: "s3" }, outside))
 
   console.log("")
   console.log("\nwhich applications a window may start")

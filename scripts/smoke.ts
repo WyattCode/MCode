@@ -56,6 +56,7 @@ import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../sr
 import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
 import type { McpServerConfig } from "../src/shared/protocol"
 import { ToolOutputs } from "../src/server/tool/truncate"
+import { wildcardMatch } from "../src/server/permission"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
@@ -1190,6 +1191,56 @@ async function main() {
   check("always on a delete is not remembered", againAsk?.forced === true, againAsk)
   if (againAsk) permissions.respond(againAsk.id, "reject")
   await again
+
+  // E35: "always" is kept per project, as a pattern, and lets through what is still waiting that it now covers.
+  {
+    const projectA = path.join(root, "rules-a")
+    const projectB = path.join(root, "rules-b")
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 20))
+    const inProject = (sessionID: string, directory: string, callID: string, command: string, always: string[]) =>
+      permissions
+        .ask({ sessionID, messageID: "m-rules", callID, kind: "bash", title: "t", subject: command, patterns: [command], always, directory })
+        .then(() => "allowed", (err: Error) => err.message)
+    const waiting = (callID: string) => permissions.outstanding().find((entry) => entry.callID === callID)
+    const settleIfAsked = (callID: string) => {
+      const asked = waiting(callID)
+      if (asked) permissions.respond(asked.id, "reject")
+      return Boolean(asked)
+    }
+
+    const first = inProject("s-rule-1", projectA, "c-rule-1", "git status", ["git status *"])
+    await pause()
+    const firstAsk = waiting("c-rule-1")
+    if (firstAsk) permissions.respond(firstAsk.id, "always")
+    await first
+    const same = inProject("s-rule-2", projectA, "c-rule-2", "git status --short", ["git status *"])
+    await pause()
+    check("always on a command prefix covers it in another conversation of the same project", !settleIfAsked("c-rule-2") && (await same) === "allowed")
+    const otherCommand = inProject("s-rule-2", projectA, "c-rule-3", "npm test", ["npm test *"])
+    await pause()
+    check("but not a command with another prefix", settleIfAsked("c-rule-3"))
+    await otherCommand
+    const otherProject = inProject("s-rule-3", projectB, "c-rule-4", "git status", ["git status *"])
+    await pause()
+    check("nor the same command in another project", settleIfAsked("c-rule-4"))
+    await otherProject
+
+    const heard: PermissionRecord[] = []
+    const stopHearing = permissions.onDecided("c-rule-6", (record) => heard.push(record))
+    const logOne = inProject("s-rule-4", projectA, "c-rule-5", "git log", ["git log *"])
+    const logTwo = inProject("s-rule-5", projectA, "c-rule-6", "git log -5", ["git log *"])
+    await pause()
+    const logAsk = waiting("c-rule-5")
+    if (logAsk) permissions.respond(logAsk.id, "always")
+    check("answering always lets through a question already waiting that it covers", (await logOne) === "allowed" && (await logTwo) === "allowed" && !waiting("c-rule-6"))
+    check("recorded as let through by that always", heard[0]?.decided === "allow-always", heard)
+    stopHearing()
+
+    check(
+      "MiMo's wildcard: a trailing ' *' also matches the words alone, slashes match either way",
+      wildcardMatch("git status", "git status *") && wildcardMatch("git status -s", "git status *") && !wildcardMatch("git statusx", "git status *") && wildcardMatch("C:\\work\\a\\b.txt", "C:/work/*"),
+    )
+  }
 
   // A decided question is reported to whoever listens for its call, so the part can keep it.
   {

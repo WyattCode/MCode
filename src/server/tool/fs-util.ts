@@ -100,16 +100,16 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   const relative = path.relative(root, real)
   if (!relative.startsWith("..") && !path.isAbsolute(relative)) return resolved
 
-  if (context.permissions.allowsOutside(context.sessionID, real)) return resolved
-
   // Approve the directory itself, not the file, so reading a second file in the
   // same folder does not ask again.
   const stats = await fs.stat(resolved).catch(() => undefined)
   // Approved against the real location too, so the same directory reached by a
   // different route is recognised as the one already allowed.
   const scope = stats?.isDirectory() ? real : path.dirname(real)
+  if (context.permissions.allowsOutside({ directory: context.directory, sessionID: context.sessionID }, scope)) return resolved
 
   await context.permissions.ask({
+    directory: context.directory,
     sessionID: context.sessionID,
     messageID: context.messageID,
     callID: context.callID,

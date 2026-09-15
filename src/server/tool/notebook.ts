@@ -146,6 +146,7 @@ export const NotebookEditTool: ToolDefinition = {
       messageID: context.messageID,
       callID: context.callID,
       kind: "edit",
+      directory: context.directory,
       title: "Edit notebook",
       subject: display,
       preview: diff,
