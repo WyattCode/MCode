@@ -35,10 +35,15 @@
       Requests may reach the preview server alone (http://*.localhost:*, which
       is loopback): MiMo's SVG file card reads a served .svg's text for its
       code tab, and that server answers other origins for .svg files only.
+
+      Images may also load from mcode-media:, MiMo's cover proxy for a video
+      card: the main process answers it only with a picture from a fixed list
+      of platform image hosts (@shared/media-platform COVER_HOSTS), so this
+      names one scheme, not the hosts behind it.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: mcode-media:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
   </head>

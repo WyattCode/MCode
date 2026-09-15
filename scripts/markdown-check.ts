@@ -22,7 +22,16 @@ import fs from "node:fs"
 import path from "node:path"
 import { detectPath, renderMarkdown, renderReply, type MarkdownOptions } from "../src/renderer/src/lib/markdown"
 import { ABC_SOURCE_LIMIT } from "../src/renderer/src/lib/abc-play"
-import { parsePlatformLink, platformLinksIn, readMediaMeta } from "../src/shared/media-platform"
+import {
+  COVER_LIMIT,
+  coverAnswer,
+  coverProxyAddress,
+  coverRedirect,
+  coverRequest,
+  parsePlatformLink,
+  platformLinksIn,
+  readMediaMeta,
+} from "../src/shared/media-platform"
 import { isSvgFile, stripSvgHazards, svgSize } from "../src/renderer/src/lib/svg-safe"
 import { fadeTail, type FadeAnchor } from "../src/renderer/src/lib/stream-reveal"
 
@@ -456,15 +465,80 @@ if (readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtube.co
   problems.push("card: a card for a lookalike link was accepted")
 }
 
+/* The cover proxy: which addresses it fetches, and what it refuses. */
+const proxied = (address: string) => `mcode-media://proxy/?u=${encodeURIComponent(address)}`
+const COVER_REQUESTS: [string, string, number | string][] = [
+  [proxied("https://i0.hdslb.com/bfs/archive/a.jpg"), "GET", "https://www.bilibili.com/"],
+  [proxied("https://hdslb.com/a.jpg"), "GET", "https://www.bilibili.com/"],
+  [proxied("https://I.YTIMG.COM/vi/x/hqdefault.jpg"), "GET", "https://www.youtube.com/"],
+  [proxied("https://p16-sign.tiktokcdn-us.com/a.jpg"), "GET", "https://www.tiktok.com/"],
+  [proxied("https://occ-0-1.nflxext.com/a.jpg"), "GET", "https://www.netflix.com/"],
+  [proxied("https://i0.hdslb.com/a.jpg"), "POST", 405],
+  [proxied("https://i0.hdslb.com/a.jpg"), "HEAD", 405],
+  [proxied("http://i0.hdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://i0.hdslb.com.evil.example/a.jpg"), "GET", 403],
+  [proxied("https://evilhdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://hdslb.com@evil.example/a.jpg"), "GET", 403],
+  [proxied("https://user:pw@i0.hdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://i0.hdslb.com:8443/a.jpg"), "GET", 403],
+  [proxied("https://evil.example/?https://i0.hdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://www.bilibili.com/video/BV1GJ411x7h7"), "GET", 403],
+  [proxied("file:///C:/Windows/win.ini"), "GET", 403],
+  [proxied("javascript:alert(1)"), "GET", 403],
+  ["mcode-media://proxy/", "GET", 400],
+  ["mcode-media://elsewhere/?u=" + encodeURIComponent("https://i0.hdslb.com/a.jpg"), "GET", 400],
+  ["https://i0.hdslb.com/a.jpg", "GET", 400],
+  ["not a url", "GET", 400],
+]
+for (const [address, method, want] of COVER_REQUESTS) {
+  const asked = coverRequest(address, method)
+  const got = asked.ok ? asked.referer : asked.status
+  if (got !== want) problems.push(`cover: ${method} ${address} gave ${got}, not ${want}`)
+}
+const COVER_REDIRECTS: [string, string | null, boolean][] = [
+  ["https://i0.hdslb.com/a.jpg", "https://i1.hdslb.com/b.jpg", true],
+  ["https://i0.hdslb.com/a.jpg", "/b.jpg", true],
+  ["https://i0.hdslb.com/a.jpg", "https://evil.example/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", "//evil.example/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", "http://i1.hdslb.com/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", "https://i1.hdslb.com.evil.example/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", null, false],
+]
+for (const [from, location, want] of COVER_REDIRECTS) if (Boolean(coverRedirect(from, location)) !== want) problems.push(`cover: a redirect from ${from} to ${location} ${want ? "was refused" : "was followed"}`)
+const COVER_ANSWERS: [number, string | null, string | null, string | undefined][] = [
+  [200, "image/jpeg", "1024", "image/jpeg"],
+  [200, "IMAGE/WEBP; charset=binary", null, "image/webp"],
+  [206, "image/png", String(COVER_LIMIT), "image/png"],
+  [200, "image/png", String(COVER_LIMIT + 1), undefined],
+  [200, "image/png", "lots", undefined],
+  [200, "image/svg+xml", "10", undefined],
+  [200, "text/html", "10", undefined],
+  [200, "application/octet-stream", "10", undefined],
+  [200, null, "10", undefined],
+  [200, "image/", "10", undefined],
+  [404, "image/png", "10", undefined],
+  [302, "image/png", "10", undefined],
+]
+for (const [status, type, length, want] of COVER_ANSWERS) if (coverAnswer(status, type, length) !== want) problems.push(`cover: a ${status} ${type} of ${length} bytes gave ${coverAnswer(status, type, length)}, not ${want}`)
+if (coverProxyAddress("http://i0.hdslb.com/a.jpg") !== proxied("https://i0.hdslb.com/a.jpg")) problems.push("cover: an http cover was not proxied as https")
+if (coverProxyAddress("https://evil.example/a.jpg") !== "") problems.push("cover: a cover off the host list got a proxy address")
+const directCover = readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtu.be/dQw4w9WgXcQ", title: "x", coverUrl: "https://i.ytimg.com/vi/x/hqdefault.jpg", aspect: "16:9" })
+if (directCover?.coverUrl !== "") problems.push("cover: a card kept a cover that bypasses the proxy")
+const offListCover = readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtu.be/dQw4w9WgXcQ", title: "x", coverUrl: proxied("https://evil.example/a.jpg"), aspect: "16:9" })
+if (offListCover?.coverUrl !== "") problems.push("cover: a card kept a proxy address to a host off the list")
+
 /* The content policy's frames: the page preview alone. A card opens the browser panel, so no platform page is ever framed. */
 const indexPage = fs.readFileSync(path.join(process.cwd(), "src/renderer/index.html"), "utf8")
 const policy = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(indexPage)?.[1] ?? ""
 const frameSources = (/(?:^|;)\s*frame-src ([^;]*)/.exec(policy)?.[1] ?? "").trim().split(/\s+/)
 const webFrames = frameSources.filter((source) => source !== "'self'" && source !== "http://*.localhost:*")
 if (!frameSources.includes("'self'") || webFrames.length) problems.push(`csp: frame-src allows ${webFrames.join(" ")} beyond the app and the page preview`)
+const imageSources = (/(?:^|;)\s*img-src ([^;]*)/.exec(policy)?.[1] ?? "").trim().split(/\s+/)
+if (!imageSources.includes("mcode-media:")) problems.push("csp: img-src does not allow the cover proxy")
+if (/(?:^|;)\s*(?:connect|frame|script|media)-src [^;]*mcode-media:/.test(policy)) problems.push("csp: the cover proxy is allowed for more than images")
 inspect("a platform link in a reply", htmlOf("watch https://www.youtube.com/watch?v=dQw4w9WgXcQ and [this](https://www.bilibili.com/video/BV1GJ411x7h7)", REPLY))
 
-console.log(`abc cases: ${ABC_HOSTILE.length * (OPTIONS.length + 3) + abcBlockCases.length + 1}, platform cases: ${PLATFORM_LINKS.length + 5}`)
+console.log(`abc cases: ${ABC_HOSTILE.length * (OPTIONS.length + 3) + abcBlockCases.length + 1}, platform cases: ${PLATFORM_LINKS.length + 5}, cover proxy cases: ${COVER_REQUESTS.length + COVER_REDIRECTS.length + COVER_ANSWERS.length + 6}`)
 console.log(`live cases: ${liveCases.length + 1}, fade cases: ${fadeCases.length + 1 + HOSTILE.length}, svg card cases: ${SVG_FILES.length + 6}`)
 console.log(`hostile inputs: ${HOSTILE.length} x ${OPTIONS.length + 1} option sets, svg pre-pass cases: ${SVG_CASES.length}, formatting cases: ${shape.length + blockCases.length + PATHS.length}`)
 

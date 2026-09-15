@@ -209,6 +209,103 @@ export function coverAddress(value: unknown): string {
   return /^https:\/\/[^\s"'<>]+$/i.test(address) ? address : ""
 }
 
+/* ------------------------------------------------------------ cover proxy */
+
+/*
+ * MiMo draws a card's cover through its main process, because many of these
+ * CDNs refuse a picture without their platform's page as referer. The window
+ * loads `mcode-media://proxy/?u=<address>`; the main process fetches the
+ * address only when it passes `coverRule` (media-cover.ts has the fetch).
+ */
+export const COVER_SCHEME = "mcode-media"
+const COVER_PARAM = "u"
+/* MiMo sets no cap; five megabytes is a cover several times over. */
+export const COVER_LIMIT = 5 * 1024 * 1024
+
+/* MiMo's cover hosts: the domain itself or any name under it, each with its platform's page as referer. */
+export const COVER_HOSTS: readonly { suffix: string; referer: string }[] = [
+  { suffix: ".hdslb.com", referer: "https://www.bilibili.com/" },
+  { suffix: ".biliimg.com", referer: "https://www.bilibili.com/" },
+  { suffix: ".byteimg.com", referer: "https://www.douyin.com/" },
+  { suffix: ".pstatp.com", referer: "https://www.douyin.com/" },
+  { suffix: ".ixigua.com", referer: "https://www.ixigua.com/" },
+  { suffix: ".yximgs.com", referer: "https://www.kuaishou.com/" },
+  { suffix: ".kwimgs.com", referer: "https://www.kuaishou.com/" },
+  { suffix: ".qiyipic.com", referer: "https://www.iqiyi.com/" },
+  { suffix: ".iqiyipic.com", referer: "https://www.iqiyi.com/" },
+  { suffix: ".qpic.cn", referer: "https://v.qq.com/" },
+  { suffix: ".gtimg.cn", referer: "https://v.qq.com/" },
+  { suffix: ".gtimg.com", referer: "https://v.qq.com/" },
+  { suffix: ".ykimg.com", referer: "https://www.youku.com/" },
+  { suffix: ".alicdn.com", referer: "https://www.youku.com/" },
+  { suffix: ".hitv.com", referer: "https://www.mgtv.com/" },
+  { suffix: ".mgtv.com", referer: "https://www.mgtv.com/" },
+  { suffix: ".cctvpic.com", referer: "https://www.yangshipin.cn/" },
+  { suffix: ".cmvideo.cn", referer: "https://www.miguvideo.com/" },
+  { suffix: ".miguvideo.com", referer: "https://www.miguvideo.com/" },
+  { suffix: ".sinaimg.cn", referer: "https://weibo.com/" },
+  { suffix: ".ytimg.com", referer: "https://www.youtube.com/" },
+  { suffix: ".ggpht.com", referer: "https://www.youtube.com/" },
+  { suffix: ".tiktokcdn.com", referer: "https://www.tiktok.com/" },
+  { suffix: ".tiktokcdn-us.com", referer: "https://www.tiktok.com/" },
+  { suffix: ".ibyteimg.com", referer: "https://www.tiktok.com/" },
+  { suffix: ".nflxext.com", referer: "https://www.netflix.com/" },
+]
+
+/** The rule a cover address falls under: https, no credentials or port, a host of the list. */
+export function coverRule(address: unknown): { target: string; referer: string } | undefined {
+  let parsed: URL
+  try {
+    parsed = new URL(String(address ?? ""))
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.port) return undefined
+  const host = parsed.hostname.toLowerCase()
+  const rule = COVER_HOSTS.find((entry) => host === entry.suffix.slice(1) || host.endsWith(entry.suffix))
+  return rule ? { target: parsed.href, referer: rule.referer } : undefined
+}
+
+/** A cover as the window loads it: through the proxy, or nothing when it is not a cover host's picture. */
+export function coverProxyAddress(address: unknown): string {
+  const rule = coverRule(coverAddress(address))
+  return rule ? `${COVER_SCHEME}://proxy/?${COVER_PARAM}=${encodeURIComponent(rule.target)}` : ""
+}
+
+/** A proxy request read: what to fetch with which referer, or MiMo's refusal (405 not GET, 400 malformed, 403 not allowed). */
+export function coverRequest(requestUrl: unknown, method: unknown): { ok: true; target: string; referer: string } | { ok: false; status: number } {
+  if (method !== "GET") return { ok: false, status: 405 }
+  let parsed: URL
+  try {
+    parsed = new URL(String(requestUrl ?? ""))
+  } catch {
+    return { ok: false, status: 400 }
+  }
+  const target = parsed.protocol === `${COVER_SCHEME}:` && parsed.hostname === "proxy" ? parsed.searchParams.get(COVER_PARAM) : null
+  if (!target) return { ok: false, status: 400 }
+  const rule = coverRule(target)
+  return rule ? { ok: true, ...rule } : { ok: false, status: 403 }
+}
+
+/** Where a cover's redirect may lead: another cover host address only, resolved against the one redirecting. */
+export function coverRedirect(from: string, location: string | null): { target: string; referer: string } | undefined {
+  if (!location) return undefined
+  try {
+    return coverRule(new URL(location, from).href)
+  } catch {
+    return undefined
+  }
+}
+
+/** The type a cover answer is passed on as: a 2xx picture (never SVG) not declared past the cap; else nothing. */
+export function coverAnswer(status: number, contentType: string | null, contentLength: string | null): string | undefined {
+  if (status < 200 || status >= 300) return undefined
+  const type = String(contentType ?? "").split(";")[0].trim().toLowerCase()
+  if (!/^image\/[a-z0-9.+-]+$/.test(type) || type === "image/svg+xml") return undefined
+  const declared = contentLength === null ? 0 : Number(contentLength)
+  return Number.isFinite(declared) && declared >= 0 && declared <= COVER_LIMIT ? type : undefined
+}
+
 function metaTag(html: string, names: string[]): string {
   for (const name of names) {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
@@ -259,8 +356,7 @@ export function bilibiliMeta(json: unknown, url: string): MediaMeta | undefined 
   const bvid = words(data.bvid)
   const cid = positive(data.cid)
   const title = words(data.title)
-  const cover = coverAddress(data.pic)
-  if (!bvid || !BVID.test(bvid) || !cid || !Number.isInteger(cid) || !title || !cover) return undefined
+  if (!bvid || !BVID.test(bvid) || !cid || !Number.isInteger(cid) || !title || !coverAddress(data.pic)) return undefined
   const dimension = record(data.dimension)
   const width = positive(dimension?.width)
   const height = positive(dimension?.height)
@@ -271,13 +367,13 @@ export function bilibiliMeta(json: unknown, url: string): MediaMeta | undefined 
     url,
     title,
     author: words(owner?.name),
-    coverUrl: cover,
+    coverUrl: coverProxyAddress(data.pic),
     durationSec: positive(data.duration),
     aspect: width && height && height > width ? "9:16" : "16:9",
   }
 }
 
-/** A card as the main process sent it, checked again on this side: only a platform link is ever opened. */
+/** A card as the main process sent it, checked again on this side: only a platform link is opened, and a cover only ever loads through the proxy. */
 export function readMediaMeta(value: unknown): MediaMeta | undefined {
   const body = record(value)
   if (!body || body.kind !== "video") return undefined
@@ -290,7 +386,7 @@ export function readMediaMeta(value: unknown): MediaMeta | undefined {
     url,
     title: typeof body.title === "string" ? body.title.slice(0, 300) : "",
     author: words(body.author)?.slice(0, 120),
-    coverUrl: coverAddress(body.coverUrl),
+    coverUrl: typeof body.coverUrl === "string" && coverRequest(body.coverUrl, "GET").ok ? body.coverUrl : "",
     durationSec: positive(body.durationSec),
     aspect: body.aspect === "9:16" ? "9:16" : "16:9",
   }

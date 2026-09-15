@@ -1,8 +1,10 @@
-import { ipcMain } from "electron"
+import { ipcMain, session } from "electron"
 import {
+  COVER_SCHEME,
   bilibiliMeta,
   cacheState,
   coverAddress,
+  coverProxyAddress,
   evictions,
   oembedMeta,
   pageMeta,
@@ -11,6 +13,7 @@ import {
   type MediaMeta,
   type MediaPlatform,
 } from "@shared/media-platform"
+import { serveCover } from "./media-cover"
 
 /**
  * The main process's half of MiMo's video cards.
@@ -21,6 +24,8 @@ import {
  * bilibili's view API, YouTube's oEmbed, and for the other twelve the page's
  * Open Graph tags. Only links `parsePlatformLink` already accepted are ever
  * fetched. A card itself opens its video in the panel's browser, as MiMo's does.
+ * Its cover is an address on MiMo's cover proxy (media-cover.ts), never the
+ * picture's own address.
  */
 
 const AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
@@ -74,9 +79,8 @@ async function youtube(url: string, signal: AbortSignal): Promise<MediaMeta | nu
   const response = await fetch(`https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`, { headers: { "user-agent": AGENT }, signal })
   if (response.status !== 200) return null
   const meta = oembedMeta(await response.json())
-  const cover = coverAddress(meta.image)
-  if (!meta.title || !cover) return null
-  return { kind: "video", platform: "youtube", url, title: meta.title, author: meta.author, coverUrl: cover, aspect: meta.vertical ? "9:16" : "16:9" }
+  if (!meta.title || !coverAddress(meta.image)) return null
+  return { kind: "video", platform: "youtube", url, title: meta.title, author: meta.author, coverUrl: coverProxyAddress(meta.image), aspect: meta.vertical ? "9:16" : "16:9" }
 }
 
 /* The other twelve always make a card, as MiMo's do: a blank one when the page says nothing useful. */
@@ -91,7 +95,7 @@ async function external(platform: MediaPlatform, url: string, signal: AbortSigna
       ...blank,
       title,
       author: title ? meta.author : undefined,
-      coverUrl: coverAddress(meta.image),
+      coverUrl: coverProxyAddress(meta.image),
       durationSec: title ? meta.durationSec : undefined,
       aspect: meta.vertical ? "9:16" : "16:9",
     }
@@ -141,4 +145,11 @@ export function registerMediaEmbeds(): void {
     const list = Array.isArray(urls) ? urls.filter((url): url is string => typeof url === "string" && url.length <= 2048).slice(0, PER_CALL) : []
     return Promise.all(list.map(cached))
   })
+
+  /*
+   * The covers, on the window's own session only. The browser panel's
+   * partition has no such scheme, so a page there cannot use the app to fetch
+   * with a platform's referer. The global fetch is looked up per request.
+   */
+  session.defaultSession.protocol.handle(COVER_SCHEME, (request) => serveCover(request.url, request.method, (url, init) => fetch(url, init)))
 }

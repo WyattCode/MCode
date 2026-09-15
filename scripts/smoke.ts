@@ -71,6 +71,7 @@ import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
 import { addressToURL, safeURL } from "../src/shared/web-address"
 import * as mediaPlatform from "../src/shared/media-platform"
+import { serveCover } from "../src/main/media-cover"
 import * as abcPlay from "../src/renderer/src/lib/abc-play"
 import {
   APP_CHORDS,
@@ -5584,7 +5585,7 @@ async function main() {
     const bilibiliCard = P.bilibiliMeta(view, "https://b23.tv/x")
     check(
       "bilibili's view answer gives the card: title, author, cover, length, orientation",
-      bilibiliCard?.title === "T" && bilibiliCard.aspect === "9:16" && bilibiliCard.coverUrl === "https://i0.hdslb.com/c.jpg" && bilibiliCard.durationSec === 212 && bilibiliCard.author === "Up",
+      bilibiliCard?.title === "T" && bilibiliCard.aspect === "9:16" && bilibiliCard.coverUrl === "mcode-media://proxy/?u=https%3A%2F%2Fi0.hdslb.com%2Fc.jpg" && bilibiliCard.durationSec === 212 && bilibiliCard.author === "Up",
       bilibiliCard,
     )
     check("no bilibili card without a cid, or on an error code", P.bilibiliMeta({ ...view, data: { ...view.data, cid: 0 } }, "u") === undefined && P.bilibiliMeta({ ...view, code: -404 }, "u") === undefined)
@@ -5609,6 +5610,72 @@ async function main() {
       ["c", { lastUsedAt: 2 }],
     ])
     check("the least recently used cards go first", P.evictions(used, 1).join(",") === "b,c")
+
+    /* MiMo's cover proxy, against a stand-in network: what it sends, where a redirect may lead, what it will not pass on. */
+    const fetched: { url: string; referer?: string; agent?: string; redirect?: string }[] = []
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const picture = () => new Response(png, { headers: { "content-type": "image/png" } })
+    const hopTo = (location: string) => () => new Response(null, { status: 302, headers: { location } })
+    const network: Record<string, () => Response> = {
+      "https://i0.hdslb.com/ok.png": picture,
+      "https://i0.hdslb.com/hop.png": hopTo("https://i1.hdslb.com/ok.png"),
+      "https://i1.hdslb.com/ok.png": picture,
+      "https://i0.hdslb.com/away.png": hopTo("https://evil.example/x.png"),
+      "https://i0.hdslb.com/loop.png": hopTo("https://i0.hdslb.com/loop.png"),
+      "https://i0.hdslb.com/page.html": () => new Response("<html></html>", { headers: { "content-type": "text/html" } }),
+      "https://i0.hdslb.com/vector.svg": () => new Response("<svg/>", { headers: { "content-type": "image/svg+xml" } }),
+      "https://i0.hdslb.com/declared.png": () => new Response(png, { headers: { "content-type": "image/png", "content-length": String(P.COVER_LIMIT + 1) } }),
+      "https://i0.hdslb.com/endless.png": () =>
+        new Response(new ReadableStream({ pull: (controller) => controller.enqueue(new Uint8Array(1024 * 1024)) }), { headers: { "content-type": "image/png" } }),
+    }
+    const stand = async (url: string, init: RequestInit): Promise<Response> => {
+      const headers = (init.headers ?? {}) as Record<string, string>
+      fetched.push({ url, referer: headers.referer, agent: headers["user-agent"], redirect: init.redirect })
+      if (url === "https://i0.hdslb.com/slow.png") {
+        return new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted"))))
+      }
+      const answer = network[url]
+      if (!answer) throw new Error(`no network for ${url}`)
+      return answer()
+    }
+    // The proxy address is built by hand: coverProxyAddress would turn an http cover into https before the proxy saw it.
+    const cover = (address: string, method = "GET", timeout?: number) => serveCover(`mcode-media://proxy/?u=${encodeURIComponent(address)}`, method, stand, timeout)
+    const statusOf = async (address: string, method?: string, timeout?: number) => (await cover(address, method, timeout)).status
+
+    fetched.length = 0
+    const good = await cover("https://i0.hdslb.com/ok.png")
+    const goodBytes = new Uint8Array(await good.arrayBuffer())
+    check(
+      "a cover is fetched with its platform's referer and MiMo's agent, redirects held back, and passed on as a sandboxed picture",
+      good.status === 200 && good.headers.get("content-type") === "image/png" && goodBytes.length === png.length && good.headers.get("cache-control") === "public, max-age=86400" &&
+        good.headers.get("content-security-policy") === "sandbox" && fetched.length === 1 && fetched[0].referer === "https://www.bilibili.com/" && /Chrome\/126\.0/.test(fetched[0].agent ?? "") && fetched[0].redirect === "manual",
+      { status: good.status, fetched },
+    )
+    fetched.length = 0
+    const hopped = await statusOf("https://i0.hdslb.com/hop.png")
+    check("a redirect to another cover host is followed", hopped === 200 && fetched.map((entry) => entry.url).join(" ") === "https://i0.hdslb.com/hop.png https://i1.hdslb.com/ok.png", { hopped, fetched })
+    fetched.length = 0
+    const away = await statusOf("https://i0.hdslb.com/away.png")
+    check("a redirect off the host list is refused and never fetched", away === 502 && !fetched.some((entry) => entry.url.includes("evil.example")), { away, fetched })
+    fetched.length = 0
+    const looped = await statusOf("https://i0.hdslb.com/loop.png")
+    check("a cover that keeps redirecting is refused after three", looped === 502 && fetched.length === 4, { looped, count: fetched.length })
+    check(
+      "a page, an SVG, a picture declared past the cap and one that never ends are all refused",
+      (await statusOf("https://i0.hdslb.com/page.html")) === 502 && (await statusOf("https://i0.hdslb.com/vector.svg")) === 502 &&
+        (await statusOf("https://i0.hdslb.com/declared.png")) === 502 && (await statusOf("https://i0.hdslb.com/endless.png")) === 502,
+    )
+    fetched.length = 0
+    const refusals = [
+      await statusOf("http://i0.hdslb.com/ok.png"),
+      await statusOf("https://i0.hdslb.com.evil.example/ok.png"),
+      await statusOf("https://evil.example/ok.png"),
+      await statusOf("https://i0.hdslb.com/ok.png", "POST"),
+      (await serveCover("mcode-media://proxy/", "GET", stand)).status,
+    ]
+    check("http, lookalike and off-list hosts, other methods and a bare proxy address are refused without a fetch", refusals.join(",") === "403,403,403,405,400" && fetched.length === 0, { refusals, fetched })
+    const slow = await cover("https://i0.hdslb.com/slow.png", "GET", 50)
+    check("a cover that does not answer in time is refused", slow.status === 502 && (await slow.arrayBuffer()).byteLength === 0)
   }
 
   section("Notices and scrollbars (MiMo)")
