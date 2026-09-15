@@ -5085,7 +5085,7 @@ async function main() {
   check("on macOS it names ⌘0", zoomNotice(80, "darwin").includes("⌘0"))
   check("a scrollbar stays coloured 500ms after the last scroll", SCROLLBAR_LINGER === 500, SCROLLBAR_LINGER)
 
-  await subagentChecks(root, project)
+  await subagentChecks(root)
   await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
@@ -5497,8 +5497,16 @@ async function deliveredToolChecks(root: string) {
   await fs.rm(data, { recursive: true, force: true })
 }
 
-async function subagentChecks(root: string, project: string) {
+async function subagentChecks(root: string) {
   section("Subagents (task tool)")
+  /*
+   * A project of its own: every turn photographs its project under one git lock, and the shared
+   * project has gathered hundreds of files by now, so a Stop check timed on a subagent starting
+   * could lose ten seconds to the photograph instead of measuring the runner.
+   */
+  const project = path.join(root, "subagent-project")
+  await fs.mkdir(project, { recursive: true })
+  await fs.writeFile(path.join(project, "README.md"), "# subagents\n")
 
   // Pure pieces first.
   check("a numbered general subagent takes its own tone", subagentTone("general-1") === 0 && subagentTone("general-6") === 5)
@@ -5744,7 +5752,13 @@ async function subagentChecks(root: string, project: string) {
   const requestsBefore = childTools.length
   await runner.prompt({ sessionID: three.id, text: "slow work" })
   const startedChild = await until(async () => (await childrenOf(three.id)).some((session) => runner.busySessions().includes(session.id)))
-  check("the subagent is listed as running while it works", startedChild)
+  check("the subagent is listed as running while it works", startedChild, startedChild ? undefined : {
+    parts: await taskParts(three.id),
+    children: (await childrenOf(three.id)).map((session) => ({ id: session.id, subagent: session.subagent })),
+    outstanding: permissions.outstanding(),
+    busy: runner.busySessions(),
+    childRequests: childTools.length - requestsBefore,
+  })
   // Stopped once its reply is streaming, so there is a reply to mark stopped.
   await until(() => childTools.length > requestsBefore)
   await new Promise((resolve) => setTimeout(resolve, 150))
