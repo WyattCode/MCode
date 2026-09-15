@@ -37,6 +37,7 @@ import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, t
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
 import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFile } from "../src/main/display-server"
+import { PowerHold } from "../src/main/power"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
@@ -2606,6 +2607,39 @@ async function main() {
       onWayland.join(",") === "gtk-version,ozone-platform,enable-wayland-ime,wayland-text-input-version",
       onWayland,
     )
+  }
+
+  section("Turn power hold (MiMo's prevent-app-suspension while a turn runs)")
+  {
+    const calls: string[] = []
+    let next = 7
+    const hold = new PowerHold({
+      start: (type) => {
+        calls.push(`start:${type}`)
+        return next++
+      },
+      stop: (id) => void calls.push(`stop:${id}`),
+    })
+    hold.sync(["a"])
+    hold.sync(["a", "b"])
+    check("the first busy session starts one blocker, the second adds none", calls.join(",") === "start:prevent-app-suspension" && hold.state.id === 7, calls)
+    hold.sync(["b"])
+    check("the hold stays while any session is busy", calls.length === 1 && hold.state.held.join(",") === "b", hold.state)
+    hold.sync([])
+    check("the last session ending stops that blocker", calls.join(",") === "start:prevent-app-suspension,stop:7" && hold.state.id === undefined, calls)
+    hold.sync([])
+    check("idle again stops nothing twice", calls.length === 2)
+    hold.sync(["c"])
+    check("a later turn starts a fresh blocker", calls.at(-1) === "start:prevent-app-suspension" && hold.state.id === 8, calls)
+    const failing = new PowerHold({
+      start: () => {
+        throw new Error("no blocker")
+      },
+      stop: () => void calls.push("stop:unexpected"),
+    })
+    failing.sync(["x"])
+    failing.sync([])
+    check("a blocker that fails to start holds nothing and stops nothing", failing.state.held.length === 0 && !calls.includes("stop:unexpected"))
   }
 
   section("Composer menus and home starters")

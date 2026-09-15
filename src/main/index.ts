@@ -4,7 +4,8 @@ import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { PowerHold } from "./power"
 import { startBackend, type Backend } from "../server/index"
 import { scratchRoot } from "../server/scratch"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
@@ -469,6 +470,15 @@ app.whenReady().then(async () => {
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
 
   backend = await startBackend(app.getPath("userData"))
+
+  /*
+   * MiMo keeps the machine from suspending while a turn runs. The runner's busy
+   * set is the truth; every backend event is a moment it may have changed, and
+   * re-reading a handful of ids costs nothing next to the event itself.
+   */
+  const powerHold = new PowerHold(powerSaveBlocker, (line) => console.info(line))
+  const runtime = backend.runtime
+  runtime.bus.subscribe(() => powerHold.sync(runtime.runner.busySessions()))
 
   // The renderer has no Node access; this is how it learns where to connect.
   ipcMain.handle("mcode:bootstrap", () => ({
