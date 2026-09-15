@@ -1642,11 +1642,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </button>
 
         <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
-
-        <div class="nav-foot">
-          MCode Desktop<br />
-          v{{ app.version }}
-        </div>
       </nav>
 
       <div class="content">
@@ -3592,15 +3587,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   background: var(--surface-key);
 }
 
-/* settings-v2-nav-footer: 11px on line-height 1, inset 4px from the column. */
-.nav-foot {
-  margin-top: auto;
-  padding: 4px 0 4px 4px;
-  color: var(--text-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  line-height: 1;
-}
-
 /* settings-v2-tab-header is 40/40/32 and the body below it 0/40/40, so the
    page carries 40 on every side and the title's own gap makes up the rest. */
 .content {
@@ -5150,10 +5136,6 @@ h3 {
 
 .nav-item.on {
   background: color-mix(in srgb, var(--text-strong) 8%, var(--surface-raised));
-}
-
-.nav-foot {
-  padding: 4px 11px;
 }
 
 .content {
