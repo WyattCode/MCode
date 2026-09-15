@@ -303,11 +303,12 @@ export const ChatGPTSubscription: ProviderAdapter = {
 
           case "response.completed":
           case "response.incomplete": {
+            // MiMo's split: input without the cached tokens it includes, output without the reasoning.
             const reported = event.response?.usage
-            usage.input = reported?.input_tokens ?? 0
-            usage.output = reported?.output_tokens ?? 0
-            usage.reasoning = reported?.output_tokens_details?.reasoning_tokens ?? 0
             usage.cacheRead = reported?.input_tokens_details?.cached_tokens ?? 0
+            usage.reasoning = reported?.output_tokens_details?.reasoning_tokens ?? 0
+            usage.input = (reported?.input_tokens ?? 0) - usage.cacheRead
+            usage.output = (reported?.output_tokens ?? 0) - usage.reasoning
             if (event.type === "response.incomplete") stop = "max_tokens"
             settled = true
             break

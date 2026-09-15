@@ -4,6 +4,7 @@ import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
+import { costOf } from "../session/usage"
 
 export function createClient(apiKey: string, maxRetries = 2): Anthropic {
   return new Anthropic({ apiKey, maxRetries })
@@ -76,13 +77,20 @@ export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[
   return out
 }
 
-export function usageFrom(usage: Anthropic.Usage | undefined, entry?: { input: number; output: number }): Usage {
+/*
+ * Anthropic's `input_tokens` already leaves out cache reads and writes, which
+ * is how MiMo counts input; reasoning is not reported apart from output.
+ */
+export function usageFrom(
+  usage: Anthropic.Usage | undefined,
+  entry?: { input: number; output: number; cacheRead?: number; cacheWrite?: number },
+): Usage {
   const input = usage?.input_tokens ?? 0
   const output = usage?.output_tokens ?? 0
   const cacheRead = usage?.cache_read_input_tokens ?? 0
   const cacheWrite = usage?.cache_creation_input_tokens ?? 0
-  const cost = entry ? ((input + cacheWrite) * entry.input + output * entry.output) / 1_000_000 : 0
-  return { input, output, reasoning: 0, cacheRead, cacheWrite, cost }
+  const counted = { input, output, reasoning: 0, cacheRead, cacheWrite }
+  return { ...counted, cost: costOf(counted, entry) }
 }
 
 /** What a request asks for when the caller named no cap. */

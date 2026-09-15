@@ -49,6 +49,7 @@ import {
 } from "./overflow"
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
+import { costOf } from "./usage"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -1547,17 +1548,8 @@ export class SessionRunner {
         return
       }
 
-      // Discovered providers report no pricing, so cost stays at zero
-      // rather than being invented from a guessed rate.
-      const entry = this.config.modelEntry(session.model)
-      const usage = {
-        ...outcome.usage,
-        cost: entry
-          ? ((outcome.usage.input + outcome.usage.cacheWrite) * entry.input +
-              outcome.usage.output * entry.output) /
-            1_000_000
-          : 0,
-      }
+      // MiMo's cost: cache reads and writes at their own prices, reasoning at the output price.
+      const usage = { ...outcome.usage, cost: costOf(outcome.usage, this.config.modelEntry(session.model)) }
       assistant.usage = usage
       await this.store.addUsage(sessionID, usage)
       /*

@@ -1,4 +1,4 @@
-import type { Message } from "@shared/protocol"
+import type { Message, Usage } from "@shared/protocol"
 import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
@@ -26,9 +26,32 @@ interface Delta {
   }[]
 }
 
+interface ChunkUsage {
+  prompt_tokens?: number
+  completion_tokens?: number
+  prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number }
+  completion_tokens_details?: { reasoning_tokens?: number }
+}
+
+/**
+ * A chat-completions usage frame in MiMo's terms: fresh input apart from the
+ * cached tokens `prompt_tokens` includes. OpenRouter, which MiMo reaches with
+ * its own SDK, also reports cache writes and reasoning, and its output is then
+ * counted without the reasoning; every other server gets the plain split.
+ */
+export function usageOf(reported: ChunkUsage, provider: string): Omit<Usage, "cost"> {
+  const prompt = reported.prompt_tokens ?? 0
+  const completion = reported.completion_tokens ?? 0
+  const cacheRead = reported.prompt_tokens_details?.cached_tokens ?? 0
+  if (provider !== "openrouter") return { input: prompt - cacheRead, output: completion, reasoning: 0, cacheRead, cacheWrite: 0 }
+  const cacheWrite = reported.prompt_tokens_details?.cache_write_tokens ?? 0
+  const reasoning = reported.completion_tokens_details?.reasoning_tokens ?? 0
+  return { input: prompt - cacheRead - cacheWrite, output: completion - reasoning, reasoning, cacheRead, cacheWrite }
+}
+
 interface Chunk {
   choices?: { delta?: Delta; finish_reason?: string | null }[]
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
+  usage?: ChunkUsage
   /** Sent inside a 200 stream by providers that fail after the headers. */
   error?: { message?: string } | string
 }
@@ -201,7 +224,7 @@ export const OpenAICompatible: ProviderAdapter = {
       return anonymous
     }
     let finish: string | null = null
-    let usage = { input: 0, output: 0 }
+    let usage: Omit<Usage, "cost"> = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
 
     for await (const data of sse(response.body, request.signal)) {
       if (data === "[DONE]") break
@@ -212,12 +235,7 @@ export const OpenAICompatible: ProviderAdapter = {
         continue
       }
 
-      if (chunk.usage) {
-        usage = {
-          input: chunk.usage.prompt_tokens ?? usage.input,
-          output: chunk.usage.completion_tokens ?? usage.output,
-        }
-      }
+      if (chunk.usage) usage = usageOf(chunk.usage, request.model.provider)
 
       if (chunk.error) throw describeStreamError(chunk.error)
 
@@ -292,7 +310,7 @@ export const OpenAICompatible: ProviderAdapter = {
     return {
       stop: toolCalls.length ? "tool_use" : finish === "length" ? "max_tokens" : "end_turn",
       toolCalls,
-      usage: { ...usage, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+      usage: { ...usage, cost: 0 },
     }
   },
 }
