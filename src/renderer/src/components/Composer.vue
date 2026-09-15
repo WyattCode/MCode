@@ -2173,7 +2173,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           v-if="resizable !== false"
           class="resize-handle"
           data-resize-handle
-          v-tip="{ label: t('composer.resizeHandle'), placement: 'top' }"
+          :title="t('composer.resizeHandle')"
           @pointerdown="startResize"
           @pointermove="moveResize"
           @pointerup="endResize"
@@ -2222,7 +2222,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               class="att-file"
               :class="{ openable: Boolean(item.path) }"
               data-attachment-tile
-              v-tip="{ label: item.path, placement: 'top' }"
               @click="onTileClick(item)"
             >
               <span class="badge att-badge" :style="badgeStyle(fileBadge(fileName(item.path)))">
@@ -2399,7 +2398,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               :class="{ open: menu === 'plus' }"
               :aria-expanded="menu === 'plus'"
               :aria-label="t('composer.plusTip')"
-              v-tip="{ label: t('composer.plusTip'), placement: 'top' }"
+              v-tip="{ label: t('composer.plusTip'), disabled: menu === 'plus' }"
               @click="toggle('plus')"
             >
               <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true">
@@ -2494,7 +2493,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <button
               class="pill access"
               :class="{ open: menu === 'access', full: access === 'full' }"
-              v-tip="{ label: t('composer.accessTip'), placement: 'top' }"
+              v-tip="{ label: t('composer.accessTip'), disabled: menu === 'access' }"
               @click="toggle('access')"
             >
               <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -2514,7 +2513,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               <button
                 v-for="entry in accessChoices"
                 :key="entry"
-                v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', wrap: true }"
+                v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', trigger: 'hover' }"
                 class="item access-item"
                 :class="{ on: entry === access }"
                 :data-access="entry"
@@ -2541,7 +2540,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             :data-mode="agent === 'plan' ? 'plan' : 'staged'"
             v-tip="{
               label: t('composer.modeChipTip', { mode: agent === 'plan' ? t('composer.planMode') : t('composer.staged') }),
-              placement: 'top',
             }"
             @click="agent === 'plan' ? chooseAgent('build') : toggleStaged()"
           >
@@ -2575,23 +2573,18 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               :class="{ open: menu === 'context' }"
               :aria-label="t('context.usage.view')"
               :aria-expanded="menu === 'context'"
+              v-tip="contextUsage && { card: { title: t('composer.ctxTitle'), lines: [contextUsage.shareLine, contextUsage.tokensLine, contextUsage.cacheLine] }, pinned: menu === 'context' }"
               @click="toggle('context')"
             >
               <ContextRing :percent="contextUsage.percent" :size="18" :stroke="2.4" />
             </button>
-            <span v-if="contextUsage" class="ctx-card" :class="{ shown: menu === 'context' }" role="status">
-              <span class="ctx-title">{{ t("composer.ctxTitle") }}</span>
-              <span v-if="contextUsage.shareLine">{{ contextUsage.shareLine }}</span>
-              <span>{{ contextUsage.tokensLine }}</span>
-              <span v-if="contextUsage.cacheLine">{{ contextUsage.cacheLine }}</span>
-            </span>
           </span>
 
           <div class="pill-wrap">
             <button
               class="pill model-pill"
               :class="{ open: menu === 'model' }"
-              v-tip="{ label: t('composer.modelTip'), placement: 'top' }"
+              v-tip="{ label: t('composer.modelTip'), disabled: menu === 'model' }"
               @click="toggle('model')"
             >
               <span class="model-label">{{ modelName }}</span>
@@ -2733,7 +2726,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             :class="{ on: voice !== 'idle', proc: voice === 'working', starting: voice === 'starting' }"
             :aria-label="voice === 'idle' ? t('voice.input') : t('voice.stopInput')"
             :aria-pressed="voice === 'recording'"
-            v-tip="{ label: voice === 'idle' ? t('voice.input') : t('voice.stopInput'), placement: 'top' }"
+            v-tip="{ label: voice === 'idle' ? t('voice.input') : t('voice.stopInput') }"
             @mousedown.prevent
             @click="toggleVoice"
           >
@@ -2822,7 +2815,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             type="button"
             :class="{ empty: !stopping && !hasContent, ready: !stopping && hasContent, stop: stopping }"
             :aria-label="stopping ? t('composer.stop') : t('composer.send')"
-            v-tip="{ label: stopping ? t('composer.stop') : t('composer.send'), placement: 'top' }"
+            v-tip="{ label: stopping ? t('composer.stop') : t('composer.send') }"
             @click="stopping ? app.abort(sessionID) : submit()"
           >
             <svg v-if="stopping" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
@@ -3525,45 +3518,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .ctx:hover,
 .ctx.open {
   background: var(--surface-hover);
-}
-
-/*
- * Measured from the reference: centred over the ring, six pixels clear of it,
- * a 20px corner on a hairline, three centred 12px lines. Symmetric about the
- * ring, so it needs no mirroring for right-to-left.
- */
-.ctx-card {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  z-index: 20;
-  display: none;
-  box-sizing: border-box;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  min-width: 180px;
-  padding: 10px 14px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  line-height: 16px;
-  white-space: nowrap;
-  color: var(--text-strong);
-  background: var(--surface-menu);
-  border: 0.5px solid var(--border-weak);
-  border-radius: 20px;
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-
-.ctx-slot:hover .ctx-card,
-.ctx-card.shown {
-  display: flex;
-}
-
-.ctx-title {
-  color: var(--text-weak);
 }
 
 /* MiMo's voice capsule: the round button widens into a pill in the send colour while it is in use. */

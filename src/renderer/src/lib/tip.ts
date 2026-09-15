@@ -24,8 +24,6 @@ export interface Tip {
   hint?: string
   /** MiMo's default side is top; it flips to the opposite side when there is no room. */
   placement?: Placement
-  /** No longer does anything: every tip wraps at 420px, as MiMo's do. Kept so older call sites type-check. */
-  wrap?: boolean
   /**
    * MiMo's information card, as its conversation rows and title show one: a
    * title in medium weight over a few quieter lines (project, folder, when it
@@ -419,7 +417,14 @@ export function installTips(app: App): void {
   window.addEventListener(
     "keydown",
     (event) => {
-      if (event.key === "Escape") hide()
+      if (event.key !== "Escape" || !open) return
+      const layer = open.target.closest('[aria-modal="true"], [role="dialog"], [role="alertdialog"], [role="menu"]')
+      hide()
+      // MiMo's tip is the top layer: over a dialog or menu, Escape shuts the tip and leaves the layer under it open.
+      if (layer) {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }
     },
     true,
   )
