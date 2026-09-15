@@ -1,5 +1,5 @@
 import type { Message, Usage } from "@shared/protocol"
-import { withAnnotations } from "@shared/annotations"
+import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { ProviderError, ProviderHttpError, headersOf, wireOfBody } from "./types"
@@ -79,7 +79,7 @@ export function toMessages(system: string, history: Message[]) {
       const files = attachments
         .filter((attachment) => !attachment.mime.startsWith("image/"))
         .map((attachment) => `<file path="${attachment.path}">\n${attachment.data}\n</file>`)
-      const text = [...files, withAnnotations(message.text, message.annotations, message.fileNotices)].filter(Boolean).join("\n\n")
+      const text = [...files, userText(message)].filter(Boolean).join("\n\n")
 
       /*
        * A plain string while there are no images: the multipart form is

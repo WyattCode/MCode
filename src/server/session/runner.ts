@@ -52,6 +52,7 @@ import { systemPrompt } from "./prompt"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor } from "../provider/sampling"
+import { runtimeContext, sessionNote } from "./context"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
@@ -1045,6 +1046,9 @@ export class SessionRunner {
     // subagents: a notice for the parent, or a follow-up for a subagent, joins the same way.
     extra: Pick<UserMessage, "notices" | "inbox"> = {},
   ): Promise<string> {
+    // The user's own words take the runtime context; a notice or a message from elsewhere does not.
+    const typed = !input.inbox && !extra.inbox && !extra.notices
+    const reminders = typed ? [runtimeContext({ language: this.config.get().language })] : []
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: input.sessionID,
@@ -1054,6 +1058,7 @@ export class SessionRunner {
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       ...extra,
+      ...(reminders.length ? { reminders } : {}),
       time: { created: Date.now() },
       // Marked, so the transcript can show it inside the turn it joined.
       steered: true,
@@ -1218,6 +1223,9 @@ export class SessionRunner {
       throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
     }
 
+    // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
+    const first = (await this.store.messages(session.id)).length === 0
+    const reminders = input.inbox ? [] : this.remindersFor(session, first)
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
@@ -1228,6 +1236,7 @@ export class SessionRunner {
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       // session chat
       ...(input.inbox ? { inbox: input.inbox } : {}),
+      ...(reminders.length ? { reminders } : {}),
       time: { created: Date.now() },
     }
     await this.store.saveMessage(user)
@@ -1246,6 +1255,25 @@ export class SessionRunner {
 
     this.launch(session.id, apiKey, controller, false, lead)
     return user.id
+  }
+
+  /**
+   * The notes a prompt the user typed is sent with: the runtime context every
+   * time, and on a conversation's first message the app note before it and the
+   * working directory inside it, as MiMo's desktop attaches them. A subagent's
+   * prompt is the runner's own and gets none.
+   */
+  private remindersFor(session: SessionInfo, first: boolean): string[] {
+    if (session.parentID) return []
+    const config = this.config.get()
+    const runtime = runtimeContext({ language: config.language, ...(first ? { directory: session.directory } : {}) })
+    if (!first) return [runtime]
+    const servers = session.agent === "plan" ? [] : this.tools(session.agent, session.model.model, session.id).flatMap((tool) => (tool.server ? [tool.server] : []))
+    const configured = Object.entries(config.mcpServers ?? {})
+      .filter(([, entry]) => entry.enabled !== false)
+      .map(([name]) => name)
+    const names = [...new Set([...servers, ...configured.filter((name) => this.mcpServersAt.get(session.id)?.has(name) ?? true)])]
+    return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
   }
 
   /**

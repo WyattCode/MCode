@@ -20,6 +20,7 @@ import { providerExtras, samplingFor } from "../src/server/provider/sampling"
 import { modelVariants } from "../src/server/provider/variants"
 import { OpenAICompatible } from "../src/server/provider/openai"
 import { verbose } from "../src/server/provider/chatgpt"
+import { interfaceLocale, localeName } from "../src/server/session/locale"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -566,6 +567,44 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const body = e.bodies.at(-1)
       check("temperature and top_p reach the request, top_k does not", body?.temperature === 1 && body.top_p === 0.9 && body.top_k === undefined, body)
       check("and Zhipu's thinking switch rides along", body?.thinking?.type === "enabled", body?.thinking)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: reply language and runtime context each turn (E7)")
+  {
+    check("the language is named in its own words and in English", localeName("de") === "de (Deutsch / German)", localeName("de"))
+    check("the machine's Chinese maps by region", interfaceLocale("", "zh-Hant-TW") === "zh-TW" && interfaceLocale("", "zh-CN") === "zh-CN" && interfaceLocale("system", "pt-PT") === "pt-BR")
+    check("a language the interface lacks falls back to English", interfaceLocale("", "sw-KE") === "en")
+    check("a chosen language wins over the machine", interfaceLocale("ja", "en-US") === "ja")
+
+    const e = await engine({ language: "zh-CN" })
+    try {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "FIRST message" })
+      await e.idle(session.id)
+      const first = wireText(e.bodies[0])
+      check("every prompt carries the reply language in a system-reminder", first.includes("<system-reminder>") && first.includes("Response language: zh-CN"), first.slice(0, 600))
+      check("the first also carries the working directory", first.includes(`Working directory: ${JSON.stringify(e.project).slice(1, -1)}`), first.slice(0, 600))
+      check("and the app note: MCP servers, where skills go, the question tool", first.includes("About this app") && first.includes("MCP servers") && first.includes(".mcode/skills") && first.includes("question tool"), first.slice(0, 900))
+      check("before what the user typed", first.indexOf("Response language") < first.indexOf("FIRST message"))
+      const stored = (await e.store.messages(session.id)).find((message) => message.role === "user")
+      check("the transcript keeps the words as typed, the notes apart", stored?.role === "user" && stored.text === "FIRST message" && (stored.reminders?.length ?? 0) === 2, stored)
+
+      await e.config.set({ language: "fr" })
+      await e.runner.prompt({ sessionID: session.id, text: "SECOND message" })
+      await e.idle(session.id)
+      const second = wireText(e.bodies.at(-1))
+      check("a later prompt takes the language the interface has now", second.includes("Response language: fr"), second.slice(-900))
+      check("while the earlier message keeps what it was sent with", second.includes("Response language: zh-CN"))
+      check("and only the first carries the app note and the directory", second.split("About this app").length === 2 && second.split("Working directory").length === 2)
+
+      const chat = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: chat.id, text: "from elsewhere", inbox: { from: "Other", sessionID: session.id, direction: "request" } })
+      await e.idle(chat.id)
+      const inbound = (await e.store.messages(chat.id)).find((message) => message.role === "user")
+      check("a message from another conversation carries no runtime context", inbound?.role === "user" && !inbound.reminders, inbound)
     } finally {
       await e.close()
     }

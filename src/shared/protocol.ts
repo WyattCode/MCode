@@ -226,6 +226,13 @@ export interface UserMessage {
   /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
   fileNotices?: FileNotice[]
   /**
+   * Notes the runner attached when the message was sent - MiMo's runtime
+   * context: the reply language, the working directory and, on a
+   * conversation's first message, what this app offers. The model reads each in
+   * a system-reminder before everything else; the transcript does not show them.
+   */
+  reminders?: string[]
+  /**
    * subagents: written by the runner, not the user - what became of background
    * subagents. `text` is what the model reads; the transcript draws pills.
    */

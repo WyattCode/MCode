@@ -87,3 +87,14 @@ export function annotationsBlock(list: readonly Annotation[] | undefined): strin
 export function withAnnotations(text: string, list: readonly Annotation[] | undefined, notices?: readonly FileNotice[]): string {
   return [fileNoticesBlock(notices), text, annotationsBlock(list)].filter(Boolean).join("\n\n")
 }
+
+/** What a provider is sent for a user message: the runner's notes first, each in a system-reminder, then the above. */
+export function userText(message: {
+  text: string
+  annotations?: readonly Annotation[]
+  fileNotices?: readonly FileNotice[]
+  reminders?: readonly string[]
+}): string {
+  const notes = (message.reminders ?? []).map((note) => `<system-reminder>\n${note.trim()}\n</system-reminder>`)
+  return [...notes, withAnnotations(message.text, message.annotations, message.fileNotices)].filter(Boolean).join("\n\n")
+}
