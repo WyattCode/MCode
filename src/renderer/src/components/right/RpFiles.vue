@@ -4,6 +4,8 @@ import type { DirEntry, FileHit, ResponseMap } from "@shared/protocol"
 import type { MenuItem } from "../../lib/menu"
 import ContextMenu from "../ContextMenu.vue"
 import PdfView from "./PdfView.vue"
+import AbcBlock from "../parts/AbcBlock.vue"
+import { isAbcFile } from "../../lib/abc-play"
 import { useApp } from "../../stores/app"
 import { useRightPanel } from "../../stores/right-panel"
 import { renderMarkdown } from "../../lib/markdown"
@@ -220,6 +222,8 @@ watch(
 )
 
 const isMarkdown = computed(() => /\.(md|markdown)$/i.test(props.viewFile ?? ""))
+/* MiMo draws an .abc file as a score, with the same block a reply's abc fence gets. */
+const isAbc = computed(() => isAbcFile(props.viewFile))
 const isHtml = computed(() => /\.(html?|xhtml)$/i.test(props.viewFile ?? ""))
 const isText = computed(() => opened.value?.kind === "text" && !opened.value.tooBig)
 const lines = computed(() => (opened.value?.content ?? "").replace(/\n+$/, "").split("\n"))
@@ -777,6 +781,7 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
               <audio :key="mediaVersion" class="fv-audio" :src="mediaUrl" controls preload="metadata" @error="mediaFailed = true" />
             </div>
             <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
+            <div v-else-if="isAbc" class="fv-doc text" data-ft-abc><AbcBlock :code="opened.content" /></div>
             <div v-else-if="isMarkdown" class="fv-doc text" v-html="renderMarkdown(opened.content)" />
             <div
               v-else

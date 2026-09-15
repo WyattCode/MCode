@@ -35,10 +35,18 @@
       Requests may reach the preview server alone (http://*.localhost:*, which
       is loopback): MiMo's SVG file card reads a served .svg's text for its
       code tab, and that server answers other origins for .svg files only.
+
+      Frames may also show exactly two video players, https://player.bilibili.com
+      and https://www.youtube-nocookie.com: MiMo plays a reply's bilibili or
+      YouTube link inline in the platform's own player page. Nothing broader -
+      not the platforms' own sites, and not the other twelve video platforms,
+      whose cards open in the browser. @shared/media-platform's isEmbedAddress
+      names the same two, the card sets no other frame address, and the main
+      process keeps such a frame on a player page and its popups out of the app.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:* https://player.bilibili.com https://www.youtube-nocookie.com; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
   </head>
