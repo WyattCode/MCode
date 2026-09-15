@@ -1233,54 +1233,26 @@ function copyWorkingDirectory() {
 
 /*
  * Folders dropped onto the side column's Projects, as MiMo takes them: each
- * becomes a project - brought back if it had been closed, given a first task
- * if it has none, since a project here is a folder with a conversation - and
- * the last one is opened. A drop that held no folder says so.
+ * goes onto the project list with no conversation made, and the home screen
+ * comes up with the last one picked. A drop that held no folder says so.
  */
 async function addDroppedProjects(directories: string[]) {
   if (!directories.length) {
     notifyFailure(t("side.dropNotDir"))
     return
   }
-  const closed = app.config?.closedProjects ?? []
-  const kept = closed.filter((entry) => !directories.includes(entry))
-  if (kept.length !== closed.length) await app.patchConfig({ closedProjects: kept })
+  await addAndBrowse(directories)
+}
+
+/* MiMo's add then browseProject: listed, the last one the latest pick, and home with it chosen. */
+async function addAndBrowse(directories: string[]) {
+  const last = directories[directories.length - 1]!
   for (const directory of directories) {
-    if (!app.sessions.some((session) => session.directory === directory && !session.archived && !session.scratch)) {
-      await app.create(directory)
-    }
+    await app.addProject(directory, { used: directory === last, switched: directory === last })
   }
-  await openProject(directories[directories.length - 1]!)
+  startIn(last)
 }
 
-async function openProject(directory: string) {
-  // Opening a directory that was closed brings it - and its sessions - back.
-  const closed = app.config?.closedProjects ?? []
-  if (closed.includes(directory)) {
-    await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
-  }
-  /*
-   * Archived sessions are excluded on purpose. `find` matched them, so a
-   * project whose sessions had all been archived opened one and was bounced
-   * straight back out by the rule that the workspace never sits inside an
-   * archived session - clicking the project looked like it did nothing at all.
-   * Sorted, because "resume where I left off" means the newest, not whichever
-   * happens to come first in the array.
-   */
-  const existing = app.sessions
-    .filter((session) => session.directory === directory && !session.archived)
-    .sort((a, b) => b.updated - a.updated)[0]
-  if (existing) await app.open(existing.id)
-  else await app.create(directory)
-  view.value = "session"
-  await focusComposer()
-}
-
-/**
- * Always starts a fresh session, unlike openProject, which resumes the existing
- * one. Both are reachable from the project panel, and a button labelled "new
- * session" reusing an old one reads as the button doing nothing.
- */
 /*
  * Starting a task no longer creates anything: it puts the home screen up with
  * that project chosen, and the session is created by the send. A session made
@@ -1294,25 +1266,19 @@ function startIn(directory?: string) {
 }
 
 async function newSessionIn(directory: string) {
-  const closed = app.config?.closedProjects ?? []
-  if (closed.includes(directory)) {
-    await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
-  }
+  await app.addProject(directory, { used: true, silent: true })
   startIn(directory)
 }
 
 /*
- * DL15, MiMo's open-folder: the home screen with the folder picked and no
- * conversation made. Several may be chosen; each is brought back if it was
- * closed, and the last one is the pick.
+ * DL15, MiMo's open-folder: each folder chosen goes onto the project list, so
+ * the side column shows it at once, and the home screen comes up with the last
+ * one picked. No conversation is made.
  */
 async function browse() {
   const directories = await window.mcode.pickDirectory(t("cmd.openProject"), true)
   if (!directories.length) return
-  const closed = app.config?.closedProjects ?? []
-  const kept = closed.filter((entry) => !directories.includes(entry))
-  if (kept.length !== closed.length) await app.patchConfig({ closedProjects: kept })
-  startIn(directories[directories.length - 1])
+  await addAndBrowse(directories)
 }
 
 /**
@@ -1626,16 +1592,8 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
  * kept below whatever the search leaves.
  */
 function moveMenu(target?: (typeof app.sessions)[number]): Pick<MenuItem, "children" | "search" | "footer" | "childWidth"> {
-  const closed = new Set(app.config?.closedProjects ?? [])
-  const recent = new Map<string, number>()
-  for (const session of app.sessions) {
-    if (session.archived || session.scratch || closed.has(session.directory)) continue
-    recent.set(session.directory, Math.max(recent.get(session.directory) ?? 0, session.updated))
-  }
   const current = target && !target.scratch ? target.directory : undefined
-  const rows: MenuItem[] = [...recent.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([directory]) => ({
+  const rows: MenuItem[] = app.projects.map((directory) => ({
       key: `move:${directory}`,
       label: projectName(directory, app.config?.projectNames),
       active: directory === current,
@@ -1786,6 +1744,8 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
       projectIcons: rekey(config.projectIcons, directory, next),
       projectColors: rekey(config.projectColors, directory, next),
       pinnedProjects: swap(config.pinnedProjects),
+      projects: swap(config.projects),
+      projectOrder: swap(config.projectOrder),
       closedProjects: swap(config.closedProjects),
     })
   },
@@ -1795,11 +1755,9 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
   },
 }
 
-/* Takes projects off the side column; opening the folder again brings each back. */
+/* Takes projects off the project list; adding the folder again brings each back. */
 async function closeProjects(directories: string[]) {
-  const closed = app.config?.closedProjects ?? []
-  const next = [...closed, ...directories.filter((directory) => !closed.includes(directory))]
-  if (next.length !== closed.length) await app.patchConfig({ closedProjects: next })
+  await app.removeProjects(directories)
 }
 
 const projectMenuItems = computed<MenuItem[]>(() => {
@@ -1971,15 +1929,14 @@ async function createNamedProject(title: string, source?: string) {
     await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
   }
   if (moving) {
-    const closed = app.config?.closedProjects ?? []
-    if (closed.includes(directory)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
+    await app.addProject(directory, { silent: true })
     await app.move(moving, directory)
     if (app.currentID !== moving) await app.open(moving)
     view.value = "session"
     return
   }
   // DL15: MiMo lands on the home screen with the new project picked, and makes no conversation for it.
-  await newSessionIn(directory)
+  await addAndBrowse([directory])
 }
 
 /**
@@ -3847,15 +3804,7 @@ watch(
  * The projects a digit can reach, ordered the way the home screen orders them:
  * whichever was worked on most recently is Ctrl+1.
  */
-const openProjects = computed(() => {
-  const closed = new Set(app.config?.closedProjects ?? [])
-  const seen = new Map<string, number>()
-  for (const session of app.sessions) {
-    if (closed.has(session.directory)) continue
-    seen.set(session.directory, Math.max(seen.get(session.directory) ?? 0, session.updated))
-  }
-  return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([directory]) => directory)
-})
+const openProjects = computed(() => app.projects)
 
 /** Steps the session's agent, wrapping - there are only ever a handful. */
 async function cycleAgent(by: 1 | -1) {

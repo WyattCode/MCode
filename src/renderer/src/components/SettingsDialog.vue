@@ -19,6 +19,7 @@ import {
 } from "@shared/protocol"
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { folderName, projectName } from "../lib/project"
+import { listedProjects } from "@shared/projects"
 import SelectMenu from "./SelectMenu.vue"
 import { chime } from "../lib/sound"
 import { CHIMES, chimeOf, type Chime } from "@shared/chime"
@@ -549,21 +550,10 @@ function tokens(count: number): string {
 /*
  * The environment page, laid out as MiMo's: the projects, each of which can be
  * configured or removed, then every worktree those projects have beyond their
- * main checkout. MCode's projects are the folders its conversations live in, so
- * adding one reopens a closed folder or starts a conversation there, and
- * removing one closes it the way the side column does - its conversations stay.
+ * main checkout. It lists the stored project list in its own order, newest
+ * added first, as MiMo's page does; adding and removing change only the list.
  */
-const envProjects = computed(() => {
-  const closed = new Set(app.config?.closedProjects ?? [])
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const session of [...app.sessions].sort((a, b) => b.updated - a.updated)) {
-    if (session.archived || session.scratch || closed.has(session.directory) || seen.has(session.directory)) continue
-    seen.add(session.directory)
-    out.push(session.directory)
-  }
-  return out
-})
+const envProjects = computed(() => listedProjects(app.config))
 
 const removingProject = ref<string>()
 /** The project whose environment is open, or none for the list. */
@@ -576,15 +566,8 @@ const envDirty = computed(
 async function addProject() {
   const [directory] = await window.mcode.pickDirectory(t("set.addProject"), false)
   if (!directory) return
-  const closed = app.config?.closedProjects ?? []
-  if (closed.includes(directory)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
-  /*
-   * A folder with no conversation is not yet a project here, so one is made -
-   * but, as MiMo's add stays on this page, it is not opened behind the dialog.
-   */
-  if (!app.sessions.some((session) => session.directory === directory && !session.archived && !session.scratch)) {
-    await app.create(directory, { open: false })
-  }
+  // MiMo's add with activate off: listed, nothing opened, no conversation made.
+  await app.addProject(directory, { switched: false })
   void loadTrees()
 }
 
@@ -592,8 +575,7 @@ async function removeProject() {
   const directory = removingProject.value
   removingProject.value = undefined
   if (!directory) return
-  const closed = app.config?.closedProjects ?? []
-  if (!closed.includes(directory)) await app.patchConfig({ closedProjects: [...closed, directory] })
+  await app.removeProjects([directory])
   void loadTrees()
 }
 
