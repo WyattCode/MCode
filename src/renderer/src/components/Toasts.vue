@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { dismiss, hold, release, toasts, type ToastLink } from "../lib/toast"
 import { t } from "../lib/i18n"
 
@@ -7,6 +8,56 @@ function follow(id: string, link: ToastLink) {
   link.run()
   dismiss(id)
 }
+
+/*
+ * MiMo's keyboard way in (sonner's hotkey): Alt+T puts focus on the notices,
+ * which hold still while it is there. Escape, or focus leaving them, puts it
+ * back where it was without scrolling.
+ */
+const list = ref<HTMLElement>()
+let before: HTMLElement | null = null
+
+function onHotkey(event: KeyboardEvent) {
+  if (!event.altKey || event.code !== "KeyT" || event.ctrlKey || event.metaKey || event.shiftKey) return
+  if (toasts.value.length) list.value?.focus()
+}
+
+function onFocusIn(event: FocusEvent) {
+  if (before !== null || !list.value) return
+  const from = event.relatedTarget
+  before = from instanceof HTMLElement && !list.value.contains(from) ? from : document.body
+  for (const toast of toasts.value) hold(toast.id)
+}
+
+function giveBack() {
+  const target = before
+  before = null
+  for (const toast of toasts.value) release(toast.id)
+  if (target && target !== document.body) target.focus({ preventScroll: true })
+}
+
+function onFocusOut(event: FocusEvent) {
+  if (list.value?.contains(event.relatedTarget as Node | null)) return
+  giveBack()
+}
+
+function onListKey(event: KeyboardEvent) {
+  if (event.key !== "Escape") return
+  event.preventDefault()
+  event.stopPropagation()
+  giveBack()
+}
+
+/* The last notice leaving with focus inside hands focus back as well. */
+watch(
+  () => toasts.value.length,
+  (count) => {
+    if (!count && before !== null) giveBack()
+  },
+)
+
+onMounted(() => document.addEventListener("keydown", onHotkey))
+onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
 </script>
 
 <template>
@@ -15,7 +66,17 @@ function follow(id: string, link: ToastLink) {
     window, the newest last. The column lets clicks through; only a capsule
     takes the pointer.
   -->
-  <div class="toasts" role="status" aria-live="polite">
+  <div
+    ref="list"
+    class="toasts"
+    role="status"
+    aria-live="polite"
+    tabindex="-1"
+    data-toasts
+    @focusin="onFocusIn"
+    @focusout="onFocusOut"
+    @keydown="onListKey"
+  >
     <TransitionGroup name="toast">
       <div
         v-for="toast in toasts"
@@ -73,6 +134,8 @@ function follow(id: string, link: ToastLink) {
   gap: 14px;
   align-items: center;
   pointer-events: none;
+  /* Focused from Alt+T; the notices themselves show where the keyboard is. */
+  outline: none;
   /* Over the caption band's drag region, never part of it. */
   -webkit-app-region: no-drag;
 }

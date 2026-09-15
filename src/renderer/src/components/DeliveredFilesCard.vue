@@ -3,7 +3,9 @@ import { computed, ref } from "vue"
 import type { AssistantPart } from "@shared/protocol"
 import { FILE_MANAGER_ID, fileManagerLabel, openApps } from "@shared/open-app"
 import { useApp } from "../stores/app"
-import { deliveredCard, deliveredFiles, relativeInside, sizeLabel, type Delivered } from "../lib/delivered"
+import { deliveredCard, deliveredFiles, projectPath, relativeInside, sizeLabel, type Delivered } from "../lib/delivered"
+import { mediaOf } from "../lib/markdown"
+import LocalMedia from "./parts/LocalMedia.vue"
 import { openDocument, officeTypeOf } from "../lib/office-open"
 import { useOpenWith } from "../lib/open-with"
 import type { MenuItem } from "../lib/menu"
@@ -34,6 +36,14 @@ const OFFICE_TONE = {
 } as const
 const WEB_TONE = { fg: "#2f6fed", bg: "rgba(47, 111, 237, 0.14)" }
 const FILE_TONE = { fg: "#6b7280", bg: "rgba(120, 120, 128, 0.14)" }
+
+/* A delivered picture, video or sound inside the project is previewed; anywhere else it keeps the plain card. */
+function mediaPreview(item: Delivered): { kind: "image" | "video" | "audio"; path: string } | undefined {
+  if (item.kind !== "file" || deliveredCard(item) !== "media") return undefined
+  const kind = mediaOf(item.path)
+  const path = projectPath(item.path, props.directory)
+  return kind && path ? { kind, path } : undefined
+}
 
 function officeType(item: Delivered) {
   return item.kind === "file" ? (officeTypeOf(item.name) ?? officeTypeOf(item.path)) : null
@@ -138,9 +148,13 @@ async function pick(key: string) {
 
 <template>
   <div v-if="items.length" class="delivered" data-delivered-files>
+    <template v-for="item in items" :key="item.kind === 'file' ? item.path : item.url">
+    <!-- MiMo previews a delivered picture, video or sound in place; `.text` is where the media card's own styles apply. -->
+    <div v-if="mediaPreview(item)" class="text dl-media" data-delivered-card="media">
+      <LocalMedia :kind="mediaPreview(item)!.kind" :path="mediaPreview(item)!.path" :directory="directory" />
+    </div>
     <div
-      v-for="item in items"
-      :key="item.kind === 'file' ? item.path : item.url"
+      v-else
       role="button"
       tabindex="0"
       class="dl-card"
@@ -195,6 +209,7 @@ async function pick(key: string) {
         <path d="M7 17 17 7M7 7h10v10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
     </div>
+    </template>
     <Teleport to="body">
       <ContextMenu
         v-if="menu"
@@ -232,6 +247,11 @@ async function pick(key: string) {
 .dl-card:focus-visible {
   border-color: #2f6fed;
   outline: none;
+}
+
+/* A preview sits where a card would, the same distance under what is above. */
+.dl-media {
+  margin-top: 10px;
 }
 
 .dl-tile {

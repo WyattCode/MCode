@@ -5,6 +5,7 @@ import { useApp } from "../stores/app"
 import { notify, notifyFailure } from "../lib/toast"
 import { t } from "../lib/i18n"
 import { readBranches, switchBranch } from "../lib/branch-switch"
+import { onMenuRowKey } from "../lib/menu-keys"
 
 /**
  * The home screen's branch chip and its menu, laid out from MiMo's.
@@ -139,6 +140,11 @@ function onPointerDown(event: MouseEvent) {
   if (open.value && !root.value?.contains(event.target as Node)) open.value = false
 }
 
+/* MiMo's menu keys over the rows; the two fields keep their own keys. */
+function onMenuKey(event: KeyboardEvent) {
+  onMenuRowKey(event, [...(root.value?.querySelectorAll<HTMLElement>(".menu button.row:not(:disabled)") ?? [])])
+}
+
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== "Escape") return
   if (pending.value) {
@@ -175,7 +181,7 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
-    <div v-if="open" class="menu" role="menu" data-branch-menu>
+    <div v-if="open" class="menu" role="menu" data-branch-menu @keydown="onMenuKey">
       <div class="search">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M7.2 2.8a4.4 4.4 0 1 0 0 8.8 4.4 4.4 0 0 0 0-8.8z" />

@@ -3,14 +3,15 @@ import { ReadTool } from "./read"
 import { EditTool, WriteTool } from "./edit"
 import { GlobTool, GrepTool, ListTool } from "./search"
 import { BashTool } from "./bash"
-import { TodoWriteTool, WebFetchTool } from "./task"
+import { TaskTool, WebFetchTool } from "./task"
 import { QuestionTool } from "./question"
 import { ApplyPatchTool } from "./patch"
 import { InvalidTool } from "./invalid"
-import { TaskTool } from "./subagent"
+import { ActorTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
+import { SkillSearchTool, SkillTool } from "./skill"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { CronTool } from "./cron"
@@ -41,10 +42,11 @@ export const TOOLS: ToolDefinition[] = [
   GlobTool,
   GrepTool,
   BashTool,
-  TodoWriteTool,
+  // tasks: MiMo's task registry, where todowrite used to be.
+  TaskTool,
   WebFetchTool,
   // subagents: last, so the prefix every earlier request cached stays as it was.
-  TaskTool,
+  ActorTool,
   // MiMo's built-in desktop tools: appended, for the same reason.
   PdfLocateTool,
   PresentFilesTool,
@@ -55,6 +57,9 @@ export const TOOLS: ToolDefinition[] = [
   TalkToSessionTool,
   CreateSessionTool,
   UpdateSessionTool,
+  // skills: appended, in MiMo's order (search, then load), for the same reason.
+  SkillSearchTool,
+  SkillTool,
   // history: appended after those for the same reason.
   HistoryTool,
   MemoryTool,
@@ -125,7 +130,7 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 /*
- * Tools that only ever read. `task` is here because it does nothing to files
+ * Tools that only ever read. `actor` is here because it does nothing to files
  * itself: its subagent's own calls are recorded into the parent's turn.
  */
 const READS = new Set([
@@ -133,11 +138,13 @@ const READS = new Set([
   "list",
   "glob",
   "grep",
-  "todowrite",
+  "task",
   "webfetch",
   "question",
   "invalid",
-  "task",
+  "actor",
+  // subagents: a subagent handing back its structured result.
+  "StructuredOutput",
   // They act on the window or the app's settings, never on the project's files.
   "pdf_locate",
   "present_files",
@@ -148,6 +155,9 @@ const READS = new Set([
   "talk_to_session",
   "create_session",
   "update_session",
+  // skills: loading instructions reads files, and changes none.
+  "skill",
+  "skill_search",
   // history, memory: they only read the app's own record.
   "history",
   "memory",

@@ -1,4 +1,4 @@
-import type { Message } from "@shared/protocol"
+import type { Message, TaskItem } from "@shared/protocol"
 import type { SessionArtifact } from "@shared/session-files"
 
 /**
@@ -11,23 +11,20 @@ import type { SessionArtifact } from "@shared/session-files"
 export { sessionFiles, projectRelative, fileKind, sessionArtifacts, sessionReferences, artifactKind } from "@shared/session-files"
 export type { FileTouch, SessionFiles, FileKind, SessionArtifact, SessionReferences, ArtifactKind, ArtifactRole } from "@shared/session-files"
 
-/** One entry of the plan the todowrite tool records. */
-export interface Todo {
+/** One entry of the plan a conversation's todowrite calls recorded, before the task registry replaced them. */
+interface Todo {
   id: string
   content: string
   status: string
-  /** Not written by todowrite today; honoured if a plan ever nests. */
   parentId?: string
 }
 
 /**
- * The most recent plan in a conversation, with when it was written.
- *
- * Read from the transcript rather than asked for, because the tool's own result
- * carries it and the newest call is by definition the current plan - an earlier
- * one is a plan that has since been rewritten.
+ * The most recent todowrite plan in a conversation saved before the task
+ * registry, with when it was written. Read from the transcript, whose newest
+ * call is by definition the plan that stood.
  */
-export function latestTodoWrite(messages: readonly Message[]): { todos: Todo[]; at: number } {
+function latestTodoWrite(messages: readonly Message[]): { todos: Todo[]; at: number } {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index]
     // Only an assistant turn runs tools; a user message has no parts at all.
@@ -42,10 +39,6 @@ export function latestTodoWrite(messages: readonly Message[]): { todos: Todo[]; 
   return { todos: [], at: 0 }
 }
 
-export function latestTodos(messages: readonly Message[]): Todo[] {
-  return latestTodoWrite(messages).todos
-}
-
 /** MiMo's task statuses, with `stalled` derived for work a finished turn left open. */
 export type InfoTaskStatus = "open" | "in_progress" | "stalled" | "blocked" | "done" | "abandoned"
 
@@ -57,7 +50,7 @@ export interface InfoTask {
   depth: number
 }
 
-/** todowrite's four words in MiMo's vocabulary; `blocked` passes through should a plan carry it. */
+/** The registry's statuses as they are; a saved todowrite plan's four words in MiMo's vocabulary. */
 function mapStatus(status: string): InfoTaskStatus {
   if (status === "completed" || status === "done") return "done"
   if (status === "cancelled" || status === "abandoned") return "abandoned"
@@ -66,14 +59,27 @@ function mapStatus(status: string): InfoTaskStatus {
   return "open"
 }
 
+/** Finished tasks leave the card this long after they end, as MiMo archives them. */
+const ARCHIVE_MS = 7 * 24 * 60 * 60 * 1000
+
 /**
- * The plan as the card lists it: parents before their children, and an item
- * still marked in progress shown as stalled unless it was written during the
- * turn running now - otherwise the turn that meant to finish it has ended.
+ * The task list as the card draws it: parents before their children, and an
+ * item still in progress shown as stalled unless it changed during the turn
+ * running now - otherwise the turn that meant to finish it has ended.
+ *
+ * The conversation's task registry when it has one; a conversation saved
+ * before the registry shows the last plan its todowrite calls recorded.
  */
-export function infoTasks(messages: readonly Message[], running: boolean): InfoTask[] {
-  const { todos, at } = latestTodoWrite(messages)
-  if (!todos.length) return []
+export function infoTasks(registry: readonly TaskItem[] | undefined, messages: readonly Message[], running: boolean, now = Date.now()): InfoTask[] {
+  const entries: { id: string; summary: string; status: string; parentID?: string; at: number }[] = registry?.length
+    ? registry
+        .filter((task) => !(task.ended !== undefined && (task.status === "done" || task.status === "abandoned") && now - task.ended >= ARCHIVE_MS))
+        .map((task) => ({ id: task.id, summary: task.summary, status: task.status, parentID: task.parentID, at: task.updated }))
+    : (() => {
+        const { todos, at } = latestTodoWrite(messages)
+        return todos.map((todo) => ({ id: todo.id, summary: todo.content, status: todo.status, parentID: todo.parentId, at }))
+      })()
+  if (!entries.length) return []
   let runStarted = Infinity
   if (running) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -85,35 +91,32 @@ export function infoTasks(messages: readonly Message[], running: boolean): InfoT
       }
     }
   }
-  const current = running && at >= runStarted
-  const byParent = new Map<string, Todo[]>()
-  const ids = new Set(todos.map((todo) => todo.id))
-  for (const todo of todos) {
-    const parent = todo.parentId && ids.has(todo.parentId) && todo.parentId !== todo.id ? todo.parentId : ""
-    byParent.set(parent, [...(byParent.get(parent) ?? []), todo])
+  const byParent = new Map<string, typeof entries>()
+  const ids = new Set(entries.map((entry) => entry.id))
+  for (const entry of entries) {
+    const parent = entry.parentID && ids.has(entry.parentID) && entry.parentID !== entry.id ? entry.parentID : ""
+    byParent.set(parent, [...(byParent.get(parent) ?? []), entry])
   }
   const out: InfoTask[] = []
   const seen = new Set<string>()
+  const shown = (entry: (typeof entries)[number]): InfoTaskStatus => {
+    const mapped = mapStatus(entry.status)
+    return mapped === "in_progress" && !(running && entry.at >= runStarted) ? "stalled" : mapped
+  }
   const walk = (parent: string, depth: number) => {
-    for (const todo of byParent.get(parent) ?? []) {
-      if (seen.has(todo.id)) continue
-      seen.add(todo.id)
-      const mapped = mapStatus(todo.status)
-      out.push({
-        id: todo.id,
-        summary: todo.content,
-        status: mapped === "in_progress" && !current ? "stalled" : mapped,
-        depth,
-      })
-      walk(todo.id, depth + 1)
+    for (const entry of byParent.get(parent) ?? []) {
+      if (seen.has(entry.id)) continue
+      seen.add(entry.id)
+      out.push({ id: entry.id, summary: entry.summary, status: shown(entry), depth })
+      walk(entry.id, depth + 1)
     }
   }
   walk("", 0)
   // Anything caught in a parent loop is still listed, at the top.
-  for (const todo of todos) {
-    if (seen.has(todo.id)) continue
-    seen.add(todo.id)
-    out.push({ id: todo.id, summary: todo.content, status: mapStatus(todo.status), depth: 0 })
+  for (const entry of entries) {
+    if (seen.has(entry.id)) continue
+    seen.add(entry.id)
+    out.push({ id: entry.id, summary: entry.summary, status: mapStatus(entry.status), depth: 0 })
   }
   return out
 }

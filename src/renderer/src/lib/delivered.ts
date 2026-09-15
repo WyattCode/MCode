@@ -2,6 +2,7 @@ import { watch } from "vue"
 import type { AssistantPart, Message, ToolPart } from "@shared/protocol"
 import { openDocument, officeTypeOf } from "./office-open"
 import { requestPdfLocate } from "./annotate"
+import { mediaOf } from "./markdown"
 
 /*
  * MiMo's two window tools, on the renderer's side: what a present_files call
@@ -49,11 +50,28 @@ export function sizeLabel(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** Which of MiMo's cards a delivered entry is drawn as. */
-export function deliveredCard(item: Delivered): "office" | "html" | "file" | "url" {
+/** Which of MiMo's cards a delivered entry is drawn as: a picture, video or sound is previewed rather than listed. */
+export function deliveredCard(item: Delivered): "office" | "html" | "media" | "file" | "url" {
   if (item.kind === "url") return "url"
   if (officeTypeOf(item.name) ?? officeTypeOf(item.path)) return "office"
-  return /\.html?$/i.test(item.name) || /\.html?$/i.test(item.path) ? "html" : "file"
+  if (/\.html?$/i.test(item.name) || /\.html?$/i.test(item.path)) return "html"
+  return mediaOf(item.path) ? "media" : "file"
+}
+
+/**
+ * The file a path a reply names, when it may be read off disk to preview it:
+ * inside the conversation's project, taken from the project when relative.
+ * MiMo previews any path; MCode keeps to the project, and anything else stays
+ * a path chip or a plain card. Answers the absolute path, so nothing looks for
+ * the file in a folder above the project.
+ */
+export function projectPath(file: string, directory: string | undefined): string | undefined {
+  const norm = file.trim().replace(/\\/g, "/")
+  if (!directory || !norm || norm.split("/").includes("..") || norm.startsWith("~") || /^[a-z][a-z0-9+.-]*:/i.test(norm.replace(/^[A-Za-z]:\//, ""))) return undefined
+  const base = directory.replace(/\\/g, "/").replace(/\/+$/, "")
+  const absolute = /^[A-Za-z]:\//.test(norm) || norm.startsWith("/")
+  const full = absolute ? norm : `${base}/${norm.replace(/^\.\//, "")}`
+  return relativeInside(directory, full) ? full : undefined
 }
 
 /** A path under a folder, as the folder-relative path the main process opens; empty when it is not under it. */

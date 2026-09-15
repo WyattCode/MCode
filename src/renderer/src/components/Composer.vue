@@ -6,11 +6,13 @@ import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, Model
 import { interruptedTurn } from "@shared/resume"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
-import { drafts, homeFilled, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
+import { drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
-import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
+import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
+import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
@@ -325,6 +327,11 @@ onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHe
  */
 const dismissed = ref(false)
 
+/* MiMo's: leaving the box closes the @ and slash menus. Typing again brings them back. */
+function onInputBlur() {
+  dismissed.value = true
+}
+
 /**
  * Paths that were chosen from the @ menu rather than merely typed.
  *
@@ -467,8 +474,21 @@ function dialogOpen(): boolean {
   return Boolean(document.querySelector(".scrim, .overlay"))
 }
 
+/*
+ * MiMo takes drops on the main column only - and on the box itself while it
+ * floats beside the side panel. A side chat's box, in the side panel, takes none.
+ */
+function inDropZone(event: DragEvent): boolean {
+  if (props.side) return false
+  return event.target instanceof Element && Boolean(event.target.closest(".main, #float-dock"))
+}
+
 function onDragOver(event: DragEvent) {
   if (dialogOpen()) return
+  if (!inDropZone(event)) {
+    dragging.value = false
+    return
+  }
   const types = event.dataTransfer?.types
   if (!types?.includes("Files") && !types?.includes("text/plain")) return
   // Without this the window navigates to the dropped file instead.
@@ -483,8 +503,10 @@ function onDragLeave(event: DragEvent) {
 
 async function onDrop(event: DragEvent) {
   if (dialogOpen()) return
-  event.preventDefault()
   dragging.value = false
+  // Anywhere else the window's own guard stops the browser opening the file, and nothing is added.
+  if (!inDropZone(event)) return
+  event.preventDefault()
 
   /*
    * A path dragged as text becomes a mention rather than a copy of the file:
@@ -845,14 +867,10 @@ function removeSkill(name: string) {
   }, 200)
 }
 
-/* The chips' skills spelled out ahead of the message, the way a skill command is expanded when typed. */
+/* MiMo's chips: each chosen skill is named as `/name` ahead of the message, and the server loads what a message names. */
 function withSkills(message: string, chosen: string[]): string {
-  const expanded = chosen
-    .map((name) => serverCommand(name))
-    .filter((command): command is CommandInfo => Boolean(command?.template))
-    .map((command) => expandTemplate(command.template, "").trim())
-    .filter(Boolean)
-  return [...expanded, message].filter((part) => part.trim()).join("\n\n")
+  if (!chosen.length) return message
+  return [chosen.map((name) => `/${name}`).join(" "), message].filter((part) => part.trim()).join(" ")
 }
 
 /* The plus menu's skills submenu: MiMo's search box over the project's skills, beside its row. */
@@ -881,6 +899,9 @@ async function openSkillMenu(event: Event) {
   skillPlace.value = besideRow(row, panel.offsetWidth, panel.offsetHeight)
   panel.querySelector("input")?.focus()
 }
+
+/* Set while attached audio is being read before a send, so a second Enter does not start another. */
+let probingAudio = false
 
 async function submit() {
   const value = text.value.trim()
@@ -923,6 +944,27 @@ async function submit() {
     notify(t("composer.compact.busy"))
     return
   }
+  // MiMo reads each audio file first: one it cannot read, or one past its limit, stops the send and keeps the draft.
+  if (probingAudio) return
+  const audio = attachments.value.filter((file) => isAudioFile(file.path))
+  if (audio.length) {
+    probingAudio = true
+    try {
+      for (const file of audio) {
+        const verdict = audioVerdict(await probeAudio(file))
+        if (verdict === "unsupported") {
+          notifyFailure(t("composer.audioFormatUnsupported"))
+          return
+        }
+        if (verdict === "tooLong") {
+          notifyFailure(t("composer.audioTooLong", { minutes: limitMinutes() }))
+          return
+        }
+      }
+    } finally {
+      probingAudio = false
+    }
+  }
   historyIndex.value = null
   const sent = attachments.value
   const carried = mentioned.value
@@ -954,7 +996,11 @@ async function submit() {
         // MiMo makes a side conversation on its first message; its tab hands over how.
         target = props.createSide ? await props.createSide() : undefined
         if (!target) throw new Error("")
-      } else await app.create(props.startDirectory, { scratch: props.startScratch })
+      } else {
+        await app.create(props.startDirectory, { scratch: props.startScratch })
+        // MiMo's newChat says so whenever the first send makes a new task.
+        notify(t("toast.newConvoCreated"))
+      }
     } catch (err) {
       text.value = value
       attachments.value = sent
@@ -1057,7 +1103,8 @@ function subtaskOf(value: string): { description: string; prompt: string } | und
 function outgoing(value: string): string {
   const line = splitCommandLine(value)
   const command = line && serverCommand(line.name)
-  if (!command) return value
+  // skills: a `/name` line goes as typed; the server loads the skill it names into the message.
+  if (!command || command.source === "skill") return value
   const expanded = expandTemplate(command.template, line!.args)
   // An MCP prompt whose fetch failed has no template. Sending nothing would be
   // refused by the store and the draft would bounce back with no explanation,
@@ -1301,9 +1348,9 @@ function mention(path: string) {
 
 /*
  * MiMo's drafts: one per conversation (the side chat's apart), and the home
- * screen's own, which is also kept on disk. Switching conversations puts the
- * words, files, mentions and skill chips of the one being left aside and
- * brings back the other's.
+ * screen's own, all kept on disk (lib/composer-drafts). Switching
+ * conversations puts the words, files, mentions and skill chips of the one
+ * being left aside and brings back the other's.
  */
 const draftKey = computed(() =>
   props.fresh ? "home" : `${props.side ? "side" : "main"}:${sessionID.value ?? ""}`,
@@ -1326,7 +1373,7 @@ watch(
     historyIndex.value = null
     if (previous) saveDraft(previous)
     const kept = drafts.get(next)
-    text.value = kept?.text ?? (next === "home" ? loadHomeDraft() : "")
+    text.value = kept?.text ?? ""
     attachments.value = kept?.attachments ?? []
     mentioned.value = new Set(kept?.mentioned ?? [])
     skills.value = kept?.skills ?? []
@@ -1337,9 +1384,15 @@ watch(
   { immediate: true },
 )
 
-watch(text, (value) => {
-  if (props.fresh) keepHomeDraft(value)
-})
+/* Every change is kept with its box at once and written to disk shortly after, as MiMo's are. */
+watch(
+  [text, attachments, mentioned, skills],
+  () => {
+    saveDraft(draftKey.value)
+    scheduleDraftSave()
+  },
+  { deep: true },
+)
 
 watch(
   () => [text.value.trim(), attachments.value.length, skills.value.length] as const,
@@ -1383,13 +1436,13 @@ const SOURCE_BADGE: Record<CommandInfo["source"], string> = {
   skill: "composer.slashSkill",
 }
 
-/** The project's own commands, its MCP prompts and its skills, badged by source. */
+/** The project's own commands, its MCP prompts and its skills, badged by source; a skill shipped with the app says so. */
 const serverEntries = computed<SlashEntry[]>(() =>
   app.commands.map((entry) => ({
     id: `custom.${entry.name}`,
     trigger: entry.name,
     description: entry.description,
-    badge: t(SOURCE_BADGE[entry.source]),
+    badge: entry.source === "skill" && entry.builtin ? t("composer.slashBuiltinSkill") : t(SOURCE_BADGE[entry.source]),
   })),
 )
 
@@ -1797,24 +1850,19 @@ onBeforeUnmount(() => {
 
 /**
  * The access chip's three positions, as MiMo has them: the default, "approve
- * for me" in the middle, and full access. "full" is what is left once nothing
- * asks - a map with a deny in it still counts, since a deny never prompts
- * either. The middle one is carried by `accessLevel`, and the server applies
- * it on top of whatever the map says.
+ * for me" in the middle, and full access. On the home screen the chip is the
+ * app's default level; in a conversation it is that conversation's own, which
+ * MiMo keeps per conversation and a conversation without one takes from the
+ * default (@shared/access).
  */
-const ACCESS_CHOICES = ["ask", "auto", "full"] as const
-type Access = (typeof ACCESS_CHOICES)[number]
-
-const access = computed<Access>(() => {
-  if (app.config?.accessLevel === "auto") return "auto"
-  const map = app.config?.permissions
-  if (!map) return "ask"
-  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
-})
+const accessHere = computed(() => !props.fresh && !props.side && Boolean(sessionID.value))
+const access = computed<Access>(() =>
+  accessHere.value ? sessionAccess(session.value?.access, app.config) : defaultAccess(app.config),
+)
 
 /* Full access is offered only once settings allow it - or while it is already on, so it can be left. */
 const accessChoices = computed(() =>
-  ACCESS_CHOICES.filter((entry) => entry !== "full" || app.config?.allowFullAccess || access.value === "full"),
+  ACCESS_LEVELS.filter((entry) => entry !== "full" || app.config?.allowFullAccess || access.value === "full"),
 )
 
 /* Set while the question before full access is on screen. */
@@ -1908,33 +1956,25 @@ async function confirmFull() {
 }
 
 /*
- * Moving between the default and the middle level leaves the map alone - the
- * middle level is applied on top of it. Only entering and leaving full access
- * rewrites the map, and leaving it puts back what was there.
+ * In a conversation the level is saved with that conversation alone. On the
+ * home screen it is the default, written into the config; that map arithmetic
+ * is shared with the settings switch, which drops full access the same way.
  */
 async function applyAccess(next: Access) {
-  const map = app.config?.permissions
-  if (!map) return
-  const leavingFull = access.value === "full"
-  let permissions = map
-  let accessBefore = app.config?.accessBefore
-  if (next === "full") {
-    permissions = { ...map }
-    for (const kind of PERMISSION_KINDS) if (permissions[kind] !== "deny") permissions[kind] = "allow"
-    accessBefore = { ...map }
-  } else if (leavingFull) {
-    const kept = app.config?.accessBefore ?? {}
-    permissions = { ...map }
-    for (const kind of PERMISSION_KINDS) {
-      if (permissions[kind] === "deny") continue
-      const restored = kept[kind]
-      permissions[kind] =
-        restored && (PERMISSION_ACTIONS as readonly string[]).includes(restored) ? restored : DEFAULT_PERMISSIONS[kind]
+  const id = sessionID.value
+  if (accessHere.value && id) {
+    try {
+      await app.setAccess(id, next)
+      app.announceAccess(next)
+    } catch (err) {
+      notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
     }
-    accessBefore = undefined
+    return
   }
+  const patch = app.config ? accessPatch(app.config, next) : undefined
+  if (!patch) return
   try {
-    await app.patchConfig({ permissions, accessBefore, accessLevel: next }, { quiet: true })
+    await app.patchConfig(patch, { quiet: true })
     app.announceAccess(next)
   } catch (err) {
     notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
@@ -1975,7 +2015,7 @@ const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
  * model with levels always shows one.
  */
 const effortLevel = computed<Effort | undefined>(() =>
-  clampEffort(variants.value, session.value?.effort ?? app.config?.effort),
+  clampEffort(variants.value, app.config?.effort),
 )
 
 const effortLabel = computed(() => {
@@ -1986,8 +2026,8 @@ const effortLabel = computed(() => {
 
 /*
  * A level chosen in a model's submenu: that model and that level. On the home
- * screen both are the defaults the next task starts with, as MiMo's global
- * level is; in a conversation they are the conversation's.
+ * screen the model is the default the next task starts with; in a conversation
+ * it is the conversation's. The level is MiMo's global one either way.
  */
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
@@ -2327,11 +2367,8 @@ async function chooseModel(provider: string, model: string) {
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
   } else {
     await app.setModel({ provider, model }, sessionID.value)
-    if (!props.side) {
-      const inForce = session.value?.effort ?? app.config?.effort
-      const effort = clampEffort(variants, inForce)
-      if (effort && effort !== inForce) await app.setEffort(effort)
-    }
+    const effort = clampEffort(variants, app.config?.effort)
+    if (effort && effort !== app.config?.effort) await app.setEffort(effort)
   }
   app.announceModel(before, { provider, model })
 }
@@ -2647,6 +2684,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           :aria-busy="compactingHere || undefined"
           @keydown.escape="mode === 'shell' && setMode('normal')"
           @keydown="onKeydown"
+          @blur="onInputBlur"
           @keyup="syncCaret"
           @click="onBoxClick"
           @select="syncCaret"

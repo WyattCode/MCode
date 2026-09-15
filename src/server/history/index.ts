@@ -122,14 +122,6 @@ export class HistoryIndex {
       case "session.removed":
         for (const key of [...this.pending.keys()]) if (key.startsWith(`${change.sessionID}/`)) this.pending.delete(key)
         this.forgetSession(change.sessionID)
-        return
-      case "cleared":
-        this.pending.clear()
-        this.projects.clear()
-        this.database.transaction(() => {
-          this.db.exec("DELETE FROM history_part")
-          this.db.exec("DELETE FROM history_session")
-        })
     }
   }
 

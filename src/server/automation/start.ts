@@ -20,6 +20,7 @@ export function startAutomations(dataDirectory: string, runner: SessionRunner, s
         .filter((provider) => provider.configured)
         .flatMap((provider) => provider.models.map((model) => ({ provider: provider.id, id: model.id, name: model.name }))),
     agent: () => config.get().agent,
+    effort: () => config.get().effort,
     scratch: () => scratchDirectory(new Date(), config.get().projectRoot),
     publish: (event) => bus.publish(event),
   })

@@ -6,6 +6,10 @@ directories:
 extraResources:
   - from: resources/app-icons
     to: app-icons
+  # The built-in skills: read from resources/skills beside the asar, where the
+  # agent's shell can also run their scripts.
+  - from: resources/skills
+    to: skills
 
 files:
   - out/**/*

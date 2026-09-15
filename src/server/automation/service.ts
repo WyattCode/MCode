@@ -68,7 +68,7 @@ export interface AutomationDeps {
   now(): number
   sessions: {
     get(sessionID: string): Promise<SessionInfo | undefined>
-    create(input: { directory: string; model: ModelRef; agent?: AgentName; effort?: Effort; title?: string; scratch?: boolean }): Promise<SessionInfo>
+    create(input: { directory: string; model: ModelRef; agent?: AgentName; title?: string; scratch?: boolean }): Promise<SessionInfo>
     messages(sessionID: string): Promise<Message[]>
   }
   prompt(input: { sessionID: string; text: string; inbox: UserMessage["inbox"] }): Promise<unknown>
@@ -76,6 +76,8 @@ export interface AutomationDeps {
   /** The models of connected providers, as `provider/model` with a display name. */
   models(): { provider: string; id: string; name: string }[]
   agent(): AgentName
+  /** The app-wide reasoning level. */
+  effort(): Effort | undefined
   /** A fresh folder for a task with no project. */
   scratch(): Promise<string>
   publish(event: ServerEvent): void
@@ -170,6 +172,12 @@ export class AutomationService {
     }
   }
 
+  /** The app's reasoning level as a task's default; effort is one app-wide value here, not a conversation's own. */
+  private appEffort(): { reasoning?: Effort } {
+    const effort = this.deps.effort()
+    return effort && (REASONING as readonly string[]).includes(effort) ? { reasoning: effort } : {}
+  }
+
   private model(ref: string | undefined, fallback: ModelRef): ModelRef & { name: string } {
     const models = this.deps.models()
     if (!ref) {
@@ -250,7 +258,7 @@ export class AutomationService {
         ...(chosenMode === "existing-task" ? { targetThreadId: text(input.targetThreadId) ?? caller.id } : {}),
         project,
         model: this.model(text(input.model), caller.model),
-        ...(reasoning ? { reasoning: reasoning as Effort } : caller.effort && (REASONING as readonly string[]).includes(caller.effort) ? { reasoning: caller.effort } : {}),
+        ...(reasoning ? { reasoning: reasoning as Effort } : this.appEffort()),
         rrule: rrule!,
         ...(text(input.scheduleLabel) ? { label: text(input.scheduleLabel) } : {}),
         notification: (notification as NotificationPolicy | undefined) ?? (chosenMode === "existing-task" ? "important-updates" : "all-runs"),
@@ -352,7 +360,6 @@ export class AutomationService {
       directory,
       model: { provider: automation.model.provider, model: automation.model.model },
       agent: this.deps.agent(),
-      ...(automation.reasoning ? { effort: automation.reasoning } : {}),
       title: automation.title,
       ...(automation.project ? {} : { scratch: true }),
     })
