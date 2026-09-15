@@ -19,6 +19,15 @@ export interface HistoryDepth {
 export interface SessionInfo {
   id: string
   title: string
+  /**
+   * Where the title came from: the first prompt's fallback, the model's
+   * generated title, or the user's own rename. MiMo generates once, only over
+   * the fallback, so a rename is never replaced. Absent on sessions stored
+   * before this existed, which are treated as already named.
+   */
+  titleSource?: "fallback" | "generated" | "user"
+  /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
+  worktreeNotice?: boolean
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
@@ -83,9 +92,17 @@ export interface SessionInfo {
    *
    * Everything up to and including `messageID` is sent to the model as
    * `summary` instead of verbatim. The messages themselves are kept: the point
-   * is to shrink the context, not to lose the history.
+   * is to shrink the context, not to lose the history. `trigger` is what set it
+   * off, MiMo's label, and `files` the files the summarised part worked on,
+   * each with what happened to it, which the next request lists.
    */
-  compacted?: { messageID: string; summary: string; at: number }
+  compacted?: {
+    messageID: string
+    summary: string
+    at: number
+    trigger?: "manual" | "automatic" | "provider-overflow"
+    files?: string[]
+  }
   /**
    * Where the conversation has been rolled back to, if it has been.
    *
@@ -160,6 +177,8 @@ export interface ReasoningPart {
   id: string
   text: string
   time: { created: number; completed?: number }
+  /** Anthropic's signature over the thinking, kept so the block can be sent back to the same model, as MiMo keeps it. */
+  signature?: string
 }
 
 export type AssistantPart = TextPart | ReasoningPart | ToolPart
@@ -222,6 +241,15 @@ export interface UserMessage {
    * reads them after the text.
    */
   reminders?: string[]
+  /**
+   * Notes the runner attached when the message was sent - MiMo's runtime
+   * context: the reply language, the working directory and, on a
+   * conversation's first message, what this app offers; also where attached
+   * files are, and the one note about changing a repository's main worktree.
+   * The model reads each in a system-reminder before everything else; the
+   * transcript does not show them.
+   */
+  context?: string[]
   /**
    * subagents: written by the runner, not the user - what became of background
    * subagents. `text` is what the model reads; the transcript draws pills.
@@ -373,8 +401,15 @@ export interface Annotation {
 export interface Attachment {
   path: string
   mime: string
-  /** base64 for binary, utf8 text otherwise. */
+  /** base64 for binary, utf8 text otherwise; empty for a file attached by path. */
   data: string
+  /**
+   * MiMo attaches a file by its path: nothing is copied into the message, and
+   * the file is read from disk each time a request is built, so a file of any
+   * size can be attached. `path` is absolute, or project-relative for an @
+   * mention; the server fills in `mime` when the message is sent.
+   */
+  byPath?: boolean
 }
 
 export interface AssistantMessage {
@@ -409,7 +444,14 @@ export interface AssistantMessage {
    * disk: the next update for the message comes without it, which is how the
    * row goes away once the stream resumes.
    */
-  retry?: { attempt: number; message: string; next: number }
+  retry?: {
+    attempt: number
+    message: string
+    next: number
+    /** MiMo's kind of failure (stream, network, rate_limit, server) and the attempts it allows, 0 when it waits indefinitely. */
+    kind?: string
+    max?: number
+  }
   time: { created: number; completed?: number }
 }
 
@@ -676,6 +718,13 @@ export interface QuestionRequest {
   tool?: { messageID: string; callID: string }
   /** When it was asked, so the dock can queue it with permission requests in arrival order. */
   time: number
+  /**
+   * Not the model's question but the runner's: MiMo's repeated-call check, put
+   * when a tool is called three times running with the same input. The window
+   * draws it in its own language; the answers are the keys `once`, `always` and
+   * `reject`, or typed feedback, which refuses.
+   */
+  loop?: { tool: string }
 }
 
 /**
@@ -1331,6 +1380,13 @@ export interface AppConfig {
    * the repository and the other travels with the reader.
    */
   instructions: string
+  /**
+   * MiMo's `instructions` setting: more instruction files to read into every
+   * conversation, as paths or globs (`docs/*.md`, `~/notes/rules.md`), each
+   * looked for from the working folder up to the repository's top. Web
+   * addresses are not fetched. Set in the config file; the settings have no row for it.
+   */
+  instructionFiles?: string[]
   /** How spoken input is written down. */
   voiceMode: VoiceMode
   /**
@@ -1442,6 +1498,11 @@ export interface CustomModel {
   attachment?: boolean
   /** Token limits: the input (context) window and the output cap. An output limit needs an input limit. */
   limit?: { context?: number; output?: number }
+  /** MiMo's model fields a config file can set beyond the form: which other inputs it reads, and an hour-long prompt cache. */
+  inputs?: { pdf?: boolean; audio?: boolean; video?: boolean }
+  cacheTTL?: "5m" | "1h"
+  /** MiMo's `interleaved.field`: the message field an OpenAI-compatible model reads its own earlier reasoning back from. */
+  interleaved?: "reasoning" | "reasoning_content" | "reasoning_details"
 }
 
 export interface CustomProvider {
@@ -1482,6 +1543,12 @@ export interface CustomProvider {
    * and the value is read from the process at the moment it is needed.
    */
   environment?: string
+  /**
+   * Which API the gateway speaks. Absent is OpenAI-compatible, which every
+   * provider stored before this existed is; `anthropic` reaches a Claude-style
+   * gateway over the Messages API, as MiMo's `npm: @ai-sdk/anthropic` does.
+   */
+  protocol?: "openai" | "anthropic"
 }
 
 /**
@@ -1705,6 +1772,7 @@ export type Request =
       apiKey: string
       headers?: Record<string, string>
       models: CustomModel[]
+      protocol?: CustomProvider["protocol"]
     }
   | { type: "provider.removeCustom"; provider: string }
   | {
@@ -1716,6 +1784,7 @@ export type Request =
       apiKey: string
       headers?: Record<string, string>
       models: CustomModel[]
+      protocol?: CustomProvider["protocol"]
     }
   /** Copied in the backend so the stored key never travels to the window; `name` is the copy's, already worded. */
   | { type: "provider.copyCustom"; provider: string; name: string }

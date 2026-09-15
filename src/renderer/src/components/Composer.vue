@@ -18,9 +18,7 @@ import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 import { clampEffort, effortLabelKey, findModel, withoutLatest } from "../lib/model"
 import {
-  absolutePath,
   fileName,
-  mentionAttachment,
   mentionSpan,
   mentionedIn,
   withMention,
@@ -1112,16 +1110,8 @@ async function fillCommand(value: string, to?: string): Promise<{ text: string; 
     notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
     return undefined
   }
-  const attachments: Attachment[] = []
-  for (const file of filled.files) {
-    try {
-      const attachment = mentionAttachment(file.name, await app.client.request({ type: "file.read", path: file.path }))
-      if (attachment) attachments.push(attachment)
-      else notifyFailure(t("attach.unreadable"), file.name)
-    } catch {
-      notifyFailure(t("attach.unreadable"), file.name)
-    }
-  }
+  // The named files go by their absolute path, as a mention does: the server reads each when the model is asked.
+  const attachments: Attachment[] = filled.files.map((file) => ({ path: file.path, mime: "", data: "", byPath: true }))
   return { text: filled.prompt.trim() ? filled.prompt : value, attachments, command }
 }
 
@@ -1146,30 +1136,22 @@ function commandRoot(to?: string): string | undefined {
 }
 
 /**
- * The mentioned files, read at the moment the message goes.
+ * The mentioned files, attached by their project path as MiMo attaches them.
  *
- * Reading them when they were named would send what the file said several
- * minutes and a few edits ago; what the model should be looking at is what is
- * on disk when it is asked. A file that cannot be read is named out loud - the
- * sentence still goes, mention and all, but the user has to know the file did
- * not go with it.
+ * Nothing is read here: the server reads each file when the model is asked,
+ * so what the model sees is what is on disk then, whatever its size. A file
+ * that cannot be read by then reaches the model as a note saying so.
  */
 async function mentionAttachments(value: string, chosen: Set<string>, to?: string): Promise<Attachment[]> {
   const root = commandRoot(to)
-  if (!root || !app.client || !chosen.size) return []
+  if (!root || !chosen.size) return []
   const out: Attachment[] = []
   for (const path of mentionedIn(value)) {
     if (!chosen.has(path)) continue
     // The same file named twice is one file.
     if (out.some((entry) => entry.path === path)) continue
-    try {
-      const result = await app.client.request({ type: "file.read", path: absolutePath(root, path) })
-      const attachment = mentionAttachment(path, result)
-      if (attachment) out.push(attachment)
-      else notifyFailure(t("attach.unreadable"), path)
-    } catch {
-      notifyFailure(t("attach.unreadable"), path)
-    }
+    // MiMo's mention: the file goes by its project path and is read when the model is asked.
+    out.push({ path, mime: "", data: "", byPath: true })
   }
   return out
 }

@@ -31,7 +31,7 @@ import { Questions } from "../tool/question"
 import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
-import { retryDelay, waitFor } from "./retry"
+import { retryDecision, waitFor } from "./retry"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
@@ -42,17 +42,23 @@ import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
-import {
-  SUMMARY_OUTPUT_TOKENS,
-  isContextOverflow,
-  isOverflowByCount,
-  maxOutputTokens,
-  summaryWouldFit,
-} from "./overflow"
-import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
-import { systemPrompt, titleFrom } from "./prompt"
+import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
+import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
+import { memorySection, repositoryState, systemPrompt } from "./prompt"
 import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
+import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
+import { interfaceLocale } from "./locale"
+import { providerExtras, samplingFor } from "../provider/sampling"
+import { attachmentNote, runtimeContext, sessionNote } from "./context"
+import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
+import type { ModelEntry } from "../provider/catalog"
+import { forWire } from "../provider/wire-ids"
+import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
+import type { ModelModalities } from "@shared/protocol"
+import { costOf } from "./usage"
+import { ABORTED_TOOL } from "../provider/history"
+import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -160,14 +166,11 @@ const REVIEW_OUTPUT_TOKENS = 2048
 /** The latest request is quoted from its end, where the instruction usually is. */
 const REVIEW_REQUEST_CHARS = 4000
 
-const COMPACT_SYSTEM = [
-  "You are compacting a coding session so it can continue in a smaller context.",
-  "Write a dense summary of everything that still matters: what the user asked for,",
-  "what was decided and why, which files and symbols were touched, what is done,",
-  "what is still open, and any constraint or preference the user stated.",
-  "Keep exact names, paths and identifiers. Omit pleasantries and narration.",
-  "Write it as notes to yourself, not as a report to the user.",
-].join(" ")
+/** How long a title may take before the fallback is kept. */
+const TITLE_TIMEOUT_MS = 60_000
+
+/** The first message is quoted up to this many characters for its title. */
+const TITLE_SOURCE_CHARS = 4000
 
 /**
  * What the model is told on the step that has to be the last one.
@@ -484,15 +487,27 @@ export class SessionRunner {
     // sending everything is the safe direction.
     if (at < 0) return messages
 
+    // MiMo's projection: the summary tagged with its trigger, and the files it had been working on.
     const summary: UserMessage = {
       id: `${mark.messageID}:summary`,
       sessionID: session.id,
       role: "user",
-      text: mark.summary,
+      text: compactedText(mark),
       attachments: [],
       time: { created: mark.at },
     }
-    return [summary, ...messages.slice(at + 1)]
+    const after = messages.slice(at + 1)
+    // Nothing re-posted after an automatic or overflow compaction: the model is told to carry on.
+    if (after.length || (mark.trigger ?? "manual") === "manual") return [summary, ...after]
+    const carryOn: UserMessage = {
+      id: `${mark.messageID}:continue`,
+      sessionID: session.id,
+      role: "user",
+      text: continueNote(mark.trigger ?? "automatic"),
+      attachments: [],
+      time: { created: mark.at },
+    }
+    return [summary, carryOn]
   }
 
   /**
@@ -861,7 +876,7 @@ export class SessionRunner {
     const controller = new AbortController()
     this.running.set(sessionID, controller)
     try {
-      return await this.compactNow(session, controller.signal)
+      return await this.compactNow(session, controller.signal, "manual")
     } finally {
       this.running.delete(sessionID)
       this.bus.publish({ type: "session.idle", sessionID })
@@ -869,33 +884,72 @@ export class SessionRunner {
   }
 
   /**
-   * The compaction itself, for the button above and for a turn that has
-   * outgrown its model (see `run`). Streams a summary of everything the model
-   * currently sees and records it as the new starting point.
+   * The system prompt a conversation's requests carry: built once and reused,
+   * as MiMo's prefix snapshot is, so a new file or a changed working tree does
+   * not start its cache over. Rebuilt only when what it was built for changes -
+   * the agent, the mode, the instructions, the model, or the tools. A compaction
+   * sends the same one, so its request reads from that cache too.
+   *
+   * memory: a conversation's own turns are told about its memory files, a
+   * subagent's are not, as MiMo does. That text names this conversation's notes
+   * file, so it goes as a tail after the prefix rather than inside it: the
+   * prefix stays the same from one conversation to the next.
    */
-  private async compactNow(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+  private async systemFor(session: SessionInfo): Promise<{ system: string; systemTail?: string }> {
+    const config = this.config.get()
+    const skills = await this.skillsFor(session.directory)
+    const key = JSON.stringify([
+      session.agent,
+      session.staged === true,
+      config.instructions ?? "",
+      config.instructionFiles ?? [],
+      session.model.provider,
+      session.model.model,
+      this.tools(session.agent, session.model.model, session.parentID ?? session.id).map((tool) => tool.name),
+      // skills: a skill added or removed changes the list the prompt carries.
+      skills.map((skill) => skill.name),
+    ])
+    const frozen = this.prefixes.get(session.id)
+    const base =
+      frozen?.key === key
+        ? frozen.system
+        : await systemPrompt({
+            directory: session.directory,
+            agent: session.agent,
+            staged: session.staged,
+            instructions: config.instructions,
+            globalAgentsFile: this.globalAgents,
+            instructionFiles: config.instructionFiles,
+            skills,
+          })
+    this.prefixes.set(session.id, { key, system: base })
+    // subagents: a subagent is told what it is, after what its agent would be told anyway.
+    const outputSchema = session.subagent?.outputSchema
+    if (session.parentID) {
+      return { system: [base, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n") }
+    }
+    const memory = memoryFilesFor(session.directory, session.id)
+    return memory ? { system: base, systemTail: memorySection(memory) } : { system: base }
+  }
+
+  /**
+   * The compaction itself, for the button above and for a turn that has
+   * outgrown its model (see `run`).
+   *
+   * MiMo's shape: the conversation as the model currently sees it is replayed
+   * with its own system prompt and tools, and one instruction is added at the
+   * end. Calling a tool is not allowed while summarising; the output cap is the
+   * model's usual one. For an overflow the attached files are left out, since
+   * they are what made it too large. A reply that is empty, not a summary, a
+   * tool call, or itself too large leaves the conversation as it was.
+   */
+  private async compactNow(session: SessionInfo, signal: AbortSignal, trigger: CompactionTrigger): Promise<SessionInfo> {
     const stored = await this.store.messages(session.id)
     const live = this.liveMessages(session, stored)
-    /*
-     * What a new summary has to cover: everything since the last one. The
-     * last summary itself goes in separately, as the reference passes it, so
-     * the model is told to carry it forward rather than shown it as a message.
-     */
-    const previous = session.compacted
-    const since = (() => {
-      if (!previous) return live
-      const at = live.findIndex((message) => message.id === previous.messageID)
-      return at < 0 ? live : live.slice(at + 1)
-    })()
-    const selected = selectForSummary(since)
-    if (!selected) throw new Error("Nothing to compact yet")
-    const prompt = buildSummaryPrompt({ previousSummary: previous?.summary, context: [selected.head] })
-    // The reference's own guard: a summary request it can see will not fit is
-    // not sent. Measured on the prompt that will actually go out, not on the
-    // raw transcript, since tool output is cut to 2,000 characters in it.
-    if (!summaryWouldFit(prompt.length, this.config.modelEntry(session.model)?.contextWindow ?? 0)) {
-      throw new Error("This conversation is too long to summarise within the model's context window")
-    }
+    const last = live.at(-1)
+    // skills: what a message loaded is part of the conversation being summarised.
+    const context = withSkillReminders(withAutomationNotes(withChatHeaders(this.contextFor(session, stored))))
+    if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
@@ -907,83 +961,126 @@ export class SessionRunner {
           : OpenAICompatible
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const entry = this.config.modelEntry(session.model)
+    const replay =
+      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map())
+    const instruction: UserMessage = {
+      id: `${session.id}:compaction`,
+      sessionID: session.id,
+      role: "user",
+      text: SUMMARY_INSTRUCTION,
+      attachments: [],
+      time: { created: Date.now() },
+    }
 
     let summary = ""
+    let called = false
     this.summarising.add(session.id)
     this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
     try {
-      await adapter.stream(
+      const outcome = await adapter.stream(
         {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
-          system: COMPACT_SYSTEM,
-          /*
-           * One user message, the conversation quoted inside it and the
-           * instruction after it, as the reference sends it. Not the
-           * transcript replayed as a live conversation, which a model
-           * continues rather than summarises.
-           */
-          history: [
-            {
-              id: `${session.id}:summary-request`,
-              sessionID: session.id,
-              role: "user",
-              text: prompt,
-              attachments: [],
-              time: { created: Date.now() },
-            },
-          ],
-          tools: [],
-          effort: "low",
+          ...(await this.systemFor(session)),
+          history: [...replay, instruction],
+          tools: this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+          // MiMo's effort is one app-wide value, not a conversation's own.
+          effort: this.config.get().effort,
+          variants: this.config.variants(session.model),
           showReasoning: false,
           signal,
           baseURL: definition.baseURL,
           headers: definition.headers,
           accountId: tokens?.accountId,
-          /*
-           * A summary is short, and asking for the usual 32k is what stopped
-           * this from working the first time: a transcript that had just been
-           * refused at 230,145 tokens plus a 32,000 answer is one token over
-           * the same window, so the summary was refused too. The reference asks
-           * for 4,096 here (its SUMMARY_OUTPUT_TOKENS), which leaves the room
-           * a summary of an overlong conversation needs.
-           */
-          maxOutput: Math.min(maxOutputTokens(this.config.modelEntry(session.model)), SUMMARY_OUTPUT_TOKENS),
+          maxOutput: maxOutputTokens(session.model, entry),
+          outputLimit: entry?.maxOutput,
+          sessionID: session.id,
+          cacheTTL: entry?.cacheTTL,
+          inputs: modelInputs(entry),
+          sampling: samplingFor(session.model.model, entry?.temperature === true),
+          extra: providerExtras(session.model.provider, entry?.reasoning === true),
         },
         (event) => {
           if (event.type === "text.delta") summary += event.text
+          if (event.type === "tool") called = true
         },
       )
+      if (outcome.toolCalls.length) called = true
+    } catch (failure) {
+      if (isContextOverflow(describe(failure))) throw new Error("This conversation is too large to compact")
+      throw failure
     } finally {
       this.summarising.delete(session.id)
       this.bus.publish({ type: "session.compacting", sessionID: session.id, active: false })
     }
-    summary = summary.trim()
+    if (called) throw new Error("The model called a tool instead of writing a summary")
+    summary = extractSummary(summary)
     if (!summary) throw new Error("The model returned an empty summary")
     if (!isSummary(summary)) throw new Error("The model did not return a summary")
+    const files = touchedFiles(context, session.directory)
     return this.store.update(session.id, {
-      // The last message the summary covers. Everything after it - the kept
-      // end - stays in the model's view word for word, as the reference keeps
-      // its `recent`.
-      compacted: { messageID: selected.mark.id, summary, at: Date.now() },
+      // The last message the summary covers: the whole conversation as it stood.
+      compacted: { messageID: last.id, summary, at: Date.now(), trigger, ...(files.length ? { files } : {}) },
     })
   }
 
   /**
-   * A compaction nothing is waiting on.
-   *
-   * The one made because a step's token count crossed the line is ahead of
-   * need: the step itself succeeded, and failing to summarise must not turn a
-   * finished turn into an error. The reference's `compactIfNeeded` returns
-   * false and carries on; so does this. If the next request is then refused
-   * for length, the rescue in `run` takes it from there.
+   * MiMo's compaction at the start of a turn: when the last finished reply
+   * since the last compaction crossed the line, the conversation is compacted
+   * before the model is asked again. A failure leaves the turn to go on; if
+   * its request is then refused for length, the rescue in `run` takes over.
    */
-  private async compactQuietly(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+  private async compactIfCrossed(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+    const live = this.liveMessages(session, await this.store.messages(session.id))
+    const from = session.compacted ? live.findIndex((message) => message.id === session.compacted?.messageID) + 1 : 0
+    const reply = live
+      .slice(from)
+      .reverse()
+      .find((message): message is AssistantMessage => message.role === "assistant" && message.finish !== undefined && message.usage !== undefined)
+    if (!reply?.usage || !isOverflowByCount(reply.usage, this.config.modelEntry(session.model))) return session
     try {
-      return await this.compactNow(session, signal)
+      return await this.compactNow(session, signal, "automatic")
     } catch {
       return session
     }
+  }
+
+  /**
+   * MiMo's overflow compaction: a request too large for the model, or a step
+   * that crossed the line mid-turn. The conversation is compacted and the
+   * user's last request posted again after the summary, its attached files
+   * left out, so the turn carries on from what was asked. Undefined when the
+   * compaction could not be made.
+   */
+  private async compactForOverflow(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo | undefined> {
+    let compacted: SessionInfo
+    try {
+      compacted = await this.compactNow(session, signal, "provider-overflow")
+    } catch {
+      return undefined
+    }
+    const live = this.liveMessages(compacted, await this.store.messages(session.id))
+    const asked = [...live].reverse().find((message): message is UserMessage => message.role === "user" && !message.notices?.length && Boolean(message.text.trim()))
+    if (!asked) return compacted
+    const left = asked.attachments.map((file) => file.path.split(/[\\/]/).pop() ?? file.path)
+    const again: UserMessage = {
+      id: Identifier.message(),
+      sessionID: session.id,
+      role: "user",
+      text: asked.text,
+      attachments: [],
+      ...(asked.annotations?.length ? { annotations: asked.annotations } : {}),
+      // skills: what the request loaded goes with it again; its context notes too, with word of the files left out.
+      ...(asked.reminders?.length ? { reminders: asked.reminders } : {}),
+      ...(left.length || asked.context?.length
+        ? { context: [...(asked.context ?? []), ...(left.length ? [`Attached files were left out to make the conversation fit: ${left.join(", ")}.`] : [])] }
+        : {}),
+      time: { created: Date.now() },
+    }
+    await this.store.saveMessage(again)
+    this.turn(session.id).messages.push(again.id)
+    return compacted
   }
 
   async prompt(input: PromptInput): Promise<string> {
@@ -1059,6 +1156,9 @@ export class SessionRunner {
     // subagents: a notice for the parent, or a follow-up for a subagent, joins the same way.
     extra: Pick<UserMessage, "notices" | "inbox"> = {},
   ): Promise<string> {
+    // The user's own words take the runtime context; a notice or a message from elsewhere does not.
+    const typed = !input.inbox && !extra.inbox && !extra.notices
+    const context = typed ? [runtimeContext({ language: this.config.get().language })] : []
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: input.sessionID,
@@ -1068,6 +1168,7 @@ export class SessionRunner {
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       ...extra,
+      ...(context.length ? { context } : {}),
       time: { created: Date.now() },
       // Marked, so the transcript can show it inside the turn it joined.
       steered: true,
@@ -1082,6 +1183,11 @@ export class SessionRunner {
     this.turn(input.sessionID).messages.push(user.id)
 
     const written = steering.written.then(async () => {
+      // Settled in the same chain, so messages still reach the transcript in the order they were typed.
+      if (user.attachments.some((file) => file.byPath)) {
+        const session = await this.store.get(input.sessionID)
+        if (session) user.attachments = await settleAttachments(user.attachments, session.directory)
+      }
       // skills: what it names is loaded into it on the way to the transcript, in the order it was typed.
       const reminders = await this.remindersFor(input)
       if (reminders.length) user.reminders = reminders
@@ -1221,6 +1327,8 @@ export class SessionRunner {
      */
     if (session.revert) session = await this.commitRevert(session)
 
+    await this.settleInterrupted(session.id)
+
     // Smart picks its model from the first message, before anything is checked against it.
     if (session.smart && !session.smartRoute && input.text.trim()) session = await this.routeSmart(session, input.text)
 
@@ -1248,31 +1356,158 @@ export class SessionRunner {
       throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
     }
 
+    // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
+    const first = (await this.store.messages(session.id)).length === 0
+    // MiMo attaches by path: what each such file is gets settled now, its contents are read per request.
+    const attachments = await settleAttachments(input.attachments, session.directory)
+    // skills: what the message names, and the hint its office documents bring.
     const reminders = await this.remindersFor(input, session.directory)
+    const context = input.inbox ? [] : await this.runtimeNotes(session, first)
+    const attached = input.inbox ? undefined : attachmentNote(attachments.filter((file) => file.byPath), session.directory)
+    if (attached) context.push(attached)
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
       role: "user",
       text: input.text,
-      attachments: input.attachments ?? [],
+      attachments,
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       // session chat
       ...(input.inbox ? { inbox: input.inbox } : {}),
       // skills
       ...(reminders.length ? { reminders } : {}),
+      ...(context.length ? { context } : {}),
       time: { created: Date.now() },
     }
     await this.store.saveMessage(user)
     this.turn(session.id).messages = [user.id]
 
-    // First real prompt names the session, so the sidebar stops saying "New session".
-    if (session.title === "New session" && input.text.trim()) {
-      await this.store.update(session.id, { title: titleFrom(input.text) })
+    /*
+     * MiMo's titles: the first prompt of a conversation nobody has named sets
+     * the fallback at once, and a model names the task in the background.
+     * Subagents keep the name they were started with.
+     */
+    if (!session.parentID && session.titleSource === undefined && session.title === UNTITLED) {
+      const fallback = fallbackTitle(input.text, input.attachments ?? [])
+      session = await this.store.update(session.id, { title: fallback, titleSource: "fallback" })
+      if (/\p{L}/u.test(input.text)) void this.generateTitle(session.id, input.text).catch(() => undefined)
     }
 
     this.launch(session.id, apiKey, controller, false, lead)
     return user.id
+  }
+
+  /**
+   * The notes a prompt the user typed is sent with: the runtime context every
+   * time, and on a conversation's first message the app note before it and the
+   * working directory inside it, as MiMo's desktop attaches them. A subagent's
+   * prompt is the runner's own and gets none.
+   */
+  private async runtimeNotes(session: SessionInfo, first: boolean): Promise<string[]> {
+    if (session.parentID) return []
+    const config = this.config.get()
+    // The date and the repository's state change per turn, so they ride here rather than in the cached system prompt.
+    const repository = await repositoryState(session.directory).catch(() => undefined)
+    const runtime = runtimeContext({
+      language: config.language,
+      today: new Date().toISOString().slice(0, 10),
+      ...(repository ? { repository } : {}),
+      ...(first ? { directory: session.directory } : {}),
+    })
+    if (!first) return [runtime]
+    // The conversation's MCP servers are fixed when it first asks for its tools (plan takes none).
+    if (session.agent !== "plan") this.tools(session.agent, session.model.model, session.id)
+    const names = [...(this.mcpServersAt.get(session.id) ?? [])]
+    return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
+  }
+
+  /**
+   * MiMo's generated title: one short request, the first message as data and
+   * the interface language as a hint, on the conversation's own model (MCode
+   * has no small-model setting). Written only while the title is still the
+   * fallback, so a rename made meanwhile wins; anything that fails leaves the
+   * fallback where it is. `MCODE_GENERATE_TITLES=0` turns it off for checks
+   * whose scripted providers would otherwise have a reply taken by it.
+   */
+  private async generateTitle(sessionID: string, text: string): Promise<void> {
+    if (process.env.MCODE_GENERATE_TITLES === "0") return
+    const session = await this.store.get(sessionID)
+    if (!session || session.titleSource !== "fallback") return
+    const definition = this.config.definition(session.model.provider)
+    if (!definition || !this.config.usable(session.model.provider)) return
+    const adapter: ProviderAdapter =
+      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const entry = this.config.modelEntry(session.model)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
+    let answer = ""
+    try {
+      await adapter.stream(
+        {
+          apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
+          model: session.model,
+          system: TITLE_SYSTEM,
+          history: [
+            {
+              id: `${session.id}:title`,
+              sessionID: session.id,
+              role: "user",
+              text: titlePrompt(text.slice(0, TITLE_SOURCE_CHARS), interfaceLocale(this.config.get().language)),
+              attachments: [],
+              time: { created: Date.now() },
+            },
+          ],
+          tools: [],
+          effort: "low",
+          variants: this.config.variants(session.model),
+          showReasoning: false,
+          signal: controller.signal,
+          baseURL: definition.baseURL,
+          headers: definition.headers,
+          accountId: tokens?.accountId,
+          maxOutput: maxOutputTokens(session.model, entry),
+          outputLimit: entry?.maxOutput,
+          // MiMo's title agent runs at 0.5, where the model takes a temperature.
+          sampling: { ...samplingFor(session.model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
+        },
+        (event) => {
+          if (event.type === "text.delta") answer += event.text
+        },
+      )
+    } catch {
+      return
+    } finally {
+      clearTimeout(timer)
+    }
+    const title = cleanTitle(answer)
+    if (!title) return
+    const current = await this.store.get(sessionID)
+    if (current?.titleSource !== "fallback") return
+    await this.store.update(sessionID, { title, titleSource: "generated" })
+  }
+
+  /**
+   * MiMo's settling of calls a stopped or closed turn left unfinished: at the
+   * next prompt, while nothing is running, each is stored as an error saying it
+   * was aborted, marked interrupted and aborted so the transcript draws it
+   * quietly and the model reads it as a call that did not complete.
+   */
+  private async settleInterrupted(sessionID: string): Promise<void> {
+    for (const message of await this.store.messages(sessionID)) {
+      if (message.role !== "assistant") continue
+      let changed = false
+      for (const part of message.parts) {
+        if (part.type !== "tool" || (part.status !== "pending" && part.status !== "running")) continue
+        part.status = "error"
+        part.error = ABORTED_TOOL
+        part.metadata = { ...(part.metadata ?? {}), aborted: true, interrupted: true }
+        part.time.completed ??= Date.now()
+        changed = true
+      }
+      if (changed) await this.store.saveMessage(message)
+    }
   }
 
   /**
@@ -1319,6 +1554,7 @@ export class SessionRunner {
       if (session.revert) throw new Error("Resume is unavailable while part of the conversation is rolled back")
       const messageID = interruptedTurn(await this.store.messages(sessionID))
       if (!messageID) throw new Error("There is no interrupted turn to resume")
+      await this.settleInterrupted(sessionID)
       if (!this.config.usable(session.model.provider)) {
         throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
       }
@@ -1400,21 +1636,10 @@ export class SessionRunner {
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const config = this.config.get()
-    const base = await systemPrompt({
-      directory: session.directory,
-      agent: session.agent,
-      staged: session.staged,
-      instructions: config.instructions,
-      globalAgentsFile: this.globalAgents,
-      skills: await this.skillsFor(session.directory),
-      // memory: told to a conversation's own turns, not to a subagent's, as MiMo does.
-      memory: session.parentID ? undefined : memoryFilesFor(session.directory, session.id),
-    })
-    // subagents: a subagent is told what it is, after what its agent would be told anyway.
+    // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
+    const { system, systemTail } = await this.systemFor(session)
+    // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
-    const system = session.parentID
-      ? [base, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n")
-      : base
 
     /*
      * subagents: a `subtask` command's subagent works first, as a task call on
@@ -1449,10 +1674,13 @@ export class SessionRunner {
       if (controller.signal.aborted) return
     }
 
+    // MiMo compacts at the start of a turn when the last finished reply crossed the line.
+    if (!lead) session = await this.compactIfCrossed(session, controller.signal)
+
     /*
      * The step that was last rescued by a compaction. A request the provider
      * refuses as too long is retried once against the compacted transcript,
-     * as the reference does; refused again, the error stands.
+     * as MiMo does; refused again, the error stands.
      */
     let rescued = -1
     /*
@@ -1462,6 +1690,11 @@ export class SessionRunner {
      * worked out, and says so in red.
      */
     const limit = config.maxSteps && config.maxSteps > 0 ? config.maxSteps : undefined
+    /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
+    const notes = new Map<string, string[]>()
+    const continued = { length: 0, textTool: 0, empty: 0 }
+    /* Files attached by path, read once for this turn. */
+    const attachmentData: AttachmentCache = new Map()
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
       // The reference's `isLastStep`: no tools, and an instruction to write.
@@ -1475,11 +1708,23 @@ export class SessionRunner {
        * yet, whereas one already in flight cannot be added to.
        */
       await this.steering.get(sessionID)?.written
+      await this.deliverWorktreeNotice(sessionID)
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
-      // session chat: a message from another conversation says so, in the request only; skills: what a message loaded follows it.
-      // automation: a scheduled task's run says so too, in the request only.
-      const history = withAutomationNotes(withSkillReminders(withChatHeaders(this.contextFor(session, stored))))
+      // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
+      const chatted = withAutomationNotes(withChatHeaders(this.contextFor(session, stored)))
+      // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
+      // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
+      // this turn's continuation notes follow the replies they answer; and three identical steps
+      // in a row bring a note to change approach.
+      const history = forWire(
+        await withAttachmentData(
+          withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)),
+          session.directory,
+          attachmentData,
+        ),
+        session.model,
+      )
 
       // MiMo's effort is one app-wide value, not a conversation's own.
       const effort = config.effort
@@ -1502,6 +1747,7 @@ export class SessionRunner {
         apiKey: tokens?.access ?? apiKey,
         model: session.model,
         system,
+        systemTail,
         history: lastStep
           ? [
               ...history,
@@ -1582,34 +1828,34 @@ export class SessionRunner {
          */
         variants: this.config.variants(session.model),
         accountId: tokens?.accountId,
-        maxOutput: maxOutputTokens(this.config.modelEntry(session.model)),
+        maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
+        outputLimit: this.config.modelEntry(session.model)?.maxOutput,
+        // MiMo's prompt cache key and session affinity, and the hour-long cache where the model asks for it.
+        sessionID,
+        cacheTTL: this.config.modelEntry(session.model)?.cacheTTL,
+        // What the model reads besides text: an attachment it cannot read goes as a note.
+        inputs: modelInputs(this.config.modelEntry(session.model)),
+        // MiMo's interleaved reasoning, for a model that reads its own reasoning back.
+        interleaved: interleavedField(definition.kind, session.model, this.config.modelEntry(session.model)),
+        // MiMo's family sampling and provider switches.
+        sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
+        extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true),
       })
       } catch (failure) {
         /*
          * A provider that refuses the request as too long is answered the way
-         * the reference answers it: the transcript is compacted and the step
-         * runs again. The refusal is already on the transcript, in red, from
-         * `stream`; what follows it is the summary and the continuation.
-         * Only one rescue per step - a summary that is itself too long is a
-         * real failure, and it is left to stand.
+         * MiMo answers it: an overflow compaction, the user's request posted
+         * again after the summary, and the step run again. The refusal is
+         * already on the transcript, in red, from `stream`. Only one rescue per
+         * step - a summary that is itself too large is a real failure, and the
+         * original refusal is left to stand.
          */
         const reason = failure instanceof Shown ? failure.reason : failure
-        if (
-          rescued !== step &&
-          !controller.signal.aborted &&
-          // compactNow measures the prompt it will send and refuses if it
-          // cannot fit, which leaves the original refusal standing.
-          isContextOverflow(describe(reason))
-        ) {
+        if (rescued !== step && !controller.signal.aborted && isContextOverflow(describe(reason))) {
           rescued = step
-          try {
-            session = await this.compactNow(session, controller.signal)
-          } catch {
-            // The summary failed too - the same refusal, usually. The one
-            // already on the message stands; a second notice would say
-            // nothing the first did not.
-            throw failure
-          }
+          const compacted = await this.compactForOverflow(session, controller.signal)
+          if (!compacted) throw failure
+          session = compacted
           step -= 1
           continue
         }
@@ -1623,31 +1869,25 @@ export class SessionRunner {
         return
       }
 
-      // Discovered providers report no pricing, so cost stays at zero
-      // rather than being invented from a guessed rate.
-      const entry = this.config.modelEntry(session.model)
-      const usage = {
-        ...outcome.usage,
-        cost: entry
-          ? ((outcome.usage.input + outcome.usage.cacheWrite) * entry.input +
-              outcome.usage.output * entry.output) /
-            1_000_000
-          : 0,
-      }
+      // MiMo's cost: cache reads and writes at their own prices, reasoning at the output price.
+      const usage = { ...outcome.usage, cost: costOf(outcome.usage, this.config.modelEntry(session.model)) }
       assistant.usage = usage
       await this.store.addUsage(sessionID, usage)
       /*
-       * The reference's other trigger: once the tokens the provider reports
-       * reach the window less the room an answer needs, the transcript is
-       * compacted before the model is asked again. Nothing for a model whose
-       * window is not known - a discovered model reports 0 - which then has
-       * only the refusal above to fall back on.
+       * MiMo's count trigger: once the tokens the provider reports reach 90%
+       * of the window, a turn that goes on is compacted as an overflow before
+       * the model is asked again, and one that ends is compacted when the next
+       * turn starts. Nothing for a model whose window is not known - a
+       * discovered model reports 0 - which has only the refusal to fall back on.
        */
       const overflowing = isOverflowByCount(usage, this.config.modelEntry(session.model))
 
       if (outcome.stop === "refusal") {
         assistant.finish = "refusal"
-        assistant.error = "The model declined to continue with this request."
+        assistant.error =
+          outcome.finishReason === "content_filter"
+            ? "The provider's content filter stopped this reply."
+            : "The model declined to continue with this request."
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
         return
@@ -1655,20 +1895,26 @@ export class SessionRunner {
 
       const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
-        assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : "end_turn"
+        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued)
+        if (next.note) notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), next.note])
+        if (next.error) {
+          assistant.error = next.error.message
+          if (next.error.code) assistant.errorCode = next.error.code
+        }
+        assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error ? "error" : "end_turn"
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
+        if (next.note && !lastStep) {
+          if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
+          continue
+        }
         /*
          * The model has stopped, but the user may have typed while it was
          * writing. Read with nothing awaited after the save above, so that a
          * message arriving from this instant onwards is the release's business
-         * and cannot fall between the two.
+         * and cannot fall between the two. A turn that ends over the line is
+         * compacted when the next one starts, as MiMo's is.
          */
-        if (overflowing) {
-          // Compacted at the end of the turn, so the next one starts inside
-          // the window instead of being refused on its first request.
-          session = await this.compactQuietly(session, controller.signal)
-        }
         if (!this.steered(sessionID)) return
         continue
       }
@@ -1696,9 +1942,8 @@ export class SessionRunner {
       await this.store.saveMessage(assistant)
 
       if (controller.signal.aborted) return
-      // The reference compacts after the step that crossed the line, before
-      // the model is asked again.
-      if (overflowing) session = await this.compactQuietly(session, controller.signal)
+      // MiMo compacts a step that crossed the line mid-turn as an overflow, before the model is asked again.
+      if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
     }
   }
 
@@ -1762,6 +2007,13 @@ export class SessionRunner {
           part.time.completed = Date.now()
           dirty = true
         }
+      } else if (event.type === "reasoning.signature") {
+        // Kept so the thinking can be sent back to the same model, as MiMo keeps it.
+        const part = blocks.get(event.index)
+        if (part?.type === "reasoning") {
+          part.signature = event.signature
+          dirty = true
+        }
       } else if (event.type === "tool") {
         announce({
           type: "tool",
@@ -1777,19 +2029,26 @@ export class SessionRunner {
 
     try {
       let outcome: TurnOutcome | undefined
+      /* When this request first failed: each kind of failure is retried for so long and no longer. */
+      let firstFailure: number | undefined
       for (let attempt = 1; outcome === undefined; attempt++) {
         try {
           // The SDK's own quiet retries are off here: this loop retries in the open.
           outcome = await adapter.stream({ ...request, retries: 0 }, emit)
         } catch (err) {
           if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) throw err
-          const wait = retryDelay(err, attempt)
-          if (wait === undefined) throw err
           /*
-           * Tried again from the start, as OpenCode's engine does: what the
-           * failed attempt managed to stream is dropped, because the next one
-           * streams it again. Nothing has run - tools only run once a step
-           * settles. The retry itself rides on the published copy only, so the
+           * MiMo retries a step only while replaying it is safe: once a tool
+           * call has started to stream, the attempt is not repeated.
+           */
+          if (assistant.parts.some((part) => part.type === "tool")) throw err
+          firstFailure ??= Date.now()
+          const decision = retryDecision(err, attempt, Date.now() - firstFailure)
+          if (!decision) throw err
+          /*
+           * Tried again from the start, as MiMo's engine does: what the failed
+           * attempt managed to stream is dropped, because the next one streams
+           * it again. The retry itself rides on the published copy only, so the
            * next update for the message clears the row without anything to undo.
            */
           assistant.parts = []
@@ -1797,9 +2056,12 @@ export class SessionRunner {
           dirty = false
           this.bus.publish({
             type: "message.updated",
-            message: { ...structuredClone(assistant), retry: { attempt, message: describe(err), next: Date.now() + wait } },
+            message: {
+              ...structuredClone(assistant),
+              retry: { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max },
+            },
           })
-          if (!(await waitFor(wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+          if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
         }
       }
 
@@ -1966,6 +2228,7 @@ export class SessionRunner {
        * consulted. Inside the try, so a refusal is caught below and written onto
        * the part as an error; one a person gave then ends the turn once saved.
        */
+      await this.checkRepeated(part, assistant, input.session.id, input.signal)
       await this.permissions.check({
         sessionID: input.session.id,
         messageID: assistant.id,
@@ -2001,6 +2264,8 @@ export class SessionRunner {
       part.output = result.output
       part.title = result.title ?? part.title
       part.metadata = result.metadata
+      // MiMo's auto-worktree notice: the first change a conversation makes to a repository's main worktree is noted.
+      await this.noteWorktreeChange(owner, part, input.session.directory)
     } catch (err) {
       part.status = "error"
       // Tool failures are told to the model as text so it can adapt; only
@@ -2033,6 +2298,93 @@ export class SessionRunner {
      */
     // subagents: a refusal inside a subagent stops the turn it works for, and so every subagent in it.
     if (refusedByUser) this.abort(owner)
+  }
+
+  /** A conversation's first change to a repository's main worktree, waiting for the next step to note it. */
+  private readonly worktreeHits = new Map<string, { root: string; linked: boolean }>()
+
+  /**
+   * MiMo's auto-worktree notice, first half: a completed write, edit or patch
+   * in a git repository's main worktree, by a conversation of the user's own
+   * (not a subagent), that has not been told yet. The shell is not looked at:
+   * MCode's shell tool reports no paths it changed.
+   */
+  private async noteWorktreeChange(sessionID: string, part: ToolPart, directory: string): Promise<void> {
+    if (this.worktreeHits.has(sessionID) || !["write", "edit", "apply_patch"].includes(part.name)) return
+    const target = typeof part.input?.path === "string" ? part.input.path : undefined
+    if (!target) return
+    const session = await this.store.get(sessionID)
+    if (!session || session.parentID || session.worktreeNotice) return
+    const top = await worktreeTop(path.dirname(path.resolve(directory, target)))
+    if (!top?.main) return
+    this.worktreeHits.set(sessionID, { root: top.root, linked: await hasLinkedWorktrees(top.root) })
+  }
+
+  /**
+   * Second half: at the next step the note is added to the latest user message
+   * - stored, as MiMo stores it - and the conversation is marked so it is never
+   * told twice.
+   */
+  private async deliverWorktreeNotice(sessionID: string): Promise<void> {
+    const hit = this.worktreeHits.get(sessionID)
+    if (!hit) return
+    this.worktreeHits.delete(sessionID)
+    const session = await this.store.get(sessionID)
+    if (!session || session.worktreeNotice) return
+    const latest = [...this.liveMessages(session, await this.store.messages(sessionID))].reverse().find((message): message is UserMessage => message.role === "user")
+    if (!latest) return
+    await this.store.saveMessage({ ...latest, context: [...(latest.context ?? []), worktreeNotice(hit.root, hit.linked)] })
+    await this.store.update(sessionID, { worktreeNotice: true })
+  }
+
+  /** Each conversation's system prompt as first built, and what it was built for (see `run`). */
+  private readonly prefixes = new Map<string, { key: string; system: string }>()
+
+  /** Tools a conversation said to always let repeat, by session: MiMo's `always` on its doom-loop ask. */
+  private readonly repeatsAllowed = new Map<string, Set<string>>()
+
+  /**
+   * MiMo's doom-loop check. The third call in a row with the same tool and the
+   * same input stops and asks: once lets it run, always lets that tool repeat
+   * for the rest of the conversation, and a refusal - or typed feedback, or
+   * dismissing the question - refuses the call, which stops the turn as a
+   * refused permission does.
+   */
+  private async checkRepeated(part: ToolPart, assistant: AssistantMessage, sessionID: string, signal: AbortSignal): Promise<void> {
+    if (!repeatsCall(assistant.parts, part) || this.repeatsAllowed.get(sessionID)?.has(part.name)) return
+    const [answer] = await this.questions.ask({
+      sessionID,
+      questions: [
+        {
+          question: `${part.name} has been called three times in a row with the same input. Let it run again?`,
+          header: part.name,
+          options: [
+            { label: LOOP_ANSWERS.once, description: "" },
+            { label: LOOP_ANSWERS.always, description: "" },
+            { label: LOOP_ANSWERS.reject, description: "" },
+          ],
+        },
+      ],
+      tool: { messageID: assistant.id, callID: part.callID },
+      signal,
+      loop: { tool: part.name },
+    })
+    const chosen = (answer ?? []).map((entry) => entry.trim()).filter(Boolean)
+    if (chosen.includes(LOOP_ANSWERS.once)) return
+    if (chosen.includes(LOOP_ANSWERS.always)) {
+      const allowed = this.repeatsAllowed.get(sessionID) ?? new Set<string>()
+      allowed.add(part.name)
+      this.repeatsAllowed.set(sessionID, allowed)
+      return
+    }
+    const feedback = chosen.find((entry) => entry !== LOOP_ANSWERS.reject)
+    throw new PermissionDenied(
+      part.name,
+      feedback
+        ? `The user stopped this repeated call and said: ${feedback}`
+        : "The user stopped this call: it repeated the previous two calls with the same input.",
+      true,
+    )
   }
 
   /** tasks: changes to one conversation's registry, one after another, so parallel subagents never lose each other's. */
@@ -2680,6 +3032,36 @@ interface Turn {
  */
 function pathKey(target: string): string {
   return process.platform === "win32" ? target.toLowerCase() : target
+}
+
+/**
+ * MiMo's interleaved field: what the model's entry states, else `reasoning_content`
+ * for a DeepSeek model reached over the OpenAI-compatible wire.
+ */
+function interleavedField(kind: string, model: ModelRef, entry: ModelEntry | undefined): string | undefined {
+  if (kind !== "openai-compatible") return undefined
+  if (entry?.interleaved) return entry.interleaved
+  return model.model.toLowerCase().includes("deepseek") ? "reasoning_content" : undefined
+}
+
+/** An overflow compaction leaves attached files out of what it replays, naming each where it was. */
+function withoutAttachments(history: Message[]): Message[] {
+  return history.map((message) => {
+    if (message.role !== "user" || !message.attachments.length) return message
+    const names = message.attachments.map((file) => file.path.split(/[\\/]/).pop() ?? file.path)
+    return { ...message, attachments: [], text: `${message.text}\n\n[Attached files left out to make the conversation fit: ${names.join(", ")}]` }
+  })
+}
+
+/** What a model reads besides text, from its catalog entry; the image switch counts where no image input is stated. */
+function modelInputs(entry: ModelEntry | undefined): ModelModalities {
+  return {
+    text: true,
+    image: entry?.inputs?.image ?? entry?.attachment ?? false,
+    audio: entry?.inputs?.audio ?? false,
+    video: entry?.inputs?.video ?? false,
+    pdf: entry?.inputs?.pdf ?? false,
+  }
 }
 
 /** Wraps a failure that has already been written onto the assistant message. */

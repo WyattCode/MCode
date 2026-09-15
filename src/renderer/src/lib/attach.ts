@@ -9,13 +9,23 @@ import type { Attachment } from "@shared/protocol"
  */
 
 /**
- * Refused above this, per file.
+ * The most a file carried inside the message may weigh.
  *
- * A base64 image is a third larger than the bytes it came from and travels in
- * the prompt itself, so a phone photo dropped in without thinking would push
- * the request past what most models accept before the model ever sees it.
+ * MiMo attaches a file by its path, so a file on disk has no cap: it goes by
+ * path and the server reads it when the model is asked. Only what has no path
+ * - something pasted from the clipboard - travels as data, and a picture or a
+ * video small enough keeps its data too, which is what draws its thumbnail.
  */
 export const MAX_BYTES = 8 * 1024 * 1024
+
+/** Where a file lives on disk, or empty for one that does not (pasted, or outside the app). */
+function diskPath(file: File): string {
+  try {
+    return (globalThis as { mcode?: { pathForFile?: (file: File) => string } }).mcode?.pathForFile?.(file) ?? ""
+  } catch {
+    return ""
+  }
+}
 
 /** Extensions worth reading as text even when the OS reports nothing useful. */
 const TEXTUAL = /\.(txt|md|markdown|json|ya?ml|toml|ini|cfg|conf|csv|tsv|log|xml|html?|css|scss|jsx?|tsx?|vue|svelte|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sh|bash|zsh|ps1|sql|env|gitignore|dockerfile|makefile)$/i
@@ -59,6 +69,13 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
   const rejected: Rejected[] = []
 
   for (const file of files) {
+    const absolute = diskPath(file)
+    const thumbnailed = (file.type.startsWith("image/") || file.type.startsWith("video/")) && file.size <= MAX_BYTES
+    if (absolute && !thumbnailed) {
+      // MiMo's attachment by path: no copy in the message, no size cap.
+      attachments.push({ path: absolute, mime: file.type, data: "", byPath: true })
+      continue
+    }
     if (file.size > MAX_BYTES) {
       rejected.push({ name: file.name, reason: "too-large" })
       continue

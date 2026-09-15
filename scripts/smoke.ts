@@ -11,7 +11,7 @@ import { commandRisk } from "../src/server/command-risk"
 import { Permissions } from "../src/server/permission"
 import { DEFAULT_PERMISSIONS as PERMISSION_DEFAULTS } from "../src/shared/protocol"
 import { discoverModels } from "../src/server/provider/discover"
-import { isSummary, selectForSummary } from "../src/server/session/summary"
+import { isSummary } from "../src/server/session/summary"
 import { OpenAICompatible, toMessages } from "../src/server/provider/openai"
 import { modelVariants } from "../src/server/provider/variants"
 import { ProviderError } from "../src/server/provider/types"
@@ -33,7 +33,7 @@ import { findInMessages, searchMessages, snippetAround } from "../src/server/sea
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
-import { systemPrompt } from "../src/server/session/prompt"
+import { repositoryState, systemPrompt } from "../src/server/session/prompt"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
 import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, transcribeFailure } from "../src/renderer/src/lib/voice"
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
@@ -88,7 +88,8 @@ import {
 } from "../src/shared/browser-page"
 import { ToolError } from "../src/server/tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
-import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/session/retry"
+import { RETRY_BUDGETS, isRetryable, retryDecision } from "../src/server/session/retry"
+import { ProviderHttpError } from "../src/server/provider/types"
 import type { Annotation, PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
@@ -239,6 +240,7 @@ import { isScheduledPrompt } from "../src/shared/scheduled"
 import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/lib/convo-card"
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
+import { roundFiveChecks } from "./smoke-round5"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -265,6 +267,8 @@ function section(name: string) {
 }
 
 async function main() {
+  // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.
+  process.env.MCODE_GENERATE_TITLES = "0"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-"))
   const dataDirectory = path.join(root, "data")
   const project = path.join(root, "project")
@@ -1260,7 +1264,7 @@ async function main() {
   section("Provider retries")
   {
     check("a dropped connection is retried", isRetryable(new TypeError("fetch failed")))
-    check("a 503 from an OpenAI-compatible provider is retried", isRetryable(new Error("The provider returned 503. This is usually transient.")))
+    check("a 503 from an OpenAI-compatible provider is retried", isRetryable(new ProviderHttpError("The provider returned 503. This is usually transient.", 503, {})))
     check("a rate limit is retried", isRetryable(new Error("Rate limited by the provider. Wait a moment and try again.")))
     check("a refused key is not retried", !isRetryable(new Error("Authentication failed - check the API key in Settings.")))
     check(
@@ -1269,12 +1273,14 @@ async function main() {
     )
     const cause = Object.assign(new Error("socket closed"), { code: "ECONNRESET" })
     check("a reset hidden in the cause is retried", isRetryable(new TypeError("request failed", { cause })))
+    // MiMo's network budget: five seconds doubling to a minute, no jitter, and no giving up.
     const dropped = new TypeError("fetch failed")
-    check("the first wait is two seconds", retryDelay(dropped, 1, 0) === 2000, retryDelay(dropped, 1, 0))
-    check("with at most a quarter more at random", retryDelay(dropped, 1, 1) === 2500, retryDelay(dropped, 1, 1))
-    check("it doubles", retryDelay(dropped, 3, 0) === 8000, retryDelay(dropped, 3, 0))
-    check("and stops at thirty seconds", retryDelay(dropped, 5, 1) === 30000, retryDelay(dropped, 5, 1))
-    check("five attempts, then it gives up", retryDelay(dropped, RETRY_MAX_RETRIES + 1, 0) === undefined)
+    check("a dropped connection first waits five seconds", retryDecision(dropped, 1, 0, 1)?.wait === 5000, retryDecision(dropped, 1, 0, 1))
+    check("it doubles", retryDecision(dropped, 3, 0, 0)?.wait === 20000, retryDecision(dropped, 3, 0, 0))
+    check("and stops at a minute", retryDecision(dropped, 9, 0, 1)?.wait === 60000, retryDecision(dropped, 9, 0, 1))
+    check("and is never given up", retryDecision(dropped, 500, 24 * 60 * 60_000)?.kind === "network")
+    const busy = new ProviderHttpError("The provider returned 503. This is usually transient.", 503, {})
+    check("a server error has eight attempts, then it gives up", retryDecision(busy, RETRY_BUDGETS.server.retries, 0) !== undefined && retryDecision(busy, RETRY_BUDGETS.server.retries + 1, 0) === undefined)
   }
 
   // ------------------------------------------------------------- turn revert
@@ -1469,7 +1475,12 @@ async function main() {
     useIDs,
     resultIDs,
   })
-  check("unfinished tool is dropped entirely", !useIDs.includes("toolu_never"), useIDs)
+  // MiMo answers a call that never finished as interrupted rather than dropping it.
+  check(
+    "an unfinished tool is answered as interrupted",
+    useIDs.includes("toolu_never") && results.find((b) => b.tool_use_id === "toolu_never")?.content === "[Tool execution was interrupted]",
+    results,
+  )
   check("failed tool is marked is_error", results.find((b) => b.tool_use_id === "toolu_bad")?.is_error === true)
   check("failed tool sends its error as content", results.find((b) => b.tool_use_id === "toolu_bad")?.content === "no match")
   check("reasoning is not replayed", !blocks.some((b) => b.type === "thinking"), blocks.map((b) => b.type))
@@ -1666,34 +1677,12 @@ async function main() {
      * turn on the provider's refusal.
      */
     {
-      const at = Date.now()
-      const conversation = [
-        { id: "u1", sessionID: "s", role: "user" as const, text: "start", attachments: [], time: { created: at } },
-        {
-          id: "a1",
-          sessionID: "s",
-          role: "assistant" as const,
-          model: { provider: "p", model: "m" },
-          agent: "build" as const,
-          parts: [{ id: "t1", type: "text" as const, text: "x".repeat(100_000) }],
-          time: { created: at },
-        },
-      ]
-      let picked: ReturnType<typeof selectForSummary>
-      let thrown: unknown
-      try {
-        picked = selectForSummary(conversation)
-      } catch (failure) {
-        thrown = failure
-      }
-      check("a last message larger than the kept end does not break the split", !thrown, String(thrown))
-      check("and the summary covers everything, marked at the last message", picked?.mark.id === "a1" && picked.recent === "", picked?.mark.id)
-
       /*
        * What counts as a summary. The two real failures were one sentence of
-       * the task carrying on; a model that translates the template's
-       * headings still writes sections, and refusing it would leave the turn
-       * on the provider's 400.
+       * the task carrying on; a model that translates the section headings
+       * still writes sections, and refusing it would leave the turn on the
+       * provider's 400. (round 5, E8: the conversation is now replayed as
+       * messages, so there is no quoted split left to check.)
        */
       check(
         "a continuation of the task is not a summary",
@@ -1703,7 +1692,7 @@ async function main() {
         "a summary with translated headings is one",
         isSummary("## 目标\n- 审计两个新功能\n\n## 工作状态\n- 已完成构建\n\n## 下一步\n1. 修复枚举"),
       )
-      check("the template as written is one", isSummary("## Objective\n- audit\n\n## Next Move\n1. (none)"))
+      check("the sections as written are one", isSummary("## Task overview\n- audit\n\n## Next steps\n1. (none)"))
     }
 
     /*
@@ -3604,7 +3593,8 @@ async function main() {
       time: { created: 1 },
     }
 
-    const openai = toMessages("sys", [withImage]) as any[]
+    // round 5 (E1): images go only to a model that reads them, so this model is said to.
+    const openai = toMessages("sys", [withImage], { image: true }) as any[]
     const user = openai.find((entry) => entry.role === "user")
     check("the image is sent, not dropped", Array.isArray(user?.content), user?.content)
     const parts = (user?.content ?? []) as any[]
@@ -4333,26 +4323,29 @@ async function main() {
     path.join(repoRoot, "package.json"),
     JSON.stringify({ name: "fixture", scripts: { build: "tsc", smoke: "node t.js" } }),
   )
-  const situated = await systemPrompt({ directory: repoRoot, agent: "build" })
-  check("the prompt names the branch", situated.includes("Branch: feature"), situated.slice(-400))
+  // round 5 (E10): the repository's state now travels with each prompt, out of the cached system prompt.
+  const situated = (await repositoryState(repoRoot)) ?? ""
+  check("the per-prompt repository note names the branch", situated.includes("Branch: feature"), situated.slice(-400))
   check(
     "and what was already dirty before the turn",
     situated.includes("loose.txt") && situated.includes("Already modified"),
     situated.slice(-400),
   )
   check("and the last commits", situated.includes("two"), situated.slice(-300))
+  const situatedPrompt = await systemPrompt({ directory: repoRoot, agent: "build" })
   check(
-    "and how this project is built",
-    situated.includes("npm run <name>") && situated.includes("build, smoke"),
-    situated.slice(-600),
+    "the system prompt says how this project is built",
+    situatedPrompt.includes("npm run <name>") && situatedPrompt.includes("build, smoke"),
+    situatedPrompt.slice(-600),
   )
+  check("and carries no repository state or date of its own", !situatedPrompt.includes("## Repository") && !situatedPrompt.includes("Today:"), situatedPrompt.slice(-400))
   await fs.rm(path.join(repoRoot, "loose.txt"))
   await fs.rm(path.join(repoRoot, "package.json"))
 
   /* A folder that is not a repository says nothing about one. */
   const noRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-plain-"))
   const bare = await systemPrompt({ directory: noRepo, agent: "build" })
-  check("a plain folder gets no repository section", !bare.includes("## Repository"), bare.slice(-200))
+  check("a plain folder gets no repository note", (await repositoryState(noRepo)) === undefined)
   check("and no build section it cannot support", !bare.includes("## Building and testing"), bare.slice(-200))
   await fs.rm(noRepo, { recursive: true, force: true })
 
@@ -4761,11 +4754,16 @@ async function main() {
     () => {},
   )
 
-  const items = sentBody.input as { type: string; call_id?: string }[]
+  const items = sentBody.input as { type: string; call_id?: string; output?: string }[]
   const calls = items.filter((item) => item.type === "function_call").map((item) => item.call_id)
   const outputs = items.filter((item) => item.type === "function_call_output").map((item) => item.call_id)
   check("a finished tool is replayed as a pair", calls.includes("call_done") && outputs.includes("call_done"))
-  check("an unfinished tool is dropped entirely", !calls.includes("call_stuck") && !outputs.includes("call_stuck"), calls)
+  // MiMo answers a call that never finished as interrupted rather than dropping it.
+  check(
+    "an unfinished tool is replayed with an interrupted result",
+    calls.includes("call_stuck") && items.some((item) => item.type === "function_call_output" && item.call_id === "call_stuck" && item.output === "[Tool execution was interrupted]"),
+    items,
+  )
   check("every replayed call has its output", calls.every((id) => outputs.includes(id!)), { calls, outputs })
 
   codex.close()
@@ -5823,6 +5821,9 @@ async function main() {
   await commandTemplateChecks(root)
   await historyMemoryCronChecks(root, project)
   await automationChecks(root, project)
+  // round 5: the turn loop, providers, context and prompt, in their own file; its provider answers title requests apart.
+  delete process.env.MCODE_GENERATE_TITLES
+  await roundFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

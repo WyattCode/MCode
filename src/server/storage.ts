@@ -23,11 +23,37 @@ export async function writeAtomic(target: string, data: string, mode?: number): 
   const temp = `${target}.${process.pid}.${++ticket}.tmp`
   await fs.writeFile(temp, data, mode === undefined ? "utf8" : { encoding: "utf8", mode })
   try {
-    await fs.rename(temp, target)
+    await renameOver(temp, target)
   } catch (err) {
     // Leaving a stray temp behind would be worse than the failure itself.
     await fs.rm(temp, { force: true }).catch(() => {})
     throw err
+  }
+}
+
+/** Lock errors Windows returns while another handle - a reader, a virus scanner - still has the target open. */
+const TRANSIENT_LOCK = new Set(["EPERM", "EACCES", "EBUSY"])
+
+/**
+ * A rename that waits out a moment of sharing.
+ *
+ * Windows refuses to replace a file some other handle has open, and says so
+ * with EPERM - even when that handle is this process reading the same session
+ * a moment earlier. A turn failed on exactly this when the conversation's
+ * record was saved while a list of sessions was being read. The lock lasts
+ * milliseconds, so the rename is tried again a few times over about a second;
+ * anything else, or a lock that outlasts that, still fails.
+ */
+async function renameOver(temp: string, target: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(temp, target)
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (process.platform !== "win32" || !code || !TRANSIENT_LOCK.has(code) || attempt >= 8) throw err
+      await new Promise((resolve) => setTimeout(resolve, 10 * 2 ** Math.min(attempt, 5)))
+    }
   }
 }
 

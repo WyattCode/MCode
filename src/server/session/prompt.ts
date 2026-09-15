@@ -3,13 +3,12 @@ import path from "node:path"
 import os from "node:os"
 import { pathToFileURL } from "node:url"
 import { recentCommits, status } from "../git"
+import { globToRegExp } from "../tool/search"
+import { foldersUp } from "./worktree"
 import { modelInvocable, type SkillInfo } from "../skill"
 
-/**
- * Instruction files a project can drop in its root to teach the agent its
- * conventions. Read in order; every one that exists is appended.
- */
-const INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", ".mcode/rules.md"]
+/** MiMo reads CLAUDE.md beside AGENTS.md only while the AGENTS.md files say less than this. */
+const AGENTS_SHORT = 500
 
 const BASE = `You are MCode, an AI coding agent working inside a user's project on their machine.
 
@@ -40,14 +39,19 @@ export interface PromptContext {
   globalAgentsFile?: string
   /** Whether the conversation works in stages. */
   staged?: boolean
+  /** MiMo's `instructions` setting: more instruction files, by glob, looked for up to the repository's top. */
+  instructionFiles?: string[]
   /** skills: every skill the conversation can reach; the ones kept from the model are left out of the list. */
   skills?: SkillInfo[]
   /** memory: the memory files a top-level conversation keeps; absent for a subagent. */
   memory?: { project: string; global: string; notes: string }
 }
 
-/* memory: what the model is told about memory, in this app's words; MiMo's desktop build describes the same three files. */
-function memorySection(files: { project: string; global: string; notes: string }): string {
+/*
+ * memory: what the model is told about memory, in this app's words; MiMo's desktop build describes the same three files.
+ * It names this conversation's own notes file, so a request carries it after the cached system prompt (runner systemFor).
+ */
+export function memorySection(files: { project: string; global: string; notes: string }): string {
   return `## Memory
 
 Some notes outlast this conversation. They are markdown files you read and write with the ordinary tools, without asking:
@@ -122,7 +126,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
     )
   }
 
-  const instructions = await projectInstructions(context.directory)
+  const instructions = await projectInstructions(context.directory, context.instructionFiles ?? [])
   if (instructions) {
     sections.push(`## Project instructions\n\nThese come from the project itself and take precedence over the general guidance above.\n\n${instructions}`)
   }
@@ -133,17 +137,16 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
   // skills: rarely changes, so before the environment and the repository.
   if (context.skills) sections.push(skillsSection(context.skills))
 
-  // memory: names this conversation's own notes file, so after the skills that every conversation shares.
-  if (context.memory) sections.push(memorySection(context.memory))
-
   /*
-   * Last, and in this order: the environment changes per project, the
-   * repository changes per turn. Anything after them would be re-sent with a
-   * new prefix every time the working tree moved.
+   * Then the environment, which changes per project. The repository's state
+   * and the date change per turn, so they travel with each prompt instead
+   * (session/context.ts) and this prompt stays the same for the conversation,
+   * as MiMo freezes its own.
    */
   sections.push(await environment(context.directory))
-  const repository = await repositoryState(context.directory)
-  if (repository) sections.push(repository)
+
+  // memory: names this conversation's own notes file, so last - where a request carries it, outside the cached prefix.
+  if (context.memory) sections.push(memorySection(context.memory))
   return sections.join("\n\n")
 }
 
@@ -174,14 +177,68 @@ function skillsSection(skills: readonly SkillInfo[]): string {
   ].join("\n")
 }
 
-async function projectInstructions(directory: string): Promise<string> {
-  const found: string[] = []
-  for (const name of INSTRUCTION_FILES) {
-    const file = path.join(directory, name)
-    const content = await fs.readFile(file, "utf8").catch(() => undefined)
-    if (content?.trim()) found.push(`<instructions source="${name}">\n${content.trim()}\n</instructions>`)
+/**
+ * A project's instruction files, as MiMo gathers them.
+ *
+ * Every AGENTS.md from the working folder up to the repository's top, nearest
+ * first, so a package inside a monorepo reads its own and the root's. While
+ * those say less than 500 characters, CLAUDE.md files on the same path join
+ * them; with no AGENTS.md at all, the CLAUDE.md files stand in, and failing
+ * those the CONTEXT.md files. Then the files the `instructions` setting names,
+ * each pattern looked for in the same folders - a web address is left out,
+ * since reading it would reach the network. MCode's own `.mcode/rules.md` in
+ * the working folder is read last. Each file once, labelled with its path.
+ */
+async function projectInstructions(directory: string, patterns: readonly string[]): Promise<string> {
+  const folders = await foldersUp(directory)
+  const read = async (file: string) => ((await fs.readFile(file, "utf8").catch(() => "")) as string).trim()
+  const named = async (name: string) => {
+    const out: { file: string; content: string }[] = []
+    for (const folder of folders) {
+      const file = path.join(folder, name)
+      const content = await read(file)
+      if (content) out.push({ file, content })
+    }
+    return out
   }
-  return found.join("\n\n")
+
+  const agents = await named("AGENTS.md")
+  let chosen = agents
+  if (agents.length && agents.reduce((sum, entry) => sum + entry.content.length, 0) < AGENTS_SHORT) chosen = [...agents, ...(await named("CLAUDE.md"))]
+  if (!agents.length) {
+    const claude = await named("CLAUDE.md")
+    chosen = claude.length ? claude : await named("CONTEXT.md")
+  }
+
+  for (const pattern of patterns) {
+    if (/^https?:\/\//i.test(pattern)) continue
+    const expanded = pattern.startsWith("~/") ? path.join(os.homedir(), pattern.slice(2)) : pattern
+    const places = path.isAbsolute(expanded) ? [path.dirname(expanded)] : folders.map((folder) => path.join(folder, path.dirname(expanded)))
+    const matcher = globToRegExp(path.basename(expanded))
+    for (const place of places) {
+      const entries = await fs.readdir(place, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries.filter((item) => item.isFile() && matcher.test(item.name)).sort((a, b) => a.name.localeCompare(b.name))) {
+        const file = path.join(place, entry.name)
+        const content = await read(file)
+        if (content) chosen.push({ file, content })
+      }
+    }
+  }
+
+  const rules = path.join(directory, ".mcode", "rules.md")
+  const ruleText = await read(rules)
+  if (ruleText) chosen.push({ file: rules, content: ruleText })
+
+  const seen = new Set<string>()
+  return chosen
+    .filter((entry) => {
+      const key = path.resolve(entry.file).toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((entry) => `<instructions source="${entry.file}">\n${entry.content}\n</instructions>`)
+    .join("\n\n")
 }
 
 async function environment(directory: string): Promise<string> {
@@ -201,7 +258,6 @@ async function environment(directory: string): Promise<string> {
 Project directory: ${directory}
 Platform: ${process.platform} (${os.release()})
 Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || "/bin/bash"}
-Today: ${new Date().toISOString().slice(0, 10)}
 
 Top level of the project: ${entries}`
 }
@@ -253,7 +309,7 @@ async function projectCommands(directory: string): Promise<string | undefined> {
  * credit for changes that were there before it started; the third is the
  * cheapest look at how this project writes its history.
  */
-async function repositoryState(directory: string): Promise<string | undefined> {
+export async function repositoryState(directory: string): Promise<string | undefined> {
   const state = await status(directory).catch(() => undefined)
   if (!state?.repo) return undefined
 
@@ -291,11 +347,4 @@ async function readJSON(file: string): Promise<Record<string, unknown> | undefin
   } catch {
     return undefined
   }
-}
-
-/** First line of the user's opening message, trimmed into a sidebar title. */
-export function titleFrom(text: string): string {
-  const line = text.trim().split("\n")[0].replace(/\s+/g, " ")
-  if (line.length <= 60) return line || "New session"
-  return line.slice(0, 57) + "..."
 }

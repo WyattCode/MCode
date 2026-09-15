@@ -1,33 +1,55 @@
 /**
  * When a failed provider request is worth sending again, and after how long.
  *
- * The schedule is OpenCode's session retry, which MiMo's engine inherits: two
- * seconds doubling each attempt with up to a quarter more at random, never more
- * than thirty seconds unless the provider named a wait of its own, and five
- * attempts at most. What counts as passing weather is its list too: rate limits,
- * overload, 5xx, and the ways a connection drops. Anything else - a refused key,
- * a malformed request, a prompt too long for the model - fails the same way
- * every time, and waiting would only delay saying so.
+ * MiMo's engine sorts every failure into a kind and gives each kind a budget of
+ * its own: a dropped connection is waited out for as long as it takes, a rate
+ * limit may be waited on for minutes, a server error is tried eight times in a
+ * quarter of an hour. Anything else - a refused key, a malformed request, a
+ * prompt too long for the model, a model the provider does not have - fails the
+ * same way every time, and waiting would only delay saying so.
+ *
+ * A wait the provider names itself (`retry-after-ms`, `retry-after`, or "try
+ * again in 20s" in its words) is honoured, held under the kind's longest wait.
  */
 import Anthropic from "@anthropic-ai/sdk"
 import { isContextOverflow } from "./overflow"
+import { ProviderError, ProviderHttpError } from "../provider/types"
 
-export const RETRY_INITIAL_DELAY = 2_000
-export const RETRY_BACKOFF_FACTOR = 2
-export const RETRY_JITTER_FACTOR = 0.25
-export const RETRY_MAX_DELAY_NO_HEADERS = 30_000
-export const RETRY_MAX_DELAY = 2_147_483_647
-export const RETRY_MAX_RETRIES = 5
+export type RetryKind = "stream" | "network" | "rate_limit" | "server"
 
-const RETRYABLE = [
-  /429|500|502|503|504|524/i,
-  /rate increased too quickly|rate limit|rate-limit|rate_limit|too many requests/i,
-  /overloaded|service unavailable|service_unavailable|service-unavailable|internal error|internal_error|internal server error|server error|server_error|server-error|provider returned error|provider_returned_error|provider-returned-error/i,
-  /terminated|fetch failed|failed to fetch|network[-_\s]error|upstream connect|connection error|connection refused|connection lost|socket connection was closed|socket hang up|reset before headers|getaddrinfo|enotfound|eai_again|econnrefused|econnreset|etimedout/i,
-  /^timeout$|\b(?:request|response|connection|network|stream|read) (?:timeout|timed out|time out)\b/i,
-  /try your request again|retry your request|resource exhausted|resource_exhausted/i,
-  /\btry again (?:later|in\b)|\b(?:currently|temporarily) at capacity\b/i,
-]
+export interface RetryBudget {
+  /** Attempts after the first; Infinity waits for as long as it takes. */
+  retries: number
+  /** How long after the first failure retrying stops; Infinity for never. */
+  deadline: number
+  initial: number
+  max: number
+  jitter: boolean
+}
+
+/** MiMo's budgets, per kind. */
+export const RETRY_BUDGETS: Record<RetryKind, RetryBudget> = {
+  stream: { retries: 5, deadline: 10 * 60_000, initial: 2_000, max: 30_000, jitter: true },
+  server: { retries: 8, deadline: 15 * 60_000, initial: 2_000, max: 30_000, jitter: true },
+  rate_limit: { retries: 5, deadline: 15 * 60_000, initial: 2_000, max: 5 * 60_000, jitter: true },
+  network: { retries: Infinity, deadline: Infinity, initial: 5_000, max: 60_000, jitter: false },
+}
+
+/** No wait is shorter than this. */
+const FLOOR = 100
+
+/** A wait named in the provider's words is taken up to this long. */
+const HINT_CAP = 5 * 60_000
+
+/** GPT's overload answer: tried at once the first time, and three times at most. */
+const GPT_OVERLOAD = /service_unavailable_error|server_is_overloaded/
+const GPT_OVERLOAD_RETRIES = 3
+
+const RATE_LIMITED = /too many requests|too_many_requests|rate[ _]limit(?:ed)?|rate increased too quickly/i
+const NETWORK =
+  /terminated|fetch failed|failed to fetch|network[-_\s]error|upstream connect|connection error|connection refused|connection lost|socket connection was closed|socket hang up|reset before headers|getaddrinfo|enotfound|eai_again|econnrefused|econnreset|etimedout|und_err_socket/i
+const STREAM = /stream_read_error|upstream_error|sse read timed? ?out|stream (?:read )?time(?:d)? ?out/i
+const SERVER_CODE = /exhausted|unavailable/i
 
 /** Everything an error says about itself, its causes included: a dropped socket hides in `cause`. */
 function textOf(err: unknown): string {
@@ -49,10 +71,12 @@ function textOf(err: unknown): string {
 
 function statusOf(err: unknown): number | undefined {
   if (err instanceof Anthropic.APIError && typeof err.status === "number") return err.status
+  if (err instanceof ProviderHttpError) return err.status
   return undefined
 }
 
 function headerOf(err: unknown, name: string): string | undefined {
+  if (err instanceof ProviderHttpError) return err.headers[name]
   if (!(err instanceof Anthropic.APIError)) return undefined
   const headers: unknown = err.headers
   if (!headers) return undefined
@@ -61,42 +85,107 @@ function headerOf(err: unknown, name: string): string | undefined {
   return typeof value === "string" ? value : undefined
 }
 
-function exponential(attempt: number, random: number): number {
-  const base = RETRY_INITIAL_DELAY * Math.pow(RETRY_BACKOFF_FACTOR, attempt - 1)
-  return Math.ceil(base + base * RETRY_JITTER_FACTOR * random)
+/** The provider's own code and type for a failure, where it sent them. */
+function wireOf(err: unknown): { code?: string; type?: string } {
+  if (err instanceof ProviderError || err instanceof ProviderHttpError) return err.wire ?? {}
+  if (err instanceof Anthropic.APIError) {
+    const body = err.error as { error?: { type?: unknown } } | undefined
+    const type = body?.error?.type
+    return typeof type === "string" ? { type } : {}
+  }
+  return {}
+}
+
+function aborted(err: unknown): boolean {
+  let current: unknown = err
+  for (let depth = 0; current && depth < 4; depth++) {
+    if (current instanceof Error && current.name === "AbortError") return true
+    if ((current as { code?: unknown })?.code === "ABORT_ERR") return true
+    current = (current as { cause?: unknown })?.cause
+  }
+  return false
+}
+
+/** What kind of failure this is, or undefined for one that will not go away by waiting. MiMo's order. */
+export function retryKind(err: unknown): RetryKind | undefined {
+  if (!err || typeof err !== "object") return undefined
+  const text = textOf(err)
+  if (aborted(err) || isContextOverflow(text)) return undefined
+  const status = statusOf(err)
+  const wire = wireOf(err)
+  if (status === 401 || status === 403 || status === 402 || status === 404 || status === 501 || status === 505) return undefined
+  if (/usage[_ ]?limit/i.test(wire.code ?? "")) return undefined
+  if (wire.code === "stream_read_error" || wire.type === "upstream_error") return "stream"
+  if (NETWORK.test(text)) return "network"
+  if (STREAM.test(text)) return "stream"
+  if (wire.type === "too_many_requests" || /rate_limit/.test(`${wire.type ?? ""} ${wire.code ?? ""}`) || wire.code === "429" || RATE_LIMITED.test(text)) {
+    return "rate_limit"
+  }
+  if (SERVER_CODE.test(wire.code ?? "")) return "server"
+  if (status === 429) return "rate_limit"
+  if (status !== undefined && (status === 408 || status === 425 || status >= 500)) return "server"
+  return undefined
 }
 
 /** Whether this failure is the kind that goes away by itself. */
 export function isRetryable(err: unknown): boolean {
-  const text = textOf(err)
-  if (isContextOverflow(text)) return false
-  const status = statusOf(err)
-  if (status !== undefined && (status >= 500 || status === 429 || status === 408 || status === 409)) return true
-  if (status !== undefined && status >= 400) return RETRYABLE.slice(1).some((pattern) => pattern.test(text))
-  return RETRYABLE.some((pattern) => pattern.test(text))
+  return retryKind(err) !== undefined
 }
 
-/**
- * How long to wait before attempt `attempt + 1`, or undefined to give up.
- *
- * @param attempt the attempt that just failed, from 1.
- */
-export function retryDelay(err: unknown, attempt: number, random = Math.random()): number | undefined {
-  if (attempt > RETRY_MAX_RETRIES || !isRetryable(err)) return undefined
-  const cap = (ms: number) => Math.min(ms, RETRY_MAX_DELAY)
+/** A wait the provider asked for: its headers first, then its words. */
+export function retryHint(err: unknown): number | undefined {
   const afterMs = headerOf(err, "retry-after-ms")
   if (afterMs) {
     const parsed = Number.parseFloat(afterMs)
-    if (!Number.isNaN(parsed)) return cap(parsed)
+    if (Number.isFinite(parsed)) return Math.ceil(parsed)
   }
   const after = headerOf(err, "retry-after")
   if (after) {
     const seconds = Number.parseFloat(after)
-    if (!Number.isNaN(seconds)) return cap(Math.ceil(seconds * 1000))
+    if (Number.isFinite(seconds)) return Math.ceil(seconds * 1000)
     const until = Date.parse(after) - Date.now()
-    if (!Number.isNaN(until) && until > 0) return cap(Math.ceil(until))
+    if (Number.isFinite(until) && until > 0) return Math.ceil(until)
   }
-  return cap(Math.min(exponential(attempt, random), RETRY_MAX_DELAY_NO_HEADERS))
+  const said = /(?:try again|retry(?:ing)?)\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*(ms|milliseconds?|s|secs?|seconds?|m|mins?|minutes?|h|hours?)\b/i.exec(textOf(err))
+  if (!said) return undefined
+  const amount = Number.parseFloat(said[1]!)
+  const unit = said[2]!.toLowerCase()
+  const scale = unit.startsWith("ms") || unit.startsWith("milli") ? 1 : unit.startsWith("s") ? 1000 : unit.startsWith("m") ? 60_000 : 3_600_000
+  return Math.min(HINT_CAP, Math.ceil(amount * scale))
+}
+
+export interface RetryDecision {
+  kind: RetryKind
+  wait: number
+  /** The attempts this kind allows, 0 when it waits for as long as it takes. */
+  max: number
+}
+
+/**
+ * Whether to send attempt `attempt + 1`, and after how long.
+ *
+ * @param attempt the attempt that just failed, from 1.
+ * @param elapsed how long ago the first failure of this request was.
+ */
+export function retryDecision(err: unknown, attempt: number, elapsed: number, random = Math.random()): RetryDecision | undefined {
+  const kind = retryKind(err)
+  if (!kind) return undefined
+  const budget = RETRY_BUDGETS[kind]
+  const overload = GPT_OVERLOAD.test(`${textOf(err)} ${wireOf(err).code ?? ""} ${wireOf(err).type ?? ""}`)
+  const retries = overload ? Math.min(budget.retries, GPT_OVERLOAD_RETRIES) : budget.retries
+  if (attempt > retries) return undefined
+
+  let wait: number
+  const hint = retryHint(err)
+  if (overload && attempt === 1) wait = 0
+  else if (hint !== undefined) wait = Math.min(budget.max, Math.max(FLOOR, hint))
+  else {
+    const base = Math.min(budget.max, budget.initial * Math.pow(2, attempt - 1))
+    const spread = budget.jitter ? 1 + (random * 2 - 1) * 0.1 : 1
+    wait = Math.round(Math.min(budget.max, Math.max(FLOOR, base * spread)))
+  }
+  if (elapsed >= budget.deadline || wait >= budget.deadline - elapsed) return undefined
+  return { kind, wait, max: Number.isFinite(retries) ? retries : 0 }
 }
 
 /** A wait that Stop cuts short. Resolves false when it was cut. */

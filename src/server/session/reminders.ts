@@ -1,0 +1,179 @@
+import type { AssistantMessage, AssistantPart, Message, ToolPart } from "@shared/protocol"
+
+/**
+ * What the model is told about the turn it is in, beside the conversation
+ * itself, in MCode's own words. MiMo wraps such notes in a system-reminder
+ * tag inside a user message; the tag is kept so a model reads them the same
+ * way.
+ */
+
+/** MiMo's doom-loop threshold: this many identical calls in a row put a question to the user. */
+export const LOOP_THRESHOLD = 3
+
+/** The answers the repeated-call question takes; anything else typed is feedback, and refuses. */
+export const LOOP_ANSWERS = { once: "once", always: "always", reject: "reject" } as const
+
+/**
+ * Whether this call is the third in a row with the same tool and input among
+ * the last parts of its reply. Any other part in between breaks the run, as it
+ * does in MiMo; the earlier two must already have been started.
+ */
+export function repeatsCall(parts: readonly AssistantPart[], call: ToolPart): boolean {
+  const at = parts.indexOf(call)
+  if (at < LOOP_THRESHOLD - 1) return false
+  const run = parts.slice(at - LOOP_THRESHOLD + 1, at + 1)
+  const input = JSON.stringify(call.input ?? {})
+  return run.every(
+    (part) => part.type === "tool" && part.name === call.name && (part === call || part.status !== "pending") && JSON.stringify(part.input ?? {}) === input,
+  )
+}
+
+/** One step's calls as a signature: each call's name and its input with keys sorted. */
+function signature(message: AssistantMessage): string {
+  const stable = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(stable)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.keys(value as Record<string, unknown>).sort().map((key) => [key, stable((value as Record<string, unknown>)[key])]))
+        : value
+  return message.parts
+    .filter((part): part is ToolPart => part.type === "tool")
+    .map((part) => `${part.name}:${JSON.stringify(stable(part.input ?? {}))}`)
+    .join("|")
+}
+
+const SAME_STEPS = [
+  "Your last three steps made exactly the same tool calls with the same arguments, and repeating them again will not change the result.",
+  "Change your approach, or stop and tell the user plainly what is blocking you.",
+].join(" ")
+
+/**
+ * MiMo's same-steps note: when the last three finished steps each made the
+ * very same calls, the latest user message carries a note to change approach.
+ * Request only, and never twice.
+ */
+export function withSameStepsNote(history: Message[]): Message[] {
+  const signatures: string[] = []
+  for (let index = history.length - 1; index >= 0 && signatures.length < LOOP_THRESHOLD; index--) {
+    const message = history[index]!
+    if (message.role !== "assistant") continue
+    if (message.finish === undefined && message.time.completed === undefined) continue
+    const sig = signature(message)
+    if (!sig) break
+    signatures.push(sig)
+  }
+  if (signatures.length < LOOP_THRESHOLD || signatures.some((sig) => sig !== signatures[0])) return history
+  const target = history.map((message) => message.role).lastIndexOf("user")
+  if (target < 0) return history
+  const note = reminder(SAME_STEPS)
+  return history.map((message, index) =>
+    index === target && message.role === "user" && !message.text.includes(SAME_STEPS) ? { ...message, text: `${message.text}\n\n${note}` } : message,
+  )
+}
+
+/** MiMo's continuation limits, per turn. */
+export const CONTINUATION_LIMITS = { length: 3, textTool: 2, empty: 2 } as const
+
+export const LENGTH_NOTE =
+  "Your previous reply was cut off because it reached the output limit. Continue from exactly where it stopped - do not repeat or summarise what you already wrote."
+export const TEXT_TOOL_NOTE = "Your previous reply wrote a tool call out as text, so nothing ran. Make that call again as a real tool call."
+export const EMPTY_NOTE = "Your previous reply had no answer and no tool call. Answer the user or call a tool; thinking alone is not a reply."
+
+/** Tool-call markup a model wrote as prose, as MiMo spots it. */
+const TEXT_TOOL_CALL = /<invoke name=|<parameter name=|<\/invoke>|<function_calls>/
+
+export type Continuation = { note?: string; error?: { message: string; code?: string } }
+
+/**
+ * MiMo's auto-continue after a step that ended without a tool call to run:
+ * a reply cut at the output limit is continued, tool calls written as text are
+ * asked for again, and an empty or reasoning-only reply is asked to answer,
+ * each up to its limit, after which the step ends in error. A GPT model's
+ * reasoning-only reply is taken as final.
+ */
+export function continuationFor(
+  message: AssistantMessage,
+  stop: string,
+  finishReason: string | undefined,
+  modelID: string,
+  counts: { length: number; textTool: number; empty: number },
+): Continuation {
+  if (message.parts.some((part) => part.type === "tool")) return {}
+  const text = message.parts
+    .filter((part) => part.type === "text")
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("")
+    .trim()
+  if (stop === "max_tokens") {
+    if (counts.length >= CONTINUATION_LIMITS.length) return { error: { message: "The reply reached the output limit again after three continuations.", code: "error.outputLength" } }
+    counts.length += 1
+    return { note: LENGTH_NOTE }
+  }
+  if ((finishReason === "tool_calls" || finishReason === "tool_use") && TEXT_TOOL_CALL.test(text)) {
+    const error = { message: "The model wrote a tool call as text instead of making the call." }
+    if (counts.textTool >= CONTINUATION_LIMITS.textTool) return { error }
+    counts.textTool += 1
+    return { note: TEXT_TOOL_NOTE, error }
+  }
+  if (text) return {}
+  const reasoned = message.parts.some((part) => part.type === "reasoning" && part.text.trim())
+  if (reasoned && /(?:^|\/)gpt-\d/i.test(modelID)) return {}
+  if (counts.empty >= CONTINUATION_LIMITS.empty) return { error: { message: "The model returned no usable output.", code: "error.emptyOutput" } }
+  counts.empty += 1
+  return { note: EMPTY_NOTE }
+}
+
+/** The turn's continuation notes, each placed right after the reply it answers. Request only. */
+export function withNotes(history: Message[], notes: ReadonlyMap<string, readonly string[]>): Message[] {
+  if (notes.size === 0) return history
+  return history.flatMap((message): Message[] => {
+    if (message.role !== "assistant") return [message]
+    const list = notes.get(message.id)
+    if (!list?.length) return [message]
+    return [
+      message,
+      ...list.map((note, index) => ({
+        id: `${message.id}:note:${index}`,
+        sessionID: message.sessionID,
+        role: "user" as const,
+        text: reminder(note),
+        attachments: [],
+        time: { created: message.time.completed ?? message.time.created },
+      })),
+    ]
+  })
+}
+
+export function reminder(body: string): string {
+  return `<system-reminder>\n${body.trim()}\n</system-reminder>`
+}
+
+/**
+ * MiMo's framing of messages sent while a turn is working: from the second
+ * step of a turn on, every user message newer than the last finished reply
+ * reaches the model inside a note saying the user sent it mid-task and that it
+ * should be dealt with before carrying on. Request only - the transcript keeps
+ * the words as typed.
+ */
+export function frameSteered(history: Message[]): Message[] {
+  let finished = -1
+  history.forEach((message, index) => {
+    if (message.role === "assistant" && (message.finish !== undefined || message.time.completed !== undefined)) finished = index
+  })
+  if (finished < 0) return history
+  return history.map((message, index) => {
+    if (index <= finished || message.role !== "user" || !message.text.trim()) return message
+    return {
+      ...message,
+      text: reminder(
+        [
+          "The user sent this message while you were working on the task:",
+          "",
+          message.text,
+          "",
+          "Take it into account now - answer it or change course as it asks - and then carry on with the work.",
+        ].join("\n"),
+      ),
+    }
+  })
+}
