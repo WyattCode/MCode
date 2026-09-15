@@ -21,6 +21,7 @@ import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
+import { cardCut, stepPart, stickState, stoppedEmpty } from "./parts/turn-end"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -87,21 +88,13 @@ type Row =
   | { kind: "retry"; id: string; attempt: number }
 
 /** The rows for the parts between two points of the turn, with the errors that fell there. */
-function rows(turn: Turn, start: number, end: number): Row[] {
+function rows(turn: Turn, start: number, end: number, live: boolean): Row[] {
   // An error exactly at a boundary belongs to the steps before it.
   const errors = turn.errors
     .filter((error) => error.at <= end && (start === 0 ? error.at >= 0 : error.at > start))
     .map((error) => ({ ...error, at: error.at - start }))
-  return buildRows(turn.parts.slice(start, end).map(stepPart), errors).map((row) => (row.kind === "group" ? { ...row, open: false } : row))
-}
-
-/*
- * MiMo draws no reasoning and skips it when it builds steps, so a reasoning
- * part is emptied here: nothing is drawn for it and a run of tools either side
- * of it stays one group.
- */
-function stepPart(part: AssistantPart): AssistantPart {
-  return part.type === "reasoning" && part.text ? { ...part, text: "" } : part
+  const parts = turn.parts.slice(start, end).map((part) => stepPart(part, live))
+  return buildRows(parts, errors).map((row) => (row.kind === "group" ? { ...row, open: false } : row))
 }
 
 interface Turn {
@@ -419,15 +412,15 @@ function hasTools(turn: Turn): boolean {
  * steps when the head above them is opened.
  */
 function shown(turn: Turn, at: number): Row[] {
+  const live = liveTurn(at)
   const all: Row[] = []
   let from = 0
   for (const steer of turn.steers) {
-    all.push(...rows(turn, from, steer.at), { kind: "steer", id: steer.id, steer })
+    all.push(...rows(turn, from, steer.at, live), { kind: "steer", id: steer.id, steer })
     from = steer.at
   }
-  all.push(...rows(turn, from, turn.parts.length))
+  all.push(...rows(turn, from, turn.parts.length, live))
 
-  const live = liveTurn(at)
   if (!live) return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "group" && row.kind !== "error")
 
   const retry = turn.last?.retry
@@ -493,33 +486,42 @@ function headTime(turn: Turn, at: number): string | undefined {
   return turn.completed ? formatDuration(turn.completed - turn.started) : undefined
 }
 
-function elapsed(turn: Turn): string | undefined {
-  if (!turn.started || !turn.completed) return undefined
-  const seconds = Math.max(1, Math.round((turn.completed - turn.started) / 1000))
-  if (seconds < 60) return t("stream.seconds", { n: seconds })
-  return t("stream.minutes", { m: Math.floor(seconds / 60), s: seconds % 60 })
+/* How long a stopped turn ran, in the head's own "12s" / "1m 5s"; 0s when nothing was timed. */
+function stoppedAfter(turn: Turn): string {
+  return formatDuration(turn.started && turn.completed ? turn.completed - turn.started : 0)
 }
+
 /** Auto-follow is on until the user scrolls up, and resumes when they return. */
 const following = ref(true)
+/** MiMo's jump button, shown only once the reader is further than the stick distance from the end. */
+const showJump = ref(false)
+
+/* Asked again whenever the content changes, not only on scroll, as MiMo does. */
+function measureJump() {
+  const element = scroller.value
+  if (!element) return
+  showJump.value = stickState(element.scrollHeight, element.scrollTop, element.clientHeight).jump
+}
 
 function onScroll() {
   const element = scroller.value
   if (!element) return
-  const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-  /*
-   * Ten, which is the reference's own `bottomThreshold` - it defaults to 10 in
-   * `createAutoScroll` and nothing ever passes another value. Sixty meant the
-   * view resumed following from six times further away than it should, so
-   * scrolling back to nearly-the-end silently re-armed the jump and took the
-   * reader the rest of the way on the next message.
-   */
-  following.value = distance < 10
+  const state = stickState(element.scrollHeight, element.scrollTop, element.clientHeight)
+  following.value = state.atEnd
+  showJump.value = state.jump
 }
 
-function toBottom(smooth = false) {
+function toBottom() {
   const element = scroller.value
   if (!element) return
-  element.scrollTo({ top: element.scrollHeight, behavior: smooth ? "smooth" : "auto" })
+  element.scrollTop = element.scrollHeight
+}
+
+/* MiMo's jump: straight to the end with no smooth scroll, following again, and the button gone in the same tick. */
+function jump() {
+  toBottom()
+  following.value = true
+  showJump.value = false
 }
 
 /*
@@ -535,6 +537,7 @@ watch(
     following.value = true
     await nextTick()
     toBottom()
+    measureJump()
   },
 )
 
@@ -550,9 +553,9 @@ watch(
 watch(
   () => shownMessages.value.length,
   async () => {
-    if (!following.value) return
     await nextTick()
-    toBottom()
+    if (following.value) toBottom()
+    measureJump()
   },
 )
 
@@ -561,9 +564,9 @@ watch(
 watch(
   () => shownStreaming.value?.parts.map((part) => ("text" in part ? part.text.length : part.status)).join(),
   async () => {
-    if (!following.value) return
     await nextTick()
-    toBottom()
+    if (following.value) toBottom()
+    measureJump()
   },
 )
 
@@ -583,6 +586,7 @@ onMounted(() => {
   if (typeof ResizeObserver === "undefined" || !inner.value) return
   sizer = new ResizeObserver(() => {
     if (following.value) toBottom()
+    measureJump()
   })
   sizer.observe(inner.value)
 })
@@ -735,8 +739,21 @@ function thinkOnly(turn: Turn): boolean {
 
 /** A turn that finished without saying or doing anything. */
 function emptyReply(turn: Turn): boolean {
-  if (!turn.finish || turn.error || turn.finish === "aborted") return false
+  if (!turn.finish || turn.error || ["aborted", "error", "max_tokens"].includes(turn.finish)) return false
   return !answered(turn) && !thinkOnly(turn)
+}
+
+/* MiMo's failure card: an error, a reply cut at the length limit, or reasoning with no answer. */
+function failed(turn: Turn): boolean {
+  return Boolean(turn.error) || turn.finish === "error" || turn.finish === "max_tokens" || thinkOnly(turn)
+}
+
+/* The card's words, cut as MiMo cuts them; nothing at all reads as the model having returned nothing usable. */
+function failureText(turn: Turn): { text: string; clamped: boolean } {
+  let said = t("stream.thinkOnlyNoAnswer")
+  if (turn.finish === "max_tokens" && !turn.error) said = t("error.outputLength")
+  else if (turn.error || turn.finish === "error") said = turn.errorCode ? t(turn.errorCode, turn.errorParams) : (turn.error ?? "")
+  return cardCut(said) ?? { text: t("error.emptyOutput"), clamped: false }
 }
 
 /*
@@ -1072,10 +1089,50 @@ defineExpose({ stepMessage, scroller })
           />
 
           <!--
+            A failure as MiMo shows one: a card with the reason and a retry at its
+            end. A stop that got nothing out, or an empty reply, gets its line and
+            a quiet retry under it; a stop after output ends on its action row.
+          -->
+          <div v-if="failed(turn)" class="err-card" data-turn-error>
+            <svg class="err-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.7" />
+              <path d="M10 5.9v4.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+              <circle cx="10" cy="13.7" r="1" fill="currentColor" />
+            </svg>
+            <span class="err-text" :class="{ clamped: failureText(turn).clamped }" data-err-text>{{ failureText(turn).text }}</span>
+            <button class="retry-pill" data-retry @click="retry(turn)">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+                <path d="M3.5 3.5v5h5" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              {{ t("stream.retry") }}
+            </button>
+          </div>
+          <template v-else-if="stoppedEmpty(turn) || emptyReply(turn)">
+            <div class="note finished" :class="{ empty: emptyReply(turn) }" data-turn-finished>
+              {{ emptyReply(turn) ? t("stream.noContent") : t("stream.stoppedAfter", { dur: stoppedAfter(turn) }) }}
+            </div>
+            <div class="retry-row">
+              <button
+                class="retry-icon"
+                data-retry
+                :aria-label="t('stream.retry')"
+                v-tip="{ label: t('stream.retry'), placement: 'top' }"
+                @click="retry(turn)"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.8v2.9h-2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </template>
+
+          <!--
             MiMo's action row under a reply: copy and branch, always there, 26px
             each; then the time it finished, which shows under the pointer only.
+            A failed turn keeps it, under its card.
           -->
-          <div v-if="turn.finish && !turn.error && turn.last" class="msg-actions" data-msg-actions>
+          <div v-if="turn.finish && turn.last && !stoppedEmpty(turn)" class="msg-actions" data-msg-actions>
             <button
               type="button"
               class="msg-act"
@@ -1107,51 +1164,6 @@ defineExpose({ stepMessage, scroller })
             </button>
             <span v-if="completedAt(turn)" class="msg-time" data-msg-time>{{ completedAt(turn) }}</span>
           </div>
-
-          <!--
-            A failure as MiMo shows one: a card with the reason and a retry at its
-            end. A stopped or empty turn gets its line and a quiet retry under it.
-          -->
-          <div v-if="turn.error || thinkOnly(turn)" class="err-card" data-turn-error>
-            <svg class="err-icon" width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.2" />
-              <path d="M8 4.8v3.8M8 11v.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-            </svg>
-            <span class="err-text">{{
-              !turn.error ? t("stream.thinkOnlyNoAnswer") : turn.errorCode ? t(turn.errorCode, turn.errorParams) : turn.error
-            }}</span>
-            <button class="retry-pill" data-retry @click="retry(turn)">
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.8v2.9h-2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-              {{ t("stream.retry") }}
-            </button>
-          </div>
-          <template v-else-if="turn.finish === 'aborted' || emptyReply(turn)">
-            <div class="note finished" :class="{ empty: emptyReply(turn) }" data-turn-finished>
-              {{
-                emptyReply(turn)
-                  ? t("stream.noContent")
-                  : elapsed(turn)
-                    ? t("stream.stoppedAfter", { dur: elapsed(turn) ?? "" })
-                    : t("stream.stopped")
-              }}
-            </div>
-            <div class="retry-row">
-              <button
-                class="retry-icon"
-                data-retry
-                :aria-label="t('stream.retry')"
-                v-tip="{ label: t('stream.retry'), placement: 'top' }"
-                @click="retry(turn)"
-              >
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.8v2.9h-2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-            </div>
-          </template>
-          <div v-else-if="turn.finish === 'max_tokens'" class="note">{{ t("stream.maxTokens") }}</div>
         </div>
 
         <div
@@ -1178,12 +1190,12 @@ defineExpose({ stepMessage, scroller })
       over the conversation it is covering.
     -->
     <button
-      v-if="!following"
+      v-if="showJump"
       class="jump"
       data-jump-to-bottom
       :aria-label="t('stream.jumpToBottom')"
       :title="t('stream.jumpToBottom')"
-      @click="toBottom(true)"
+      @click="jump"
     >
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M12 5v14M5 12l7 7 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
@@ -1202,7 +1214,7 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* Under a card - the edited files, or the artifacts - it keeps its distance. */
-.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions) {
+.msg-actions:is(.file-card + .msg-actions, [data-fc-reverted] + .msg-actions, .fc-confirm + .msg-actions, .err-card + .msg-actions) {
   margin-top: 10px;
 }
 
@@ -1688,7 +1700,10 @@ defineExpose({ stepMessage, scroller })
   border: 1px solid var(--border-weak);
   border-radius: 999px;
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
-  transition: color 0.12s;
+  /* MiMo tweens the lift over the pill and the colour; the sideways move with the info card stays a snap. */
+  transition:
+    bottom 0.18s cubic-bezier(0.2, 0.7, 0.2, 1),
+    color 0.12s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 .jump:hover {
@@ -1937,31 +1952,42 @@ defineExpose({ stepMessage, scroller })
   font-weight: 500;
 }
 
+/* Nothing above it in the turn: it sits flush, as MiMo's flushTop does. */
+.msg.assistant > .err-card:first-child {
+  margin-top: 0;
+}
+
+/* MiMo's 20px alert in the card's own text colour, not red. */
 .err-icon {
   flex-shrink: 0;
-  color: var(--error);
+  width: 20px;
+  height: 20px;
 }
 
 .err-text {
   flex: 1;
   min-width: 0;
-  max-height: 143px;
-  overflow: hidden;
   line-height: 1.7;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
+.err-text.clamped {
+  max-height: 143px;
+  overflow: hidden;
+}
+
+/* MiMo's framed retry: 8px corners, 6 between the arrow and the word. */
 .retry-pill {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   padding: 5px 13px;
   color: var(--text-base);
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
-  border-radius: 999px;
+  border-radius: 8px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
   line-height: 1.7;

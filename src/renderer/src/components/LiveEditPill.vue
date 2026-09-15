@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from "vue"
-import type { AssistantPart, ToolPart } from "@shared/protocol"
+import type { ToolPart } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
 import { editedFiles } from "../lib/edited-files"
 import { t } from "../lib/i18n"
+import { latestTurnParts } from "./parts/turn-end"
 
 /*
  * MiMo's pill over the composer: what the latest turn changed - the one
@@ -20,17 +21,7 @@ const rp = useRightPanel()
 /* The diff tab's source, which App.vue also reads to say whether the tab is on show. */
 const LIVE_EDIT = "live-edit"
 
-/* The parts after the last question; a message sent into the running turn stays inside it. */
-const latest = computed<AssistantPart[]>(() => {
-  const parts: AssistantPart[] = []
-  const list = app.visible
-  for (let at = list.length - 1; at >= 0; at--) {
-    const message = list[at]!
-    if (message.role === "assistant") parts.unshift(...message.parts)
-    else if (!message.steered) break
-  }
-  return parts
-})
+const latest = computed(() => latestTurnParts(app.visible))
 
 const changes = computed(() => editedFiles(latest.value, app.current?.directory))
 

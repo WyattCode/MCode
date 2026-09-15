@@ -32,7 +32,7 @@ import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
 import type { AuthManager } from "../auth/manager"
 import type { ProviderAdapter, TurnEvent, TurnOutcome } from "../provider/types"
-import { ProviderError } from "../provider/types"
+import { failureCode, failureDetail } from "./error-map"
 import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
@@ -1595,9 +1595,14 @@ export class SessionRunner {
       if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) return undefined
       assistant.finish = "error"
       assistant.error = describe(err)
-      if (err instanceof ProviderError && err.code) {
-        assistant.errorCode = err.code
-        assistant.errorParams = err.params
+      /*
+       * MiMo's card shows a short sentence and keeps the raw text aside; the
+       * code names the sentence and `detail` keeps what the provider said.
+       */
+      const failure = failureCode(err)
+      if (failure) {
+        assistant.errorCode = failure.code
+        assistant.errorParams = failure.params ?? { detail: failureDetail(err) }
       }
       assistant.time.completed = Date.now()
       await this.store.saveMessage(assistant)
@@ -1757,6 +1762,11 @@ export class SessionRunner {
         part.errorCode = err.code
         part.errorParams = err.params
       }
+      /*
+       * Cut off by Stop rather than failing on its own. The model still reads
+       * the error; the transcript settles the step quietly, as MiMo does.
+       */
+      if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true }
       if (err instanceof PermissionDenied && err.byUser) refusedByUser = true
     } finally {
       stopListening()
