@@ -148,10 +148,34 @@ export function toMessages(system: string, history: Message[]) {
 
 const MAX_TOKENS = 32_000
 
+/** Whether MiMo puts cache marks on a chat-completions request: Claude reached through OpenRouter or Alibaba. */
+export function cacheMarked(provider: string, modelID: string): boolean {
+  return (provider === "openrouter" || provider === "dashscope") && /claude|anthropic/i.test(modelID)
+}
+
+/**
+ * MiMo's marks on such a request: the last part of each of the last two
+ * messages after the system prompt, where that message is made of parts - a
+ * plain string carries none, as in MiMo - and the last tool definition.
+ */
+export function withCacheMarks(messages: Record<string, unknown>[], tools: Record<string, unknown>[]): void {
+  const mark = { type: "ephemeral" }
+  for (const message of messages.filter((entry) => entry.role !== "system").slice(-2)) {
+    const content = message.content
+    if (!Array.isArray(content) || content.length === 0) continue
+    content[content.length - 1] = { ...(content[content.length - 1] as Record<string, unknown>), cache_control: mark }
+  }
+  if (tools.length) tools[tools.length - 1] = { ...tools[tools.length - 1], cache_control: mark }
+}
+
 export const OpenAICompatible: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
+
+    const messages = toMessages(request.system, request.history)
+    const tools: Record<string, unknown>[] = toolSchemas(request.tools)
+    if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
 
     const response = await fetch(`${root}/chat/completions`, {
       method: "POST",
@@ -164,6 +188,8 @@ export const OpenAICompatible: ProviderAdapter = {
          * request's, rather than being screened by a block-list.
          */
         ...request.headers,
+        // MiMo keeps a conversation's requests together with this header.
+        ...(request.sessionID ? { "x-session-affinity": request.sessionID } : {}),
         /*
          * Only when there is one. A provider whose credential lives in a header
          * has no key here, and writing `Bearer ` over the header the user typed
@@ -180,7 +206,7 @@ export const OpenAICompatible: ProviderAdapter = {
         stream: true,
         stream_options: { include_usage: true },
         max_tokens: request.maxOutput ?? MAX_TOKENS,
-        messages: toMessages(request.system, request.history),
+        messages,
         /*
          * The field the effort control has always meant and never sent.
          *
@@ -196,7 +222,7 @@ export const OpenAICompatible: ProviderAdapter = {
         ...(request.variants && !request.variants.includes(request.effort)
           ? {}
           : { reasoning_effort: request.effort }),
-        ...(request.tools.length ? { tools: toolSchemas(request.tools), tool_choice: "auto" } : {}),
+        ...(tools.length ? { tools, tool_choice: "auto" } : {}),
         // MiMo's family sampling; top-k is not a chat-completions field, so it stays off this wire.
         ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
         ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),

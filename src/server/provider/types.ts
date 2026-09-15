@@ -75,6 +75,10 @@ export interface TurnRequest {
   sampling?: { temperature?: number; topP?: number; topK?: number }
   /** Body fields a provider needs beside the usual ones (see `providerExtras`). */
   extra?: Record<string, unknown>
+  /** The conversation this request belongs to: MiMo's prompt cache key and session-affinity header. */
+  sessionID?: string
+  /** How long a cache mark should last, when the model asks for the hour-long one. */
+  cacheTTL?: "5m" | "1h"
   /**
    * How many times the SDK may quietly resend a failed request itself. The turn
    * loop passes 0 because it retries in the open, with a row saying so; other

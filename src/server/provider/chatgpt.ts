@@ -192,6 +192,8 @@ export const ChatGPTSubscription: ProviderAdapter = {
       "User-Agent": USER_AGENT,
     }
     if (request.accountId) headers["chatgpt-account-id"] = request.accountId
+    // MiMo keeps a conversation's requests together with this header.
+    if (request.sessionID) headers["x-session-affinity"] = request.sessionID
 
     const response = await fetch(`${base}/responses`, {
       method: "POST",
@@ -207,6 +209,8 @@ export const ChatGPTSubscription: ProviderAdapter = {
         // Nothing is retained server-side: the transcript lives in this app.
         store: false,
         stream: true,
+        // MiMo's prompt cache key for OpenAI: the conversation's id, so its prefix is found again.
+        ...(request.sessionID ? { prompt_cache_key: request.sessionID } : {}),
         ...reasoningRequest(request.effort, request.variants, request.showReasoning),
         // MiMo asks GPT-5.x for terse text, except the codex and chat models.
         ...(verbose(request.model.model) ? {} : { text: { verbosity: "low" } }),

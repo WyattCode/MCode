@@ -31,7 +31,7 @@ import { findInMessages, searchMessages, snippetAround } from "../src/server/sea
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
-import { systemPrompt } from "../src/server/session/prompt"
+import { repositoryState, systemPrompt } from "../src/server/session/prompt"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
 import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, transcribeFailure } from "../src/renderer/src/lib/voice"
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
@@ -4136,26 +4136,29 @@ async function main() {
     path.join(repoRoot, "package.json"),
     JSON.stringify({ name: "fixture", scripts: { build: "tsc", smoke: "node t.js" } }),
   )
-  const situated = await systemPrompt({ directory: repoRoot, agent: "build" })
-  check("the prompt names the branch", situated.includes("Branch: feature"), situated.slice(-400))
+  // round 5 (E10): the repository's state now travels with each prompt, out of the cached system prompt.
+  const situated = (await repositoryState(repoRoot)) ?? ""
+  check("the per-prompt repository note names the branch", situated.includes("Branch: feature"), situated.slice(-400))
   check(
     "and what was already dirty before the turn",
     situated.includes("loose.txt") && situated.includes("Already modified"),
     situated.slice(-400),
   )
   check("and the last commits", situated.includes("two"), situated.slice(-300))
+  const situatedPrompt = await systemPrompt({ directory: repoRoot, agent: "build" })
   check(
-    "and how this project is built",
-    situated.includes("npm run <name>") && situated.includes("build, smoke"),
-    situated.slice(-600),
+    "the system prompt says how this project is built",
+    situatedPrompt.includes("npm run <name>") && situatedPrompt.includes("build, smoke"),
+    situatedPrompt.slice(-600),
   )
+  check("and carries no repository state or date of its own", !situatedPrompt.includes("## Repository") && !situatedPrompt.includes("Today:"), situatedPrompt.slice(-400))
   await fs.rm(path.join(repoRoot, "loose.txt"))
   await fs.rm(path.join(repoRoot, "package.json"))
 
   /* A folder that is not a repository says nothing about one. */
   const noRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-plain-"))
   const bare = await systemPrompt({ directory: noRepo, agent: "build" })
-  check("a plain folder gets no repository section", !bare.includes("## Repository"), bare.slice(-200))
+  check("a plain folder gets no repository note", (await repositoryState(noRepo)) === undefined)
   check("and no build section it cannot support", !bare.includes("## Building and testing"), bare.slice(-200))
   await fs.rm(noRepo, { recursive: true, force: true })
 

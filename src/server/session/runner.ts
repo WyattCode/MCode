@@ -48,7 +48,7 @@ import {
   summaryWouldFit,
 } from "./overflow"
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
-import { systemPrompt } from "./prompt"
+import { repositoryState, systemPrompt } from "./prompt"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor } from "../provider/sampling"
@@ -1225,7 +1225,7 @@ export class SessionRunner {
 
     // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
     const first = (await this.store.messages(session.id)).length === 0
-    const reminders = input.inbox ? [] : this.remindersFor(session, first)
+    const reminders = input.inbox ? [] : await this.remindersFor(session, first)
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
@@ -1263,16 +1263,21 @@ export class SessionRunner {
    * working directory inside it, as MiMo's desktop attaches them. A subagent's
    * prompt is the runner's own and gets none.
    */
-  private remindersFor(session: SessionInfo, first: boolean): string[] {
+  private async remindersFor(session: SessionInfo, first: boolean): Promise<string[]> {
     if (session.parentID) return []
     const config = this.config.get()
-    const runtime = runtimeContext({ language: config.language, ...(first ? { directory: session.directory } : {}) })
+    // The date and the repository's state change per turn, so they ride here rather than in the cached system prompt.
+    const repository = await repositoryState(session.directory).catch(() => undefined)
+    const runtime = runtimeContext({
+      language: config.language,
+      today: new Date().toISOString().slice(0, 10),
+      ...(repository ? { repository } : {}),
+      ...(first ? { directory: session.directory } : {}),
+    })
     if (!first) return [runtime]
-    const servers = session.agent === "plan" ? [] : this.tools(session.agent, session.model.model, session.id).flatMap((tool) => (tool.server ? [tool.server] : []))
-    const configured = Object.entries(config.mcpServers ?? {})
-      .filter(([, entry]) => entry.enabled !== false)
-      .map(([name]) => name)
-    const names = [...new Set([...servers, ...configured.filter((name) => this.mcpServersAt.get(session.id)?.has(name) ?? true)])]
+    // The conversation's MCP servers are fixed when it first asks for its tools (plan takes none).
+    if (session.agent !== "plan") this.tools(session.agent, session.model.model, session.id)
+    const names = [...(this.mcpServersAt.get(session.id) ?? [])]
     return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
   }
 
@@ -1490,13 +1495,32 @@ export class SessionRunner {
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const config = this.config.get()
-    const base = await systemPrompt({
-      directory: session.directory,
-      agent: session.agent,
-      staged: session.staged,
-      instructions: config.instructions,
-      globalAgentsFile: this.globalAgents,
-    })
+    /*
+     * MiMo's prefix snapshot: the system prompt is built once for a
+     * conversation and reused, so a new file or a changed working tree does not
+     * start its cache over. It is rebuilt only when what it was built for
+     * changes - the agent, the mode, the instructions, the model, or the tools.
+     */
+    const prefixKey = JSON.stringify([
+      session.agent,
+      session.staged === true,
+      config.instructions ?? "",
+      session.model.provider,
+      session.model.model,
+      this.tools(session.agent, session.model.model, sessionID).map((tool) => tool.name),
+    ])
+    const frozen = this.prefixes.get(sessionID)
+    const base =
+      frozen?.key === prefixKey
+        ? frozen.system
+        : await systemPrompt({
+            directory: session.directory,
+            agent: session.agent,
+            staged: session.staged,
+            instructions: config.instructions,
+            globalAgentsFile: this.globalAgents,
+          })
+    this.prefixes.set(sessionID, { key: prefixKey, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const system = session.parentID ? `${base}\n\n${SUBAGENT_NOTE}` : base
 
@@ -1665,6 +1689,8 @@ export class SessionRunner {
         accountId: tokens?.accountId,
         maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
         outputLimit: this.config.modelEntry(session.model)?.maxOutput,
+        // MiMo's prompt cache key and session affinity.
+        sessionID,
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
         extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true),
@@ -2129,6 +2155,9 @@ export class SessionRunner {
     // subagents: a refusal inside a subagent stops the turn it works for, and so every subagent in it.
     if (refusedByUser) this.abort(owner)
   }
+
+  /** Each conversation's system prompt as first built, and what it was built for (see `run`). */
+  private readonly prefixes = new Map<string, { key: string; system: string }>()
 
   /** Tools a conversation said to always let repeat, by session: MiMo's `always` on its doom-loop ask. */
   private readonly repeatsAllowed = new Map<string, Set<string>>()

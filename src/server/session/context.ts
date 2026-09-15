@@ -15,6 +15,10 @@ export interface RuntimeInput {
   language: string | undefined
   /** Given only on the conversation's first message. */
   directory?: string
+  /** The date the message was sent, as YYYY-MM-DD. */
+  today?: string
+  /** The repository's state as the message was sent (prompt.ts `repositoryState`), kept out of the cached system prompt. */
+  repository?: string
 }
 
 export function runtimeContext(input: RuntimeInput): string {
@@ -24,7 +28,9 @@ export function runtimeContext(input: RuntimeInput): string {
   lines.push(
     `Response language: ${localeName(locale)}. Reply in this language unless the user's message or their custom instructions ask for another.`,
   )
-  return lines.join("\n")
+  if (input.today) lines.push(`Today: ${input.today}`)
+  const block = lines.join("\n")
+  return input.repository ? `${block}\n\n${input.repository}` : block
 }
 
 export interface SessionNoteInput {

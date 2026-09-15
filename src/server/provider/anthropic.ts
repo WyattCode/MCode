@@ -196,40 +196,57 @@ export function reasoningRequest(
   }
 }
 
+type MessagesBody = Parameters<Anthropic["messages"]["stream"]>[0]
+type CacheMark = { type: "ephemeral"; ttl?: "5m" | "1h" }
+
+/** Puts a cache mark on a message's last block, turning plain text into a block to carry it. */
+function markLast(message: Anthropic.MessageParam, mark: CacheMark): void {
+  if (typeof message.content === "string") {
+    message.content = [{ type: "text", text: message.content, cache_control: mark }]
+    return
+  }
+  const last = message.content[message.content.length - 1]
+  if (last && last.type !== "thinking" && last.type !== "redacted_thinking") (last as { cache_control?: CacheMark }).cache_control = mark
+}
+
+/**
+ * The Messages request, with MiMo's cache marks: the system prompt, the last
+ * tool definition and the last two messages, so each step reads back what the
+ * one before it wrote. The cap is MiMo's, held to the model's own ceiling when
+ * the catalog knows it - what MiMo's Anthropic SDK does for a model it
+ * recognises - and the thinking budgets are cut from that ceiling.
+ */
+export function messagesRequest(request: TurnRequest): MessagesBody {
+  const limit = request.outputLimit && request.outputLimit > 0 ? request.outputLimit : undefined
+  const wanted = request.maxOutput ?? MAX_TOKENS
+  const maxTokens = limit ? Math.min(wanted, limit) : wanted
+  const mark: CacheMark = { type: "ephemeral", ...(request.cacheTTL === "1h" ? { ttl: "1h" as const } : {}) }
+  const tools = toolSchemas(request.tools)
+  if (tools.length) tools[tools.length - 1] = { ...tools[tools.length - 1]!, cache_control: mark }
+  const messages = toProviderMessages(request.history)
+  for (const message of messages.slice(-2)) markLast(message, mark)
+  return {
+    model: request.model.model,
+    max_tokens: maxTokens,
+    system: [{ type: "text", text: request.system, cache_control: mark }],
+    tools,
+    messages,
+    ...reasoningRequest(request.model.model, request.effort, request.variants, request.showReasoning, maxTokens, limit ?? wanted),
+    // MiMo's family sampling: none for Claude, set for another family reached over this protocol.
+    ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
+    ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
+    ...(request.sampling?.topK !== undefined ? { top_k: request.sampling.topK } : {}),
+  }
+}
+
 export const AnthropicAdapter: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const client = createClient(request.apiKey, request.retries)
-    /*
-     * MiMo's cap, held to the model's own ceiling when the catalog knows it -
-     * what MiMo's Anthropic SDK does for a model it recognises. The thinking
-     * budgets are cut from that ceiling.
-     */
-    const limit = request.outputLimit && request.outputLimit > 0 ? request.outputLimit : undefined
-    const wanted = request.maxOutput ?? MAX_TOKENS
-    const maxTokens = limit ? Math.min(wanted, limit) : wanted
-
-    const stream = client.messages.stream(
-      {
-        model: request.model.model,
-        max_tokens: maxTokens,
-        system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
-        tools: toolSchemas(request.tools),
-        messages: toProviderMessages(request.history),
-        ...reasoningRequest(
-          request.model.model,
-          request.effort,
-          request.variants,
-          request.showReasoning,
-          maxTokens,
-          limit ?? wanted,
-        ),
-        // MiMo's family sampling: none for Claude, set for another family reached over this protocol.
-        ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
-        ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
-        ...(request.sampling?.topK !== undefined ? { top_k: request.sampling.topK } : {}),
-      },
-      { signal: request.signal },
-    )
+    const stream = client.messages.stream(messagesRequest(request), {
+      signal: request.signal,
+      // MiMo keeps a conversation's requests together with this header.
+      ...(request.sessionID ? { headers: { "x-session-affinity": request.sessionID } } : {}),
+    })
 
     for await (const event of stream) {
       if (request.signal.aborted) break

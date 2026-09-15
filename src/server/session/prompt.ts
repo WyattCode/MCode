@@ -112,13 +112,12 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
   if (commands) sections.push(commands)
 
   /*
-   * Last, and in this order: the environment changes per project, the
-   * repository changes per turn. Anything after them would be re-sent with a
-   * new prefix every time the working tree moved.
+   * Last: the environment, which changes per project. The repository's state
+   * and the date change per turn, so they travel with each prompt instead
+   * (session/context.ts) and this prompt stays the same for the conversation,
+   * as MiMo freezes its own.
    */
   sections.push(await environment(context.directory))
-  const repository = await repositoryState(context.directory)
-  if (repository) sections.push(repository)
   return sections.join("\n\n")
 }
 
@@ -149,7 +148,6 @@ async function environment(directory: string): Promise<string> {
 Project directory: ${directory}
 Platform: ${process.platform} (${os.release()})
 Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || "/bin/bash"}
-Today: ${new Date().toISOString().slice(0, 10)}
 
 Top level of the project: ${entries}`
 }
@@ -201,7 +199,7 @@ async function projectCommands(directory: string): Promise<string | undefined> {
  * credit for changes that were there before it started; the third is the
  * cheapest look at how this project writes its history.
  */
-async function repositoryState(directory: string): Promise<string | undefined> {
+export async function repositoryState(directory: string): Promise<string | undefined> {
   const state = await status(directory).catch(() => undefined)
   if (!state?.repo) return undefined
 

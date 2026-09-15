@@ -18,9 +18,13 @@ import { repeatsCall } from "../src/server/session/reminders"
 import { UNTITLED, clampTitle, cleanTitle, fallbackTitle } from "../src/server/session/title"
 import { providerExtras, samplingFor } from "../src/server/provider/sampling"
 import { modelVariants } from "../src/server/provider/variants"
-import { OpenAICompatible } from "../src/server/provider/openai"
+import { OpenAICompatible, cacheMarked, withCacheMarks } from "../src/server/provider/openai"
 import { verbose } from "../src/server/provider/chatgpt"
 import { interfaceLocale, localeName } from "../src/server/session/locale"
+import { messagesRequest } from "../src/server/provider/anthropic"
+import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
+import { TOOLS } from "../src/server/tool/registry"
+import { execFileSync } from "node:child_process"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -605,6 +609,72 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.idle(chat.id)
       const inbound = (await e.store.messages(chat.id)).find((message) => message.role === "user")
       check("a message from another conversation carries no runtime context", inbound?.role === "user" && !inbound.reminders, inbound)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: prompt caching - a stable prefix and MiMo's cache marks (E10)")
+  {
+    const user = (id: string, text: string): Message => ({ id, sessionID: "s", role: "user", text, attachments: [], time: { created: 1 } })
+    const base = {
+      apiKey: "k",
+      model: { provider: "anthropic", model: "claude-opus-5" },
+      system: "SYSTEM",
+      tools: TOOLS.slice(0, 3),
+      effort: "high",
+      showReasoning: false,
+      signal: new AbortController().signal,
+    }
+    const body = messagesRequest({ ...base, history: [user("u1", "one"), user("u2", "two"), user("u3", "three")] }) as unknown as Record<string, any>
+    const marked = (block: Record<string, any> | undefined) => block?.cache_control?.type === "ephemeral"
+    check("the system block is marked", marked(body.system?.[0]))
+    check("the last tool definition is marked, and only it", marked(body.tools?.at(-1)) && !body.tools.slice(0, -1).some(marked), body.tools?.map((tool: Record<string, unknown>) => Boolean(tool.cache_control)))
+    const blocks = (body.messages as Record<string, any>[]).map((message) => (Array.isArray(message.content) ? marked(message.content.at(-1)) : false))
+    check("the last two messages are marked, earlier ones are not", JSON.stringify(blocks) === JSON.stringify([false, true, true]), blocks)
+    const hour = messagesRequest({ ...base, cacheTTL: "1h", history: [user("u1", "one")] }) as unknown as Record<string, any>
+    check("a model that asks for the hour-long cache gets it", hour.system?.[0]?.cache_control?.ttl === "1h")
+
+    check("chat-completions requests are marked only for Claude through OpenRouter or Alibaba", cacheMarked("openrouter", "anthropic/claude-sonnet-5") && !cacheMarked("openrouter", "openai/gpt-5.5") && !cacheMarked("lmstudio", "claude-local"))
+    const messages: Record<string, unknown>[] = [
+      { role: "system", content: "s" },
+      { role: "user", content: [{ type: "text", text: "a" }, { type: "image_url", image_url: { url: "data:x" } }] },
+      { role: "assistant", content: "plain" },
+      { role: "user", content: [{ type: "text", text: "b" }] },
+    ]
+    const tools: Record<string, unknown>[] = [{ type: "function" }, { type: "function" }]
+    withCacheMarks(messages, tools)
+    const parts = (at: number) => messages[at]?.content as Record<string, unknown>[]
+    check(
+      "the last two messages take a mark on their last part, a plain string none, and so does the last tool",
+      !parts(1).at(-1)?.cache_control && messages[2]?.content === "plain" && Boolean(parts(3).at(-1)?.cache_control) && Boolean(tools[1]?.cache_control) && !tools[0]?.cache_control,
+      { messages, tools },
+    )
+
+    const e = await engine()
+    try {
+      // ChatGPT: the prompt cache key is the conversation.
+      await ChatGPTSubscription.stream({ ...base, model: { provider: "chatgpt", model: "gpt-5.5" }, tools: [], history: [user("u1", "hi")], baseURL: `http://127.0.0.1:${e.port}`, sessionID: "ses_cache" }, () => {}).catch(() => undefined)
+      check("ChatGPT is sent the conversation as its prompt cache key", e.bodies.at(-1)?.prompt_cache_key === "ses_cache" && e.headers.at(-1)?.["x-session-affinity"] === "ses_cache", { key: e.bodies.at(-1)?.prompt_cache_key })
+
+      // The runner: the same system prompt across turns, whatever the working tree does.
+      execFileSync("git", ["init", "-q"], { cwd: e.project })
+      execFileSync("git", ["-c", "user.email=r5@example.com", "-c", "user.name=r5", "add", "-A"], { cwd: e.project })
+      execFileSync("git", ["-c", "user.email=r5@example.com", "-c", "user.name=r5", "commit", "-q", "-m", "first"], { cwd: e.project })
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "PREFIX one" })
+      await e.idle(session.id)
+      const firstSystem = e.bodies.at(-1)?.messages?.[0]?.content
+      await fs.writeFile(path.join(e.project, "added-later.txt"), "new\n")
+      await fs.writeFile(path.join(e.project, "README.md"), "# changed\n")
+      await e.runner.prompt({ sessionID: session.id, text: "PREFIX two" })
+      await e.idle(session.id)
+      const later = e.bodies.at(-1)
+      check("the system prompt is sent unchanged after the working tree moved", typeof firstSystem === "string" && later?.messages?.[0]?.content === firstSystem, String(later?.messages?.[0]?.content).slice(-300))
+      check("it carries neither the date nor the repository", !String(firstSystem).includes("Today:") && !String(firstSystem).includes("## Repository"))
+      const lastUser = (later?.messages as Record<string, any>[]).filter((m) => m.role === "user").at(-1)
+      check("the prompt that follows the change carries them instead", String(lastUser?.content).includes("Today:") && String(lastUser?.content).includes("Branch:") && String(lastUser?.content).includes("README.md"), String(lastUser?.content).slice(0, 500))
+      check("and the conversation's requests carry its session affinity", e.headers.at(-1)?.["x-session-affinity"] === session.id)
     } finally {
       await e.close()
     }
