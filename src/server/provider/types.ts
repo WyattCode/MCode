@@ -89,9 +89,52 @@ export class ProviderError extends Error {
     message: string,
     readonly code?: string,
     readonly params?: Record<string, string>,
+    /** The provider's own error code and type, which decide whether it is worth retrying. */
+    readonly wire?: { code?: string; type?: string },
   ) {
     super(message)
     this.name = "ProviderError"
+  }
+}
+
+/**
+ * A request the provider answered with an HTTP failure, with the status and
+ * headers kept: a rate limit's `retry-after` is how long MiMo waits.
+ */
+export class ProviderHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly headers: Record<string, string>,
+    readonly wire?: { code?: string; type?: string },
+  ) {
+    super(message)
+    this.name = "ProviderHttpError"
+  }
+}
+
+/** A response's headers, lower-cased, for a `ProviderHttpError`. */
+export function headersOf(response: Response): Record<string, string> {
+  const out: Record<string, string> = {}
+  response.headers.forEach((value, key) => {
+    out[key.toLowerCase()] = value
+  })
+  return out
+}
+
+/** The code and type an error body carries, when it is the usual `{error: {code, type}}` JSON. */
+export function wireOfBody(body: string): { code?: string; type?: string } | undefined {
+  try {
+    const parsed = JSON.parse(body) as { error?: { code?: unknown; type?: unknown } }
+    const code = parsed?.error?.code
+    const type = parsed?.error?.type
+    const wire = {
+      ...(typeof code === "string" || typeof code === "number" ? { code: String(code) } : {}),
+      ...(typeof type === "string" ? { type } : {}),
+    }
+    return Object.keys(wire).length ? wire : undefined
+  } catch {
+    return undefined
   }
 }
 

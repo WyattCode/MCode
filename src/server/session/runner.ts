@@ -29,7 +29,7 @@ import { Questions } from "../tool/question"
 import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
-import { retryDelay, waitFor } from "./retry"
+import { retryDecision, waitFor } from "./retry"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
@@ -1693,19 +1693,26 @@ export class SessionRunner {
 
     try {
       let outcome: TurnOutcome | undefined
+      /* When this request first failed: each kind of failure is retried for so long and no longer. */
+      let firstFailure: number | undefined
       for (let attempt = 1; outcome === undefined; attempt++) {
         try {
           // The SDK's own quiet retries are off here: this loop retries in the open.
           outcome = await adapter.stream({ ...request, retries: 0 }, emit)
         } catch (err) {
           if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) throw err
-          const wait = retryDelay(err, attempt)
-          if (wait === undefined) throw err
           /*
-           * Tried again from the start, as OpenCode's engine does: what the
-           * failed attempt managed to stream is dropped, because the next one
-           * streams it again. Nothing has run - tools only run once a step
-           * settles. The retry itself rides on the published copy only, so the
+           * MiMo retries a step only while replaying it is safe: once a tool
+           * call has started to stream, the attempt is not repeated.
+           */
+          if (assistant.parts.some((part) => part.type === "tool")) throw err
+          firstFailure ??= Date.now()
+          const decision = retryDecision(err, attempt, Date.now() - firstFailure)
+          if (!decision) throw err
+          /*
+           * Tried again from the start, as MiMo's engine does: what the failed
+           * attempt managed to stream is dropped, because the next one streams
+           * it again. The retry itself rides on the published copy only, so the
            * next update for the message clears the row without anything to undo.
            */
           assistant.parts = []
@@ -1713,9 +1720,12 @@ export class SessionRunner {
           dirty = false
           this.bus.publish({
             type: "message.updated",
-            message: { ...structuredClone(assistant), retry: { attempt, message: describe(err), next: Date.now() + wait } },
+            message: {
+              ...structuredClone(assistant),
+              retry: { attempt, message: describe(err), next: Date.now() + decision.wait, kind: decision.kind, max: decision.max },
+            },
           })
-          if (!(await waitFor(wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+          if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
         }
       }
 

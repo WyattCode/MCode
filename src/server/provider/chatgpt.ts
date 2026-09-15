@@ -2,7 +2,7 @@ import type { Message } from "@shared/protocol"
 import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, wireOfBody } from "./types"
 import { USER_AGENT } from "../auth/oauth"
 
 /**
@@ -30,7 +30,7 @@ interface StreamEvent {
   /** Present on `error` frames; `response.failed` nests it under `response`. */
   message?: string
   code?: string
-  error?: { message?: string }
+  error?: { message?: string; code?: string; type?: string }
   response?: {
     error?: { message?: string }
     usage?: {
@@ -209,7 +209,7 @@ export const ChatGPTSubscription: ProviderAdapter = {
 
     if (!response.ok || !response.body) {
       const detail = await response.text().catch(() => "")
-      throw new Error(`ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`)
+      throw new ProviderHttpError(`ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`, response.status, headersOf(response), wireOfBody(detail))
     }
 
     const toolCalls: ToolCall[] = []
@@ -323,6 +323,10 @@ export const ChatGPTSubscription: ProviderAdapter = {
                 event.error?.message ??
                 event.message ??
                 "ChatGPT stream failed without saying why.",
+              undefined,
+              undefined,
+              // The code decides the retry: GPT's overload answer is tried at once, three times at most.
+              { ...(event.code ? { code: event.code } : {}), ...(event.error?.code ? { code: event.error.code } : {}), ...(event.error?.type ? { type: event.error.type } : {}) },
             )
         }
       }

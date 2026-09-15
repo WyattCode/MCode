@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk"
-import { ProviderError } from "../provider/types"
+import { ProviderError, ProviderHttpError } from "../provider/types"
 import { isContextOverflow } from "./overflow"
 
 /**
@@ -42,6 +42,7 @@ export function failureDetail(err: unknown): string {
 
 function statusOf(err: unknown, text: string): number | undefined {
   if (err instanceof Anthropic.APIError && typeof err.status === "number") return err.status
+  if (err instanceof ProviderHttpError) return err.status
   const found = STATUS_IN_TEXT.exec(text)
   return found ? Number(found[1]) : undefined
 }

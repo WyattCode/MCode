@@ -372,7 +372,14 @@ export interface AssistantMessage {
    * disk: the next update for the message comes without it, which is how the
    * row goes away once the stream resumes.
    */
-  retry?: { attempt: number; message: string; next: number }
+  retry?: {
+    attempt: number
+    message: string
+    next: number
+    /** MiMo's kind of failure (stream, network, rate_limit, server) and the attempts it allows, 0 when it waits indefinitely. */
+    kind?: string
+    max?: number
+  }
   time: { created: number; completed?: number }
 }
 

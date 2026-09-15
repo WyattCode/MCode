@@ -2,7 +2,7 @@ import type { Message, Usage } from "@shared/protocol"
 import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, wireOfBody } from "./types"
 
 /**
  * Adapter for OpenAI-compatible chat completions.
@@ -53,7 +53,7 @@ interface Chunk {
   choices?: { delta?: Delta; finish_reason?: string | null }[]
   usage?: ChunkUsage
   /** Sent inside a 200 stream by providers that fail after the headers. */
-  error?: { message?: string } | string
+  error?: { message?: string; code?: unknown; type?: unknown } | string
 }
 
 function toolSchemas(tools: ToolDefinition[]) {
@@ -201,7 +201,8 @@ export const OpenAICompatible: ProviderAdapter = {
 
     if (!response.ok || !response.body) {
       const detail = await response.text().catch(() => "")
-      throw new Error(describeHttp(response.status, detail))
+      // The status and headers travel with the failure: a rate limit's retry-after decides the wait.
+      throw new ProviderHttpError(describeHttp(response.status, detail), response.status, headersOf(response), wireOfBody(detail))
     }
 
     // Blocks are indexed for the UI; text always occupies slot 0, reasoning 1,
@@ -341,7 +342,14 @@ function parseArguments(raw: string): { input: Record<string, unknown>; inputErr
  * string, sometimes twice. The innermost message is the one that says what
  * actually went wrong, so it is the one worth keeping.
  */
-function describeStreamError(error: { message?: string } | string): ProviderError {
+function describeStreamError(error: { message?: string; code?: unknown; type?: unknown } | string): ProviderError {
+  const wire =
+    typeof error === "object" && error
+      ? {
+          ...(typeof error.code === "string" || typeof error.code === "number" ? { code: String(error.code) } : {}),
+          ...(typeof error.type === "string" ? { type: error.type } : {}),
+        }
+      : {}
   // Nothing here is guaranteed to be a string, and calling a string method on
   // whatever arrived would replace the provider's error with a TypeError.
   const raw =
@@ -371,9 +379,9 @@ function describeStreamError(error: { message?: string } | string): ProviderErro
    * app phrases it; the numbers are the provider's, so they are passed through.
    */
   if (/context (size|length|window)/i.test(message)) {
-    return new ProviderError(message, "error.contextExceeded", { detail: message })
+    return new ProviderError(message, "error.contextExceeded", { detail: message }, wire)
   }
-  return new ProviderError(message || "The provider reported an error but gave no detail.")
+  return new ProviderError(message || "The provider reported an error but gave no detail.", undefined, undefined, wire)
 }
 
 function describeHttp(status: number, detail: string): string {

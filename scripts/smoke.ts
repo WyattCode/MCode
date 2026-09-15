@@ -76,7 +76,8 @@ import {
 } from "../src/shared/browser-page"
 import { ToolError } from "../src/server/tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
-import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/session/retry"
+import { RETRY_BUDGETS, isRetryable, retryDecision } from "../src/server/session/retry"
+import { ProviderHttpError } from "../src/server/provider/types"
 import type { PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
@@ -1017,7 +1018,7 @@ async function main() {
   section("Provider retries")
   {
     check("a dropped connection is retried", isRetryable(new TypeError("fetch failed")))
-    check("a 503 from an OpenAI-compatible provider is retried", isRetryable(new Error("The provider returned 503. This is usually transient.")))
+    check("a 503 from an OpenAI-compatible provider is retried", isRetryable(new ProviderHttpError("The provider returned 503. This is usually transient.", 503, {})))
     check("a rate limit is retried", isRetryable(new Error("Rate limited by the provider. Wait a moment and try again.")))
     check("a refused key is not retried", !isRetryable(new Error("Authentication failed - check the API key in Settings.")))
     check(
@@ -1026,12 +1027,14 @@ async function main() {
     )
     const cause = Object.assign(new Error("socket closed"), { code: "ECONNRESET" })
     check("a reset hidden in the cause is retried", isRetryable(new TypeError("request failed", { cause })))
+    // MiMo's network budget: five seconds doubling to a minute, no jitter, and no giving up.
     const dropped = new TypeError("fetch failed")
-    check("the first wait is two seconds", retryDelay(dropped, 1, 0) === 2000, retryDelay(dropped, 1, 0))
-    check("with at most a quarter more at random", retryDelay(dropped, 1, 1) === 2500, retryDelay(dropped, 1, 1))
-    check("it doubles", retryDelay(dropped, 3, 0) === 8000, retryDelay(dropped, 3, 0))
-    check("and stops at thirty seconds", retryDelay(dropped, 5, 1) === 30000, retryDelay(dropped, 5, 1))
-    check("five attempts, then it gives up", retryDelay(dropped, RETRY_MAX_RETRIES + 1, 0) === undefined)
+    check("a dropped connection first waits five seconds", retryDecision(dropped, 1, 0, 1)?.wait === 5000, retryDecision(dropped, 1, 0, 1))
+    check("it doubles", retryDecision(dropped, 3, 0, 0)?.wait === 20000, retryDecision(dropped, 3, 0, 0))
+    check("and stops at a minute", retryDecision(dropped, 9, 0, 1)?.wait === 60000, retryDecision(dropped, 9, 0, 1))
+    check("and is never given up", retryDecision(dropped, 500, 24 * 60 * 60_000)?.kind === "network")
+    const busy = new ProviderHttpError("The provider returned 503. This is usually transient.", 503, {})
+    check("a server error has eight attempts, then it gives up", retryDecision(busy, RETRY_BUDGETS.server.retries, 0) !== undefined && retryDecision(busy, RETRY_BUDGETS.server.retries + 1, 0) === undefined)
   }
 
   // ------------------------------------------------------------- turn revert
