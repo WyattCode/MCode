@@ -1014,13 +1014,18 @@ async function submit() {
   }
 
   const named = await mentionAttachments(value, carried, target)
+  const filled = await fillCommand(value, target)
+  // A file the command names that was also mentioned goes once.
+  const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
 
   // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
-  const subtask = props.side ? undefined : subtaskOf(value)
+  const subtask = props.side || !filled ? undefined : subtaskOf(filled)
   // A rejected message should not cost the user what they typed, or gathered.
-  const accepted = subtask
-    ? await app.subtask(value, subtask)
-    : await app.send(withSkills(outgoing(value), chips), [...sent, ...named], target, pointed)
+  const accepted = !filled
+    ? false
+    : subtask
+      ? await app.subtask(value, subtask)
+      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -1072,44 +1077,72 @@ async function compactFromBox(line: string) {
 /**
  * What actually goes to the model when the draft is a command line.
  *
- * The reference sends `session.command` and lets its server look the name up
- * and fill the template in (main-8t-QUXax.js @4461049 into
- * `SessionPrompt.command` @32957943); this app has no such request, so the
- * template travels with the command list and is filled in here. The visible
- * result is the same either way: the transcript shows the expanded prompt,
- * because the reference's server puts the template's own parts on the user
- * message rather than the slash line.
+ * MiMo sends `session.command` and its engine fills the template in. Here a
+ * project or global command is filled in by the backend the same way
+ * (`command.expand`): arguments, then its ``!`cmd` `` placeholders run in the
+ * conversation's folder, then the files it names with `@` come back to be
+ * attached. An MCP prompt is filled in here from the listed template and runs
+ * nothing; a skill's `/name` line goes as typed, for the server to load it.
+ * The transcript shows the filled-in prompt, as MiMo's does.
  *
  * NOT carried across, because `session.prompt` has nowhere to put them: a
- * command's `agent` and `model`. The reference runs the turn as whichever
- * agent and model the command names; here it runs as whatever the session is
- * already set to. A command marked `subtask` does not come through here at all:
- * see `subtaskOf`.
+ * command's `agent` and `model`. MiMo runs the turn as whichever agent and
+ * model the command names; here it runs as whatever the session is already set
+ * to.
+ *
+ * Undefined when the backend could not fill the command in; the failure has
+ * been said and the draft should come back.
  */
+async function fillCommand(value: string, to?: string): Promise<{ text: string; attachments: Attachment[]; command?: CommandInfo } | undefined> {
+  const line = splitCommandLine(value)
+  const command = line && serverCommand(line.name)
+  if (!line || !command || command.source === "skill") return { text: value, attachments: [] }
+  const root = commandRoot(to)
+  if (command.source === "mcp" || !root || !app.client) {
+    const expanded = expandTemplate(command.template, line.args)
+    // An MCP prompt whose fetch failed has no template. Sending nothing would be
+    // refused by the store and the draft would bounce back with no explanation,
+    // so the line goes as it was typed instead.
+    return { text: expanded.trim() ? expanded : value, attachments: [], command }
+  }
+  let filled: { prompt: string; files: { name: string; path: string }[] }
+  try {
+    filled = await app.client.request({ type: "command.expand", directory: root, name: line.name, arguments: line.args })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return undefined
+  }
+  const attachments: Attachment[] = []
+  for (const file of filled.files) {
+    try {
+      const attachment = mentionAttachment(file.name, await app.client.request({ type: "file.read", path: file.path }))
+      if (attachment) attachments.push(attachment)
+      else notifyFailure(t("attach.unreadable"), file.name)
+    } catch {
+      notifyFailure(t("attach.unreadable"), file.name)
+    }
+  }
+  return { text: filled.prompt.trim() ? filled.prompt : value, attachments, command }
+}
+
 /**
  * subagents: a command marked `subtask`, as MiMo runs one - its filled-in
  * template goes to a subagent, named by the command's description, and the line
  * as typed stays the user's message. Undefined for anything else.
  */
-function subtaskOf(value: string): { description: string; prompt: string } | undefined {
-  const line = splitCommandLine(value)
-  const command = line && serverCommand(line.name)
-  if (!line || !command?.subtask) return undefined
-  const prompt = expandTemplate(command.template, line.args).trim()
+function subtaskOf(filled: { text: string; command?: CommandInfo }): { description: string; prompt: string } | undefined {
+  const command = filled.command
+  if (!command?.subtask) return undefined
+  const prompt = filled.text.trim()
   if (!prompt) return undefined
   return { description: command.description?.trim() || `/${command.name}`, prompt }
 }
 
-function outgoing(value: string): string {
-  const line = splitCommandLine(value)
-  const command = line && serverCommand(line.name)
-  // skills: a `/name` line goes as typed; the server loads the skill it names into the message.
-  if (!command || command.source === "skill") return value
-  const expanded = expandTemplate(command.template, line!.args)
-  // An MCP prompt whose fetch failed has no template. Sending nothing would be
-  // refused by the store and the draft would bounce back with no explanation,
-  // so the line goes as it was typed instead.
-  return expanded.trim() ? expanded : value
+/** The folder a message from this box is sent from: its conversation's, or the side chat's. */
+function commandRoot(to?: string): string | undefined {
+  // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
+  const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
+  return props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
 }
 
 /**
@@ -1122,9 +1155,7 @@ function outgoing(value: string): string {
  * not go with it.
  */
 async function mentionAttachments(value: string, chosen: Set<string>, to?: string): Promise<Attachment[]> {
-  // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
-  const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
-  const root = props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
+  const root = commandRoot(to)
   if (!root || !app.client || !chosen.size) return []
   const out: Attachment[] = []
   for (const path of mentionedIn(value)) {

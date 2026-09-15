@@ -221,7 +221,8 @@ import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage }
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
-import { listCommands } from "../src/server/command"
+import { expandCommand, listCommands } from "../src/server/command"
+import { expandTemplate, fileReferences, shellPlaceholders, substituteShell } from "../src/shared/command"
 import { SEARCH, SKILL_FILE_SAMPLE, SkillSearchTool, SkillTool, searchSkills, searchTokens } from "../src/server/tool/skill"
 import { stepTitle as skillStepTitle, toolVerb as skillToolVerb } from "../src/renderer/src/lib/tool-meta"
 
@@ -5749,9 +5750,107 @@ async function main() {
   await deliveredToolChecks(root)
   await skillChecks(root)
   taskChecks()
+  await commandTemplateChecks(root)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/** commands: MiMo's template rules - shell placeholders, `@file`, folders and model tiers. */
+async function commandTemplateChecks(root: string) {
+  section("Command templates (shell, @file, folders, models)")
+  check("shell placeholders are found in order, repeats kept", shellPlaceholders("a !`one` b !`two` c !`one`").join("|") === "one|two|one")
+  check("outputs replace placeholders in order, and a $ in an output is text", substituteShell("x !`a` y !`b`", ["$&", "$1"]) === "x $& y $1")
+  check(
+    "@file: an email is not a file, a closing full stop is not part of one, a repeat counts once",
+    fileReferences("see @notes.md. and @src/a.ts, mail me@example.com, again @notes.md and `@code`").join("|") === "notes.md|src/a.ts",
+    fileReferences("see @notes.md. and @src/a.ts, mail me@example.com, again @notes.md and `@code`"),
+  )
+
+  const base = path.join(root, "commands-case")
+  const home = path.join(base, "home")
+  const storage = path.join(base, "storage")
+  const outer = path.join(base, "outer")
+  const repo = path.join(outer, "repo")
+  const nested = path.join(repo, "packages", "app")
+  const write = async (file: string, text: string) => {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, text)
+  }
+  const doc = (body: string, front = "") => `---\ndescription: probe\n${front}---\n${body}\n`
+  await fs.mkdir(path.join(repo, ".git"), { recursive: true })
+  await fs.mkdir(nested, { recursive: true })
+  await write(path.join(storage, "commands", "global-only.md"), doc("from the global folder"))
+  await write(path.join(storage, "commands", "shared.md"), doc("global shared"))
+  await write(path.join(repo, ".mcode", "commands", "shared.md"), doc("repo shared"))
+  await write(path.join(nested, ".mcode", "command", "shared.md"), doc("nested shared"))
+  await write(path.join(nested, ".mcode", "commands", "deploy", "web.md"), doc("deploy web"))
+  await write(path.join(nested, ".claude", "commands", "from-claude.md"), doc("claude command"))
+  await write(path.join(nested, ".claude", "commands", "global-only.md"), doc("claude loses to the global folder"))
+  await write(path.join(outer, ".mcode", "commands", "above.md"), doc("above the repository"))
+  await write(path.join(home, ".mcode", "commands", "shared.md"), doc("home shared"))
+  await write(path.join(repo, ".mcode", "commands", "pair.md"), doc("repo pair"))
+  await write(path.join(nested, ".mcode", "commands", "pair.md"), doc("nested pair"))
+  await write(path.join(nested, ".mcode", "commands", "tier.md"), doc("tier", "model: ultra\n"))
+  await write(path.join(nested, ".mcode", "commands", "literal.md"), doc("literal", "model: probe/stub/v2\n"))
+  await write(path.join(nested, ".mcode", "commands", "group.md"), doc("group", "model: my-group\n"))
+  await write(path.join(nested, ".mcode", "commands", "writes.md"), doc('made !`node -e "require(\'fs\').writeFileSync(\'ran.txt\',\'1\');console.log(\'written\')"`'))
+  // node prints the words the shell handed it, the same in any shell.
+  const words = `node -e "console.log(process.argv.slice(1).join('|'))"`
+  await write(path.join(nested, ".mcode", "commands", "echo.md"), doc(`A !\`${words} $1 $2\` B !\`${words} $ARGUMENTS\``))
+  await write(path.join(nested, ".mcode", "commands", "slow.md"), doc('slow !`node -e "setTimeout(function(){console.log(42)},2000)"`'))
+  await write(path.join(nested, ".mcode", "commands", "big.md"), doc('big !`node -e "process.stdout.write(String.fromCharCode(120).repeat(300000))"`'))
+  await write(path.join(nested, ".mcode", "commands", "noisy.md"), doc('noisy [!`node -e "process.stdout.write(String.fromCharCode(111));process.stderr.write(String.fromCharCode(101));process.exit(3)"`]'))
+  await write(path.join(nested, ".mcode", "commands", "missing.md"), doc("before [!`echo never`] after"))
+  await write(path.join(nested, ".mcode", "commands", "files.md"), doc(`Read @notes.md and @src/a.ts. Skip @missing.txt, @src and me@example.com. !\`node -e "console.log('@later.md')"\``))
+  await write(path.join(repo, "notes.md"), "notes\n")
+  await write(path.join(repo, "src", "a.ts"), "export {}\n")
+  await write(path.join(repo, "later.md"), "later\n")
+
+  const defaultModel = { provider: "probe", model: "stub" }
+  const deps = (shell = "") => ({
+    config: { get: () => ({ model: defaultModel, shell, commands: { configured: { template: "from the config document" } } }) },
+    mcp: { prompts: async () => ({ remote: { client: "srv", name: "remote", description: "mcp" } }), getPrompt: async () => "!`echo from-mcp`" },
+    storage: { directory: storage },
+    home,
+  })
+  const listed = await listCommands(deps() as never, nested)
+  const named = (name: string) => listed.find((entry) => entry.name === name)
+  check("listing never runs a placeholder", !(await fs.stat(path.join(nested, "ran.txt")).catch(() => undefined)) && Boolean(named("writes")))
+  check("the global folder, the walk up to the repository root and .claude folders are all read", Boolean(named("global-only") && named("from-claude") && named("deploy/web") && named("configured")), listed.map((entry) => entry.name))
+  check("the walk stops at the repository root", !named("above"))
+  check("of two project folders the outer one wins a name, as MiMo merges them nearest first", named("pair")?.template === "repo pair", named("pair")?.template)
+  check("the home .mcode wins over the project and global folders", named("shared")?.template === "home shared", named("shared")?.template)
+  check("a .claude command loses a name to the global folder", named("global-only")?.template === "from the global folder", named("global-only")?.template)
+  check("model: a tier name is the default model, provider/model splits on the first slash, another group maps to nothing", JSON.stringify(named("tier")?.model) === JSON.stringify(defaultModel) && named("literal")?.model?.model === "stub/v2" && named("group")?.model === undefined, [named("tier")?.model, named("literal")?.model, named("group")?.model])
+
+  const expand = (name: string, args = "", shell = "") => expandCommand(deps(shell) as never, { directory: nested, name, arguments: args })
+  const writes = await expand("writes")
+  check("sending runs the placeholder, in the conversation's folder, and its output replaces it", writes.prompt === "made written" && Boolean(await fs.stat(path.join(nested, "ran.txt")).catch(() => undefined)), writes.prompt)
+  const echoed = await expand("echo", 'one "x y"')
+  check(
+    "arguments are substituted before the shell runs, unescaped: $2 loses its quotes and splits, $ARGUMENTS keeps them",
+    /^A one\|x\|y\r?\n B one\|x y$/.test(echoed.prompt),
+    echoed.prompt,
+  )
+  const started = Date.now()
+  const slow = await expand("slow")
+  check("no timeout: a command that takes two seconds is still waited for", slow.prompt === "slow 42" && Date.now() - started >= 1900, { prompt: slow.prompt, ms: Date.now() - started })
+  const big = await expand("big")
+  check("no output cap: 300000 characters of output all go in", big.prompt.length === "big ".length + 300000, big.prompt.length)
+  const noisy = await expand("noisy")
+  check("stdout only: stderr is dropped and a failing exit code is ignored", noisy.prompt === "noisy [o]", noisy.prompt)
+  const missing = await expand("missing", "", path.join(base, "no-such-shell", "bash.exe"))
+  check("a shell that cannot start leaves the empty string", missing.prompt === "before [] after", missing.prompt)
+  const files = await expand("files")
+  check(
+    "@file: existing files from the repository root, including one a placeholder printed; no folders, no missing files, no emails",
+    files.files.map((file) => file.name).join("|") === "notes.md|src/a.ts|later.md" && files.files[0]!.path === path.join(repo, "notes.md"),
+    files.files,
+  )
+  const refused = await expand("remote").then(() => "", (err: Error) => err.message)
+  check("an MCP prompt is not a command whose placeholders run", refused.includes("/remote"), refused)
+  check("the window's own fill-in of a template never runs anything", expandTemplate("a !`echo no` $1", "b") === "a !`echo no` b")
 }
 
 /** tasks: MiMo's task registry, as pure changes to a list. */
