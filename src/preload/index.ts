@@ -195,6 +195,20 @@ const api = {
   officeConvertLegacy: (target: string): Promise<{ ok: true; output: string; cached: boolean } | { ok: false; error: string }> =>
     ipcRenderer.invoke("mcode:office-convert-legacy", target),
   revealPath: (target: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("mcode:reveal-path", target),
+  /** A reply's path link: opens a file with its default program; executables and folders are refused there. */
+  openNativePath: (target: string): Promise<{ ok: true } | { ok: false; code: string; error: string }> =>
+    ipcRenderer.invoke("mcode:open-native-path", target),
+  /** The first absolute candidate that exists, and whether it is a folder. */
+  resolveExistingPath: (candidates: string[]): Promise<{ path: string; directory: boolean } | null> =>
+    ipcRenderer.invoke("mcode:resolve-existing-path", candidates),
+  /** Selects a file in its folder, or opens a folder. */
+  revealNativePath: (target: string): Promise<{ ok: true } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:reveal-native-path", target),
+  /** A picture on disk as base64, for copying it to the clipboard. */
+  readImageData: (target: string): Promise<{ ok: true; mime: string; base64: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:read-image-data", target),
+  /** Saves a PNG where the person chooses; the path, or undefined when dismissed. */
+  savePng: (suggested: string, base64: string): Promise<string | undefined> => ipcRenderer.invoke("mcode:save-png", suggested, base64),
   /** A loopback address a web page is served at, with its folder beside it. */
   officeServe: (target: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:office-serve", target),
   /** Watches an open document so its view can reload when it changes on disk. */

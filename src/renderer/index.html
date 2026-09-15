@@ -25,10 +25,16 @@
       attached video), the preview server (a video file on disk) and the web (a
       video link in a reply) - only ever once the video preview has been opened
       by a press.
+
+      Images may load from the web and from the preview server, as MiMo shows
+      a reply's ![](https://...) picture and a picture on disk named by its
+      path; blob addresses carry a picture being copied. An <img> cannot run
+      script, and connect-src still keeps http and https out of reach, so this
+      opens no way for page code to send a request of its own.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
   </head>

@@ -18,7 +18,13 @@ import path from "node:path"
  * cannot read another's files or storage.
  */
 
-const SERVED = new Set([".xlsx", ".docx", ".pptx", ".pdf", ".html", ".htm", ".mp4", ".m4v", ".webm", ".mov", ".ogv"])
+/* Documents and pages, plus the pictures, videos and sounds a reply shows inline by their path. */
+const SERVED = new Set([
+  ".xlsx", ".docx", ".pptx", ".pdf", ".html", ".htm",
+  ".mp4", ".m4v", ".webm", ".mov", ".ogv",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".avif", ".svg",
+  ".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac",
+])
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".htm": "text/html; charset=utf-8",
@@ -43,6 +49,10 @@ const TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
   ".webm": "video/webm",
   ".mov": "video/quicktime",
+  ".m4v": "video/mp4",
+  ".ogv": "video/ogg",
+  ".flac": "audio/flac",
+  ".aac": "audio/aac",
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
   ".ogg": "audio/ogg",

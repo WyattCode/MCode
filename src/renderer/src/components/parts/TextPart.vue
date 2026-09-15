@@ -1,24 +1,44 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue"
+import "katex/dist/katex.min.css"
+import { computed, getCurrentInstance, h, nextTick, onBeforeUnmount, onMounted, ref, render, watch } from "vue"
 import type { TextPart } from "@shared/protocol"
-import { renderMarkdown } from "../../lib/markdown"
+import { renderReply, type ReplyBlock } from "../../lib/markdown"
 import { highlightWithin } from "../../lib/highlight"
-import { openVideoPreview } from "../../lib/image-preview"
+import { openImagePreview, openVideoPreview } from "../../lib/image-preview"
 import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 import { notifyFailure } from "../../lib/toast"
+import type { MenuItem } from "../../lib/menu"
+import { localPathOf, openPathLink, pathMenuItems, resolvePathTarget, runPathMenu, type PathTarget } from "../../lib/path-open"
+import ContextMenu from "../ContextMenu.vue"
+import DiagramBlock from "./DiagramBlock.vue"
+import LocalMedia from "./LocalMedia.vue"
 
 const props = defineProps<{ part: TextPart }>()
 const app = useApp()
+const instance = getCurrentInstance()
 
-// Safe to bind as HTML: renderMarkdown escapes the source before formatting it.
-const html = computed(() =>
-  renderMarkdown(props.part.text, {
+/* MiMo keeps a diagram a code block until the reply has finished arriving. */
+const streaming = computed(() =>
+  [app.streaming, app.sideStreaming].some((message) => message?.parts.some((part) => part.id === props.part.id)),
+)
+
+// Safe to bind as HTML: renderReply escapes every piece of source it places, and hands diagrams over as source.
+const blocks = computed(() =>
+  renderReply(props.part.text, {
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
     tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
     videoCards: { tip: t("markdown.previewAnnotateTip"), fallback: t("markdown.videoFallbackLabel") },
+    math: true,
+    links: { imageTip: t("markdown.previewAnnotateTip") },
+    paths: { tip: t("markdown.openWithDefaultTip") },
+    diagrams: { streaming: streaming.value },
+    lineNumbers: true,
   }),
 )
+
+/* A block keeps its element while it is unchanged, so only the one being written is redrawn. */
+const blockKey = (block: ReplyBlock, index: number) => `${block.kind === "diagram" ? "d" : block.kind === "html" ? "h" : "s"}${index}`
 
 /*
  * MiMo's video card: a web, data or blob address plays as it is; a file on
@@ -26,27 +46,12 @@ const html = computed(() =>
  * preview server first, since the window cannot read the disk, and the
  * preview then knows its path for the annotation.
  */
-function localPathOf(url: string): string {
-  if (/^file:/i.test(url)) {
-    try {
-      const pathname = decodeURIComponent(new URL(url).pathname)
-      // file:///C:/a/b.mp4 is C:\a\b.mp4 on Windows, written the way the rest of the app writes paths there.
-      return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1).replace(/\//g, "\\") : pathname
-    } catch {
-      return ""
-    }
-  }
-  if (/^([A-Za-z]:)?[\\/]/.test(url)) return url
-  const directory = app.current?.directory
-  return directory ? `${directory}/${url}` : ""
-}
-
 async function openVideoCard(url: string, label: string) {
   if (/^(https?:|data:|blob:)/i.test(url)) {
     openVideoPreview(url, { name: label })
     return
   }
-  const file = localPathOf(url)
+  const file = localPathOf(url, app.current?.directory)
   const served = file ? await window.mcode.officeServe(file) : null
   if (!served?.ok) {
     notifyFailure(t("office.fileMissing"))
@@ -63,7 +68,7 @@ async function openVideoCard(url: string, label: string) {
 const root = ref<HTMLElement>()
 let colourTimer: ReturnType<typeof setTimeout> | undefined
 watch(
-  html,
+  blocks,
   () => {
     clearTimeout(colourTimer)
     colourTimer = setTimeout(() => void nextTick(() => highlightWithin(root.value)), 120)
@@ -72,8 +77,40 @@ watch(
 )
 
 /*
- * MiMo's table copy: the table as a markdown pipe table for plain text and as
- * the bare table for anything that pastes HTML. Falls back to the text alone.
+ * The cards for pictures, videos and sounds named by path are components,
+ * mounted into the placeholders the renderer left. A block that is redrawn
+ * drops its placeholders, and their cards are unmounted with them.
+ */
+const mounted = new Set<HTMLElement>()
+
+function mountMedia() {
+  const host = root.value
+  if (!host) return
+  for (const holder of [...mounted]) {
+    if (holder.isConnected) continue
+    render(null, holder)
+    mounted.delete(holder)
+  }
+  for (const holder of host.querySelectorAll<HTMLElement>(".md-media:not([data-mounted])")) {
+    const kind = holder.dataset.media
+    const path = holder.dataset.mediaPath
+    if ((kind !== "image" && kind !== "video" && kind !== "audio") || !path) continue
+    holder.dataset.mounted = "true"
+    holder.textContent = ""
+    const vnode = h(LocalMedia, { kind, path, directory: app.current?.directory })
+    vnode.appContext = instance?.appContext ?? null
+    render(vnode, holder)
+    mounted.add(holder)
+  }
+}
+
+watch(blocks, () => void nextTick(mountMedia), { flush: "post" })
+onMounted(mountMedia)
+
+/*
+ * MiMo's table copy: the model's own markdown for plain text and the bare
+ * table for anything that pastes HTML; a table without its source is written
+ * out as a pipe table instead.
  */
 function pipeTable(table: HTMLTableElement): string {
   const rows = [...table.rows]
@@ -93,9 +130,10 @@ function bareTable(table: HTMLTableElement): string {
 }
 
 async function copyTable(button: HTMLElement) {
-  const table = button.closest(".md-table-container")?.querySelector("table")
-  if (!table) return
-  const text = pipeTable(table)
+  const container = button.closest<HTMLElement>(".md-table-container")
+  const table = container?.querySelector("table")
+  if (!container || !table) return
+  const text = container.dataset.mdSource?.trim() || pipeTable(table)
   try {
     const Item = (globalThis as { ClipboardItem?: typeof ClipboardItem }).ClipboardItem
     let written = false
@@ -133,34 +171,94 @@ watch(previewing, (open) => {
   else window.removeEventListener("keydown", onEscape)
 })
 
+/* The right-click menu on a path: open, copy the picture, copy the path, show it in the file manager. */
+const pathMenu = ref<{ x: number; y: number; items: MenuItem[]; target: PathTarget }>()
+
+async function onContextMenu(event: MouseEvent) {
+  const holder = (event.target as HTMLElement | null)?.closest<HTMLElement>("[data-path]")
+  if (!holder) return
+  event.preventDefault()
+  const at = { x: event.clientX, y: event.clientY }
+  const target = await resolvePathTarget(holder.dataset.path ?? "", holder.dataset.pathKind ?? "", app.current?.directory, holder.hasAttribute("data-path-image"))
+  if (target) pathMenu.value = { ...at, items: pathMenuItems(target, app.platform), target }
+}
+
+function pickPathMenu(key: string) {
+  const menu = pathMenu.value
+  pathMenu.value = undefined
+  if (menu) void runPathMenu(key, menu.target, app.platform)
+}
+
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onEscape)
   clearTimeout(colourTimer)
+  for (const holder of mounted) render(null, holder)
+  mounted.clear()
 })
 
+function scrollToFootnote(selector: string) {
+  root.value?.querySelector<HTMLElement>(selector)?.scrollIntoView({ block: "center", behavior: "smooth" })
+}
+
+function openChip(chip: HTMLElement) {
+  void openPathLink(chip.dataset.path ?? "", chip.dataset.pathKind ?? "", app.current?.directory, app.platform)
+}
+
 /*
- * The copy button on a code block, as MiMo has it: the block's text goes to the
- * clipboard and the button says so for two seconds. The markup is rendered as
- * HTML, so the click is caught here on the way up rather than on the button.
+ * Every control in the rendered markup is caught here on the way up, since the
+ * markup is bound as HTML: code and table buttons, video cards, links (which go
+ * to the system browser), pictures (to the preview), footnotes and path chips.
  */
 async function onClick(event: MouseEvent) {
   const target = event.target as HTMLElement | null
-  const videoCard = target?.closest<HTMLElement>("[data-video-url]")
+  if (!target) return
+  const videoCard = target.closest<HTMLElement>("[data-video-url]")
   if (videoCard) {
     await openVideoCard(videoCard.dataset.videoUrl ?? "", videoCard.dataset.videoLabel ?? "")
     return
   }
-  const tableCopy = target?.closest<HTMLElement>("[data-table-copy]")
+  const tableCopy = target.closest<HTMLElement>("[data-table-copy]")
   if (tableCopy) {
     await copyTable(tableCopy)
     return
   }
-  const tablePreview = target?.closest<HTMLElement>("[data-table-preview]")
+  const tablePreview = target.closest<HTMLElement>("[data-table-preview]")
   if (tablePreview) {
     previewing.value = tablePreview.closest(".md-table-container")?.querySelector("table")?.outerHTML
     return
   }
-  const button = target?.closest<HTMLButtonElement>("[data-copy-code]")
+  const footnoteRef = target.closest<HTMLElement>("[data-footnote-ref]")
+  if (footnoteRef) {
+    event.preventDefault()
+    scrollToFootnote(`[data-footnote="${footnoteRef.dataset.footnoteRef}"]`)
+    return
+  }
+  const footnoteBack = target.closest<HTMLElement>("[data-footnote-back]")
+  if (footnoteBack) {
+    event.preventDefault()
+    scrollToFootnote(`[data-footnote-ref="${footnoteBack.dataset.footnoteBack}"]`)
+    return
+  }
+  const link = target.closest<HTMLAnchorElement>("a[href]")
+  if (link) {
+    // Never a navigation of this window: a web address goes to the system browser, anything else nowhere.
+    event.preventDefault()
+    const href = link.getAttribute("href") ?? ""
+    if (/^https?:\/\//i.test(href)) window.mcode.openExternal(href)
+    return
+  }
+  const image = target.closest<HTMLImageElement>("img[data-preview-src]")
+  if (image) {
+    const group = [...(root.value?.querySelectorAll<HTMLImageElement>("img[data-preview-src]") ?? [])].map((each) => each.dataset.previewSrc ?? "")
+    openImagePreview(image.dataset.previewSrc ?? "", { name: image.alt || undefined, group })
+    return
+  }
+  const chip = target.closest<HTMLElement>("code.md-path[role='button']")
+  if (chip) {
+    openChip(chip)
+    return
+  }
+  const button = target.closest<HTMLButtonElement>("[data-copy-code]")
   if (!button) return
   const code = button.closest(".md-codeblock")?.querySelector("pre code")?.textContent ?? ""
   try {
@@ -171,10 +269,37 @@ async function onClick(event: MouseEvent) {
     notifyFailure(t("code.copyFailed"))
   }
 }
+
+/* A path chip is a button to the keyboard as well: Enter or Space opens it. */
+function onKeydown(event: KeyboardEvent) {
+  if (event.key !== "Enter" && event.key !== " ") return
+  const chip = (event.target as HTMLElement | null)?.closest<HTMLElement>("code.md-path[role='button']")
+  if (!chip) return
+  event.preventDefault()
+  openChip(chip)
+}
+
+/* MiMo's picture link: when the picture will not load, it becomes the link it was. `error` does not bubble, so this listens while capturing. */
+function onError(event: Event) {
+  const image = event.target
+  if (!(image instanceof HTMLImageElement) || !image.dataset.fallbackHref) return
+  const link = document.createElement("a")
+  link.className = "md-link"
+  link.href = image.dataset.fallbackHref
+  link.rel = "noreferrer"
+  link.textContent = image.alt || image.dataset.fallbackHref
+  image.replaceWith(link)
+}
 </script>
 
 <template>
-  <div ref="root" class="text" data-annotate="answer" v-html="html" @click="onClick" />
+  <div ref="root" class="text" data-annotate="answer" @click="onClick" @keydown="onKeydown" @contextmenu="onContextMenu" @error.capture="onError">
+    <template v-for="(block, index) in blocks" :key="blockKey(block, index)">
+      <DiagramBlock v-if="block.kind === 'diagram'" class="md-block" :mode="block.mode" :code="block.code" />
+      <div v-else-if="block.kind === 'svg-loading'" class="md-block md-svg-loading" data-svg-loading>{{ t("svgLoading.generating") }}</div>
+      <div v-else class="md-block" v-html="block.html" />
+    </template>
+  </div>
   <Teleport to="body">
     <div v-if="previewing" class="md-table-preview-overlay" data-table-preview-overlay @mousedown.self="closePreview">
       <div class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">
@@ -196,6 +321,7 @@ async function onClick(event: MouseEvent) {
         <div class="md-table-preview-scroller text" v-html="previewing" />
       </div>
     </div>
+    <ContextMenu v-if="pathMenu" :x="pathMenu.x" :y="pathMenu.y" :items="pathMenu.items" :min-width="196" @pick="pickPathMenu" @close="pathMenu = undefined" />
   </Teleport>
 </template>
 
@@ -267,7 +393,13 @@ async function onClick(event: MouseEvent) {
   margin: 0 0 12px;
 }
 
-.text .md-p:last-child {
+/*
+ * A reply is drawn as blocks, each in its own wrapper, so "last" means the last
+ * block's last element; everywhere else (a quote, a list item, another
+ * surface's plain markup) it still means the last paragraph in its parent.
+ */
+.text .md-p:last-child:not(.md-block > .md-p),
+.text > .md-block:last-child > .md-p:last-child {
   margin-bottom: 0;
 }
 
@@ -281,39 +413,6 @@ async function onClick(event: MouseEvent) {
 .text .md-h {
   color: var(--text-strong);
   line-height: 1.5;
-}
-
-.text .md-h[data-level="1"] {
-  margin: 28px 0 12px;
-  font-size: calc(17px * var(--ui-font-scale, 1));
-  font-weight: 600;
-}
-
-.text .md-h[data-level="2"] {
-  margin: 24px 0 10px;
-  font-size: calc(15px * var(--ui-font-scale, 1));
-  font-weight: 600;
-}
-
-.text .md-h[data-level="3"] {
-  margin: 20px 0 8px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 500;
-}
-
-/*
- * Past the third level a heading stops being a size and becomes a label: same
- * size as the third, dimmed, so deep structure still reads as structure.
- */
-.text .md-h[data-level="4"] {
-  margin: 20px 0 8px;
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 500;
-}
-
-.text .md-h:first-child {
-  margin-top: 0;
 }
 
 .text .md-list {
@@ -336,34 +435,12 @@ async function onClick(event: MouseEvent) {
   padding-inline-start: 28px;
 }
 
-/*
- * A quoted passage, marked by a hairline down its side rather than by a fill:
- * the quote is still prose and should read as prose.
- */
-.text .md-quote {
-  margin: 16px 0;
-  padding-inline-start: 8px;
-  border-inline-start: 0.5px solid var(--border-weak);
-  color: var(--text-base);
-  font-style: normal;
-}
-
-.text .md-quote .md-p:last-child {
-  margin-bottom: 0;
-}
-
 .text .md-list li {
   margin: 0 0 8px;
 }
 
 .text .md-list li:last-child {
   margin-bottom: 0;
-}
-
-.text .md-rule {
-  height: 0;
-  margin: 32px 0;
-  border: none;
 }
 
 /* A tint of the text itself rather than a boxed chip. */
@@ -540,30 +617,44 @@ async function onClick(event: MouseEvent) {
 
 .text .md-h {
   line-height: 1.4;
+  font-weight: 600;
 }
 
+/* MiMo's six heading levels: 20, 20, 16, 16, 14, 14, the last one muted. */
 .text .md-h[data-level="1"] {
-  margin: 20px 0 12px;
-  font-size: calc(22px * var(--ui-font-scale, 1));
-  font-weight: 600;
+  margin: 0 0 12px;
+  font-size: calc(20px * var(--ui-font-scale, 1));
 }
 
 .text .md-h[data-level="2"] {
   margin: 18px 0 10px;
   font-size: calc(20px * var(--ui-font-scale, 1));
-  font-weight: 600;
 }
 
 .text .md-h[data-level="3"] {
   margin: 16px 0 8px;
   font-size: calc(16px * var(--ui-font-scale, 1));
-  font-weight: 600;
 }
 
 .text .md-h[data-level="4"] {
   margin: 14px 0 6px;
+  font-size: calc(16px * var(--ui-font-scale, 1));
+}
+
+.text .md-h[data-level="5"] {
+  margin: 12px 0 6px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 600;
+}
+
+.text .md-h[data-level="6"] {
+  margin: 12px 0 6px;
+  color: var(--text-weak);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.text .md-h:first-child:not(.md-block > .md-h),
+.text > .md-block:first-child > .md-h:first-child {
+  margin-top: 0;
 }
 
 .text .md-list {
@@ -572,12 +663,52 @@ async function onClick(event: MouseEvent) {
 }
 
 .text ol.md-list {
-  padding-inline-start: 28px;
+  padding-inline-start: 30px;
+}
+
+.text .md-list .md-list {
+  margin: 0;
 }
 
 .text .md-list li,
 .text .md-list li:last-child {
   margin: 6px 0;
+}
+
+/* A task list item: the box stands where the bullet was. */
+.text .md-list li.md-task {
+  list-style: none;
+}
+
+.text .md-task-box {
+  margin-block: 0;
+  margin-inline: -18px 6px;
+  vertical-align: -1px;
+}
+
+/* MiMo's quote: a 3px rule down its side, 12px in, muted. */
+.text .md-quote {
+  margin: 0 0 14px;
+  padding-inline-start: 12px;
+  color: var(--text-weak);
+  border-inline-start: 3px solid var(--border-weak);
+  font-style: normal;
+}
+
+.text .md-quote .md-p:last-child {
+  margin-bottom: 0;
+}
+
+/* MiMo's rule: a hairline with 16px either side. */
+.text .md-rule {
+  height: 0;
+  margin: 16px 0;
+  border: 0;
+  border-top: 1px solid var(--border-weak);
+}
+
+.text > .md-block:last-child > :last-child {
+  margin-bottom: 0;
 }
 
 .text code {
@@ -595,19 +726,171 @@ async function onClick(event: MouseEvent) {
   line-height: 1.7;
 }
 
+/* MiMo numbers every line of a reply's code block: 2ch, right-aligned, dim, not selectable. */
+.text .md-code.md-lined code {
+  counter-reset: md-line;
+}
+
+.text .md-code.md-lined .line {
+  counter-increment: md-line;
+}
+
+.text .md-code.md-lined .line::before {
+  display: inline-block;
+  width: 2ch;
+  margin-inline-end: 16px;
+  color: var(--text-weak);
+  content: counter(md-line);
+  opacity: 0.6;
+  text-align: end;
+  user-select: none;
+}
+
 .text .md-table {
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
+/* MiMo's cells: the head never wraps, a cell is at least 112 wide, a number keeps together. */
 .text .md-table th {
   padding: 8px 24px 8px 0;
   font-weight: 600;
   line-height: 1.4;
+  white-space: nowrap;
 }
 
 .text .md-table td {
-  max-width: 480px;
+  min-width: 112px;
   padding: 10px 24px 10px 0;
+}
+
+.text .md-table td.md-num {
+  min-width: calc(3ch + 24px);
+  white-space: nowrap;
+}
+
+.text .md-table th:last-child,
+.text .md-table td:last-child {
+  padding-inline-end: 0;
+}
+
+.text .md-table tbody tr:last-child td {
+  padding-bottom: 16px;
+}
+
+/* Links, MiMo's blue: solid underline for a link, dotted for an address in code. */
+.text .md-link {
+  color: #2f6fed;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.text .md-link-code {
+  font-family: var(--font-mono);
+  font-size: calc(13px * var(--code-font-scale, 1));
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.text .md-link-code:hover {
+  text-decoration-style: solid;
+}
+
+/* A path link: the code chip, in blue with a dotted underline that turns solid on hover. */
+.text code.md-path[role="button"] {
+  color: #2f6fed;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.text code.md-path[role="button"]:hover {
+  text-decoration-style: solid;
+}
+
+.text code.md-path[role="button"]:focus-visible {
+  outline: 2px solid #2f6fed;
+  outline-offset: 1px;
+}
+
+/* A picture in a reply, capped at 420 (240 for a picture link); a press opens the preview. */
+.text .md-img {
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 420px;
+  margin: 10px 0;
+  object-fit: contain;
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+
+.text .md-img-link {
+  max-height: 240px;
+}
+
+.text del {
+  color: var(--text-weak);
+}
+
+/* KaTeX: display math is its own block; an error shows in KaTeX's red with the message as its tip. */
+.text .md-math {
+  margin: 0 0 14px;
+}
+
+.text .md-math .katex-display {
+  margin: 0;
+}
+
+.text .katex-error {
+  color: #cc0000;
+}
+
+/* Footnotes: a rule, then the notes at 13px; a reference is a small blue number. */
+.text .md-fnref {
+  line-height: 0;
+}
+
+.text .md-fnref-link,
+.text .md-fn-back {
+  color: #2f6fed;
+  text-decoration: none;
+}
+
+.text .md-footnotes {
+  margin-top: 16px;
+  padding-top: 8px;
+  color: var(--text-weak);
+  border-top: 1px solid var(--border-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.text .md-footnotes ol {
+  margin: 0;
+  padding-inline-start: 22px;
+}
+
+.text .md-svg-loading {
+  margin: 8px 0;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  animation: md-media-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+:root[data-theme="dark"] .text .md-link,
+:root[data-theme="dark"] .text code.md-path[role="button"],
+:root[data-theme="dark"] .text .md-fnref-link,
+:root[data-theme="dark"] .text .md-fn-back {
+  color: #5a9cff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text .md-link,
+  :root:not([data-theme="light"]) .text code.md-path[role="button"],
+  :root:not([data-theme="light"]) .text .md-fnref-link,
+  :root:not([data-theme="light"]) .text .md-fn-back {
+    color: #5a9cff;
+  }
 }
 
 /*
