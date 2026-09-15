@@ -18,7 +18,7 @@
 - C2 [已完成] 步骤行：工具 14px 图标（lib/tool-meta.ts + parts/StepIcon.vue）、按状态动词（已读取 / 正在读取… / 读取失败 / 已拒绝 / 未执行：读取，失败红字、跳过删除线），运行中闪烁
 - C3 [已完成] 分组摘要：lib/step-rows.ts 按连续同类分组，「已读取 N 个文件 · 已运行 N 条命令 …」（lib/plural.ts），含失败步骤标记「本组包含失败步骤」，运行中展开、出现正文后自动折叠
 - C4 [已完成] bash 展开上格「# 描述 + 命令」下格输出，MCP 工具上格 JSON 入参，标题提示「⌘/Ctrl+点击打开」
-- C5 [已完成] 编辑 / 写入行标题带 +N −M：照 MiMo `hs-diffstat`——标题后 12px，等宽 14px，「+N」用 `--diff-add`、「-M」用 `--diff-delete`，为 0 的一侧不显示、两者之间一个空格；数字按 `metadata.diff` 各 hunk 的增删行数计（MiMo 的 `Tce` 同样只数 hunk 内的行）。ToolPart 的标题不再撑满，箭头改用 `margin-inline-start: auto` 留在行尾——探针 mcode-step-diffstat.cjs 6 项全过，HEAD 上 5 项失败（「读取行无统计」本就成立）
+- C5 [已完成] 编辑 / 写入行标题带 +N −M：照 MiMo `hs-diffstat`——标题后 12px，等宽 14px，「+N」用 `--diff-add`、「-M」用 `--diff-delete`，为 0 的一侧不显示、两者之间一个空格；数字按 `metadata.diff` 各 hunk 的增删行数计（MiMo 的 `Tce` 同样只数 hunk 内的行）。（C2 重做步骤行后，箭头照 MiMo 紧跟文字后，不再留在行尾）——探针 mcode-step-diffstat.cjs 6 项全过，HEAD 上 5 项失败（「读取行无统计」本就成立）
 - C6 [已完成] 回合头：照 MiMo harness-head——运行中是「已处理」加扫光（TextShimmer）和每秒递增的计时；完成后用过工具的回合整行是一个按钮（文字 + 时间 + 12px 半透明 chevron，展开时转 90°，aria-expanded），没用工具的只是文字；时间格式照 MiMo `SMe`：「12s」「1m 5s」，不随语言变。探针 mcode-turn-head.cjs 4 项全过（完成回合是按钮、点整行折叠展开、无工具不是按钮、运行中计时递增），HEAD 上 4 项全败
 - C7 提问表单：改为输入框上方停靠卡（第 N 题、‹ N/M ›、放弃、数字键选项、跳过 / 下一题 / 提交、计划模式专用文案）（大）
 - C8 [已完成] 已回答提问显示答案、已取消提问卡「需要你确认 · 已取消」（parts/QuestionCard.vue），不进工具分组
