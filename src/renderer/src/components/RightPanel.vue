@@ -374,7 +374,9 @@ defineExpose({
             :ref="(instance) => setBrowserPane(tab.id, instance)"
             :active="tab.id === rp.active && rp.open"
             :pageId="tab.pageId"
+            :url="tab.url"
             @page="(id: string) => rp.update(tab.id, { pageId: id })"
+            @address="(url: string) => rp.update(tab.id, { url })"
           />
           <RpTerminal
             v-else-if="tab.type === 'terminal'"

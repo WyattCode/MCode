@@ -2,12 +2,9 @@
  * MiMo's video platform cards, as plain functions shared by the window, the
  * main process and the checks.
  *
- * A reply's link to one of fourteen video platforms becomes a card. Two of
- * them - bilibili and YouTube - play inline through the platform's own player
- * page, and those two player addresses are the only pages a reply may ever put
- * in a frame: `isEmbedAddress` is the single test the renderer, the content
- * policy's frame-src and the main process's navigation guard all agree on.
- * The other twelve open in the browser.
+ * A reply's link to one of fourteen video platforms becomes a card, and a card
+ * opens its video page in a browser tab of the right panel, as MiMo's shipped
+ * build does for all fourteen. Nothing of a platform is ever put in a frame.
  *
  * Hosts are compared whole, after the URL parser has taken the address apart,
  * so a lookalike such as bilibili.com.example.net or youtube.com@example.net
@@ -55,72 +52,19 @@ export const PLATFORM_COLOURS: Record<MediaPlatform, { fg: string; bg: string }>
 
 export interface PlatformLink {
   platform: MediaPlatform
-  /** inline: plays in a player under the reply; external: opens in the browser. */
-  play: "inline" | "external"
   url: string
   videoId: string
-  /** Known up front for YouTube; bilibili's needs the video's cid, which the metadata lookup brings. */
-  embedUrl: string
 }
 
 export interface MediaMeta {
   kind: "video"
   platform: MediaPlatform
-  play: "inline" | "external"
   url: string
-  embedUrl: string
   title: string
   author?: string
   coverUrl: string
   durationSec?: number
   aspect: "16:9" | "9:16"
-}
-
-/* ------------------------------------------------------------ the players */
-
-/** The only two player origins a reply's frame may show. The renderer's frame-src names exactly these. */
-export const EMBED_ORIGINS = ["https://player.bilibili.com", "https://www.youtube-nocookie.com"] as const
-const EMBED_HOSTS = new Set(["player.bilibili.com", "www.youtube-nocookie.com"])
-
-/** Whether an address is one of the two platform players: https, the exact host, no credentials or port. */
-export function isEmbedAddress(address: string): boolean {
-  let parsed: URL
-  try {
-    parsed = new URL(String(address ?? ""))
-  } catch {
-    return false
-  }
-  return parsed.protocol === "https:" && EMBED_HOSTS.has(parsed.hostname.toLowerCase()) && !parsed.port && !parsed.username && !parsed.password
-}
-
-export function youtubeEmbed(videoId: string): string {
-  return `https://www.youtube-nocookie.com/embed/${encodeURIComponent(videoId)}?autoplay=1&rel=0`
-}
-
-export function bilibiliEmbed(bvid: string, cid: number): string {
-  return `https://player.bilibili.com/player.html?bvid=${encodeURIComponent(bvid)}&cid=${cid}&autoplay=1&danmaku=0&high_quality=1`
-}
-
-/*
- * What an embedded player may do beyond its own frame. It may not take its
- * frame anywhere but a player page, and bilibili's player, which opens
- * bilibili itself when clicked, may not open a window onto bilibili (MiMo
- * refuses the same); any other link a player opens goes where every link goes.
- */
-export function embedFrameMayNotGo(current: string, target: string): boolean {
-  return isEmbedAddress(current) && !isEmbedAddress(target) && target !== "about:blank"
-}
-
-export function embedPopupRefused(opener: string, target: string): boolean {
-  let openerHost = ""
-  let targetHost = ""
-  try {
-    openerHost = new URL(String(opener ?? "")).hostname.toLowerCase()
-    targetHost = new URL(String(target ?? "")).hostname.toLowerCase()
-  } catch {
-    return false
-  }
-  return openerHost === "player.bilibili.com" && (targetHost === "b23.tv" || targetHost === "bilibili.com" || targetHost.endsWith(".bilibili.com"))
 }
 
 /* ---------------------------------------------------------------- parsing */
@@ -181,7 +125,7 @@ export function youtubeId(parsed: URL): string {
   return ""
 }
 
-/* MiMo's table for the twelve platforms that open in the browser. */
+/* MiMo's table for the other twelve platforms. */
 const EXTERNAL: { platform: MediaPlatform; hosts: string[]; path?: RegExp; idParams?: string[] }[] = [
   { platform: "douyin", hosts: ["douyin.com"], path: /^\/(video|note)\/\d+/ },
   { platform: "douyin", hosts: ["douyin.com"], idParams: ["modal_id"] },
@@ -203,14 +147,14 @@ const EXTERNAL: { platform: MediaPlatform; hosts: string[]; path?: RegExp; idPar
   { platform: "netflix", hosts: ["netflix.com"], path: /^\/(watch|title)\/\d+/ },
 ]
 
-/** Which platform a link is a video on, if any, and how it plays. */
+/** Which platform a link is a video on, if any. */
 export function parsePlatformLink(address: string): PlatformLink | undefined {
   const web = webUrl(address)
   if (!web) return undefined
   const bilibili = parseBilibili(web.text)
-  if (bilibili) return { platform: "bilibili", play: "inline", url: bilibili.url, videoId: "bvid" in bilibili.id ? bilibili.id.bvid : "", embedUrl: "" }
+  if (bilibili) return { platform: "bilibili", url: bilibili.url, videoId: "bvid" in bilibili.id ? bilibili.id.bvid : "" }
   const youtube = youtubeId(web.parsed)
-  if (youtube) return { platform: "youtube", play: "inline", url: web.text, videoId: youtube, embedUrl: youtubeEmbed(youtube) }
+  if (youtube) return { platform: "youtube", url: web.text, videoId: youtube }
   const host = bareHost(web.parsed)
   for (const rule of EXTERNAL) {
     if (!rule.hosts.some((domain) => onDomain(host, domain))) continue
@@ -220,7 +164,7 @@ export function parsePlatformLink(address: string): PlatformLink | undefined {
       videoId = rule.idParams.map((name) => (web.parsed.searchParams.get(name) ?? "").trim()).find((value) => NUMERIC_ID.test(value)) ?? ""
       if (!videoId) continue
     }
-    return { platform: rule.platform, play: "external", url: web.text, videoId, embedUrl: "" }
+    return { platform: rule.platform, url: web.text, videoId }
   }
   return undefined
 }
@@ -307,7 +251,7 @@ export function oembedMeta(json: unknown): { title?: string; image?: string; aut
   return { title: words(body.title), image: words(body.thumbnail_url), author: words(body.author_name), vertical: width && height ? height > width : undefined }
 }
 
-/** bilibili's view API answer as a card, or nothing when a field the player needs is missing. */
+/** bilibili's view API answer as a card, or nothing when a field MiMo requires (bvid, cid, title, cover) is missing. */
 export function bilibiliMeta(json: unknown, url: string): MediaMeta | undefined {
   const body = record(json)
   const data = record(body?.data)
@@ -324,9 +268,7 @@ export function bilibiliMeta(json: unknown, url: string): MediaMeta | undefined 
   return {
     kind: "video",
     platform: "bilibili",
-    play: "inline",
     url,
-    embedUrl: bilibiliEmbed(bvid, cid),
     title,
     author: words(owner?.name),
     coverUrl: cover,
@@ -335,20 +277,17 @@ export function bilibiliMeta(json: unknown, url: string): MediaMeta | undefined 
   }
 }
 
-/** A card as the main process sent it, checked again on this side: a frame only ever gets a player address. */
+/** A card as the main process sent it, checked again on this side: only a platform link is ever opened. */
 export function readMediaMeta(value: unknown): MediaMeta | undefined {
   const body = record(value)
   if (!body || body.kind !== "video") return undefined
   const platform = MEDIA_PLATFORMS.find((entry) => entry === body.platform)
   const url = words(body.url)
   if (!platform || !url || !parsePlatformLink(url)) return undefined
-  const embedUrl = typeof body.embedUrl === "string" && isEmbedAddress(body.embedUrl) ? body.embedUrl : ""
   return {
     kind: "video",
     platform,
-    play: body.play === "inline" && embedUrl ? "inline" : "external",
     url,
-    embedUrl,
     title: typeof body.title === "string" ? body.title.slice(0, 300) : "",
     author: words(body.author)?.slice(0, 120),
     coverUrl: coverAddress(body.coverUrl),
@@ -372,20 +311,7 @@ export function evictions<K>(entries: Map<K, { lastUsedAt: number }>, limit = ME
     .map(([key]) => key)
 }
 
-/* ---------------------------------------------------------------- playing */
-
-/** MiMo's speed menu. */
-export const MEDIA_SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const
-
-export function speedValue(value: unknown): number {
-  const number = typeof value === "number" ? value : Number(value)
-  return !Number.isFinite(number) || number < 0.25 || number > 4 ? 1 : Math.round(number * 100) / 100
-}
-
-export function speedLabel(value: unknown): string {
-  const number = speedValue(value)
-  return `${Number.isInteger(number * 10) ? number.toFixed(1) : String(number)}x`
-}
+/* -------------------------------------------------------------- coverflow */
 
 /** A cover's place in MiMo's coverflow, `offset` steps from the one in front. */
 export function coverflowSlot(offset: number): { transform: string; zIndex: number; opacity: number; pointerEvents: "auto" | "none" } {
@@ -400,9 +326,4 @@ export function coverflowSlot(offset: number): { transform: string; zIndex: numb
 
 export function stepIndex(index: number, step: number, count: number): number {
   return Math.max(0, Math.min(count - 1, index + step))
-}
-
-/** MiMo's player box: a vertical video 9:16 up to 480 high and centred, else 16:9 across. */
-export function playerBox(aspect: MediaMeta["aspect"]): Record<string, string> {
-  return aspect === "9:16" ? { aspectRatio: "9 / 16", height: "min(60vh, 480px)", margin: "0 auto" } : { aspectRatio: "16 / 9", width: "100%" }
 }

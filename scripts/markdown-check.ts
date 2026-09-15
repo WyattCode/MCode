@@ -22,15 +22,7 @@ import fs from "node:fs"
 import path from "node:path"
 import { detectPath, renderMarkdown, renderReply, type MarkdownOptions } from "../src/renderer/src/lib/markdown"
 import { ABC_SOURCE_LIMIT } from "../src/renderer/src/lib/abc-play"
-import {
-  EMBED_ORIGINS,
-  embedFrameMayNotGo,
-  embedPopupRefused,
-  isEmbedAddress,
-  parsePlatformLink,
-  platformLinksIn,
-  readMediaMeta,
-} from "../src/shared/media-platform"
+import { parsePlatformLink, platformLinksIn, readMediaMeta } from "../src/shared/media-platform"
 import { isSvgFile, stripSvgHazards, svgSize } from "../src/renderer/src/lib/svg-safe"
 import { fadeTail, type FadeAnchor } from "../src/renderer/src/lib/stream-reveal"
 
@@ -422,17 +414,17 @@ for (const [name, source, options, want] of abcBlockCases) {
 }
 if (!/<pre class="md-code md-lined" data-lang="abc">/.test(renderMarkdown(ABC_TUNE, REPLY))) problems.push("an abc fence no longer falls back to a code block in the string form")
 
-const PLATFORM_LINKS: [string, string | undefined, string?][] = [
-  ["https://www.bilibili.com/video/BV1GJ411x7h7", "bilibili", "inline"],
-  ["https://m.bilibili.com/video/av170001/", "bilibili", "inline"],
-  ["https://b23.tv/abc123", "bilibili", "inline"],
-  ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube", "inline"],
-  ["https://youtu.be/dQw4w9WgXcQ?t=4", "youtube", "inline"],
-  ["https://m.youtube.com/shorts/dQw4w9WgXcQ", "youtube", "inline"],
-  ["https://www.douyin.com/video/7300000000000000000", "douyin", "external"],
-  ["https://www.douyin.com/discover?modal_id=7300000000000000000", "douyin", "external"],
-  ["https://v.qq.com/x/cover/abc/def.html", "tencent", "external"],
-  ["https://www.netflix.com/title/80100172", "netflix", "external"],
+const PLATFORM_LINKS: [string, string | undefined][] = [
+  ["https://www.bilibili.com/video/BV1GJ411x7h7", "bilibili"],
+  ["https://m.bilibili.com/video/av170001/", "bilibili"],
+  ["https://b23.tv/abc123", "bilibili"],
+  ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube"],
+  ["https://youtu.be/dQw4w9WgXcQ?t=4", "youtube"],
+  ["https://m.youtube.com/shorts/dQw4w9WgXcQ", "youtube"],
+  ["https://www.douyin.com/video/7300000000000000000", "douyin"],
+  ["https://www.douyin.com/discover?modal_id=7300000000000000000", "douyin"],
+  ["https://v.qq.com/x/cover/abc/def.html", "tencent"],
+  ["https://www.netflix.com/title/80100172", "netflix"],
   // Lookalikes and near misses: none of these is a platform.
   ["https://bilibili.com.evil.example/video/BV1GJ411x7h7", undefined],
   ["https://evilbilibili.com/video/BV1GJ411x7h7", undefined],
@@ -449,52 +441,30 @@ const PLATFORM_LINKS: [string, string | undefined, string?][] = [
   ["https://www.youtube.com/watch?v=short", undefined],
   ["ftp://www.youtube.com/watch?v=dQw4w9WgXcQ", undefined],
 ]
-for (const [address, platform, play] of PLATFORM_LINKS) {
+for (const [address, platform] of PLATFORM_LINKS) {
   const link = parsePlatformLink(address)
-  if (link?.platform !== platform || (play && link?.play !== play)) problems.push(`platform: ${address} was ${link?.platform ?? "no platform"}/${link?.play ?? "-"}, not ${platform ?? "no platform"}/${play ?? "-"}`)
+  if (link?.platform !== platform) problems.push(`platform: ${address} was ${link?.platform ?? "no platform"}, not ${platform ?? "no platform"}`)
   if (!platform && platformLinksIn(`see ${address} now`).length) problems.push(`platform: the lookalike ${address} became a card`)
-  if (link?.embedUrl && !isEmbedAddress(link.embedUrl)) problems.push(`platform: ${address} produced a frame address that is not a player: ${link.embedUrl}`)
 }
 if (platformLinksIn("`https://youtu.be/dQw4w9WgXcQ`\n```\nhttps://youtu.be/dQw4w9WgXcQ\n```").length) problems.push("platform: a link in code became a card")
 if (platformLinksIn("[a](https://youtu.be/dQw4w9WgXcQ) and https://youtu.be/dQw4w9WgXcQ。").join() !== "https://youtu.be/dQw4w9WgXcQ") problems.push("platform: a link written twice is not one card")
 
-const EMBEDS: [string, boolean][] = [
-  ["https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&cid=1", true],
-  ["https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1", true],
-  ["http://player.bilibili.com/player.html", false],
-  ["https://player.bilibili.com.evil.example/player.html", false],
-  ["https://www.youtube.com/embed/dQw4w9WgXcQ", false],
-  ["https://youtube-nocookie.com/embed/dQw4w9WgXcQ", false],
-  ["https://player.bilibili.com:8443/player.html", false],
-  ["https://user:pw@www.youtube-nocookie.com/embed/x", false],
-  ["https://evil.example/#https://player.bilibili.com/", false],
-  ["javascript:alert(1)", false],
-]
-for (const [address, want] of EMBEDS) if (isEmbedAddress(address) !== want) problems.push(`embed: ${address} ${want ? "should" : "should not"} be a player address`)
-
-/* A card from the main process is checked again: a forged frame address or cover is dropped, a lookalike link is no card. */
-const forged = readMediaMeta({ kind: "video", platform: "youtube", play: "inline", url: "https://youtu.be/dQw4w9WgXcQ", embedUrl: "https://evil.example/embed", title: "x", coverUrl: "javascript:alert(1)", aspect: "16:9" })
-if (!forged || forged.embedUrl !== "" || forged.play !== "external" || forged.coverUrl !== "") problems.push(`embed: a forged card kept its frame address or cover: ${JSON.stringify(forged)}`)
-if (readMediaMeta({ kind: "video", platform: "youtube", play: "inline", url: "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ", embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", title: "x", coverUrl: "", aspect: "16:9" })) {
-  problems.push("embed: a card for a lookalike link was accepted")
+/* A card from the main process is checked again: a forged cover is dropped, a lookalike link is no card. */
+const forged = readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtu.be/dQw4w9WgXcQ", title: "x", coverUrl: "javascript:alert(1)", aspect: "16:9" })
+if (!forged || forged.coverUrl !== "") problems.push(`card: a forged card kept its cover: ${JSON.stringify(forged)}`)
+if (readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ", title: "x", coverUrl: "", aspect: "16:9" })) {
+  problems.push("card: a card for a lookalike link was accepted")
 }
 
-/* The main process's guards, as plain rules. */
-if (!embedFrameMayNotGo("https://www.youtube-nocookie.com/embed/x", "https://evil.example/")) problems.push("guard: a player frame may navigate off the player")
-if (embedFrameMayNotGo("https://www.youtube-nocookie.com/embed/x", "https://www.youtube-nocookie.com/embed/y")) problems.push("guard: a player frame may not move to another video")
-if (embedFrameMayNotGo("http://abc.localhost:5000/index.html", "https://evil.example/")) problems.push("guard: the player rule reached the page preview's frames")
-if (!embedPopupRefused("https://player.bilibili.com/player.html?bvid=x", "https://www.bilibili.com/video/BV1GJ411x7h7")) problems.push("guard: bilibili's player may open bilibili")
-if (embedPopupRefused("https://www.youtube-nocookie.com/embed/x", "https://www.youtube.com/watch?v=x")) problems.push("guard: YouTube's 'watch on YouTube' link was refused")
-
-/* The content policy's frames: the page preview, and exactly the two players. */
+/* The content policy's frames: the page preview alone. A card opens the browser panel, so no platform page is ever framed. */
 const indexPage = fs.readFileSync(path.join(process.cwd(), "src/renderer/index.html"), "utf8")
 const policy = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(indexPage)?.[1] ?? ""
 const frameSources = (/(?:^|;)\s*frame-src ([^;]*)/.exec(policy)?.[1] ?? "").trim().split(/\s+/)
-const webFrames = frameSources.filter((source) => source !== "'self'" && source !== "http://*.localhost:*").sort()
-if (JSON.stringify(webFrames) !== JSON.stringify([...EMBED_ORIGINS].sort())) problems.push(`csp: frame-src allows ${webFrames.join(" ") || "nothing"}, not exactly ${EMBED_ORIGINS.join(" ")}`)
+const webFrames = frameSources.filter((source) => source !== "'self'" && source !== "http://*.localhost:*")
+if (!frameSources.includes("'self'") || webFrames.length) problems.push(`csp: frame-src allows ${webFrames.join(" ")} beyond the app and the page preview`)
 inspect("a platform link in a reply", htmlOf("watch https://www.youtube.com/watch?v=dQw4w9WgXcQ and [this](https://www.bilibili.com/video/BV1GJ411x7h7)", REPLY))
 
-console.log(`abc cases: ${ABC_HOSTILE.length * (OPTIONS.length + 3) + abcBlockCases.length + 1}, platform cases: ${PLATFORM_LINKS.length + EMBEDS.length + 12}`)
+console.log(`abc cases: ${ABC_HOSTILE.length * (OPTIONS.length + 3) + abcBlockCases.length + 1}, platform cases: ${PLATFORM_LINKS.length + 5}`)
 console.log(`live cases: ${liveCases.length + 1}, fade cases: ${fadeCases.length + 1 + HOSTILE.length}, svg card cases: ${SVG_FILES.length + 6}`)
 console.log(`hostile inputs: ${HOSTILE.length} x ${OPTIONS.length + 1} option sets, svg pre-pass cases: ${SVG_CASES.length}, formatting cases: ${shape.length + blockCases.length + PATHS.length}`)
 

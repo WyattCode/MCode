@@ -5526,8 +5526,8 @@ async function main() {
     const P = mediaPlatform
     const bili = P.parsePlatformLink("https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1。")
     check(
-      "a bilibili BV link plays inline, the sentence's full stop trimmed",
-      bili?.platform === "bilibili" && bili.play === "inline" && bili.videoId === "BV1GJ411x7h7" && bili.url === "https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1",
+      "a bilibili BV link is a card, the sentence's full stop trimmed",
+      bili?.platform === "bilibili" && bili.videoId === "BV1GJ411x7h7" && bili.url === "https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1" && !("play" in bili) && !("embedUrl" in bili),
       bili,
     )
     check(
@@ -5537,11 +5537,7 @@ async function main() {
         P.parseBilibili("https://b23.tv/") === undefined,
     )
     const yt = P.parsePlatformLink("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=x")
-    check(
-      "YouTube's player address is the no-cookie embed",
-      yt?.platform === "youtube" && yt.embedUrl === "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0" && P.isEmbedAddress(yt.embedUrl),
-      yt,
-    )
+    check("a YouTube Music link is a YouTube card for its video", yt?.platform === "youtube" && yt.videoId === "dQw4w9WgXcQ", yt)
     check(
       "youtu.be and shorts give the same id",
       P.parsePlatformLink("https://youtu.be/dQw4w9WgXcQ")?.videoId === "dQw4w9WgXcQ" && P.parsePlatformLink("https://www.youtube.com/shorts/dQw4w9WgXcQ")?.videoId === "dQw4w9WgXcQ",
@@ -5561,8 +5557,8 @@ async function main() {
       "https://www.netflix.com/watch/80100172",
     ].map((url) => P.parsePlatformLink(url))
     check(
-      "the twelve other platforms open in the browser",
-      externals.map((link) => link?.platform).join(",") === "douyin,kuaishou,iqiyi,tencent,youku,mangotv,xigua,yangshipin,migu,weibo,tiktok,netflix" && externals.every((link) => link?.play === "external" && link.embedUrl === ""),
+      "the twelve other platforms are recognised",
+      externals.map((link) => link?.platform).join(",") === "douyin,kuaishou,iqiyi,tencent,youku,mangotv,xigua,yangshipin,migu,weibo,tiktok,netflix",
       externals,
     )
     check("fourteen platforms, each with MiMo's badge colours", P.MEDIA_PLATFORMS.length === 14 && P.MEDIA_PLATFORMS.every((name) => /^#/.test(P.PLATFORM_COLOURS[name].bg)) && P.PLATFORM_COLOURS.bilibili.bg === "#fb7299")
@@ -5587,18 +5583,13 @@ async function main() {
     const view = { code: 0, data: { bvid: "BV1GJ411x7h7", cid: 123, title: "T", pic: "http://i0.hdslb.com/c.jpg", duration: 212, owner: { name: "Up" }, dimension: { width: 1080, height: 1920 } } }
     const bilibiliCard = P.bilibiliMeta(view, "https://b23.tv/x")
     check(
-      "bilibili's view answer gives the player address with its cid",
-      bilibiliCard?.embedUrl === "https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&cid=123&autoplay=1&danmaku=0&high_quality=1" &&
-        bilibiliCard.aspect === "9:16" && bilibiliCard.coverUrl === "https://i0.hdslb.com/c.jpg" && bilibiliCard.durationSec === 212 && bilibiliCard.author === "Up",
+      "bilibili's view answer gives the card: title, author, cover, length, orientation",
+      bilibiliCard?.title === "T" && bilibiliCard.aspect === "9:16" && bilibiliCard.coverUrl === "https://i0.hdslb.com/c.jpg" && bilibiliCard.durationSec === 212 && bilibiliCard.author === "Up",
       bilibiliCard,
     )
     check("no bilibili card without a cid, or on an error code", P.bilibiliMeta({ ...view, data: { ...view.data, cid: 0 } }, "u") === undefined && P.bilibiliMeta({ ...view, code: -404 }, "u") === undefined)
     const oembed = P.oembedMeta({ title: "Song", author_name: "Band", thumbnail_url: "https://i.ytimg.com/vi/x/hqdefault.jpg", width: 200, height: 113 })
     check("YouTube's oEmbed gives title, author and cover", oembed.title === "Song" && oembed.author === "Band" && oembed.image === "https://i.ytimg.com/vi/x/hqdefault.jpg" && oembed.vertical === false, oembed)
-    check(
-      "the speed menu is MiMo's six, labelled 1.0x and 1.25x, and a strange rate is 1x",
-      P.MEDIA_SPEEDS.map((value) => P.speedLabel(value)).join(" ") === "0.5x 0.75x 1.0x 1.25x 1.5x 2.0x" && P.speedValue(9) === 1 && P.speedValue("1.5") === 1.5,
-    )
     const front = P.coverflowSlot(0)
     const side = P.coverflowSlot(-2)
     const hidden = P.coverflowSlot(5)
@@ -5618,14 +5609,6 @@ async function main() {
       ["c", { lastUsedAt: 2 }],
     ])
     check("the least recently used cards go first", P.evictions(used, 1).join(",") === "b,c")
-    check("a vertical player is 9:16 up to 480 high", P.playerBox("9:16").height === "min(60vh, 480px)" && P.playerBox("16:9").aspectRatio === "16 / 9")
-    check(
-      "a player frame stays on a player page, and bilibili's player opens no bilibili window",
-      P.embedFrameMayNotGo("https://player.bilibili.com/player.html", "https://www.bilibili.com/") &&
-        !P.embedFrameMayNotGo("https://player.bilibili.com/player.html", "about:blank") &&
-        P.embedPopupRefused("https://player.bilibili.com/player.html", "https://b23.tv/x") &&
-        !P.embedPopupRefused("https://www.youtube-nocookie.com/embed/x", "https://www.youtube.com/watch?v=x"),
-    )
   }
 
   section("Notices and scrollbars (MiMo)")
