@@ -38,6 +38,17 @@ import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, parseVoiceEdit, voiceDraftOf, voiceE
 import { customModelOf } from "../src/server/config"
 import { closeHidesToTray } from "../src/shared/protocol"
 import { addressToURL, safeURL } from "../src/shared/web-address"
+import {
+  APP_CHORDS,
+  barMode,
+  loadErrorKind,
+  localServerOf,
+  pageKeyAction,
+  pageMenuGroups,
+  routeWindowOpen,
+  stepZoom,
+  type PageKeyInput,
+} from "../src/shared/browser-page"
 import { ToolError } from "../src/server/tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
 import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/session/retry"
@@ -2645,10 +2656,146 @@ async function main() {
     check("localhost too", addressToURL("localhost:3000/app") === "http://localhost:3000/app")
     check("a bare domain is https", addressToURL("example.com") === "https://example.com/")
     check(
-      "and words are a search",
-      (addressToURL("how to fix a flaky test") ?? "").startsWith("https://duckduckgo.com/?q="),
+      "and words are a Google search, as MiMo's are",
+      addressToURL("how to fix a flaky test") === "https://www.google.com/search?q=how%20to%20fix%20a%20flaky%20test",
     )
     check("nothing typed goes nowhere", addressToURL("   ") === undefined)
+  }
+
+  section("The browser panel's pages")
+  {
+    /* MiMo's popups: the web becomes a panel tab, mailto and tel the system's, the rest nowhere. */
+    check("a popup to the web is a new tab", routeWindowOpen("https://example.com/a").type === "newtab")
+    check("mailto goes to the system", routeWindowOpen("mailto:someone@example.com").type === "external")
+    check("tel too", routeWindowOpen("tel:+100").type === "external")
+    check("file is refused, unlike MiMo", routeWindowOpen("file:///C:/Windows/notepad.exe").type === "deny")
+    check("javascript is refused", routeWindowOpen("javascript:alert(1)").type === "deny")
+    check("nothing is refused", routeWindowOpen("").type === "deny")
+
+    const ids = (groups: { id: string; enabled: boolean }[][]) => groups.map((group) => group.map((item) => item.id).join(","))
+    check(
+      "a web link offers a new tab and its address",
+      JSON.stringify(ids(pageMenuGroups({ linkURL: "https://example.com/" }))) === JSON.stringify(["openLinkNewTab,copyLink"]),
+    )
+    check(
+      "a link that is not the web only its address",
+      JSON.stringify(ids(pageMenuGroups({ linkURL: "javascript:void(0)" }))) === JSON.stringify(["copyLink"]),
+    )
+    check(
+      "an image in a link: both groups, link first",
+      JSON.stringify(ids(pageMenuGroups({ linkURL: "https://example.com/", mediaType: "image", srcURL: "https://example.com/a.png" }))) ===
+        JSON.stringify(["openLinkNewTab,copyLink", "copyImage,copyImageUrl"]),
+    )
+    check(
+      "selected page text: copy and select all",
+      JSON.stringify(ids(pageMenuGroups({ selectionText: "hello", editFlags: { canCopy: true } }))) === JSON.stringify(["copy,selectAll"]),
+    )
+    check(
+      "an empty field hides cut and copy rather than greying them",
+      JSON.stringify(ids(pageMenuGroups({ isEditable: true, selectionText: "", editFlags: { canCopy: false, canCut: false, canPaste: true, canSelectAll: true } }))) ===
+        JSON.stringify(["paste,selectAll"]),
+    )
+    const bare = pageMenuGroups({ canGoBack: false, canGoForward: true })
+    check(
+      "nothing under the pointer: back greyed, forward and reload",
+      JSON.stringify(bare) === JSON.stringify([[{ id: "back", enabled: false }, { id: "forward", enabled: true }, { id: "reload", enabled: true }]]),
+    )
+
+    /* Keys pressed while a page has focus. */
+    const press = (key: string, code: string, mods: Partial<PageKeyInput> = {}): PageKeyInput => ({
+      type: "keyDown", key, code, control: false, shift: false, alt: false, meta: false, ...mods,
+    })
+    check("Ctrl+L reaches the window", pageKeyAction(press("l", "KeyL", { control: true })).kind === "forward")
+    check("Ctrl+T too", pageKeyAction(press("t", "KeyT", { control: true })).kind === "forward")
+    check("Ctrl+period, for annotating", pageKeyAction(press(".", "Period", { control: true })).kind === "forward")
+    check("Ctrl+Shift+B, by its capital letter", pageKeyAction(press("B", "KeyB", { control: true, shift: true })).kind === "forward")
+    check("Ctrl+Shift+period, typed as >", pageKeyAction(press(">", "Period", { control: true, shift: true })).kind === "forward")
+    check("Ctrl+R reloads the page itself", JSON.stringify(pageKeyAction(press("r", "KeyR", { control: true }))) === JSON.stringify({ kind: "reload", force: false }))
+    check("Ctrl+Shift+R force-reloads it", JSON.stringify(pageKeyAction(press("R", "KeyR", { control: true, shift: true }))) === JSON.stringify({ kind: "reload", force: true }))
+    check("Ctrl+C stays with the page", pageKeyAction(press("c", "KeyC", { control: true })).kind === "none")
+    check("Ctrl+F, Ctrl+A and Ctrl+V too", ["f", "a", "v"].every((key) => pageKeyAction(press(key, `Key${key.toUpperCase()}`, { control: true })).kind === "none"))
+    check("Ctrl+Z is not the app's", pageKeyAction(press("z", "KeyZ", { control: true })).kind === "none")
+    check("plain typing is never taken", pageKeyAction(press("l", "KeyL")).kind === "none")
+    check("a key coming up is not a press", pageKeyAction({ ...press("l", "KeyL", { control: true }), type: "keyUp" }).kind === "none")
+    check(
+      "a chord the reader bound is taken only once bound",
+      pageKeyAction(press("y", "KeyY", { control: true, shift: true })).kind === "none" &&
+        pageKeyAction(press("Y", "KeyY", { control: true, shift: true }), new Set(["Ctrl+Shift+Y"])).kind === "forward",
+    )
+    check("binding Ctrl+V does not take paste from the page", pageKeyAction(press("v", "KeyV", { control: true }), new Set(["Ctrl+V"])).kind === "none")
+
+    /*
+     * The chord list against App.vue's keydown handler. A chord added there and
+     * not here would work everywhere except inside a page, which nobody notices.
+     */
+    const appSource = await fs.readFile(path.join(process.cwd(), "src/renderer/src/App.vue"), "utf8")
+    const block = (start: string) => {
+      const at = appSource.indexOf(start)
+      return at === -1 ? "" : appSource.slice(at, appSource.indexOf("\n  }\n", at))
+    }
+    const keysIn = (text: string) => [...text.matchAll(/^\s+(?:"([^"]+)"|([a-z0-9]))\s*:/gm)].map((match) => (match[1] ?? match[2]).toUpperCase())
+    const plainKeys = keysIn(block("const handlers: Record<string, () => void> = {"))
+    const shiftedKeys = keysIn(block("const shifted: Record<string, () => void> = {"))
+    const altKeys = [...appSource.matchAll(/mod && event\.altKey && event\.key\.toLowerCase\(\) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
+    check("App.vue's handler tables were found", plainKeys.length > 15 && shiftedKeys.length > 12 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
+    const wanted = [
+      ...plainKeys.filter((key) => key !== "F" && key !== "R").map((key) => `Ctrl+${key}`),
+      ...shiftedKeys.filter((key) => key !== "R").map((key) => `Ctrl+Shift+${key}`),
+      ...altKeys.map((key) => `Ctrl+Alt+${key}`),
+    ]
+    const unlisted = wanted.filter((chord) => !APP_CHORDS.includes(chord))
+    check("every chord App.vue answers is taken from a page", unlisted.length === 0, unlisted)
+
+    /* The page menu's words have to be sent to the main process, or they read in English. */
+    const pageMenuSource = await fs.readFile(path.join(process.cwd(), "src/main/browser-page.ts"), "utf8")
+    const i18nSource = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"), "utf8")
+    const menuKeys = i18nSource.slice(i18nSource.indexOf("const MENU_KEYS = ["), i18nSource.indexOf("]", i18nSource.indexOf("const MENU_KEYS = [")))
+    const asked = [...pageMenuSource.matchAll(/\["((?:rp\.browser\.ctx|edit)\.[\w]+)", "/g)].map((match) => match[1])
+    const unsent = asked.filter((key) => !menuKeys.includes(`"${key}"`))
+    check("the page menu names its eleven rows", asked.length === 11, asked)
+    check("and every one of them is published to the main process", unsent.length === 0, unsent)
+
+    /* The channels the page module and the panel send on, which the preload must forward. */
+    const preloadSource = await fs.readFile(path.join(process.cwd(), "src/preload/index.ts"), "utf8")
+    const browserSource = await fs.readFile(path.join(process.cwd(), "src/main/browser.ts"), "utf8")
+    const channels = [...`${pageMenuSource}\n${browserSource}`.matchAll(/(?:send|on)\("(mcode:browser-[a-z-]+)"/g)].map((match) => match[1])
+    const unforwarded = [...new Set(channels)].filter((channel) => !preloadSource.includes(`"${channel}"`))
+    check("the page's channels were found", channels.length >= 3, channels)
+    check("and the preload carries each of them", unforwarded.length === 0, unforwarded)
+
+    /* MiMo's zoom: whole tens of percent, 25% to 300%. */
+    check("a step in from 100%", stepZoom(1, 1) === 1.1)
+    check("an odd factor steps from its rounded percent", stepZoom(1.05, -1) === 0.95)
+    check("300% is the ceiling", stepZoom(2.95, 1) === 3 && stepZoom(3, 1) === 3)
+    check("25% is the floor", stepZoom(0.3, -1) === 0.25 && stepZoom(0.25, -1) === 0.25)
+
+    /* Failed loads, by number or by name. */
+    check("-21 is a connection failure", loadErrorKind(-21) === "connection")
+    check("an aborted connection is too, by its name", loadErrorKind(-103, "ERR_CONNECTION_ABORTED") === "connection")
+    check("a socket error is too", loadErrorKind(-15, "ERR_SOCKET_NOT_CONNECTED") === "connection")
+    check("a name that did not resolve is dns", loadErrorKind(-105) === "dns" && loadErrorKind(-1, "ERR_NAME_RESOLUTION_FAILED") === "dns")
+    check("no network is offline", loadErrorKind(-106) === "offline")
+    check("a certificate error is generic", loadErrorKind(-202, "ERR_CERT_AUTHORITY_INVALID") === "generic")
+
+    /* The bar's widths. */
+    check("under 300 is mini", barMode(299) === "mini")
+    check("300 to 379 is compact", barMode(300) === "compact" && barMode(379.5) === "compact")
+    check("380 is full", barMode(380) === "full")
+
+    /* Local servers, as MiMo names and filters them. */
+    const page = (body: string, status = 200) => ({ status, contentType: "text/html; charset=utf-8", server: "", body })
+    check("AirPlay is not a development server", localServerOf(5000, { status: 403, contentType: "", server: "AirTunes/860.7.1", body: "" }) === undefined)
+    check("a 4xx that is not a page is left out", localServerOf(8080, { status: 404, contentType: "application/json", server: "", body: "{}" }) === undefined)
+    check("a 4xx page is kept", localServerOf(8080, page("<title>Not here</title>", 404))?.name === "Not here")
+    const vite = localServerOf(5173, page("<head><title>\n  My   App\n</title></head>"))
+    check(
+      "a title is folded, on a localhost address and label",
+      vite?.name === "My App" && vite.label === "localhost:5173" && vite.url === "http://localhost:5173",
+      vite,
+    )
+    check("a long title stops at 60 with an ellipsis", localServerOf(3000, page(`<title>${"x".repeat(80)}</title>`))?.name === `${"x".repeat(60)}\u2026`)
+    check("no title is named by its address", localServerOf(3000, page("<p>hi</p>"))?.name === "localhost:3000")
+    check("a body that is not a page is not read for a title", localServerOf(3000, { status: 200, contentType: "text/plain", server: "", body: "<title>no</title>" })?.name === "localhost:3000")
   }
 
   section("Attachments")

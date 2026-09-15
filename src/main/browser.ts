@@ -1,5 +1,7 @@
-import { BrowserWindow, WebContentsView, clipboard, shell, session } from "electron"
+import { BrowserWindow, WebContentsView, clipboard, session } from "electron"
 import { addressToURL, safeURL } from "@shared/web-address"
+import { stepZoom } from "@shared/browser-page"
+import { wirePage } from "./browser-page"
 
 /**
  * The in-app browser panel.
@@ -19,9 +21,9 @@ import { addressToURL, safeURL } from "@shared/web-address"
  *   can open, and internal schemes are not for a page to ask for.
  * - No permissions. The window's own handler allows a microphone because a
  *   button asks for it; a site in this panel gets nothing at all.
- * - New windows are handed to the real browser. A site that opens a popup
- *   should get the user's browser, with its extensions and its blocklists,
- *   rather than a second frameless view with no address bar.
+ * - A popup becomes a tab of the panel, with the panel's address bar, as MiMo
+ *   opens them; mailto and tel go to the system, and nothing else goes
+ *   anywhere (browser-page.ts, which also holds the page's menu and keys).
  *
  * Tabs are views of their own, and only the open one is attached to the
  * window. A background tab keeps running - its process is alive and its page
@@ -56,16 +58,17 @@ export interface BrowserState {
   /** The open page's zoom, in percent. */
   zoom: number
   /** Why the open page did not load, until the next load starts. */
-  error?: { code: number; url: string }
+  error?: { code: number; url: string; description: string }
 }
 
 interface Tab {
   id: string
   view: WebContentsView
-  failure?: { code: number; url: string }
+  failure?: { code: number; url: string; description: string }
 }
 
 interface Panel {
+  window: BrowserWindow
   tabs: Tab[]
   active: string
   bounds: BrowserBounds
@@ -139,10 +142,10 @@ function makeTab(panel: Panel): Tab {
   })
 
   const contents = view.webContents
-  contents.setWindowOpenHandler(({ url }) => {
-    const safe = safeURL(url)
-    if (safe) void shell.openExternal(safe)
-    return { action: "deny" }
+  wirePage(contents, {
+    window: panel.window,
+    openTab: (url) => openFromPage(panel, url),
+    changed: () => panel.publish(),
   })
   /* A navigation to anything but the web is refused rather than followed. */
   contents.on("will-navigate", (event, url) => {
@@ -164,13 +167,29 @@ function makeTab(panel: Panel): Tab {
     tab.failure = undefined
     panel.publish()
   })
-  contents.on("did-fail-load", (_event, code, _description, url, isMainFrame) => {
+  contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
     // -3 is a load the page itself abandoned for another, which is not a failure.
     if (!isMainFrame || code === -3) return
-    tab.failure = { code, url }
+    // The name is kept too: MiMo sorts an error by its name as well as its number.
+    tab.failure = { code, url, description }
     panel.publish()
   })
   return tab
+}
+
+/**
+ * A page's popup or "open link in new tab": a page of its own, loading, and not
+ * yet on show. The window is told its id and gives it a tab, whose claim is what
+ * selects it - so the page is never drawn without a tab around it.
+ */
+function openFromPage(panel: Panel, url: string): void {
+  if (panel.window.isDestroyed()) return
+  const tab = makeTab(panel)
+  panel.tabs.push(tab)
+  void tab.view.webContents.loadURL(url).catch(() => {
+    /* A failure is shown by the tab itself once it is selected. */
+  })
+  panel.window.webContents.send("mcode:browser-open-tab", tab.id)
 }
 
 /** Draws the open tab and only the open tab. */
@@ -206,7 +225,7 @@ export function openPanel(
   partition.setPermissionRequestHandler((_contents, _permission, done) => done(false))
   partition.setPermissionCheckHandler(() => false)
 
-  const panel: Panel = { tabs: [], active: "", bounds, publish: () => {} }
+  const panel: Panel = { window, tabs: [], active: "", bounds, publish: () => {} }
   panel.publish = () => onState(stateOf(panel))
   const first = makeTab(panel)
   panel.tabs.push(first)
@@ -306,11 +325,6 @@ export function navigate(window: BrowserWindow, input: string): BrowserState | u
 
 export type BrowserAct = "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset"
 
-/* Zoom moves in tenths, from a quarter of the page to five times it. */
-const ZOOM_STEP = 0.1
-const ZOOM_MIN = 0.25
-const ZOOM_MAX = 5
-
 export function act(window: BrowserWindow, what: BrowserAct): BrowserState | undefined {
   const panel = panels.get(window.id)
   if (!panel) return undefined
@@ -321,10 +335,8 @@ export function act(window: BrowserWindow, what: BrowserAct): BrowserState | und
   if (what === "reload") contents.reload()
   if (what === "forceReload") contents.reloadIgnoringCache()
   if (what === "stop") contents.stop()
-  if (what === "zoomIn" || what === "zoomOut") {
-    const next = contents.getZoomFactor() + (what === "zoomIn" ? ZOOM_STEP : -ZOOM_STEP)
-    contents.setZoomFactor(Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next)) * 10) / 10)
-  }
+  /* MiMo's steps: ten percent at a time, from a quarter of the page to three times it. */
+  if (what === "zoomIn" || what === "zoomOut") contents.setZoomFactor(stepZoom(contents.getZoomFactor(), what === "zoomIn" ? 1 : -1))
   if (what === "zoomReset") contents.setZoomFactor(1)
   return stateOf(panel)
 }
@@ -340,11 +352,37 @@ export async function screenshot(window: BrowserWindow): Promise<boolean> {
   return true
 }
 
-/** One of MiMo's two clears from the page's own menu: the cookies, or the cache. */
+/*
+ * MiMo's "cookies" are everything a site keeps about a visit, not only the
+ * cookie jar: a site that signs in with local storage stays signed in otherwise.
+ */
+const SITE_STORAGES: ("cookies" | "localstorage" | "indexdb" | "websql" | "serviceworkers" | "cachestorage")[] = [
+  "cookies",
+  "localstorage",
+  "indexdb",
+  "websql",
+  "serviceworkers",
+  "cachestorage",
+]
+
+/* Every page in the panel, in every window, loaded again so none is left holding what was cleared. */
+function reloadAllPages(): void {
+  for (const panel of panels.values()) {
+    for (const tab of panel.tabs) {
+      if (!tab.view.webContents.isDestroyed()) tab.view.webContents.reload()
+    }
+  }
+}
+
+/** One of MiMo's two clears from the page's own menu: what sites stored (and every page reloads), or the cache. */
 export async function clearSiteData(what: "cookies" | "cache"): Promise<void> {
   const partition = session.fromPartition(PARTITION)
-  if (what === "cookies") await partition.clearStorageData({ storages: ["cookies"] })
-  else await partition.clearCache()
+  if (what === "cache") {
+    await partition.clearCache()
+    return
+  }
+  await partition.clearStorageData({ storages: SITE_STORAGES })
+  reloadAllPages()
 }
 
 export function panelState(window: BrowserWindow): BrowserState | undefined {
@@ -362,6 +400,7 @@ export async function clearBrowsingData(): Promise<void> {
   const partition = session.fromPartition(PARTITION)
   await partition.clearStorageData()
   await partition.clearCache()
+  reloadAllPages()
 }
 
 export function hasPanel(window: BrowserWindow): boolean {

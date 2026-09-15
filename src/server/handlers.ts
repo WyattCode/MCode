@@ -13,6 +13,7 @@ import type {
   UsageBucket,
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
+import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { customModelOf } from "./config"
@@ -627,13 +628,16 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const found: LocalServer[] = []
       await Promise.all(
         PORTS.map(async (port) => {
-          const url = `http://127.0.0.1:${port}/`
+          // localhost, as MiMo asks and shows: a server bound only to ::1 answers there and not on 127.0.0.1.
           const stop = AbortSignal.timeout(400)
-          const response = await fetch(url, { signal: stop, redirect: "manual" }).catch(() => undefined)
+          const response = await fetch(`http://localhost:${port}/`, { signal: stop, redirect: "manual" }).catch(() => undefined)
           if (!response) return
-          const body = await response.text().catch(() => "")
-          const title = (body.match(/<title[^>]*>([^<]{1,80})</i)?.[1] ?? "").trim()
-          found.push({ port, url, title })
+          const contentType = response.headers.get("content-type") ?? ""
+          // Only a page is read for its title; anything else is let go unread.
+          const body = /html/i.test(contentType) ? await response.text().catch(() => "") : ""
+          if (!body) void response.body?.cancel().catch(() => {})
+          const server = localServerOf(port, { status: response.status, contentType, server: response.headers.get("server") ?? "", body })
+          if (server) found.push(server)
         }),
       )
       found.sort((a, b) => a.port - b.port)

@@ -828,6 +828,10 @@ export interface LocalServer {
   url: string
   /** The page's own title, when it gave one. */
   title: string
+  /** MiMo's card name: the title with its spaces folded, up to 60 characters, else `localhost:PORT`. */
+  name: string
+  /** MiMo's card subtitle, always `localhost:PORT`. */
+  label: string
 }
 
 export type VoiceMode = "fast" | "smart"
