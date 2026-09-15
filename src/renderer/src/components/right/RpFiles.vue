@@ -94,7 +94,6 @@ watch(
       expanded.value = new Set()
       listing.value = {}
       rootListed.value = false
-      editing.value = false
     }
     void listDir("")
   },
@@ -521,9 +520,13 @@ watch(() => app.currentID, () => closeFind())
 
 /* The agent's edits: one to the open file reads it again, any finished edit re-lists the tree. */
 const counts = computed(() => editCounts(app.messages, root.value, props.viewFile))
-let seenOnFile = { file: props.viewFile, count: counts.value.onFile }
+/* Numbers of their own, so a streamed token that changes no count wakes nothing. */
+const editsOnFile = computed(() => counts.value.onFile)
+const editsTotal = computed(() => counts.value.total)
+const turnsReverted = computed(() => counts.value.reverted)
+let seenOnFile = { file: props.viewFile, count: editsOnFile.value }
 watch(
-  () => [props.viewFile, counts.value.onFile] as const,
+  () => [props.viewFile, editsOnFile.value] as const,
   ([file, count]) => {
     const before = seenOnFile
     seenOnFile = { file, count }
@@ -531,14 +534,11 @@ watch(
     void refresh()
   },
 )
+watch(editsTotal, (now, before) => {
+  if (now > before && root.value) void relistExpanded()
+})
 watch(
-  () => counts.value.total,
-  (now, before) => {
-    if (now > before && root.value) void relistExpanded()
-  },
-)
-watch(
-  () => [counts.value.reverted, app.history.undo, app.history.redo] as const,
+  () => [turnsReverted.value, app.history.undo, app.history.redo] as const,
   () => void refresh(),
 )
 
