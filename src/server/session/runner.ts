@@ -361,13 +361,9 @@ export class SessionRunner {
    * Plan gets none of the MCP ones. What an outside server does with a call is
    * not knowable from here, so a mode that promises to change nothing cannot
    * pass one along.
-   *
-   * The model id is passed on because the surface depends on it: the reference
-   * gives a GPT-5 model `apply_patch` and withholds `edit` and `write`, and
-   * every other model the reverse. See `usesPatch` in the registry.
    */
-  private tools(agent: string, modelID: string): ToolDefinition[] {
-    const own = toolsFor(agent, modelID)
+  private tools(agent: string): ToolDefinition[] {
+    const own = toolsFor(agent)
     if (agent === "plan") return own
     return [...own, ...(this.mcp?.tools() ?? [])]
   }
@@ -1483,7 +1479,7 @@ export class SessionRunner {
               : history,
         // subagents: a subagent is never handed the task tool, so it cannot start subagents of its own,
         // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call.
-        tools: lastStep ? [] : this.tools(session.agent, session.model.model).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+        tools: lastStep ? [] : this.tools(session.agent).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
         effort,
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,

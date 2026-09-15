@@ -744,6 +744,10 @@ async function main() {
     await fs.rm(tree, { recursive: true, force: true })
   }
 
+  // E27: MiMo's desktop never hands a GPT model apply_patch; every model edits with edit and write.
+  const surface = toolsFor("build").map((tool) => tool.name)
+  check("every model is offered edit and write, and no apply_patch", surface.includes("edit") && surface.includes("write") && !surface.includes("apply_patch") && findTool("apply_patch") === undefined, surface)
+
   const list = await findTool("list")!.execute({}, context("c4"))
   check("list renders a tree", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
 
