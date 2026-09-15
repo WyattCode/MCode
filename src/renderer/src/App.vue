@@ -59,7 +59,8 @@ import { loadReleaseHighlights, normalizeVersion, type Highlight } from "./lib/c
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
-import { useRightPanel } from "./stores/right-panel"
+import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
+import { SIDE_COLUMN_WIDTH, arbitratePanel, boundChord, sideFits, toolHints } from "./lib/right-tools"
 import { editedFiles } from "./lib/edited-files"
 import { dismiss, notify, notifyFailure } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
@@ -1071,6 +1072,35 @@ const inConversation = computed(() => !isHome.value && !onboarding.value && Bool
  * the Teleport always finds it.
  */
 const floatingComposer = computed(() => inConversation.value && rp.open && rp.fullscreen)
+
+/* The panel tools' shortcuts and the side panel toggle's, as bound now rather than as shipped. */
+const panelHints = computed(() => toolHints(bindableCommands.value, app.config?.keybinds ?? {}))
+const sidePanelHint = computed(() => boundChord("view.right", "Ctrl+Alt+B", app.config?.keybinds ?? {}))
+
+/*
+ * MiMo's narrow window: with the side column and the panel both open beside a
+ * conversation left under 480, the panel shuts if the column was just opened;
+ * otherwise the column folds, and comes back by itself once there is room.
+ */
+const windowWidth = ref(window.innerWidth)
+const onWindowResize = () => (windowWidth.value = window.innerWidth)
+onMounted(() => window.addEventListener("resize", onWindowResize))
+onBeforeUnmount(() => window.removeEventListener("resize", onWindowResize))
+let sideAutoFolded = false
+watch(
+  [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
+  ([viewport, sideOpen], [, sideBefore]) => {
+    if (onboarding.value) return
+    if (sideOpen) sideAutoFolded = false
+    const room = { viewport, sideWidth: SIDE_COLUMN_WIDTH, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
+    const outcome = arbitratePanel(room, sideOpen && !sideBefore)
+    if (outcome === "close-panel") rp.setOpen(false)
+    else if (outcome === "collapse-side") {
+      leftPanel.value = false
+      sideAutoFolded = true
+    } else if (!sideOpen && sideAutoFolded && sideFits({ ...room, sideOpen: true })) leftPanel.value = true
+  },
+)
 
 /* Ctrl+Shift+G: another review tab. */
 function openReviewTab() {
@@ -2667,6 +2697,14 @@ const bindableCommands = computed(() => {
       run: toggleSidePanel,
     },
     {
+      // MiMo's toggle-max-side: no default chord, and only while the panel is open.
+      id: "view.rightExpand",
+      group: "key.groupSession",
+      title: t("key.sidePanelExpand"),
+      enabled: rp.open,
+      run: () => rp.toggleFullscreen(),
+    },
+    {
       id: "view.terminal",
       group: "key.groupTerminal",
       title: terminalOpen.value ? t("cmd.hideTerminal") : t("cmd.showTerminal"),
@@ -3931,7 +3969,7 @@ onBeforeUnmount(() => {
       :class="{ on: rp.open }"
       :aria-pressed="rp.open"
       :aria-label="t('key.sidePanel')"
-      v-tip="{ label: t('key.sidePanel'), hint: 'Ctrl+Alt+B' }"
+      v-tip="{ label: t('key.sidePanel'), hint: sidePanelHint }"
       @click="toggleSidePanel"
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -4177,7 +4215,11 @@ onBeforeUnmount(() => {
         :sessionID="isHome ? undefined : app.currentID"
         :directory="panelDirectory"
         :browserAllowed="browserAllowed"
-        :sidebarWidth="leftPanel ? 256 : 0"
+        :sidebarWidth="leftPanel ? SIDE_COLUMN_WIDTH : 0"
+        :sideCollapsed="!leftPanel"
+        :hints="panelHints"
+        :modalOpen="modalOpen"
+        :searchOpen="searchOpen"
         @open-settings="openSettings"
         @connect="connectOpen = true"
         @shell="runShellCommand"

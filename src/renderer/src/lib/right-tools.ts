@@ -74,11 +74,67 @@ export function iconOf(type: RightTabType): string[] {
 export const LAUNCH_ORDER: RightTool[] = ["review", "files", "chat", "browser", "terminal"]
 export const ADD_MENU_ORDER: RightTool[] = ["review", "terminal", "browser", "files", "chat"]
 
-/* The shortcut beside each tool: in the launcher only files and browser carry one, the menu names all it can. */
-export const LAUNCH_KEYS: Partial<Record<RightTool, string>> = { files: "Ctrl+P", browser: "Ctrl+T" }
-export const MENU_KEYS: Partial<Record<RightTool, string>> = {
-  review: "Ctrl+Shift+G",
-  browser: "Ctrl+T",
-  files: "Ctrl+P",
-  chat: "Ctrl+Alt+S",
+/* The command whose shortcut opens each tool, as App.vue's command table names it. */
+export const TOOL_COMMANDS: Partial<Record<RightTool, string>> = {
+  review: "view.review",
+  files: "app.openFile",
+  browser: "browser.tab",
+  chat: "session.side",
+}
+
+/* In MiMo's launcher only files and browser carry a shortcut; its plus menu names every one there is. */
+export const LAUNCH_HINTED: RightTool[] = ["files", "browser"]
+
+/**
+ * The chord a command answers to now: the user's binding if they set one, else
+ * the built-in. A binding cleared on the shortcuts page is an empty string, and
+ * names nothing.
+ */
+export function boundChord(id: string, builtIn: string | undefined, binds: Record<string, string>): string | undefined {
+  return (id in binds ? binds[id] : builtIn) || undefined
+}
+
+/** Each tool's shortcut as bound now, so a rebinding shows in the launcher and the plus menu. */
+export function toolHints(
+  commands: readonly { id: string; hint?: string }[],
+  binds: Record<string, string>,
+): Partial<Record<RightTool, string>> {
+  const out: Partial<Record<RightTool, string>> = {}
+  for (const [tool, id] of Object.entries(TOOL_COMMANDS) as [RightTool, string][]) {
+    const chord = boundChord(id, commands.find((command) => command.id === id)?.hint, binds)
+    if (chord) out[tool] = chord
+  }
+  return out
+}
+
+/* MiMo's layout widths: the rail, the open side column past it (--sw), and the room a conversation keeps. */
+export const RAIL_WIDTH = 62
+export const SIDE_COLUMN_WIDTH = 194
+export const MAIN_MIN_WIDTH = 480
+
+export interface PanelRoom {
+  viewport: number
+  /** The side column's width past the rail while it is open. */
+  sideWidth: number
+  sideOpen: boolean
+  panelOpen: boolean
+  panelWidth: number
+  fullscreen: boolean
+}
+
+/**
+ * MiMo's narrow-window rule: with the side column and the panel both open
+ * beside a conversation left under 480, the panel shuts when the column was
+ * the one just opened, and otherwise the column folds.
+ */
+export function arbitratePanel(room: PanelRoom, sideJustOpened: boolean): "none" | "close-panel" | "collapse-side" {
+  if (!room.sideOpen || !room.panelOpen || room.fullscreen) return "none"
+  if (room.viewport - RAIL_WIDTH - room.sideWidth - room.panelWidth >= MAIN_MIN_WIDTH) return "none"
+  return sideJustOpened ? "close-panel" : "collapse-side"
+}
+
+/** Whether an automatically folded side column fits again beside the panel as it stands. */
+export function sideFits(room: PanelRoom): boolean {
+  const panel = room.panelOpen && !room.fullscreen ? room.panelWidth : 0
+  return room.viewport - RAIL_WIDTH - room.sideWidth - panel >= MAIN_MIN_WIDTH
 }

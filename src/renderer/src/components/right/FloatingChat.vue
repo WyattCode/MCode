@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import type { AssistantMessage, AssistantPart } from "@shared/protocol"
-import TextPart from "../parts/TextPart.vue"
-import ReasoningPart from "../parts/ReasoningPart.vue"
-import ToolPart from "../parts/ToolPart.vue"
+import MessageStream from "../MessageStream.vue"
+import PaneBoundary from "./PaneBoundary.vue"
 import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 
@@ -13,42 +11,29 @@ import { t } from "../../lib/i18n"
  * With the panel taking the conversation's room, the conversation is folded
  * down to what is still needed of it: the box to write in, and above it the
  * latest reply - a pill that says whether one is being written or is there to
- * read, and that opens into a card of the reply itself.
+ * read, and that opens into a card of the reply itself, drawn by the same turn
+ * view as the transcript (head, steps, answer, error card) without its actions.
  *
  * The box is the app's own composer, moved in here while the panel is expanded
  * (App.vue sends it to `#float-dock`, which is why the dock is always in the
  * page). How tall all of this stands is told to the panel as `--fc-h`, so what
- * scrolls beneath can keep clear of it.
+ * scrolls beneath can keep clear of it. Under a modal the whole overlay goes
+ * inert; while the search overlay is open the box dims and takes no clicks.
  */
-const props = defineProps<{ shown: boolean }>()
+const props = defineProps<{ shown: boolean; covered?: boolean; searching?: boolean }>()
 const app = useApp()
 
 const collapsed = ref(true)
 const running = computed(() => app.busy)
-
-/*
- * The turn to show: the one running, or else the last one answered - every
- * assistant message after the question before the latest reply.
- */
-const parts = computed<AssistantPart[]>(() => {
-  const messages = app.messages
-  let last = messages.length - 1
-  if (!running.value) while (last >= 0 && messages[last].role !== "assistant") last -= 1
-  if (last < 0) return []
-  let start = last
-  while (start >= 0 && messages[start].role !== "user") start -= 1
-  return messages
-    .slice(start + 1, last + 1)
-    .filter((message): message is AssistantMessage => message.role === "assistant")
-    .flatMap((message) => message.parts)
-})
-
-const hasReply = computed(() => running.value || parts.value.length > 0)
+const hasReply = computed(() => running.value || app.visible.some((message) => message.role === "assistant"))
 
 const root = ref<HTMLElement>()
 const body = ref<HTMLElement>()
 const content = ref<HTMLElement>()
 let stuck = true
+
+/* MiMo's scrollStick: the card follows the reply while within 64px of its end. */
+const STICK_DISTANCE = 64
 
 const heightObserver = new ResizeObserver(() => publishHeight())
 const contentObserver = new ResizeObserver(() => {
@@ -63,7 +48,7 @@ function publishHeight() {
 
 function onBodyScroll() {
   const box = body.value
-  if (box) stuck = box.scrollHeight - box.scrollTop - box.clientHeight < 24
+  if (box) stuck = box.scrollHeight - box.scrollTop - box.clientHeight <= STICK_DISTANCE
 }
 
 onMounted(() => {
@@ -88,7 +73,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div v-show="shown" ref="root" class="fc-overlay" data-floating-chat>
+  <div
+    v-show="shown"
+    ref="root"
+    class="fc-overlay"
+    data-floating-chat
+    :inert="Boolean(covered)"
+    :aria-hidden="covered || undefined"
+  >
     <div v-if="shown && hasReply && !collapsed" class="fc-win">
       <div class="fc-win-head">
         <span class="fc-label">{{ t(running ? "rp.floatingChat.generating" : "rp.floatingChat.latestReply") }}</span>
@@ -98,11 +90,9 @@ onBeforeUnmount(() => {
       </div>
       <div ref="body" class="fc-win-body" @scroll.passive="onBodyScroll">
         <div ref="content" class="fc-content">
-          <template v-for="part in parts" :key="part.id">
-            <TextPart v-if="part.type === 'text'" :part="part" />
-            <ReasoningPart v-else-if="part.type === 'reasoning'" :part="part" />
-            <ToolPart v-else-if="part.type === 'tool'" :part="part" />
-          </template>
+          <PaneBoundary reset-key="floating-chat">
+            <MessageStream latest class="fc-stream" />
+          </PaneBoundary>
         </div>
       </div>
     </div>
@@ -111,7 +101,7 @@ onBeforeUnmount(() => {
       <span>{{ t(running ? "rp.floatingChat.generating" : "rp.floatingChat.showOutput") }}</span>
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 15l-6-6-6 6" /></svg>
     </button>
-    <div id="float-dock" class="fc-dock" />
+    <div id="float-dock" class="fc-dock" :class="{ searching }" :aria-hidden="searching || undefined" />
   </div>
 </template>
 
@@ -188,6 +178,19 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+/* The turn view as the card's content: the card scrolls, not the stream, and the column is the card's. */
+.fc-content :deep(.stream) {
+  flex: none;
+  overflow: visible;
+  scrollbar-gutter: auto;
+}
+
+.fc-content :deep(.inner) {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
 /* The pill: 5 by 12, fully round, 12px muted, lifted. */
 .fc-strip {
   display: inline-flex;
@@ -234,5 +237,12 @@ onBeforeUnmount(() => {
   width: 100%;
   max-width: 720px;
   pointer-events: auto;
+  transition: opacity 0.12s;
+}
+
+/* MiMo dims the docked box to .4 and lets it take no clicks while the search overlay is open. */
+.fc-dock.searching {
+  opacity: 0.4;
+  pointer-events: none;
 }
 </style>

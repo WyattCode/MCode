@@ -82,6 +82,7 @@ import {
   type OAuthProvider,
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
+import { arbitratePanel, boundChord, sideFits, toolHints } from "../src/renderer/src/lib/right-tools"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
 import { interruptedTurn } from "../src/shared/resume"
 import { detectCodeLanguage, insertFence } from "../src/renderer/src/lib/paste-code"
@@ -325,6 +326,25 @@ async function main() {
   const none = filterMenu(moveRows, "zzz")
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
+
+  // The right panel's tool hints follow the shortcuts page, and MiMo's narrow-window rule.
+  const panelCommands = [
+    { id: "view.review", hint: "Ctrl+Shift+G" },
+    { id: "app.openFile", hint: "Ctrl+P" },
+    { id: "browser.tab", hint: "Ctrl+T" },
+    { id: "session.side", hint: "Ctrl+Alt+S" },
+  ]
+  const panelHints = toolHints(panelCommands, { "app.openFile": "Ctrl+Shift+O", "browser.tab": "" })
+  check("a panel tool's hint follows its rebinding", panelHints.files === "Ctrl+Shift+O", panelHints)
+  check("a panel tool whose binding was cleared names no hint", panelHints.browser === undefined, panelHints)
+  check("untouched panel tools keep their built-in hints", panelHints.review === "Ctrl+Shift+G" && panelHints.chat === "Ctrl+Alt+S" && panelHints.terminal === undefined, panelHints)
+  check("a command never rebound answers to its default chord", boundChord("view.right", "Ctrl+Alt+B", {}) === "Ctrl+Alt+B")
+  const crampedRoom = { viewport: 1200, sideWidth: 194, sideOpen: true, panelOpen: true, panelWidth: 500, fullscreen: false }
+  check("a cramped window shuts the panel when the side column was just opened", arbitratePanel(crampedRoom, true) === "close-panel")
+  check("a cramped window folds the side column otherwise", arbitratePanel(crampedRoom, false) === "collapse-side")
+  check("480 left for the conversation keeps both open", arbitratePanel({ ...crampedRoom, viewport: 1236 }, false) === "none")
+  check("an expanded panel is left out of the narrow-window rule", arbitratePanel({ ...crampedRoom, fullscreen: true }, false) === "none")
+  check("a folded side column fits again only once there is room", sideFits({ ...crampedRoom, viewport: 1300 }) && !sideFits(crampedRoom))
 
   const noticeOnce = notify("Copied")
   const noticeTwice = notify("Copied")

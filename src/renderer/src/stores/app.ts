@@ -80,12 +80,30 @@ export const useApp = defineStore("app", () => {
    * own transcript so the open conversation and the side chat never share one.
    */
   const sideSessions = ref<SessionInfo[]>([])
+  /*
+   * MiMo keeps every side chat tab mounted with its own transcript, and several
+   * can stream at once, so each loaded side conversation keeps its messages and
+   * error here by id. `sideID` is the one the box on show speaks for.
+   */
   const sideID = ref<string>()
-  const sideMessages = ref<Message[]>([])
-  const sideError = ref<string>()
-  const sidePartIndex = new Map<string, { messageID: string; index: number }>()
+  const sideTranscripts = ref<Record<string, Message[]>>({})
+  const sideErrors = ref<Record<string, string | undefined>>({})
+  const sidePartIndexes = new Map<string, Map<string, { messageID: string; index: number }>>()
+  const sideMessages = computed<Message[]>(() => (sideID.value ? sideTranscripts.value[sideID.value] ?? [] : []))
+  const sideError = computed(() => (sideID.value ? sideErrors.value[sideID.value] : undefined))
   const side = computed(() => sideSessions.value.find((session) => session.id === sideID.value))
   const sideBusy = computed(() => (sideID.value ? running.value.has(sideID.value) : false))
+  const isSide = (sessionID: string) => sideSessions.value.some((session) => session.id === sessionID)
+  const sideMessagesOf = (sessionID?: string): Message[] => (sessionID ? sideTranscripts.value[sessionID] ?? [] : [])
+  const sideErrorOf = (sessionID?: string) => (sessionID ? sideErrors.value[sessionID] : undefined)
+  const sideSessionOf = (sessionID?: string) => sideSessions.value.find((session) => session.id === sessionID)
+  const sideBusyOf = (sessionID?: string) => (sessionID ? running.value.has(sessionID) : false)
+  function sideStreamingOf(sessionID?: string): AssistantMessage | undefined {
+    if (!sideBusyOf(sessionID)) return undefined
+    const list = sideMessagesOf(sessionID)
+    const last = list[list.length - 1]
+    return last?.role === "assistant" ? last : undefined
+  }
 
   const config = ref<AppConfig>()
   const providers = ref<ProviderStatus[]>([])
@@ -382,9 +400,26 @@ export const useApp = defineStore("app", () => {
     message.parts.forEach((part, index) => partIndex.set(part.id, { messageID: message.id, index }))
   }
 
-  function sideReindex(message: Message) {
+  function sideReindex(sessionID: string, message: Message) {
     if (message.role !== "assistant") return
-    message.parts.forEach((part, index) => sidePartIndex.set(part.id, { messageID: message.id, index }))
+    let index = sidePartIndexes.get(sessionID)
+    if (!index) sidePartIndexes.set(sessionID, (index = new Map()))
+    const into = index
+    message.parts.forEach((part, at) => into.set(part.id, { messageID: message.id, index: at }))
+  }
+
+  function forgetSideTranscript(sessionID: string) {
+    const transcripts = { ...sideTranscripts.value }
+    delete transcripts[sessionID]
+    sideTranscripts.value = transcripts
+    const errors = { ...sideErrors.value }
+    delete errors[sessionID]
+    sideErrors.value = errors
+    sidePartIndexes.delete(sessionID)
+  }
+
+  function setSideError(sessionID: string, message: string | undefined) {
+    sideErrors.value = { ...sideErrors.value, [sessionID]: message }
   }
 
   function apply(event: ServerEvent) {
@@ -406,6 +441,7 @@ export const useApp = defineStore("app", () => {
         if (sideSessions.value.some((session) => session.id === event.sessionID)) {
           sideSessions.value = sideSessions.value.filter((session) => session.id !== event.sessionID)
           if (sideID.value === event.sessionID) closeSide()
+          forgetSideTranscript(event.sessionID)
           break
         }
         const removed = sessions.value.find((session) => session.id === event.sessionID)
@@ -441,12 +477,16 @@ export const useApp = defineStore("app", () => {
           event.message,
           (sessions.value.find((session) => session.id === event.message.sessionID) ?? sideSessions.value.find((session) => session.id === event.message.sessionID))?.directory,
         )
-        if (event.message.sessionID === sideID.value) {
-          const at = sideMessages.value.findIndex((message) => message.id === event.message.id)
-          if (at === -1) sideMessages.value.push(event.message)
-          else sideMessages.value[at] = event.message
-          sideReindex(event.message)
-          break
+        {
+          // Every loaded side chat follows its own conversation, on show or not.
+          const list = sideTranscripts.value[event.message.sessionID]
+          if (list) {
+            const at = list.findIndex((message) => message.id === event.message.id)
+            if (at === -1) list.push(event.message)
+            else list[at] = event.message
+            sideReindex(event.message.sessionID, event.message)
+            break
+          }
         }
         if (event.message.sessionID !== currentID.value) break
         const index = messages.value.findIndex((message) => message.id === event.message.id)
@@ -456,9 +496,9 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "message.delta": {
-        if (event.sessionID === sideID.value) {
-          const location = sidePartIndex.get(event.partID)
-          const message = location && sideMessages.value.find((candidate) => candidate.id === location.messageID)
+        if (sideTranscripts.value[event.sessionID]) {
+          const location = sidePartIndexes.get(event.sessionID)?.get(event.partID)
+          const message = location && sideTranscripts.value[event.sessionID]?.find((candidate) => candidate.id === location.messageID)
           if (location && message?.role === "assistant") {
             const part = message.parts[location.index]
             if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
@@ -506,7 +546,7 @@ export const useApp = defineStore("app", () => {
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
         if (event.sessionID === currentID.value) error.value = event.error
-        if (event.sessionID === sideID.value) sideError.value = event.error
+        if (isSide(event.sessionID)) setSideError(event.sessionID, event.error)
         break
       case "permission.requested": {
         const queue = pendingPermissions.value.get(event.request.sessionID) ?? []
@@ -1050,9 +1090,9 @@ export const useApp = defineStore("app", () => {
     const target = to ?? currentID.value
     // An attachment, or a place pointed at, with no words is still something to answer.
     if (!target || (!text.trim() && !attachments.length && !annotations.length)) return false
-    const onSide = target === sideID.value
+    const onSide = isSide(target)
     const report = (message: string | undefined) => {
-      if (onSide) sideError.value = message
+      if (onSide) setSideError(target, message)
       else error.value = message
     }
     report(undefined)
@@ -1060,7 +1100,7 @@ export const useApp = defineStore("app", () => {
 
     // Caught here rather than in the backend so it can be said in the user's
     // language - the server has no idea which one that is.
-    const chosen = (onSide ? side.value : sessions.value.find((session) => session.id === target))?.model
+    const chosen = (onSide ? sideSessionOf(target) : sessions.value.find((session) => session.id === target))?.model
     const provider = providers.value.find((entry) => entry.id === chosen?.provider)
     if (provider && !provider.configured) {
       report(t("error.noProvider", { name: provider.name }))
@@ -1115,7 +1155,7 @@ export const useApp = defineStore("app", () => {
   async function resume(to?: string): Promise<boolean> {
     const target = to ?? currentID.value
     if (!target || running.value.has(target)) return false
-    if (target === sideID.value) sideError.value = undefined
+    if (isSide(target)) setSideError(target, undefined)
     else error.value = undefined
     noteError(target, undefined)
     running.value.add(target)
@@ -1171,7 +1211,7 @@ export const useApp = defineStore("app", () => {
     if (!target) return
     await api().request({ type: "session.model", sessionID: target, model })
     // A side chat's model is its own; the default follows the open conversation.
-    if (target !== sideID.value) await patchConfig({ model, smart: false })
+    if (!isSide(target)) await patchConfig({ model, smart: false })
   }
 
   /** Puts a conversation on Smart, and makes Smart the start for the next one. */
@@ -1179,7 +1219,7 @@ export const useApp = defineStore("app", () => {
     const target = to ?? currentID.value
     if (!target) return
     await api().request({ type: "session.smart", sessionID: target })
-    if (target !== sideID.value) await patchConfig({ smart: true })
+    if (!isSide(target)) await patchConfig({ smart: true })
   }
 
   /**
@@ -1417,11 +1457,12 @@ export const useApp = defineStore("app", () => {
    * the same project that no list shows. An empty one this conversation already
    * has is taken up again rather than leaving a trail of blank ones behind.
    */
-  async function openSide(parentID: string) {
+  async function openSide(parentID: string, taken: string[] = []) {
     const parent = sessions.value.find((session) => session.id === parentID)
     if (!parent) return
+    // A conversation another open chat tab holds is that tab's, even while it is still empty.
     const previous = sideSessions.value
-      .filter((session) => session.sideOf === parentID)
+      .filter((session) => session.sideOf === parentID && !taken.includes(session.id))
       .sort((a, b) => b.updated - a.updated)[0]
     let chosen: SessionInfo | undefined
     if (previous) {
@@ -1438,11 +1479,23 @@ export const useApp = defineStore("app", () => {
       chosen = created.session
       if (!sideSessions.value.some((session) => session.id === created.session.id)) sideSessions.value.push(created.session)
     }
+    if (!sideTranscripts.value[chosen.id]) sideTranscripts.value = { ...sideTranscripts.value, [chosen.id]: [] }
+    setSideError(chosen.id, undefined)
     sideID.value = chosen.id
-    sideError.value = undefined
-    sideMessages.value = []
-    sidePartIndex.clear()
     return chosen.id
+  }
+
+  /**
+   * Reads a side conversation that already exists into its own transcript,
+   * once: after that its events keep it current whether or not it is on show.
+   */
+  async function loadSide(sessionID: string) {
+    if (sideTranscripts.value[sessionID]) return
+    const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
+    if (!result || sideTranscripts.value[sessionID]) return
+    sidePartIndexes.delete(sessionID)
+    result.messages.forEach((message) => sideReindex(sessionID, message))
+    sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: result.messages }
   }
 
   /**
@@ -1450,27 +1503,15 @@ export const useApp = defineStore("app", () => {
    * tab holds, coming back to it after another tab or another conversation.
    */
   async function showSide(sessionID: string) {
-    const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
-    if (!result) return
     sideID.value = sessionID
-    sideError.value = undefined
-    sideMessages.value = result.messages
-    sidePartIndex.clear()
-    result.messages.forEach(sideReindex)
+    await loadSide(sessionID)
   }
 
   function closeSide() {
     sideID.value = undefined
-    sideMessages.value = []
-    sideError.value = undefined
-    sidePartIndex.clear()
   }
 
-  const sideStreaming = computed<AssistantMessage | undefined>(() => {
-    if (!sideBusy.value) return undefined
-    const last = sideMessages.value[sideMessages.value.length - 1]
-    return last?.role === "assistant" ? last : undefined
-  })
+  const sideStreaming = computed<AssistantMessage | undefined>(() => sideStreamingOf(sideID.value))
 
   const streaming = computed<AssistantMessage | undefined>(() => {
     if (!busy.value) return undefined
@@ -1528,7 +1569,13 @@ export const useApp = defineStore("app", () => {
     sideBusy,
     sideStreaming,
     sideError,
+    sideMessagesOf,
+    sideErrorOf,
+    sideSessionOf,
+    sideBusyOf,
+    sideStreamingOf,
     openSide,
+    loadSide,
     showSide,
     closeSide,
     start,
