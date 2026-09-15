@@ -13,7 +13,18 @@ import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
-import { beginIntentionalQuit, captureConsole, recordProcessError, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
+import {
+  activate,
+  beginIntentionalQuit,
+  captureConsole,
+  currentWindow,
+  markClosing,
+  recordProcessError,
+  relaunch,
+  setRecoveryHost,
+  wireProcessRecovery,
+  wireRecovery,
+} from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
 import { installedOpenAppIcons, installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
@@ -160,8 +171,17 @@ function deliverLink(raw: string) {
 app.on("second-instance", (_event, argv) => {
   const raw = linkInArgs(argv)
   if (raw) return deliverLink(raw)
-  const window = [...windows].find((entry) => !entry.isDestroyed())
-  if (window) raise(window)
+  activate(raise)
+})
+
+/*
+ * How recovery makes a replacement window: MiMo's createRendererWindow, shown
+ * or kept hidden as the one it replaces was. A hidden one is only wanted for a
+ * turn still running, whose notification has to come from somewhere.
+ */
+setRecoveryHost({
+  create: (show) => createWindow(show),
+  hasPendingWork: () => (backend?.runtime.runner.busySessions().length ?? 0) > 0,
 })
 
 // macOS delivers links as an event rather than as arguments.
@@ -210,7 +230,7 @@ let trayProfiles: TrayProfile[] = []
  * Electron cannot relabel a tray menu in place any more than it can a menu bar,
  * so a language change rebuilds this the same way it rebuilds that one.
  */
-function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
+function refreshTray(enabled: boolean): void {
   if (!enabled) {
     tray?.destroy()
     tray = undefined
@@ -222,7 +242,7 @@ function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
   // scales it. The source is 512, so this is a reduction rather than a stretch.
   const image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
   /* MiMo's tray opens the window on a click and on a double-click alike; it never hides it. */
-  const open = () => raise(BrowserWindow.getAllWindows()[0] ?? make())
+  const open = () => activate(raise)
   if (!tray) {
     tray = new Tray(image)
     tray.on("click", open)
@@ -246,7 +266,7 @@ function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
           type: "radio" as const,
           checked: entry.checked,
           click: () => {
-            const window = BrowserWindow.getAllWindows()[0] ?? make()
+            const window = currentWindow() ?? createWindow()
             window.webContents.send("mcode:tray-profile", entry.key)
           },
         })),
@@ -296,7 +316,8 @@ function saveFilter(suggested: string): Electron.FileFilter {
   return { name: known[extension] ?? extension.toUpperCase(), extensions: [extension] }
 }
 
-function createWindow(): BrowserWindow {
+/* `show` is false only for a replacement of a hidden window (renderer recovery). */
+function createWindow(show = true): BrowserWindow {
   const saved = restore()
 
   const window = new BrowserWindow({
@@ -341,7 +362,9 @@ function createWindow(): BrowserWindow {
    * that can fail is the load itself: a missing renderer bundle, or a dev server
    * that is not up yet, both fail before this function has finished running.
    */
-  wireRecovery(window, String(window.id))
+  wireRecovery(window)
+  // A hidden replacement still has a turn to report on; it must not be throttled into silence.
+  if (!show) window.webContents.setBackgroundThrottling(false)
 
   // The renderer paints over this, but it is what shows during a resize or
   // before the first frame - so it has to track the OS theme, not just sample
@@ -392,7 +415,9 @@ function createWindow(): BrowserWindow {
   window.webContents.on("zoom-changed", () => refreshTitlebar(window))
   window.webContents.on("did-finish-load", () => refreshTitlebar(window))
 
-  window.once("ready-to-show", () => window.show())
+  window.once("ready-to-show", () => {
+    if (show) window.show()
+  })
   window.on("closed", () => windows.delete(window))
 
   /*
@@ -409,7 +434,11 @@ function createWindow(): BrowserWindow {
       platform: process.platform,
       trayEnabled: Boolean(tray),
     })
-    if (!hide) return
+    if (!hide) {
+      // The close goes ahead, so the contents going away next is not a failure to recover from.
+      markClosing(window)
+      return
+    }
     event.preventDefault()
     if (process.platform === "darwin" && window.isFullScreen()) {
       window.once("leave-full-screen", () => window.hide())
@@ -577,7 +606,7 @@ app.whenReady().then(async () => {
     // Rebuilt rather than patched: Electron has no way to relabel in place.
     buildMenu()
     // The tray's menu has the same problem and the same answer.
-    if (tray) refreshTray(true, createWindow)
+    if (tray) refreshTray(true)
   })
 
   /*
@@ -1038,7 +1067,7 @@ app.whenReady().then(async () => {
   registerMediaEmbeds()
 
   ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
-    refreshTray(Boolean(enabled), createWindow)
+    refreshTray(Boolean(enabled))
   })
 
   /* The 配置切换 list, checked here because it arrives from a window. */
@@ -1054,7 +1083,7 @@ app.whenReady().then(async () => {
       )
       .slice(0, 40)
       .map((entry) => ({ key: entry.key, label: entry.label.slice(0, 120), checked: entry.checked }))
-    if (tray) refreshTray(true, createWindow)
+    if (tray) refreshTray(true)
   })
 
   /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */
@@ -1072,7 +1101,7 @@ app.whenReady().then(async () => {
     window.setIcon(image)
     /* The corner and the taskbar are the same app; they wear the same icon. */
     trayIcon = id
-    if (tray) refreshTray(true, createWindow)
+    if (tray) refreshTray(true)
     return { ok: true }
   })
 
@@ -1109,10 +1138,8 @@ app.whenReady().then(async () => {
   createWindow()
 
   app.on("activate", () => {
-    // A window hidden to the tray or menu bar comes back rather than being joined by a new one.
-    const hidden = BrowserWindow.getAllWindows()[0]
-    if (hidden) raise(hidden)
-    else createWindow()
+    // A window hidden to the tray or menu bar comes back; one whose renderer is gone is replaced.
+    activate(raise)
   })
 })
 

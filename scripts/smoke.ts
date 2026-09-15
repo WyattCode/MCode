@@ -38,6 +38,9 @@ import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/r
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
 import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFile } from "../src/main/display-server"
 import { PowerHold } from "../src/main/power"
+import { RecoverySchedule, RendererHealth, recoveryVisibility } from "../src/main/renderer-health"
+import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boot-prefs"
+import { boundsOnShow, clampToWorkAreas, sameBounds } from "../src/main/work-area"
 import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
@@ -2641,6 +2644,98 @@ async function main() {
     failing.sync(["x"])
     failing.sync([])
     check("a blocker that fails to start holds nothing and stops nothing", failing.state.held.length === 0 && !calls.includes("stop:unexpected"))
+  }
+
+  section("Pre-ready choices (theme and hardware acceleration)")
+  {
+    check("no file or a broken one is the defaults", readBootPrefs("").theme === "system" && readBootPrefs("[]").hardwareAcceleration === true && readBootPrefs("{").theme === "system")
+    check("the saved theme reads back, anything else follows the system", readBootPrefs('{"theme":"dark"}').theme === "dark" && readBootPrefs('{"theme":"light"}').theme === "light" && readBootPrefs('{"theme":"dracula"}').theme === "system")
+    check("acceleration is only off when turned off", readBootPrefs('{"hardwareAcceleration":false}').hardwareAcceleration === false && readBootPrefs('{"hardwareAcceleration":"0"}').hardwareAcceleration === false && readBootPrefs('{"hardwareAcceleration":"no"}').hardwareAcceleration === true)
+    const written = writeBootPrefs({ theme: "dark", hardwareAcceleration: false })
+    check("what is written reads back the same", JSON.stringify(readBootPrefs(written)) === JSON.stringify({ theme: "dark", hardwareAcceleration: false }), written)
+    check("the first paint is MiMo's plane for each scheme", windowBackground(true) === "#181818" && windowBackground(false) === "#ffffff")
+  }
+
+  section("Work areas (windows pulled back onto a screen)")
+  {
+    const primary = { x: 0, y: 0, width: 1920, height: 1040 }
+    const right = { x: 1920, y: 0, width: 1280, height: 984 }
+    check("a window wholly on a screen stays where it is", clampToWorkAreas({ x: 100, y: 100, width: 800, height: 600 }, [primary, right]) === undefined)
+    check("with no displays reported nothing is moved", clampToWorkAreas({ x: 5000, y: 0, width: 800, height: 600 }, []) === undefined)
+    const straddling = clampToWorkAreas({ x: 1700, y: 200, width: 800, height: 600 }, [primary, right])
+    check("one straddling two goes into the screen it overlaps most", JSON.stringify(straddling) === JSON.stringify({ x: 1920, y: 200, width: 800, height: 600 }), straddling)
+    const orphan = clampToWorkAreas({ x: 3500, y: 300, width: 900, height: 700 }, [primary])
+    check("one left on an unplugged screen comes back to the nearest, at its edge", JSON.stringify(orphan) === JSON.stringify({ x: 1020, y: 300, width: 900, height: 700 }), orphan)
+    const huge = clampToWorkAreas({ x: -50, y: -50, width: 2600, height: 1400 }, [primary])
+    check("one larger than the screen is shrunk to it", JSON.stringify(huge) === JSON.stringify(primary), huge)
+    check("bounds compare exactly", sameBounds(primary, { ...primary }) && !sameBounds(primary, { ...primary, x: 1 }))
+    check("hiding from full screen restores nothing", boundsOnShow({ x: 10, y: 10, width: 900, height: 700 }, true, [primary]) === undefined && boundsOnShow(undefined, false, [primary]) === undefined)
+    check("recorded bounds on a live screen come back as they were", JSON.stringify(boundsOnShow({ x: 10, y: 10, width: 900, height: 700 }, false, [primary])) === JSON.stringify({ x: 10, y: 10, width: 900, height: 700 }))
+    check("recorded bounds on a screen since removed are pulled back", boundsOnShow({ x: 2000, y: 10, width: 900, height: 700 }, false, [primary])?.x === 1020)
+  }
+
+  section("Renderer recovery (MiMo's silent replacement)")
+  {
+    const a = {}
+    const b = {}
+    const health = new RendererHealth<object>()
+    health.track(a)
+    check("a new renderer is starting", health.state(a) === "starting" && health.state(undefined) === "missing")
+    check("a subframe failure or a cancelled load (-3) leaves it alone", !health.didFailLoad(a, { errorCode: -105, isMainFrame: false }) && !health.didFailLoad(a, { errorCode: -3, isMainFrame: true }) && health.state(a) === "starting")
+    check("finishing its first load makes it ready, and only once", health.didFinishLoad(a) && !health.didFinishLoad(a) && health.state(a) === "ready")
+    check("the startup watchdog does nothing to a ready renderer", !health.startupTimedOut(a))
+    check("a main-frame failure makes it gone, reported once", health.didFailLoad(a, { errorCode: -6, isMainFrame: true }) && !health.renderProcessGone(a) && health.state(a) === "missing")
+    check("destroying one already gone is not a second failure", !health.destroyed(a))
+    health.track(b)
+    check("a renderer that never finishes starting times out", health.startupTimedOut(b) && health.state(b) === "missing")
+    const c = {}
+    health.track(c)
+    check("destroyed contents that were alive are a failure", health.destroyed(c) && !health.destroyed(c))
+
+    check("nothing is recovered while quitting", recoveryVisibility({ becameUnavailable: true, windowClosing: false, quitting: true, platform: "win32" }) === "none")
+    check("a closing window is not brought back on Windows", recoveryVisibility({ becameUnavailable: true, windowClosing: true, quitting: false, platform: "win32" }) === "none")
+    check("on macOS a closing one comes back hidden", recoveryVisibility({ becameUnavailable: true, windowClosing: true, quitting: false, platform: "darwin" }) === "hidden")
+    check("otherwise the replacement keeps the old visibility", recoveryVisibility({ becameUnavailable: true, windowClosing: false, quitting: false, platform: "linux" }) === "preserve-visibility")
+
+    // Fake timers: each scheduled run is kept with its delay and fired by hand.
+    let clock: { run: () => void; ms: number; id: number }[] = []
+    let nextId = 1
+    const timers = {
+      schedule: (run: () => void, ms: number) => {
+        const id = nextId++
+        clock.push({ run, ms, id })
+        return id
+      },
+      cancel: (id: number) => void (clock = clock.filter((entry) => entry.id !== id)),
+    }
+    const fire = () => {
+      const entry = clock.shift()
+      entry?.run()
+      return entry?.ms
+    }
+    const recovery = new RecoverySchedule<number>(timers)
+    let made = 0
+    const failing = () => {
+      made++
+      return false
+    }
+    check("the first attempt is scheduled at once", recovery.request(failing) === "scheduled" && clock[0]?.ms === 0)
+    check("a second request while one is queued joins it", recovery.request(failing) === "pending" && clock.length === 1)
+    const delays = [fire(), fire(), fire(), fire()]
+    check("failed attempts retry after 0, 250, 1000 and 5000 ms, then stop", delays.join(",") === "0,250,1000,5000" && made === 4 && clock.length === 0 && recovery.snapshot.exhausted, { delays, made })
+    check("an exhausted schedule makes no more attempts", recovery.request(failing) === "exhausted" && clock.length === 0)
+
+    const fresh = new RecoverySchedule<number>(timers)
+    fresh.request(() => true)
+    fire()
+    check("a successful attempt ends the retries", fresh.snapshot.attempts === 1 && !fresh.snapshot.retryScheduled && clock.length === 0)
+    fresh.rendererReady()
+    check("a ready replacement starts the 30 s stable timer", fresh.snapshot.stableScheduled && clock[0]?.ms === 30_000)
+    fire()
+    check("staying up for it resets the attempt count", fresh.snapshot.attempts === 0 && !fresh.snapshot.stableScheduled)
+    fresh.request(() => true)
+    fresh.cancel()
+    check("cancelling on quit drops a queued attempt", clock.length === 0 && fresh.request(() => true) === "stopped")
   }
 
   section("Log files (MiMo's userData/logs, one file a day, 15 days)")
