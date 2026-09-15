@@ -119,12 +119,6 @@ function defaults(): AppConfig {
     staged: false,
     openTabs: [],
     onboarded: false,
-    /*
-     * Off, which is opencode's own default: `defaultSettings` in v1.18.27 has
-     * `showReasoningSummaries: false`. A reasoning summary is something a
-     * reader asks for, not something every turn opens with.
-     */
-    showReasoning: false,
     expandShell: false,
     expandEdits: false,
     uiFont: "",
@@ -142,15 +136,8 @@ function defaults(): AppConfig {
     pointerCursor: true,
     reduceMotion: "system",
     diffMarks: "color",
-    wrapCode: true,
     notifyAgent: true,
     notifyPermission: true,
-    /*
-     * Off, matching opencode's `notifications.errors: false` - the one
-     * notification of the three it does not raise by default. An error is
-     * already on screen in the conversation the moment it happens.
-     */
-    notifyError: false,
     /*
      * Off, which is opencode's. Its own getter is
      * `getStore().get(PINCH_ZOOM_ENABLED_KEY) === true`, so an unset store
@@ -351,17 +338,6 @@ export class Config {
       done.add(name)
       moved = true
     }
-
-    /*
-     * Reasoning summaries were on by default here and are off in opencode.
-     * Changing the default only reached new documents, so anyone who had ever
-     * run this app kept the old behaviour with no sign of why. This turns it
-     * off once; turning it back on afterwards sticks, because the name is
-     * recorded either way.
-     */
-    once("reasoning-off", () => {
-      this.current.showReasoning = false
-    })
 
     /*
      * 2.0 draws with its own theme, MCode 2.0. Changing the default only

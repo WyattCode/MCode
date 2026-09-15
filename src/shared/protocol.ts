@@ -1154,8 +1154,6 @@ export interface AppConfig {
    * has not curated the list yet, and every connected model is offered.
    */
   enabledModels: string[]
-  /** Show the model's summarized reasoning in the stream. */
-  showReasoning: boolean
   /** Start shell tool calls expanded in the transcript. */
   expandShell: boolean
   /** Start edit, write and patch tool calls expanded in the transcript. */
@@ -1244,13 +1242,10 @@ export interface AppConfig {
    * asked rather than assumed.
    */
   diffMarks: "color" | "signs"
-  /** Whether a long line in code or a diff folds rather than scrolling away. */
-  wrapCode: boolean
 
   /** Desktop notifications, by occasion. */
   notifyAgent: boolean
   notifyPermission: boolean
-  notifyError: boolean
 
   /** Whether pinch and Ctrl+wheel resize the interface. */
   pinchZoom: boolean

@@ -925,9 +925,9 @@ onBeforeUnmount(
 )
 
 /*
- * Four choices that are answered by the stylesheet rather than by a component:
- * the cursor over what can be pressed, whether anything animates, how a diff
- * marks its changed lines, and whether a long line folds.
+ * Choices that are answered by the stylesheet rather than by a component: the
+ * cursor over what can be pressed, whether anything animates, how a diff marks
+ * its changed lines, and how text is smoothed.
  *
  * They land on <html> because each one reaches across the whole window - a
  * wrapper element would leave out every dialog, menu and tooltip, which are
@@ -939,16 +939,14 @@ watch(
       app.config?.pointerCursor ?? true,
       app.config?.reduceMotion ?? "system",
       app.config?.diffMarks ?? "color",
-      app.config?.wrapCode ?? true,
       app.config?.fontSmoothing ?? true,
     ] as const,
-  ([cursor, motion, marks, wrap]) => {
+  ([cursor, motion, marks, smoothing]) => {
     const root = document.documentElement
     root.setAttribute("data-cursor", cursor ? "pointer" : "default")
     root.setAttribute("data-motion", motion)
     root.setAttribute("data-diff-marks", marks)
-    root.setAttribute("data-wrap", wrap ? "on" : "off")
-    root.setAttribute("data-smoothing", (app.config?.fontSmoothing ?? true) ? "on" : "off")
+    root.setAttribute("data-smoothing", smoothing ? "on" : "off")
   },
   { immediate: true },
 )
