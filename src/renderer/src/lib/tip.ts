@@ -29,13 +29,27 @@ export interface Tip {
    * title in medium weight over a few quieter lines (project, folder, when it
    * last changed). Empty lines are left out.
    */
-  card?: { title: string; lines: (string | undefined)[] }
+  card?: { title: string; lines: (string | TipLine | undefined)[] }
   /** Forced shut, and shut if already up. MiMo passes it while the trigger's own menu is open. */
   disabled?: boolean
   /** Forced open until it turns false, as MiMo's context-usage card stays once clicked. */
   pinned?: boolean
   /** "hover" leaves focus alone, as MiMo's menu-row descriptions do; the default opens on both. */
   trigger?: "hover" | "hoverFocus"
+}
+
+/**
+ * session chat: a card line about a message between two conversations, as
+ * MiMo's side column card draws one - a 9px mark for which way it goes, then
+ * the words. One with an action is a button, and a card holding one stays open
+ * while the pointer crosses over to it.
+ */
+export interface TipLine {
+  text: string
+  direction: "outbound" | "inbound"
+  /** The button's native title. */
+  title?: string
+  action?: () => void
 }
 
 /** MiMo's `sideOffset`: the distance from the control. */
@@ -145,6 +159,15 @@ let pending: { target: HTMLElement; timer: ReturnType<typeof setTimeout> } | und
 /** When the last tip closed, for the warm window. */
 let last = 0
 let watcher: ResizeObserver | undefined
+/** session chat: the short wait after the pointer leaves a control whose card has lines to press. */
+let lingering: ReturnType<typeof setTimeout> | undefined
+/** The time the pointer has to cross the 6px gap into such a card. */
+const LINGER = 150
+
+function cancelLinger() {
+  if (lingering) clearTimeout(lingering)
+  lingering = undefined
+}
 
 function parse(value: Tip | string): Tip {
   return typeof value === "string" ? { label: value } : value
@@ -158,9 +181,44 @@ function showable(tip: Tip) {
   return Boolean(tip.label || tip.card?.title) && !tip.disabled
 }
 
+/** session chat: whether a card has a line to press, which makes the card itself take the pointer. */
+function pressable(tip: Tip): boolean {
+  return Boolean(tip.card?.lines.some((line) => typeof line === "object" && line.action))
+}
+
+/* session chat: one link line - the mark, then the words; pressed, it closes the card and does its action. */
+function linkLine(line: TipLine): HTMLElement {
+  const row = document.createElement(line.action ? "button" : "div")
+  row.className = "app-tip-link"
+  row.dataset.convoTipChatlink = ""
+  row.dataset.direction = line.direction
+  if (line.action) {
+    row.setAttribute("type", "button")
+    if (line.title) row.title = line.title
+    const action = line.action
+    row.addEventListener("click", (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      hide()
+      action()
+    })
+  }
+  const mark = document.createElement("span")
+  mark.className = "app-tip-link-mark"
+  mark.setAttribute("aria-hidden", "true")
+  const dot = document.createElement("span")
+  dot.className = "app-tip-link-dot"
+  mark.appendChild(dot)
+  const words = document.createElement("span")
+  words.textContent = line.text
+  row.append(mark, words)
+  return row
+}
+
 function render(node: HTMLElement, tip: Tip) {
   node.textContent = ""
   node.classList.toggle("card", Boolean(tip.card))
+  node.classList.toggle("interactive", pressable(tip))
   if (!tip.card) {
     node.textContent = tipText(tip)
     return
@@ -171,6 +229,10 @@ function render(node: HTMLElement, tip: Tip) {
   node.appendChild(title)
   for (const text of tip.card.lines) {
     if (!text) continue
+    if (typeof text === "object") {
+      node.appendChild(linkLine(text))
+      continue
+    }
     const line = document.createElement("div")
     line.className = "app-tip-line"
     line.textContent = text
@@ -216,6 +278,15 @@ function openLayer(target: HTMLElement, tip: Tip): Layer {
   render(node, tip)
   document.body.appendChild(node)
   const layer = { node, target }
+  // session chat: a card with lines to press stays open while the pointer is on it.
+  node.addEventListener("pointerenter", () => {
+    if (node.classList.contains("interactive")) cancelLinger()
+  })
+  node.addEventListener("pointerleave", (event) => {
+    if (!node.classList.contains("interactive")) return
+    if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) return
+    hideFor(target)
+  })
   position(layer, tip)
   // Set last, after measuring: the entrance scales the box, which would skew the measurement.
   node.dataset.state = "open"
@@ -337,8 +408,19 @@ export const tip = {
       state.moved = true
       enter(el)
     }
-    const leave = () => {
+    const leave = (event: PointerEvent) => {
       state.moved = false
+      // session chat: leaving for a card with lines to press - or for the gap before it - keeps the card up.
+      const layer = open
+      if (layer?.target === el && layer.node.classList.contains("interactive")) {
+        if (event.relatedTarget instanceof Node && layer.node.contains(event.relatedTarget)) return
+        cancelLinger()
+        lingering = setTimeout(() => {
+          lingering = undefined
+          if (!layer.node.matches(":hover")) hideFor(el)
+        }, LINGER)
+        return
+      }
       hideFor(el)
     }
     // A press closes it, and the focus the press gives does not reopen it.
@@ -403,7 +485,15 @@ export const tip = {
 export function installTips(app: App): void {
   app.directive("tip", tip)
   // A press anywhere dismisses the open tip, as MiMo's dismissable layer does.
-  document.addEventListener("pointerdown", () => hide(), true)
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      // session chat: a press on a line inside the card is the line's, not a press elsewhere.
+      if (open && event.target instanceof Node && open.node.contains(event.target)) return
+      hide()
+    },
+    true,
+  )
   // Only a scroll that moves the control closes its tip; a list scrolling elsewhere does not.
   window.addEventListener(
     "scroll",

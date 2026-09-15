@@ -190,6 +190,11 @@ import {
   wantsNotice,
 } from "../src/main/desktop-rules"
 
+// session chat: conversations messaging each other, through the real runner over a fake provider, and the pieces the side column draws.
+import { CHAT_HOPS, replyIn, withChatHeaders } from "../src/server/session/chat"
+import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/lib/convo-card"
+import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
+
 let passed = 0
 let failed = 0
 
@@ -4896,6 +4901,7 @@ async function main() {
   check("a scrollbar stays coloured 500ms after the last scroll", SCROLLBAR_LINGER === 500, SCROLLBAR_LINGER)
 
   await subagentChecks(root, project)
+  await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
 
@@ -5155,7 +5161,9 @@ async function deliveredToolChecks(root: string) {
   const names = ["pdf_locate", "present_files", "get_desktop_settings", "set_desktop_setting"]
 
   // The registry: appended after the task tool, no permission bucket, nothing to record in undo.
-  check("the four window tools are appended after task, keeping the cached prefix", TOOLS.slice(-5).map((tool) => tool.name).join(",") === ["task", ...names].join(","), TOOLS.map((tool) => tool.name))
+  // Read from task rather than from the end: tools appended after these (session chat's) leave the prefix as it was.
+  const taskAt = TOOLS.findIndex((tool) => tool.name === "task")
+  check("the four window tools are appended after task, keeping the cached prefix", taskAt >= 0 && TOOLS.slice(taskAt, taskAt + 5).map((tool) => tool.name).join(",") === ["task", ...names].join(","), TOOLS.map((tool) => tool.name))
   check("none of them asks for permission, as MiMo asks none", names.every((name) => findTool(name)?.permission === undefined))
   check("none of them counts as touching the project", names.every((name) => reachOf(name) === "reads"))
 
@@ -5745,6 +5753,279 @@ async function subagentChecks(root: string, project: string) {
   check("a model nobody has connected is refused", unknownModel?.status === "error" && /models action/.test(unknownModel.error ?? ""), unknownModel?.error)
   const chosen = (await childrenOf(twelve.id)).find((session) => session.title === "Chosen model")
   check("a subagent runs on the model it was given", chosen?.model.provider === "fake" && chosen.model.model === "m", chosen?.model)
+
+  await new Promise<void>((resolve) => provider.close(() => resolve()))
+}
+
+async function sessionChatChecks(root: string, project: string) {
+  section("Session chat (contacts, talk_to_session, create_session, update_session)")
+
+  // Pure pieces first.
+  const asked = (id: string, text: string, inbox?: ChatUserMessage["inbox"]): ChatMessage => ({
+    id,
+    sessionID: "s",
+    role: "user",
+    text,
+    attachments: [],
+    ...(inbox ? { inbox } : {}),
+    time: { created: 1 },
+  })
+  const replied = (id: string, extra: Record<string, unknown>): ChatMessage =>
+    ({ id, sessionID: "s", role: "assistant", model: { provider: "p", model: "m" }, agent: "build", parts: [], time: { created: 2 }, ...extra }) as ChatMessage
+  const headed = withChatHeaders([asked("u1", "hello", { from: "Alpha", sessionID: "ses_a", direction: "request" }), asked("u2", "follow up", { from: "main" })])
+  check("a message from another session reaches the model with its header, and the transcript keeps the words", headed[0]?.role === "user" && headed[0].text.startsWith("[Session chat] A message from the session \"Alpha\"") && headed[0].text.endsWith("hello"))
+  check("a subagent's follow-up gets no session chat header", headed[1]?.role === "user" && headed[1].text === "follow up")
+  const replyHeader = withChatHeaders([asked("u3", "the answer", { from: "Beta", sessionID: "ses_b", direction: "reply" })])[0]
+  check("a reply says it is a reply", replyHeader?.role === "user" && replyHeader.text.startsWith("[Session chat] The reply from the session \"Beta\""))
+  const textPart = (text: string) => ({ type: "text", id: `p${text}`, text })
+  check("the reply is the last answer after the message", (() => {
+    const outcome = replyIn([asked("u1", "q"), replied("a1", { parts: [textPart("first")] }), replied("a2", { parts: [textPart("final")] })], "u1")
+    return outcome.ok && outcome.reply === "final"
+  })())
+  check("a failed turn says why", (() => {
+    const outcome = replyIn([asked("u1", "q"), replied("a1", { error: "boom", finish: "error" })], "u1")
+    return !outcome.ok && outcome.error.includes("boom")
+  })())
+  check("a stopped turn with nothing written says it was stopped", (() => {
+    const outcome = replyIn([asked("u1", "q"), replied("a1", { finish: "aborted" })], "u1")
+    return !outcome.ok && outcome.error.includes("stopped")
+  })())
+  check("chains stop at MiMo's five hops", CHAT_HOPS === 5)
+
+  const link = (extra: Partial<ChatLink>): ChatLink => ({ peerID: "ses_p", peerTitle: "Peer", direction: "outbound", kind: "request", phase: "running", queueAhead: 0, ...extra })
+  check("waiting reads MiMo's words", chatLinkText(link({})) === t("side.chatLink.waiting", { peer: "Peer" }))
+  check("handling a message reads MiMo's words", chatLinkText(link({ direction: "inbound" })) === t("side.chatLink.handlingRequest", { peer: "Peer" }))
+  check("handling a reply reads MiMo's words", chatLinkText(link({ direction: "inbound", kind: "reply" })) === t("side.chatLink.handlingReply", { peer: "Peer" }))
+  check(
+    "a queued message adds its position, counting the one running",
+    chatLinkText(link({ phase: "queued", queueAhead: 1 })) === `${t("side.chatLink.waiting", { peer: "Peer" })} · ${t("side.chatLink.queued", { position: "2" })}`,
+  )
+  check("running links come before queued ones", sortedChatLinks([link({ phase: "queued", queueAhead: 1, peerTitle: "Q" }), link({ peerTitle: "R" })]).map((entry) => entry.peerTitle).join() === "R,Q")
+  const jumped: string[] = []
+  const card = convoCard({ title: "T", directory: project, updated: 0 }, undefined, [link({}), link({ peerID: null, direction: "inbound" })], (id) => jumped.push(id))
+  const cardLinks = card.lines.filter((line) => typeof line === "object")
+  const first = cardLinks[0]
+  if (typeof first === "object") first.action?.()
+  check("the card lists a line per link; one whose peer exists jumps to it", cardLinks.length === 2 && jumped.join() === "ses_p" && typeof cardLinks[1] === "object" && !cardLinks[1].action)
+  check(
+    "the four tools are appended last, after every tool already there, keeping the cached prefix",
+    TOOLS.slice(-4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
+      TOOLS.findIndex((tool) => tool.name === "task") < TOOLS.length - 4,
+    TOOLS.map((tool) => tool.name),
+  )
+  check("Plan keeps contacts and loses the three that act", toolsFor("plan").some((tool) => tool.name === "contacts") && !toolsFor("plan").some((tool) => ["talk_to_session", "create_session", "update_session"].includes(tool.name)))
+  check("none of the four is recorded as touching project files", ["contacts", "talk_to_session", "create_session", "update_session"].every((name) => reachOf(name) === "reads"))
+
+  // The runner over a fake provider. create_session gets a folder of its own: earlier sections move the shared project.
+  const workspace = path.join(root, "session-chat-workspace")
+  await fs.mkdir(workspace, { recursive: true })
+  let callCount = 0
+  const provider = createServer((request, response) => {
+    let body = ""
+    request.on("data", (chunk) => (body += chunk))
+    request.on("end", async () => {
+      const sent = JSON.parse(body || "{}") as { messages?: { role: string; content?: unknown }[] }
+      const messages = sent.messages ?? []
+      const lastUserAt = messages.map((message) => message.role).lastIndexOf("user")
+      const lastUser = JSON.stringify(messages[lastUserAt]?.content ?? "")
+      const answered = messages.slice(lastUserAt + 1).some((message) => message.role === "tool")
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      let closed = false
+      response.on("close", () => (closed = true))
+      const frame = (data: unknown) => response.write(`data: ${JSON.stringify(data)}\n\n`)
+      const end = (reason: string) => {
+        frame({ choices: [{ delta: {}, finish_reason: reason }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+        response.write("data: [DONE]\n\n")
+        response.end()
+      }
+      const say = (text: string) => {
+        frame({ choices: [{ delta: { content: text } }] })
+        end("stop")
+      }
+      const slow = async (text: string) => {
+        for (let at = 0; at < 30 && !closed; at++) {
+          frame({ choices: [{ delta: { content: "." } }] })
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        if (!closed) say(text)
+      }
+      const call = (name: string, input: Record<string, unknown>) => {
+        frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: `call_chat_${++callCount}`, type: "function", function: { name, arguments: JSON.stringify(input) } }] } }] })
+        end("tool_calls")
+      }
+
+      if (lastUser.includes("[Session chat] The reply from")) return say("got reply")
+      const chain = /CHAIN:(\d+)/.exec(lastUser)
+      if (chain) {
+        const at = Number(chain[1])
+        if (answered) return say(`chain ${at} done`)
+        return call("talk_to_session", { contact: `chain-${at + 1}`, message: `CHAIN:${at + 1}` })
+      }
+      if (lastUser.includes("[Session chat] A message from")) {
+        if (lastUser.includes("SLOW")) return slow("slow pong")
+        return say(`pong:${/PING[\w-]*/.exec(lastUser)?.[0] ?? ""}`)
+      }
+      if (answered) return say("caller done")
+      if (lastUser.includes("USER-SLOW")) return slow("user slow done")
+      if (lastUser.includes("CONTACTS")) return call("contacts", { explanation: "who is there" })
+      const order = /(TALK-SYNC|TALK-SLOW|TALK-ASYNC|SELF|UPDATE):([A-Za-z0-9_-]+)/.exec(lastUser)
+      if (order?.[1] === "TALK-SYNC") return call("talk_to_session", { contact: order[2], message: "PING" })
+      if (order?.[1] === "TALK-SLOW") return call("talk_to_session", { contact: order[2], message: "SLOW PING" })
+      if (order?.[1] === "TALK-ASYNC") return call("talk_to_session", { contact: order[2], message: "PING-ASYNC", mode: "async" })
+      if (order?.[1] === "SELF") return call("talk_to_session", { contact: order[2], message: "PING" })
+      if (order?.[1] === "UPDATE") return call("update_session", { contact_id: order[2], name: "Gamma two", purpose: "", task_status: "blocked" })
+      if (lastUser.includes("CREATE-BAD")) return call("create_session", { name: "Bad", purpose: "Nothing", workspace: "relative/folder" })
+      if (lastUser.includes("CREATE")) return call("create_session", { name: "Gamma", purpose: "Keeps the docs", workspace, task: "Write the guide" })
+      return say("nothing to do")
+    })
+  })
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", () => resolve()))
+  const port = (provider.address() as { port: number }).port
+
+  const data = path.join(root, "session-chat-data")
+  const storage = new SubagentStorage(path.join(data, "storage"))
+  const bus = new Bus()
+  const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  await config.load()
+  await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
+  await config.setApiKey("fake", "k")
+  const permissions = new Permissions(bus, config)
+  const store = new SubagentStore(storage, bus)
+  const runner = new SubagentRunner(store, bus, config, permissions, { accessToken: async () => undefined } as never, storage)
+  const model = { provider: "fake", model: "m" }
+  const announced: Record<string, ChatLink[]>[] = []
+  bus.subscribe((event) => {
+    if (event.type === "session.chatLinks") announced.push(event.links)
+  })
+
+  const until = async (test: () => boolean | Promise<boolean>, ms = 15_000) => {
+    const deadline = Date.now() + ms
+    while (Date.now() < deadline) {
+      if (await test()) return true
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    return false
+  }
+  // Nothing running and nothing in flight, for a moment.
+  const quiet = async () => {
+    const calm = () => runner.busySessions().length === 0 && Object.keys(runner.chat.links()).length === 0
+    await until(async () => {
+      if (!calm()) return false
+      await new Promise((resolve) => setTimeout(resolve, 250))
+      return calm()
+    }, 20_000)
+  }
+  const partsOf = async (sessionID: string, name: string) =>
+    (await store.messages(sessionID)).flatMap((message) =>
+      message.role === "assistant" ? message.parts.filter((part): part is ToolPart => part.type === "tool" && part.name === name) : [],
+    )
+  // Everything the session's replies said, as one string: a streamed reply is one part holding every delta.
+  const texts = async (sessionID: string) =>
+    (await store.messages(sessionID))
+      .flatMap((message) => (message.role === "assistant" ? message.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])) : []))
+      .join("\n")
+
+  const alpha = await store.create({ directory: project, model, title: "Alpha" })
+  const beta = await store.create({ directory: project, model, title: "Beta" })
+
+  // Contacts: the others, not itself.
+  await runner.prompt({ sessionID: alpha.id, text: "CONTACTS" })
+  await quiet()
+  const [contacts] = await partsOf(alpha.id, "contacts")
+  check("contacts lists the other sessions and leaves the caller out", contacts?.status === "completed" && (contacts.output ?? "").includes(`"Beta" id=${beta.id} idle`) && !(contacts.output ?? "").includes(`id=${alpha.id}`), contacts?.output)
+
+  // A waiting call: a real turn in the target, and its reply as the result.
+  await runner.prompt({ sessionID: alpha.id, text: "TALK-SYNC:Beta" })
+  await quiet()
+  const [talked] = await partsOf(alpha.id, "talk_to_session")
+  check("a waiting call returns the target's reply", talked?.status === "completed" && talked.output === 'Reply from "Beta":\npong:PING', talked?.output)
+  const betaAsked = (await store.messages(beta.id)).find((message) => message.role === "user")
+  check(
+    "the target's transcript has the words, marked as from the caller through the inbox field",
+    betaAsked?.role === "user" && betaAsked.text === "PING" && betaAsked.inbox?.from === "Alpha" && betaAsked.inbox.sessionID === alpha.id && betaAsked.inbox.direction === "request",
+    betaAsked,
+  )
+  check("the caller's model reads the result and carries on", (await texts(alpha.id)).includes("caller done"))
+  check("links were announced while it ran, and are empty after", announced.some((links) => links[alpha.id]?.[0]?.direction === "outbound" && links[beta.id]?.[0]?.direction === "inbound") && Object.keys(runner.chat.links()).length === 0)
+
+  // A busy target: queued, switched to async, and the reply comes back as a message that runs a turn.
+  await runner.prompt({ sessionID: beta.id, text: "USER-SLOW" })
+  await runner.prompt({ sessionID: alpha.id, text: "TALK-SYNC:Beta" })
+  await until(async () => (await partsOf(alpha.id, "talk_to_session")).length === 2 && (await partsOf(alpha.id, "talk_to_session"))[1]?.status === "completed")
+  const queuedPart = (await partsOf(alpha.id, "talk_to_session"))[1]
+  const whileQueued = runner.chat.links()
+  check("a call to a busy session is queued and returns at once", (queuedPart?.output ?? "").includes("busy, so the message was queued"), queuedPart?.output)
+  check(
+    "while it waits both sides show a queued link, first in line",
+    whileQueued[beta.id]?.[0]?.phase === "queued" && whileQueued[beta.id]?.[0]?.queueAhead === 0 && whileQueued[alpha.id]?.[0]?.direction === "outbound" && whileQueued[alpha.id]?.[0]?.phase === "queued",
+    whileQueued,
+  )
+  await quiet()
+  const replyMessage = (await store.messages(alpha.id)).find((message) => message.role === "user" && message.inbox?.direction === "reply")
+  check("the reply arrives in the caller marked as a reply from the target", replyMessage?.role === "user" && replyMessage.text === "pong:PING" && replyMessage.inbox?.from === "Beta", replyMessage)
+  check("and runs a turn there", (await texts(alpha.id)).includes("got reply"))
+  const betaSaid = await texts(beta.id)
+  check("the busy target finished its own turn first", betaSaid.indexOf("user slow done") >= 0 && betaSaid.indexOf("user slow done") < betaSaid.lastIndexOf("pong:PING"), betaSaid)
+
+  // A session cannot message itself.
+  await runner.prompt({ sessionID: alpha.id, text: "SELF:Alpha" })
+  await quiet()
+  const selfPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
+  check("calling yourself is refused", selfPart?.status === "error" && (selfPart.error ?? "").includes("cannot message itself"), selfPart?.error)
+
+  // create_session and update_session.
+  await runner.prompt({ sessionID: alpha.id, text: "CREATE" })
+  await quiet()
+  const gamma = (await store.list()).find((session) => session.title === "Gamma")
+  check(
+    "create_session makes a conversation in the workspace with its record",
+    gamma?.directory === workspace && gamma.chat?.purpose === "Keeps the docs" && gamma.chat.task === "Write the guide" && gamma.chat.taskStatus === "working",
+    { gamma, part: (await partsOf(alpha.id, "create_session"))[0] },
+  )
+  check("the new conversation starts nothing until messaged", Boolean(gamma) && (await store.messages(gamma!.id)).length === 0)
+  await runner.prompt({ sessionID: alpha.id, text: "CREATE-BAD" })
+  await quiet()
+  const badCreate = (await partsOf(alpha.id, "create_session")).at(-1)
+  check("a workspace that is not an absolute folder is refused", badCreate?.status === "error" && (badCreate.error ?? "").includes("absolute"), badCreate?.error)
+  if (gamma) {
+    await runner.prompt({ sessionID: alpha.id, text: `UPDATE:${gamma.id}` })
+    await quiet()
+    const changed = await store.get(gamma.id)
+    check("update_session renames, clears an empty purpose and sets the status", changed?.title === "Gamma two" && changed.chat?.purpose === undefined && changed.chat?.task === "Write the guide" && changed.chat?.taskStatus === "blocked", changed)
+  }
+
+  // The hop limit: chain-1 calls chain-2 calls ... and the sixth call is refused.
+  const chain: string[] = []
+  for (let at = 1; at <= 7; at++) chain.push((await store.create({ directory: project, model, title: `chain-${at}` })).id)
+  await runner.prompt({ sessionID: chain[0]!, text: "CHAIN:1" })
+  await quiet()
+  const refusedHop = (await partsOf(chain[5]!, "talk_to_session"))[0]
+  check("a chain of calls is refused at the sixth hop", refusedHop?.status === "error" && (refusedHop.error ?? "").includes("limit of 5 hops"), refusedHop?.error)
+  check("the session past the limit was never messaged", (await store.messages(chain[6]!)).length === 0)
+  check("the replies unwind back to the start", (await texts(chain[0]!)).includes("chain 1 done"))
+
+  // Stop while waiting: the call settles as stopped and nothing is delivered later.
+  const delta = await store.create({ directory: project, model, title: "Delta" })
+  await runner.prompt({ sessionID: alpha.id, text: "TALK-SLOW:Delta" })
+  await until(() => runner.busySessions().includes(delta.id))
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  runner.abort(alpha.id)
+  await quiet()
+  const stoppedPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
+  check("Stop settles a waiting call cleanly", stoppedPart?.status === "error" && stoppedPart.error === "Stopped before the reply arrived." && stoppedPart.metadata?.aborted === true, stoppedPart)
+  check("the target still finishes its turn", (await texts(delta.id)).includes("slow pong"))
+  check("no reply is delivered to a call that was stopped", !(await store.messages(alpha.id)).some((message) => message.role === "user" && message.inbox?.from === "Delta"))
+
+  // A queued target deleted: the caller hears that it is gone.
+  const epsilon = await store.create({ directory: project, model, title: "Epsilon" })
+  await runner.prompt({ sessionID: epsilon.id, text: "USER-SLOW" })
+  await runner.prompt({ sessionID: alpha.id, text: "TALK-ASYNC:Epsilon" })
+  await until(() => runner.chat.links()[epsilon.id]?.length === 1)
+  runner.abort(epsilon.id)
+  await store.delete(epsilon.id)
+  await quiet()
+  const gone = (await store.messages(alpha.id)).find((message) => message.role === "user" && message.inbox?.from === "Epsilon")
+  check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("no longer exists"), gone)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }

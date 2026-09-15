@@ -1,5 +1,6 @@
 import type { Permissions } from "../permission"
 import type { Questions } from "./question"
+import type { SessionChat } from "../session/chat"
 
 export interface ToolContext {
   sessionID: string
@@ -42,6 +43,8 @@ export interface ToolContext {
    * Absent inside a subagent, which cannot start or manage subagents of its own.
    */
   subagents?: SubagentControl
+  /** session chat: messaging the other conversations. Absent inside a subagent. */
+  chat?: SessionChat
 }
 
 /** subagents: what run and spawn ask for. */

@@ -10,6 +10,7 @@ import { InvalidTool } from "./invalid"
 import { TaskTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
+import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
 
 /**
  * The tool surface offered to the model.
@@ -45,6 +46,11 @@ export const TOOLS: ToolDefinition[] = [
   PresentFilesTool,
   GetDesktopSettingsTool,
   SetDesktopSettingTool,
+  // session chat: appended after those for the same reason.
+  ContactsTool,
+  TalkToSessionTool,
+  CreateSessionTool,
+  UpdateSessionTool,
 ]
 
 /**
@@ -53,7 +59,8 @@ export const TOOLS: ToolDefinition[] = [
  * `bash` belongs here: a shell is a way to write a file like any other, and a
  * mode that promises to change nothing cannot hand one out.
  */
-const MUTATING = new Set(["write", "edit", "bash", "apply_patch"])
+// session chat: making another conversation act, or changing its record, is acting too; Plan keeps contacts.
+const MUTATING = new Set(["write", "edit", "bash", "apply_patch", "talk_to_session", "create_session", "update_session"])
 
 /**
  * Whether a model is given `apply_patch` in place of `edit` and `write`.
@@ -125,6 +132,11 @@ const READS = new Set([
   "present_files",
   "get_desktop_settings",
   "set_desktop_setting",
+  // session chat: the four touch no project file; the target's own turn records its own changes.
+  "contacts",
+  "talk_to_session",
+  "create_session",
+  "update_session",
 ])
 
 /**

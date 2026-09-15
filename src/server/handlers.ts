@@ -252,6 +252,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
          * the request and throws the turn away with it.
          */
         permissions: runtime.permissions.outstanding(),
+        // session chat: replayed for the same reason, so a reopened window still marks the rows.
+        chatLinks: runtime.runner.chat.links(),
       } satisfies Handled<"session.list">
 
     /*

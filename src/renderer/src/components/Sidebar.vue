@@ -2,6 +2,7 @@
 import type { SessionInfo } from "@shared/protocol"
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
+import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
@@ -1035,9 +1036,10 @@ function pickNewProject(key: string) {
                 <path d="M4.5 5h15a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5H10l-4.5 3.5V17H4.5A1.5 1.5 0 0 1 3 15.5v-9A1.5 1.5 0 0 1 4.5 5z" />
               </svg>
             </span>
+            <ChatLinkMark v-if="app.chatLinksOf(block.session.id).length" :links="app.chatLinksOf(block.session.id)" />
             <RowTitle
               class="row-label task-label"
-              v-tip="{ card: convoCard(block.session, app.config?.projectNames), placement: 'right', disabled: picking || menuSession === block.session.id }"
+              v-tip="{ card: convoCard(block.session, app.config?.projectNames, app.chatLinksOf(block.session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === block.session.id }"
               :text="title(block.session.title)"
               :cover="picking ? 0 : TITLE_COVER"
               @rename="!picking && emit('rename', block.session.id)"
@@ -1233,9 +1235,10 @@ function pickNewProject(key: string) {
                 <svg v-if="app.isPinned(session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
+                <ChatLinkMark v-if="app.chatLinksOf(session.id).length" :links="app.chatLinksOf(session.id)" />
                 <RowTitle
                   class="row-label task-label"
-                  v-tip="{ card: convoCard(session, app.config?.projectNames), placement: 'right', disabled: picking || menuSession === session.id }"
+                  v-tip="{ card: convoCard(session, app.config?.projectNames, app.chatLinksOf(session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === session.id }"
                   :text="title(session.title)"
                   :cover="picking ? 0 : TITLE_COVER"
                   @rename="!picking && emit('rename', session.id)"
@@ -1364,10 +1367,11 @@ function pickNewProject(key: string) {
             <svg v-if="app.isPinned(entry.session.id)" class="pin" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
             </svg>
+            <ChatLinkMark v-if="app.chatLinksOf(entry.session.id).length" :links="app.chatLinksOf(entry.session.id)" />
             <span class="stack">
               <RowTitle
                 class="row-label task-label"
-                v-tip="{ card: convoCard(entry.session, app.config?.projectNames), placement: 'right', disabled: picking || menuSession === entry.session.id }"
+                v-tip="{ card: convoCard(entry.session, app.config?.projectNames, app.chatLinksOf(entry.session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === entry.session.id }"
                 :text="title(entry.session.title)"
                 :cover="picking ? 0 : TITLE_COVER"
                 @rename="!picking && emit('rename', entry.session.id)"

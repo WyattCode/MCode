@@ -50,6 +50,8 @@ import {
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { interruptedTurn } from "@shared/resume"
+// session chat
+import { SessionChat, withChatHeaders } from "./chat"
 import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, subagentOutput, type SubagentTimers } from "@shared/subagent"
 
 /*
@@ -79,7 +81,14 @@ const SUBTASK_PROMPT =
 type Lead = SubagentSpec
 
 /** A message the user sent: its words, its files, and the places it points at. */
-type PromptInput = { sessionID: string; text: string; attachments?: Attachment[]; annotations?: UserMessage["annotations"] }
+type PromptInput = {
+  sessionID: string
+  text: string
+  attachments?: Attachment[]
+  annotations?: UserMessage["annotations"]
+  /* session chat: sent by another conversation, marked the way a subagent's follow-up is. */
+  inbox?: UserMessage["inbox"]
+}
 
 /**
  * What the summary is for: the next turn reads it instead of the conversation,
@@ -227,6 +236,8 @@ export class SessionRunner {
    * `runner.busySessions()`.
    */
   readonly questions: Questions
+  /** session chat: conversations messaging each other; `handlers.ts` reads its links. */
+  readonly chat: SessionChat
 
   /** Where the global AGENTS.md lives, next to the app's own config. */
   private readonly globalAgents: string
@@ -242,6 +253,16 @@ export class SessionRunner {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
     this.globalAgents = globalAgentsPath(storage.directory)
     this.questions = new Questions(bus)
+    // session chat: messages between conversations run through this runner's own prompt.
+    this.chat = new SessionChat(store, bus, {
+      isRunning: (sessionID) => this.running.has(sessionID),
+      prompt: (input) => this.prompt(input),
+      create: async ({ directory, title }) => {
+        const settings = config.get()
+        await config.adoptProjects([directory])
+        return store.create({ directory, title, model: settings.model, agent: settings.agent, staged: settings.staged, ...(settings.smart ? { smart: true } : {}) })
+      },
+    })
     permissions.useReviewer((input) => this.reviewCommand(input))
     // subagents: anything a working subagent writes is a sign of life to the watchdog.
     bus.subscribe((event) => {
@@ -1173,6 +1194,8 @@ export class SessionRunner {
       text: input.text,
       attachments: input.attachments ?? [],
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
+      // session chat
+      ...(input.inbox ? { inbox: input.inbox } : {}),
       time: { created: Date.now() },
     }
     await this.store.saveMessage(user)
@@ -1383,7 +1406,8 @@ export class SessionRunner {
       await this.steering.get(sessionID)?.written
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
-      const history = this.contextFor(session, stored)
+      // session chat: a message from another conversation says so, in the request only.
+      const history = withChatHeaders(this.contextFor(session, stored))
 
       const effort = session.effort ?? config.effort
 
@@ -1875,6 +1899,8 @@ export class SessionRunner {
         signal: input.signal,
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
+        // session chat: a conversation's own calls only; a subagent has no contacts.
+        chat: this.workers.has(input.session.id) ? undefined : this.chat,
         // subagents: offered to a conversation's own calls; a subagent's calls get none, so there is no nesting.
         subagents: this.workers.has(input.session.id)
           ? undefined

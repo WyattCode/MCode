@@ -103,6 +103,8 @@ export interface SessionInfo {
    * which is what makes it possible to put them back.
    */
   revert?: { messageID: string; at: number }
+  /** session chat: what this conversation is for, as a tool recorded it for other conversations to read. */
+  chat?: { purpose?: string; task?: string; taskStatus?: ChatTaskStatus }
 }
 
 export interface Usage {
@@ -217,8 +219,41 @@ export interface UserMessage {
    * subagents. `text` is what the model reads; the transcript draws pills.
    */
   notices?: SubagentNotice[]
-  /** subagents: a follow-up the parent sent this subagent, drawn under 来自 {source} 的消息. */
-  inbox?: { from: string }
+  /**
+   * Who sent this message when it was not typed: the parent of a subagent
+   * (`from: "main"`, drawn under 来自 {source} 的消息), or - session chat - another
+   * conversation, named by its title, with its id and whether it asks or answers.
+   */
+  inbox?: MessageSource
+}
+
+export interface MessageSource {
+  from: string
+  /** session chat: the conversation that sent it. */
+  sessionID?: string
+  /** session chat: a message to handle, or the reply to one this conversation sent. */
+  direction?: "request" | "reply"
+}
+
+/* session chat: the task statuses a conversation's record can hold, as MiMo's update_session takes them. */
+export const CHAT_TASK_STATUSES = ["idle", "working", "blocked", "done"] as const
+export type ChatTaskStatus = (typeof CHAT_TASK_STATUSES)[number]
+
+/**
+ * session chat: one message between two conversations, from one side's view.
+ *
+ * Outbound is the caller waiting on a reply; inbound is the target handling a
+ * message (`kind: "request"`) or the caller handling the reply that came back
+ * (`kind: "reply"`). A queued one waits behind `queueAhead` others for its
+ * target. `peerID` is null once the other conversation is gone.
+ */
+export interface ChatLink {
+  peerID: string | null
+  peerTitle: string
+  direction: "outbound" | "inbound"
+  kind: "request" | "reply"
+  phase: "running" | "queued"
+  queueAhead: number
 }
 
 /** subagents: what a background subagent's parent is told, in MiMo's five outcomes. */
@@ -1805,6 +1840,8 @@ export interface ResponseMap {
     /** Sessions being summarised, so a window that reconnects mid-summary is right. */
     compacting: string[]
     permissions: PermissionRequest[]
+    /** session chat: the messages in flight, for a window that was not listening when they started. */
+    chatLinks: Record<string, ChatLink[]>
   }
   "artifact.list": { artifacts: SessionArtifacts[] }
   "session.create": { session: SessionInfo }
@@ -1974,6 +2011,8 @@ export type ServerEvent =
    * transcript a window is holding is longer than the one on disk.
    */
   | { type: "session.reverted"; sessionID: string }
+  /** session chat: every conversation's messages in flight, whole, whenever one changes. */
+  | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
   /** Incremental append to a part already announced via message.updated. */
   | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string }
   | { type: "permission.requested"; request: PermissionRequest }

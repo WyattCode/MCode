@@ -1,5 +1,7 @@
+import type { ChatLink } from "@shared/protocol"
 import { language, sessionTitle, t } from "./i18n"
 import { projectName } from "./project"
+import type { TipLine } from "./tip"
 
 /**
  * The time on a conversation's information card, as MiMo writes it: month and
@@ -19,21 +21,55 @@ export function cardTime(at: number): string {
   }
 }
 
+/** session chat: MiMo's order - the messages being handled first, then the queue by position. */
+export function sortedChatLinks(links: readonly ChatLink[]): ChatLink[] {
+  return [...links].sort((a, b) => Number(a.phase === "queued") - Number(b.phase === "queued") || a.queueAhead - b.queueAhead)
+}
+
+/**
+ * session chat: MiMo's words for one message in flight - waiting for a reply,
+ * handling a message, or handling a reply - with its place in the queue after
+ * it while it waits (a running message is first in line, so the next is #2).
+ */
+export function chatLinkText(link: ChatLink): string {
+  const peer = sessionTitle(link.peerTitle)
+  const doing =
+    link.direction === "outbound"
+      ? t("side.chatLink.waiting", { peer })
+      : link.kind === "reply"
+        ? t("side.chatLink.handlingReply", { peer })
+        : t("side.chatLink.handlingRequest", { peer })
+  return link.phase === "queued" ? `${doing} · ${t("side.chatLink.queued", { position: String(link.queueAhead + 1) })}` : doing
+}
+
 /**
  * What MiMo's card says about a conversation: its title, the project it is in,
  * the folder it works in and when it last changed. A task without a project
  * has no project line.
+ *
+ * session chat: then a line for each message in flight with another
+ * conversation; given `jump`, a line whose other side still exists opens it.
  */
 export function convoCard(
   session: { title: string; directory: string; updated: number; scratch?: boolean },
   names?: Record<string, string>,
-): { title: string; lines: (string | undefined)[] } {
+  links: readonly ChatLink[] = [],
+  jump?: (sessionID: string) => void,
+): { title: string; lines: (string | TipLine | undefined)[] } {
   return {
     title: sessionTitle(session.title),
     lines: [
       session.scratch ? undefined : t("convoTip.project", { name: projectName(session.directory, names) }),
       session.directory || undefined,
       session.updated ? t("convoTip.updatedAt", { time: cardTime(session.updated) }) : undefined,
+      ...sortedChatLinks(links).map((link): TipLine => {
+        const peer = link.peerID
+        return {
+          text: chatLinkText(link),
+          direction: link.direction,
+          ...(peer && jump ? { title: t("side.chatLink.jump"), action: () => jump(peer) } : {}),
+        }
+      }),
     ],
   }
 }
