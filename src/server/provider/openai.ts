@@ -285,8 +285,8 @@ export const OpenAICompatible: ProviderAdapter = {
         name: slot.name,
         // Arguments arrive as a JSON string in fragments; a provider that
         // truncates mid-object should surface as an empty input rather than
-        // taking down the turn.
-        input: parseArguments(slot.args),
+        // taking down the turn, with the reason kept so the call can be refused.
+        ...parseArguments(slot.args),
       }))
 
     return {
@@ -297,13 +297,15 @@ export const OpenAICompatible: ProviderAdapter = {
   },
 }
 
-function parseArguments(raw: string): Record<string, unknown> {
-  if (!raw.trim()) return {}
+function parseArguments(raw: string): { input: Record<string, unknown>; inputError?: string } {
+  if (!raw.trim()) return { input: {} }
   try {
-    const parsed = JSON.parse(raw)
-    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : {}
-  } catch {
-    return {}
+    const parsed: unknown = JSON.parse(raw)
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? { input: parsed as Record<string, unknown> }
+      : { input: {}, inputError: "the arguments were not a JSON object" }
+  } catch (err) {
+    return { input: {}, inputError: `the arguments were not valid JSON (${(err as Error).message})` }
   }
 }
 

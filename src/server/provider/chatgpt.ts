@@ -134,12 +134,16 @@ function toInput(history: Message[]): Record<string, unknown>[] {
 }
 
 /** Arguments can arrive truncated when a turn is cut short. */
-function parseArguments(raw: string | undefined): Record<string, unknown> {
-  if (!raw) return {}
+function parseArguments(raw: string | undefined): { input: Record<string, unknown>; inputError?: string } {
+  if (!raw) return { input: {} }
   try {
-    return JSON.parse(raw)
-  } catch {
-    return {}
+    const parsed: unknown = JSON.parse(raw)
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? { input: parsed as Record<string, unknown> }
+      : { input: {}, inputError: "the arguments were not a JSON object" }
+  } catch (err) {
+    // Kept, so the call is refused with the reason rather than run on nothing.
+    return { input: {}, inputError: `the arguments were not valid JSON (${(err as Error).message})` }
   }
 }
 
@@ -291,7 +295,7 @@ export const ChatGPTSubscription: ProviderAdapter = {
             toolCalls.push({
               callID,
               name: event.item.name ?? "",
-              input: parseArguments(event.item.arguments),
+              ...parseArguments(event.item.arguments),
             })
             stop = "tool_use"
             break

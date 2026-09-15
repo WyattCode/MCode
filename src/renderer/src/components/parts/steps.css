@@ -1,0 +1,595 @@
+/*
+ * MiMo's step list: tool rows, group summaries, what they open to, and the
+ * permission, question, reconnecting and error rows beside them.
+ *
+ * One global sheet rather than scoped styles, because the same pieces - the
+ * 14px icon slot, the chevron, the code cells - are drawn by several
+ * components and have to stay identical between them. The greys are MiMo's own
+ * mut / dim and its code colours, with their dark values below; lines and
+ * hovers use this app's tokens.
+ */
+
+.hstep {
+  display: flex;
+  align-items: flex-start;
+  padding: 5px 0;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 21px;
+}
+
+.hstep.indent {
+  padding-inline-start: 23px;
+}
+
+/* A group of one draws its row as the summary line: no padding of its own. */
+.hstep.single {
+  padding: 0;
+}
+
+.hs-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.hs-h {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0;
+  color: #909091;
+  font: inherit;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  line-height: 21px;
+  text-align: start;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.hs-h[aria-disabled="true"] {
+  cursor: default;
+}
+
+.hs-summary {
+  gap: 7px;
+  padding: 5px 0;
+}
+
+.hs-summary:not([aria-disabled="true"]):hover {
+  color: var(--text-strong);
+}
+
+.hs-ic {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+}
+
+.hs-ic.tall {
+  height: 21px;
+}
+
+.hs-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.hs-summary .hs-text {
+  gap: 7px;
+}
+
+.hs-verb {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.hs-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A title is inline code, as every code span in MiMo's thread is drawn. */
+.hs-title code {
+  padding: 1.5px 5px;
+  color: #3a3a38;
+  font-family: var(--font-mono);
+  font-size: calc(14px * var(--code-font-scale, 1));
+  background: #f0f0f2;
+  border-radius: 5px;
+}
+
+.hs-title code.openable {
+  cursor: pointer;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.hs-title code.openable:hover {
+  text-decoration-line: underline;
+}
+
+.hs-err {
+  color: #e5484d;
+  user-select: text;
+}
+
+.hs-struck {
+  text-decoration: line-through;
+}
+
+.hs-dim {
+  flex: none;
+  color: #919191;
+}
+
+.hs-bash-desc {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 1px 6px;
+  overflow: hidden;
+  color: #909091;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--surface-hover);
+  border-radius: 4px;
+}
+
+/* Twelve after the title, as MiMo sets it: the row's gap and six more. */
+.hs-diffstat {
+  flex: none;
+  margin-inline-start: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(14px * var(--code-font-scale, 1));
+  white-space: pre;
+}
+
+.hs-diffstat .add {
+  color: var(--diff-add);
+}
+
+.hs-diffstat .del {
+  color: var(--diff-delete);
+}
+
+.hs-chev {
+  display: flex;
+  flex: none;
+  align-items: center;
+  opacity: 0.5;
+}
+
+.hs-chev svg {
+  transition: transform 0.15s;
+}
+
+.hs-chev.open svg {
+  transform: rotate(90deg);
+}
+
+/* Running: the words are painted by a sweep, the icon is left alone. */
+.running-shimmer {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  background: linear-gradient(90deg, #919191 35%, var(--text-strong) 50%, #919191 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: steps-sweep 1.8s linear infinite;
+}
+
+.running-shimmer :is(code, .hs-bash-desc) {
+  background: none;
+}
+
+@keyframes steps-sweep {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes steps-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+html[data-motion="on"] .running-shimmer {
+  color: #909091;
+  -webkit-text-fill-color: #909091;
+  background: none;
+  animation: steps-pulse 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-motion="system"] .running-shimmer {
+    color: #909091;
+    -webkit-text-fill-color: #909091;
+    background: none;
+    animation: steps-pulse 1.8s ease-in-out infinite;
+  }
+}
+
+/* What a step or group opens to: the rows grow from nothing and fade in. */
+.hs-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.18s cubic-bezier(0.2, 0.7, 0.2, 1),
+    opacity 0.18s;
+}
+
+.hs-collapse.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.hs-collapse.still {
+  transition: none;
+}
+
+.hs-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+html[data-motion="on"] .hs-collapse {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-motion="system"] .hs-collapse {
+    transition: none;
+  }
+}
+
+/* A command: what was run over what it printed. */
+.hs-bash-expand {
+  margin-top: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+}
+
+.hs-cell {
+  box-sizing: border-box;
+  min-height: 48px;
+  max-height: 220px;
+  margin: 0;
+  padding: 9px 12px;
+  overflow: auto;
+  color: #3a3a38;
+  font-family: var(--font-mono);
+  font-size: calc(14px * var(--code-font-scale, 1));
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.hs-cell.bottom {
+  font-size: calc(12px * var(--code-font-scale, 1));
+  background: #f0f0f2;
+}
+
+.hs-bash-desc-line {
+  color: #909091;
+}
+
+.hs-divider {
+  height: 0;
+  border-top: 1px solid rgb(144 144 145 / 25%);
+}
+
+.hs-full-cmd,
+.hs-perm-cmd,
+.tc-out {
+  box-sizing: border-box;
+  max-height: 220px;
+  margin: 6px 0 0;
+  padding: 9px 12px;
+  overflow: auto;
+  color: #3a3a38;
+  font-family: var(--font-mono);
+  font-size: calc(14px * var(--code-font-scale, 1));
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: #f0f0f2;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+}
+
+.tc-out {
+  max-height: 480px;
+  font-size: calc(12px * var(--code-font-scale, 1));
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.hs-skip-hint {
+  margin-top: 6px;
+  color: #909091;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  user-select: text;
+}
+
+.hs-diff {
+  margin-top: 6px;
+}
+
+/* A group's failed-step mark sits in the summary's own colour. */
+.hs-group-err {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+}
+
+/* A decided permission. */
+.hs-perm {
+  gap: 9px;
+}
+
+.hs-perm-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.hs-decided {
+  color: #919191;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.hs-perm-toggle {
+  display: inline-flex;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 0;
+  color: #909091;
+  font: inherit;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.hs-perm-toggle + .hs-perm-toggle {
+  margin-inline-start: 10px;
+}
+
+.hs-perm-toggle:hover {
+  color: var(--text-strong);
+}
+
+.hs-perm-reason {
+  margin-top: 6px;
+  color: #909091;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.hs-ic.mut {
+  color: #909091;
+}
+
+/* A question once it is answered or cancelled. */
+.hs-q-card {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0;
+  padding: 10px 12px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 21px;
+  background: color-mix(in srgb, var(--surface-hover) 30%, transparent);
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+}
+
+.hs-q + .hs-q {
+  margin-top: 12px;
+}
+
+.hs-q-text {
+  color: var(--text-strong);
+}
+
+.hs-q-answer {
+  margin-top: 6px;
+  color: var(--text-strong);
+  font-weight: 500;
+}
+
+.hs-q-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.hs-q-need {
+  color: var(--text-strong);
+}
+
+.hs-tag {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 1px 6px;
+  color: #909091;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 18px;
+  background: var(--surface-hover);
+  border-radius: 6px;
+}
+
+.hs-tag-dot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  background: #909091;
+  border-radius: 50%;
+}
+
+.hs-q-grow {
+  flex: 1;
+}
+
+.hs-q-count {
+  color: #909091;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.hs-q-list {
+  padding-inline-start: 23px;
+}
+
+.hs-q-item {
+  margin-top: 8px;
+}
+
+.hs-q-item + .hs-q-item {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-weak);
+}
+
+.hs-q-header {
+  color: #909091;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+/* Reconnecting, and an error the turn carried on past. */
+.hs-retry-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding-inline-start: 6px;
+  color: #909091;
+  font-weight: 500;
+}
+
+.hs-retry-count {
+  color: #919191;
+  font-variant-numeric: tabular-nums;
+}
+
+.hs-error {
+  gap: 9px;
+}
+
+.hs-error-mark {
+  flex: none;
+  width: 14px;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  text-align: center;
+}
+
+.hs-error-text {
+  user-select: text;
+}
+
+:root[data-theme="dark"] :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label) {
+  color: #b8b8b8;
+}
+
+:root[data-theme="dark"] :is(.hs-dim, .hs-decided, .hs-retry-count) {
+  color: #777777;
+}
+
+:root[data-theme="dark"] :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
+  color: #e6e6e6;
+}
+
+:root[data-theme="dark"] :is(.hs-cell.bottom, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .hs-tag-dot {
+  background: #b8b8b8;
+}
+
+:root[data-theme="dark"] .hs-divider {
+  border-top-color: rgb(184 184 184 / 25%);
+}
+
+:root[data-theme="dark"] .running-shimmer {
+  background-image: linear-gradient(90deg, #777777 35%, var(--text-strong) 50%, #777777 65%);
+}
+
+:root[data-theme="dark"] .running-shimmer :is(code, .hs-bash-desc) {
+  background: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label) {
+    color: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) :is(.hs-dim, .hs-decided, .hs-retry-count) {
+    color: #777777;
+  }
+
+  :root:not([data-theme="light"]) :is(.hs-cell, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
+    color: #e6e6e6;
+  }
+
+  :root:not([data-theme="light"]) :is(.hs-cell.bottom, .hs-full-cmd, .hs-perm-cmd, .tc-out, .hs-title code) {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .hs-tag-dot {
+    background: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) .hs-divider {
+    border-top-color: rgb(184 184 184 / 25%);
+  }
+
+  :root:not([data-theme="light"]) .running-shimmer {
+    background-image: linear-gradient(90deg, #777777 35%, var(--text-strong) 50%, #777777 65%);
+  }
+
+  :root:not([data-theme="light"]) .running-shimmer :is(code, .hs-bash-desc) {
+    background: none;
+  }
+}

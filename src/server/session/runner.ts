@@ -3,6 +3,7 @@ import type {
   AssistantPart,
   Attachment,
   Message,
+  PermissionRecord,
   ReasoningPart,
   SessionInfo,
   TextPart,
@@ -24,6 +25,8 @@ import { findTool, reachOf, toolsFor } from "../tool/registry"
 import { Questions } from "../tool/question"
 import type { ToolDefinition } from "../tool/types"
 import { ToolError } from "../tool/types"
+import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
+import { retryDelay, waitFor } from "./retry"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
@@ -136,6 +139,8 @@ const MAX_STEPS_PROMPT = [
  */
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
+  /** Calls whose arguments arrived as text that could not be read, and why. */
+  private readonly inputErrors = new WeakMap<ToolPart, string>()
   /**
    * The turns that are still open to more of the user's words.
    *
@@ -1456,17 +1461,42 @@ export class SessionRunner {
     }
 
     try {
-      const outcome = await adapter.stream(request, emit)
+      let outcome: TurnOutcome | undefined
+      for (let attempt = 1; outcome === undefined; attempt++) {
+        try {
+          // The SDK's own quiet retries are off here: this loop retries in the open.
+          outcome = await adapter.stream({ ...request, retries: 0 }, emit)
+        } catch (err) {
+          if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) throw err
+          const wait = retryDelay(err, attempt)
+          if (wait === undefined) throw err
+          /*
+           * Tried again from the start, as OpenCode's engine does: what the
+           * failed attempt managed to stream is dropped, because the next one
+           * streams it again. Nothing has run - tools only run once a step
+           * settles. The retry itself rides on the published copy only, so the
+           * next update for the message clears the row without anything to undo.
+           */
+          assistant.parts = []
+          blocks.clear()
+          dirty = false
+          this.bus.publish({
+            type: "message.updated",
+            message: { ...structuredClone(assistant), retry: { attempt, message: describe(err), next: Date.now() + wait } },
+          })
+          if (!(await waitFor(wait, request.signal))) throw new DOMException("Aborted", "AbortError")
+        }
+      }
 
       // Tool arguments stream as partial JSON, so they are only trustworthy
       // once the turn closes - fill them in from the settled outcome.
       for (const call of outcome.toolCalls) {
-        const part = assistant.parts.find(
+        let part = assistant.parts.find(
           (candidate): candidate is ToolPart => candidate.type === "tool" && candidate.callID === call.callID,
         )
         if (part) part.input = call.input
-        else
-          announce({
+        else {
+          part = {
             type: "tool",
             id: Identifier.part(),
             callID: call.callID,
@@ -1474,7 +1504,10 @@ export class SessionRunner {
             status: "pending",
             input: call.input,
             time: { created: Date.now() },
-          })
+          }
+          announce(part)
+        }
+        if (call.inputError) this.inputErrors.set(part, call.inputError)
       }
 
       await this.store.saveMessage(assistant)
@@ -1547,6 +1580,26 @@ export class SessionRunner {
       return
     }
 
+    /*
+     * Arguments that do not fit the tool's parameters are refused before
+     * anything runs or anyone is asked. The part is an error the model reads
+     * back like any other, so the turn continues, but it is marked recoverable:
+     * the call was a generation slip, not a failure of the tool, and the
+     * transcript draws it as a step that was not executed.
+     */
+    const unreadable = this.inputErrors.get(part)
+    const problems = tool.name === "invalid" ? [] : unreadable ? [unreadable] : argumentProblems(tool.parameters, part.input)
+    if (problems.length) {
+      part.status = "error"
+      part.error = refusedArgumentsNote(tool.name, problems)
+      part.metadata = { recoverable: true }
+      part.time.started = Date.now()
+      part.time.completed = part.time.started
+      publish()
+      await this.store.saveMessage(assistant, true)
+      return
+    }
+
     part.status = "running"
     part.time.started = Date.now()
     publish()
@@ -1564,6 +1617,18 @@ export class SessionRunner {
        */
       await turn.watching?.ready()
     }
+
+    /*
+     * The answers to this call's questions, kept on the part so the transcript
+     * can say what was asked and how it was answered after a reload. Written as
+     * each one is decided, so the row appears while an approved command runs.
+     */
+    const decisions: PermissionRecord[] = []
+    const stopListening = this.permissions.onDecided(part.callID, (record) => {
+      decisions.push(record)
+      part.metadata = { ...(part.metadata ?? {}), permissions: [...decisions] }
+      publish()
+    })
 
     try {
       /*
@@ -1613,6 +1678,9 @@ export class SessionRunner {
         part.errorParams = err.params
       }
     } finally {
+      stopListening()
+      // A finished tool hands back metadata of its own, which would otherwise replace the record.
+      if (decisions.length) part.metadata = { ...(part.metadata ?? {}), permissions: decisions }
       part.time.completed = Date.now()
       publish()
       await this.store.saveMessage(assistant, true)

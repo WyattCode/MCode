@@ -23,6 +23,8 @@ export interface ToolCall {
   callID: string
   name: string
   input: Record<string, unknown>
+  /** Why the arguments could not be read, when they arrived as text that is not a JSON object. */
+  inputError?: string
 }
 
 export interface TurnOutcome {
@@ -66,6 +68,12 @@ export interface TurnRequest {
    * default, which is that same 32k.
    */
   maxOutput?: number
+  /**
+   * How many times the SDK may quietly resend a failed request itself. The turn
+   * loop passes 0 because it retries in the open, with a row saying so; other
+   * callers leave it unset and keep the SDK's own.
+   */
+  retries?: number
 }
 
 /**

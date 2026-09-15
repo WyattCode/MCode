@@ -1,6 +1,8 @@
 import type {
   PermissionAction,
+  PermissionDecision,
   PermissionKind,
+  PermissionRecord,
   PermissionRequest,
   PermissionResponse,
 } from "@shared/protocol"
@@ -88,6 +90,15 @@ interface Pending {
   resolve: (response: PermissionResponse) => void
   /** What the user said when refusing, if anything. */
   reason?: string
+  /** How it was closed, for the record the transcript keeps. */
+  decided?: PermissionDecision
+}
+
+/** The decision a person's answer stands for, as the transcript names it. */
+function decisionOf(response: PermissionResponse, reason?: string): PermissionDecision {
+  if (response === "once") return "allow-once"
+  if (response === "always") return "allow-always"
+  return reason?.trim() ? "reject-with-reason" : "reject"
 }
 
 /**
@@ -107,6 +118,8 @@ export class Permissions {
   private readonly approved = new Set<string>()
   /** Directories outside the project that the user let this session reach. */
   private readonly outsideRoots = new Map<string, Set<string>>()
+  /** Who wants to hear how a call's questions ended, by call id. */
+  private readonly listeners = new Map<string, (record: PermissionRecord) => void>()
   private reviewer?: CommandReviewer
   private reviewTimeout = REVIEW_TIMEOUT_MS
 
@@ -153,6 +166,21 @@ export class Permissions {
 
   private key(sessionID: string, kind: string) {
     return `${sessionID}:${kind}`
+  }
+
+  /**
+   * Hears every question raised for one call once it is decided.
+   *
+   * The tools ask for themselves, so the runner cannot see the answers pass;
+   * this is how it learns them and writes them onto the part. Only questions a
+   * person was actually shown are reported - a call let through by a setting or
+   * an earlier "always" asked nothing, and has nothing to redraw.
+   */
+  onDecided(callID: string, listener: (record: PermissionRecord) => void): () => void {
+    this.listeners.set(callID, listener)
+    return () => {
+      if (this.listeners.get(callID) === listener) this.listeners.delete(callID)
+    }
   }
 
   /**
@@ -246,6 +274,18 @@ export class Permissions {
       this.bus.publish({ type: "permission.requested", request })
     })
 
+    const reason = entry?.reason?.trim()
+    this.listeners.get(input.callID)?.({
+      requestID: request.id,
+      kind: request.kind,
+      ...(forced ? { forced: true } : {}),
+      subject: request.subject,
+      ...(request.preview ? { preview: request.preview } : {}),
+      decided: entry?.decided ?? decisionOf(response, reason),
+      ...(reason ? { reason } : {}),
+      time: Date.now(),
+    })
+
     if (response === "always" && !forced) {
       if (input.scope) this.allowOutside(input.sessionID, input.scope)
       else this.approved.add(this.key(input.sessionID, input.kind))
@@ -260,7 +300,6 @@ export class Permissions {
       if (this.action(input.kind) === "deny") {
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
       }
-      const reason = entry?.reason?.trim()
       if (reason) {
         throw new PermissionDenied(
           input.subject,
@@ -339,8 +378,14 @@ export class Permissions {
     if (!pending) return
     this.pending.delete(requestID)
     if (response === "reject" && reason) pending.reason = reason
+    pending.decided = decisionOf(response, pending.reason)
     pending.resolve(response)
-    this.bus.publish({ type: "permission.resolved", requestID })
+    this.bus.publish({
+      type: "permission.resolved",
+      requestID,
+      decided: pending.decided,
+      ...(pending.reason?.trim() ? { reason: pending.reason.trim() } : {}),
+    })
   }
 
   /**
@@ -360,8 +405,9 @@ export class Permissions {
       const action = this.action(pending.request.kind)
       if (action === "ask") continue
       this.pending.delete(id)
+      pending.decided = "policy"
       pending.resolve(action === "allow" ? "once" : "reject")
-      this.bus.publish({ type: "permission.resolved", requestID: id })
+      this.bus.publish({ type: "permission.resolved", requestID: id, decided: "policy" })
     }
   }
 
@@ -370,8 +416,9 @@ export class Permissions {
     for (const [id, pending] of this.pending) {
       if (pending.request.sessionID !== sessionID) continue
       this.pending.delete(id)
+      pending.decided = "cancelled"
       pending.resolve("reject")
-      this.bus.publish({ type: "permission.resolved", requestID: id })
+      this.bus.publish({ type: "permission.resolved", requestID: id, decided: "cancelled" })
     }
   }
 

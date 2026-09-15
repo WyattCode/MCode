@@ -36,6 +36,10 @@ import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../sr
 import { splitSendWord } from "../src/renderer/src/lib/voice"
 import { addressToURL, safeURL } from "../src/shared/web-address"
 import { ToolError } from "../src/server/tool/types"
+import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
+import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/session/retry"
+import type { PermissionRecord } from "../src/shared/protocol"
+import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
 import { annotationsBlock } from "../src/shared/annotations"
@@ -581,6 +585,93 @@ async function main() {
   check("always on a delete is not remembered", againAsk?.forced === true, againAsk)
   if (againAsk) permissions.respond(againAsk.id, "reject")
   await again
+
+  // A decided question is reported to whoever listens for its call, so the part can keep it.
+  {
+    const heard: PermissionRecord[] = []
+    const resolved: ServerEvent[] = []
+    const unsubscribe = bus.subscribe((event) => {
+      if (event.type === "permission.resolved") resolved.push(event)
+    })
+    const listen = (callID: string) => permissions.onDecided(callID, (record) => heard.push(record))
+    const decide = async (callID: string, respond: (id: string) => void) => {
+      const stop = listen(callID)
+      const asked = permissions
+        .ask({ sessionID: "s-record", messageID: "m-record", callID, kind: "write", title: "t", subject: `${callID}.md`, preview: "--- a/x\n+++ b/x\n" })
+        .then(() => "allowed", (err: Error) => err.message)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const request = permissions.outstanding().find((entry) => entry.callID === callID)
+      if (request) respond(request.id)
+      const result = await asked
+      stop()
+      return result
+    }
+
+    const refused = await decide("c-rec-reason", (id) => permissions.respond(id, "reject", "not this file"))
+    check("a refusal with a reason is recorded as such", heard[0]?.decided === "reject-with-reason" && heard[0]?.reason === "not this file", heard[0])
+    check("and the model still reads the reason", refused.includes("not this file"), refused)
+    check("the record carries what was asked", heard[0]?.kind === "write" && heard[0]?.subject === "c-rec-reason.md" && heard[0]?.preview?.startsWith("--- a/x") === true, heard[0])
+    check("permission.resolved says how it ended", resolved.some((event) => event.type === "permission.resolved" && event.decided === "reject-with-reason" && event.reason === "not this file"), resolved)
+
+    await decide("c-rec-plain", (id) => permissions.respond(id, "reject"))
+    check("a bare refusal is recorded as a reject", heard[1]?.decided === "reject" && heard[1]?.reason === undefined, heard[1])
+
+    await decide("c-rec-once", (id) => permissions.respond(id, "once"))
+    check("an approval for once is recorded", heard[2]?.decided === "allow-once", heard[2])
+
+    await decide("c-rec-stop", () => permissions.rejectAll("s-record"))
+    check("a question closed by Stop is recorded as cancelled", heard[3]?.decided === "cancelled", heard[3])
+
+    const before = heard.length
+    const unheard = permissions
+      .ask({ sessionID: "s-record", messageID: "m-record", callID: "c-rec-none", kind: "write", title: "t", subject: "x.md" })
+      .catch(() => undefined)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    permissions.rejectAll("s-record")
+    await unheard
+    check("a call nobody listens for records nothing", heard.length === before, heard.slice(before))
+    unsubscribe()
+  }
+
+  section("Tool arguments")
+  {
+    const readSchema = findTool("read")!.parameters
+    check("arguments that fit have no problems", argumentProblems(readSchema, { path: "a.ts", limit: 20 }).length === 0)
+    const missing = argumentProblems(readSchema, {})
+    check("a missing required field is named", missing.length === 1 && missing[0] === "path is required", missing)
+    const wrong = argumentProblems(readSchema, { path: 5 })
+    check("a wrong type is named with what arrived", wrong[0] === "path should be string, got integer", wrong)
+    const todos = argumentProblems(findTool("todowrite")!.parameters, {
+      todos: [{ id: "1", content: "x", status: "doing" }],
+    })
+    check("a nested enum is checked", todos.length === 1 && todos[0]!.startsWith("todos[0].status should be one of"), todos)
+    check(
+      "a schema construct the checker does not know is let through",
+      argumentProblems({ type: "object", properties: { value: { anyOf: [{ type: "string" }, { type: "number" }] } } }, { value: true }).length === 0,
+    )
+    const note = refusedArgumentsNote("read", wrong)
+    check("the note says nothing ran and what to send", note.includes("was not run") && note.includes("path should be string"), note)
+  }
+
+  section("Provider retries")
+  {
+    check("a dropped connection is retried", isRetryable(new TypeError("fetch failed")))
+    check("a 503 from an OpenAI-compatible provider is retried", isRetryable(new Error("The provider returned 503. This is usually transient.")))
+    check("a rate limit is retried", isRetryable(new Error("Rate limited by the provider. Wait a moment and try again.")))
+    check("a refused key is not retried", !isRetryable(new Error("Authentication failed - check the API key in Settings.")))
+    check(
+      "a prompt too long for the model is not retried",
+      !isRetryable(new Error("request (22530 tokens) exceeds the available context size (8192 tokens), try increasing it")),
+    )
+    const cause = Object.assign(new Error("socket closed"), { code: "ECONNRESET" })
+    check("a reset hidden in the cause is retried", isRetryable(new TypeError("request failed", { cause })))
+    const dropped = new TypeError("fetch failed")
+    check("the first wait is two seconds", retryDelay(dropped, 1, 0) === 2000, retryDelay(dropped, 1, 0))
+    check("with at most a quarter more at random", retryDelay(dropped, 1, 1) === 2500, retryDelay(dropped, 1, 1))
+    check("it doubles", retryDelay(dropped, 3, 0) === 8000, retryDelay(dropped, 3, 0))
+    check("and stops at thirty seconds", retryDelay(dropped, 5, 1) === 30000, retryDelay(dropped, 5, 1))
+    check("five attempts, then it gives up", retryDelay(dropped, RETRY_MAX_RETRIES + 1, 0) === undefined)
+  }
 
   // ------------------------------------------------------------- turn revert
   section("Turn revert")
@@ -1644,6 +1735,141 @@ async function main() {
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
     await call({ type: "config.set", patch: { providerEndpoints: {} } })
     flaky.close()
+  }
+
+  section("Steps: refused arguments, kept answers, reconnecting")
+  {
+    /*
+     * Whole turns against a runtime that answers from a script, one reply per
+     * request: what the transcript keeps is what the renderer draws, so it is
+     * read back from the session rather than from the runner's memory.
+     */
+    const replies: ((response: ServerResponse) => void)[] = []
+    const frames = (...list: unknown[]) => list.map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("") + "data: [DONE]\n\n"
+    const stream = (body: string) => (response: ServerResponse) => {
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.end(body)
+    }
+    const toolCall = (id: string, name: string, args: string) =>
+      stream(frames({ choices: [{ delta: { tool_calls: [{ index: 0, id, function: { name, arguments: args } }] }, finish_reason: "tool_calls" }] }))
+    const reply = stream(frames({ choices: [{ delta: { content: "done" }, finish_reason: "stop" }] }))
+    const bodies: any[] = []
+    const scripted = createServer((request, response) => {
+      if ((request.url ?? "").includes("/models")) {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ data: [{ id: "qwen/qwen3.8-27b" }] }))
+        return
+      }
+      let raw = ""
+      request.on("data", (chunk) => (raw += chunk))
+      request.on("end", () => {
+        bodies.push(raw ? JSON.parse(raw) : undefined)
+        ;(replies.shift() ?? reply)(response)
+      })
+    })
+    await new Promise<void>((resolve) => scripted.listen(8799, "127.0.0.1", resolve))
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8799/v1" } } })
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
+
+    const created = await call({ type: "session.create", directory: project })
+    const stepsID: string = created.session.id
+    await call({ type: "session.model", sessionID: stepsID, model: { provider: "lmstudio", model: "qwen/qwen3.8-27b" } })
+
+    const idle = (from: number, timeout = 60_000) =>
+      new Promise<boolean>((resolve) => {
+        const started = Date.now()
+        const poll = setInterval(() => {
+          const done = events.slice(from).some((event) => event.type === "session.idle" && event.sessionID === stepsID)
+          if (done || Date.now() - started > timeout) {
+            clearInterval(poll)
+            resolve(done)
+          }
+        }, 50)
+      })
+    const toolPart = async (callID: string) => {
+      const state = await call({ type: "session.get", sessionID: stepsID })
+      const assistants = state.messages.filter((message: any) => message.role === "assistant")
+      const part = assistants.flatMap((message: any) => message.parts).find((entry: any) => entry.type === "tool" && entry.callID === callID)
+      return { part, last: assistants.at(-1), messages: state.messages }
+    }
+
+    // Arguments that do not fit: refused before running, marked recoverable, and the turn goes on.
+    replies.push(toolCall("call_badargs", "read", '{"path": 5}'))
+    let from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "read something" })
+    check("the turn with a refused call finished", await idle(from))
+    let found = await toolPart("call_badargs")
+    check("a call with arguments that do not fit is an error part", found.part?.status === "error", found.part)
+    check("marked recoverable, which the transcript draws as skipped", found.part?.metadata?.recoverable === true, found.part?.metadata)
+    check("its note names the problem", String(found.part?.error).includes("path should be string"), found.part?.error)
+    check("and the turn carried on to an answer", found.last?.finish === "end_turn", found.last?.finish)
+    check(
+      "the model was told why",
+      JSON.stringify(bodies.at(-1) ?? {}).includes("was not run"),
+      JSON.stringify(bodies.at(-1) ?? {}).slice(0, 400),
+    )
+
+    // Arguments that are not JSON at all.
+    replies.push(toolCall("call_cutoff", "read", '{"path": "hel'))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "read again" })
+    await idle(from)
+    found = await toolPart("call_cutoff")
+    check("arguments cut off mid-object are refused the same way", found.part?.metadata?.recoverable === true && String(found.part?.error).includes("not valid JSON"), found.part)
+
+    // A refusal with a reason: kept on the part, and still fed back rather than ending the turn.
+    replies.push(toolCall("call_perm", "write", '{"path": "steps-denied.md", "content": "no"}'))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "write a note" })
+    const asked = await new Promise<string | undefined>((resolve) => {
+      const started = Date.now()
+      const poll = setInterval(() => {
+        const event = events.slice(from).find((entry) => entry.type === "permission.requested" && entry.request.callID === "call_perm")
+        if (event?.type === "permission.requested" || Date.now() - started > 10_000) {
+          clearInterval(poll)
+          resolve(event?.type === "permission.requested" ? event.request.id : undefined)
+        }
+      }, 50)
+    })
+    check("the write asked", asked !== undefined)
+    if (asked) await call({ type: "permission.respond", requestID: asked, response: "reject", reason: "keep notes elsewhere" })
+    check("the refused turn finished", await idle(from))
+    found = await toolPart("call_perm")
+    const kept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
+    check("the decision is kept on the part", kept.length === 1 && kept[0]?.decided === "reject-with-reason" && kept[0]?.reason === "keep notes elsewhere", kept)
+    check("with the question it answered", kept[0]?.kind === "write" && typeof kept[0]?.requestID === "string", kept[0])
+    check("the refused call is still an ordinary error for the model", found.part?.status === "error" && String(found.part?.error).includes("keep notes elsewhere"), found.part?.error)
+    check("and a refusal does not stop the turn", found.last?.finish === "end_turn", found.last?.finish)
+    check("nothing was written", !(await exists(path.join(project, "steps-denied.md"))))
+
+    // A transient failure: retried in the open, then the turn completes.
+    replies.push((response) => {
+      response.writeHead(503, { "content-type": "application/json" })
+      response.end(JSON.stringify({ error: { message: "upstream overloaded" } }))
+    })
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "try through a blip" })
+    check("the turn through a 503 finished", await idle(from))
+    const retried = events
+      .slice(from)
+      .filter((event) => event.type === "message.updated" && event.message.role === "assistant" && event.message.retry)
+    check(
+      "the window was told it was reconnecting",
+      retried.length === 1 && retried[0]?.type === "message.updated" && retried[0].message.role === "assistant" && retried[0].message.retry?.attempt === 1,
+      retried,
+    )
+    const settled = await toolPart("none")
+    check("the retried turn completed", settled.last?.finish === "end_turn" && !settled.last?.error, settled.last)
+    check("the retry is never written to disk", settled.messages.every((message: any) => message.retry === undefined))
+    check(
+      "the update after the retry clears it",
+      events.slice(from).filter((event) => event.type === "message.updated" && event.message.role === "assistant").at(-1)?.type === "message.updated" &&
+        !(events.slice(from).filter((event) => event.type === "message.updated").at(-1) as { message: { retry?: unknown } }).message.retry,
+    )
+
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
+    await call({ type: "config.set", patch: { providerEndpoints: {} } })
+    scripted.close()
   }
 
   section("Approve for me: the model's review on the wire")

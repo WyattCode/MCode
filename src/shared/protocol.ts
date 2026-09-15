@@ -120,7 +120,15 @@ export interface ToolPart {
   /** Human-readable one-liner shown in the collapsed card, e.g. a command. */
   title?: string
   output?: string
-  /** Tool-specific structured payload the UI renders richly (diffs, matches). */
+  /**
+   * Tool-specific structured payload the UI renders richly (diffs, matches).
+   *
+   * Two keys are the runner's rather than the tool's: `recoverable: true` on an
+   * error part marks a call refused before it ran because its arguments did not
+   * fit the schema (drawn as skipped), and `permissions` holds the
+   * `PermissionRecord`s the call's questions were answered with, so the
+   * transcript can redraw them after a reload.
+   */
   metadata?: Record<string, unknown>
   error?: string
   /** i18n key for `error`, when the failure was one the tool anticipated. */
@@ -269,6 +277,14 @@ export interface AssistantMessage {
    * project with the card's 撤销. The transcript stays; only the files moved.
    */
   reverted?: boolean
+  /**
+   * Set while the provider request is being tried again (MiMo's 正在重新连接).
+   *
+   * Only ever on the copy published with `message.updated`, never written to
+   * disk: the next update for the message comes without it, which is how the
+   * row goes away once the stream resumes.
+   */
+  retry?: { attempt: number; message: string; next: number }
   time: { created: number; completed?: number }
 }
 
@@ -368,6 +384,28 @@ export interface PermissionRequest {
 }
 
 export type PermissionResponse = "once" | "always" | "reject"
+
+/**
+ * How a question that was put to the user ended.
+ *
+ * `cancelled` is a turn stopped while it was on screen; `policy` is one closed
+ * by its bucket being switched to Allow or Deny in settings meanwhile.
+ */
+export type PermissionDecision = "allow-once" | "allow-always" | "reject" | "reject-with-reason" | "cancelled" | "policy"
+
+/** A decided permission question, kept on the tool part it gated. */
+export interface PermissionRecord {
+  requestID: string
+  kind: string
+  /** A command that loses work, which the row names as a delete. */
+  forced?: boolean
+  subject: string
+  preview?: string
+  decided: PermissionDecision
+  /** What the user wrote when refusing. */
+  reason?: string
+  time: number
+}
 
 // ---------------------------------------------------------------------------
 // The question tool
@@ -1653,7 +1691,7 @@ export type ServerEvent =
   /** Incremental append to a part already announced via message.updated. */
   | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string }
   | { type: "permission.requested"; request: PermissionRequest }
-  | { type: "permission.resolved"; requestID: string }
+  | { type: "permission.resolved"; requestID: string; decided?: PermissionDecision; reason?: string }
   /**
    * A question tool call is waiting on the reader.
    *
