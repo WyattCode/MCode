@@ -245,7 +245,8 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
   return {
     model: request.model.model,
     max_tokens: maxTokens,
-    system: [{ type: "text", text: request.system, cache_control: mark }],
+    // The conversation's own tail follows the marked prefix unmarked, so the prefix reads from one cache across conversations.
+    system: [{ type: "text", text: request.system, cache_control: mark }, ...(request.systemTail ? [{ type: "text" as const, text: request.systemTail }] : [])],
     tools,
     messages,
     ...reasoningRequest(request.model.model, request.effort, request.variants, request.showReasoning, maxTokens, limit ?? wanted),

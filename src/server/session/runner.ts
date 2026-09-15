@@ -44,7 +44,9 @@ import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
 import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
-import { repositoryState, systemPrompt } from "./prompt"
+import { memorySection, repositoryState, systemPrompt } from "./prompt"
+import { memoryFilesFor } from "../history/service"
+import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor } from "../provider/sampling"
@@ -205,7 +207,9 @@ const MAX_STEPS_PROMPT = [
  * turn while it is still running, and so an abort can land mid-tool.
  */
 /** Tools a subagent never gets: starting subagents, and talking to other conversations. */
-const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session"])
+const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update"])
+/* history, memory, cron: MiMo's explore agent is denied everything but reading and searching the project. */
+const EXPLORE_WITHHELD = new Set(["history", "memory", "cron"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -885,8 +889,13 @@ export class SessionRunner {
    * not start its cache over. Rebuilt only when what it was built for changes -
    * the agent, the mode, the instructions, the model, or the tools. A compaction
    * sends the same one, so its request reads from that cache too.
+   *
+   * memory: a conversation's own turns are told about its memory files, a
+   * subagent's are not, as MiMo does. That text names this conversation's notes
+   * file, so it goes as a tail after the prefix rather than inside it: the
+   * prefix stays the same from one conversation to the next.
    */
-  private async systemFor(session: SessionInfo): Promise<string> {
+  private async systemFor(session: SessionInfo): Promise<{ system: string; systemTail?: string }> {
     const config = this.config.get()
     const skills = await this.skillsFor(session.directory)
     const key = JSON.stringify([
@@ -916,9 +925,11 @@ export class SessionRunner {
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
-    return session.parentID
-      ? [base, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n")
-      : base
+    if (session.parentID) {
+      return { system: [base, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n") }
+    }
+    const memory = memoryFilesFor(session.directory, session.id)
+    return memory ? { system: base, systemTail: memorySection(memory) } : { system: base }
   }
 
   /**
@@ -937,7 +948,7 @@ export class SessionRunner {
     const live = this.liveMessages(session, stored)
     const last = live.at(-1)
     // skills: what a message loaded is part of the conversation being summarised.
-    const context = withSkillReminders(withChatHeaders(this.contextFor(session, stored)))
+    const context = withSkillReminders(withAutomationNotes(withChatHeaders(this.contextFor(session, stored))))
     if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
 
     const definition = this.config.definition(session.model.provider)
@@ -971,7 +982,7 @@ export class SessionRunner {
         {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
-          system: await this.systemFor(session),
+          ...(await this.systemFor(session)),
           history: [...replay, instruction],
           tools: this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
           // MiMo's effort is one app-wide value, not a conversation's own.
@@ -1625,8 +1636,8 @@ export class SessionRunner {
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const config = this.config.get()
-    // MiMo's prefix snapshot, with the skills and a subagent's notes (see systemFor).
-    const system = await this.systemFor(session)
+    // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
+    const { system, systemTail } = await this.systemFor(session)
     // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
 
@@ -1700,8 +1711,8 @@ export class SessionRunner {
       await this.deliverWorktreeNotice(sessionID)
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
-      // session chat: a message from another conversation says so, in the request only.
-      const chatted = withChatHeaders(this.contextFor(session, stored))
+      // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
+      const chatted = withAutomationNotes(withChatHeaders(this.contextFor(session, stored)))
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
@@ -1736,6 +1747,7 @@ export class SessionRunner {
         apiKey: tokens?.access ?? apiKey,
         model: session.model,
         system,
+        systemTail,
         history: lastStep
           ? [
               ...history,
@@ -1791,7 +1803,9 @@ export class SessionRunner {
         tools: lastStep
           ? []
           : [
-              ...this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+              ...this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter(
+                (tool) => !session.parentID || (!SUBAGENT_WITHHELD.has(tool.name) && !(session.subagent?.type === "explore" && EXPLORE_WITHHELD.has(tool.name))),
+              ),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort,

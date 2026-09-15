@@ -31,8 +31,16 @@ async function openSource() {
 </script>
 
 <template>
+  <!-- automation: MiMo's automation-message-source line, 13px quiet words after a 14px clock; its page is not shown in MiMo's release, so nothing opens. -->
+  <div v-if="source.automationID" class="chat-source automation-source" :data-automation-source="source.automationID">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+    <span>{{ t("stream.automationSource") }}</span>
+  </div>
   <button
-    v-if="source.sessionID"
+    v-else-if="source.sessionID"
     type="button"
     class="chat-source"
     :data-sessionchat-source="source.sessionID"
@@ -76,7 +84,11 @@ async function openSource() {
   flex: none;
 }
 
-.chat-source:hover,
+.automation-source {
+  cursor: default;
+}
+
+.chat-source:not(.automation-source):hover,
 .chat-source:focus-visible {
   color: color-mix(in srgb, var(--text-strong) 95%, transparent);
   outline: none;

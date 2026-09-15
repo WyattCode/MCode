@@ -3809,11 +3809,22 @@ watch(
     // A short phrase read aloud is for someone who has looked away.
     if (app.config?.voiceFeedback && document.hidden) speak(t("voice.said.agent"), language.value)
     if (app.config?.notifyAgent === false) return
+    // automation: a scheduled task's run is told about by its own policy, below.
+    if (app.automationRuns.has(turn.sessionID)) return
     if (chiming && watching(turn.sessionID)) {
       heldNotices.add(turn.sessionID)
       return
     }
     window.mcode.taskNotice({ kind: "done", ...about, silent: chiming })
+  },
+)
+
+/* automation: MiMo tells the user about a scheduled task's run when the task's notification policy says to, failures included. */
+watch(
+  () => app.automationNotice,
+  (notice) => {
+    if (!notice || app.config?.notifyAgent === false) return
+    window.mcode.taskNotice({ kind: "done", ...noticeAbout(notice.sessionID), silent: false })
   },
 )
 

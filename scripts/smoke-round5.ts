@@ -11,7 +11,7 @@ import { reasoningRequest as anthropicReasoning } from "../src/server/provider/a
 import { costOf } from "../src/server/session/usage"
 import { usageOf } from "../src/server/provider/openai"
 import { RETRY_BUDGETS, retryDecision, retryHint, retryKind } from "../src/server/session/retry"
-import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
+import { ProviderError, ProviderHttpError, systemText } from "../src/server/provider/types"
 import { ABORTED_TOOL, INTERRUPTED_RESULT, requestHistory } from "../src/server/provider/history"
 import { toMessages } from "../src/server/provider/openai"
 import { repeatsCall } from "../src/server/session/reminders"
@@ -651,6 +651,14 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("the last two messages are marked, earlier ones are not", JSON.stringify(blocks) === JSON.stringify([false, true, true]), blocks)
     const hour = messagesRequest({ ...base, cacheTTL: "1h", history: [user("u1", "one")] }) as unknown as Record<string, any>
     check("a model that asks for the hour-long cache gets it", hour.system?.[0]?.cache_control?.ttl === "1h")
+    // memory: what names one conversation's notes follows the marked prefix, unmarked, so the prefix is shared.
+    const tailed = messagesRequest({ ...base, systemTail: "MEMORY TAIL", history: [user("u1", "one")] }) as unknown as Record<string, any>
+    check(
+      "a conversation's own system tail is a second, unmarked block after the marked prefix",
+      tailed.system?.length === 2 && tailed.system[0]?.text === "SYSTEM" && marked(tailed.system[0]) && tailed.system[1]?.text === "MEMORY TAIL" && !tailed.system[1]?.cache_control,
+      tailed.system,
+    )
+    check("and other providers read it at the end of the system text", systemText({ system: "SYSTEM", systemTail: "MEMORY TAIL" }) === "SYSTEM\n\nMEMORY TAIL" && systemText({ system: "SYSTEM" }) === "SYSTEM")
 
     check("chat-completions requests are marked only for Claude through OpenRouter or Alibaba", cacheMarked("openrouter", "anthropic/claude-sonnet-5") && !cacheMarked("openrouter", "openai/gpt-5.5") && !cacheMarked("lmstudio", "claude-local"))
     const messages: Record<string, unknown>[] = [

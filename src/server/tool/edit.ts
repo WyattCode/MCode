@@ -4,6 +4,7 @@ import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
 import { unifiedDiff } from "../diff"
+import { isMemoryPath } from "../history/service"
 
 export const WriteTool: ToolDefinition = {
   name: "write",
@@ -27,7 +28,8 @@ export const WriteTool: ToolDefinition = {
     const previous = await fs.readFile(target, "utf8").catch(() => undefined)
     const diff = unifiedDiff(display, previous ?? "", content)
 
-    await context.permissions.ask({
+    // memory: memory files are written without asking, as MiMo does.
+    if (!isMemoryPath(target)) await context.permissions.ask({
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,
@@ -95,7 +97,7 @@ export const EditTool: ToolDefinition = {
       : original.replace(oldString, () => newString)
     const diff = unifiedDiff(display, original, updated)
 
-    await context.permissions.ask({
+    if (!isMemoryPath(target)) await context.permissions.ask({
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,

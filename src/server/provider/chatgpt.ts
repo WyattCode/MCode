@@ -3,7 +3,7 @@ import { attachmentParts } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError, ProviderHttpError, headersOf, wireOfBody } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 import { USER_AGENT } from "../auth/oauth"
 
@@ -202,7 +202,7 @@ export const ChatGPTSubscription: ProviderAdapter = {
       signal: request.signal,
       body: JSON.stringify({
         model: request.model.model,
-        instructions: request.system,
+        instructions: systemText(request),
         input: toInput(request.history, request.inputs),
         tools: toolSchemas(request.tools),
         tool_choice: "auto",

@@ -3,7 +3,7 @@ import { attachmentParts } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError, ProviderHttpError, headersOf, wireOfBody } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 
 /**
@@ -187,7 +187,7 @@ export const OpenAICompatible: ProviderAdapter = {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
 
-    const messages = toMessages(request.system, request.history, request.inputs, request.interleaved)
+    const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved)
     const tools: Record<string, unknown>[] = toolSchemas(request.tools)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
 

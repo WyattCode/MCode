@@ -37,10 +37,18 @@ export interface TurnOutcome {
   finishReason?: string
 }
 
+/** The whole system text of a request: the cached prefix, then what belongs to this conversation alone. */
+export function systemText(request: Pick<TurnRequest, "system" | "systemTail">): string {
+  return request.systemTail ? `${request.system}\n\n${request.systemTail}` : request.system
+}
+
 export interface TurnRequest {
   apiKey: string
   model: ModelRef
+  /** The system prompt as frozen for the conversation: the prefix a provider caches. */
   system: string
+  /** memory: system text for this conversation alone, sent after the prefix and never marked for caching. */
+  systemTail?: string
   history: Message[]
   tools: ToolDefinition[]
   effort: string
