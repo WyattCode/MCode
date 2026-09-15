@@ -351,6 +351,31 @@ export class Config {
       if (this.current.themeID === "oc-2") this.current.themeID = "mcode-2"
     })
 
+    /*
+     * Round three renamed several commands to MiMo's ids. A chord someone bound
+     * under the old id would otherwise stop working without a word; it moves to
+     * the new id unless that one already has a binding. Commands that are gone
+     * (new terminal, the duplicate fork) take their chords with them.
+     */
+    once("keybind-ids-r3", () => {
+      const renamed: Record<string, string | undefined> = {
+        "command.palette": "app.search",
+        "model.variant.decrease": "effort.decrease",
+        "model.variant.increase": "effort.increase",
+        "view.rightMax": "panel.maximize",
+        "view.rightExpand": "panel.maximize",
+        "session.forkChat": undefined,
+        "terminal.new": undefined,
+      }
+      const binds = { ...(this.current.keybinds ?? {}) }
+      for (const [from, to] of Object.entries(renamed)) {
+        if (!(from in binds)) continue
+        if (to && !(to in binds)) binds[to] = binds[from]
+        delete binds[from]
+      }
+      this.current.keybinds = binds
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
