@@ -74,8 +74,7 @@ function eventOf(part: ToolPart): string | undefined {
     return "read: full"
   }
   if (part.name === "write") return part.metadata?.created === true ? "written" : "edited"
-  if (part.name === "edit") return input.oldString === "" ? "written" : "edited"
-  if (part.name === "apply_patch") return "edited"
+  if (part.name === "edit") return input.old_string === "" ? "written" : "edited"
   return undefined
 }
 
@@ -89,10 +88,11 @@ export function touchedFiles(messages: readonly Message[], directory: string): s
   for (const message of messages) {
     if (message.role !== "assistant") continue
     for (const part of message.parts) {
-      if (part.type !== "tool" || part.status !== "completed" || typeof part.input?.path !== "string") continue
+      const named = part.type === "tool" ? part.input?.file_path : undefined
+      if (part.type !== "tool" || part.status !== "completed" || typeof named !== "string") continue
       const event = eventOf(part)
       if (!event) continue
-      const absolute = path.resolve(directory, part.input.path)
+      const absolute = path.resolve(directory, named)
       const inside = path.relative(directory, absolute)
       const file = (inside && !inside.startsWith("..") && !path.isAbsolute(inside) ? inside : absolute).split(path.sep).join("/")
       events.set(file, [...(events.get(file) ?? []), event].slice(-MANIFEST_EVENTS))

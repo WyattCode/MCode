@@ -2341,8 +2341,9 @@ export class SessionRunner {
    * MCode's shell tool reports no paths it changed.
    */
   private async noteWorktreeChange(sessionID: string, part: ToolPart, directory: string): Promise<void> {
-    if (this.worktreeHits.has(sessionID) || !["write", "edit", "apply_patch"].includes(part.name)) return
-    const target = typeof part.input?.path === "string" ? part.input.path : undefined
+    if (this.worktreeHits.has(sessionID) || !["write", "edit", "notebook_edit"].includes(part.name)) return
+    const named = part.input?.file_path ?? part.input?.notebook_path
+    const target = typeof named === "string" ? named : undefined
     if (!target) return
     const session = await this.store.get(sessionID)
     if (!session || session.parentID || session.worktreeNotice) return
