@@ -26,6 +26,8 @@ export interface SessionInfo {
    * before this existed, which are treated as already named.
    */
   titleSource?: "fallback" | "generated" | "user"
+  /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
+  worktreeNotice?: boolean
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
@@ -1344,6 +1346,13 @@ export interface AppConfig {
    * the repository and the other travels with the reader.
    */
   instructions: string
+  /**
+   * MiMo's `instructions` setting: more instruction files to read into every
+   * conversation, as paths or globs (`docs/*.md`, `~/notes/rules.md`), each
+   * looked for from the working folder up to the repository's top. Web
+   * addresses are not fetched. Set in the config file; the settings have no row for it.
+   */
+  instructionFiles?: string[]
   /** How spoken input is written down. */
   voiceMode: VoiceMode
   /**

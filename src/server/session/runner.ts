@@ -50,6 +50,8 @@ import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
 import { forWire } from "../provider/wire-ids"
+import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
+import path from "node:path"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
@@ -868,6 +870,7 @@ export class SessionRunner {
       session.agent,
       session.staged === true,
       config.instructions ?? "",
+      config.instructionFiles ?? [],
       session.model.provider,
       session.model.model,
       this.tools(session.agent, session.model.model, session.parentID ?? session.id).map((tool) => tool.name),
@@ -882,6 +885,7 @@ export class SessionRunner {
             staged: session.staged,
             instructions: config.instructions,
             globalAgentsFile: this.globalAgents,
+            instructionFiles: config.instructionFiles,
           })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
@@ -1638,6 +1642,7 @@ export class SessionRunner {
        * yet, whereas one already in flight cannot be added to.
        */
       await this.steering.get(sessionID)?.written
+      await this.deliverWorktreeNotice(sessionID)
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only.
@@ -2173,6 +2178,8 @@ export class SessionRunner {
       part.output = result.output
       part.title = result.title ?? part.title
       part.metadata = result.metadata
+      // MiMo's auto-worktree notice: the first change a conversation makes to a repository's main worktree is noted.
+      await this.noteWorktreeChange(owner, part, input.session.directory)
     } catch (err) {
       part.status = "error"
       // Tool failures are told to the model as text so it can adapt; only
@@ -2205,6 +2212,43 @@ export class SessionRunner {
      */
     // subagents: a refusal inside a subagent stops the turn it works for, and so every subagent in it.
     if (refusedByUser) this.abort(owner)
+  }
+
+  /** A conversation's first change to a repository's main worktree, waiting for the next step to note it. */
+  private readonly worktreeHits = new Map<string, { root: string; linked: boolean }>()
+
+  /**
+   * MiMo's auto-worktree notice, first half: a completed write, edit or patch
+   * in a git repository's main worktree, by a conversation of the user's own
+   * (not a subagent), that has not been told yet. The shell is not looked at:
+   * MCode's shell tool reports no paths it changed.
+   */
+  private async noteWorktreeChange(sessionID: string, part: ToolPart, directory: string): Promise<void> {
+    if (this.worktreeHits.has(sessionID) || !["write", "edit", "apply_patch"].includes(part.name)) return
+    const target = typeof part.input?.path === "string" ? part.input.path : undefined
+    if (!target) return
+    const session = await this.store.get(sessionID)
+    if (!session || session.parentID || session.worktreeNotice) return
+    const top = await worktreeTop(path.dirname(path.resolve(directory, target)))
+    if (!top?.main) return
+    this.worktreeHits.set(sessionID, { root: top.root, linked: await hasLinkedWorktrees(top.root) })
+  }
+
+  /**
+   * Second half: at the next step the note is added to the latest user message
+   * - stored, as MiMo stores it - and the conversation is marked so it is never
+   * told twice.
+   */
+  private async deliverWorktreeNotice(sessionID: string): Promise<void> {
+    const hit = this.worktreeHits.get(sessionID)
+    if (!hit) return
+    this.worktreeHits.delete(sessionID)
+    const session = await this.store.get(sessionID)
+    if (!session || session.worktreeNotice) return
+    const latest = [...this.liveMessages(session, await this.store.messages(sessionID))].reverse().find((message): message is UserMessage => message.role === "user")
+    if (!latest) return
+    await this.store.saveMessage({ ...latest, reminders: [...(latest.reminders ?? []), worktreeNotice(hit.root, hit.linked)] })
+    await this.store.update(sessionID, { worktreeNotice: true })
   }
 
   /** Each conversation's system prompt as first built, and what it was built for (see `run`). */

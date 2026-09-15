@@ -2,12 +2,11 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { recentCommits, status } from "../git"
+import { globToRegExp } from "../tool/search"
+import { foldersUp } from "./worktree"
 
-/**
- * Instruction files a project can drop in its root to teach the agent its
- * conventions. Read in order; every one that exists is appended.
- */
-const INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", ".mcode/rules.md"]
+/** MiMo reads CLAUDE.md beside AGENTS.md only while the AGENTS.md files say less than this. */
+const AGENTS_SHORT = 500
 
 const BASE = `You are MCode, an AI coding agent working inside a user's project on their machine.
 
@@ -38,6 +37,8 @@ export interface PromptContext {
   globalAgentsFile?: string
   /** Whether the conversation works in stages. */
   staged?: boolean
+  /** MiMo's `instructions` setting: more instruction files, by glob, looked for up to the repository's top. */
+  instructionFiles?: string[]
 }
 
 /**
@@ -103,7 +104,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
     )
   }
 
-  const instructions = await projectInstructions(context.directory)
+  const instructions = await projectInstructions(context.directory, context.instructionFiles ?? [])
   if (instructions) {
     sections.push(`## Project instructions\n\nThese come from the project itself and take precedence over the general guidance above.\n\n${instructions}`)
   }
@@ -121,14 +122,68 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
   return sections.join("\n\n")
 }
 
-async function projectInstructions(directory: string): Promise<string> {
-  const found: string[] = []
-  for (const name of INSTRUCTION_FILES) {
-    const file = path.join(directory, name)
-    const content = await fs.readFile(file, "utf8").catch(() => undefined)
-    if (content?.trim()) found.push(`<instructions source="${name}">\n${content.trim()}\n</instructions>`)
+/**
+ * A project's instruction files, as MiMo gathers them.
+ *
+ * Every AGENTS.md from the working folder up to the repository's top, nearest
+ * first, so a package inside a monorepo reads its own and the root's. While
+ * those say less than 500 characters, CLAUDE.md files on the same path join
+ * them; with no AGENTS.md at all, the CLAUDE.md files stand in, and failing
+ * those the CONTEXT.md files. Then the files the `instructions` setting names,
+ * each pattern looked for in the same folders - a web address is left out,
+ * since reading it would reach the network. MCode's own `.mcode/rules.md` in
+ * the working folder is read last. Each file once, labelled with its path.
+ */
+async function projectInstructions(directory: string, patterns: readonly string[]): Promise<string> {
+  const folders = await foldersUp(directory)
+  const read = async (file: string) => ((await fs.readFile(file, "utf8").catch(() => "")) as string).trim()
+  const named = async (name: string) => {
+    const out: { file: string; content: string }[] = []
+    for (const folder of folders) {
+      const file = path.join(folder, name)
+      const content = await read(file)
+      if (content) out.push({ file, content })
+    }
+    return out
   }
-  return found.join("\n\n")
+
+  const agents = await named("AGENTS.md")
+  let chosen = agents
+  if (agents.length && agents.reduce((sum, entry) => sum + entry.content.length, 0) < AGENTS_SHORT) chosen = [...agents, ...(await named("CLAUDE.md"))]
+  if (!agents.length) {
+    const claude = await named("CLAUDE.md")
+    chosen = claude.length ? claude : await named("CONTEXT.md")
+  }
+
+  for (const pattern of patterns) {
+    if (/^https?:\/\//i.test(pattern)) continue
+    const expanded = pattern.startsWith("~/") ? path.join(os.homedir(), pattern.slice(2)) : pattern
+    const places = path.isAbsolute(expanded) ? [path.dirname(expanded)] : folders.map((folder) => path.join(folder, path.dirname(expanded)))
+    const matcher = globToRegExp(path.basename(expanded))
+    for (const place of places) {
+      const entries = await fs.readdir(place, { withFileTypes: true }).catch(() => [])
+      for (const entry of entries.filter((item) => item.isFile() && matcher.test(item.name)).sort((a, b) => a.name.localeCompare(b.name))) {
+        const file = path.join(place, entry.name)
+        const content = await read(file)
+        if (content) chosen.push({ file, content })
+      }
+    }
+  }
+
+  const rules = path.join(directory, ".mcode", "rules.md")
+  const ruleText = await read(rules)
+  if (ruleText) chosen.push({ file: rules, content: ruleText })
+
+  const seen = new Set<string>()
+  return chosen
+    .filter((entry) => {
+      const key = path.resolve(entry.file).toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .map((entry) => `<instructions source="${entry.file}">\n${entry.content}\n</instructions>`)
+    .join("\n\n")
 }
 
 async function environment(directory: string): Promise<string> {

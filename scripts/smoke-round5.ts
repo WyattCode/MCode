@@ -29,6 +29,7 @@ import { attachmentParts, imageSize } from "../src/server/provider/attachment-pa
 import { isSummary, touchedFiles } from "../src/server/session/summary"
 import { claudeCallID, forWire, mistralCallID } from "../src/server/provider/wire-ids"
 import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
+import { systemPrompt } from "../src/server/session/prompt"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -925,6 +926,77 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("the request goes to the gateway's /v1/messages", e.paths.at(-1) === "/v1/messages", e.paths.at(-1))
       check("with its key as x-api-key and its own headers", e.headers.at(-1)?.["x-api-key"] === "gateway-key" && e.headers.at(-1)?.["x-route"] === "claude", { key: Boolean(e.headers.at(-1)?.["x-api-key"]), route: e.headers.at(-1)?.["x-route"] })
       check("and a Messages body", e.bodies.at(-1)?.model === "claude-sonnet-5" && Array.isArray(e.bodies.at(-1)?.messages) && e.bodies.at(-1)?.system?.[0]?.text === "s", e.bodies.at(-1))
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: instruction files up to the repository's top (E50)")
+  {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r5-instr-"))
+    try {
+      await fs.mkdir(path.join(repo, ".git"), { recursive: true })
+      await fs.mkdir(path.join(repo, "packages", "web"), { recursive: true })
+      await fs.mkdir(path.join(repo, "docs"), { recursive: true })
+      await fs.writeFile(path.join(repo, "AGENTS.md"), "ROOT-AGENTS short")
+      await fs.writeFile(path.join(repo, "packages", "web", "AGENTS.md"), "WEB-AGENTS short")
+      await fs.writeFile(path.join(repo, "CLAUDE.md"), "ROOT-CLAUDE")
+      await fs.writeFile(path.join(repo, "docs", "style.md"), "DOCS-STYLE")
+      const inPackage = await systemPrompt({ directory: path.join(repo, "packages", "web"), agent: "build" })
+      check("a package reads its own AGENTS.md and the repository root's, nearest first", inPackage.indexOf("WEB-AGENTS") >= 0 && inPackage.indexOf("WEB-AGENTS") < inPackage.indexOf("ROOT-AGENTS"), inPackage.slice(-600))
+      check("short AGENTS.md files bring CLAUDE.md along", inPackage.includes("ROOT-CLAUDE"))
+      check("each file is labelled with its path", inPackage.includes(`source="${path.join(repo, "AGENTS.md")}"`))
+      await fs.writeFile(path.join(repo, "AGENTS.md"), `ROOT-AGENTS ${"long ".repeat(120)}`)
+      const longAgents = await systemPrompt({ directory: repo, agent: "build" })
+      check("but not once they say 500 characters or more", longAgents.includes("ROOT-AGENTS") && !longAgents.includes("ROOT-CLAUDE"))
+      await fs.rm(path.join(repo, "AGENTS.md"))
+      await fs.rm(path.join(repo, "packages", "web", "AGENTS.md"))
+      await fs.rm(path.join(repo, "CLAUDE.md"))
+      await fs.writeFile(path.join(repo, "CONTEXT.md"), "ROOT-CONTEXT")
+      const contextOnly = await systemPrompt({ directory: repo, agent: "build" })
+      check("with neither, CONTEXT.md stands in", contextOnly.includes("ROOT-CONTEXT"))
+      const globbed = await systemPrompt({ directory: path.join(repo, "packages", "web"), agent: "build", instructionFiles: ["docs/*.md", "https://example.com/rules.md"] })
+      check("the instructions setting's globs are found up to the repository's top", globbed.includes("DOCS-STYLE"), globbed.slice(-400))
+      check("and a web address is not fetched", !globbed.includes("example.com"))
+      const outside = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r5-plain-"))
+      await fs.writeFile(path.join(outside, "AGENTS.md"), "PLAIN-AGENTS")
+      check("a folder outside any repository still reads its own", (await systemPrompt({ directory: outside, agent: "build" })).includes("PLAIN-AGENTS"))
+      await fs.rm(outside, { recursive: true, force: true })
+    } finally {
+      await fs.rm(repo, { recursive: true, force: true })
+    }
+  }
+
+  section("Round 5: the auto-worktree notice (E40)")
+  {
+    const e = await engine()
+    try {
+      await e.config.set({ permissions: { ...e.config.get().permissions, write: "allow", edit: "allow" } })
+      execFileSync("git", ["init", "-q"], { cwd: e.project })
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "write", input: { path: "note.txt", content: "first" } }]))
+      await e.runner.prompt({ sessionID: session.id, text: "WORKTREE write" })
+      await e.idle(session.id)
+      const noted = wireText(e.bodies.at(-1))
+      check("a change to a main worktree brings the note at the next step", noted.includes("main worktree of a git repository") && noted.includes("ask the user"), noted.slice(0, 700))
+      check("stored on the user's message, and the conversation marked", (await e.store.get(session.id))?.worktreeNotice === true && (await e.store.messages(session.id)).some((message) => message.role === "user" && message.reminders?.some((note) => note.includes("main worktree"))))
+      e.replies.push(calls([{ name: "write", input: { path: "note.txt", content: "second" } }]))
+      await e.runner.prompt({ sessionID: session.id, text: "WORKTREE again" })
+      await e.idle(session.id)
+      check("once per conversation", wireText(e.bodies.at(-1)).split("main worktree of a git repository").length === 2)
+
+      await fs.mkdir(path.join(e.project, ".git", "worktrees", "feature"), { recursive: true })
+      const linked = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "write", input: { path: "other.txt", content: "x" } }]))
+      await e.runner.prompt({ sessionID: linked.id, text: "WORKTREE linked" })
+      await e.idle(linked.id)
+      check("with linked worktrees already there, it says to work in a new one", wireText(e.bodies.at(-1)).includes("create a new worktree for the task"))
+
+      const reads = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "list", input: { path: "." } }]))
+      await e.runner.prompt({ sessionID: reads.id, text: "WORKTREE only reads" })
+      await e.idle(reads.id)
+      check("reading alone brings no note", !wireText(e.bodies.at(-1)).includes("main worktree") && !(await e.store.get(reads.id))?.worktreeNotice)
     } finally {
       await e.close()
     }
