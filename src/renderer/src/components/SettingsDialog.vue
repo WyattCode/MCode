@@ -925,10 +925,11 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeySearchKey, true)
 })
 
+/* MiMo's order and wording: 跟随系统, 浅色, 深色. */
 const themeOptions = computed(() => [
-  { value: "system", label: t("set.themeSystem") },
-  { value: "dark", label: t("set.themeDark") },
-  { value: "light", label: t("set.themeLight") },
+  { value: "system", label: t("set.appearance.themeFollow") },
+  { value: "light", label: t("set.appearance.themeLight") },
+  { value: "dark", label: t("set.appearance.themeDark") },
 ])
 const paletteOptions = THEMES.map((entry) => ({ value: entry.id, label: entry.name }))
 const languageOptions = computed(() => LANGUAGES.map((entry) => ({ value: entry.id, label: entry.label })))
@@ -2123,11 +2124,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <!-- Appearance: a page of its own, as MiMo keeps it, rather than a group under General. -->
         <template v-else-if="section === 'appearance'">
           <h2>{{ t("set.appearance") }}</h2>
-          <div class="card">
+          <!-- MiMo's first card: 主题, then MCode's own palette row under a name of its own. -->
+          <div class="card" data-appearance-theme>
             <div class="line">
               <div class="line-text">
-                <div class="line-title">{{ t("set.scheme") }}</div>
-                <div class="line-sub">{{ t("set.schemeSub") }}</div>
+                <div class="line-title">{{ t("set.appearance.theme") }}</div>
+                <div class="line-sub">{{ t("set.appearance.themeSub") }}</div>
               </div>
               <SelectMenu
                 :model-value="app.config?.theme ?? 'system'"
@@ -2136,9 +2138,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               />
             </div>
 
-            <div class="line">
+            <div class="line" data-palette-row>
               <div class="line-text">
-                <div class="line-title">{{ t("set.themePalette") }}</div>
+                <div class="line-title">{{ t("set.paletteName") }}</div>
                 <div class="line-sub">{{ t("set.themePaletteSub") }}</div>
               </div>
               <SelectMenu
@@ -2147,40 +2149,33 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 @update:model-value="app.patchConfig({ themeID: $event })"
               />
             </div>
+          </div>
 
-            <!--
-              The mark comes in six colourways. They are drawn here rather than
-              loaded as pictures, from the same string the icon files are
-              rasterised from, so the tile a reader presses is the icon they
-              get rather than a picture of one that might have drifted.
-            -->
-            <div class="line icons">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.appIcon") }}</div>
-                <div class="line-sub">{{ t("set.appIconSub") }}</div>
-              </div>
-              <div class="gallery" role="radiogroup" :aria-label="t('set.appIcon')">
-                <button
-                  v-for="tile in iconTiles"
-                  :key="tile.spec.id"
-                  class="tile"
-                  :class="{ on: appIcon === tile.spec.id }"
-                  role="radio"
-                  :aria-checked="appIcon === tile.spec.id"
-                  :aria-label="tile.spec.name"
-                  @click="app.patchConfig({ appIcon: tile.spec.id })"
-                >
-                  <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
-                  <span v-else class="tile-art" v-html="tile.svg" />
-                  <span class="tile-name">{{ tile.spec.name }}</span>
-                </button>
-              </div>
-            </div>
+          <!--
+            MiMo's 应用图标: a section heading and the grid as a block of its own.
+            The tiles are drawn from the same string the icon files are rasterised
+            from, so the tile a reader presses is the icon they get.
+          -->
+          <h3 data-app-icon-head>{{ t("set.appIcon") }}</h3>
+          <div class="gallery" role="radiogroup" :aria-label="t('set.appIcon')">
+            <button
+              v-for="tile in iconTiles"
+              :key="tile.spec.id"
+              class="tile"
+              :class="{ on: appIcon === tile.spec.id }"
+              role="radio"
+              :aria-checked="appIcon === tile.spec.id"
+              :aria-label="tile.spec.name"
+              @click="app.patchConfig({ appIcon: tile.spec.id })"
+            >
+              <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
+              <span v-else class="tile-art" v-html="tile.svg" />
+              <span class="tile-name">{{ tile.spec.name }}</span>
+            </button>
+          </div>
 
-            <!--
-              Four questions the stylesheet answers, kept together because they
-              are all about how the window behaves rather than what it holds.
-            -->
+          <div class="card appearance-rest">
+            <!-- MiMo's second card: pointer, motion, the two sizes, diff marks and smoothing; MCode's fonts and wrap after. -->
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.pointerCursor") }}</div>
@@ -2257,10 +2252,47 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </span>
             </div>
 
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.diffMarks") }}</div>
+                <div class="line-sub">{{ t("set.diffMarksSub") }}</div>
+              </div>
+              <div class="choice" role="radiogroup" :aria-label="t('set.diffMarks')">
+                <button
+                  v-for="mark in DIFF_MARKS"
+                  :key="mark"
+                  class="choice-btn"
+                  :class="{ on: (app.config?.diffMarks ?? 'color') === mark }"
+                  role="radio"
+                  :aria-checked="(app.config?.diffMarks ?? 'color') === mark"
+                  @click="app.patchConfig({ diffMarks: mark })"
+                >
+                  {{ t(`set.marks.${mark}`) }}
+                </button>
+              </div>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.fontSmoothing") }}</div>
+                <div class="line-sub">{{ t(app.platform === "darwin" ? "set.fontSmoothingSubMac" : "set.fontSmoothingSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.fontSmoothing ?? true }"
+                role="switch"
+                :aria-checked="app.config?.fontSmoothing ?? true"
+                :aria-label="t('set.fontSmoothing')"
+                @click="app.patchConfig({ fontSmoothing: !(app.config?.fontSmoothing ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
             <!--
-              Three faces rather than one, because the jobs differ: prose wants
-              a different face from code, and a terminal wants one whose glyphs
-              are all the same width whatever the rest of the app uses.
+              MCode's own rows after MiMo's. Three faces rather than one, because
+              the jobs differ: prose wants a different face from code, and a
+              terminal wants one whose glyphs are all the same width.
             -->
             <div class="line">
               <div class="line-text">
@@ -2304,27 +2336,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               />
             </div>
 
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.diffMarks") }}</div>
-                <div class="line-sub">{{ t("set.diffMarksSub") }}</div>
-              </div>
-              <div class="choice" role="radiogroup" :aria-label="t('set.diffMarks')">
-                <button
-                  v-for="mark in DIFF_MARKS"
-                  :key="mark"
-                  class="choice-btn"
-                  :class="{ on: (app.config?.diffMarks ?? 'color') === mark }"
-                  role="radio"
-                  :aria-checked="(app.config?.diffMarks ?? 'color') === mark"
-                  @click="app.patchConfig({ diffMarks: mark })"
-                >
-                  {{ t(`set.marks.${mark}`) }}
-                </button>
-              </div>
-            </div>
-
-            <div class="line">
+            <div class="line" data-tray-row>
               <div class="line-text">
                 <div class="line-title">{{ t("set.tray") }}</div>
                 <div class="line-sub">{{ t("set.traySub") }}</div>
@@ -2336,23 +2348,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :aria-checked="app.config?.tray ?? true"
                 :aria-label="t('set.tray')"
                 @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.fontSmoothing") }}</div>
-                <div class="line-sub">{{ t("set.fontSmoothingSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.fontSmoothing ?? true }"
-                role="switch"
-                :aria-checked="app.config?.fontSmoothing ?? true"
-                :aria-label="t('set.fontSmoothing')"
-                @click="app.patchConfig({ fontSmoothing: !(app.config?.fontSmoothing ?? true) })"
               >
                 <span class="knob" />
               </button>
@@ -4600,17 +4595,12 @@ h3 {
   line-height: 20px;
 }
 
-/* The gallery is a block of its own, so its row stacks instead of squeezing. */
-.line.icons {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-}
-
+/* MiMo's app icon grid: a block under its own section heading, between the two cards. */
 .gallery {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
   gap: 10px;
+  margin-block: 8px 16px;
 }
 
 .tile {
