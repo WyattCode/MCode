@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { MessageHit, SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
@@ -12,17 +12,21 @@ import { projectName } from "../lib/project"
  * what was said in them (read by the server, which holds every transcript),
  * project names and paths, and the files conversations wrote; each kind gets a
  * heading, the kind with the best match first, and the words are marked where
- * they were found.
+ * they were found. As in MiMo, rows are chosen with the pointer; only Escape is
+ * bound.
  */
 const emit = defineEmits<{ close: []; open: [sessionID: string]; project: [directory: string] }>()
 
 const app = useApp()
 const query = ref("")
 const field = ref<HTMLInputElement>()
-const list = ref<HTMLElement>()
-const sel = ref(0)
 const hits = ref<MessageHit[]>([])
 const artifacts = ref<SessionArtifacts[]>([])
+/* The server half of a search: waiting on it, answered, or failed. */
+const status = ref<"idle" | "loading" | "ready" | "error">("idle")
+/* MiMo keeps the overlay up for its 180ms exit before it goes. */
+const closing = ref(false)
+const CLOSE_MS = 180
 
 interface Span {
   text: string
@@ -184,50 +188,64 @@ function pieces(span: Span) {
 /* The server reads the transcripts a moment after typing stops; an older answer never replaces a newer one. */
 let timer: ReturnType<typeof setTimeout> | undefined
 let generation = 0
+
+function runSearch(needle: string) {
+  const run = ++generation
+  status.value = "loading"
+  timer = setTimeout(async () => {
+    try {
+      const result = await app.client?.request({ type: "search.messages", query: needle, limit: RECENT })
+      if (run !== generation) return
+      hits.value = result?.hits ?? []
+      status.value = "ready"
+    } catch {
+      if (run !== generation) return
+      hits.value = []
+      status.value = "error"
+    }
+  }, 150)
+}
+
 watch(query, (value) => {
-  sel.value = 0
   if (timer) clearTimeout(timer)
   const needle = value.trim()
-  const run = ++generation
   if (!needle) {
+    generation += 1
     hits.value = []
+    status.value = "idle"
     return
   }
-  timer = setTimeout(async () => {
-    const result = await app.client?.request({ type: "search.messages", query: needle, limit: RECENT }).catch(() => undefined)
-    if (run === generation) hits.value = result?.hits ?? []
-  }, 150)
+  runSearch(needle)
 })
+
+/* MiMo's 重试: the same query asked again. */
+function retry() {
+  const needle = query.value.trim()
+  if (!needle) return
+  if (timer) clearTimeout(timer)
+  runSearch(needle)
+}
+
+/** Plays MiMo's exit, then tells the owner to unmount. */
+function close() {
+  if (closing.value) return
+  closing.value = true
+  setTimeout(() => emit("close"), CLOSE_MS)
+}
 
 function choose(item?: Item) {
   if (!item) return
   if (item.kind === "project") emit("project", item.target)
   else emit("open", item.target)
-  emit("close")
+  close()
 }
 
 function onKeydown(event: KeyboardEvent) {
-  const count = flat.value.length
-  if (event.key === "Escape") {
-    event.preventDefault()
-    event.stopPropagation()
-    emit("close")
-  } else if (event.key === "ArrowDown" && count) {
-    event.preventDefault()
-    sel.value = (sel.value + 1) % count
-  } else if (event.key === "ArrowUp" && count) {
-    event.preventDefault()
-    sel.value = (sel.value - 1 + count) % count
-  } else if (event.key === "Enter" && !event.isComposing) {
-    event.preventDefault()
-    choose(flat.value[sel.value])
-  }
+  if (event.key !== "Escape") return
+  event.preventDefault()
+  event.stopPropagation()
+  close()
 }
-
-watch(sel, async () => {
-  await nextTick()
-  list.value?.querySelector(".sr-item.sel")?.scrollIntoView({ block: "nearest" })
-})
 
 onMounted(async () => {
   field.value?.focus()
@@ -238,10 +256,12 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
 })
+
+defineExpose({ close })
 </script>
 
 <template>
-  <div class="search-overlay" @mousedown.self="emit('close')">
+  <div class="search-overlay" :class="{ closing }" @mousedown.self="close">
     <div v-modal class="search-card" role="dialog" :aria-label="t('searchOverlay.placeholder')">
       <div class="search-bar">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -257,17 +277,20 @@ onBeforeUnmount(() => {
           @keydown="onKeydown"
         />
       </div>
-      <div ref="list" class="search-results">
-        <div v-if="!flat.length" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
+      <div class="search-results">
+        <div v-if="status === 'error'" class="sr-artifact-error" data-search-error>
+          <span>{{ t("searchOverlay.error") }}</span>
+          <button type="button" @click="retry">{{ t("searchOverlay.retry") }}</button>
+        </div>
+        <div v-if="!flat.length && status === 'loading'" class="sr-empty" data-search-loading>{{ t("searchOverlay.loading") }}</div>
+        <div v-else-if="!flat.length && status !== 'error'" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
         <div v-for="group in groups" :key="group.kind" class="sr-group">
           <div class="sr-head">{{ t(HEAD[group.kind]) }}</div>
           <button
             v-for="item in group.items"
             :key="item.kind + item.id"
             class="sr-item"
-            :class="{ sel: flat.indexOf(item) === sel }"
             :data-kind="item.kind"
-            @mousemove="sel = flat.indexOf(item)"
             @click="choose(item)"
           >
             <span class="sr-line">
@@ -302,7 +325,8 @@ onBeforeUnmount(() => {
   place-items: start center;
   background: rgb(0 0 0 / 0.34);
   backdrop-filter: blur(8px);
-  animation: search-fade 0.16s ease-out;
+  /* MiMo's --motion-base with --ease-enter. */
+  animation: search-fade-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 .search-card {
@@ -314,7 +338,16 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-weak);
   border-radius: 14px;
   box-shadow: 0 18px 52px rgb(0 0 0 / 0.2);
-  animation: search-card 0.16s ease-out;
+  animation: search-card-in 0.18s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+/* MiMo's exit: both fade over --motion-fast with --ease-exit, and stay faded. */
+.search-overlay.closing {
+  animation: search-fade-out 0.12s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.search-overlay.closing .search-card {
+  animation: search-card-out 0.12s cubic-bezier(0.4, 0, 1, 1) forwards;
 }
 
 .search-bar {
@@ -388,10 +421,6 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
-.sr-item.sel {
-  background: var(--surface-selected);
-}
-
 .sr-line {
   display: flex;
   align-items: center;
@@ -447,23 +476,74 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
-@keyframes search-fade {
+/* MiMo's failed artifact search: the reason in the delete colour, and a small 重试. */
+.sr-artifact-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 10px;
+  color: #d92e3c;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.sr-artifact-error button {
+  flex: none;
+  padding: 4px 9px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 7px;
+  font: inherit;
+  cursor: pointer;
+}
+
+:root[data-theme="dark"] .sr-artifact-error {
+  color: #f17471;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sr-artifact-error {
+    color: #f17471;
+  }
+}
+
+/* MiMo's search-card-in and overlay-fade-in move nothing: opacity only. */
+@keyframes search-fade-in {
   from {
     opacity: 0;
   }
 }
 
-@keyframes search-card {
+@keyframes search-card-in {
   from {
     opacity: 0;
-    transform: translateY(-6px) scale(0.99);
+  }
+}
+
+@keyframes search-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes search-card-out {
+  to {
+    opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .search-overlay,
-  .search-card {
+  .search-card,
+  .search-overlay.closing,
+  .search-overlay.closing .search-card {
     animation: none;
   }
+}
+
+html[data-motion="on"] .search-overlay,
+html[data-motion="on"] .search-card {
+  animation: none;
 }
 </style>
