@@ -271,7 +271,7 @@ const ANSI_SLOTS = [
  * the wrong compound, so a dark variant written that way never applies.
  */
 function scopedBlocks(source: string): string[] {
-  return [...source.matchAll(/<style[^>]*scoped[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1])
+  return [...source.matchAll(/<style[^>]*\bscoped\b[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1])
 }
 function walkVue(directory: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
