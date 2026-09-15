@@ -32321,19 +32321,16 @@ export function t(key: string, params?: Record<string, string | number>): string
  * back to the English default written beside the call.
  */
 const MENU_KEYS = [
-  "menu.about", "menu.hide", "menu.hideOthers", "menu.quit",
+  "menu.about", "menu.hide", "menu.hideOthers",
   // MiMo's About box, drawn by the main process.
   "menu.aboutVersion", "menu.aboutOk",
-  "menu.file", "menu.newSession", "menu.newWindow", "menu.openProject", "menu.settings",
+  "menu.file", "menu.newWindow", "menu.settings",
   "menu.edit", "menu.undo", "menu.redo",
   "edit.cut", "edit.copy", "edit.paste", "edit.selectAll",
-  "menu.view", "menu.terminal", "menu.sidebar", "menu.files",
-  "menu.reload", "menu.devTools",
-  "menu.resetZoom", "menu.zoomIn", "menu.zoomOut", "menu.fullscreen",
-  "menu.session", "menu.stop", "menu.switchModel", "menu.deleteSession",
-  "menu.go", "menu.back", "menu.forward",
-  "menu.prevSession", "menu.nextSession", "menu.prevProject", "menu.nextProject",
-  "menu.window", "menu.minimize", "menu.zoom", "menu.close",
+  "menu.view",
+  "menu.reload",
+  "menu.resetZoom", "menu.zoomIn", "menu.zoomOut",
+  "menu.window", "menu.minimize",
   "menu.newTask", "menu.openFolder", "menu.fileClose", "menu.unhide", "menu.quitApp",
   "menu.forceReload", "menu.developerTools", "menu.enterFullscreen", "menu.zoomWindow",
   // The tray's menu is built out here too, and rebuilt when these change.
