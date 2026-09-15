@@ -25,6 +25,7 @@ import { messagesRequest } from "../src/server/provider/anthropic"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import { TOOLS } from "../src/server/tool/registry"
 import { execFileSync } from "node:child_process"
+import { attachmentParts, imageSize } from "../src/server/provider/attachment-parts"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -675,6 +676,61 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const lastUser = (later?.messages as Record<string, any>[]).filter((m) => m.role === "user").at(-1)
       check("the prompt that follows the change carries them instead", String(lastUser?.content).includes("Today:") && String(lastUser?.content).includes("Branch:") && String(lastUser?.content).includes("README.md"), String(lastUser?.content).slice(0, 500))
       check("and the conversation's requests carry its session affinity", e.headers.at(-1)?.["x-session-affinity"] === session.id)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: attachments by path, sent by what the model reads (E1, R27, E44)")
+  {
+    const PNG_1x1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    const file = (path: string, mime: string, data = "x", extra: Record<string, unknown> = {}) => ({ path, mime, data, ...extra })
+    const texts = (parts: ReturnType<typeof attachmentParts>) => parts.flatMap((part) => (part.kind === "text" ? [part.text] : []))
+    check("an image the model cannot read is a note, not base64", texts(attachmentParts([file("a.png", "image/png", PNG_1x1)], { image: false }, "chat"))[0]?.includes("cannot read image input") === true)
+    check("one it reads goes as an image", attachmentParts([file("a.png", "image/png", PNG_1x1)], { image: true }, "chat")[0]?.kind === "image")
+    check("an empty image is said to be empty", texts(attachmentParts([file("a.png", "image/png", "")], { image: true }, "chat"))[0]?.includes("empty or damaged") === true)
+    check("a PDF goes as a document to a model that reads PDFs", attachmentParts([file("r.pdf", "application/pdf", "JVBER")], { pdf: true }, "anthropic")[0]?.kind === "pdf")
+    check("audio goes natively only over chat completions", attachmentParts([file("v.wav", "audio/wav")], { audio: true }, "chat")[0]?.kind === "audio" && attachmentParts([file("v.wav", "audio/wav")], { audio: true }, "anthropic")[0]?.kind === "text")
+    check("any other file is named by its path", texts(attachmentParts([file("C:/w/data.zip", "application/zip")], { image: true }, "chat"))[0]?.includes("C:/w/data.zip") === true)
+    const wide = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13]).copy(wide)
+    wide.write("IHDR", 12)
+    wide.writeUInt32BE(3000, 16)
+    wide.writeUInt32BE(100, 20)
+    check("an image's size is read from its header", JSON.stringify(imageSize(wide)) === JSON.stringify({ width: 3000, height: 100 }))
+    check("over 2000 px an Anthropic route gets a note instead", texts(attachmentParts([file("w.png", "image/png", wide.toString("base64"))], { image: true }, "anthropic"))[0]?.startsWith("[Image omitted") === true)
+    check("the same image is sent to a route with no such limit", attachmentParts([file("w.png", "image/png", wide.toString("base64"))], { image: true }, "chat")[0]?.kind === "image")
+    const pdfWire = toMessages("s", [{ id: "u", sessionID: "s", role: "user", text: "read", attachments: [file("r.pdf", "application/pdf", "JVBER")], time: { created: 1 } }], { pdf: true }) as Record<string, any>[]
+    check("chat completions carry a PDF as a file part", pdfWire[1]?.content?.some((part: Record<string, any>) => part.type === "file" && String(part.file?.file_data).startsWith("data:application/pdf;base64,")), pdfWire[1]?.content)
+
+    const e = await engine({ custom: { models: [{ id: "m", name: "M", attachment: true }] } })
+    try {
+      const log = path.join(e.project, "big.log")
+      await fs.writeFile(log, "line of the log\n".repeat(20_000))
+      await fs.writeFile(path.join(e.project, "shot.png"), Buffer.from(PNG_1x1, "base64"))
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({
+        sessionID: session.id,
+        text: "ATTACH these",
+        attachments: [
+          { path: log, mime: "", data: "", byPath: true },
+          { path: "shot.png", mime: "", data: "", byPath: true },
+          { path: path.join(e.project, "missing.txt"), mime: "", data: "", byPath: true },
+        ],
+      })
+      await e.idle(session.id)
+      const stored = (await e.store.messages(session.id)).find((message) => message.role === "user")
+      check(
+        "a file attached by path is stored as a path with its type, no data",
+        stored?.role === "user" && stored.attachments[0]?.mime === "text/plain" && stored.attachments[1]?.mime === "image/png" && stored.attachments.every((entry) => entry.data === ""),
+        stored?.role === "user" ? stored.attachments : stored,
+      )
+      const sent = (e.bodies[0]?.messages as Record<string, any>[]).find((m) => m.role === "user")
+      const sentText = JSON.stringify(sent?.content)
+      check("a 320 KB log is read from disk and sent up to 50 KB, with where the rest is", sentText.includes("line of the log") && sentText.includes("read the rest of") && sentText.length < 120_000, sentText.length)
+      check("the picture is read and sent to a model that reads images", Array.isArray(sent?.content) && sent.content.some((part: Record<string, any>) => part.type === "image_url"))
+      check("a file that is gone is named as unreadable", sentText.includes("missing.txt was attached but could not be read"))
+      check("and the message says where the files are", sentText.includes("# Attached files") && sentText.includes("big.log"))
     } finally {
       await e.close()
     }

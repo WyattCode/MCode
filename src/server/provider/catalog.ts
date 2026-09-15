@@ -29,6 +29,8 @@ export interface ModelEntry {
   /** USD per million cached tokens read and written; absent prices count as nothing, as MiMo's do. */
   cacheRead?: number
   cacheWrite?: number
+  /** MiMo's `cachePromptTTL`: a model that asks for the hour-long prompt cache. */
+  cacheTTL?: "5m" | "1h"
   /**
    * What the model can do, in the reference's own vocabulary.
    *

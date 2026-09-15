@@ -311,6 +311,10 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   if (context !== undefined && !positive(context)) throw new Error(invalid)
   if (output !== undefined && (!positive(output) || context === undefined)) throw new Error(invalid)
   if (positive(context)) out.limit = positive(output) ? { context, output } : { context }
+  // MiMo's other model fields, kept when a config file states them.
+  const inputs = Object.fromEntries((["pdf", "audio", "video"] as const).flatMap((key) => (typeof model.inputs?.[key] === "boolean" ? [[key, model.inputs[key]]] : [])))
+  if (Object.keys(inputs).length) out.inputs = inputs
+  if (model.cacheTTL === "5m" || model.cacheTTL === "1h") out.cacheTTL = model.cacheTTL
   return out
 }
 
@@ -660,9 +664,12 @@ export class Config {
           name: model.name,
           contextWindow: model.limit?.context ?? 0,
           ...(model.limit?.output ? { maxOutput: model.limit.output } : {}),
-          ...(typeof model.attachment === "boolean"
-            ? { attachment: model.attachment, inputs: { text: true, image: model.attachment } }
+          ...(typeof model.attachment === "boolean" ? { attachment: model.attachment } : {}),
+          // MiMo's modalities: the image switch, and the other inputs a config file may state.
+          ...(typeof model.attachment === "boolean" || model.inputs
+            ? { inputs: { text: true, ...model.inputs, ...(typeof model.attachment === "boolean" ? { image: model.attachment } : {}) } }
             : {}),
+          ...(model.cacheTTL ? { cacheTTL: model.cacheTTL } : {}),
           input: 0,
           output: 0,
         })),

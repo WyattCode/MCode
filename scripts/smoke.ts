@@ -3407,7 +3407,8 @@ async function main() {
       time: { created: 1 },
     }
 
-    const openai = toMessages("sys", [withImage]) as any[]
+    // round 5 (E1): images go only to a model that reads them, so this model is said to.
+    const openai = toMessages("sys", [withImage], { image: true }) as any[]
     const user = openai.find((entry) => entry.role === "user")
     check("the image is sent, not dropped", Array.isArray(user?.content), user?.content)
     const parts = (user?.content ?? []) as any[]

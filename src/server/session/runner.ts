@@ -52,7 +52,10 @@ import { repositoryState, systemPrompt } from "./prompt"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor } from "../provider/sampling"
-import { runtimeContext, sessionNote } from "./context"
+import { attachmentNote, runtimeContext, sessionNote } from "./context"
+import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
+import type { ModelEntry } from "../provider/catalog"
+import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
@@ -1072,7 +1075,14 @@ export class SessionRunner {
      */
     this.turn(input.sessionID).messages.push(user.id)
 
-    const written = steering.written.then(() => this.store.saveMessage(user))
+    const written = steering.written.then(async () => {
+      // Settled in the same chain, so messages still reach the transcript in the order they were typed.
+      if (user.attachments.some((file) => file.byPath)) {
+        const session = await this.store.get(input.sessionID)
+        if (session) user.attachments = await settleAttachments(user.attachments, session.directory)
+      }
+      return this.store.saveMessage(user)
+    })
     /*
      * A message that could not be written is taken off both lists again. Left
      * on the waiting one, the loop would keep asking for another step to
@@ -1225,13 +1235,17 @@ export class SessionRunner {
 
     // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
     const first = (await this.store.messages(session.id)).length === 0
+    // MiMo attaches by path: what each such file is gets settled now, its contents are read per request.
+    const attachments = await settleAttachments(input.attachments, session.directory)
     const reminders = input.inbox ? [] : await this.remindersFor(session, first)
+    const attached = input.inbox ? undefined : attachmentNote(attachments.filter((file) => file.byPath), session.directory)
+    if (attached) reminders.push(attached)
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
       role: "user",
       text: input.text,
-      attachments: input.attachments ?? [],
+      attachments,
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       // session chat
@@ -1573,6 +1587,8 @@ export class SessionRunner {
     /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
     const notes = new Map<string, string[]>()
     const continued = { length: 0, textTool: 0, empty: 0 }
+    /* Files attached by path, read once for this turn. */
+    const attachmentData: AttachmentCache = new Map()
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
       // The reference's `isLastStep`: no tools, and an instruction to write.
@@ -1593,7 +1609,7 @@ export class SessionRunner {
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // this turn's continuation notes follow the replies they answer; and three identical steps
       // in a row bring a note to change approach.
-      const history = withSameStepsNote(withNotes(step > 0 ? frameSteered(chatted) : chatted, notes))
+      const history = await withAttachmentData(withSameStepsNote(withNotes(step > 0 ? frameSteered(chatted) : chatted, notes)), session.directory, attachmentData)
 
       const effort = session.effort ?? config.effort
 
@@ -1689,8 +1705,11 @@ export class SessionRunner {
         accountId: tokens?.accountId,
         maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
         outputLimit: this.config.modelEntry(session.model)?.maxOutput,
-        // MiMo's prompt cache key and session affinity.
+        // MiMo's prompt cache key and session affinity, and the hour-long cache where the model asks for it.
         sessionID,
+        cacheTTL: this.config.modelEntry(session.model)?.cacheTTL,
+        // What the model reads besides text: an attachment it cannot read goes as a note.
+        inputs: modelInputs(this.config.modelEntry(session.model)),
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
         extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true),
@@ -2778,6 +2797,17 @@ interface Turn {
  */
 function pathKey(target: string): string {
   return process.platform === "win32" ? target.toLowerCase() : target
+}
+
+/** What a model reads besides text, from its catalog entry; the image switch counts where no image input is stated. */
+function modelInputs(entry: ModelEntry | undefined): ModelModalities {
+  return {
+    text: true,
+    image: entry?.inputs?.image ?? entry?.attachment ?? false,
+    audio: entry?.inputs?.audio ?? false,
+    video: entry?.inputs?.video ?? false,
+    pdf: entry?.inputs?.pdf ?? false,
+  }
 }
 
 /** Wraps a failure that has already been written onto the assistant message. */

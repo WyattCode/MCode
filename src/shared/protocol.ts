@@ -354,8 +354,15 @@ export interface Annotation {
 export interface Attachment {
   path: string
   mime: string
-  /** base64 for binary, utf8 text otherwise. */
+  /** base64 for binary, utf8 text otherwise; empty for a file attached by path. */
   data: string
+  /**
+   * MiMo attaches a file by its path: nothing is copied into the message, and
+   * the file is read from disk each time a request is built, so a file of any
+   * size can be attached. `path` is absolute, or project-relative for an @
+   * mention; the server fills in `mime` when the message is sent.
+   */
+  byPath?: boolean
 }
 
 export interface AssistantMessage {
@@ -1438,6 +1445,9 @@ export interface CustomModel {
   attachment?: boolean
   /** Token limits: the input (context) window and the output cap. An output limit needs an input limit. */
   limit?: { context?: number; output?: number }
+  /** MiMo's model fields a config file can set beyond the form: which other inputs it reads, and an hour-long prompt cache. */
+  inputs?: { pdf?: boolean; audio?: boolean; video?: boolean }
+  cacheTTL?: "5m" | "1h"
 }
 
 export interface CustomProvider {

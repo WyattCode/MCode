@@ -17,9 +17,7 @@ import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 import { clampEffort, effortLabelKey, findModel, withoutLatest } from "../lib/model"
 import {
-  absolutePath,
   fileName,
-  mentionAttachment,
   mentionSpan,
   mentionedIn,
   withMention,
@@ -1091,32 +1089,24 @@ function outgoing(value: string): string {
 }
 
 /**
- * The mentioned files, read at the moment the message goes.
+ * The mentioned files, attached by their project path as MiMo attaches them.
  *
- * Reading them when they were named would send what the file said several
- * minutes and a few edits ago; what the model should be looking at is what is
- * on disk when it is asked. A file that cannot be read is named out loud - the
- * sentence still goes, mention and all, but the user has to know the file did
- * not go with it.
+ * Nothing is read here: the server reads each file when the model is asked,
+ * so what the model sees is what is on disk then, whatever its size. A file
+ * that cannot be read by then reaches the model as a note saying so.
  */
 async function mentionAttachments(value: string, chosen: Set<string>, to?: string): Promise<Attachment[]> {
   // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
   const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
   const root = props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
-  if (!root || !app.client || !chosen.size) return []
+  if (!root || !chosen.size) return []
   const out: Attachment[] = []
   for (const path of mentionedIn(value)) {
     if (!chosen.has(path)) continue
     // The same file named twice is one file.
     if (out.some((entry) => entry.path === path)) continue
-    try {
-      const result = await app.client.request({ type: "file.read", path: absolutePath(root, path) })
-      const attachment = mentionAttachment(path, result)
-      if (attachment) out.push(attachment)
-      else notifyFailure(t("attach.unreadable"), path)
-    } catch {
-      notifyFailure(t("attach.unreadable"), path)
-    }
+    // MiMo's mention: the file goes by its project path and is read when the model is asked.
+    out.push({ path, mime: "", data: "", byPath: true })
   }
   return out
 }

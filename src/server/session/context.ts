@@ -1,4 +1,19 @@
+import path from "node:path"
 import { interfaceLocale, localeName } from "./locale"
+
+/**
+ * MiMo's attachment note: the paths of the files attached by path, what to
+ * tell the user, and not to go looking through their folders for them.
+ */
+export function attachmentNote(files: readonly { path: string }[], directory: string): string | undefined {
+  if (!files.length) return undefined
+  return [
+    "# Attached files",
+    "The user attached these files to this message:",
+    ...files.map((file) => `- ${path.isAbsolute(file.path) ? file.path : path.resolve(directory, file.path)}`),
+    "Tell the user in one sentence what you received. When the message does not hold all of a file you need, read it with the read tool at the path above; do not search or list the user's folders to find it.",
+  ].join("\n")
+}
 
 /**
  * What the model is told about where it is working, attached to the user's own

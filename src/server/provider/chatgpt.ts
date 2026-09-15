@@ -1,4 +1,5 @@
-import type { Message } from "@shared/protocol"
+import type { Message, ModelModalities } from "@shared/protocol"
+import { attachmentParts } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
@@ -62,23 +63,23 @@ function toolSchemas(tools: ToolDefinition[]) {
  * the backend rejects the turn - the same constraint as the other adapters,
  * expressed with different item types.
  */
-function toInput(history: Message[]): Record<string, unknown>[] {
+function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
 
   for (const message of requestHistory(history)) {
     if (message.role === "user") {
-      const attachments = message.attachments ?? []
-      const images = attachments.filter((attachment) => attachment.mime.startsWith("image/"))
-      const files = attachments
-        .filter((attachment) => !attachment.mime.startsWith("image/"))
-        .map((attachment) => `<file path="${attachment.path}">\n${attachment.data}\n</file>`)
-      const text = [...files, userText(message)].filter(Boolean).join("\n\n")
+      // MiMo's parts: images and PDFs the model reads go natively, anything else as text or a note.
+      const parts = attachmentParts(message.attachments ?? [], inputs, "responses")
+      const text = [...parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])), userText(message)].filter(Boolean).join("\n\n")
       const content = [
         ...(text ? [{ type: "input_text", text }] : []),
-        ...images.map((image) => ({
-          type: "input_image",
-          image_url: `data:${image.mime};base64,${image.data}`,
-        })),
+        ...parts.flatMap((part): Record<string, unknown>[] =>
+          part.kind === "image"
+            ? [{ type: "input_image", image_url: `data:${part.mime};base64,${part.data}` }]
+            : part.kind === "pdf"
+              ? [{ type: "input_file", filename: part.name, file_data: `data:application/pdf;base64,${part.data}` }]
+              : [],
+        ),
       ]
       if (content.length) out.push({ type: "message", role: "user", content })
       continue
@@ -202,7 +203,7 @@ export const ChatGPTSubscription: ProviderAdapter = {
       body: JSON.stringify({
         model: request.model.model,
         instructions: request.system,
-        input: toInput(request.history),
+        input: toInput(request.history, request.inputs),
         tools: toolSchemas(request.tools),
         tool_choice: "auto",
         parallel_tool_calls: false,

@@ -1,4 +1,4 @@
-import type { Message, ModelRef, Usage } from "@shared/protocol"
+import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
 import type { ToolDefinition } from "../tool/types"
 
 /**
@@ -79,6 +79,8 @@ export interface TurnRequest {
   sessionID?: string
   /** How long a cache mark should last, when the model asks for the hour-long one. */
   cacheTTL?: "5m" | "1h"
+  /** What the model reads besides text; an attachment of a kind it lacks is sent as a note instead (MiMo's unsupported parts). */
+  inputs?: Partial<ModelModalities>
   /**
    * How many times the SDK may quietly resend a failed request itself. The turn
    * loop passes 0 because it retries in the open, with a row saying so; other

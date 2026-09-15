@@ -1,4 +1,5 @@
-import type { Message, Usage } from "@shared/protocol"
+import type { Message, ModelModalities, Usage } from "@shared/protocol"
+import { attachmentParts } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
@@ -69,32 +70,35 @@ function toolSchemas(tools: ToolDefinition[]) {
  * `role: "tool"` entries keyed by call id, which is what this format expects
  * in place of Anthropic's batched tool_result blocks.
  */
-export function toMessages(system: string, history: Message[]) {
+export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
   for (const message of requestHistory(history)) {
     if (message.role === "user") {
-      const attachments = message.attachments ?? []
-      const images = attachments.filter((attachment) => attachment.mime.startsWith("image/"))
-      const files = attachments
-        .filter((attachment) => !attachment.mime.startsWith("image/"))
-        .map((attachment) => `<file path="${attachment.path}">\n${attachment.data}\n</file>`)
-      const text = [...files, userText(message)].filter(Boolean).join("\n\n")
+      // MiMo's parts: media the model reads go natively, anything else as text or a note.
+      const parts = attachmentParts(message.attachments ?? [], inputs, "chat")
+      const media = parts.filter((part) => part.kind !== "text")
+      const text = [...parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])), userText(message)].filter(Boolean).join("\n\n")
 
       /*
-       * A plain string while there are no images: the multipart form is
+       * A plain string while there is no media: the multipart form is
        * understood by far fewer of the servers that speak this format,
        * and there is no reason to reach for it when there is only text.
        */
-      if (images.length) {
+      if (media.length) {
         out.push({
           role: "user",
           content: [
             ...(text ? [{ type: "text", text }] : []),
-            ...images.map((image) => ({
-              type: "image_url",
-              image_url: { url: `data:${image.mime};base64,${image.data}` },
-            })),
+            ...media.map((part) =>
+              part.kind === "image"
+                ? { type: "image_url", image_url: { url: `data:${part.mime};base64,${part.data}` } }
+                : part.kind === "pdf"
+                  ? { type: "file", file: { filename: part.name, file_data: `data:application/pdf;base64,${part.data}` } }
+                  : part.kind === "audio"
+                    ? { type: "input_audio", input_audio: { data: part.data, format: part.format } }
+                    : { type: "video_url", video_url: { url: `data:${part.kind === "video" ? part.mime : ""};base64,${part.data}` } },
+            ),
           ],
         })
       } else if (text) {
@@ -173,7 +177,7 @@ export const OpenAICompatible: ProviderAdapter = {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
 
-    const messages = toMessages(request.system, request.history)
+    const messages = toMessages(request.system, request.history, request.inputs)
     const tools: Record<string, unknown>[] = toolSchemas(request.tools)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
 

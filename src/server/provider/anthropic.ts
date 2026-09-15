@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
-import type { Message, ModelRef, Usage } from "@shared/protocol"
+import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
+import { attachmentParts } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
@@ -29,21 +30,17 @@ export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
  * the summarized text is stored, not the signed original, and sending an
  * unsigned thinking block back is worse than sending none.
  */
-export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[] {
+export function toProviderMessages(messages: Message[], inputs?: Partial<ModelModalities>): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = []
 
   for (const message of requestHistory(messages)) {
     if (message.role === "user") {
       const content: Anthropic.ContentBlockParam[] = []
-      for (const attachment of message.attachments ?? []) {
-        if (attachment.mime.startsWith("image/")) {
-          content.push({
-            type: "image",
-            source: { type: "base64", media_type: attachment.mime as "image/png", data: attachment.data },
-          })
-        } else {
-          content.push({ type: "text", text: `<file path="${attachment.path}">\n${attachment.data}\n</file>` })
-        }
+      // MiMo's parts: images and PDFs the model reads go natively, anything else as text or a note.
+      for (const part of attachmentParts(message.attachments ?? [], inputs, "anthropic")) {
+        if (part.kind === "text") content.push({ type: "text", text: part.text })
+        else if (part.kind === "image") content.push({ type: "image", source: { type: "base64", media_type: part.mime as "image/png", data: part.data } })
+        else if (part.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: part.data }, title: part.name })
       }
       const text = userText(message)
       if (text) content.push({ type: "text", text })
@@ -223,7 +220,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
   const mark: CacheMark = { type: "ephemeral", ...(request.cacheTTL === "1h" ? { ttl: "1h" as const } : {}) }
   const tools = toolSchemas(request.tools)
   if (tools.length) tools[tools.length - 1] = { ...tools[tools.length - 1]!, cache_control: mark }
-  const messages = toProviderMessages(request.history)
+  const messages = toProviderMessages(request.history, request.inputs)
   for (const message of messages.slice(-2)) markLast(message, mark)
   return {
     model: request.model.model,
