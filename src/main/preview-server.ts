@@ -262,7 +262,17 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   }
   // A video seeks by asking for byte ranges, so those are answered as ranges rather than the whole file each time.
   const range = /^bytes=(\d*)-(\d*)$/.exec(request.headers.range ?? "")
-  const common = { "Content-Type": type, "Cache-Control": "no-store", "Accept-Ranges": "bytes" }
+  /*
+   * A reply's SVG file card reads the file's text as well as drawing it, from
+   * the window's own origin. Only an SVG may be read that way; every other file
+   * stays display-only to other origins.
+   */
+  const common = {
+    "Content-Type": type,
+    "Cache-Control": "no-store",
+    "Accept-Ranges": "bytes",
+    ...(extension === ".svg" ? { "Access-Control-Allow-Origin": "*" } : {}),
+  }
   let start = 0
   let end = size - 1
   if (range && (range[1] || range[2])) {

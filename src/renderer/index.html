@@ -29,12 +29,16 @@
       Images may load from the web and from the preview server, as MiMo shows
       a reply's ![](https://...) picture and a picture on disk named by its
       path; blob addresses carry a picture being copied. An <img> cannot run
-      script, and connect-src still keeps http and https out of reach, so this
-      opens no way for page code to send a request of its own.
+      script, and connect-src still keeps the web out of reach, so this opens no
+      way for page code to send a request of its own.
+
+      Requests may reach the preview server alone (http://*.localhost:*, which
+      is loopback): MiMo's SVG file card reads a served .svg's text for its
+      code tab, and that server answers other origins for .svg files only.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
   </head>

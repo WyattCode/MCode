@@ -2,20 +2,28 @@
 /* Kept across mounts: a reply that is still streaming mounts its cards again on every word. */
 const served = new Map<string, { file: string; url: string }>()
 const loaded = new Set<string>()
+/* An SVG file's text by its served address, once read. */
+const svgTexts = new Map<string, string>()
+/* MiMo plays one inline clip at a time: starting one pauses the one before. */
+let playingAudio: HTMLAudioElement | undefined
 </script>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { t } from "../../lib/i18n"
 import { openImagePreview } from "../../lib/image-preview"
+import { audioBubbleWidth, audioClock } from "../../lib/media-card"
 import { openNative, pathCandidates } from "../../lib/path-open"
+import { isSvgFile } from "../../lib/svg-safe"
+import SvgFileCard from "./SvgFileCard.vue"
 
 /**
  * MiMo's card for a picture, video or sound named by its path in a reply. The
  * window cannot read the disk, so the file is found through the main process
  * and shown from the local preview server. A file that is gone falls back to
  * the path as plain code; one that is there but will not load offers to open
- * it with the default program.
+ * it with the default program. An .svg file becomes MiMo's SVG file card once
+ * its text has been read, and a sound is MiMo's voice bubble.
  */
 const props = defineProps<{ kind: "image" | "video" | "audio"; path: string; directory?: string }>()
 
@@ -23,11 +31,26 @@ type State = "resolving" | "missing" | "loading" | "ok" | "error"
 const key = computed(() => `${props.directory ?? ""}\n${props.path}`)
 const entry = ref(served.get(key.value))
 const state = ref<State>(entry.value ? (loaded.has(entry.value.url) ? "ok" : "loading") : "resolving")
-const duration = ref(0)
+const svgText = ref(entry.value ? svgTexts.get(entry.value.url) : undefined)
 const name = computed(() => (entry.value?.file ?? props.path).split(/[\\/]/).pop() || props.path)
 
-/* MiMo's player grows with the sound's length: 148 + 30 + 3.2px a second, between 178 and 590. */
-const audioWidth = computed(() => `${Math.round(Math.max(178, Math.min(590, 178 + 3.2 * duration.value)))}px`)
+/* MiMo reads the file's text for the card; if that fails the plain picture card stays. */
+async function readSvg(url: string) {
+  const known = svgTexts.get(url)
+  if (known !== undefined) {
+    svgText.value = known
+    return
+  }
+  try {
+    const response = await fetch(url)
+    const text = response.ok ? await response.text() : ""
+    if (!/<svg[\s>]/i.test(text)) return
+    svgTexts.set(url, text)
+    if (entry.value?.url === url) svgText.value = text
+  } catch {
+    // The plain picture card stays.
+  }
+}
 
 async function resolve(): Promise<void> {
   const found = await window.mcode.resolveExistingPath(pathCandidates(props.path, props.directory)).catch(() => null)
@@ -46,10 +69,12 @@ async function resolve(): Promise<void> {
   entry.value = { file: found.path, url: address.url }
   served.set(key.value, entry.value)
   state.value = loaded.has(address.url) ? "ok" : "loading"
+  if (props.kind === "image" && isSvgFile(found.path)) void readSvg(address.url)
 }
 
 onMounted(() => {
   if (state.value === "resolving") void resolve()
+  else if (props.kind === "image" && entry.value?.url && isSvgFile(entry.value.file) && svgText.value === undefined) void readSvg(entry.value.url)
 })
 
 function ready() {
@@ -65,8 +90,15 @@ async function broken() {
   if (!found) served.delete(key.value)
 }
 
-function preview() {
-  if (entry.value?.url && state.value === "ok") openImagePreview(entry.value.url, { name: name.value })
+function svgMissing() {
+  served.delete(key.value)
+  state.value = "missing"
+}
+
+/* The preview zooms out of the picture that was pressed. */
+function preview(event: Event) {
+  if (!entry.value?.url || state.value !== "ok") return
+  openImagePreview(entry.value.url, { name: name.value, rect: (event.currentTarget as HTMLElement).getBoundingClientRect() })
 }
 
 function openWithDefault() {
@@ -76,10 +108,84 @@ function openWithDefault() {
 const failedLabel = computed(() =>
   props.kind === "image" ? t("markdown.imageLoadFailed") : props.kind === "video" ? t("markdown.videoLoadFailed") : t("markdown.audioLoadFailed"),
 )
+
+/*
+ * MiMo's voice bubble: a play button, a track that seeks where it is pressed,
+ * the clip's total length, and a "…" for the path menu; the bubble grows with
+ * the clip. The audio element itself is hidden.
+ */
+const audio = ref<HTMLAudioElement>()
+const track = ref<HTMLElement>()
+const playing = ref(false)
+const position = ref(0)
+const duration = ref(0)
+const bubbleWidth = computed(() => `${audioBubbleWidth(duration.value)}px`)
+// The length, as MiMo shows it; the position only while the length is not known.
+const clock = computed(() => audioClock(duration.value > 0 ? duration.value : position.value))
+const progress = computed(() => (duration.value > 0 ? `${Math.min(100, (position.value / duration.value) * 100)}%` : "0%"))
+
+function onMetadata() {
+  const element = audio.value
+  duration.value = element && Number.isFinite(element.duration) ? element.duration : 0
+  ready()
+}
+
+function togglePlay() {
+  const element = audio.value
+  if (!element) return
+  if (!element.paused) {
+    element.pause()
+    return
+  }
+  // A clip that refuses to play becomes the open-with-your-player card.
+  element.play().catch(() => void broken())
+}
+
+function onPlay() {
+  const element = audio.value
+  if (playingAudio && playingAudio !== element) playingAudio.pause()
+  playingAudio = element
+  playing.value = true
+}
+
+function onPause() {
+  if (playingAudio === audio.value) playingAudio = undefined
+  playing.value = false
+}
+
+function seek(event: MouseEvent) {
+  const element = audio.value
+  const bar = track.value
+  if (!element || !bar || duration.value <= 0) return
+  const box = bar.getBoundingClientRect()
+  const ratio = Math.min(1, Math.max(0, (event.clientX - box.left) / box.width))
+  element.currentTime = ratio * duration.value
+  position.value = element.currentTime
+}
+
+/* The "…" opens the reply's path menu where MiMo puts it: 80px before the button, 4px under it. */
+function openMore(event: MouseEvent) {
+  const button = event.currentTarget as HTMLElement
+  const box = button.getBoundingClientRect()
+  button.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: box.left - 80, clientY: box.bottom + 4 }))
+}
+
+onBeforeUnmount(() => {
+  if (playingAudio && playingAudio === audio.value) playingAudio = undefined
+})
 </script>
 
 <template>
   <code v-if="state === 'missing'">{{ path }}</code>
+  <SvgFileCard
+    v-else-if="kind === 'image' && svgText !== undefined && entry?.url && state !== 'error'"
+    :text="svgText"
+    :url="entry.url"
+    :file="entry.file"
+    :name="name"
+    @loaded="ready"
+    @missing="svgMissing"
+  />
   <div
     v-else
     class="md-media-card"
@@ -88,12 +194,24 @@ const failedLabel = computed(() =>
     :data-path="entry?.file ?? path"
     data-path-kind="open"
     :data-path-image="kind === 'image' ? '' : undefined"
+    :data-inline-audio="kind === 'audio' ? '' : undefined"
   >
     <button v-if="state === 'error'" type="button" class="md-media-failed" :title="t('markdown.openWithDefaultTip')" data-media-failed @click="openWithDefault">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path v-if="kind === 'image'" d="M2 2l20 20M10.4 10.4a2 2 0 1 1-2.8-2.8M13.5 13.5 6 21M18 12l3 3M3.6 3.6A2 2 0 0 0 3 5v14a2 2 0 0 0 2 2h14a2 2 0 0 0 1.4-.6M21 15V5a2 2 0 0 0-2-2H9" />
-        <path v-else-if="kind === 'video'" d="M10.7 6H14a2 2 0 0 1 2 2v2.5l5.2-3.1a.5.5 0 0 1 .8.4v8.2M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2M2 2l20 20" />
-        <path v-else d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5zM22 9l-6 6M16 9l6 6" />
+        <template v-if="kind === 'image'">
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="m21 15-5-5L5 21" />
+        </template>
+        <template v-else-if="kind === 'video'">
+          <path d="m22 8-6 4 6 4V8Z" />
+          <rect x="2" y="6" width="14" height="12" rx="2" />
+        </template>
+        <template v-else>
+          <path d="M9 18V5l12-2v13" />
+          <circle cx="6" cy="18" r="3" />
+          <circle cx="18" cy="16" r="3" />
+        </template>
+        <path d="M3 3l18 18" />
       </svg>
       <span>{{ failedLabel }}</span>
       <span class="md-media-name">{{ name }}</span>
@@ -128,15 +246,48 @@ const failedLabel = computed(() =>
     <template v-else>
       <audio
         v-if="entry?.url"
-        class="md-media-audio"
-        :style="{ width: audioWidth }"
+        ref="audio"
         :src="entry.url"
-        controls
         preload="metadata"
-        @loadedmetadata="duration = ($event.target as HTMLAudioElement).duration || 0; ready()"
+        @loadedmetadata="onMetadata"
+        @durationchange="onMetadata"
+        @timeupdate="position = ($event.target as HTMLAudioElement).currentTime"
+        @play="onPlay"
+        @pause="onPause"
+        @ended="onPause"
         @error="broken"
       />
-      <span class="md-media-name">{{ name }}</span>
+      <div
+        class="md-voice"
+        role="button"
+        tabindex="0"
+        :title="name"
+        :style="{ width: bubbleWidth }"
+        data-voice-bubble
+        @click="togglePlay"
+        @keydown.enter.self.prevent="togglePlay"
+        @keydown.space.self.prevent="togglePlay"
+      >
+        <span class="md-voice-play" :data-playing="playing" aria-hidden="true">
+          <svg v-if="playing" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="6" y="5" width="4" height="14" rx="1" />
+            <rect x="14" y="5" width="4" height="14" rx="1" />
+          </svg>
+          <svg v-else class="md-voice-glyph" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+        </span>
+        <span ref="track" class="md-voice-track" data-voice-track @click.stop="seek">
+          <span class="md-voice-progress" :style="{ width: progress }" />
+        </span>
+        <span class="md-voice-time" data-voice-time>{{ clock }}</span>
+        <button type="button" class="md-voice-more" :title="t('header.moreTip')" :aria-label="t('header.moreTip')" data-voice-more @click.stop="openMore">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <circle cx="5" cy="12" r="1.8" />
+            <circle cx="12" cy="12" r="1.8" />
+            <circle cx="19" cy="12" r="1.8" />
+          </svg>
+        </button>
+      </div>
+      <span class="md-media-name md-voice-name">{{ name }}</span>
     </template>
   </div>
 </template>
@@ -150,6 +301,7 @@ const failedLabel = computed(() =>
 .text .md-media-card {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 6px;
   width: fit-content;
   max-width: 100%;
@@ -200,10 +352,6 @@ const failedLabel = computed(() =>
   border-radius: 10px;
 }
 
-.text .md-media-audio {
-  max-width: 100%;
-}
-
 .text .md-media-name {
   max-width: 360px;
   overflow: hidden;
@@ -234,5 +382,168 @@ const failedLabel = computed(() =>
 
 .text .md-media-failed svg {
   flex: none;
+}
+
+/* MiMo's voice bubble: 44 high and round, on the sunken ground with a line that turns blue on hover. */
+.text .md-voice {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  height: 44px;
+  padding: 0 10px;
+  background: #f8f7f5;
+  border: 1px solid #f0ebe5;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.text .md-voice:hover {
+  border-color: #3295fb;
+}
+
+.text .md-voice:focus-visible {
+  outline: 2px solid #3295fb;
+  outline-offset: 2px;
+}
+
+.text .md-voice-play {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: #fffefd;
+  background: #151c13;
+  border-radius: 50%;
+}
+
+/* The play triangle sits a pixel off centre, as MiMo nudges it. */
+.text .md-voice-glyph {
+  margin-inline-start: 1px;
+}
+
+.text .md-voice-track {
+  position: relative;
+  flex: 1;
+  min-width: 24px;
+  height: 4px;
+  background: #f0ebe5;
+  border-radius: 9999px;
+  cursor: pointer;
+}
+
+.text .md-voice-progress {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  background: #151c13;
+  border-radius: 9999px;
+}
+
+.text .md-voice-time {
+  flex: none;
+  color: #151c1399;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+
+.text .md-voice-more {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: #151c1399;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+}
+
+.text .md-voice-more:hover {
+  color: #151c13cc;
+  background: #f1f0ec;
+}
+
+.text .md-voice-name {
+  color: #151c1366;
+}
+
+:root[data-theme="dark"] .text .md-voice {
+  background: #2e2e2e;
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .text .md-voice:hover {
+  border-color: #3295fb;
+}
+
+:root[data-theme="dark"] .text .md-voice-play {
+  color: #181818;
+  background: #fff;
+}
+
+:root[data-theme="dark"] .text .md-voice-track {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .text .md-voice-progress {
+  background: #fff;
+}
+
+:root[data-theme="dark"] .text .md-voice-time,
+:root[data-theme="dark"] .text .md-voice-more {
+  color: #b8b8b8;
+}
+
+:root[data-theme="dark"] .text .md-voice-more:hover {
+  color: #f4f4f5;
+  background: #ffffff0f;
+}
+
+:root[data-theme="dark"] .text .md-voice-name {
+  color: #777;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text .md-voice {
+    background: #2e2e2e;
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .text .md-voice:hover {
+    border-color: #3295fb;
+  }
+
+  :root:not([data-theme="light"]) .text .md-voice-play {
+    color: #181818;
+    background: #fff;
+  }
+
+  :root:not([data-theme="light"]) .text .md-voice-track {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .text .md-voice-progress {
+    background: #fff;
+  }
+
+  :root:not([data-theme="light"]) .text .md-voice-time,
+  :root:not([data-theme="light"]) .text .md-voice-more {
+    color: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) .text .md-voice-more:hover {
+    color: #f4f4f5;
+    background: #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .text .md-voice-name {
+    color: #777;
+  }
 }
 </style>
