@@ -62,7 +62,7 @@ import {
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { restore, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
-import { boundsOnShow, sameBounds } from "./work-area"
+import { boundsOnShow, closeBounds } from "./work-area"
 import { createUpdater, parseFeed, type FeedEntry, type UpdateState } from "./updater"
 import { deliveryOf, waitForDelivery } from "./install-notice"
 import pkg from "../../package.json"
@@ -477,11 +477,12 @@ function createWindow(show = true): BrowserWindow {
     if (confirmBounds) clearTimeout(confirmBounds)
     confirmBounds = undefined
     const target = boundsOnShow(recorded, window.isFullScreen(), screen.getAllDisplays().map((display) => display.workArea))
-    if (!target) return
+    // Where the OS kept it, give or take scaling noise, is left alone rather than nudged a pixel larger.
+    if (!target || closeBounds(window.getBounds(), target)) return
     window.setBounds(target)
     confirmBounds = setTimeout(() => {
       confirmBounds = undefined
-      if (window.isDestroyed() || window.isFullScreen() || sameBounds(window.getBounds(), target)) return
+      if (window.isDestroyed() || window.isFullScreen() || closeBounds(window.getBounds(), target)) return
       console.info("[hidden-bounds] the window drifted after show; bounds applied again")
       window.setBounds(target)
     }, 150)

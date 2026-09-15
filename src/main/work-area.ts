@@ -69,8 +69,19 @@ export function clampToWorkAreas(bounds: Box, areas: readonly Box[]): Box | unde
   }
 }
 
-export function sameBounds(a: Box, b: Box): boolean {
-  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+/**
+ * Whether two bounds are the same once scaling noise is allowed for. Under
+ * fractional display scaling a setBounds round-trip comes back a pixel or so
+ * off, and re-applying on every such difference would grow the window each
+ * time it came back from the tray - window-state.ts allows the same 4.
+ */
+export function closeBounds(a: Box, b: Box, tolerance = 4): boolean {
+  return (
+    Math.abs(a.x - b.x) <= tolerance &&
+    Math.abs(a.y - b.y) <= tolerance &&
+    Math.abs(a.width - b.width) <= tolerance &&
+    Math.abs(a.height - b.height) <= tolerance
+  )
 }
 
 /**

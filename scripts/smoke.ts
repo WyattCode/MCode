@@ -42,7 +42,7 @@ import { RecoverySchedule, RendererHealth, recoveryVisibility } from "../src/mai
 import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boot-prefs"
 import { createUpdater, parseFeed, type FeedEntry } from "../src/main/updater"
 import { deliveryOf, waitForDelivery } from "../src/main/install-notice"
-import { boundsOnShow, clampToWorkAreas, sameBounds } from "../src/main/work-area"
+import { boundsOnShow, clampToWorkAreas, closeBounds } from "../src/main/work-area"
 import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
@@ -2821,7 +2821,10 @@ async function main() {
     check("one left on an unplugged screen comes back to the nearest, at its edge", JSON.stringify(orphan) === JSON.stringify({ x: 1020, y: 300, width: 900, height: 700 }), orphan)
     const huge = clampToWorkAreas({ x: -50, y: -50, width: 2600, height: 1400 }, [primary])
     check("one larger than the screen is shrunk to it", JSON.stringify(huge) === JSON.stringify(primary), huge)
-    check("bounds compare exactly", sameBounds(primary, { ...primary }) && !sameBounds(primary, { ...primary, x: 1 }))
+    check(
+      "bounds a scaling round-trip moved by a pixel or so count as the same; a real move does not",
+      closeBounds(primary, { ...primary, width: primary.width + 1, height: primary.height - 2 }) && !closeBounds(primary, { ...primary, x: 5 }),
+    )
     check("hiding from full screen restores nothing", boundsOnShow({ x: 10, y: 10, width: 900, height: 700 }, true, [primary]) === undefined && boundsOnShow(undefined, false, [primary]) === undefined)
     check("recorded bounds on a live screen come back as they were", JSON.stringify(boundsOnShow({ x: 10, y: 10, width: 900, height: 700 }, false, [primary])) === JSON.stringify({ x: 10, y: 10, width: 900, height: 700 }))
     check("recorded bounds on a screen since removed are pulled back", boundsOnShow({ x: 2000, y: 10, width: 900, height: 700 }, false, [primary])?.x === 1020)
