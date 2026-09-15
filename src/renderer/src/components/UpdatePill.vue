@@ -146,6 +146,18 @@ onBeforeUnmount(() => {
         :aria-label="t('update.panelTitle', { version: updateState.version })"
         :style="{ left: `${spot.left}px`, bottom: `${spot.bottom}px` }"
       >
+        <!--
+          The 87px band MiMo draws above the bubble, with MCode's own art: an
+          upward arrow on a filled disc inside two faint rings.
+        -->
+        <div class="ub-hero" data-update-hero aria-hidden="true">
+          <svg class="ub-art" width="360" height="87" viewBox="0 0 360 87" fill="none">
+            <circle class="ub-ring" cx="180" cy="44" r="60" />
+            <circle class="ub-ring" cx="180" cy="44" r="40" />
+            <circle class="ub-disc" cx="180" cy="44" r="22" />
+            <path class="ub-arrow" d="M180 54.5V33.5M171 42.5l9-9 9 9" />
+          </svg>
+        </div>
         <div class="ub-body">
           <div class="ub-title">{{ t("update.panelTitle", { version: updateState.version }) }}</div>
           <ul v-if="notes.length" class="ub-notes">
@@ -230,7 +242,7 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
-/* Unscoped: the bubble is teleported to <body>. MCode draws no hero art above it. */
+/* Unscoped: the bubble is teleported to <body>. */
 .update-bubble {
   position: fixed;
   z-index: 140;
@@ -243,6 +255,65 @@ onBeforeUnmount(() => {
   border: 0;
   border-radius: 20px;
   box-shadow: var(--shadow-overlay);
+}
+
+/* MiMo's 87px hero band across the top; the art is MCode's own. */
+.update-bubble .ub-hero {
+  display: grid;
+  place-items: center;
+  height: 87px;
+  overflow: hidden;
+  background: #eef4ff;
+}
+
+.update-bubble .ub-art {
+  display: block;
+  flex: none;
+}
+
+.update-bubble .ub-ring {
+  stroke: #0077fa;
+  stroke-opacity: 0.16;
+  stroke-width: 1.5;
+}
+
+.update-bubble .ub-disc {
+  fill: #0077fa;
+}
+
+.update-bubble .ub-arrow {
+  stroke: #fff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+:root[data-theme="dark"] .update-bubble .ub-hero {
+  background: #1b2230;
+}
+
+:root[data-theme="dark"] .update-bubble .ub-ring {
+  stroke: #6ea8fe;
+  stroke-opacity: 0.24;
+}
+
+:root[data-theme="dark"] .update-bubble .ub-disc {
+  fill: #2f6fed;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .update-bubble .ub-hero {
+    background: #1b2230;
+  }
+
+  :root:not([data-theme="light"]) .update-bubble .ub-ring {
+    stroke: #6ea8fe;
+    stroke-opacity: 0.24;
+  }
+
+  :root:not([data-theme="light"]) .update-bubble .ub-disc {
+    fill: #2f6fed;
+  }
 }
 
 .update-bubble .ub-body {
