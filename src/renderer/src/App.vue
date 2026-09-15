@@ -1276,7 +1276,7 @@ async function newSessionIn(directory: string) {
  * one picked. No conversation is made.
  */
 async function browse() {
-  const directories = await window.mcode.pickDirectory(t("cmd.openProject"), true)
+  const directories = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), true)
   if (!directories.length) return
   await addAndBrowse(directories)
 }

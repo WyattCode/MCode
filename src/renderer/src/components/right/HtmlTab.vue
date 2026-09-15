@@ -9,8 +9,10 @@ import { fileManagerName } from "../../lib/path-open"
 import { annotationId, annotationRequest, requestAnnotation, type AnnotationRequest } from "../../lib/annotate"
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { aiTouch, aiWrite, normalPath } from "../../lib/ai-touch"
-import { notify, notifyFailure } from "../../lib/toast"
+import { dismiss, notify, notifyFailure, toastID } from "../../lib/toast"
 import { t } from "../../lib/i18n"
+import { useAnnotations } from "../../stores/annotations"
+import { ANNOTATION_LIMIT } from "@shared/annotations"
 import LucideIcon from "../LucideIcon.vue"
 import VersionHistory from "./VersionHistory.vue"
 
@@ -154,6 +156,27 @@ async function sendNow(note: Annotation) {
   if (!result.ok && result.reason) notifyFailure(result.reason)
 }
 
+const annotations = useAnnotations()
+/* Notes the box handed straight to sendNow, which it never adds to the box. */
+const sentAtOnce = new Set<string>()
+
+/*
+ * MiMo's page tab: stashing a note the box refuses at the limit says
+ * 批注数量已达上限. The box adds synchronously after make, so by the next
+ * microtask a stashed note is either in the store or was refused. MiMo's one
+ * notice slot leaves the page's words over the box's own limit notice.
+ */
+function sayIfRefused(note: Annotation) {
+  queueMicrotask(() => {
+    if (sentAtOnce.delete(note.id)) return
+    if (Object.values(annotations.byScope).some((list) => list.some((item) => item.id === note.id))) return
+    dismiss(toastID("danger", t("composer.annotationLimit", { max: ANNOTATION_LIMIT })))
+    notifyFailure(t("html.annotateFull"))
+    // MiMo closes the box either way; the pick stays outlined in the page.
+    dropBox()
+  })
+}
+
 function openBox(picked: Picked) {
   const box = frame.value?.getBoundingClientRect()
   if (!box) return
@@ -163,9 +186,14 @@ function openBox(picked: Picked) {
     make: (comment) => {
       lastComment = comment.trim()
       void ensureVersions()
-      return buildNote(picked, comment)
+      const note = buildNote(picked, comment)
+      sayIfRefused(note)
+      return note
     },
-    sendNow: (note) => void sendNow(note),
+    sendNow: (note) => {
+      sentAtOnce.add(note.id)
+      void sendNow(note)
+    },
     onClose: () => post({ type: "clearSel" }),
   }
   ownRequest = request

@@ -25,6 +25,7 @@ import { searchMessages } from "./search"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
+import { pullRequestState } from "./pull-request"
 import { AnthropicAdapter } from "./provider/anthropic"
 import { OpenAICompatible } from "./provider/openai"
 import { ChatGPTSubscription } from "./provider/chatgpt"
@@ -1023,6 +1024,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "git.push":
       return (await git.push(request.directory)) satisfies Handled<"git.push">
+
+    case "git.pullRequest":
+      return (await pullRequestState(request.directory)) satisfies Handled<"git.pullRequest">
 
     case "git.commitMessage": {
       const paths = request.paths.filter((entry) => typeof entry === "string")

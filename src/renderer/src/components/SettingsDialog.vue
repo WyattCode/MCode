@@ -564,7 +564,7 @@ const envDirty = computed(
 )
 
 async function addProject() {
-  const [directory] = await window.mcode.pickDirectory(t("set.addProject"), false)
+  const [directory] = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), false)
   if (!directory) return
   // MiMo's add with activate off: listed, nothing opened, no conversation made.
   await app.addProject(directory, { switched: false })
@@ -1360,7 +1360,7 @@ function toggleAutoApproveAll() {
 }
 
 async function pickDirectory() {
-  const [directory] = await window.mcode.pickDirectory(t("cmd.openProject"))
+  const [directory] = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"))
   if (directory) await app.patchConfig({ directory })
 }
 

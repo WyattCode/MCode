@@ -29,6 +29,9 @@ const api = {
   directoriesOf: (paths: string[]): Promise<string[]> => ipcRenderer.invoke("mcode:directories-of", paths),
   pickDirectory: (title: string, multiple = false): Promise<string[]> =>
     ipcRenderer.invoke("mcode:pick-directory", title, multiple),
+  /** MiMo's 选择或新建项目文件夹: the same dialog, opening at the default project location. */
+  pickProjectFolder: (title: string, multiple = false): Promise<string[]> =>
+    ipcRenderer.invoke("mcode:pick-directory", title, multiple, true),
   saveText: (suggested: string, text: string): Promise<string | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
 
