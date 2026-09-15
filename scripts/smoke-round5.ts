@@ -399,4 +399,56 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.close()
     }
   }
+
+  section("Round 5: auto-continue after truncated, empty or text-form tool-call output (E12)")
+  {
+    const e = await engine()
+    const quiet = (finish: string): Reply => (response) => {
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.end(frame({ choices: [{ delta: {}, finish_reason: finish }], usage: { prompt_tokens: 1, completion_tokens: 0 } }) + "data: [DONE]\n\n")
+    }
+    const turn = async (text: string) => {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      const from = e.bodies.length
+      await e.runner.prompt({ sessionID: session.id, text })
+      await e.idle(session.id)
+      return { sent: e.bodies.slice(from), last: (await e.assistants(session.id)).at(-1), all: await e.assistants(session.id) }
+    }
+    try {
+      e.replies.push(say("first half", "length"))
+      let run = await turn("LENGTH once")
+      check(
+        "a reply cut at the output limit is continued, with a note after it",
+        run.sent.length === 2 && wireText(run.sent[1]).includes("reached the output limit") && run.last?.finish === "end_turn",
+        { requests: run.sent.length, finish: run.last?.finish },
+      )
+      check("the note is in the request only", run.all.length === 2 && !(await e.store.messages(run.all[0]!.sessionID)).some((m) => m.role === "user" && m.text.includes("output limit")))
+
+      e.replies.push(say("1", "length"), say("2", "length"), say("3", "length"), say("4", "length"))
+      run = await turn("LENGTH four")
+      check("three continuations, then the step ends on the output limit", run.sent.length === 4 && run.last?.finish === "max_tokens" && run.last.errorCode === "error.outputLength", { requests: run.sent.length, last: run.last })
+
+      e.replies.push(say('<function_calls><invoke name="read"><parameter name="path">a.ts</parameter></invoke></function_calls>', "tool_calls"))
+      run = await turn("TEXT TOOL")
+      check(
+        "tool calls written as prose are asked for again as real calls",
+        run.sent.length === 2 && wireText(run.sent[1]).includes("real tool call") && run.all[0]?.error !== undefined && run.last?.finish === "end_turn",
+        { requests: run.sent.length, first: run.all[0]?.error, finish: run.last?.finish },
+      )
+
+      e.replies.push(quiet("stop"))
+      run = await turn("EMPTY once")
+      check("an empty reply is asked to answer", run.sent.length === 2 && wireText(run.sent[1]).includes("no answer and no tool call") && run.last?.finish === "end_turn", { requests: run.sent.length, finish: run.last?.finish })
+
+      e.replies.push(quiet("stop"), quiet("stop"), quiet("stop"))
+      run = await turn("EMPTY thrice")
+      check("twice, then it ends as no usable output", run.sent.length === 3 && run.last?.finish === "error" && run.last.errorCode === "error.emptyOutput", { requests: run.sent.length, last: run.last })
+
+      e.replies.push(say("", "content_filter"))
+      run = await turn("FILTERED")
+      check("a content-filter finish ends the turn in error", run.sent.length === 1 && run.last?.finish === "refusal" && String(run.last.error).includes("content filter"), run.last)
+    } finally {
+      await e.close()
+    }
+  }
 }

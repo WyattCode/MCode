@@ -51,7 +51,7 @@ import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, frameSteered, repeatsCall, withSameStepsNote } from "./reminders"
+import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -1423,6 +1423,9 @@ export class SessionRunner {
      * worked out, and says so in red.
      */
     const limit = config.maxSteps && config.maxSteps > 0 ? config.maxSteps : undefined
+    /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
+    const notes = new Map<string, string[]>()
+    const continued = { length: 0, textTool: 0, empty: 0 }
     for (let step = 0; ; step++) {
       if (controller.signal.aborted) return
       // The reference's `isLastStep`: no tools, and an instruction to write.
@@ -1441,8 +1444,9 @@ export class SessionRunner {
       // session chat: a message from another conversation says so, in the request only.
       const chatted = withChatHeaders(this.contextFor(session, stored))
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
-      // and three identical steps in a row bring a note to change approach.
-      const history = withSameStepsNote(step > 0 ? frameSteered(chatted) : chatted)
+      // this turn's continuation notes follow the replies they answer; and three identical steps
+      // in a row bring a note to change approach.
+      const history = withSameStepsNote(withNotes(step > 0 ? frameSteered(chatted) : chatted, notes))
 
       const effort = session.effort ?? config.effort
 
@@ -1593,7 +1597,10 @@ export class SessionRunner {
 
       if (outcome.stop === "refusal") {
         assistant.finish = "refusal"
-        assistant.error = "The model declined to continue with this request."
+        assistant.error =
+          outcome.finishReason === "content_filter"
+            ? "The provider's content filter stopped this reply."
+            : "The model declined to continue with this request."
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
         return
@@ -1601,9 +1608,19 @@ export class SessionRunner {
 
       const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
-        assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : "end_turn"
+        const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued)
+        if (next.note) notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), next.note])
+        if (next.error) {
+          assistant.error = next.error.message
+          if (next.error.code) assistant.errorCode = next.error.code
+        }
+        assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error ? "error" : "end_turn"
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
+        if (next.note && !lastStep) {
+          if (overflowing) session = await this.compactQuietly(session, controller.signal)
+          continue
+        }
         /*
          * The model has stopped, but the user may have typed while it was
          * writing. Read with nothing awaited after the save above, so that a

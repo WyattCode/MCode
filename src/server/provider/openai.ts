@@ -310,9 +310,11 @@ export const OpenAICompatible: ProviderAdapter = {
       }))
 
     return {
-      stop: toolCalls.length ? "tool_use" : finish === "length" ? "max_tokens" : "end_turn",
+      // A content filter ending the reply is a refusal, as MiMo's ContentFilterError is.
+      stop: toolCalls.length ? "tool_use" : finish === "length" ? "max_tokens" : finish === "content_filter" ? "refusal" : "end_turn",
       toolCalls,
       usage: { ...usage, cost: 0 },
+      ...(finish ? { finishReason: finish } : {}),
     }
   },
 }

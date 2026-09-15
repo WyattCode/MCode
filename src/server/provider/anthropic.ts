@@ -276,7 +276,7 @@ export const AnthropicAdapter: ProviderAdapter = {
             ? "tool_use"
             : "end_turn"
 
-    return { stop, toolCalls, usage: usageFrom(final.usage) }
+    return { stop, toolCalls, usage: usageFrom(final.usage), ...(final.stop_reason ? { finishReason: final.stop_reason } : {}) }
   },
 }
 

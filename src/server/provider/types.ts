@@ -31,6 +31,8 @@ export interface TurnOutcome {
   stop: "end_turn" | "tool_use" | "max_tokens" | "refusal"
   toolCalls: ToolCall[]
   usage: Usage
+  /** The provider's own finish reason, as it said it: MiMo tells a tool-call finish with no call apart from a plain one. */
+  finishReason?: string
 }
 
 export interface TurnRequest {
