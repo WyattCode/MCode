@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { randomUUID } from "node:crypto"
 import type { SessionInfo } from "@shared/protocol"
+import { scheduledPromptText } from "@shared/scheduled"
 import { JITTER, clampLoopDelay, oneShotFireAt, recurringFireAt } from "./expr"
 import { cronFile, missedTasks, readCronTasks, writeCronTasks, type CronTask } from "./tasks"
 
@@ -50,9 +51,9 @@ interface Durable {
 
 export const newTaskID = () => randomUUID().replace(/-/g, "").slice(0, 8)
 
-/** What a fired prompt reads as, in the transcript and to the model. */
+/** What a fired prompt reads as, in the transcript and to the model; the window recognises it by the same words. */
 export function firedText(task: CronTask, at: number): string {
-  return `[Scheduled ${task.kind ?? "cron"} ${task.id} · ${new Date(at).toISOString().replace(/\.\d{3}Z$/, "Z")}] ${task.prompt}`
+  return scheduledPromptText(task.kind ?? "cron", task.id, at, task.prompt)
 }
 
 export class CronScheduler {

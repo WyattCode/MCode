@@ -26,6 +26,7 @@ import { findModel, withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 import { readLegacyMessage } from "@shared/subagent"
+import { isScheduledPrompt } from "@shared/scheduled"
 import { returnFileNotices, takeFileNotices } from "../lib/file-notices"
 
 export const useApp = defineStore("app", () => {
@@ -557,6 +558,11 @@ export const useApp = defineStore("app", () => {
          */
         {
           const message = event.message
+          // cron, automation: a scheduled prompt starts a turn nobody sent from this window; it shows working, is timed and notifies like one.
+          if (message.role === "user" && !message.steered && !running.value.has(message.sessionID) && (message.inbox?.automationID || isScheduledPrompt(message.text))) {
+            running.value = new Set(running.value).add(message.sessionID)
+            turnStarted.set(message.sessionID, Date.now())
+          }
           if (message.role === "user" && message.notices?.length && !message.steered) noticeWoken.add(message.sessionID)
           else if (message.role === "assistant" && !message.finish && !message.time.completed && noticeWoken.delete(message.sessionID) && !running.value.has(message.sessionID)) {
             running.value = new Set(running.value).add(message.sessionID)

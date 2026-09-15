@@ -231,6 +231,7 @@ import type { ToolContext as HistoryToolContext } from "../src/server/tool/types
 import { nextOccurrence, parseRRule, scheduleLabel } from "../src/server/automation/rrule"
 import { AutomationService, notifies } from "../src/server/automation/service"
 import { AUTOMATION_RUN_NOTE, withAutomationNotes } from "../src/server/automation/framing"
+import { isScheduledPrompt } from "../src/shared/scheduled"
 import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/lib/convo-card"
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
@@ -7483,6 +7484,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
   busy.delete(alpha.id)
   await scheduler.tick()
   check("and fires into that conversation once it is idle, marked as scheduled", fired.length === 1 && fired[0]?.sessionID === alpha.id && fired[0]?.text === `[Scheduled cron ${every.id} · 2026-01-01T00:05:01Z] every five`, fired)
+  check("the window can tell a fired prompt from one someone typed", isScheduledPrompt(fired[0]?.text ?? "") && !isScheduledPrompt("[Scheduled cron abc] typed by hand") && !isScheduledPrompt("every five"))
   await scheduler.tick()
   check("one match fires once, and the next run is the following match", fired.length === 1 && (scheduler.dueAt(every.id) ?? 0) >= Date.UTC(2026, 0, 1, 0, 10) - 15_000)
   await scheduler.remove(every.id)
