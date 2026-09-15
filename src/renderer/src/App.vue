@@ -2233,6 +2233,12 @@ function goPlugins() {
   push({ view: "plugins" })
 }
 
+/* A conversation picked in the side column always shows it, even the current one sitting behind the artifacts page. */
+async function openFromSide(sessionID: string) {
+  view.value = "session"
+  if (app.currentID !== sessionID) await app.open(sessionID)
+}
+
 /** A file's session, opened from the artifacts page. */
 async function openFromArtifacts(sessionID: string) {
   view.value = "session"
@@ -4088,7 +4094,7 @@ onBeforeUnmount(() => {
         @toggle="leftPanel = !leftPanel"
         @browse="browse"
         @dropFolders="addDroppedProjects"
-        @open="app.open($event)"
+        @open="openFromSide"
         @rename="renameFromSide"
         @createIn="newSessionIn"
         @settings="openSettings"
