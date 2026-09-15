@@ -5,8 +5,11 @@ import { parseUnifiedDiff } from "@shared/unified-diff"
 import DiffView from "./DiffView.vue"
 import StepIcon from "./StepIcon.vue"
 import StepCollapse from "./StepCollapse.vue"
+import SubagentActivity from "./SubagentActivity.vue"
+import SubagentAvatar from "./SubagentAvatar.vue"
 import "./steps.css"
 import { t } from "../../lib/i18n"
+import { childFor, isPill } from "../../lib/subagents"
 import { useApp } from "../../stores/app"
 import { openStepPath } from "../../lib/open-step-path"
 import {
@@ -136,10 +139,18 @@ function toggle() {
   animate.value = true
   open.value = !open.value
 }
+
+/* subagents: a task call working or done is MiMo's pill; in any other state it is a row wearing the avatar. */
+const pill = computed(() => isPill(props.part))
+const avatarSeed = computed(() =>
+  props.part.name === "task" ? (childFor(props.part.callID, app.subagentSessions)?.subagent?.id ?? props.part.callID) : undefined,
+)
 </script>
 
 <template>
+  <SubagentActivity v-if="pill" :parts="[part]" />
   <div
+    v-else
     class="hstep"
     :class="{ indent, single: summary }"
     :data-tool-part="part.id"
@@ -156,7 +167,10 @@ function toggle() {
         data-step-head
         @click="toggle"
       >
-        <span class="hs-ic"><StepIcon :name="icon" /></span>
+        <span class="hs-ic" :class="{ 'hs-ic-avatar': avatarSeed }">
+          <SubagentAvatar v-if="avatarSeed" :seed="avatarSeed" compact />
+          <StepIcon v-else :name="icon" />
+        </span>
         <span class="hs-text" :class="{ 'running-shimmer': state === 'running' }">
           <span class="hs-verb" :class="{ 'hs-err': state === 'error', 'hs-struck': state === 'skipped' }" data-step-verb>{{ verb }}</span>
           <span v-if="bash" class="hs-bash-desc" :class="{ 'hs-struck': state === 'skipped' }" data-step-title>{{ bash.desc || bash.cmd }}</span>

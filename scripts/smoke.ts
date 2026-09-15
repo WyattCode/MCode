@@ -145,6 +145,14 @@ import { originTransform } from "../src/renderer/src/lib/image-preview"
 import { dismiss, notice, notify, notifyFailure, toastID, toastTitle, toasts, zoomNotice } from "../src/renderer/src/lib/toast"
 import { t as translate } from "../src/renderer/src/lib/i18n"
 import { LINGER as SCROLLBAR_LINGER } from "../src/renderer/src/lib/scrollbars"
+// subagents: the task tool driven through the real runner over a fake provider, and the pure pieces the window uses.
+import { Storage as SubagentStorage } from "../src/server/storage"
+import { Config as SubagentConfig } from "../src/server/config"
+import { SessionStore as SubagentStore } from "../src/server/session/store"
+import { SessionRunner as SubagentRunner } from "../src/server/session/runner"
+import { reachOf } from "../src/server/tool/registry"
+import { subagentAnswer, subagentOutput, subagentTone } from "../src/shared/subagent"
+import { COMPLETED_CAP, isPill, pillStatus, subagentItems, subagentTime } from "../src/renderer/src/lib/subagents"
 import {
   WINDOW_MIN,
   badgeCount,
@@ -4755,8 +4763,254 @@ async function main() {
   check("on macOS it names ⌘0", zoomNotice(80, "darwin").includes("⌘0"))
   check("a scrollbar stays coloured 500ms after the last scroll", SCROLLBAR_LINGER === 500, SCROLLBAR_LINGER)
 
+  await subagentChecks(root, project)
+
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/**
+ * subagents: the task tool through the real runner, store, permissions and
+ * provider adapter, with the provider played by a local server.
+ *
+ * The fake tells a subagent's request from its parent's by the note a subagent
+ * is given, and reads its orders from the subagent's prompt: `ANSWER:x` replies
+ * x, `SLOW` streams until it is stopped, `PERM` runs a command that has to be
+ * approved. A parent asks for whatever calls `parentCalls` holds, then replies.
+ */
+async function subagentChecks(root: string, project: string) {
+  section("Subagents (task tool)")
+
+  // Pure pieces first.
+  check("a numbered general subagent takes its own tone", subagentTone("general-1") === 0 && subagentTone("general-6") === 5)
+  check("any other name hashes onto one of six tones", [..."abcdefgh"].every((c) => subagentTone(`explore-${c}`) >= 0 && subagentTone(`explore-${c}`) < 6))
+  check("the answer comes back out of the call's output", subagentAnswer(subagentOutput("ses_1", "  the answer\n")) === "the answer")
+  check("task is recorded through its subagent's own calls", reachOf("task") === "reads")
+  const partOf = (status: ToolPart["status"], extra: Partial<ToolPart> = {}): ToolPart => ({
+    type: "tool",
+    id: `p-${Math.random()}`,
+    callID: `c-${Math.random()}`,
+    name: "task",
+    status,
+    input: { description: "Look around", prompt: "x", subagent_type: "explore" },
+    time: { created: 1000, started: 1000, completed: status === "running" ? undefined : 5000 },
+    ...extra,
+  })
+  check("a working or finished task call is a pill", isPill(partOf("running")) && isPill(partOf("completed")))
+  check("a failed task call is an ordinary row", !isPill(partOf("error")))
+  check("a task call Stop cut off stays a row even once settled as done", !isPill(partOf("completed", { metadata: { aborted: true } })))
+  check("pills read 开始工作 until every one is done", pillStatus([partOf("completed"), partOf("running")]) === "started" && pillStatus([partOf("completed")]) === "completed")
+  const aborted = partOf("error", { metadata: { aborted: true }, error: "The subagent was stopped before it finished." })
+  const skipped = partOf("error", { metadata: { recoverable: true } })
+  const listed = subagentItems(
+    [
+      {
+        id: "a1",
+        sessionID: "s",
+        role: "assistant",
+        model: { provider: "p", model: "m" },
+        agent: "build",
+        parts: [partOf("completed", { output: subagentOutput("x", "done") }), partOf("running"), aborted, skipped],
+        time: { created: 1 },
+      },
+    ],
+    [],
+  )
+  check("the tab lists working subagents first and leaves out calls that started nothing", listed.length === 3 && listed[0]?.status === "running", listed.map((item) => item.status))
+  check("a stopped subagent reads as cancelled", listed.some((item) => item.status === "rejected"))
+  check("a finished subagent's summary is its answer", listed.find((item) => item.status === "completed")?.summary === "done")
+  check("the seconds column counts from the start", subagentTime({ ...listed[0]!, startedAt: 1000 }, 13_500).count === 12)
+  check("an ended subagent reads minutes ago", subagentTime({ ...listed[1]!, endedAt: 0 }, 5 * 60_000).key === "subagents.minutesAgo")
+  check("the completed group shows ten at first", COMPLETED_CAP === 10)
+  check(
+    "a subagent's request joins its parent's dock",
+    confirmQueue("parent", [{ id: "r1", sessionID: "child", messageID: "m", callID: "c", kind: "bash", title: "", subject: "ls", time: 1 }], [], (id) =>
+      id === "child" || id === "parent",
+    ).length === 1,
+  )
+
+  // The runner over a fake provider.
+  let parentCalls: Record<string, unknown>[] = []
+  const childTools: string[][] = []
+  const childSpans: { prompt: string; start: number; end: number }[] = []
+  const parentBodies: string[] = []
+  let callCount = 0
+  const provider = createServer((request, response) => {
+    let body = ""
+    request.on("data", (chunk) => (body += chunk))
+    request.on("end", async () => {
+      const asked = JSON.parse(body || "{}") as { messages?: { role: string; content?: unknown }[]; tools?: { function?: { name?: string } }[] }
+      const system = JSON.stringify(asked.messages?.find((message) => message.role === "system")?.content ?? "")
+      const answered = (asked.messages ?? []).some((message) => message.role === "tool")
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      let closed = false
+      response.on("close", () => (closed = true))
+      const say = async (text: string, pause = 0) => {
+        if (pause) await new Promise((resolve) => setTimeout(resolve, pause))
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`)
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })}\n\n`)
+        response.write("data: [DONE]\n\n")
+        response.end()
+      }
+      const call = (calls: { name: string; input: Record<string, unknown> }[]) => {
+        calls.forEach((entry, index) => {
+          const frame = { choices: [{ delta: { tool_calls: [{ index, id: `call_sub_${++callCount}`, type: "function", function: { name: entry.name, arguments: JSON.stringify(entry.input) } }] } }] }
+          response.write(`data: ${JSON.stringify(frame)}\n\n`)
+        })
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })}\n\n`)
+        response.write("data: [DONE]\n\n")
+        response.end()
+      }
+
+      if (!system.includes("Working as a subagent")) {
+        parentBodies.push(body)
+        if (answered || !parentCalls.length) return say("parent done")
+        return call(parentCalls.map((input) => ({ name: "task", input })))
+      }
+
+      childTools.push((asked.tools ?? []).map((tool) => tool.function?.name ?? ""))
+      const prompt = JSON.stringify((asked.messages ?? []).filter((message) => message.role === "user"))
+      if (prompt.includes("SLOW")) {
+        for (let at = 0; at < 100 && !closed; at++) {
+          response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "." } }] })}\n\n`)
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        if (!closed) await say("slow done")
+        return
+      }
+      if (prompt.includes("PERM")) {
+        if (answered) return say("perm done")
+        return call([{ name: "bash", input: { command: "echo subagent", description: "Say something" } }])
+      }
+      const found = /ANSWER:([a-z-]+)/.exec(prompt)
+      const span = { prompt: found?.[1] ?? "", start: Date.now(), end: 0 }
+      childSpans.push(span)
+      await new Promise((resolve) => setTimeout(resolve, prompt.includes("DELAY") ? 400 : 5))
+      span.end = Date.now()
+      return say(found?.[1] ?? "no orders")
+    })
+  })
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", () => resolve()))
+  const port = (provider.address() as { port: number }).port
+
+  const data = path.join(root, "subagent-data")
+  const storage = new SubagentStorage(path.join(data, "storage"))
+  const bus = new Bus()
+  const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  await config.load()
+  await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
+  await config.setApiKey("fake", "k")
+  const permissions = new Permissions(bus, config)
+  const store = new SubagentStore(storage, bus)
+  const runner = new SubagentRunner(store, bus, config, permissions, { accessToken: async () => undefined } as never, storage)
+  const model = { provider: "fake", model: "m" }
+
+  const settled = (sessionID: string, quiet = 300) =>
+    new Promise<void>((resolve) => {
+      const deadline = Date.now() + 20_000
+      const look = () => {
+        if (runner.busySessions().includes(sessionID) && Date.now() < deadline) return void setTimeout(look, 25)
+        setTimeout(() => (runner.busySessions().includes(sessionID) && Date.now() < deadline ? look() : resolve()), quiet)
+      }
+      setTimeout(look, 25)
+    })
+  const until = async (test: () => boolean | Promise<boolean>, ms = 10_000) => {
+    const deadline = Date.now() + ms
+    while (Date.now() < deadline) {
+      if (await test()) return true
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    return false
+  }
+  const taskParts = async (sessionID: string) =>
+    (await store.messages(sessionID)).flatMap((message) =>
+      message.role === "assistant" ? message.parts.filter((part): part is ToolPart => part.type === "tool" && part.name === "task") : [],
+    )
+  const childrenOf = async (sessionID: string) => (await store.list()).filter((session) => session.parentID === sessionID)
+
+  // One subagent: its own conversation, and its answer as the call's result.
+  parentCalls = [{ description: "Find the answer", prompt: "ANSWER:forty-two", subagent_type: "explore" }]
+  const one = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: one.id, text: "delegate this" })
+  await settled(one.id)
+  const [onePart] = await taskParts(one.id)
+  const [oneChild] = await childrenOf(one.id)
+  check("a task call starts a subagent linked to its message and call", Boolean(oneChild) && oneChild?.parentCallID === onePart?.callID && oneChild?.parentMessageID !== undefined, oneChild)
+  check("it is named by kind and number, and titled by the description", oneChild?.subagent?.id === "explore-1" && oneChild?.title === "Find the answer", oneChild?.subagent)
+  check("an explore subagent works as Plan", oneChild?.agent === "plan", oneChild?.agent)
+  const childMessages = oneChild ? await store.messages(oneChild.id) : []
+  check("the subagent keeps its own history", childMessages[0]?.role === "user" && childMessages[0].text === "ANSWER:forty-two" && childMessages.some((message) => message.role === "assistant"))
+  check("its final message returns as the call's result", onePart?.status === "completed" && subagentAnswer(onePart.output) === "forty-two", onePart?.output)
+  check("the parent's model reads the result and replies", (await store.messages(one.id)).some((message) => message.role === "assistant" && message.parts.some((part) => part.type === "text" && part.text === "parent done")))
+  check("a subagent is offered no task tool of its own", childTools.length > 0 && childTools.every((names) => !names.includes("task")), childTools)
+  check("no subagent is left running", !oneChild || !runner.busySessions().includes(oneChild.id))
+  const hits = await searchMessages(await store.list(), (id) => store.messages(id), "forty-two")
+  check("search leaves a subagent's conversation out", !hits.some((hit) => hit.sessionID === oneChild?.id), hits)
+
+  // Two in one reply run side by side.
+  parentCalls = [
+    { description: "First", prompt: "ANSWER:one DELAY", subagent_type: "general" },
+    { description: "Second", prompt: "ANSWER:two DELAY", subagent_type: "general" },
+  ]
+  childSpans.length = 0
+  const two = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: two.id, text: "two at once" })
+  await settled(two.id)
+  const [first, second] = childSpans
+  check("two task calls in one reply run at the same time", Boolean(first && second) && first!.start < second!.end && second!.start < first!.end, childSpans)
+  const twoParts = await taskParts(two.id)
+  check("each returns its own answer", twoParts.map((part) => subagentAnswer(part.output)).sort().join(",") === "one,two", twoParts.map((part) => part.output))
+  const twoNames = (await childrenOf(two.id)).map((session) => session.subagent?.id).sort()
+  check("parallel subagents get different numbers", twoNames.join(",") === "general-1,general-2", twoNames)
+
+  // Stop on the parent stops the subagent.
+  parentCalls = [{ description: "Take a while", prompt: "SLOW", subagent_type: "explore" }]
+  const three = await store.create({ directory: project, model })
+  const requestsBefore = childTools.length
+  await runner.prompt({ sessionID: three.id, text: "slow work" })
+  const startedChild = await until(async () => (await childrenOf(three.id)).some((session) => runner.busySessions().includes(session.id)))
+  check("the subagent is listed as running while it works", startedChild)
+  // Stopped once its reply is streaming, so there is a reply to mark stopped.
+  await until(() => childTools.length > requestsBefore)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  runner.abort(three.id)
+  await settled(three.id)
+  const [threeChild] = await childrenOf(three.id)
+  const [threePart] = await taskParts(three.id)
+  check("Stop on the parent stops its subagent", Boolean(threeChild) && !runner.busySessions().includes(threeChild!.id))
+  const threeLast = threeChild ? (await store.messages(threeChild.id)).filter((message) => message.role === "assistant").at(-1) : undefined
+  check("the subagent's turn is recorded as stopped", threeLast?.role === "assistant" && threeLast.finish === "aborted", threeLast)
+  check("the task call settles as stopped", threePart?.status === "error" && threePart.metadata?.aborted === true, threePart)
+
+  // A subagent's permission reaches the queue.
+  parentCalls = [{ description: "Run a command", prompt: "PERM", subagent_type: "general" }]
+  const four = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: four.id, text: "needs approval" })
+  const asked = await until(() => permissions.outstanding().length > 0)
+  const request = permissions.outstanding()[0]
+  const asker = request ? await store.get(request.sessionID) : undefined
+  check("a subagent's permission request reaches the queue", asked && asker?.parentID === four.id, request)
+  if (request) permissions.respond(request.id, "once")
+  await settled(four.id)
+  const [fourPart] = await taskParts(four.id)
+  check("once answered, the subagent finishes and its result returns", fourPart?.status === "completed" && subagentAnswer(fourPart.output) === "perm done", fourPart?.output)
+
+  // A command marked subtask.
+  parentBodies.length = 0
+  const five = await store.create({ directory: project, model })
+  await runner.subtask({ sessionID: five.id, text: "/review src", description: "Review", prompt: "ANSWER:reviewed", type: "general" })
+  await settled(five.id)
+  const fiveMessages = await store.messages(five.id)
+  const [fivePart] = await taskParts(five.id)
+  check("a subtask command keeps the line as typed", fiveMessages[0]?.role === "user" && fiveMessages[0].text === "/review src")
+  check("its subagent works first and its answer returns", fivePart?.status === "completed" && subagentAnswer(fivePart.output) === "reviewed", fivePart)
+  check(
+    "then the conversation's model is asked to pass it on",
+    parentBodies.some((body) => body.includes("A subagent has just carried out the command")) &&
+      fiveMessages.some((message) => message.role === "assistant" && message.parts.some((part) => part.type === "text" && part.text === "parent done")),
+  )
+
+  await new Promise<void>((resolve) => provider.close(() => resolve()))
 }
 
 async function exists(file: string) {

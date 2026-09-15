@@ -63,7 +63,16 @@ export const DOCUMENT_ICON = ["M9.5 2.5H4.5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h7a1 1 
 /* A web page tab's icon: a globe with its meridian and equator. */
 export const PAGE_ICON = ["M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11z", "M2.5 8h11", "M8 2.5c1.6 1.6 2.3 3.4 2.3 5.5S9.6 11.9 8 13.5C6.4 11.9 5.7 10.1 5.7 8S6.4 4.1 8 2.5z"]
 
+/* subagents: the 子智能体 tab's icon, two figures side by side. */
+export const SUBAGENTS_ICON = [
+  "M6 7.5a2 2 0 1 0 0-4 2 2 0 0 0 0 4z",
+  "M2.5 12.5c0-2 1.6-3.5 3.5-3.5s3.5 1.5 3.5 3.5",
+  "M11 7a1.7 1.7 0 1 0 0-3.4A1.7 1.7 0 0 0 11 7z",
+  "M10.6 9.1c1.7-.2 3 1.1 3 3",
+]
+
 export function iconOf(type: RightTabType): string[] {
+  if (type === "subagents") return SUBAGENTS_ICON
   if (type === "diff") return DIFF_ICON
   if (type === "office") return DOCUMENT_ICON
   if (type === "html") return PAGE_ICON

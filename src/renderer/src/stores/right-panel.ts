@@ -20,7 +20,8 @@ import { computed, ref } from "vue"
  */
 
 export type RightTool = "review" | "files" | "chat" | "browser" | "terminal"
-export type RightTabType = RightTool | "diff" | "office" | "html"
+/* subagents: MiMo's 子智能体 tab, opened from a subagent row rather than from the launcher. */
+export type RightTabType = RightTool | "diff" | "office" | "html" | "subagents"
 export type OfficeType = "xlsx" | "docx" | "pptx" | "pdf"
 
 export interface RightTab {
@@ -54,6 +55,8 @@ export interface RightTab {
   /** Web page: the .html file on show, and whether its edit mode (picking modules to annotate) is on. */
   htmlPath?: string
   htmlEdit?: boolean
+  /** subagents: the subagent whose transcript is on show, by its task call's id; absent for the overview. */
+  subagentKey?: string
 }
 
 interface Kept {
@@ -153,6 +156,17 @@ export const useRightPanel = defineStore("rightPanel", () => {
       return tabs.value.find((tab) => tab.id === found.id) ?? found
     }
     return add("html", { name, htmlPath: page.path, htmlEdit: false, origin: scope })
+  }
+
+  /** subagents: MiMo's openSubagents - the one 子智能体 tab, taken up again, on a subagent or on the overview. */
+  function openSubagents(key?: string): RightTab {
+    const found = tabs.value.find((tab) => tab.type === "subagents")
+    if (found) {
+      update(found.id, { subagentKey: key })
+      show(found.id)
+      return tabs.value.find((tab) => tab.id === found.id) ?? found
+    }
+    return add("subagents", { subagentKey: key })
   }
 
   function toggleHtmlEdit(id: string) {
@@ -278,6 +292,7 @@ export const useRightPanel = defineStore("rightPanel", () => {
     openTool,
     openOffice,
     openHtml,
+    openSubagents,
     toggleHtmlEdit,
     openDiff,
     toggleDiff,

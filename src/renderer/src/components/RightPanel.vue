@@ -12,6 +12,7 @@ import RpTerminal from "./right/RpTerminal.vue"
 import RpDiffTab from "./right/RpDiffTab.vue"
 import OfficeTab from "./right/OfficeTab.vue"
 import HtmlTab from "./right/HtmlTab.vue"
+import RpSubagents from "./right/RpSubagents.vue"
 import FloatingChat from "./right/FloatingChat.vue"
 import PaneBoundary from "./right/PaneBoundary.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
@@ -65,6 +66,8 @@ const tools = computed(() => LAUNCH_ORDER.filter((tool) => tool !== "browser" ||
 
 function title(tab: RightTab): string {
   if (tab.name) return tab.name
+  // subagents: the one 子智能体 tab, named as MiMo names it.
+  if (tab.type === "subagents") return t("launch.subagents")
   if (tab.type === "diff" || tab.type === "office" || tab.type === "html") return ""
   if (tab.type === "files") return t("rp.files.openFileTitle")
   const name = t(TOOL_INFO[tab.type].label)
@@ -387,6 +390,7 @@ defineExpose({
           <OfficeTab v-else-if="tab.type === 'office'" :tab="tab" :active="tab.id === rp.active && rp.open" />
           <HtmlTab v-else-if="tab.type === 'html'" :tab="tab" :active="tab.id === rp.active && rp.open" />
           <RpDiffTab v-else-if="tab.type === 'diff'" :diff="tab.diff ?? ''" />
+          <RpSubagents v-else-if="tab.type === 'subagents'" :tab="tab" :active="tab.id === rp.active && rp.open" />
         </PaneBoundary>
       </div>
     </div>

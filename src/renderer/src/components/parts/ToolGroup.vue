@@ -5,7 +5,9 @@ import PermissionRow from "./PermissionRow.vue"
 import ErrorStep from "./ErrorStep.vue"
 import StepIcon from "./StepIcon.vue"
 import StepCollapse from "./StepCollapse.vue"
+import SubagentActivity from "./SubagentActivity.vue"
 import "./steps.css"
+import { isPill } from "../../lib/subagents"
 import { t } from "../../lib/i18n"
 import { tn } from "../../lib/plural"
 import { stepsEpoch, stepsOpen } from "../../lib/steps"
@@ -33,6 +35,12 @@ const props = withDefaults(
 )
 
 const single = computed(() => singleTool(props.items))
+/* subagents: a run of task calls that are all working or done is one pill list, with no summary line, as MiMo merges them. */
+const pills = computed(() =>
+  props.items.length > 1 && props.items.every((item) => item.kind === "tool" && isPill(item.part))
+    ? props.items.flatMap((item) => (item.kind === "tool" ? [item.part] : []))
+    : undefined,
+)
 const firstTool = computed(() => props.items.find((item) => item.kind === "tool"))
 const icon = computed(() => toolIcon(firstTool.value?.kind === "tool" ? firstTool.value.part.name : ""))
 const running = computed(() => props.items.some((item) => item.kind === "tool" && stepState(item.part) === "running"))
@@ -69,7 +77,8 @@ function toggle() {
 </script>
 
 <template>
-  <ToolPart v-if="single" :part="single" summary :title-max="SINGLE_TITLE_MAX" />
+  <SubagentActivity v-if="pills" :parts="pills" />
+  <ToolPart v-else-if="single" :part="single" summary :title-max="SINGLE_TITLE_MAX" />
   <div v-else class="hs-group" data-step-group>
     <button type="button" class="hs-h hs-summary" :aria-expanded="open" data-group-head @click="toggle">
       <span class="hs-ic"><StepIcon :name="icon" /></span>

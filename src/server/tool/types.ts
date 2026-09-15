@@ -37,6 +37,18 @@ export interface ToolContext {
    * instead of once per call.
    */
   shell?: string
+  /**
+   * subagents: starts a subagent for this call and settles with its answer.
+   * Absent inside a subagent, which cannot start subagents of its own.
+   */
+  subagents?: (spec: SubagentSpec) => Promise<ToolResult>
+}
+
+/** subagents: what the task tool asks for. */
+export interface SubagentSpec {
+  description: string
+  prompt: string
+  type: "general" | "explore"
 }
 
 export interface ToolResult {

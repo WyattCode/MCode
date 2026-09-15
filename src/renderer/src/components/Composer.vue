@@ -965,8 +965,13 @@ async function submit() {
 
   const named = await mentionAttachments(value, carried, target)
 
+  // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
+  const subtask = props.side ? undefined : subtaskOf(value)
   // A rejected message should not cost the user what they typed, or gathered.
-  if (!(await app.send(withSkills(outgoing(value), chips), [...sent, ...named], target, pointed))) {
+  const accepted = subtask
+    ? await app.subtask(value, subtask)
+    : await app.send(withSkills(outgoing(value), chips), [...sent, ...named], target, pointed)
+  if (!accepted) {
     text.value = value
     attachments.value = sent
     mentioned.value = carried
@@ -1026,11 +1031,25 @@ async function compactFromBox(line: string) {
  * message rather than the slash line.
  *
  * NOT carried across, because `session.prompt` has nowhere to put them: a
- * command's `agent`, `model` and `subtask`. The reference runs the turn as
- * whichever agent and model the command names and can hand it to a subagent;
- * here it runs as whatever the session is already set to. That is a real gap
- * and it is reported rather than papered over.
+ * command's `agent` and `model`. The reference runs the turn as whichever
+ * agent and model the command names; here it runs as whatever the session is
+ * already set to. A command marked `subtask` does not come through here at all:
+ * see `subtaskOf`.
  */
+/**
+ * subagents: a command marked `subtask`, as MiMo runs one - its filled-in
+ * template goes to a subagent, named by the command's description, and the line
+ * as typed stays the user's message. Undefined for anything else.
+ */
+function subtaskOf(value: string): { description: string; prompt: string } | undefined {
+  const line = splitCommandLine(value)
+  const command = line && serverCommand(line.name)
+  if (!line || !command?.subtask) return undefined
+  const prompt = expandTemplate(command.template, line.args).trim()
+  if (!prompt) return undefined
+  return { description: command.description?.trim() || `/${command.name}`, prompt }
+}
+
 function outgoing(value: string): string {
   const line = splitCommandLine(value)
   const command = line && serverCommand(line.name)

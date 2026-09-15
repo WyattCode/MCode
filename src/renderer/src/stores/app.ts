@@ -94,10 +94,28 @@ export const useApp = defineStore("app", () => {
   const sideError = computed(() => (sideID.value ? sideErrors.value[sideID.value] : undefined))
   const side = computed(() => sideSessions.value.find((session) => session.id === sideID.value))
   const sideBusy = computed(() => (sideID.value ? running.value.has(sideID.value) : false))
-  const isSide = (sessionID: string) => sideSessions.value.some((session) => session.id === sessionID)
+  /*
+   * subagents: the subagents' own conversations. Like side chats, no list shows
+   * them; their transcripts load into the side transcripts by id, so the 子智能体
+   * tab draws one with the side chat's stream.
+   */
+  const subagentSessions = ref<SessionInfo[]>([])
+  const isSubagent = (sessionID: string) => subagentSessions.value.some((session) => session.id === sessionID)
+  /** subagents: the conversation a subagent works for, or the session itself; its questions queue there. */
+  function rootOf(sessionID: string): string {
+    let id = sessionID
+    for (let depth = 0; depth < 8; depth++) {
+      const parent = subagentSessions.value.find((session) => session.id === id)?.parentID
+      if (!parent) break
+      id = parent
+    }
+    return id
+  }
+  const isSide = (sessionID: string) => sideSessions.value.some((session) => session.id === sessionID) || isSubagent(sessionID)
   const sideMessagesOf = (sessionID?: string): Message[] => (sessionID ? sideTranscripts.value[sessionID] ?? [] : [])
   const sideErrorOf = (sessionID?: string) => (sessionID ? sideErrors.value[sessionID] : undefined)
-  const sideSessionOf = (sessionID?: string) => sideSessions.value.find((session) => session.id === sessionID)
+  const sideSessionOf = (sessionID?: string) =>
+    sideSessions.value.find((session) => session.id === sessionID) ?? subagentSessions.value.find((session) => session.id === sessionID)
   const sideBusyOf = (sessionID?: string) => (sessionID ? running.value.has(sessionID) : false)
   function sideStreamingOf(sessionID?: string): AssistantMessage | undefined {
     if (!sideBusyOf(sessionID)) return undefined
@@ -146,7 +164,9 @@ export const useApp = defineStore("app", () => {
   function groupPermissions(requests: PermissionRequest[]) {
     const grouped = new Map<string, PermissionRequest[]>()
     for (const request of [...requests].sort((a, b) => a.time - b.time)) {
-      grouped.set(request.sessionID, [...(grouped.get(request.sessionID) ?? []), request])
+      // subagents: a subagent's request waits with the conversation it works for.
+      const key = rootOf(request.sessionID)
+      grouped.set(key, [...(grouped.get(key) ?? []), request])
     }
     return grouped
   }
@@ -426,6 +446,15 @@ export const useApp = defineStore("app", () => {
   function apply(event: ServerEvent) {
     switch (event.type) {
       case "session.updated": {
+        // subagents: kept apart from every list; one that has just been made is already working.
+        if (event.session.parentID) {
+          const at = subagentSessions.value.findIndex((session) => session.id === event.session.id)
+          if (at === -1) {
+            subagentSessions.value.push(event.session)
+            if (Date.now() - event.session.created < 60_000) running.value = new Set(running.value).add(event.session.id)
+          } else subagentSessions.value[at] = event.session
+          break
+        }
         if (event.session.sideOf) {
           const at = sideSessions.value.findIndex((session) => session.id === event.session.id)
           if (at === -1) sideSessions.value.push(event.session)
@@ -439,6 +468,13 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.deleted": {
+        // subagents: goes with its transcript, and nothing else.
+        if (isSubagent(event.sessionID)) {
+          subagentSessions.value = subagentSessions.value.filter((session) => session.id !== event.sessionID)
+          if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
+          forgetSideTranscript(event.sessionID)
+          break
+        }
         if (sideSessions.value.some((session) => session.id === event.sessionID)) {
           sideSessions.value = sideSessions.value.filter((session) => session.id !== event.sessionID)
           if (sideID.value === event.sessionID) closeSide()
@@ -524,6 +560,11 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.idle": {
+        // subagents: its end is its parent's business; no chime, unread dot or history for it.
+        if (isSubagent(event.sessionID)) {
+          if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
+          break
+        }
         noteRunEnded(event.sessionID)
         endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
@@ -539,6 +580,12 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "session.error":
+        // subagents: shown in its own transcript in the 子智能体 tab, nowhere else.
+        if (isSubagent(event.sessionID)) {
+          if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
+          setSideError(event.sessionID, event.error)
+          break
+        }
         noteRunEnded(event.sessionID)
         endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
@@ -550,10 +597,12 @@ export const useApp = defineStore("app", () => {
         if (isSide(event.sessionID)) setSideError(event.sessionID, event.error)
         break
       case "permission.requested": {
-        const queue = pendingPermissions.value.get(event.request.sessionID) ?? []
+        // subagents: filed under the conversation a subagent works for, so its dock and its row show it.
+        const key = rootOf(event.request.sessionID)
+        const queue = pendingPermissions.value.get(key) ?? []
         if (queue.some((request) => request.id === event.request.id)) break
         const next = new Map(pendingPermissions.value)
-        next.set(event.request.sessionID, [...queue, event.request])
+        next.set(key, [...queue, event.request])
         pendingPermissions.value = next
         break
       }
@@ -702,7 +751,9 @@ export const useApp = defineStore("app", () => {
     config.value = (await instance.request({ type: "config.get" })).config
     providers.value = (await instance.request({ type: "provider.list" })).providers
     const listed = await instance.request({ type: "session.list" })
-    sessions.value = listed.sessions.filter((session) => !session.sideOf)
+    // subagents: listed apart from both, as their own conversations are.
+    subagentSessions.value = listed.sessions.filter((session) => session.parentID)
+    sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
     sideSessions.value = listed.sessions.filter((session) => session.sideOf)
     running.value = new Set(listed.running)
     clockTurns(listed.running)
@@ -839,7 +890,8 @@ export const useApp = defineStore("app", () => {
   async function resync() {
     try {
       const listed = await api().request({ type: "session.list" })
-      sessions.value = listed.sessions.filter((session) => !session.sideOf)
+      subagentSessions.value = listed.sessions.filter((session) => session.parentID)
+      sessions.value = listed.sessions.filter((session) => !session.sideOf && !session.parentID)
       sideSessions.value = listed.sessions.filter((session) => session.sideOf)
       running.value = new Set(listed.running)
       clockTurns(listed.running)
@@ -1602,6 +1654,38 @@ export const useApp = defineStore("app", () => {
     sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: result.messages }
   }
 
+  /** subagents: reads a subagent's transcript, for the 子智能体 tab; false when it could not be read. */
+  async function loadSubagent(sessionID: string): Promise<boolean> {
+    await loadSide(sessionID)
+    return Boolean(sideTranscripts.value[sessionID])
+  }
+
+  /**
+   * subagents: a slash command marked `subtask`, run as a subagent in the open
+   * conversation. The line as typed is the message; marked running before the
+   * request, as a send is, because the turn's first events can arrive first.
+   */
+  async function subtask(text: string, command: { description: string; prompt: string }): Promise<boolean> {
+    const target = currentID.value
+    if (!target) return false
+    error.value = undefined
+    noteError(target, undefined)
+    const joined = running.value.has(target)
+    running.value.add(target)
+    if (!joined) turnStarted.set(target, Date.now())
+    try {
+      await api().request({ type: "session.subtask", sessionID: target, text, description: command.description, prompt: command.prompt })
+      return true
+    } catch (err) {
+      if (!joined) {
+        running.value.delete(target)
+        turnStarted.delete(target)
+      }
+      error.value = err instanceof Error ? err.message : String(err)
+      return false
+    }
+  }
+
   /**
    * Shows a side conversation that already exists: the one a right panel chat
    * tab holds, coming back to it after another tab or another conversation.
@@ -1687,6 +1771,11 @@ export const useApp = defineStore("app", () => {
     streaming,
     side,
     sideID,
+    // subagents
+    subagentSessions,
+    rootOf,
+    loadSubagent,
+    subtask,
     sideMessages,
     sideBusy,
     sideStreaming,
