@@ -37,6 +37,9 @@ export interface RightTab {
   convoId?: string
   /** Browser: the main process's id for this tab's page. */
   pageId?: string
+  /** Browser: the page's favicon and title, which MiMo's tab draws in place of the globe and the tool's name. */
+  faviconUrl?: string
+  pageTitle?: string
   /** Terminal: the shell the backend holds for it, and whether anything was typed into it. */
   shellID?: string
   cwd?: string

@@ -1,6 +1,6 @@
 import { BrowserWindow, WebContentsView, clipboard, session } from "electron"
 import { addressToURL, safeURL } from "@shared/web-address"
-import { stepZoom } from "@shared/browser-page"
+import { pageFavicon, stepZoom } from "@shared/browser-page"
 import { wirePage } from "./browser-page"
 
 /**
@@ -45,6 +45,8 @@ export interface BrowserTab {
   title: string
   url: string
   loading: boolean
+  /** The icon the page names for itself, once it has: an http(s) address or an inline image. */
+  favicon?: string
 }
 
 export interface BrowserState {
@@ -65,6 +67,7 @@ interface Tab {
   id: string
   view: WebContentsView
   failure?: { code: number; url: string; description: string }
+  favicon?: string
 }
 
 interface Panel {
@@ -104,6 +107,7 @@ function describe(tab: Tab): BrowserTab {
     title: contents.getTitle(),
     url: contents.getURL(),
     loading: contents.isLoading(),
+    ...(tab.favicon ? { favicon: tab.favicon } : {}),
   }
 }
 
@@ -172,6 +176,19 @@ function makeTab(panel: Panel): Tab {
     if (!isMainFrame || code === -3) return
     // The name is kept too: MiMo sorts an error by its name as well as its number.
     tab.failure = { code, url, description }
+    panel.publish()
+  })
+  /*
+   * MiMo's tab face. The event hands over the addresses the page names; the
+   * window only ever gets one of the kinds its own policy lets an image load,
+   * and a page that commits forgets the last one's until it names its own.
+   */
+  contents.on("did-navigate", () => {
+    tab.favicon = undefined
+    panel.publish()
+  })
+  contents.on("page-favicon-updated", (_event, favicons) => {
+    tab.favicon = pageFavicon(favicons)
     panel.publish()
   })
   return tab

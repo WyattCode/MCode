@@ -73,8 +73,10 @@ import * as abcPlay from "../src/renderer/src/lib/abc-play"
 import {
   APP_CHORDS,
   barMode,
+  browserTabFace,
   loadErrorKind,
   localServerOf,
+  pageFavicon,
   pageKeyAction,
   pageMenuGroups,
   routeWindowOpen,
@@ -450,6 +452,12 @@ async function main() {
   // The reconnecting row's reason: one line, or nothing at all.
   check("a retry's reason is drawn on one line", retryReason("  overloaded\n  try later ") === "overloaded try later")
   check("a retry without a reason draws none", retryReason("") === undefined && retryReason(undefined) === undefined && retryReason(" \n ") === undefined)
+
+  // A browser tab's face: the page's favicon when the window may load it, and its title.
+  check("a favicon is the first http(s) or inline image address", pageFavicon(["file:///c:/x.ico", "javascript:1", "https://a.test/f.ico", "http://b.test/g.png"]) === "https://a.test/f.ico" && pageFavicon(["data:image/png;base64,AA"]) === "data:image/png;base64,AA")
+  check("a page naming no loadable favicon has none", pageFavicon(["data:text/html,x", 3, ""]) === undefined && pageFavicon([]) === undefined)
+  check("a browser tab is named by its page's title", browserTabFace({ url: "http://127.0.0.1:1/", title: " Probe \n page ", favicon: "http://127.0.0.1:1/f.png" }).pageTitle === "Probe page")
+  check("a blank browser tab keeps the globe and the tool's name", JSON.stringify(browserTabFace({ url: "about:blank", title: "about:blank", favicon: "https://a.test/f.ico" })) === "{}")
 
   // The right panel's tool hints follow the shortcuts page, and MiMo's narrow-window rule.
   const panelCommands = [
