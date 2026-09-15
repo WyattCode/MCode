@@ -177,6 +177,9 @@ const MAX_STEPS_PROMPT = [
  * each permission prompt is published as it happens so the UI can render a
  * turn while it is still running, and so an abort can land mid-tool.
  */
+/** Tools a subagent never gets: starting subagents, and talking to other conversations. */
+const SUBAGENT_WITHHELD = new Set(["task", "contacts", "talk_to_session", "create_session", "update_session"])
+
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
   /** Calls whose arguments arrived as text that could not be read, and why. */
@@ -1478,8 +1481,9 @@ export class SessionRunner {
                   },
                 ]
               : history,
-        // subagents: a subagent is never handed the task tool, so it cannot start subagents of its own.
-        tools: lastStep ? [] : this.tools(session.agent, session.model.model).filter((tool) => !session.parentID || tool.name !== "task"),
+        // subagents: a subagent is never handed the task tool, so it cannot start subagents of its own,
+        // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call.
+        tools: lastStep ? [] : this.tools(session.agent, session.model.model).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
         effort,
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,
