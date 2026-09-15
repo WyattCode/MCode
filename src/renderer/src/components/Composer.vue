@@ -11,6 +11,7 @@ import SlashPill from "./SlashPill.vue"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
@@ -882,6 +883,9 @@ async function openSkillMenu(event: Event) {
   panel.querySelector("input")?.focus()
 }
 
+/* Set while attached audio is being read before a send, so a second Enter does not start another. */
+let probingAudio = false
+
 async function submit() {
   const value = text.value.trim()
   if (mode.value === "shell") {
@@ -922,6 +926,27 @@ async function submit() {
   if (compactingHere.value) {
     notify(t("composer.compact.busy"))
     return
+  }
+  // MiMo reads each audio file first: one it cannot read, or one past its limit, stops the send and keeps the draft.
+  if (probingAudio) return
+  const audio = attachments.value.filter((file) => isAudioFile(file.path))
+  if (audio.length) {
+    probingAudio = true
+    try {
+      for (const file of audio) {
+        const verdict = audioVerdict(await probeAudio(file))
+        if (verdict === "unsupported") {
+          notifyFailure(t("composer.audioFormatUnsupported"))
+          return
+        }
+        if (verdict === "tooLong") {
+          notifyFailure(t("composer.audioTooLong", { minutes: limitMinutes() }))
+          return
+        }
+      }
+    } finally {
+      probingAudio = false
+    }
   }
   historyIndex.value = null
   const sent = attachments.value

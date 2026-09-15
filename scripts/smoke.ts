@@ -27,6 +27,7 @@ import { startBackend } from "../src/server/index"
 import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
 import { readTask, smartRoute } from "../src/shared/smart"
 import { chimeOf, longTask, migrateChime } from "../src/shared/chime"
+import { audioVerdict, isAudioFile, limitMinutes } from "../src/renderer/src/lib/audio-check"
 import { findInMessages, searchMessages, snippetAround } from "../src/server/search"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
@@ -494,6 +495,21 @@ async function main() {
       migrateChime("off") === "off" &&
       migrateChime("handpan") === "handpan" &&
       migrateChime("nonsense") === "bloom",
+  )
+
+  // R15: MiMo reads attached audio before a send; only a file it cannot read, or one past ten minutes, stops it.
+  check(
+    "only MiMo's six audio extensions are read before a send",
+    isAudioFile("C:/a/Voice.M4A") && isAudioFile("clip.flac") && !isAudioFile("clip.mp4") && !isAudioFile("notes.wav.txt"),
+  )
+  check(
+    "an unreadable clip stops the send, a clip past ten minutes stops it, anything else goes",
+    audioVerdict({ ok: false, unsupported: true }) === "unsupported" &&
+      audioVerdict({ ok: true, durationMs: 600_001 }) === "tooLong" &&
+      audioVerdict({ ok: true, durationMs: 600_000 }) === "ok" &&
+      audioVerdict({ ok: false, unsupported: false }) === "ok" &&
+      audioVerdict(undefined) === "ok" &&
+      limitMinutes() === 10,
   )
 
   /*
