@@ -149,10 +149,11 @@ watch(showingPage, (showing) => {
   if (!showing) annotating.value = false
 })
 
-/* Annotating is for a page; a blank tab has nothing to mark. */
-function toggleAnnotate() {
-  if (!showingPage.value) return
+/* Annotating is for a page; a blank tab has nothing to mark, and says so, so Ctrl+. can fall back. */
+function toggleAnnotate(): boolean {
+  if (!showingPage.value) return false
   annotating.value = !annotating.value
+  return true
 }
 
 /*
@@ -249,7 +250,10 @@ defineExpose({
     addressInput.value?.focus()
     addressInput.value?.select()
   },
-  reload: (force = false) => act(force ? "forceReload" : "reload"),
+  /* Its own page, even while another tab is on show (C25); a tab that never opened one has nothing to reload. */
+  reload: async (force = false) => {
+    if (props.pageId) apply(await window.mcode.browserAct(force ? "forceReload" : "reload", props.pageId))
+  },
   toggleAnnotate,
 })
 </script>

@@ -111,7 +111,7 @@ import {
 import { filterMenu } from "../src/renderer/src/lib/menu"
 import { arbitratePanel, boundChord, sideFits, toolHints } from "../src/renderer/src/lib/right-tools"
 import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
-import { capDiff, normalizeLayout, parseDiffFiles, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
+import { capDiff, normalizeLayout, parseDiffFiles, reviewRows, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
 import { interruptedTurn } from "../src/shared/resume"
 import { detectCodeLanguage, insertFence } from "../src/renderer/src/lib/paste-code"
@@ -4640,6 +4640,14 @@ async function main() {
   const firstHunk = twoFiles[0]?.hunks[0]?.lines ?? []
   check("lines carry both numbers", firstHunk[0]?.old === 1 && firstHunk[0]?.new === 1 && firstHunk[3]?.new === 2, firstHunk)
   check("a bare edit-tool patch is one file", parseDiffFiles("--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-a\n+b\n").length === 1)
+  const boxRows = reviewRows("--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/y.md b/y.md\nindex 1..2 100644\n--- a/y.md\n+++ b/y.md\n@@ -3 +3 @@\n-c\n+d\n")
+  check(
+    "the review box draws a second file's headers as neither removed nor added rows",
+    boxRows.map((row) => row.kind).join(",") === "hunk,del,add,hunk,del,add" &&
+      boxRows.every((row) => !row.text.startsWith("-- a/") && !row.text.startsWith("++ b/") && !row.text.startsWith("iff --git")) &&
+      boxRows[4]?.old === 3 && boxRows[5]?.new === 3,
+    boxRows,
+  )
   const sidePairs = splitRows(firstHunk)
   check(
     "side by side pairs removals with the additions after them",

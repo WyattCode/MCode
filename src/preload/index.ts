@@ -182,8 +182,9 @@ const api = {
     ipcRenderer.send("mcode:browser-bounds", bounds),
   browserClose: (): void => ipcRenderer.send("mcode:browser-close"),
   browserNavigate: (input: string) => ipcRenderer.invoke("mcode:browser-navigate", input),
-  browserAct: (what: "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset") =>
-    ipcRenderer.invoke("mcode:browser-act", what),
+  /** Acts on the open page, or on the page `id` names when given. */
+  browserAct: (what: "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset", id?: string) =>
+    ipcRenderer.invoke("mcode:browser-act", what, id),
   /** The open page onto the clipboard; false when there was nothing to take. */
   browserScreenshot: (): Promise<boolean> => ipcRenderer.invoke("mcode:browser-screenshot"),
   /** Clears the browser's cookies or its cache; resolves to "" or the reason it failed. */

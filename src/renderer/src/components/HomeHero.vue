@@ -196,7 +196,8 @@ async function createBlank(title: string, source?: string) {
     if (!made) return
     take(made.directory)
   } catch (err) {
-    notifyFailure(t("home.blankFailed"), err instanceof Error ? err.message : String(err))
+    // DL13: MiMo's one line, 「创建失败：{error}」.
+    notifyFailure(t("home.blankFailed", { error: err instanceof Error ? err.message : String(err) }))
   }
 }
 

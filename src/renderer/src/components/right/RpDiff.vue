@@ -1,54 +1,21 @@
 <script setup lang="ts">
 import { computed } from "vue"
-import RpDiffTab from "./RpDiffTab.vue"
+import { reviewRows } from "../../lib/diff-view"
 
 /**
  * MiMo's review diff: a framed box of rows, each with the line's number before
  * and after, its sign and its text. Added and removed rows are tinted with a
  * 3px bar down their start; a hunk's header is a row of its own that keeps the
- * two empty number cells.
- *
- * Without `review` this is the diff tab, which the panel still mounts by this
- * name: that view is RpDiffTab, drawn to reach past the panel pane's padding.
+ * two empty number cells. A patch of several files reads each hunk by its
+ * counts, so the next file's headers never show as changed lines.
  */
-const props = defineProps<{ diff: string; review?: boolean }>()
+const props = defineProps<{ diff: string }>()
 
-interface Row {
-  kind: "add" | "del" | "ctx" | "hunk"
-  old?: number
-  new?: number
-  sign: string
-  text: string
-}
-
-const rows = computed<Row[]>(() => {
-  if (!props.review) return []
-  const out: Row[] = []
-  let oldLine = 0
-  let newLine = 0
-  for (const line of props.diff.split("\n")) {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
-    if (hunk) {
-      oldLine = Number(hunk[1])
-      newLine = Number(hunk[2])
-      out.push({ kind: "hunk", sign: "", text: line })
-      continue
-    }
-    if (!out.length) continue
-    if (line.startsWith("\\")) continue
-    if (line.startsWith("+")) out.push({ kind: "add", new: newLine++, sign: "+", text: line.slice(1) })
-    else if (line.startsWith("-")) out.push({ kind: "del", old: oldLine++, sign: "-", text: line.slice(1) })
-    else if (line.startsWith("diff --git")) continue
-    else out.push({ kind: "ctx", old: oldLine++, new: newLine++, sign: " ", text: line.slice(1) })
-  }
-  // A trailing empty line is the patch's own last newline, not a line of the file.
-  if (out.length && out[out.length - 1].kind === "ctx" && out[out.length - 1].text === "") out.pop()
-  return out
-})
+const rows = computed(() => reviewRows(props.diff))
 </script>
 
 <template>
-  <div v-if="review" class="rp-diff" data-rp-diff>
+  <div class="rp-diff" data-rp-diff>
     <div v-for="(row, index) in rows" :key="index" class="row" :class="row.kind">
       <span class="num">{{ row.old ?? "" }}</span>
       <span class="num">{{ row.new ?? "" }}</span>
@@ -56,7 +23,6 @@ const rows = computed<Row[]>(() => {
       <span class="text">{{ row.text }}</span>
     </div>
   </div>
-  <RpDiffTab v-else :diff="diff" bleed />
 </template>
 
 <style scoped>

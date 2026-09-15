@@ -14,9 +14,9 @@ import { t } from "../../lib/i18n"
  *
  * The tab stays mounted while another tab is on show or the panel is put away,
  * as MiMo's does, so its transcript, scroll place and following survive, and a
- * reply keeps streaming into it. The conversation is made the first time the
- * tab is shown (or an empty one taken up again) and then read by id. The box
- * speaks for the store's one focused side chat, so only the tab on show has one.
+ * reply keeps streaming into it. Every tab keeps its own box, which speaks for
+ * that tab's conversation by id; a tab with none yet makes it on the first
+ * send, as MiMo's does, so an unused tab leaves no empty conversation behind.
  */
 const props = defineProps<{ convoId?: string; parentID?: string; active: boolean }>()
 const emit = defineEmits<{
@@ -30,26 +30,19 @@ const app = useApp()
 const rp = useRightPanel()
 
 const messages = computed(() => app.sideMessagesOf(props.convoId))
-/* Only once this tab's conversation is the focused one, or the box would send to another. */
-const boxed = computed(() => props.active && Boolean(props.convoId) && app.sideID === props.convoId)
 
-let opening = false
+/* Shown: focus and load this tab's conversation, if it has one yet. */
 async function take() {
-  if (!props.active) return
-  if (props.convoId) {
-    await app.showSide(props.convoId)
-    return
-  }
-  if (!props.parentID || opening) return
-  opening = true
-  try {
-    // Another chat tab's empty conversation is that tab's, not one to take up again.
-    const taken = rp.tabs.flatMap((tab) => (tab.type === "chat" && tab.convoId ? [tab.convoId] : []))
-    const id = await app.openSide(props.parentID, taken)
-    if (id) emit("created", id)
-  } finally {
-    opening = false
-  }
+  if (props.active && props.convoId) await app.showSide(props.convoId)
+}
+
+/* The box's first send in a tab with no conversation makes one; the message goes to it. */
+async function createOnSend() {
+  // Another chat tab's empty conversation is that tab's, not one to take up again.
+  const taken = rp.tabs.flatMap((tab) => (tab.type === "chat" && tab.convoId ? [tab.convoId] : []))
+  const id = props.parentID ? await app.openSide(props.parentID, taken) : undefined
+  if (id) emit("created", id)
+  return id
 }
 
 onMounted(() => {
@@ -71,9 +64,10 @@ watch(
     <MessageStream v-else class="rp-chat-stream" side :sideId="convoId" />
     <div class="rp-chat-dock">
       <Composer
-        v-if="boxed"
         side
         :resizable="false"
+        :sideId="convoId"
+        :createSide="convoId ? undefined : createOnSend"
         @open-settings="emit('open-settings', $event)"
         @connect="emit('connect')"
         @shell="emit('shell', $event)"

@@ -62,8 +62,7 @@ export const PAGE_ROWS: readonly PageRow[] = [
   { key: "copy-cwd", commands: ["app.copyDirectory"] },
   { key: "fork-chat", commands: ["session.fork"] },
   { key: "force-reload", commands: ["browser.forceReload"] },
-  // MCode's Ctrl+K command opens the same search overlay MiMo's 搜索 does.
-  { key: "search", commands: ["app.search", "command.palette"] },
+  { key: "search", commands: ["app.search"] },
   { key: "reload-page", commands: ["browser.reload"] },
   { key: "search-files", commands: ["app.openFile"] },
   { key: "show-shortcuts", commands: ["app.shortcuts"] },

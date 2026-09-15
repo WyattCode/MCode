@@ -91,11 +91,6 @@ defineExpose({
   /** Closes the focused shell, asking first if it was used; the drawer goes with the last one. */
   closeActive: () => requestClose(activeID.value),
   /**
-   * Open another shell. The drawer owns the tab strip, so the app cannot add
-   * one itself; it mounts the drawer and then asks.
-   */
-  add: () => add(),
-  /**
    * Runs a command in the terminal that is showing.
    *
    * The composer's shell mode sends here rather than opening a shell of its

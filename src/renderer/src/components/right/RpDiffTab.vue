@@ -17,11 +17,8 @@ import { t } from "../../lib/i18n"
  * that folds it away, naming its folder dimly before its name with its +N and
  * -M beside. Past 1200 lines only the start is drawn, and a note says how much
  * was left out.
- *
- * `bleed` reaches past the padding of the pane the panel wraps this in, so the
- * body sits MiMo's 14px in; mounted in a pane with no padding it is left off.
  */
-const props = defineProps<{ diff: string; bleed?: boolean }>()
+const props = defineProps<{ diff: string }>()
 
 function readLayout(): DiffLayout {
   try {
@@ -79,7 +76,7 @@ async function reveal(index: number) {
 </script>
 
 <template>
-  <div class="dt" :class="{ bleed }" data-rp-diff-tab>
+  <div class="dt" data-rp-diff-tab>
     <div class="dt-bar" data-diff-layout-bar>
       <div class="dt-seg" role="group">
         <button type="button" class="dt-seg-btn" :class="{ on: layout === 'unified' }" data-diff-layout="unified" :aria-pressed="layout === 'unified'" @click="setLayout('unified')">
@@ -238,13 +235,6 @@ async function reveal(index: number) {
     --d2h-info-border: #388bfd66;
     --d2h-empty-bg: #6e76811a;
   }
-}
-
-/* Inside the panel's padded pane: cancel its 10 / 12 / 12 so the body sits 14 in. */
-.dt.bleed {
-  flex: 1;
-  height: auto;
-  margin: -10px -12px -12px;
 }
 
 /* The layout bar: right-aligned, 8 above the diff. */

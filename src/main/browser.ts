@@ -325,10 +325,11 @@ export function navigate(window: BrowserWindow, input: string): BrowserState | u
 
 export type BrowserAct = "back" | "forward" | "reload" | "forceReload" | "stop" | "zoomIn" | "zoomOut" | "zoomReset"
 
-export function act(window: BrowserWindow, what: BrowserAct): BrowserState | undefined {
+/* `id` names a page other than the open one: MiMo's Ctrl+R reloads a browser tab even while another tab is on show. */
+export function act(window: BrowserWindow, what: BrowserAct, id?: string): BrowserState | undefined {
   const panel = panels.get(window.id)
   if (!panel) return undefined
-  const contents = activeTab(panel)?.view.webContents
+  const contents = (id ? tabOf(panel, id) : activeTab(panel))?.view.webContents
   if (!contents) return stateOf(panel)
   if (what === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack()
   if (what === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward()
