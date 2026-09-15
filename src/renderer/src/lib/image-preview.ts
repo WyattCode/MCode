@@ -11,6 +11,27 @@ export interface ImagePreviewMeta {
   group?: string[]
   /** The picture's file on disk, when it has one: adds "copy image" and "show in folder" (keys C and F), as MiMo does. */
   path?: string
+  /** Where the clicked thumbnail was on screen, so the preview can zoom out of it and back into it. */
+  rect?: PreviewRect
+}
+
+export interface PreviewRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * MiMo's zoom from a thumbnail: the translate between the two centres and a
+ * uniform scale by the width ratio. Without an origin, or with nothing to
+ * measure, it is a plain 94% scale.
+ */
+export function originTransform(from: PreviewRect | undefined, to: PreviewRect | undefined): string {
+  if (!from || !to || !from.width || !to.width) return "scale(0.94)"
+  const dx = from.left + from.width / 2 - (to.left + to.width / 2)
+  const dy = from.top + from.height / 2 - (to.top + to.height / 2)
+  return `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px) scale(${(from.width / to.width).toFixed(4)})`
 }
 
 export const imagePreview = ref<({ url: string } & ImagePreviewMeta) | undefined>()

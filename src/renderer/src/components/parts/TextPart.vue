@@ -3,8 +3,9 @@ import "katex/dist/katex.min.css"
 import { computed, getCurrentInstance, h, nextTick, onBeforeUnmount, onMounted, ref, render, watch } from "vue"
 import type { TextPart } from "@shared/protocol"
 import { renderReply, type ReplyBlock } from "../../lib/markdown"
-import { highlightWithin } from "../../lib/highlight"
+import { cachedHighlight, highlight, languageOf } from "../../lib/highlight"
 import { openImagePreview, openVideoPreview } from "../../lib/image-preview"
+import { FADE_SOURCE_LIMIT, fadeTail, useStreamReveal, type FadeAnchor } from "../../lib/stream-reveal"
 import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 import { notifyFailure } from "../../lib/toast"
@@ -18,24 +19,105 @@ const props = defineProps<{ part: TextPart }>()
 const app = useApp()
 const instance = getCurrentInstance()
 
-/* MiMo keeps a diagram a code block until the reply has finished arriving. */
-const streaming = computed(() =>
-  [app.streaming, app.sideStreaming].some((message) => message?.parts.some((part) => part.id === props.part.id)),
+/* The streaming message this part is in, while it streams. */
+const owner = computed(() => [app.streaming, app.sideStreaming].find((message) => message?.parts.some((part) => part.id === props.part.id)))
+
+/* MiMo paces only the answer's live tail: text that a tool call has followed is a step, and shows whole. */
+const tail = computed(() => {
+  const parts = owner.value?.parts ?? []
+  const at = parts.findIndex((part) => part.id === props.part.id)
+  return at >= 0 && parts.slice(at + 1).every((part) => (part.type === "text" || part.type === "reasoning") && !part.text.trim())
+})
+
+const reveal = useStreamReveal(
+  () => props.part.id,
+  () => props.part.text,
+  () => (!owner.value ? "settle" : tail.value ? "paced" : "full"),
 )
 
+/* Live until the reveal has caught up: MiMo keeps diagrams as code, the last line plain and footnotes back until then. */
+const live = computed(() => Boolean(owner.value) || !reveal.done.value)
+
+/*
+ * MiMo's syntax colours, put into the markup before it is bound, from the
+ * highlighter's cache, so a block redrawn every frame never flashes plain.
+ * What is not cached yet is asked for and drawn plain until it arrives. While
+ * a block is live only the lines before its last newline are coloured; the
+ * unfinished line follows them plain, and a live block past 20,000 characters
+ * is not coloured until the reply ends.
+ */
+const CODE_BLOCK = /<pre class="md-code( md-lined)?" data-lang="([^"]*)"><code>([\s\S]*?)<\/code><\/pre>/g
+const LIVE_COLOUR_LIMIT = 20_000
+const colourRound = ref(0)
+const wanted = new Map<string, { code: string; lang: string }>()
+
+const plainText = (html: string) =>
+  html.replace(/<[^>]*>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&")
+const escapeText = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+
+function colourCode(html: string, liveBlock: boolean): string {
+  if (!html.includes('<pre class="md-code')) return html
+  return html.replace(CODE_BLOCK, (whole, lined: string | undefined, lang: string, inner: string) => {
+    if (!languageOf(lang)) return whole
+    const text = plainText(inner)
+    let code = text
+    let rest = ""
+    if (liveBlock) {
+      const cut = text.lastIndexOf("\n")
+      if (cut <= 0 || cut > LIVE_COLOUR_LIMIT) return whole
+      code = text.slice(0, cut)
+      rest = `\n<span class="line">${escapeText(text.slice(cut + 1))}</span>`
+    }
+    const coloured = cachedHighlight(code, lang)
+    if (coloured === undefined) {
+      wanted.set(`${lang}\n${code}`, { code, lang })
+      return whole
+    }
+    return `<pre class="md-code${lined ?? ""} shiki" data-lang="${lang}"><code>${coloured}${rest}</code></pre>`
+  })
+}
+
 // Safe to bind as HTML: renderReply escapes every piece of source it places, and hands diagrams over as source.
-const blocks = computed(() =>
-  renderReply(props.part.text, {
+const rendered = computed<ReplyBlock[]>(() => {
+  void colourRound.value
+  const isLive = live.value
+  const list = renderReply(reveal.text.value, {
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
     tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
     videoCards: { tip: t("markdown.previewAnnotateTip"), fallback: t("markdown.videoFallbackLabel") },
     math: true,
     links: { imageTip: t("markdown.previewAnnotateTip") },
     paths: { tip: t("markdown.openWithDefaultTip") },
-    diagrams: { streaming: streaming.value },
+    diagrams: { streaming: isLive },
     lineNumbers: true,
-  }),
-)
+    live: isLive,
+  })
+  const last = list.length - 1
+  return list.map((block, index) => (block.kind === "html" ? { kind: "html", html: colourCode(block.html, isLive && index === last) } : block))
+})
+
+const isOpenLine = (block: ReplyBlock | undefined) => block?.kind === "html" && block.html.startsWith('<div class="stream-open-line">')
+
+/*
+ * MiMo's fade on the live block - the last one, or the one before the
+ * unfinished line - unless it is code or longer than 9,000 characters. The
+ * anchor keeps a character from dimming again, and starts over with each block.
+ */
+let anchor: FadeAnchor & { block: number } = { block: -1, start: 0, floors: [] }
+const blocks = computed<ReplyBlock[]>(() => {
+  const list = rendered.value
+  const opacities = reveal.opacities.value
+  if (!live.value || !opacities.length) return list
+  let index = list.length - 1
+  if (isOpenLine(list[index])) index -= 1
+  const block = list[index]
+  if (!block || block.kind !== "html" || /^<(div class="md-codeblock|pre)/.test(block.html)) return list
+  if (anchor.block !== index) anchor = { block: index, start: 0, floors: [] }
+  if (block.html.replace(/<[^>]*>/g, "").length > FADE_SOURCE_LIMIT) return list
+  const next = list.slice()
+  next[index] = { kind: "html", html: fadeTail(block.html, opacities, anchor) }
+  return next
+})
 
 /* A block keeps its element while it is unchanged, so only the one being written is redrawn. */
 const blockKey = (block: ReplyBlock, index: number) => `${block.kind === "diagram" ? "d" : block.kind === "html" ? "h" : "s"}${index}`
@@ -60,21 +142,38 @@ async function openVideoCard(url: string, label: string) {
   openVideoPreview(served.url, { path: file, name: file.split(/[\\/]/).pop() || label })
 }
 
-/*
- * MiMo's syntax colours on the reply's code blocks, once each render has landed.
- * A reply still streaming renders on every word, so the pass waits for a pause
- * of 120ms; blocks already coloured come back from the cache at once.
- */
 const root = ref<HTMLElement>()
+
+/*
+ * The colour pass, as MiMo throttles it: at most once per six times the last
+ * pass's cost, between 120ms and a second, so colour keeps up with a block
+ * that is still streaming instead of waiting for the stream to pause.
+ */
 let colourTimer: ReturnType<typeof setTimeout> | undefined
-watch(
-  blocks,
-  () => {
-    clearTimeout(colourTimer)
-    colourTimer = setTimeout(() => void nextTick(() => highlightWithin(root.value)), 120)
-  },
-  { immediate: true },
-)
+let lastColour = 0
+let colourCost = 0
+let unmounted = false
+
+function scheduleColour() {
+  if (colourTimer !== undefined || !wanted.size || unmounted) return
+  const gap = Math.min(1000, Math.max(120, 6 * colourCost))
+  colourTimer = setTimeout(() => void runColour(), Math.max(0, lastColour + gap - performance.now()))
+}
+
+async function runColour() {
+  colourTimer = undefined
+  lastColour = performance.now()
+  const jobs = [...wanted.values()]
+  wanted.clear()
+  let fresh = false
+  for (const job of jobs) if ((await highlight(job.code, job.lang)) !== undefined) fresh = true
+  colourCost = performance.now() - lastColour
+  if (unmounted) return
+  if (fresh) colourRound.value += 1
+  scheduleColour()
+}
+
+watch(rendered, scheduleColour, { immediate: true, flush: "post" })
 
 /*
  * The cards for pictures, videos and sounds named by path are components,
@@ -190,6 +289,7 @@ function pickPathMenu(key: string) {
 }
 
 onBeforeUnmount(() => {
+  unmounted = true
   window.removeEventListener("keydown", onEscape)
   clearTimeout(colourTimer)
   for (const holder of mounted) render(null, holder)
@@ -250,7 +350,7 @@ async function onClick(event: MouseEvent) {
   const image = target.closest<HTMLImageElement>("img[data-preview-src]")
   if (image) {
     const group = [...(root.value?.querySelectorAll<HTMLImageElement>("img[data-preview-src]") ?? [])].map((each) => each.dataset.previewSrc ?? "")
-    openImagePreview(image.dataset.previewSrc ?? "", { name: image.alt || undefined, group })
+    openImagePreview(image.dataset.previewSrc ?? "", { name: image.alt || undefined, group, rect: image.getBoundingClientRect() })
     return
   }
   const chip = target.closest<HTMLElement>("code.md-path[role='button']")
@@ -470,35 +570,43 @@ function onError(event: Event) {
 }
 
 /*
- * A reply's code block, as MiMo frames it: a head with the language at the start
- * and a small copy button at the end, over the code itself. The button is quiet
- * until the block is hovered, and says "copied" in the success colour for two
- * seconds after a press.
+ * A reply's code block, as MiMo frames it: 8px corners; white with a 1px line
+ * in light, #2e2e2e with no line in dark. The head sticks to the top of the
+ * thread while a long block scrolls past - clip rather than hidden, which would
+ * make the block a scroller of its own and pin the head inside it - with the
+ * language at the start and a small copy button at the end. The button is
+ * quiet until the block is hovered, and shows a green check for two seconds
+ * after a press. The code itself scrolls sideways; it never wraps.
  */
 .text .md-codeblock {
   margin: 8px 0;
-  overflow: hidden;
-  background: var(--surface-raised);
-  border: 0.5px solid var(--border-weak);
-  border-radius: 6px;
+  overflow: clip;
+  background: #fff;
+  border: 1px solid #f0ebe5;
+  border-radius: 8px;
 }
 
 .text .md-codeblock .md-code {
   margin: 0;
+  background: transparent;
   border: 0;
   border-radius: 0;
 }
 
 .text .md-code-head {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 8px 4px 12px;
-  border-bottom: 0.5px solid var(--border-weak);
+  padding: 4px 12px;
+  background: #fff;
+  border-bottom: 1px solid #f0ebe5;
 }
 
 .text .md-code-lang {
-  color: var(--text-weak);
+  color: #151c1399;
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 18px;
   text-transform: lowercase;
@@ -525,7 +633,7 @@ function onError(event: Event) {
 }
 
 .text .md-code-copy:hover {
-  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  background: rgb(0 0 0 / 0.08);
 }
 
 .text .md-code-copy .done,
@@ -538,7 +646,45 @@ function onError(event: Event) {
 }
 
 .text .md-code-copy.copied .md-code-icon.done {
-  color: var(--text-success);
+  color: #00c950;
+}
+
+:root[data-theme="dark"] .text .md-codeblock {
+  background: #2e2e2e;
+  border: 0;
+}
+
+:root[data-theme="dark"] .text .md-code-head {
+  background: #2e2e2e;
+  border-bottom-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .text .md-code-lang {
+  color: #b8b8b8;
+}
+
+:root[data-theme="dark"] .text .md-code-copy:hover {
+  background: rgb(255 255 255 / 0.1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text .md-codeblock {
+    background: #2e2e2e;
+    border: 0;
+  }
+
+  :root:not([data-theme="light"]) .text .md-code-head {
+    background: #2e2e2e;
+    border-bottom-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .text .md-code-lang {
+    color: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) .text .md-code-copy:hover {
+    background: rgb(255 255 255 / 0.1);
+  }
 }
 
 .text .md-url {
@@ -868,6 +1014,13 @@ function onError(event: Event) {
 .text .md-footnotes ol {
   margin: 0;
   padding-inline-start: 22px;
+}
+
+/* MiMo's unfinished last line while a reply streams: plain text until its newline arrives. */
+.text .stream-open-line {
+  margin: 0 0 14px;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
 
 .text .md-svg-loading {

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from "vue"
 import { t } from "../lib/i18n"
-import { closeImagePreview, imagePreview, imagePreviewKey, openImagePreview } from "../lib/image-preview"
+import { closeImagePreview, imagePreview, imagePreviewKey, openImagePreview, originTransform, type PreviewRect } from "../lib/image-preview"
 import { copyImageFile, fileManagerName } from "../lib/path-open"
 import { notice } from "../lib/toast"
 import { useApp } from "../stores/app"
@@ -25,37 +25,100 @@ const START_SCALE = 0.8
 
 const clamp = (value: number, low: number, high: number) => Math.max(low, Math.min(high, value))
 
+/* MiMo's entry out of the clicked thumbnail, and its faster exit back into it on a different curve. */
+const OPEN_EASE = "transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1), opacity 0.42s cubic-bezier(0.22, 0.61, 0.36, 1)"
+const CLOSE_EASE = "transform 0.34s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.34s cubic-bezier(0.4, 0, 0.2, 1)"
+
 const root = ref<HTMLElement>()
+const lift = ref<HTMLElement>()
 const image = ref<HTMLImageElement>()
 const shown = ref(false)
+/** The picture apart from the ground and controls: stepping to a neighbour hides only the picture. */
+const pictureShown = ref(false)
+/** The zoom and pan only ease once the entry is over, so the two never fight. */
+const settled = ref(false)
 const scale = ref(START_SCALE)
 const turn = ref(0)
 const offset = ref({ x: 0, y: 0 })
 const dragging = ref(false)
 let drag: { x: number; y: number; ox: number; oy: number } | undefined
 let closing: number | undefined
+let settling: number | undefined
+let entered = false
+/** The thumbnail's rect as it was when the preview opened; closing flies back to it even if the reply has scrolled. */
+let origin: PreviewRect | undefined
+
+/*
+ * The next frame, or a short timer if frames have stopped (a covered window
+ * draws none), whichever comes first - so the picture always comes up.
+ */
+function nextFrame(run: () => void) {
+  let ran = false
+  const go = () => {
+    if (ran) return
+    ran = true
+    cancelAnimationFrame(frameId)
+    window.clearTimeout(timer)
+    run()
+  }
+  const frameId = requestAnimationFrame(go)
+  const timer = window.setTimeout(go, 50)
+}
 
 watch(
   () => imagePreview.value?.url,
   async (url) => {
     window.clearTimeout(closing)
+    window.clearTimeout(settling)
+    entered = false
+    settled.value = false
+    pictureShown.value = false
     if (!url) {
       shown.value = false
       return
     }
+    origin = imagePreview.value?.rect
     scale.value = START_SCALE
     turn.value = 0
     offset.value = { x: 0, y: 0 }
+    if (lift.value) {
+      lift.value.style.transition = "none"
+      lift.value.style.transform = ""
+    }
     await nextTick()
     root.value?.focus({ preventScroll: true })
-    /*
-     * A beat after the hidden first paint, so the fade has somewhere to start
-     * from. A timer rather than an animation frame: frames stop in a window
-     * that is covered, and the picture would then never come up.
-     */
-    window.setTimeout(() => (shown.value = true), 16)
+    // A picture already decoded may have finished loading before this ran.
+    if (image.value?.complete && image.value.naturalWidth) onImageLoad()
   },
 )
+
+/* MiMo starts the entry once the picture has loaded, or failed to, never before. */
+function onImageLoad() {
+  fit()
+  enter()
+}
+
+function enter() {
+  if (entered) return
+  entered = true
+  nextFrame(() => {
+    const el = lift.value
+    if (!el) return
+    // Measured where it will end, then put back over the thumbnail, then let go.
+    el.style.transition = "none"
+    el.style.transform = ""
+    void el.offsetWidth
+    el.style.transform = originTransform(origin, el.getBoundingClientRect())
+    void el.offsetWidth
+    nextFrame(() => {
+      el.style.transition = OPEN_EASE
+      el.style.transform = "translateZ(0)"
+      shown.value = true
+      pictureShown.value = true
+      settling = window.setTimeout(() => (settled.value = true), 440)
+    })
+  })
+}
 
 /** Fits the picture inside the window less 40px a side, larger or smaller than it really is. */
 function fit() {
@@ -94,15 +157,28 @@ function reset() {
   offset.value = { x: 0, y: 0 }
 }
 
-/** Fades out first, then lets go of the picture. */
+/** Flies back into the thumbnail it came from while everything fades, then lets go of the picture. */
 function close() {
   if (!shown.value) {
     closeImagePreview()
     return
   }
+  const el = lift.value
+  if (el) {
+    el.style.transition = CLOSE_EASE
+    el.style.transform = originTransform(origin, el.getBoundingClientRect())
+  }
   shown.value = false
+  pictureShown.value = false
   window.clearTimeout(closing)
   closing = window.setTimeout(closeImagePreview, 380)
+}
+
+/* The ground's fade ending lets go at once, before the 380ms fallback. */
+function onGroundFaded(event: TransitionEvent) {
+  if (event.propertyName !== "opacity" || shown.value || !imagePreview.value) return
+  window.clearTimeout(closing)
+  closeImagePreview()
 }
 
 function download() {
@@ -132,12 +208,21 @@ function reveal() {
   if (file) void window.mcode.revealNativePath(file).catch(() => undefined)
 }
 
+/* The thumbnail a neighbour is shown by, when it is on screen, so the picture zooms out of that one. */
+function thumbnailRect(url: string): PreviewRect | undefined {
+  const thumbnail = [...document.querySelectorAll<HTMLImageElement>("img")].find(
+    (each) => !each.closest("[data-image-preview]") && (each.dataset.previewSrc === url || each.getAttribute("src") === url),
+  )
+  return thumbnail?.getBoundingClientRect()
+}
+
 function neighbour(by: 1 | -1) {
   const current = imagePreview.value
   const group = current?.group ?? []
   const at = current ? group.indexOf(current.url) : -1
   if (group.length < 2 || at < 0) return
-  openImagePreview(group[(at + by + group.length) % group.length], { group })
+  const next = group[(at + by + group.length) % group.length]
+  openImagePreview(next, { group, rect: thumbnailRect(next) })
 }
 
 /*
@@ -205,6 +290,7 @@ watch(
 
 onBeforeUnmount(() => {
   window.clearTimeout(closing)
+  window.clearTimeout(settling)
   window.removeEventListener("keydown", onKey, true)
   window.removeEventListener("resize", onResize)
 })
@@ -224,7 +310,7 @@ onBeforeUnmount(() => {
       @click="close"
       @wheel.prevent.stop="onWheel"
     >
-      <div class="ip-ground" :style="{ opacity: shown ? 0.72 : 0 }" data-image-preview-ground />
+      <div class="ip-ground" :style="{ opacity: shown ? 0.72 : 0 }" data-image-preview-ground @transitionend="onGroundFaded" />
 
       <div class="ip-corner" :style="{ opacity: shown ? 1 : 0 }" @click.stop>
         <button type="button" class="ip-close" :aria-label="t('imagePreview.close')" data-image-preview-close @click="close">
@@ -236,10 +322,10 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="ip-stage" @click.stop>
-        <div class="ip-lift" :style="{ opacity: shown ? 1 : 0, transform: shown ? 'none' : 'scale(0.94)' }">
+        <div ref="lift" class="ip-lift" :style="{ opacity: pictureShown ? 1 : 0 }">
           <div
             class="ip-transform"
-            :class="{ dragging }"
+            :class="{ dragging, settled }"
             :style="{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale}) rotate(${turn}deg)` }"
             data-image-preview-transform
           >
@@ -250,7 +336,8 @@ onBeforeUnmount(() => {
               draggable="false"
               :style="{ cursor: scale > 1 ? 'grab' : 'zoom-in' }"
               data-image-preview-image
-              @load="fit"
+              @load="onImageLoad"
+              @error="enter"
               @pointerdown="startDrag"
               @pointermove="moveDrag"
               @pointerup="endDrag"
@@ -389,18 +476,22 @@ onBeforeUnmount(() => {
   max-height: 100%;
 }
 
+/* Its transform and transition are set from script: MiMo's entry out of the thumbnail and exit back into it. */
 .ip-lift {
   display: inline-flex;
   transform-origin: center;
-  transition:
-    transform 0.42s cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 0.42s cubic-bezier(0.22, 0.61, 0.36, 1);
+  will-change: transform, opacity;
+  backface-visibility: hidden;
 }
 
 .ip-transform {
   position: relative;
   display: inline-flex;
   transform-origin: center;
+}
+
+/* The zoom and pan ease only once the entry has finished. */
+.ip-transform.settled {
   transition: transform 0.14s ease;
 }
 

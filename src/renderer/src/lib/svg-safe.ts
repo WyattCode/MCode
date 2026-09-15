@@ -18,6 +18,11 @@ export function stripSvgHazards(svg: string, keepForeignObject = false): string 
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
 }
 
+/** MiMo's test for a picture path that gets the SVG file card: .svg, before any query or fragment. */
+export function isSvgFile(path: string): boolean {
+  return /\.svg(?:[?#].*)?$/i.test(path)
+}
+
 const OPEN_TAG = /<svg\b[^>]*>/i
 
 /** An SVG's own size: its width and height in pixels, else its viewBox, else 800 by 600 - as MiMo measures it. */
