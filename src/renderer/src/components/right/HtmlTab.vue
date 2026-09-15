@@ -262,7 +262,7 @@ onBeforeUnmount(() => {
           data-html-edit-toggle
           :aria-pressed="tab.htmlEdit ? 'true' : 'false'"
           :class="{ on: tab.htmlEdit }"
-          v-tip="{ label: tab.htmlEdit ? t('html.exitEdit') : t('html.edit'), placement: 'bottom' }"
+          v-tip="{ label: tab.htmlEdit ? t('html.exitEdit') : t('html.edit') }"
           @click="rp.toggleHtmlEdit(tab.id)"
         >
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

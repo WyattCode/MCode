@@ -23,7 +23,8 @@ const app = useApp()
 /* `sideCollapsed`: the side column is folded to its rail, whose controls row floats over this header's start. */
 /* `hasContent`: something has been said, which is when MiMo offers the info card at all. */
 /* `panelBeside`: a side panel stands to the right, so this row ends at the column instead of under the toggle. */
-defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean; panelBeside?: boolean }>()
+/* `menuOpen`: this conversation's menu is up, which keeps its "more" tip shut as MiMo's is. */
+defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean; panelBeside?: boolean; menuOpen?: boolean }>()
 
 /* `rename` asks the app for MiMo's rename dialog; the header no longer edits in place. */
 const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; info: []; bottom: [] }>()
@@ -63,7 +64,7 @@ function openMenu(event: MouseEvent) {
         v-if="pinned"
         class="pin-mark"
         :aria-label="t('header.pinnedTip')"
-        v-tip="{ label: t('header.pinnedTip'), placement: 'bottom' }"
+        :title="t('header.pinnedTip')"
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
@@ -78,7 +79,7 @@ function openMenu(event: MouseEvent) {
         The buttons at the other end drive the panels, which are not the
         conversation.
       -->
-      <button class="ico options" v-tip="{ label: t('session.options'), placement: 'bottom' }" @click="openMenu">
+      <button class="ico options" v-tip="{ label: t('header.moreTip'), disabled: menuOpen }" @click="openMenu">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
           <circle cx="5" cy="12" r="1.7" />
           <circle cx="12" cy="12" r="1.7" />
@@ -96,7 +97,7 @@ function openMenu(event: MouseEvent) {
         <button
           class="open-face"
           :aria-label="t('header.openDirTip', { name: openLabel })"
-          v-tip="{ label: t('header.openDirTip', { name: openLabel }), placement: 'bottom' }"
+          v-tip="t('header.openDirTip', { name: openLabel })"
           @click="openIn(directory)"
         >
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -112,7 +113,7 @@ function openMenu(event: MouseEvent) {
         <button
           class="open-caret"
           :aria-label="t('header.pickApp')"
-          v-tip="{ label: t('header.pickApp'), placement: 'bottom' }"
+          v-tip="{ label: t('header.pickApp'), disabled: Boolean(appMenu) }"
           @click="openAppMenu"
         >
           <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -127,7 +128,7 @@ function openMenu(event: MouseEvent) {
         class="ico info"
         :aria-pressed="Boolean(infoOpen)"
         :aria-label="t('info.tip')"
-        v-tip="{ label: t('info.tip'), placement: 'bottom' }"
+        v-tip="t('info.tip')"
         @click="emit('info')"
       >
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -144,7 +145,7 @@ function openMenu(event: MouseEvent) {
         class="ico bottom"
         :aria-pressed="Boolean(bottomOpen)"
         :aria-label="t('key.bottomPanel')"
-        v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J', placement: 'bottom' }"
+        v-tip="{ label: t('key.bottomPanel'), hint: 'Ctrl+J' }"
         @click="emit('bottom')"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

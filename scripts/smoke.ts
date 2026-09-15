@@ -94,6 +94,7 @@ import {
   slashLead,
 } from "../src/renderer/src/lib/composer-text"
 import type { Message } from "../src/shared/protocol"
+import { DELAY as TIP_DELAY, EDGE as TIP_EDGE, GAP as TIP_GAP, WARM as TIP_WARM, fit as fitTip, openDelay, tipText } from "../src/renderer/src/lib/tip"
 import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
 
 let passed = 0
@@ -3803,6 +3804,47 @@ async function main() {
   ].join(".")
   const claims = decodeClaims(idToken)
   check("account id is read from the nested id_token claim", claims && accountId(claims) === "acct_42")
+
+  // ---------------------------------------------------------------- tooltips
+  section("Tooltips (MiMo's Radix values)")
+  check("tip constants are MiMo's", TIP_GAP === 6 && TIP_EDGE === 8 && TIP_DELAY === 200 && TIP_WARM === 300, [
+    TIP_GAP,
+    TIP_EDGE,
+    TIP_DELAY,
+    TIP_WARM,
+  ])
+  check("a first tip waits the full delay", openDelay(10_000, 0) === 200)
+  check("a tip inside the warm window opens at once", openDelay(10_000, 10_000 - 299) === 0)
+  check("the warm window ends at 300ms", openDelay(10_000, 10_000 - 300) === 200)
+  check("a shortcut follows the label after one space", tipText({ label: "返回", hint: "Ctrl+[" }) === "返回 Ctrl+[")
+  check("a tip with no shortcut is only its label", tipText({ label: "更多" }) === "更多")
+
+  const tipBox = (left: number, top: number, width: number, height: number) => ({
+    left,
+    top,
+    width,
+    height,
+    right: left + width,
+    bottom: top + height,
+  })
+  const tipView = { width: 1000, height: 800 }
+  const tipSelf = { width: 60, height: 26 }
+  const centred = fitTip(tipBox(400, 400, 28, 28), tipSelf, "top", tipView)
+  check(
+    "top is centred on the control, 6 above it",
+    centred.side === "top" && centred.left === 400 + (28 - 60) / 2 && centred.top === 400 - 26 - 6,
+    centred,
+  )
+  const flipped = fitTip(tipBox(400, 10, 28, 28), tipSelf, "top", tipView)
+  check("no room above flips below", flipped.side === "bottom" && flipped.top === 10 + 28 + 6, flipped)
+  const shifted = fitTip(tipBox(2, 400, 20, 20), tipSelf, "top", tipView)
+  check("the cross axis is shifted inside the 8px padding", shifted.side === "top" && shifted.left === 8, shifted)
+  const right = fitTip(tipBox(975, 400, 20, 20), tipSelf, "right", tipView)
+  check("no room to the right flips left", right.side === "left" && right.left === 975 - 60 - 6, right)
+  const cramped = fitTip(tipBox(400, 30, 28, 740), { width: 60, height: 40 }, "top", tipView)
+  check("with room on neither side, the side overflowing less wins", cramped.side === "top", cramped)
+  const limited = fitTip(tipBox(-50, 400, 20, 20), tipSelf, "top", tipView)
+  check("the shift never detaches the tip from its control", limited.left === -30, limited)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

@@ -247,7 +247,7 @@ function enter(row: Row) {
             data-view="grid"
             :aria-pressed="layout === 'grid'"
             :aria-label="t('art.viewGrid')"
-            v-tip="{ label: t('art.viewGrid') }"
+            :title="t('art.viewGrid')"
             @click="setLayout('grid')"
           >
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -262,7 +262,7 @@ function enter(row: Row) {
             data-view="list"
             :aria-pressed="layout === 'list'"
             :aria-label="t('art.viewList')"
-            v-tip="{ label: t('art.viewList') }"
+            :title="t('art.viewList')"
             @click="setLayout('list')"
           >
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -297,17 +297,17 @@ function enter(row: Row) {
             </svg>
             <span class="badge" :data-badge="row.badge">{{ t(row.badge) }}</span>
             <div class="acts">
-              <button class="act" data-act="preview" :aria-label="t('art.preview')" v-tip="{ label: t('art.preview') }" @click.stop="preview(row)">
+              <button class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8zM8 6.2a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
               </button>
-              <button class="act" data-act="download" :aria-label="t('art.download')" v-tip="{ label: t('art.download') }" @click.stop="download(row)">
+              <button class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M8 2.5v7M5 6.8l3 3 3-3M3 11.5v2h10v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
-              <button class="act" data-act="enter" :aria-label="t('art.back')" v-tip="{ label: t('art.back') }" @click.stop="enter(row)">
+              <button class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
                 </svg>
@@ -351,17 +351,17 @@ function enter(row: Row) {
           </span>
           <span class="when">{{ when(row.at) }}</span>
           <div class="acts">
-            <button class="act" data-act="preview" :aria-label="t('art.preview')" v-tip="{ label: t('art.preview') }" @click.stop="preview(row)">
+            <button class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M1.8 8s2.3-4.2 6.2-4.2S14.2 8 14.2 8s-2.3 4.2-6.2 4.2S1.8 8 1.8 8zM8 6.2a1.8 1.8 0 1 1 0 3.6a1.8 1.8 0 1 1 0-3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>
             </button>
-            <button class="act" data-act="download" :aria-label="t('art.download')" v-tip="{ label: t('art.download') }" @click.stop="download(row)">
+            <button class="act" data-act="download" :aria-label="t('art.download')" :title="t('art.download')" @click.stop="download(row)">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 2.5v7M5 6.8l3 3 3-3M3 11.5v2h10v-2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
-            <button class="act" data-act="enter" :aria-label="t('art.back')" v-tip="{ label: t('art.back') }" @click.stop="enter(row)">
+            <button class="act" data-act="enter" :aria-label="t('art.back')" :title="t('art.back')" @click.stop="enter(row)">
               <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>

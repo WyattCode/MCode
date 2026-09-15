@@ -207,10 +207,10 @@ defineExpose({
     <div ref="bar" class="rb-bar" :class="{ mini }">
       <span class="rb-dot" aria-hidden="true" />
       <template v-if="!mini">
-        <button type="button" class="rb-round" :disabled="!state.canGoBack" :aria-label="t('rp.browser.back')" v-tip="{ label: t('rp.browser.back'), placement: 'bottom' }" @click="act('back')">
+        <button type="button" class="rb-round" :disabled="!state.canGoBack" :aria-label="t('rp.browser.back')" v-tip="t('rp.browser.back')" @click="act('back')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
         </button>
-        <button type="button" class="rb-round" :disabled="!state.canGoForward" :aria-label="t('rp.browser.forward')" v-tip="{ label: t('rp.browser.forward'), placement: 'bottom' }" @click="act('forward')">
+        <button type="button" class="rb-round" :disabled="!state.canGoForward" :aria-label="t('rp.browser.forward')" v-tip="t('rp.browser.forward')" @click="act('forward')">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18l6-6-6-6" /></svg>
         </button>
       </template>
@@ -225,14 +225,14 @@ defineExpose({
         @blur="editing = false"
         @keydown.enter.prevent="go"
       />
-      <button type="button" class="rb-round" :aria-label="t('rp.browser.reload')" v-tip="{ label: t('rp.browser.reload'), placement: 'bottom' }" @click="act('reload')">
+      <button type="button" class="rb-round" :aria-label="t('rp.browser.reload')" v-tip="t('rp.browser.reload')" @click="act('reload')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" /></svg>
       </button>
       <template v-if="showingPage && !mini">
-        <button type="button" class="rb-round" :aria-label="t('rp.browser.openExternal')" v-tip="{ label: t('rp.browser.openExternal'), placement: 'bottom' }" @click="openExternal">
+        <button type="button" class="rb-round" :aria-label="t('rp.browser.openExternal')" v-tip="t('rp.browser.openExternal')" @click="openExternal">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>
         </button>
-        <button type="button" class="rb-round" :aria-label="t('rp.browser.screenshotToClipboard')" v-tip="{ label: t('rp.browser.screenshotToClipboard'), placement: 'bottom' }" @click="screenshot">
+        <button type="button" class="rb-round" :aria-label="t('rp.browser.screenshotToClipboard')" v-tip="t('rp.browser.screenshotToClipboard')" @click="screenshot">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" /><circle cx="12" cy="12" r="3" /></svg>
         </button>
       </template>
@@ -243,14 +243,14 @@ defineExpose({
         :class="{ active: annotating }"
         data-rb-annotate
         :aria-pressed="annotating"
-        v-tip="{ label: t('rp.browser.annotate', { combo: ANNOTATE_COMBO }), placement: 'bottom' }"
+        v-tip="t('rp.browser.annotate', { combo: ANNOTATE_COMBO })"
         @click="toggleAnnotate"
       >
         <span>{{ t("rp.browser.annotateLabel") }}</span>
         <kbd class="rb-annotate-kbd">{{ ANNOTATE_COMBO }}</kbd>
       </button>
       <div class="rb-more-wrap">
-        <button type="button" class="rb-round" data-rb-more :aria-label="t('rp.browser.more')" v-tip="{ label: t('rp.browser.more'), placement: 'bottom' }" @click="menuOpen = !menuOpen">
+        <button type="button" class="rb-round" data-rb-more :aria-label="t('rp.browser.more')" v-tip="{ label: t('rp.browser.more'), disabled: menuOpen }" @click="menuOpen = !menuOpen">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
         </button>
         <template v-if="menuOpen">

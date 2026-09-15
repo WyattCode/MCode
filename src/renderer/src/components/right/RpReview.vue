@@ -113,7 +113,7 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
           class="rv-refresh"
           :disabled="resting"
           :aria-label="t('rp.review.refresh')"
-          v-tip="{ label: t('rp.review.refresh'), placement: 'bottom' }"
+          :title="t('rp.review.refresh')"
           @click="refresh"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

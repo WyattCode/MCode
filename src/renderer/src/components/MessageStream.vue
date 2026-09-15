@@ -848,7 +848,7 @@ defineExpose({ stepMessage, scroller })
                 v-else
                 class="sent-tile file"
                 :class="{ openable: Boolean(item.path) }"
-                :title="item.path"
+                v-tip="item.path ? t('stream.previewTip') : ''"
                 data-sent-file
                 @click="item.path && openSentFile(item.path)"
               >
@@ -1043,7 +1043,7 @@ defineExpose({ stepMessage, scroller })
                   >
                     <video :src="videoUrl(item)" muted playsinline preload="metadata" />
                   </button>
-                  <span v-else class="sent-tile file" :title="item.path">
+                  <span v-else class="sent-tile file">
                     <span class="sent-name">{{ item.path }}</span>
                   </span>
                 </template>

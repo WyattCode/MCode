@@ -191,20 +191,20 @@ function onEditKey(event: KeyboardEvent) {
         <path d="M5.5 8h5M8 5.5v5" />
       </svg>
       <span class="cchip-name">{{ t("annotations.chip", { count: notes.length }) }}</span>
-      <button v-if="!readOnly" type="button" class="cchip-rm" data-chip-rm="annotations" :aria-label="t('annotations.clearAll')" v-tip="{ label: t('annotations.clearAll'), placement: 'top' }" @click="remove(notes)">✕</button>
+      <button v-if="!readOnly" type="button" class="cchip-rm" data-chip-rm="annotations" :aria-label="t('annotations.clearAll')" :title="t('annotations.clearAll')" @click="remove(notes)">✕</button>
     </span>
 
-    <span v-for="entry in refsShown" :key="entry.note.id" class="cchip" data-chip="ann-ref" :data-ann-num="entry.num" v-tip="{ label: `${sourceOf(entry.note)} · ${rangeOf(entry.note)}`, placement: 'top' }">
+    <span v-for="entry in refsShown" :key="entry.note.id" class="cchip" data-chip="ann-ref" :data-ann-num="entry.num" :title="`${sourceOf(entry.note)} · ${rangeOf(entry.note)}`">
       <span class="cchip-go" role="button" tabindex="0" data-ann-go @click="activate(entry.note)" @keydown.enter.space.prevent="activate(entry.note)">
         <span class="ann-num">{{ entry.num }}</span>
         <span class="cchip-name cchip-ref">{{ rangeOf(entry.note) }}</span>
       </span>
-      <button v-if="!readOnly" type="button" class="cchip-rm" :data-ann-rm="entry.index" :aria-label="t('annotations.removeRef')" @click="remove([entry])">✕</button>
+      <button v-if="!readOnly" type="button" class="cchip-rm" :data-ann-rm="entry.index" :aria-label="t('annotations.removeRef')" :title="t('annotations.removeRef')" @click="remove([entry])">✕</button>
     </span>
 
     <span v-if="refsMore.length" class="cchip" data-chip="ann-refs-more" @mouseenter="hover('more', $event)" @mouseleave="leave">
       <span class="cchip-name">{{ t("annotations.refsMore", { count: refsMore.length }) }}</span>
-      <button v-if="!readOnly" type="button" class="cchip-rm" data-chip-rm="ann-refs-more" :aria-label="t('annotations.clearRefs')" v-tip="{ label: t('annotations.clearRefs'), placement: 'top' }" @click="remove(refsMore)">✕</button>
+      <button v-if="!readOnly" type="button" class="cchip-rm" data-chip-rm="ann-refs-more" :aria-label="t('annotations.clearRefs')" :title="t('annotations.clearRefs')" @click="remove(refsMore)">✕</button>
     </span>
 
     <Teleport to="body">
@@ -231,7 +231,7 @@ function onEditKey(event: KeyboardEvent) {
               @keydown="onEditKey"
               @click.stop
             />
-            <span v-else class="ann-note ann-note-edit" :data-ann-edit="entry.index" v-tip="{ label: t('annotations.editHint'), placement: 'top' }" @click.stop="startEdit(entry)">
+            <span v-else class="ann-note ann-note-edit" :data-ann-edit="entry.index" :title="t('annotations.editHint')" @click.stop="startEdit(entry)">
               <template v-if="entry.note.text">{{ entry.note.text }}</template>
               <span v-else class="ann-muted">{{ t("annotations.editHint") }}</span>
             </span>

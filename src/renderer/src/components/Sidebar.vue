@@ -34,6 +34,8 @@ const props = defineProps<{
   selectingProjects?: string[]
   /** The project whose menu is open, so its row keeps its actions in view. */
   menuDirectory?: string
+  /** The conversation whose row menu is open, so its "more" tip and card stay shut as MiMo's do. */
+  menuSession?: string
   /** Whether MiMo's priority filter is on: attention first, then the week by day. */
   priority?: boolean
   /** Whether back and forward have anywhere to go; MiMo dims them when not. */
@@ -892,23 +894,23 @@ function pickNewProject(key: string) {
       three in from its edge, then back, forward and search.
     -->
     <div v-if="collapsed" class="rail-tools">
-      <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B', placement: 'bottom' }" @click="emit('toggle')">
+      <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="emit('toggle')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
           <path d="M9 2.5v19" />
         </svg>
       </button>
-      <button class="ico" :disabled="!canBack" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
+      <button class="ico" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
-      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
+      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K', placement: 'bottom' }" @click="emit('search')">
+      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="emit('search')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="10.5" cy="10.5" r="6.9" />
           <path d="m15.6 15.6 4.8 4.8" />
@@ -916,23 +918,23 @@ function pickNewProject(key: string) {
       </button>
     </div>
     <div class="top" :class="{ mac: app.platform === 'darwin' }">
-      <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B', placement: 'bottom' }" @click="emit('toggle')">
+      <button class="ico" :aria-label="t('side.toggle')" v-tip="{ label: t('side.toggle'), hint: 'Ctrl+B' }" @click="emit('toggle')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <rect x="2.5" y="2.5" width="19" height="19" rx="4" />
           <path d="M9 2.5v19" />
         </svg>
       </button>
-      <button class="ico" :disabled="!canBack" :aria-label="t('title.back')" v-tip="{ label: t('title.back'), hint: 'Ctrl+[', placement: 'bottom' }" @click="emit('back')">
+      <button class="ico" :disabled="!canBack" :aria-label="t('side.back')" v-tip="{ label: t('side.back'), hint: 'Ctrl+[' }" @click="emit('back')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
         </svg>
       </button>
-      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]', placement: 'bottom' }" @click="emit('forward')">
+      <button class="ico" :disabled="!canForward" :aria-label="t('title.forward')" v-tip="{ label: t('title.forward'), hint: 'Ctrl+]' }" @click="emit('forward')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4.5 12h15M13 5.5l6.5 6.5-6.5 6.5" />
         </svg>
       </button>
-      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K', placement: 'bottom' }" @click="emit('search')">
+      <button class="ico" :aria-label="t('side.search')" v-tip="{ label: t('side.search'), hint: 'Ctrl+K' }" @click="emit('search')">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <circle cx="10.5" cy="10.5" r="6.9" />
           <path d="m15.6 15.6 4.8 4.8" />
@@ -947,7 +949,7 @@ function pickNewProject(key: string) {
         :class="{ on: priority }"
         :aria-pressed="Boolean(priority)"
         :aria-label="t(priority ? 'side.priorityOff' : 'side.priorityOn')"
-        v-tip="{ label: t(priority ? 'side.priorityOff' : 'side.priorityOn'), hint: 'Ctrl+Alt+U', placement: 'bottom' }"
+        v-tip="t(priority ? 'side.priorityTipOff' : 'side.priorityTipOn', { shortcut: 'Ctrl+Alt+U' })"
         @click="emit('toggle-priority')"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -963,7 +965,7 @@ function pickNewProject(key: string) {
     </div>
 
     <nav class="nav">
-      <button class="row" v-tip="collapsed ? { label: t('side.newTask'), placement: 'right' } : ''" @click="emit('newTask')">
+      <button class="row" v-tip="collapsed ? { label: t('side.railNewTask', { shortcut: 'Ctrl+N' }), placement: 'right' } : ''" @click="emit('newTask')">
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="10" cy="10" r="7" stroke="currentColor" />
           <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
@@ -974,7 +976,7 @@ function pickNewProject(key: string) {
       <button
         class="row"
         :class="{ on: page === 'artifacts' }"
-        v-tip="collapsed ? { label: t('side.artifacts'), placement: 'right' } : ''"
+        v-tip="collapsed ? { label: t('side.railArtifacts'), placement: 'right' } : ''"
         @click="emit('artifacts')"
       >
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1030,7 +1032,7 @@ function pickNewProject(key: string) {
             </span>
             <RowTitle
               class="row-label task-label"
-              v-tip="picking ? '' : { card: convoCard(block.session, app.config?.projectNames), placement: 'right' }"
+              v-tip="{ card: convoCard(block.session, app.config?.projectNames), placement: 'right', disabled: picking || menuSession === block.session.id }"
               :text="title(block.session.title)"
               :cover="picking ? 0 : TITLE_COVER"
               @rename="!picking && emit('rename', block.session.id)"
@@ -1038,18 +1040,23 @@ function pickNewProject(key: string) {
             <span v-if="statusOf(block.session.id)" class="row-status" :data-status="statusOf(block.session.id)">
               <span v-if="statusOf(block.session.id) === 'running'" class="status-spin" aria-hidden="true" />
               <span v-else-if="statusOf(block.session.id) === 'unread'" class="status-dot" aria-hidden="true" />
-              <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+              <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
             </span>
           </button>
           <span class="row-actions">
-            <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(block.session.id, $event)">
+            <button
+              class="row-menu"
+              :aria-label="t('session.options')"
+              v-tip="{ label: t('side.priorityMore'), disabled: menuSession === block.session.id }"
+              @click.stop="openMenu(block.session.id, $event)"
+            >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <circle cx="3" cy="8" r="1.1" fill="currentColor" />
                 <circle cx="8" cy="8" r="1.1" fill="currentColor" />
                 <circle cx="13" cy="8" r="1.1" fill="currentColor" />
               </svg>
             </button>
-            <button class="row-pin on" :aria-label="t('menu.unpin')" @click.stop="app.togglePinned(block.session.id)">
+            <button class="row-pin on" :aria-label="t('menu.unpin')" v-tip="t('side.unpinTip')" @click.stop="app.togglePinned(block.session.id)">
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
               </svg>
@@ -1076,7 +1083,7 @@ function pickNewProject(key: string) {
             :aria-label="t('side.newProject')"
             aria-haspopup="menu"
             :aria-expanded="Boolean(newProjectMenu)"
-            v-tip="{ label: t('side.newProject') }"
+            v-tip="{ label: t('side.newProject'), disabled: Boolean(newProjectMenu) }"
             @click.stop="openNewProjectMenu"
           >
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1119,7 +1126,7 @@ function pickNewProject(key: string) {
             </span>
             <button
               class="project-toggle"
-              v-tip="pickingProjects ? '' : { label: project.directory, placement: 'top' }"
+              v-tip="{ label: project.directory, disabled: pickingProjects || menuDirectory === project.directory }"
               @click="pressProject(project.directory)"
             >
               <!-- Open while its tasks are listed under it, as MiMo draws an expanded project. -->
@@ -1154,7 +1161,7 @@ function pickNewProject(key: string) {
                 >
                   <span v-if="projectStatus(project.children) === 'running'" class="status-spin" aria-hidden="true" />
                   <span v-else-if="projectStatus(project.children) === 'unread'" class="status-dot" aria-hidden="true" />
-                  <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+                  <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
                 </span>
               </span>
               <span
@@ -1164,7 +1171,7 @@ function pickNewProject(key: string) {
               >
                 <span v-if="projectStatus(project.children) === 'running'" class="status-spin" aria-hidden="true" />
                 <span v-else-if="projectStatus(project.children) === 'unread'" class="status-dot" aria-hidden="true" />
-                <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+                <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
               </span>
             </button>
             <!--
@@ -1176,7 +1183,7 @@ function pickNewProject(key: string) {
               <button
                 class="row-menu"
                 :aria-label="t('side.projectOptions')"
-                v-tip="{ label: t('side.projectOptions') }"
+                v-tip="{ label: t('side.priorityMore'), disabled: menuDirectory === project.directory }"
                 @click.stop="openProjectMenu(project.directory, $event)"
               >
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1223,7 +1230,7 @@ function pickNewProject(key: string) {
                 </svg>
                 <RowTitle
                   class="row-label task-label"
-                  v-tip="picking ? '' : { card: convoCard(session, app.config?.projectNames), placement: 'right' }"
+                  v-tip="{ card: convoCard(session, app.config?.projectNames), placement: 'right', disabled: picking || menuSession === session.id }"
                   :text="title(session.title)"
                   :cover="picking ? 0 : TITLE_COVER"
                   @rename="!picking && emit('rename', session.id)"
@@ -1231,11 +1238,16 @@ function pickNewProject(key: string) {
                 <span v-if="statusOf(session.id)" class="row-status" :data-status="statusOf(session.id)">
                   <span v-if="statusOf(session.id) === 'running'" class="status-spin" aria-hidden="true" />
                   <span v-else-if="statusOf(session.id) === 'unread'" class="status-dot" aria-hidden="true" />
-                  <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+                  <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
                 </span>
               </button>
               <span class="row-actions">
-                <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event, true)">
+                <button
+                  class="row-menu"
+                  :aria-label="t('session.options')"
+                  v-tip="{ label: t('side.priorityMore'), disabled: menuSession === session.id }"
+                  @click.stop="openMenu(session.id, $event, true)"
+                >
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <circle cx="3" cy="8" r="1.1" fill="currentColor" />
                     <circle cx="8" cy="8" r="1.1" fill="currentColor" />
@@ -1246,6 +1258,7 @@ function pickNewProject(key: string) {
                   class="row-pin"
                   :class="{ on: app.isPinned(session.id) }"
                   :aria-label="t(app.isPinned(session.id) ? 'menu.unpin' : 'menu.pin')"
+                  v-tip="t(app.isPinned(session.id) ? 'side.unpinTip' : 'side.pinTip')"
                   @click.stop="app.togglePinned(session.id)"
                 >
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1288,7 +1301,7 @@ function pickNewProject(key: string) {
           <button
             class="ico add recent-more"
             :aria-label="t('side.priorityMore')"
-            v-tip="{ label: t('side.priorityMore') }"
+            v-tip="{ label: t('side.priorityMore'), disabled: Boolean(recentMenu) }"
             @click.stop="openRecentMenu"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1297,10 +1310,11 @@ function pickNewProject(key: string) {
               <circle cx="13" cy="8" r="1.1" fill="currentColor" />
             </svg>
           </button>
+          <!-- MiMo's heading new task names no shortcut, unlike the folded rail's. -->
           <button
             class="ico add recent-new"
             :aria-label="t('side.newTask')"
-            v-tip="{ label: t('side.newTask'), hint: 'Ctrl+N' }"
+            v-tip="t('side.newTask')"
             @click.stop="emit('newTask')"
           >
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1318,7 +1332,7 @@ function pickNewProject(key: string) {
             v-if="entry.section === 'priority'"
             class="ico add more"
             :aria-label="t('side.priorityMore')"
-            v-tip="{ label: t('side.priorityMore') }"
+            v-tip="{ label: t('side.priorityMore'), disabled: Boolean(priorityMenu) }"
             @click.stop="openPriorityMenu"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -1347,7 +1361,7 @@ function pickNewProject(key: string) {
             <span class="stack">
               <RowTitle
                 class="row-label task-label"
-                v-tip="picking ? '' : { card: convoCard(entry.session, app.config?.projectNames), placement: 'right' }"
+                v-tip="{ card: convoCard(entry.session, app.config?.projectNames), placement: 'right', disabled: picking || menuSession === entry.session.id }"
                 :text="title(entry.session.title)"
                 :cover="picking ? 0 : TITLE_COVER"
                 @rename="!picking && emit('rename', entry.session.id)"
@@ -1358,11 +1372,16 @@ function pickNewProject(key: string) {
             <span v-if="statusOf(entry.session.id)" class="row-status" :data-status="statusOf(entry.session.id)">
               <span v-if="statusOf(entry.session.id) === 'running'" class="status-spin" aria-hidden="true" />
               <span v-else-if="statusOf(entry.session.id) === 'unread'" class="status-dot" aria-hidden="true" />
-              <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+              <span v-else class="status-pill" :aria-label="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
             </span>
           </button>
           <span class="row-actions">
-            <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(entry.session.id, $event)">
+            <button
+              class="row-menu"
+              :aria-label="t('session.options')"
+              v-tip="{ label: t('side.priorityMore'), disabled: menuSession === entry.session.id }"
+              @click.stop="openMenu(entry.session.id, $event)"
+            >
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <circle cx="3" cy="8" r="1.1" fill="currentColor" />
                 <circle cx="8" cy="8" r="1.1" fill="currentColor" />
@@ -1373,6 +1392,7 @@ function pickNewProject(key: string) {
               class="row-pin"
               :class="{ on: app.isPinned(entry.session.id) }"
               :aria-label="t(app.isPinned(entry.session.id) ? 'menu.unpin' : 'menu.pin')"
+              v-tip="t(app.isPinned(entry.session.id) ? 'side.unpinTip' : 'side.pinTip')"
               @click.stop="app.togglePinned(entry.session.id)"
             >
               <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
