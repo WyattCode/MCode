@@ -158,7 +158,7 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
       <!-- MiMo hides these notes by a stylesheet accident; they stay, as its markup intends. -->
       <div v-if="patch === undefined && patchLoading" class="rv-diff-note">{{ t("rp.review.diffLoading") }}</div>
       <div v-else-if="patch !== undefined && !patch.trim()" class="rv-diff-note">{{ t("rp.review.noTextDiff") }}</div>
-      <RpDiff v-else-if="patch" :diff="patch" review />
+      <RpDiff v-else-if="patch" :diff="patch" />
     </template>
   </div>
 </template>

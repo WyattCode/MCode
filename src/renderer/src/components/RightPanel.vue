@@ -9,7 +9,7 @@ import RpFiles from "./right/RpFiles.vue"
 import RpChat from "./right/RpChat.vue"
 import RpBrowser from "./right/RpBrowser.vue"
 import RpTerminal from "./right/RpTerminal.vue"
-import RpDiff from "./right/RpDiff.vue"
+import RpDiffTab from "./right/RpDiffTab.vue"
 import OfficeTab from "./right/OfficeTab.vue"
 import HtmlTab from "./right/HtmlTab.vue"
 import FloatingChat from "./right/FloatingChat.vue"
@@ -381,9 +381,7 @@ defineExpose({
           />
           <OfficeTab v-else-if="tab.type === 'office'" :tab="tab" :active="tab.id === rp.active && rp.open" />
           <HtmlTab v-else-if="tab.type === 'html'" :tab="tab" :active="tab.id === rp.active && rp.open" />
-          <div v-else-if="tab.type === 'diff'" class="rp-diff-pane">
-            <RpDiff :diff="tab.diff ?? ''" />
-          </div>
+          <RpDiffTab v-else-if="tab.type === 'diff'" :diff="tab.diff ?? ''" />
         </PaneBoundary>
       </div>
     </div>
@@ -740,11 +738,5 @@ body.resizing webview {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-}
-
-.rp-diff-pane {
-  display: flex;
-  flex-direction: column;
-  padding: 10px 12px 12px;
 }
 </style>

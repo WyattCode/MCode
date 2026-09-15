@@ -136,6 +136,34 @@ export function parseDiffFiles(diff: string): DiffFileView[] {
   return files
 }
 
+export interface ReviewRow {
+  kind: "add" | "del" | "ctx" | "hunk"
+  old?: number
+  new?: number
+  sign: string
+  text: string
+}
+
+/*
+ * The review box's rows: each hunk's header, then its lines, file after file.
+ * Read through parseDiffFiles, so a later file's `diff --git`, `---` and `+++`
+ * lines are headers, not a removed and an added row.
+ */
+export function reviewRows(diff: string): ReviewRow[] {
+  return parseDiffFiles(diff).flatMap((file) =>
+    file.hunks.flatMap((hunk): ReviewRow[] => [
+      { kind: "hunk", sign: "", text: hunk.header },
+      ...hunk.lines.map((line) => ({
+        kind: line.kind,
+        old: line.old,
+        new: line.new,
+        sign: line.kind === "add" ? "+" : line.kind === "del" ? "-" : " ",
+        text: line.text,
+      })),
+    ]),
+  )
+}
+
 export interface SplitRow {
   left?: DiffLine
   right?: DiffLine
