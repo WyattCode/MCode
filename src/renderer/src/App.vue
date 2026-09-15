@@ -214,16 +214,18 @@ const terminalOpen = ref(false)
 const drawerHeight = ref(0)
 
 /*
- * MiMo's drop overlay: while files are dragged over the window, the main column
- * says they will be added. Only files and links count, as in MiMo - dragged
- * text is not a file - and not while a dialog or overlay has the window.
+ * MiMo's drop overlay: while files are dragged over the main column, it says
+ * they will be added. Only files and links count, as in MiMo - dragged text is
+ * not a file - and not while a dialog or overlay has the window. Over the side
+ * column or the side panel nothing lights, because nothing would be added.
  */
 const fileDrag = ref(false)
 
 function trackDrag(event: DragEvent) {
   const types = [...(event.dataTransfer?.types ?? [])].map((type) => type.toLowerCase())
   if (!types.includes("files") && !types.includes("text/uri-list")) return
-  fileDrag.value = !document.querySelector(".scrim, .overlay")
+  const overMain = event.target instanceof Element && Boolean(event.target.closest(".main"))
+  fileDrag.value = overMain && !document.querySelector(".scrim, .overlay")
 }
 
 function leaveDrag(event: DragEvent) {

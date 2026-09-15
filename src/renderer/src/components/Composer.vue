@@ -473,8 +473,21 @@ function dialogOpen(): boolean {
   return Boolean(document.querySelector(".scrim, .overlay"))
 }
 
+/*
+ * MiMo takes drops on the main column only - and on the box itself while it
+ * floats beside the side panel. A side chat's box, in the side panel, takes none.
+ */
+function inDropZone(event: DragEvent): boolean {
+  if (props.side) return false
+  return event.target instanceof Element && Boolean(event.target.closest(".main, #float-dock"))
+}
+
 function onDragOver(event: DragEvent) {
   if (dialogOpen()) return
+  if (!inDropZone(event)) {
+    dragging.value = false
+    return
+  }
   const types = event.dataTransfer?.types
   if (!types?.includes("Files") && !types?.includes("text/plain")) return
   // Without this the window navigates to the dropped file instead.
@@ -489,8 +502,10 @@ function onDragLeave(event: DragEvent) {
 
 async function onDrop(event: DragEvent) {
   if (dialogOpen()) return
-  event.preventDefault()
   dragging.value = false
+  // Anywhere else the window's own guard stops the browser opening the file, and nothing is added.
+  if (!inDropZone(event)) return
+  event.preventDefault()
 
   /*
    * A path dragged as text becomes a mention rather than a copy of the file:
@@ -960,7 +975,11 @@ async function submit() {
         // MiMo makes a side conversation on its first message; its tab hands over how.
         target = props.createSide ? await props.createSide() : undefined
         if (!target) throw new Error("")
-      } else await app.create(props.startDirectory, { scratch: props.startScratch })
+      } else {
+        await app.create(props.startDirectory, { scratch: props.startScratch })
+        // MiMo's newChat says so whenever the first send makes a new task.
+        notify(t("toast.newConvoCreated"))
+      }
     } catch (err) {
       text.value = value
       attachments.value = sent
