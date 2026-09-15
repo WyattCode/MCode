@@ -4254,6 +4254,8 @@ onBeforeUnmount(() => {
           <SessionHero v-if="empty && !app.error" />
           <MessageStream v-else ref="stream" />
           <SessionSpine v-if="!(empty && !app.error)" :scroller="stream?.scroller" />
+          <!-- MiMo's boundaries inside the page: the info panel, and the composer's dock zone, each apart from the transcript. -->
+          <ErrorBoundary :reset-key="app.currentID ?? ''">
           <InfoPanel
             :visible="infoShowing"
             :floating="infoFloating"
@@ -4261,6 +4263,7 @@ onBeforeUnmount(() => {
             :escape-blocked="modalOpen || searchOpen || connectOpen || Boolean(sessionMenu) || Boolean(projectMenu) || Boolean(app.permission)"
             @close="closeInfo"
           />
+          </ErrorBoundary>
 
           <!--
             The dock, which is the same region in every state a session can be
@@ -4270,6 +4273,7 @@ onBeforeUnmount(() => {
             the composer was torn down and rebuilt on that first message.
           -->
           <!-- MiMo's confirm dock: the first undecided permission or question, in arrival order. -->
+          <ErrorBoundary :reset-key="app.currentID ?? ''">
           <QuestionDock />
           <!--
             While the session is empty the box belongs inside the hero, between
@@ -4313,6 +4317,7 @@ onBeforeUnmount(() => {
               @terminal="openTerminalTab"
             />
           </Teleport>
+          </ErrorBoundary>
         </template>
 
         <!--
@@ -4451,8 +4456,9 @@ onBeforeUnmount(() => {
       @submit="applyServer"
     />
 
+    <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
+    <ErrorBoundary v-if="settingsOpen" :reset-key="settingsSection">
     <SettingsDialog
-      v-if="settingsOpen"
       :section="settingsSection"
       :commands="bindableCommands"
       :update-checking="updateChecking"
@@ -4460,6 +4466,7 @@ onBeforeUnmount(() => {
       @close="settingsOpen = false"
       @check-updates="checkForUpdates"
     />
+    </ErrorBoundary>
 
     <ProjectDialog
       v-if="editingProject"
