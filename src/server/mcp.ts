@@ -1,4 +1,6 @@
 import pkg from "../../package.json"
+import os from "node:os"
+import { existsSync } from "node:fs"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
@@ -21,10 +23,24 @@ import { ToolError, type ToolDefinition } from "./tool/types"
  * Talks to Model Context Protocol servers, and offers their tools to the agent.
  *
  * MCP is JSON-RPC 2.0 with a handshake, so this speaks it directly rather than
- * pulling in an SDK - the whole surface used here is initialize, tools/list and
- * tools/call. A local server is a child process exchanging newline-delimited
- * frames on its pipes; a remote one is an HTTP endpoint that answers a POST.
+ * pulling in an SDK. A local server is a child process exchanging
+ * newline-delimited frames on its pipes; a remote one is reached the way MiMo's
+ * engine reaches it - Streamable HTTP first, then the older HTTP+SSE transport
+ * when that fails. Either way the server may send requests and notifications
+ * of its own, which are answered here: a ping, a sampling request, and a
+ * changed tool list.
  */
+
+type JsonRpcId = number | string
+
+interface JsonRpcMessage {
+  jsonrpc?: string
+  id?: JsonRpcId | null
+  method?: string
+  params?: Record<string, unknown>
+  result?: unknown
+  error?: { code?: number; message?: string; data?: unknown }
+}
 
 interface Pending {
   resolve: (value: unknown) => void
@@ -37,6 +53,31 @@ interface McpTool {
   description?: string
   inputSchema?: Record<string, unknown>
 }
+
+/**
+ * A refusal a server-initiated request is answered with, carrying its JSON-RPC
+ * code - MiMo answers a declined sampling request with -1, a malformed one with
+ * the protocol's invalid-params code.
+ */
+export class McpRequestError extends Error {
+  constructor(
+    readonly code: number,
+    message: string,
+    readonly data?: unknown,
+  ) {
+    super(message)
+    this.name = "McpRequestError"
+  }
+}
+
+/** Answers one `sampling/createMessage` a server sent, with the result the protocol expects. */
+export type McpSampler = (input: {
+  server: string
+  params: Record<string, unknown>
+  /** The conversation whose tool call last reached the server, which is where approval is asked. */
+  sessionID?: string
+  signal: AbortSignal
+}) => Promise<Record<string, unknown>>
 
 /**
  * One prompt a server offers, which the composer reaches as a slash command.
@@ -59,15 +100,13 @@ export interface McpPromptRef extends McpPrompt {
 }
 
 /**
- * How a server's name and a prompt's name are joined into one word.
+ * How a server's name and a tool's or prompt's name are made safe to join.
  *
- * Verbatim the reference's `sanitize` at node-BBwF64dM.js @22772862 -
- * `value.replace(/[^a-zA-Z0-9_-]/g, "_")` - which it applies to both halves
- * before joining them with a colon (@22770881). The colon is what makes an MCP
- * prompt typeable as `/server:prompt`, and it is deliberately not the
- * underscore this file uses for tool names: the reference uses different
- * separators for the two, and a tool name has to survive a provider's own
- * `^[a-zA-Z0-9_-]+$` check while a command name never leaves this app.
+ * MiMo's engine replaces everything outside `[a-zA-Z0-9_-]` with `_` in both
+ * halves. A tool name is then `server_tool`, which has to survive a provider's
+ * own `^[a-zA-Z0-9_-]+$` check - a server called "my.docs" would otherwise
+ * make every request of the turn fail. A prompt is `server:prompt`, typeable
+ * as a slash command.
  */
 export function sanitizeMcpName(value: string): string {
   return value.replace(/[^a-zA-Z0-9_-]/g, "_")
@@ -77,12 +116,132 @@ export function promptCommandName(client: string, prompt: string): string {
   return `${sanitizeMcpName(client)}:${sanitizeMcpName(prompt)}`
 }
 
-/** How long any one call is given before it is abandoned. */
-const CALL_TIMEOUT = 60_000
-/** The handshake gets less: a server that cannot greet is not going to work. */
-const CONNECT_TIMEOUT = 15_000
+export function mcpToolName(client: string, tool: string): string {
+  return `${sanitizeMcpName(client)}_${sanitizeMcpName(tool)}`
+}
 
-const PROTOCOL_VERSION = "2024-11-05"
+/**
+ * A server's input schema as MiMo's engine hands it to the model: always an
+ * object, always with properties, and closed to keys it did not declare.
+ */
+export function mcpToolSchema(schema: Record<string, unknown> | undefined): Record<string, unknown> {
+  const declared = schema ?? {}
+  return { ...declared, type: "object", properties: declared.properties ?? {}, additionalProperties: false }
+}
+
+/** Connecting and listing a server's tools get this long, unless its config sets `timeout` (MiMo's engine). */
+const CONNECT_TIMEOUT = 30_000
+/** A call to a server with no `timeout` of its own: the MCP SDK's default request timeout, which MiMo leaves in place. */
+const CALL_TIMEOUT = 60_000
+
+/** The version MiMo's MCP SDK offers in the handshake; a server answers with the one it speaks. */
+const PROTOCOL_VERSION = "2025-11-25"
+
+/** JSON-RPC's codes for a method this client does not answer and a failure while answering. */
+const METHOD_NOT_FOUND = -32601
+const INTERNAL_ERROR = -32603
+
+interface McpContent {
+  type?: string
+  text?: string
+  mimeType?: string
+  uri?: string
+  name?: string
+  title?: string
+  resource?: { uri?: string; mimeType?: string; text?: string; blob?: string }
+}
+
+interface McpToolResult {
+  content?: McpContent[]
+  structuredContent?: unknown
+  isError?: boolean
+}
+
+function serializedIn(output: string, serialized: string): boolean {
+  const value = output.replaceAll("\r\n", "\n").trim()
+  return value === serialized || value.startsWith(`${serialized}\n`) || value.endsWith(`\n${serialized}`) || value.includes(`\n${serialized}\n`)
+}
+
+/**
+ * A tool result as text for the model, laid out as MiMo's engine lays it out:
+ * text parts and embedded resource text joined by blank lines, a resource link
+ * as its name and address, and structured content appended as JSON unless the
+ * text already carries it.
+ *
+ * MiMo attaches images, audio and binary resources to the result. This app has
+ * no way to hand a tool's attachment to the model, so each is named in a line
+ * saying it was left out rather than dropped without a word.
+ */
+export function mcpToolOutput(result: McpToolResult): { output: string; isError: boolean } {
+  const text: string[] = []
+  for (const item of result.content ?? []) {
+    if (item.type === "text") text.push(item.text ?? "")
+    else if (item.type === "image" || item.type === "audio") {
+      text.push(`[${item.mimeType ?? item.type} ${item.type} left out: this app cannot pass it to the model]`)
+    } else if (item.type === "resource_link") {
+      const name = item.title ?? item.name ?? ""
+      const uri = (item.uri ?? "").trim()
+      if (/^data:/i.test(uri)) {
+        const inline = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+);base64,/i.exec(uri)
+        text.push(inline ? `${name}: [inline ${inline[1]} resource left out]` : `${name}: [data URI omitted]`)
+      } else text.push(`${name}: ${uri}`)
+    } else if (item.type === "resource" && item.resource) {
+      if (typeof item.resource.text === "string") text.push(item.resource.text)
+      if (typeof item.resource.blob === "string") {
+        text.push(`[${item.resource.mimeType ?? "application/octet-stream"} resource ${item.resource.uri ?? ""} left out]`)
+      }
+    }
+  }
+  const textOutput = text.join("\n\n")
+  if (result.structuredContent === undefined) return { output: textOutput, isError: result.isError ?? false }
+  const structured = JSON.stringify(result.structuredContent)
+  const pretty = JSON.stringify(result.structuredContent, null, 2)
+  const already = serializedIn(textOutput, structured) || serializedIn(textOutput, pretty)
+  const visible = text.some((entry) => entry.trim().length > 0)
+  const output = already ? textOutput : visible ? `${textOutput}\n\nStructured content:\n${structured}` : structured
+  return { output, isError: result.isError ?? false }
+}
+
+/**
+ * Reads a server-sent event stream, handing over each event's name and its
+ * joined data lines as the blank line that ends it arrives - so a request the
+ * server sends in the middle of a long answer is seen while the answer waits.
+ */
+async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: string, data: string) => void): Promise<void> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ""
+  let event = ""
+  let data: string[] = []
+  const line = (text: string) => {
+    if (text === "") {
+      if (data.length) onEvent(event || "message", data.join("\n"))
+      event = ""
+      data = []
+      return
+    }
+    if (text.startsWith(":")) return
+    const colon = text.indexOf(":")
+    const field = colon === -1 ? text : text.slice(0, colon)
+    let value = colon === -1 ? "" : text.slice(colon + 1)
+    if (value.startsWith(" ")) value = value.slice(1)
+    if (field === "event") event = value
+    else if (field === "data") data.push(value)
+  }
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let index = buffer.indexOf("\n")
+    while (index !== -1) {
+      line(buffer.slice(0, index).replace(/\r$/, ""))
+      buffer = buffer.slice(index + 1)
+      index = buffer.indexOf("\n")
+    }
+  }
+  if (buffer) line(buffer.replace(/\r$/, ""))
+  line("")
+}
 
 /**
  * How to start a command on this platform.
@@ -102,6 +261,15 @@ function windowsLaunch(command: string, args: string[]) {
   return { command: "cmd.exe", args: ["/d", "/s", "/c", `"${line}"`], verbatim: true }
 }
 
+/** What a connection asks of the servers' owner. */
+interface ConnectionHooks {
+  /** Where a local server starts: the project, as MiMo's engine starts it in its instance directory. */
+  cwd?: () => string | undefined
+  /** The server said its tools changed, and the new list is in. */
+  toolsChanged?: () => void
+  sample?: McpSampler
+}
+
 /**
  * One connection, in whichever transport its config asks for.
  *
@@ -113,6 +281,8 @@ class Connection {
   status: McpStatus = "disabled"
   error?: string
   tools: McpTool[] = []
+  /** The conversation whose tool call last reached this server; sampling asks there, as MiMo's does. */
+  activeSession?: string
   /*
    * What the handshake said the server can do. Kept because prompts are asked
    * for only when they were advertised: the reference guards its own listing
@@ -129,6 +299,15 @@ class Connection {
   private nextID = 1
   private readonly pending = new Map<number, Pending>()
   private closed = false
+  /** How a remote server is spoken to: Streamable HTTP, or the older HTTP+SSE once that failed. */
+  private transport: "stdio" | "http" | "sse" = "stdio"
+  /** HTTP+SSE: the address the event stream named for posting messages. */
+  private endpoint?: URL
+  /** Requests and event streams in flight, cut off when the connection closes. */
+  private readonly streams = new Set<AbortController>()
+  /** Requests the server sent that are still being answered. */
+  private readonly serving = new Map<JsonRpcId, AbortController>()
+  private protocolVersion?: string
 
   /** A remote server's sign-in, unless its config turns OAuth off. */
   private readonly provider?: McpOAuthProvider
@@ -146,6 +325,7 @@ class Connection {
     auth?: McpAuthStore,
     /** Where the authorization address goes when signing in needs the reader; a plain connect only notes it. */
     onRedirect?: (url: URL) => void,
+    private readonly hooks: ConnectionHooks = {},
   ) {
     if (config.type === "remote" && config.url && config.oauth !== false && auth) {
       const oauth = typeof config.oauth === "object" ? config.oauth : {}
@@ -172,23 +352,16 @@ class Connection {
     this.stderr = ""
     this.sessionID = undefined
     this.signedIn = false
+    this.protocolVersion = undefined
     try {
       if (this.config.type === "remote") {
         if (!this.config.url) throw new Error("no url configured")
+        await this.connectRemote()
       } else {
+        this.transport = "stdio"
         this.spawn()
+        await this.handshake()
       }
-      const greeting = (await this.request("initialize", {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "MCode", version: pkg.version },
-      })) as { capabilities?: Record<string, unknown> }
-      this.capabilities = greeting?.capabilities ?? {}
-      // The spec wants this after initialize, and servers that follow it will
-      // not answer anything else until they have seen it.
-      this.notify("notifications/initialized")
-      const listed = (await this.request("tools/list", {})) as { tools?: McpTool[] }
-      this.tools = listed?.tools ?? []
       this.status = "connected"
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
@@ -212,6 +385,53 @@ class Connection {
     }
   }
 
+  /**
+   * MiMo's order for a remote server: Streamable HTTP, then HTTP+SSE. A server
+   * that asked for a sign-in is not tried a second way - signing in is the answer.
+   */
+  private async connectRemote(): Promise<void> {
+    this.transport = "http"
+    try {
+      await this.handshake()
+      return
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      if (err instanceof UnauthorizedError || (this.provider && reason.includes("OAuth"))) throw err
+      this.cut()
+      this.sessionID = undefined
+      this.protocolVersion = undefined
+    }
+    this.transport = "sse"
+    await this.openLegacyStream()
+    await this.handshake()
+  }
+
+  private async handshake(): Promise<void> {
+    const timeout = this.config.timeout ?? CONNECT_TIMEOUT
+    const greeting = (await this.request(
+      "initialize",
+      {
+        protocolVersion: PROTOCOL_VERSION,
+        // Sampling is offered, as MiMo's client offers it; each request is still decided per server.
+        capabilities: { sampling: {} },
+        clientInfo: { name: "MCode", version: pkg.version },
+      },
+      { timeout },
+    )) as { capabilities?: Record<string, unknown>; protocolVersion?: unknown }
+    this.capabilities = greeting?.capabilities ?? {}
+    if (typeof greeting?.protocolVersion === "string") this.protocolVersion = greeting.protocolVersion
+    // The spec wants this after initialize, and servers that follow it will
+    // not answer anything else until they have seen it.
+    this.notify("notifications/initialized")
+    if (this.transport === "http") void this.openServerStream()
+    this.tools = await this.listTools(timeout)
+  }
+
+  private async listTools(timeout = this.config.timeout ?? CONNECT_TIMEOUT): Promise<McpTool[]> {
+    const listed = (await this.request("tools/list", {}, { timeout })) as { tools?: McpTool[] }
+    return listed?.tools ?? []
+  }
+
   disable(): void {
     this.stop()
     this.status = "disabled"
@@ -222,27 +442,41 @@ class Connection {
 
   stop(): void {
     this.closed = true
-    for (const [, entry] of this.pending) {
-      clearTimeout(entry.timer)
-      entry.reject(new Error("connection closed"))
-    }
-    this.pending.clear()
+    this.cut()
     this.child?.kill()
     this.child = undefined
     this.buffer = ""
   }
 
-  async call(tool: string, args: Record<string, unknown>): Promise<string> {
-    const result = (await this.request("tools/call", { name: tool, arguments: args })) as {
-      content?: { type: string; text?: string }[]
-      isError?: boolean
+  /** Settles everything waiting on this connection and closes its streams, without deciding its status. */
+  private cut(): void {
+    for (const [, entry] of this.pending) {
+      clearTimeout(entry.timer)
+      entry.reject(new Error("connection closed"))
     }
-    const text = (result?.content ?? [])
-      .map((part) => (part.type === "text" ? (part.text ?? "") : `[${part.type}]`))
-      .join("\n")
-      .trim()
-    if (result?.isError) throw new ToolError(text || "the MCP server reported an error")
-    return text || "(no output)"
+    this.pending.clear()
+    for (const controller of this.streams) controller.abort()
+    this.streams.clear()
+    for (const [, controller] of this.serving) controller.abort()
+    this.serving.clear()
+    this.endpoint = undefined
+  }
+
+  /**
+   * One tool call. The turn's Stop reaches the server as a cancellation, and a
+   * call with no answer inside the server's `timeout` - or a minute, without
+   * one - is given up on.
+   */
+  async call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+    // A call that timed out or lost its server is a failure the model reads, not a crash of the app.
+    const result = (await this.request("tools/call", { name: tool, arguments: args }, { timeout: this.config.timeout ?? CALL_TIMEOUT, signal }).catch(
+      (err: unknown) => {
+        throw err instanceof ToolError ? err : new ToolError(err instanceof Error ? err.message : String(err))
+      },
+    )) as McpToolResult
+    const { output, isError } = mcpToolOutput(result ?? {})
+    if (isError) throw new ToolError(output || "the MCP server reported an error")
+    return output || "(no output)"
   }
 
   /** The prompts this server offers, or nothing if it never claimed to have any. */
@@ -274,6 +508,8 @@ class Connection {
     if (!command) throw new Error("no command configured")
     const launch = windowsLaunch(command, args)
     const child = spawn(launch.command, launch.args, {
+      // In the project, so a server told `.` - server-filesystem, say - looks where the user works.
+      cwd: this.hooks.cwd?.(),
       env: { ...process.env, ...(this.config.environment ?? {}) },
       windowsHide: true,
       windowsVerbatimArguments: launch.verbatim,
@@ -328,17 +564,35 @@ class Connection {
     while (index !== -1) {
       const line = this.buffer.slice(0, index).trim()
       this.buffer = this.buffer.slice(index + 1)
-      if (line) this.receive(line)
+      if (line) this.receiveText(line)
       index = this.buffer.indexOf("\n")
     }
   }
 
-  private receive(line: string) {
-    let message: { id?: number; result?: unknown; error?: { message?: string } }
+  /** A frame, a batch of frames, or - some servers print banners on stdout - not a frame at all. */
+  private receiveText(text: string) {
+    let parsed: unknown
     try {
-      message = JSON.parse(line)
+      parsed = JSON.parse(text)
     } catch {
-      return // Not a frame: some servers print banners on stdout.
+      return
+    }
+    for (const message of Array.isArray(parsed) ? parsed : [parsed]) {
+      if (message && typeof message === "object") this.receive(message as JsonRpcMessage)
+    }
+  }
+
+  /*
+   * A message with a method is the server speaking first - a request when it
+   * carries an id, a notification when it does not. Only one without a method
+   * is a reply, so a server's own request that happens to reuse the id of a
+   * call still waiting is answered, not mistaken for that call's result.
+   */
+  private receive(message: JsonRpcMessage) {
+    if (typeof message.method === "string") {
+      if (message.id !== undefined && message.id !== null) void this.serve(message.id, message.method, message.params ?? {})
+      else this.notified(message.method, message.params ?? {})
+      return
     }
     if (typeof message.id !== "number") return
     const entry = this.pending.get(message.id)
@@ -349,70 +603,187 @@ class Connection {
     else entry.resolve(message.result)
   }
 
-  private notify(method: string, params: Record<string, unknown> = {}) {
-    const frame = JSON.stringify({ jsonrpc: "2.0", method, params })
-    if (this.config.type === "remote") {
-      void this.post(frame).catch(() => {})
+  private notified(method: string, params: Record<string, unknown>) {
+    // MiMo refetches a server's tools when it says they changed, and the next request offers the new list.
+    if (method === "notifications/tools/list_changed") {
+      if (this.status !== "connected") return
+      void this.listTools().then(
+        (tools) => {
+          if (this.status !== "connected") return
+          this.tools = tools
+          this.hooks.toolsChanged?.()
+        },
+        () => {},
+      )
       return
     }
-    this.child?.stdin.write(frame + "\n")
+    if (method === "notifications/cancelled") {
+      const id = params.requestId
+      if (typeof id === "number" || typeof id === "string") this.serving.get(id)?.abort()
+    }
   }
 
-  private async request(method: string, params: Record<string, unknown>): Promise<unknown> {
+  /** Answers a request the server sent: a ping, a sampling request, or that the method is not one this client has. */
+  private async serve(id: JsonRpcId, method: string, params: Record<string, unknown>): Promise<void> {
+    const controller = new AbortController()
+    this.serving.set(id, controller)
+    try {
+      let result: unknown
+      if (method === "ping") result = {}
+      else if (method === "sampling/createMessage" && this.hooks.sample) {
+        result = await this.hooks.sample({ server: this.name, params, sessionID: this.activeSession, signal: controller.signal })
+      } else throw new McpRequestError(METHOD_NOT_FOUND, "Method not found")
+      await this.send({ jsonrpc: "2.0", id, result })
+    } catch (err) {
+      const code = err instanceof McpRequestError ? err.code : INTERNAL_ERROR
+      const message = err instanceof Error ? err.message : String(err)
+      const data = err instanceof McpRequestError && err.data !== undefined ? { data: err.data } : {}
+      await this.send({ jsonrpc: "2.0", id, error: { code, message, ...data } }).catch(() => {})
+    } finally {
+      this.serving.delete(id)
+    }
+  }
+
+  private notify(method: string, params: Record<string, unknown> = {}) {
+    void this.send({ jsonrpc: "2.0", method, params }).catch(() => {})
+  }
+
+  private request(
+    method: string,
+    params: Record<string, unknown>,
+    options: { timeout?: number; signal?: AbortSignal } = {},
+  ): Promise<unknown> {
     const id = this.nextID
     this.nextID += 1
-    const frame = JSON.stringify({ jsonrpc: "2.0", id, method, params })
-
-    if (this.config.type === "remote") {
-      const body = await this.post(frame, method === "initialize")
-      const message = JSON.parse(body) as { result?: unknown; error?: { message?: string } }
-      if (message.error) throw new Error(message.error.message ?? "MCP error")
-      return message.result
-    }
-
-    if (!this.child) throw new Error("not connected")
+    const timeout = options.timeout ?? CALL_TIMEOUT
+    const signal = options.signal
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(new ToolError("The MCP call was stopped"))
+        return
+      }
+      const settle = () => {
+        const entry = this.pending.get(id)
+        if (!entry) return undefined
+        this.pending.delete(id)
+        clearTimeout(entry.timer)
+        signal?.removeEventListener("abort", onAbort)
+        return entry
+      }
+      // Stopped or given up on, the server is told, as the MCP SDK tells it, so it can stop working too.
+      const onAbort = () => {
+        if (!settle()) return
+        this.notify("notifications/cancelled", { requestId: id, reason: "The turn was stopped" })
+        reject(new ToolError("The MCP call was stopped"))
+      }
       const timer = setTimeout(() => {
-        this.pending.delete(id)
+        if (!settle()) return
+        this.notify("notifications/cancelled", { requestId: id, reason: `Timed out after ${timeout}ms` })
         reject(new Error(`${method} timed out`))
-      }, method === "initialize" ? CONNECT_TIMEOUT : CALL_TIMEOUT)
-      this.pending.set(id, { resolve, reject, timer })
-      this.child?.stdin.write(frame + "\n", (err) => {
-        if (!err) return
-        this.pending.delete(id)
-        clearTimeout(timer)
-        reject(err)
+      }, timeout)
+      this.pending.set(id, {
+        timer,
+        resolve: (value) => {
+          signal?.removeEventListener("abort", onAbort)
+          resolve(value)
+        },
+        reject: (error) => {
+          signal?.removeEventListener("abort", onAbort)
+          reject(error)
+        },
+      })
+      signal?.addEventListener("abort", onAbort, { once: true })
+      this.send({ jsonrpc: "2.0", id, method, params }, timeout).catch((err: unknown) => {
+        if (!settle()) return
+        reject(err instanceof Error ? err : new Error(String(err)))
       })
     })
   }
 
-  private async post(frame: string, handshake = false): Promise<string> {
-    const controller = new AbortController()
-    const timer = setTimeout(
-      () => controller.abort(),
-      handshake ? CONNECT_TIMEOUT : CALL_TIMEOUT,
+  /** Puts one frame on the wire; a reply that comes back in the response body is received from there. */
+  private async send(message: JsonRpcMessage, timeout = CALL_TIMEOUT): Promise<void> {
+    const frame = JSON.stringify(message)
+    if (this.transport === "stdio") {
+      const child = this.child
+      if (!child) throw new Error("not connected")
+      await new Promise<void>((resolve, reject) => child.stdin.write(frame + "\n", (err) => (err ? reject(err) : resolve())))
+      return
+    }
+    if (this.transport === "sse") {
+      if (!this.endpoint) throw new Error("not connected")
+      const { response, release } = await this.open(this.endpoint, "POST", { "content-type": "application/json" }, frame, timeout)
+      await response.body?.cancel().catch(() => {})
+      release()
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return
+    }
+    const { response, release } = await this.open(
+      new URL(this.config.url!),
+      "POST",
+      { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      frame,
+      timeout,
     )
     try {
+      const session = response.headers.get("mcp-session-id")
+      if (session) this.sessionID = session
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {})
+        throw new Error(`HTTP ${response.status}`)
+      }
+      if (response.status === 202 || !response.body) return
+      if ((response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+        await readEvents(response.body, (_event, data) => this.receiveText(data))
+        return
+      }
+      const text = await response.text()
       /*
-       * The SDK transport's order: the stored token, the session, and then the
-       * config's own headers, which win - an Authorization written there is
-       * what gets sent.
+       * Some servers answer as server-sent events without saying so in the
+       * content type; the JSON is then on the data: lines.
        */
-      const headers = new Headers({ "content-type": "application/json", accept: "application/json, text/event-stream" })
+      if (!text.trimStart().startsWith("{") && !text.trimStart().startsWith("[") && /^(event|data):/m.test(text)) {
+        for (const line of text.split("\n")) if (line.startsWith("data:")) this.receiveText(line.slice(5).trim())
+        return
+      }
+      this.receiveText(text)
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * One HTTP request to a remote server, with its headers and its sign-in.
+   *
+   * The SDK transport's order: the stored token, the session, and then the
+   * config's own headers, which win - an Authorization written there is what
+   * gets sent. `release` ends the request's hold once its body has been read;
+   * a request without `timeout` is an event stream that stays open.
+   */
+  private async open(
+    url: URL,
+    method: "GET" | "POST",
+    base: Record<string, string>,
+    body?: string,
+    timeout?: number,
+  ): Promise<{ response: Response; release: () => void }> {
+    const controller = new AbortController()
+    this.streams.add(controller)
+    const timer = timeout === undefined ? undefined : setTimeout(() => controller.abort(), timeout)
+    const release = () => {
+      clearTimeout(timer)
+      this.streams.delete(controller)
+    }
+    try {
+      const headers = new Headers(base)
       const tokens = this.provider ? await this.provider.tokens() : undefined
       if (tokens) headers.set("authorization", `Bearer ${tokens.access_token}`)
       if (this.sessionID) headers.set("mcp-session-id", this.sessionID)
+      if (this.transport === "http" && this.protocolVersion) headers.set("mcp-protocol-version", this.protocolVersion)
       for (const [key, value] of Object.entries(this.config.headers ?? {})) headers.set(key, value)
-      const response = await fetch(this.config.url!, {
-        method: "POST",
-        headers,
-        body: frame,
-        signal: controller.signal,
-      })
-      const session = response.headers.get("mcp-session-id")
-      if (session) this.sessionID = session
+      const response = await fetch(url, { method, headers, body, signal: controller.signal })
       if (response.status === 401 && this.provider) {
         await response.body?.cancel().catch(() => {})
+        release()
         if (this.signedIn) throw new Error("Server returned 401 after successful authentication")
         const named = wwwAuthenticateParams(response)
         this.resourceMetadataUrl = named.resourceMetadataUrl
@@ -425,25 +796,61 @@ class Connection {
         })
         if (result !== "AUTHORIZED") throw new UnauthorizedError()
         this.signedIn = true
-        clearTimeout(timer)
-        return this.post(frame, handshake)
+        return this.open(url, method, base, body, timeout)
       }
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const text = await response.text()
-      /*
-       * Streamable HTTP may answer as server-sent events even for a single
-       * reply, in which case the JSON is on the last data: line.
-       */
-      if (text.startsWith("event:") || text.includes("\ndata:")) {
-        const data = text
-          .split("\n")
-          .filter((line) => line.startsWith("data:"))
-          .map((line) => line.slice(5).trim())
-        return data[data.length - 1] ?? "{}"
+      return { response, release }
+    } catch (err) {
+      release()
+      throw err
+    }
+  }
+
+  /** HTTP+SSE: opens the event stream and waits for the address it names for posting. */
+  private async openLegacyStream(): Promise<void> {
+    const url = new URL(this.config.url!)
+    const { response, release } = await this.open(url, "GET", { accept: "text/event-stream" })
+    if (!response.ok || !response.body) {
+      await response.body?.cancel().catch(() => {})
+      release()
+      throw new Error(`HTTP ${response.status}`)
+    }
+    const body = response.body
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("the event stream named no endpoint")), this.config.timeout ?? CONNECT_TIMEOUT)
+      readEvents(body, (event, data) => {
+        if (event === "endpoint") {
+          this.endpoint = new URL(data, url)
+          clearTimeout(timer)
+          resolve()
+          return
+        }
+        this.receiveText(data)
+      })
+        .catch(() => {})
+        .finally(() => {
+          release()
+          clearTimeout(timer)
+          reject(new Error("the event stream closed"))
+          if (!this.closed && this.transport === "sse" && this.status === "connected") this.fail("the event stream closed")
+        })
+    })
+  }
+
+  /** Streamable HTTP: the stream a server may speak first on; one without it answers 405, which is fine. */
+  private async openServerStream(): Promise<void> {
+    try {
+      const { response, release } = await this.open(new URL(this.config.url!), "GET", { accept: "text/event-stream" })
+      try {
+        if (!response.ok || !response.body || !(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+          await response.body?.cancel().catch(() => {})
+          return
+        }
+        await readEvents(response.body, (_event, data) => this.receiveText(data))
+      } finally {
+        release()
       }
-      return text
-    } finally {
-      clearTimeout(timer)
+    } catch {
+      // Closed with the connection, or never offered.
     }
   }
 }
@@ -460,6 +867,7 @@ export class McpServers {
   private readonly oauth?: McpAuthStore
   /** Servers whose sign-in is under way, so a second press does not start another. */
   private readonly authorizing = new Set<string>()
+  private sampler?: McpSampler
 
   constructor(
     private readonly bus: Bus,
@@ -472,6 +880,22 @@ export class McpServers {
       if (JSON.stringify(event.config.mcpServers ?? {}) === this.fingerprint) return
       void this.sync()
     })
+  }
+
+  /** How a server's sampling requests are answered; the backend hands this over once the models are reachable. */
+  useSampling(sampler: McpSampler): void {
+    this.sampler = sampler
+  }
+
+  private hooks(): ConnectionHooks {
+    return {
+      cwd: () => {
+        const directory = this.config.get().directory
+        return directory && existsSync(directory) ? directory : os.homedir()
+      },
+      toolsChanged: () => this.publish(),
+      sample: (input) => (this.sampler ? this.sampler(input) : Promise.reject(new McpRequestError(METHOD_NOT_FOUND, "Method not found"))),
+    }
   }
 
   /**
@@ -497,7 +921,7 @@ export class McpServers {
       const wanted = entry.enabled !== false
       let connection = this.connections.get(name)
       if (!connection) {
-        connection = new Connection(name, entry, this.oauth)
+        connection = new Connection(name, entry, this.oauth, undefined, this.hooks())
         this.connections.set(name, connection)
       }
       if (!wanted) {
@@ -552,9 +976,15 @@ export class McpServers {
     await store.update(name, "oauthState", state)
 
     let address: URL | undefined
-    const attempt = new Connection(name, entry, store, (url) => {
-      address = url
-    })
+    const attempt = new Connection(
+      name,
+      entry,
+      store,
+      (url) => {
+        address = url
+      },
+      this.hooks(),
+    )
     await attempt.connect()
     if (attempt.status === "connected") {
       await store.clear(name, "oauthState")
@@ -662,13 +1092,14 @@ export class McpServers {
       if (connection.status !== "connected") continue
       for (const tool of connection.tools) {
         out.push({
-          name: `${name}_${tool.name}`,
-          description: tool.description ?? `${tool.name} from the ${name} MCP server`,
-          parameters: tool.inputSchema ?? { type: "object", properties: {} },
+          name: mcpToolName(name, tool.name),
+          description: tool.description ?? "",
+          parameters: mcpToolSchema(tool.inputSchema),
           // One bucket for all of them: approving a server's tools once is the
           // decision a user is actually making.
           permission: "mcp",
           execute: async (input, context) => {
+            connection.activeSession = context.sessionID
             /*
              * An MCP server is code this app did not write, reached over a
              * pipe or a socket, and a call hands it whatever the model chose
@@ -686,7 +1117,7 @@ export class McpServers {
               preview: JSON.stringify(input, null, 2),
               scope: `mcp:${name}`,
             })
-            const output = await connection.call(tool.name, input)
+            const output = await connection.call(tool.name, input, context.signal)
             return { output, title: `${name}: ${tool.name}` }
           },
         })

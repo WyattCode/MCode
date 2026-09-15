@@ -28,5 +28,8 @@ export function mergeMcpSecrets(
   if (incoming.headers) merged.headers = fill(incoming.headers, stored?.headers, keep.headers)
   if (!merged.environment) delete merged.environment
   if (!merged.headers) delete merged.headers
+  // Written by hand into config.json, never shown by the form: kept rather than lost on the next save.
+  if (merged.timeout === undefined && stored?.timeout !== undefined) merged.timeout = stored.timeout
+  if (merged.sampling === undefined && stored?.sampling !== undefined) merged.sampling = stored.sampling
   return merged
 }

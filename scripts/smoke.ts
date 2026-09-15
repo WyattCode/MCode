@@ -44,6 +44,10 @@ import { normalizeChord } from "../src/shared/chord"
 import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
+// round 5: MCP names, folder, server messages, results, transports and sampling.
+import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../src/server/mcp"
+import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
+import type { McpServerConfig } from "../src/shared/protocol"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
   VOICE_EDIT_MAX,
@@ -5129,6 +5133,7 @@ async function main() {
   await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
+  await mcpChecks(project)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -6267,6 +6272,225 @@ async function sessionChatChecks(root: string, project: string) {
   check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("no longer exists"), gone)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
+}
+
+/** Round 5 (E45-E49): MCP tool names, the folder a server starts in, messages a server sends first, results, Stop and timeouts, remote transports, sampling. */
+async function mcpChecks(project: string) {
+  section("MCP servers (round 5)")
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const waitFor = async (test: () => boolean, ms: number) => {
+    const end = Date.now() + ms
+    while (Date.now() < end) {
+      if (test()) return true
+      await sleep(25)
+    }
+    return test()
+  }
+  const listen = (server: ReturnType<typeof createServer>) =>
+    new Promise<number>((resolve) => server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port)))
+  const readBody = (request: import("node:http").IncomingMessage) =>
+    new Promise<string>((resolve) => {
+      let body = ""
+      request.on("data", (chunk) => (body += chunk))
+      request.on("end", () => resolve(body))
+    })
+
+  // A Streamable HTTP server that answers a call as an event stream with a ping of its own first.
+  const httpSeen: { session?: string; pingAnswered: boolean } = { pingAnswered: false }
+  const streamable = createServer(async (request, response) => {
+    if (request.method !== "POST") return void response.writeHead(405).end()
+    const message = JSON.parse(await readBody(request))
+    if (!message.method) {
+      if (message.id === "p1" && message.result) httpSeen.pingAnswered = true
+      return void response.writeHead(202).end()
+    }
+    if (message.id === undefined) return void response.writeHead(202).end()
+    const reply = (result: unknown) => {
+      response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "sess-1" })
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }))
+    }
+    if (message.method === "initialize") reply({ protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "http", version: "1" } })
+    else if (message.method === "tools/list") reply({ tools: [{ name: "echo", inputSchema: { type: "object" } }] })
+    else if (message.method === "tools/call") {
+      httpSeen.session = String(request.headers["mcp-session-id"] ?? "")
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: "p1", method: "ping" })}\n\n`)
+      await sleep(100)
+      response.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: `http:${message.params.arguments.text}` }] } })}\n\n`)
+    } else reply({})
+  })
+  // An HTTP+SSE-only server: a POST to its address is refused, its event stream names where to post.
+  let legacyStream: ServerResponse | undefined
+  const legacy = createServer(async (request, response) => {
+    if (request.method === "GET") {
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.write("event: endpoint\ndata: /messages?session=1\n\n")
+      legacyStream = response
+      return
+    }
+    if (!request.url?.startsWith("/messages")) return void response.writeHead(405).end()
+    const message = JSON.parse(await readBody(request))
+    response.writeHead(202).end()
+    if (message.id === undefined || !message.method) return
+    const push = (result: unknown) => legacyStream?.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n\n`)
+    if (message.method === "initialize") push({ protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "legacy", version: "1" } })
+    else if (message.method === "tools/list") push({ tools: [{ name: "echo", inputSchema: { type: "object" } }] })
+    else if (message.method === "tools/call") push({ content: [{ type: "text", text: `legacy:${message.params.arguments.text}` }] })
+    else push({})
+  })
+  const httpPort = await listen(streamable)
+  const legacyPort = await listen(legacy)
+
+  const fixture = path.join(process.cwd(), "scripts/fixtures/mcp-rich-server.cjs")
+  const workFolder = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-mcp-cwd-"))
+  let servers: Record<string, McpServerConfig> = {
+    "my.server": { type: "local", command: ["node", fixture] },
+    quick: { type: "local", command: ["node", fixture], timeout: 400 },
+    web: { type: "remote", url: `http://127.0.0.1:${httpPort}/mcp`, oauth: false },
+    old: { type: "remote", url: `http://127.0.0.1:${legacyPort}/sse`, oauth: false },
+  }
+  const stubConfig = {
+    get: () => ({ mcpServers: servers, directory: workFolder }) as unknown as AppConfig,
+    set: async (patch: Partial<AppConfig>) => {
+      if (patch.mcpServers) servers = patch.mcpServers
+      return stubConfig.get()
+    },
+  }
+  const mcpBus = new Bus()
+  const counts: number[] = []
+  mcpBus.subscribe((event) => {
+    if (event.type === "mcp.status") counts.push(event.servers.find((entry) => entry.name === "my.server")?.tools ?? -1)
+  })
+  const mcp = new McpServers(mcpBus, stubConfig as never)
+  const sampled: { server: string; sessionID?: string }[] = []
+  mcp.useSampling(async (input) => {
+    sampled.push({ server: input.server, sessionID: input.sessionID })
+    return { role: "assistant", content: { type: "text", text: "sampled" }, model: "fake/m", stopReason: "endTurn" }
+  })
+  await mcp.sync()
+  const mcpContext = (callID: string, signal = new AbortController().signal) =>
+    ({ sessionID: "ses_mcp", messageID: "msg_mcp", callID, directory: project, permissions: { ask: async () => {} }, signal, progress: () => {}, snapshot: async () => {} }) as never
+  const named = (name: string) => mcp.tools().find((tool) => tool.name === name)
+  const run = (name: string, input: Record<string, unknown> = {}, signal?: AbortSignal) =>
+    named(name)!.execute(input, mcpContext(`m-${name}`, signal)).then(
+      (result) => result.output,
+      (error: Error) => `ERROR ${error.message}`,
+    )
+  check("every configured server connects, both remote transports included", mcp.list().every((entry) => entry.status === "connected"), mcp.list())
+
+  // E45
+  check(
+    "an MCP tool is named server_tool with everything outside [a-zA-Z0-9_-] as _",
+    Boolean(named("my_server_echo")) && Boolean(named("my_server_ask-model")) && mcp.tools().every((tool) => /^[a-zA-Z0-9_-]+$/.test(tool.name)),
+    mcp.tools().map((tool) => tool.name),
+  )
+  const echoSchema = named("my_server_echo")?.parameters
+  check(
+    "its schema is made a closed object",
+    echoSchema?.type === "object" && echoSchema.additionalProperties === false && JSON.stringify(echoSchema.properties) === JSON.stringify({ text: { type: "string" } }),
+    echoSchema,
+  )
+  check("a server with no schema gets empty properties", JSON.stringify(mcpToolSchema(undefined)) === JSON.stringify({ type: "object", properties: {}, additionalProperties: false }))
+
+  // E46
+  const where = await run("my_server_where")
+  check("a local server starts in the project folder", path.resolve(where).toLowerCase() === path.resolve(workFolder).toLowerCase(), { where, workFolder })
+
+  // E47
+  const countsBefore = counts.length
+  await run("my_server_grow")
+  const grew = await waitFor(() => Boolean(named("my_server_extra")), 3000)
+  check("tools/list_changed refetches a server's tools and says so", grew && counts.slice(countsBefore).includes(9), counts.slice(countsBefore))
+  check("a server request reusing a waiting call's id is answered, not taken for the call's reply", (await run("my_server_collide")) === "pong:{}")
+  check("Streamable HTTP: a call answered as an event stream, with the session sent back", (await run("web_echo", { text: "hi" })) === "http:hi" && httpSeen.session === "sess-1", httpSeen)
+  check("and the server's own ping inside that stream is answered", await waitFor(() => httpSeen.pingAnswered, 2000))
+  check("a server that only speaks HTTP+SSE is reached through the fallback", (await run("old_echo", { text: "hi" })) === "legacy:hi")
+
+  // E48
+  const shape = await run("my_server_shape")
+  check(
+    "a result keeps text and resource text, names what it leaves out, lists a link and appends structured content",
+    shape ===
+      ["alpha", "[image/png image left out: this app cannot pass it to the model]", "resource body", "doc: https://example.com/doc"].join("\n\n") +
+        '\n\nStructured content:\n{"answer":42}',
+    shape,
+  )
+  check("structured content the text already carries is not repeated", mcpToolOutput({ content: [{ type: "text", text: '{"a":1}' }], structuredContent: { a: 1 } }).output === '{"a":1}')
+  check("structured content alone is the whole output", mcpToolOutput({ content: [], structuredContent: { a: 1 } }).output === '{"a":1}')
+  const stopper = new AbortController()
+  const slow = run("my_server_slow", {}, stopper.signal)
+  await sleep(150)
+  const stoppedAt = Date.now()
+  stopper.abort()
+  const slowResult = await slow
+  check("Stop settles an MCP call at once", slowResult === "ERROR The MCP call was stopped" && Date.now() - stoppedAt < 500, slowResult)
+  const cancelledIDs = JSON.parse(await run("my_server_cancelled")) as unknown[]
+  check("and the server is told to cancel it", cancelledIDs.length === 1, cancelledIDs)
+  const quickStart = Date.now()
+  const timedOut = await run("quick_slow")
+  check("a server's own timeout bounds its calls", timedOut === "ERROR tools/call timed out" && Date.now() - quickStart < 2000, { timedOut, ms: Date.now() - quickStart })
+
+  // E49
+  const asked = JSON.parse(await run("my_server_ask-model")) as { content?: { text?: string } }
+  check(
+    "a sampling request is answered, in the conversation whose call reached the server",
+    asked.content?.text === "sampled" && sampled[0]?.server === "my.server" && sampled[0]?.sessionID === "ses_mcp",
+    { asked, sampled },
+  )
+
+  mcp.close()
+  legacyStream?.end()
+  streamable.closeAllConnections()
+  legacy.closeAllConnections()
+  await new Promise<void>((resolve) => streamable.close(() => resolve()))
+  await new Promise<void>((resolve) => legacy.close(() => resolve()))
+
+  // The sampler itself: per-server policy, the question, and the model's answer over a fake provider.
+  const model = createServer(async (request, response) => {
+    await readBody(request)
+    response.writeHead(200, { "content-type": "text/event-stream" })
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "from the model" } }] })}\n\n`)
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })}\n\n`)
+    response.end("data: [DONE]\n\n")
+  })
+  const modelPort = await listen(model)
+  const policies: Record<string, McpServerConfig> = { off: { type: "local", sampling: "deny" }, open: { type: "local", sampling: "allow" }, asks: { type: "local" } }
+  const samplingConfig = {
+    get: () => ({ mcpServers: policies, model: { provider: "fake", model: "m" }, permissions: { ...PERMISSION_DEFAULTS } }),
+    definition: (id: string) => (id === "fake" ? { id: "fake", kind: "openai", baseURL: `http://127.0.0.1:${modelPort}/v1` } : undefined),
+    usable: () => true,
+    apiKey: () => "k",
+  }
+  const samplingGate = new Permissions(new Bus(), samplingConfig as never)
+  const sampler = createSampler({ config: samplingConfig as never, auth: {} as never, permissions: samplingGate })
+  const params = { messages: [{ role: "user", content: { type: "text", text: "hello" } }], maxTokens: 20 }
+  const signal = new AbortController().signal
+  const refusal = (promise: Promise<unknown>) => promise.then(() => undefined, (error: unknown) => error)
+  const off = await refusal(sampler({ server: "off", params, sessionID: "s", signal }))
+  check("a server set to deny is refused with MiMo's code -1", off instanceof McpRequestError && off.code === -1, off)
+  const nowhere = await refusal(sampler({ server: "asks", params, signal }))
+  check("asking with no conversation to ask in is refused, not left waiting", nowhere instanceof McpRequestError && nowhere.code === -1, nowhere)
+  const waiting = refusal(sampler({ server: "asks", params, sessionID: "s-sample", signal }))
+  await sleep(30)
+  const card = samplingGate.outstanding()[0]
+  check("unset, a server's sampling asks in that conversation", card?.sessionID === "s-sample" && card.subject === "asks" && card.title === "mcp_sampling", card)
+  if (card) samplingGate.respond(card.id, "reject")
+  const declined = await waiting
+  check("a refusal is answered with code -1", declined instanceof McpRequestError && declined.code === -1, declined)
+  const answer = await sampler({ server: "open", params, signal })
+  check(
+    "a server set to allow gets the model's answer",
+    (answer.content as { text?: string }).text === "from the model" && answer.model === "fake/m" && answer.role === "assistant" && answer.stopReason === "endTurn",
+    answer,
+  )
+  const malformed = samplingRequest("x", { messages: [], maxTokens: 5 })
+  check("a request with no messages is invalid params", malformed instanceof McpRequestError && malformed.code === -32602)
+  check("the policy is ask when unset", samplingPolicy(undefined) === "ask" && samplingPolicy({ type: "local", sampling: "allow" }) === "allow")
+  const kept = mergeMcpSecrets({ type: "local", command: ["x"], timeout: 5, sampling: "deny" }, { type: "local", command: ["y"] })
+  check("saving from the form keeps a hand-written timeout and sampling policy", kept.timeout === 5 && kept.sampling === "deny", kept)
+  model.closeAllConnections()
+  await new Promise<void>((resolve) => model.close(() => resolve()))
+  await fs.rm(workFolder, { recursive: true, force: true }).catch(() => {})
 }
 
 async function exists(file: string) {
