@@ -10,14 +10,13 @@ import { badgeStyle, fileBadge } from "../lib/filetype"
  * how the reference offers its file, session and project pickers rather than
  * building three dialogs. MiMo has no command list, so there is no mixed mode.
  */
-export type PaletteMode = "files" | "sessions" | "projects" | "messages"
+export type PaletteMode = "files" | "sessions" | "projects"
 
 const props = withDefaults(defineProps<{ mode: PaletteMode; projects?: string[] }>(), { projects: () => [] })
 const emit = defineEmits<{
   close: []
   file: [path: string]
   project: [directory: string]
-  message: [messageID: string]
 }>()
 
 const app = useApp()
@@ -63,7 +62,6 @@ type Row =
   | { kind: "file"; id: string; path: string; rank: number }
   | { kind: "session"; id: string; sessionID: string; title: string; hint?: string; rank: number }
   | { kind: "project"; id: string; directory: string; title: string; rank: number }
-  | { kind: "message"; id: string; messageID: string; text: string; title: string; rank: number }
 
 /**
  * How many of one kind to show. Nothing else competes for the room, so the
@@ -122,36 +120,7 @@ const rows = computed<Row[]>(() => {
           }))
       : []
 
-  /*
-   * Only the questions, not the answers: forking replays a message, and an
-   * assistant turn is not something that can be sent again.
-   */
-  const messageRows =
-    props.mode === "messages"
-      ? app.messages
-          // The id travels with the text: a fork is made at a point in the
-          // conversation, and the text alone cannot say which point.
-          .flatMap((message) =>
-            message.role === "user" && message.text.trim()
-              ? [{ messageID: message.id, text: message.text.trim() }]
-              : [],
-          )
-          .map((entry) => ({ ...entry, rank: score(entry.text, needle) }))
-          .filter((entry): entry is { messageID: string; text: string; rank: number } => entry.rank !== undefined)
-          .sort((a, b) => a.rank - b.rank)
-          .slice(0, SCOPED_LIMIT)
-          .map<Row>((entry, at) => ({
-            kind: "message",
-            id: `message:${at}`,
-            messageID: entry.messageID,
-            text: entry.text,
-            title: entry.text.replace(/\s+/g, " ").slice(0, 120),
-            rank: entry.rank,
-          }))
-      : []
-
   // Only what it was opened for.
-  if (props.mode === "messages") return messageRows
   if (props.mode === "files") return fileRows
   if (props.mode === "sessions") return sessionRows
   return projectRows
@@ -175,7 +144,6 @@ const LABELS: Record<Row["kind"], string> = {
   file: "search.files",
   project: "search.projects",
   session: "search.sessions",
-  message: "search.messages",
 }
 
 async function choose(index: number) {
@@ -185,11 +153,6 @@ async function choose(index: number) {
   // listener on an unmounted component never fires.
   if (row.kind === "project") {
     emit("project", row.directory)
-    emit("close")
-    return
-  }
-  if (row.kind === "message") {
-    emit("message", row.messageID)
     emit("close")
     return
   }
@@ -266,14 +229,9 @@ onMounted(() => {
             </template>
 
             <!-- A project is named once; the path underneath is the hint. -->
-            <template v-else-if="row.kind === 'project'">
-              <span class="title">{{ row.title }}</span>
-              <span class="hint">{{ row.directory }}</span>
-            </template>
-
-            <!-- A question, trimmed to a line; the fork starts by asking it again. -->
             <template v-else>
               <span class="title">{{ row.title }}</span>
+              <span class="hint">{{ row.directory }}</span>
             </template>
           </button>
         </template>

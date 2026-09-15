@@ -60,7 +60,6 @@ import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { SIDE_COLUMN_WIDTH, arbitratePanel, boundChord, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
-import { editedFiles } from "./lib/edited-files"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
@@ -1186,26 +1185,13 @@ function annotateOrCycleAgent() {
 }
 
 /*
- * The pill over the composer: MiMo's diff of what this conversation's own tools
- * changed, as a tab of its own - updated when asked again, put away when asked
- * while it is the tab on show.
+ * The pill over the composer toggles its own diff tab (the latest turn, source
+ * "live-edit"); the window only tells it whether that tab is the one on show.
  */
 const LIVE_EDIT = "live-edit"
 const liveEditShowing = computed(
   () => rp.open && rp.activeTab?.type === "diff" && rp.activeTab.source === LIVE_EDIT,
 )
-
-function toggleLiveReview() {
-  const parts = app.messages.flatMap((message) => (message.role === "assistant" ? message.parts : []))
-  const diffs: string[] = []
-  for (const part of parts) {
-    if (part.type !== "tool" || !["edit", "write", "patch"].includes(part.name) || part.status === "error") continue
-    const diff = part.metadata?.diff
-    if (typeof diff === "string" && diff) diffs.push(diff)
-  }
-  const count = editedFiles(parts, app.current?.directory).files.length
-  rp.toggleDiff(t("composer.filesChanged", { n: count }), diffs.join("\n"), LIVE_EDIT)
-}
 
 /* The "edited N files" card at the end of a turn: 审阅 brings the review tab there is forward, or opens one. */
 watch(reviewRequest, () => {
@@ -1567,6 +1553,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
     if (app.currentID !== sessionID) await app.open(sessionID)
     const last = app.messages[app.messages.length - 1]
     if (last) await app.forkFrom(last.id)
+    else notifyFailure(t("stream.branchNeedsMessage"))
   },
   "row.batch": (sessionID) => {
     selectingProjects.value = undefined
@@ -3137,11 +3124,16 @@ const bindableCommands = computed(() => {
       run: () => startIn(directory),
     })),
     {
+      // MiMo's branchConvo: the whole conversation at once, titled 「… (分支)」; the store toasts either way.
       id: "session.fork",
       group: "key.groupSession",
-      title: t("cmd.fork"),
-      enabled: hasSession && app.messages.some((message) => message.role === "user"),
-      run: () => openPalette("messages"),
+      title: t("key.label.fork-chat"),
+      enabled: hasSession,
+      run: () => {
+        const last = app.messages[app.messages.length - 1]
+        if (!last) notifyFailure(t("stream.branchNeedsMessage"))
+        else void app.forkFrom(last.id, { titleSuffix: true })
+      },
     },
     {
       id: "provider.connect",
@@ -3158,15 +3150,6 @@ const bindableCommands = computed(() => {
       enabled: hasSession && app.messages.length > 0,
       run: () => {
         if (app.currentID) void ROW_ACTIONS["row.copyMarkdown"](app.currentID, false)
-      },
-    },
-    {
-      id: "session.forkChat",
-      group: "key.groupSession",
-      title: t("key.forkChat"),
-      enabled: hasSession && app.messages.length > 0,
-      run: () => {
-        if (app.currentID) void ROW_ACTIONS["row.continue"](app.currentID, false)
       },
     },
     {
@@ -4195,7 +4178,7 @@ onBeforeUnmount(() => {
             while the confirm dock is up, which it would sit on top of.
           -->
           <div v-if="!empty && !confirmDock.queue.length" class="live-edit-anchor">
-            <LiveEditPill :expanded="liveEditShowing" @toggle="toggleLiveReview" />
+            <LiveEditPill :expanded="liveEditShowing" />
           </div>
           <div id="main-dock" class="main-dock" />
           <Teleport :to="floatingComposer ? '#float-dock' : empty && !app.error ? '#hero-dock' : '#main-dock'">
@@ -4301,7 +4284,6 @@ onBeforeUnmount(() => {
       @close="paletteOpen = false; workspaceChoices = []"
       @file="composer?.mention($event)"
       @project="pickedProject"
-      @message="app.forkFrom($event)"
     />
 
     <SearchOverlay

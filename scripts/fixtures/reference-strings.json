@@ -194,26 +194,6 @@
     "zhCN": "切换语言",
     "zhTW": "依序切換語言"
   },
-  "cmd.fork": {
-    "ar": "تشعب من الرسالة",
-    "bs": "Fork iz poruke",
-    "da": "Forgren fra besked",
-    "de": "Von Nachricht abzweigen",
-    "en": "Fork from message",
-    "es": "Bifurcar desde mensaje",
-    "fr": "Bifurquer à partir du message",
-    "ja": "メッセージからフォーク",
-    "ko": "메시지에서 분기",
-    "nb": "Forgren fra melding",
-    "pl": "Rozwidlij od wiadomości",
-    "ptBR": "Bifurcar da mensagem",
-    "ru": "Создать ответвление",
-    "th": "แตกแขนงจากข้อความ",
-    "tr": "Mesajdan dallandır",
-    "uk": "Відгалузити від повідомлення",
-    "zhCN": "从消息创建新会话",
-    "zhTW": "從訊息分支"
-  },
   "cmd.groupProject": {
     "ar": "مشروع",
     "bs": "Projekat",
@@ -4629,26 +4609,6 @@
     "uk": "Пошук сесій",
     "zhCN": "搜索会话",
     "zhTW": "搜尋工作階段"
-  },
-  "search.messages": {
-    "ar": "رسائل",
-    "bs": "Poruke",
-    "da": "Beskeder",
-    "de": "Nachrichten",
-    "en": "Messages",
-    "es": "Mensajes",
-    "fr": "Messages",
-    "ja": "メッセージ",
-    "ko": "메시지",
-    "nb": "Meldinger",
-    "pl": "Wiadomości",
-    "ptBR": "Mensagens",
-    "ru": "Сообщения",
-    "th": "ข้อความ",
-    "tr": "Mesajlar",
-    "uk": "Повідомлення",
-    "zhCN": "消息数",
-    "zhTW": "訊息數"
   },
   "search.placeholder": {
     "ar": "البحث في الملفات والأوامر والجلسات",
