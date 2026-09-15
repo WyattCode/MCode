@@ -5,6 +5,7 @@ import RowTitle from "./RowTitle.vue"
 import { convoCard } from "../lib/convo-card"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
+import { notify } from "../lib/toast"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
 import UpdatePill from "./UpdatePill.vue"
@@ -508,8 +509,11 @@ const recentSort = ref<"recent" | "name">(
   })(),
 )
 
+/* MiMo's setSort: only a real change is said. */
 function setRecentSort(mode: "recent" | "name") {
+  if (mode === recentSort.value) return
   recentSort.value = mode
+  notify(t(mode === "name" ? "toast.sortByName" : "toast.sortByRecent"))
   try {
     localStorage.setItem(SORT_KEY, mode)
   } catch {}
