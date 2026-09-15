@@ -143,13 +143,14 @@ function reflow() {
 
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
-  window.addEventListener("keydown", onKeydown)
+  // Capture, so an open list takes Escape before a dialog that mounted earlier sees it and closes too.
+  window.addEventListener("keydown", onKeydown, true)
   window.addEventListener("scroll", reflow, true)
   window.addEventListener("resize", reflow)
 })
 onBeforeUnmount(() => {
   window.removeEventListener("mousedown", onPointerDown, true)
-  window.removeEventListener("keydown", onKeydown)
+  window.removeEventListener("keydown", onKeydown, true)
   window.removeEventListener("scroll", reflow, true)
   window.removeEventListener("resize", reflow)
 })
