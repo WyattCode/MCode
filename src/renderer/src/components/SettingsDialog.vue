@@ -3187,86 +3187,89 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </button>
           </div>
 
-          <div class="keys-table" data-shortcuts-list>
-            <div class="keys-cols">
-              <span class="keys-col-command">{{ t("set.keys.colCommand") }}</span>
-              <span>{{ t("set.keys.colBinding") }}</span>
-            </div>
-            <div v-for="shortcut in shortcutRows" :key="shortcut.id" class="keys-row" :data-shortcut-id="shortcut.id">
-              <div class="keys-command">
-                <div class="keys-label">{{ shortcut.title }}</div>
-                <div v-if="shortcut.desc" class="keys-desc" data-shortcut-desc>{{ shortcut.desc }}</div>
+          <!-- KS7: only the list scrolls; the title, search and footer stay put. -->
+          <div class="keys-list">
+            <div class="keys-table" data-shortcuts-list>
+              <div class="keys-cols">
+                <span class="keys-col-command">{{ t("set.keys.colCommand") }}</span>
+                <span>{{ t("set.keys.colBinding") }}</span>
               </div>
-              <div class="keys-binding">
-                <div v-if="recording === shortcut.id" class="keys-record">
-                  <div class="keys-record-line">
-                    <span class="keys-record-box" :class="{ conflict: recordConflict }" data-record-box>
-                      {{ recordChord ? shownChord(recordChord) : t("set.keys.pressKey") }}
-                    </span>
-                    <button
-                      v-if="recordChord && !recordConflict"
-                      type="button"
-                      class="keys-record-confirm"
-                      data-record-confirm
-                      @click="confirmRecord"
-                    >
-                      {{ t("set.keys.confirm") }}
-                    </button>
-                    <button type="button" class="keys-record-cancel" data-record-cancel @click="cancelRecord">
-                      {{ t("common.cancel") }}
-                    </button>
-                  </div>
-                  <span v-if="recordConflict" class="keys-record-conflict" data-record-conflict>
-                    {{ t("set.keys.conflict", { label: commandLabel(recordConflict) }) }}
-                  </span>
+              <div v-for="shortcut in shortcutRows" :key="shortcut.id" class="keys-row" :data-shortcut-id="shortcut.id">
+                <div class="keys-command">
+                  <div class="keys-label">{{ shortcut.title }}</div>
+                  <div v-if="shortcut.desc" class="keys-desc" data-shortcut-desc>{{ shortcut.desc }}</div>
                 </div>
-                <template v-else>
-                  <kbd v-if="boundKeys(shortcut)" class="keys-kbd" data-binding>{{ shownChord(boundKeys(shortcut)) }}</kbd>
-                  <span v-else class="keys-unassigned" data-binding-unassigned>{{ t("set.keys.unassigned") }}</span>
+                <div class="keys-binding">
+                  <div v-if="recording === shortcut.id" class="keys-record">
+                    <div class="keys-record-line">
+                      <span class="keys-record-box" :class="{ conflict: recordConflict }" data-record-box>
+                        {{ recordChord ? shownChord(recordChord) : t("set.keys.pressKey") }}
+                      </span>
+                      <button
+                        v-if="recordChord && !recordConflict"
+                        type="button"
+                        class="keys-record-confirm"
+                        data-record-confirm
+                        @click="confirmRecord"
+                      >
+                        {{ t("set.keys.confirm") }}
+                      </button>
+                      <button type="button" class="keys-record-cancel" data-record-cancel @click="cancelRecord">
+                        {{ t("common.cancel") }}
+                      </button>
+                    </div>
+                    <span v-if="recordConflict" class="keys-record-conflict" data-record-conflict>
+                      {{ t("set.keys.conflict", { label: commandLabel(recordConflict) }) }}
+                    </span>
+                  </div>
+                  <template v-else>
+                    <kbd v-if="boundKeys(shortcut)" class="keys-kbd" data-binding>{{ shownChord(boundKeys(shortcut)) }}</kbd>
+                    <span v-else class="keys-unassigned" data-binding-unassigned>{{ t("set.keys.unassigned") }}</span>
+                    <button
+                      type="button"
+                      class="keys-edit"
+                      :aria-label="t('set.keys.edit')"
+                      v-tip="{ label: t('set.keys.edit'), placement: 'top' }"
+                      data-edit-shortcut
+                      @click="startRecord(shortcut.id)"
+                    >
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M10.8 2.7l2.5 2.5L6 12.5H3.5V10zM2.5 14.5h11" />
+                      </svg>
+                    </button>
+                  </template>
+                </div>
+                <div class="keys-end">
                   <button
+                    v-if="customBinding(shortcut.id)"
                     type="button"
-                    class="keys-edit"
-                    :aria-label="t('set.keys.edit')"
-                    v-tip="{ label: t('set.keys.edit'), placement: 'top' }"
-                    data-edit-shortcut
-                    @click="startRecord(shortcut.id)"
+                    class="keys-icon"
+                    :aria-label="t('set.keys.resetOne', { label: shortcut.title })"
+                    v-tip="{ label: t('set.keys.resetOne', { label: shortcut.title }), placement: 'top' }"
+                    data-reset-shortcut
+                    @click="resetBinding(shortcut.id)"
                   >
-                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">
-                      <path d="M10.8 2.7l2.5 2.5L6 12.5H3.5V10zM2.5 14.5h11" />
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 8.2a5 5 0 1 0 1.6-3.7M3.2 2.5v2.8H6" />
                     </svg>
                   </button>
-                </template>
+                  <button
+                    v-else-if="boundKeys(shortcut)"
+                    type="button"
+                    class="keys-icon danger"
+                    :aria-label="t('set.keys.delete')"
+                    v-tip="{ label: t('set.keys.delete'), placement: 'top' }"
+                    data-delete-shortcut
+                    @click="deleteBinding(shortcut.id)"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                      <path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.5 9h6l.5-9" />
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <div class="keys-end">
-                <button
-                  v-if="customBinding(shortcut.id)"
-                  type="button"
-                  class="keys-icon"
-                  :aria-label="t('set.keys.resetOne', { label: shortcut.title })"
-                  v-tip="{ label: t('set.keys.resetOne', { label: shortcut.title }), placement: 'top' }"
-                  data-reset-shortcut
-                  @click="resetBinding(shortcut.id)"
-                >
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M3 8.2a5 5 0 1 0 1.6-3.7M3.2 2.5v2.8H6" />
-                  </svg>
-                </button>
-                <button
-                  v-else-if="boundKeys(shortcut)"
-                  type="button"
-                  class="keys-icon danger"
-                  :aria-label="t('set.keys.delete')"
-                  v-tip="{ label: t('set.keys.delete'), placement: 'top' }"
-                  data-delete-shortcut
-                  @click="deleteBinding(shortcut.id)"
-                >
-                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                    <path d="M3 4.5h10M6.5 2.5h3M4.5 4.5l.5 9h6l.5-9" />
-                  </svg>
-                </button>
-              </div>
+              <div v-if="!shortcutRows.length" class="keys-empty" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
             </div>
-            <div v-if="!shortcutRows.length" class="keys-empty" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
           </div>
 
           <div class="keys-foot">
