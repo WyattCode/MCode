@@ -23,10 +23,11 @@ import path from "node:path"
 import { detectPath, renderMarkdown, renderReply, type MarkdownOptions } from "../src/renderer/src/lib/markdown"
 import { ABC_SOURCE_LIMIT } from "../src/renderer/src/lib/abc-play"
 import {
-  EMBED_ORIGINS,
-  embedFrameMayNotGo,
-  embedPopupRefused,
-  isEmbedAddress,
+  COVER_LIMIT,
+  coverAnswer,
+  coverProxyAddress,
+  coverRedirect,
+  coverRequest,
   parsePlatformLink,
   platformLinksIn,
   readMediaMeta,
@@ -422,17 +423,17 @@ for (const [name, source, options, want] of abcBlockCases) {
 }
 if (!/<pre class="md-code md-lined" data-lang="abc">/.test(renderMarkdown(ABC_TUNE, REPLY))) problems.push("an abc fence no longer falls back to a code block in the string form")
 
-const PLATFORM_LINKS: [string, string | undefined, string?][] = [
-  ["https://www.bilibili.com/video/BV1GJ411x7h7", "bilibili", "inline"],
-  ["https://m.bilibili.com/video/av170001/", "bilibili", "inline"],
-  ["https://b23.tv/abc123", "bilibili", "inline"],
-  ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube", "inline"],
-  ["https://youtu.be/dQw4w9WgXcQ?t=4", "youtube", "inline"],
-  ["https://m.youtube.com/shorts/dQw4w9WgXcQ", "youtube", "inline"],
-  ["https://www.douyin.com/video/7300000000000000000", "douyin", "external"],
-  ["https://www.douyin.com/discover?modal_id=7300000000000000000", "douyin", "external"],
-  ["https://v.qq.com/x/cover/abc/def.html", "tencent", "external"],
-  ["https://www.netflix.com/title/80100172", "netflix", "external"],
+const PLATFORM_LINKS: [string, string | undefined][] = [
+  ["https://www.bilibili.com/video/BV1GJ411x7h7", "bilibili"],
+  ["https://m.bilibili.com/video/av170001/", "bilibili"],
+  ["https://b23.tv/abc123", "bilibili"],
+  ["https://www.youtube.com/watch?v=dQw4w9WgXcQ", "youtube"],
+  ["https://youtu.be/dQw4w9WgXcQ?t=4", "youtube"],
+  ["https://m.youtube.com/shorts/dQw4w9WgXcQ", "youtube"],
+  ["https://www.douyin.com/video/7300000000000000000", "douyin"],
+  ["https://www.douyin.com/discover?modal_id=7300000000000000000", "douyin"],
+  ["https://v.qq.com/x/cover/abc/def.html", "tencent"],
+  ["https://www.netflix.com/title/80100172", "netflix"],
   // Lookalikes and near misses: none of these is a platform.
   ["https://bilibili.com.evil.example/video/BV1GJ411x7h7", undefined],
   ["https://evilbilibili.com/video/BV1GJ411x7h7", undefined],
@@ -449,52 +450,95 @@ const PLATFORM_LINKS: [string, string | undefined, string?][] = [
   ["https://www.youtube.com/watch?v=short", undefined],
   ["ftp://www.youtube.com/watch?v=dQw4w9WgXcQ", undefined],
 ]
-for (const [address, platform, play] of PLATFORM_LINKS) {
+for (const [address, platform] of PLATFORM_LINKS) {
   const link = parsePlatformLink(address)
-  if (link?.platform !== platform || (play && link?.play !== play)) problems.push(`platform: ${address} was ${link?.platform ?? "no platform"}/${link?.play ?? "-"}, not ${platform ?? "no platform"}/${play ?? "-"}`)
+  if (link?.platform !== platform) problems.push(`platform: ${address} was ${link?.platform ?? "no platform"}, not ${platform ?? "no platform"}`)
   if (!platform && platformLinksIn(`see ${address} now`).length) problems.push(`platform: the lookalike ${address} became a card`)
-  if (link?.embedUrl && !isEmbedAddress(link.embedUrl)) problems.push(`platform: ${address} produced a frame address that is not a player: ${link.embedUrl}`)
 }
 if (platformLinksIn("`https://youtu.be/dQw4w9WgXcQ`\n```\nhttps://youtu.be/dQw4w9WgXcQ\n```").length) problems.push("platform: a link in code became a card")
 if (platformLinksIn("[a](https://youtu.be/dQw4w9WgXcQ) and https://youtu.be/dQw4w9WgXcQ。").join() !== "https://youtu.be/dQw4w9WgXcQ") problems.push("platform: a link written twice is not one card")
 
-const EMBEDS: [string, boolean][] = [
-  ["https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&cid=1", true],
-  ["https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1", true],
-  ["http://player.bilibili.com/player.html", false],
-  ["https://player.bilibili.com.evil.example/player.html", false],
-  ["https://www.youtube.com/embed/dQw4w9WgXcQ", false],
-  ["https://youtube-nocookie.com/embed/dQw4w9WgXcQ", false],
-  ["https://player.bilibili.com:8443/player.html", false],
-  ["https://user:pw@www.youtube-nocookie.com/embed/x", false],
-  ["https://evil.example/#https://player.bilibili.com/", false],
-  ["javascript:alert(1)", false],
-]
-for (const [address, want] of EMBEDS) if (isEmbedAddress(address) !== want) problems.push(`embed: ${address} ${want ? "should" : "should not"} be a player address`)
-
-/* A card from the main process is checked again: a forged frame address or cover is dropped, a lookalike link is no card. */
-const forged = readMediaMeta({ kind: "video", platform: "youtube", play: "inline", url: "https://youtu.be/dQw4w9WgXcQ", embedUrl: "https://evil.example/embed", title: "x", coverUrl: "javascript:alert(1)", aspect: "16:9" })
-if (!forged || forged.embedUrl !== "" || forged.play !== "external" || forged.coverUrl !== "") problems.push(`embed: a forged card kept its frame address or cover: ${JSON.stringify(forged)}`)
-if (readMediaMeta({ kind: "video", platform: "youtube", play: "inline", url: "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ", embedUrl: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ", title: "x", coverUrl: "", aspect: "16:9" })) {
-  problems.push("embed: a card for a lookalike link was accepted")
+/* A card from the main process is checked again: a forged cover is dropped, a lookalike link is no card. */
+const forged = readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtu.be/dQw4w9WgXcQ", title: "x", coverUrl: "javascript:alert(1)", aspect: "16:9" })
+if (!forged || forged.coverUrl !== "") problems.push(`card: a forged card kept its cover: ${JSON.stringify(forged)}`)
+if (readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtube.com.evil.example/watch?v=dQw4w9WgXcQ", title: "x", coverUrl: "", aspect: "16:9" })) {
+  problems.push("card: a card for a lookalike link was accepted")
 }
 
-/* The main process's guards, as plain rules. */
-if (!embedFrameMayNotGo("https://www.youtube-nocookie.com/embed/x", "https://evil.example/")) problems.push("guard: a player frame may navigate off the player")
-if (embedFrameMayNotGo("https://www.youtube-nocookie.com/embed/x", "https://www.youtube-nocookie.com/embed/y")) problems.push("guard: a player frame may not move to another video")
-if (embedFrameMayNotGo("http://abc.localhost:5000/index.html", "https://evil.example/")) problems.push("guard: the player rule reached the page preview's frames")
-if (!embedPopupRefused("https://player.bilibili.com/player.html?bvid=x", "https://www.bilibili.com/video/BV1GJ411x7h7")) problems.push("guard: bilibili's player may open bilibili")
-if (embedPopupRefused("https://www.youtube-nocookie.com/embed/x", "https://www.youtube.com/watch?v=x")) problems.push("guard: YouTube's 'watch on YouTube' link was refused")
+/* The cover proxy: which addresses it fetches, and what it refuses. */
+const proxied = (address: string) => `mcode-media://proxy/?u=${encodeURIComponent(address)}`
+const COVER_REQUESTS: [string, string, number | string][] = [
+  [proxied("https://i0.hdslb.com/bfs/archive/a.jpg"), "GET", "https://www.bilibili.com/"],
+  [proxied("https://hdslb.com/a.jpg"), "GET", "https://www.bilibili.com/"],
+  [proxied("https://I.YTIMG.COM/vi/x/hqdefault.jpg"), "GET", "https://www.youtube.com/"],
+  [proxied("https://p16-sign.tiktokcdn-us.com/a.jpg"), "GET", "https://www.tiktok.com/"],
+  [proxied("https://occ-0-1.nflxext.com/a.jpg"), "GET", "https://www.netflix.com/"],
+  [proxied("https://i0.hdslb.com/a.jpg"), "POST", 405],
+  [proxied("https://i0.hdslb.com/a.jpg"), "HEAD", 405],
+  [proxied("http://i0.hdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://i0.hdslb.com.evil.example/a.jpg"), "GET", 403],
+  [proxied("https://evilhdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://hdslb.com@evil.example/a.jpg"), "GET", 403],
+  [proxied("https://user:pw@i0.hdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://i0.hdslb.com:8443/a.jpg"), "GET", 403],
+  [proxied("https://evil.example/?https://i0.hdslb.com/a.jpg"), "GET", 403],
+  [proxied("https://www.bilibili.com/video/BV1GJ411x7h7"), "GET", 403],
+  [proxied("file:///C:/Windows/win.ini"), "GET", 403],
+  [proxied("javascript:alert(1)"), "GET", 403],
+  ["mcode-media://proxy/", "GET", 400],
+  ["mcode-media://elsewhere/?u=" + encodeURIComponent("https://i0.hdslb.com/a.jpg"), "GET", 400],
+  ["https://i0.hdslb.com/a.jpg", "GET", 400],
+  ["not a url", "GET", 400],
+]
+for (const [address, method, want] of COVER_REQUESTS) {
+  const asked = coverRequest(address, method)
+  const got = asked.ok ? asked.referer : asked.status
+  if (got !== want) problems.push(`cover: ${method} ${address} gave ${got}, not ${want}`)
+}
+const COVER_REDIRECTS: [string, string | null, boolean][] = [
+  ["https://i0.hdslb.com/a.jpg", "https://i1.hdslb.com/b.jpg", true],
+  ["https://i0.hdslb.com/a.jpg", "/b.jpg", true],
+  ["https://i0.hdslb.com/a.jpg", "https://evil.example/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", "//evil.example/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", "http://i1.hdslb.com/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", "https://i1.hdslb.com.evil.example/b.jpg", false],
+  ["https://i0.hdslb.com/a.jpg", null, false],
+]
+for (const [from, location, want] of COVER_REDIRECTS) if (Boolean(coverRedirect(from, location)) !== want) problems.push(`cover: a redirect from ${from} to ${location} ${want ? "was refused" : "was followed"}`)
+const COVER_ANSWERS: [number, string | null, string | null, string | undefined][] = [
+  [200, "image/jpeg", "1024", "image/jpeg"],
+  [200, "IMAGE/WEBP; charset=binary", null, "image/webp"],
+  [206, "image/png", String(COVER_LIMIT), "image/png"],
+  [200, "image/png", String(COVER_LIMIT + 1), undefined],
+  [200, "image/png", "lots", undefined],
+  [200, "image/svg+xml", "10", undefined],
+  [200, "text/html", "10", undefined],
+  [200, "application/octet-stream", "10", undefined],
+  [200, null, "10", undefined],
+  [200, "image/", "10", undefined],
+  [404, "image/png", "10", undefined],
+  [302, "image/png", "10", undefined],
+]
+for (const [status, type, length, want] of COVER_ANSWERS) if (coverAnswer(status, type, length) !== want) problems.push(`cover: a ${status} ${type} of ${length} bytes gave ${coverAnswer(status, type, length)}, not ${want}`)
+if (coverProxyAddress("http://i0.hdslb.com/a.jpg") !== proxied("https://i0.hdslb.com/a.jpg")) problems.push("cover: an http cover was not proxied as https")
+if (coverProxyAddress("https://evil.example/a.jpg") !== "") problems.push("cover: a cover off the host list got a proxy address")
+const directCover = readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtu.be/dQw4w9WgXcQ", title: "x", coverUrl: "https://i.ytimg.com/vi/x/hqdefault.jpg", aspect: "16:9" })
+if (directCover?.coverUrl !== "") problems.push("cover: a card kept a cover that bypasses the proxy")
+const offListCover = readMediaMeta({ kind: "video", platform: "youtube", url: "https://youtu.be/dQw4w9WgXcQ", title: "x", coverUrl: proxied("https://evil.example/a.jpg"), aspect: "16:9" })
+if (offListCover?.coverUrl !== "") problems.push("cover: a card kept a proxy address to a host off the list")
 
-/* The content policy's frames: the page preview, and exactly the two players. */
+/* The content policy's frames: the page preview alone. A card opens the browser panel, so no platform page is ever framed. */
 const indexPage = fs.readFileSync(path.join(process.cwd(), "src/renderer/index.html"), "utf8")
 const policy = /http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(indexPage)?.[1] ?? ""
 const frameSources = (/(?:^|;)\s*frame-src ([^;]*)/.exec(policy)?.[1] ?? "").trim().split(/\s+/)
-const webFrames = frameSources.filter((source) => source !== "'self'" && source !== "http://*.localhost:*").sort()
-if (JSON.stringify(webFrames) !== JSON.stringify([...EMBED_ORIGINS].sort())) problems.push(`csp: frame-src allows ${webFrames.join(" ") || "nothing"}, not exactly ${EMBED_ORIGINS.join(" ")}`)
+const webFrames = frameSources.filter((source) => source !== "'self'" && source !== "http://*.localhost:*")
+if (!frameSources.includes("'self'") || webFrames.length) problems.push(`csp: frame-src allows ${webFrames.join(" ")} beyond the app and the page preview`)
+const imageSources = (/(?:^|;)\s*img-src ([^;]*)/.exec(policy)?.[1] ?? "").trim().split(/\s+/)
+if (!imageSources.includes("mcode-media:")) problems.push("csp: img-src does not allow the cover proxy")
+if (/(?:^|;)\s*(?:connect|frame|script|media)-src [^;]*mcode-media:/.test(policy)) problems.push("csp: the cover proxy is allowed for more than images")
 inspect("a platform link in a reply", htmlOf("watch https://www.youtube.com/watch?v=dQw4w9WgXcQ and [this](https://www.bilibili.com/video/BV1GJ411x7h7)", REPLY))
 
-console.log(`abc cases: ${ABC_HOSTILE.length * (OPTIONS.length + 3) + abcBlockCases.length + 1}, platform cases: ${PLATFORM_LINKS.length + EMBEDS.length + 12}`)
+console.log(`abc cases: ${ABC_HOSTILE.length * (OPTIONS.length + 3) + abcBlockCases.length + 1}, platform cases: ${PLATFORM_LINKS.length + 5}, cover proxy cases: ${COVER_REQUESTS.length + COVER_REDIRECTS.length + COVER_ANSWERS.length + 6}`)
 console.log(`live cases: ${liveCases.length + 1}, fade cases: ${fadeCases.length + 1 + HOSTILE.length}, svg card cases: ${SVG_FILES.length + 6}`)
 console.log(`hostile inputs: ${HOSTILE.length} x ${OPTIONS.length + 1} option sets, svg pre-pass cases: ${SVG_CASES.length}, formatting cases: ${shape.length + blockCases.length + PATHS.length}`)
 

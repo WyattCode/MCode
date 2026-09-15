@@ -18,8 +18,9 @@ import { t } from "../../lib/i18n"
  * it is placed in. Each tab holds its own page, and only the tab on show asks
  * for it to be drawn - the panel hides the page when no browser tab is showing.
  */
-const props = defineProps<{ active: boolean; pageId?: string }>()
-const emit = defineEmits<{ page: [pageId: string] }>()
+/* url: where a tab opened at an address (a video card's) goes once it has a page. */
+const props = defineProps<{ active: boolean; pageId?: string; url?: string }>()
+const emit = defineEmits<{ page: [pageId: string]; address: [url: string] }>()
 const app = useApp()
 
 interface State {
@@ -65,6 +66,8 @@ function apply(next: unknown) {
   if (props.pageId && incoming.active && incoming.active !== props.pageId) return
   state.value = incoming
   if (!editing.value) address.value = incoming.url === "about:blank" ? "" : incoming.url
+  // The tab keeps its page's address, so a card for the same address takes this tab up again.
+  if (incoming.url && incoming.url !== "about:blank" && incoming.url !== props.url) emit("address", incoming.url)
   remeasure()
 }
 
@@ -115,6 +118,7 @@ async function claim() {
   state.value = fresh
   address.value = ""
   remeasure()
+  if (props.url && props.url !== "about:blank") apply(await window.mcode.browserNavigate(props.url))
 }
 
 let stopState: (() => void) | undefined

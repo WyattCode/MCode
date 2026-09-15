@@ -40,6 +40,8 @@ export interface RightTab {
   /** Browser: the page's favicon and title, which MiMo's tab draws in place of the globe and the tool's name. */
   faviconUrl?: string
   pageTitle?: string
+  /** Browser: the address its page is on, or is to open first; MiMo takes up a tab by it. */
+  url?: string
   /** Terminal: the shell the backend holds for it, and whether anything was typed into it. */
   shellID?: string
   cwd?: string
@@ -136,6 +138,22 @@ export const useRightPanel = defineStore("rightPanel", () => {
       }
     }
     return add(type)
+  }
+
+  /*
+   * MiMo's openTool("browser", url, { reuse }): a browser tab at an address.
+   * Reuse takes up a browser tab already on exactly that address; otherwise a
+   * new tab opens there. The tab's page loads the address once it has a page.
+   */
+  function openBrowser(url: string, options: { reuse?: boolean } = {}): RightTab {
+    if (options.reuse && url && url !== "about:blank") {
+      const found = tabs.value.find((tab) => tab.type === "browser" && tab.url === url)
+      if (found) {
+        show(found.id)
+        return found
+      }
+    }
+    return add("browser", { url })
   }
 
   /** MiMo's Office tab: one per document, taken up again when the same file is opened. */
@@ -293,6 +311,7 @@ export const useRightPanel = defineStore("rightPanel", () => {
     activeTab,
     setDisposer,
     openTool,
+    openBrowser,
     openOffice,
     openHtml,
     openSubagents,
