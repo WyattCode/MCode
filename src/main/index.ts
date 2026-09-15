@@ -1010,8 +1010,7 @@ app.whenReady().then(async () => {
    * button for it that a reader presses; everything else - the camera, the
    * screen, the location, notifications through the web API - is refused,
    * because nothing in this app has a reason to want them.
-   */
-  /*
+   *
    * A reply's video player is someone else's page inside this window, so it
    * gets none of the window's own permissions - never the microphone - and
    * only what a video needs of its own: full screen.
