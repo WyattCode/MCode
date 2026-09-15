@@ -95,7 +95,7 @@ function audio(): AudioContext {
  * than the tone itself - so each voice fades in over a few milliseconds and
  * decays away rather than being cut.
  */
-function sound(ctx: AudioContext, voice: Voice): void {
+function sound(ctx: AudioContext, voice: Voice, out: AudioNode = ctx.destination): void {
   const start = ctx.currentTime + voice.at
   const oscillator = ctx.createOscillator()
   const amplifier = ctx.createGain()
@@ -111,7 +111,7 @@ function sound(ctx: AudioContext, voice: Voice): void {
   amplifier.gain.exponentialRampToValueAtTime(0.0001, start + voice.seconds)
 
   oscillator.connect(amplifier)
-  amplifier.connect(ctx.destination)
+  amplifier.connect(out)
   oscillator.start(start)
   oscillator.stop(start + voice.seconds + 0.02)
 }
@@ -126,10 +126,47 @@ export function play(cue: Cue): void {
   }
 }
 
+/*
+ * The chimes share one small room: a reverb whose impulse is MCode's own noise
+ * dying away, so each figure rings out a little instead of stopping dry. Built
+ * once per context.
+ */
+let room: { context: AudioContext; input: GainNode } | undefined
+
+function chimeRoom(ctx: AudioContext): AudioNode {
+  if (room?.context === ctx) return room.input
+  const input = ctx.createGain()
+  const dry = ctx.createGain()
+  const wet = ctx.createGain()
+  const convolver = ctx.createConvolver()
+  dry.gain.value = 0.85
+  wet.gain.value = 0.3
+  convolver.buffer = impulse(ctx, 1.6)
+  input.connect(dry)
+  dry.connect(ctx.destination)
+  input.connect(convolver)
+  convolver.connect(wet)
+  wet.connect(ctx.destination)
+  room = { context: ctx, input }
+  return input
+}
+
+/* A stereo tail of noise fading exponentially over `seconds`, each side drawn apart, which gives the room its width. */
+function impulse(ctx: AudioContext, seconds: number): AudioBuffer {
+  const length = Math.max(1, Math.floor(ctx.sampleRate * seconds))
+  const buffer = ctx.createBuffer(2, length, ctx.sampleRate)
+  for (let channel = 0; channel < 2; channel++) {
+    const data = buffer.getChannelData(channel)
+    for (let index = 0; index < length; index++) data[index] = (Math.random() * 2 - 1) * Math.exp((-5 * index) / length)
+  }
+  return buffer
+}
+
 export function chime(name: ChimeName): void {
   try {
     const ctx = audio()
-    for (const voice of CHIME_VOICES[name]) sound(ctx, voice)
+    const out = chimeRoom(ctx)
+    for (const voice of CHIME_VOICES[name]) sound(ctx, voice, out)
   } catch {
     // As above: silence is the right failure.
   }
