@@ -56,6 +56,7 @@ import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../sr
 import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
 import type { McpServerConfig } from "../src/shared/protocol"
 import { ToolOutputs } from "../src/server/tool/truncate"
+import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
   VOICE_EDIT_MAX,
@@ -907,6 +908,92 @@ async function main() {
     )
     clearInterval(approving)
     await fs.rm(nb, { recursive: true, force: true })
+  }
+
+  // E26: MiMo's webfetch - formats, 5 MB, internal addresses refused before anything is sent, a Cloudflare challenge tried once more.
+  {
+    let challenged = 0
+    const site = createServer((request, response) => {
+      const agent = String(request.headers["user-agent"] ?? "")
+      if (request.url === "/page") {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+        response.end(
+          `<html><head><title>T</title><style>.x{}</style></head><body><h1>Title</h1><p>Some <strong>bold</strong> and <a href="http://example.com/">a link</a>.</p><ul><li>one</li><li>two</li></ul><pre><code>let x = 1 &lt; 2</code></pre><script>secret()</script></body></html>`,
+        )
+      } else if (request.url === "/plain") {
+        response.writeHead(200, { "content-type": "text/plain" })
+        response.end("just text")
+      } else if (request.url === "/huge") {
+        response.writeHead(200, { "content-type": "text/plain", "content-length": String(6 * 1024 * 1024) })
+        response.flushHeaders()
+        setTimeout(() => response.destroy(), 300)
+      } else if (request.url === "/guarded") {
+        if (agent === "mcode") {
+          response.writeHead(200, { "content-type": "text/plain" })
+          response.end("past the challenge")
+        } else {
+          challenged++
+          response.writeHead(403, { "cf-mitigated": "challenge" })
+          response.end()
+        }
+      } else if (request.url === "/hop") {
+        response.writeHead(302, { location: "http://169.254.169.254/latest/meta-data" })
+        response.end()
+      } else if (request.url === "/pic") {
+        response.writeHead(200, { "content-type": "image/png" })
+        response.end(Buffer.from([137, 80, 78, 71]))
+      } else {
+        response.writeHead(404)
+        response.end()
+      }
+    })
+    const sitePort = await new Promise<number>((resolve) => site.listen(0, "127.0.0.1", () => resolve((site.address() as { port: number }).port)))
+    const base = `http://127.0.0.1:${sitePort}`
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+    const fetched = (input: Record<string, unknown>) =>
+      findTool("webfetch")!
+        .execute(input, context("wf"))
+        .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+
+    const markdown = await fetched({ url: `${base}/page` })
+    check(
+      "an HTML page comes back as Markdown by default",
+      markdown.includes("# Title") &&
+        markdown.includes("**bold**") &&
+        markdown.includes("[a link](http://example.com/)") &&
+        markdown.includes("- one") &&
+        markdown.includes("```\nlet x = 1 < 2\n```") &&
+        !markdown.includes("secret()") &&
+        !markdown.includes("<p>"),
+      markdown,
+    )
+    const words = await fetched({ url: `${base}/page`, format: "text" })
+    // The page's own "1 &lt; 2" decodes to a "<", so it is tags that must be gone, not the character.
+    check("format text keeps the words and drops the markup and scripts", words.includes("Title") && words.includes("bold") && !/<\/?[a-z]/i.test(words) && !words.includes("secret()"), words)
+    check("format html is the page as sent", (await fetched({ url: `${base}/page`, format: "html" })).includes("<h1>Title</h1>"))
+    check("a body that is not HTML comes back as it is", (await fetched({ url: `${base}/plain` })) === "just text")
+    check("a response over 5 MB is refused", (await fetched({ url: `${base}/huge` })).includes("larger than 5 MB"))
+    check("a Cloudflare challenge is tried once more as this app", (await fetched({ url: `${base}/guarded` })) === "past the challenge" && challenged === 1, challenged)
+    check("a redirect to an internal address is refused before it is followed", (await fetched({ url: `${base}/hop` })).startsWith("ERROR Refused"))
+    const refusedBefore = permissions.outstanding().length
+    check(
+      "an internal address is refused before anything is asked",
+      (await fetched({ url: "http://10.1.2.3/" })).startsWith("ERROR Refused") &&
+        (await fetched({ url: "http://[fe80::1]/" })).startsWith("ERROR Refused") &&
+        (await fetched({ url: "http://metadata.google.internal/" })).startsWith("ERROR Refused") &&
+        refusedBefore === 0,
+    )
+    check(
+      "the blocked ranges are MiMo's, loopback left out",
+      blockedIPv4("192.168.1.1") && blockedIPv4("100.100.100.200") && blockedIPv4("0.0.0.0") && !blockedIPv4("127.0.0.1") && !blockedIPv4("8.8.8.8") && blockedIPv6("::ffff:10.0.0.1") && blockedIPv6("fd00::1") && !blockedIPv6("::1"),
+    )
+    check("an image is named, not passed on", (await fetched({ url: `${base}/pic` })).includes("image/png"))
+    check("only http and https are fetched", (await fetched({ url: "ftp://example.com/" })).includes("http://"))
+    clearInterval(approving)
+    site.closeAllConnections()
+    await new Promise<void>((resolve) => site.close(() => resolve()))
   }
 
   // E27: MiMo's desktop never hands a GPT model apply_patch; every model edits with edit and write.
