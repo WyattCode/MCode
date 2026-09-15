@@ -10,7 +10,7 @@ import TextShimmer from "./parts/TextShimmer.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
 import { buildRows, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { preview, videoUrl } from "../lib/attach"
-import { openImagePreview, openVideoPreview } from "../lib/image-preview"
+import { openImagePreview, openVideoPreview, type ImagePreviewMeta } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
 import { questionParts } from "../lib/question-parts"
 import { renderMarkdown } from "../lib/markdown"
@@ -22,6 +22,7 @@ import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
 import { cardCut, stepPart, stickState, stoppedEmpty } from "./parts/turn-end"
+import { revealing } from "../lib/stream-reveal"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -714,12 +715,21 @@ function onEditKey(event: KeyboardEvent, turn: Turn) {
   }
 }
 
-/* MiMo's sent pictures open in its image preview; the message's other pictures are its neighbours. */
-function previewSent(item: Attachment, all: Attachment[] | undefined) {
+/*
+ * MiMo's sent pictures open in its image preview, zooming out of the tile that
+ * was pressed; the message's other pictures are its neighbours.
+ */
+function previewSent(item: Attachment, all: Attachment[] | undefined, event: MouseEvent) {
   const url = preview(item)
   if (!url) return
   const group = (all ?? []).map((entry) => preview(entry)).filter((entry): entry is string => Boolean(entry))
-  openImagePreview(url, { name: item.path.split(/[\\/]/).pop(), group })
+  // `rect` is the reply agent's addition to ImagePreviewMeta (P1-4), not merged here yet.
+  const meta: ImagePreviewMeta & { rect?: DOMRect } = {
+    name: item.path.split(/[\\/]/).pop(),
+    group,
+    rect: (event.currentTarget as HTMLElement).getBoundingClientRect(),
+  }
+  openImagePreview(url, meta)
 }
 
 /** Whether the turn said or did anything a reader would call an answer. */
@@ -782,6 +792,50 @@ async function retry(turn: Turn) {
   }
 }
 
+/*
+ * MiMo holds a turn's end - the action row, the edited-files card - until the
+ * answer's paced reveal has caught up. The reply renderer lists the parts
+ * still playing out.
+ */
+function playingOut(turn: Turn): boolean {
+  return turn.parts.some((part) => revealing.has(part.id))
+}
+
+/*
+ * MiMo's search result: the conversation goes to the message and flashes it
+ * for 1.6s. Asked through the store's revealMessage(id); the message may
+ * still be loading when a search opens another conversation, so it is looked
+ * for over a couple of seconds.
+ */
+const REVEAL_FLASH = 1600
+let revealTimer: ReturnType<typeof setTimeout> | undefined
+
+watch(
+  () => app.revealRequest,
+  async (asked) => {
+    if (!asked || props.side) return
+    const selector = `[data-message-id="${CSS.escape(asked.id)}"], [data-message-ids~="${CSS.escape(asked.id)}"]`
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await nextTick()
+      const target = scroller.value?.querySelector<HTMLElement>(selector)
+      if (target) {
+        following.value = false
+        target.scrollIntoView({ block: "center" })
+        measureJump()
+        target.classList.remove("revealed")
+        void target.offsetWidth
+        target.classList.add("revealed")
+        clearTimeout(revealTimer)
+        revealTimer = setTimeout(() => target.classList.remove("revealed"), REVEAL_FLASH)
+        return
+      }
+      if (app.revealRequest !== asked) return
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+  },
+)
+onBeforeUnmount(() => clearTimeout(revealTimer))
+
 function stepMessage(by: 1 | -1) {
   const view = scroller.value
   if (!view) return
@@ -835,6 +889,7 @@ defineExpose({ stepMessage, scroller })
           v-if="turn.text !== undefined || turn.attachments?.length"
           class="msg user"
           :class="{ editing: editingAsked === turn.id }"
+          :data-message-id="turn.id"
         >
           <div v-if="turn.attachments?.length" class="sent">
             <template v-for="(item, at) in turn.attachments" :key="at">
@@ -845,7 +900,7 @@ defineExpose({ stepMessage, scroller })
                 :aria-label="t('stream.previewTip')"
                 v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
                 :data-preview-src="preview(item)"
-                @click="previewSent(item, turn.attachments)"
+                @click="previewSent(item, turn.attachments, $event)"
               >
                 <img :src="preview(item)" :alt="item.path" />
               </button>
@@ -994,7 +1049,13 @@ defineExpose({ stepMessage, scroller })
           </div>
         </div>
 
-        <div v-if="turn.parts.length || turn.error || turn.finish" class="msg assistant">
+        <!-- One block answers with every assistant message of the turn: the first names it, and all of them are listed. -->
+        <div
+          v-if="turn.parts.length || turn.error || turn.finish"
+          class="msg assistant"
+          :data-message-id="turn.messageIDs[0]"
+          :data-message-ids="turn.messageIDs.join(' ')"
+        >
           <!--
             What the turn did, above the answer rather than under it. MiMo
             states it there and keeps it; this app had the same figure in a
@@ -1033,6 +1094,7 @@ defineExpose({ stepMessage, scroller })
               v-if="row.kind === 'steer'"
               class="steer"
               :data-user-steer="row.id"
+              :data-message-id="row.steer.id"
               :data-steer-state="steerWaiting(turn, at, row.steer) ? 'waiting' : 'landed'"
             >
               <div v-if="row.steer.attachments?.length" class="sent">
@@ -1044,7 +1106,7 @@ defineExpose({ stepMessage, scroller })
                     :aria-label="t('stream.previewTip')"
                     v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
                     :data-preview-src="preview(item)"
-                    @click="previewSent(item, row.steer.attachments)"
+                    @click="previewSent(item, row.steer.attachments, $event)"
                   >
                     <img :src="preview(item)" :alt="item.path" />
                   </button>
@@ -1079,7 +1141,7 @@ defineExpose({ stepMessage, scroller })
             with 撤销 and 审阅. A live turn has none - its files are still moving.
           -->
           <EditedFilesCard
-            v-if="!(at === turns.length - 1 && shownBusy)"
+            v-if="!(at === turns.length - 1 && shownBusy) && !playingOut(turn)"
             :parts="turn.parts"
             :message-ids="turn.messageIDs"
             :session-id="shownID"
@@ -1132,7 +1194,7 @@ defineExpose({ stepMessage, scroller })
             each; then the time it finished, which shows under the pointer only.
             A failed turn keeps it, under its card.
           -->
-          <div v-if="turn.finish && turn.last && !stoppedEmpty(turn)" class="msg-actions" data-msg-actions>
+          <div v-if="turn.finish && turn.last && !stoppedEmpty(turn) && !playingOut(turn)" class="msg-actions" data-msg-actions>
             <button
               type="button"
               class="msg-act"
@@ -2026,5 +2088,22 @@ defineExpose({ stepMessage, scroller })
 .retry-icon:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+/* A search result arrived at: a soft tint over the message that fades over MiMo's 1.6s. */
+.revealed {
+  border-radius: 12px;
+  animation: reveal-flash 1.6s ease-out both;
+}
+
+@keyframes reveal-flash {
+  0%,
+  35% {
+    background-color: color-mix(in srgb, var(--text-interactive) 14%, transparent);
+  }
+
+  100% {
+    background-color: transparent;
+  }
 }
 </style>

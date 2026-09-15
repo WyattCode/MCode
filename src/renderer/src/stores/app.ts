@@ -987,6 +987,16 @@ export const useApp = defineStore("app", () => {
   }
 
   /*
+   * MiMo's search result: go to a message in the open conversation and flash
+   * it. The stream carries it out; this records the ask with when it was made,
+   * so asking for the same message twice still reads as a change.
+   */
+  const revealRequest = ref<{ id: string; at: number }>()
+  function revealMessage(id: string) {
+    revealRequest.value = { id, at: Date.now() }
+  }
+
+  /*
    * The edited-files card's current diff, one patch per file. Kept per set of
    * paths, as MiMo keeps its figures, so a transcript of many cards asks once
    * for each; 审阅 asks afresh.
@@ -1597,6 +1607,8 @@ export const useApp = defineStore("app", () => {
     redo,
     truncate,
     turnDiff,
+    revealRequest,
+    revealMessage,
     revertedAt,
     rolledBack,
     visible,

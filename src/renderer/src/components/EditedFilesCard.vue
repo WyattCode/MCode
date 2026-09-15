@@ -124,6 +124,11 @@ function toolPatch(): string {
   return diffs.join("\n")
 }
 
+/* A patch with at least one hunk; headers alone show nothing. */
+function changes(patch: string) {
+  return parseUnifiedDiff(patch).some((section) => section.hunks.length > 0)
+}
+
 /*
  * MiMo's 审阅: a 审阅 diff tab of just this card's files as they stand now,
  * else the turn's recorded diffs, else a note that there is nothing to show.
@@ -137,10 +142,10 @@ async function review() {
     if (props.directory) {
       const answer = await app.turnDiff(props.directory, files.value.map((file) => file.path), true).catch(() => undefined)
       keep(answer)
-      if (answer?.repo) patch = answer.files.map((entry) => entry.patch).filter((entry) => entry.trim()).join("\n")
+      if (answer?.repo) patch = answer.files.map((entry) => entry.patch).filter(changes).join("\n")
     }
-    if (!patch.trim()) patch = toolPatch()
-    if (!patch.trim()) {
+    if (!changes(patch)) patch = toolPatch()
+    if (!changes(patch)) {
       notify(t("stream.noDiff"))
       return
     }
