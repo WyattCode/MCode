@@ -3,10 +3,10 @@
  * per-session state the composer and the panel read.
  *
  * Two kinds of assertion, for two ways this can break. The first half runs the
- * pure functions the window uses - the mention/attachment split, the variant
- * resolution, the tab-strip map - because each is a rule copied from the
+ * pure functions the window uses - the mention/attachment split, the level a
+ * model runs at, the tab-strip map - because each is a rule copied from the
  * reference and a wrong answer there is silent: the message comes back looking
- * right and sends the same file twice, or the effort pill offers a level the
+ * right and sends the same file twice, or the model pill names a level the
  * provider drops. The second half reads the components, because those functions
  * are only worth anything while something still calls them, and a seam between
  * a helper and the one component that uses it is exactly what a type checker
@@ -17,7 +17,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { UserMessage } from "../src/shared/protocol"
 import { draftFromMessage, draftLine } from "../src/renderer/src/lib/draft"
-import { cycleVariant, isLatest, resolveVariant, withoutLatest } from "../src/renderer/src/lib/model"
+import { clampEffort, cycleVariant, isLatest, withoutLatest } from "../src/renderer/src/lib/model"
 import { createPinia, setActivePinia } from "pinia"
 import { useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { locateOffset } from "../src/renderer/src/lib/find"
@@ -90,15 +90,20 @@ console.log("\nThe one line a rolled back message shows")
 
 // ------------------------------------------------- which steps a model accepts
 /*
- * `resolveModelVariant` reads the stored step and does not erase it; the cycle
- * walks the model's own list and falls off the end into "follow the default"
- * rather than wrapping.
+ * MiMo clamps the level a model runs at: the one set, if this model takes it;
+ * else medium; else the model's first. The menu has no "follow the default"
+ * row any more, so a model with levels always names one. The keyboard's cycle
+ * still walks the model's own list and falls off the end rather than wrapping.
  */
 console.log("\nReasoning steps, per model")
 {
-  check("a step this model takes resolves to itself", resolveVariant(["low", "high"], "high"), "high")
-  check("one it does not take resolves to nothing", resolveVariant(["low", "high"], "xhigh"), undefined)
-  check("and no steps at all resolves to nothing", resolveVariant([], "low"), undefined)
+  check("a level this model takes is kept", clampEffort(["low", "high"], "high"), "high")
+  check(
+    "one it lacks snaps to medium, or without medium to the first",
+    [clampEffort(["low", "medium", "high"], "xhigh"), clampEffort(["low", "high"], "xhigh")],
+    ["medium", "low"],
+  )
+  check("and a model without levels runs at none", clampEffort([], "low"), undefined)
 
   check("cycling a model with no steps does nothing", cycleVariant([], "low"), undefined)
   check("from unset, the first step", cycleVariant(["low", "medium", "high"], undefined), "low")
@@ -174,8 +179,8 @@ console.log("\nThe right panel's tabs, as MiMo keeps them")
  * Every one of these is a call across a file boundary that nothing else
  * enforces. The composer's two new methods are reached through a template ref,
  * the two revert buttons reach them through an injected function, and the
- * effort pill's guard is one attribute - all four survive a type check with the
- * behaviour gone.
+ * effort label's guard is one attribute - all of them survive a type check with
+ * the behaviour gone.
  */
 console.log("\nWhat the components still do")
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -193,19 +198,21 @@ check(
   true,
 )
 /*
- * Two halves, both of them load-bearing: a model with no steps to choose
- * between gets no pill, and neither does the home screen - the setting belongs
- * to a session, and there is no session behind that box until a message is
- * sent. MiMo's home box carries no such control either.
+ * MiMo has no effort pill of its own: the level is named on the model pill, and
+ * chosen from a submenu beside each model. Both halves are load-bearing - the
+ * name is the clamped level, so a model without levels shows none and a side
+ * chat asks for none; and each row offers exactly its model's levels, with no
+ * 默认 row since the composer branch removed it.
  */
 check(
-  "the effort pill is drawn only for a model with steps, and only with a session",
-  /<div v-if="!side && variants\.length && sessionID" class="pill-wrap">/.test(composer),
+  "the level is named on the model pill outside a side chat, and only once clamped to the model's levels",
+  /<span v-if="!smartOn && !side && effortLabel" class="model-effort"/.test(composer) &&
+    /const effortLevel = computed<Effort \| undefined>\(\(\) =>\s*clampEffort\(variants\.value,/.test(composer),
   true,
 )
 check(
-  "and its menu offers exactly those steps",
-  /EFFORT_CHOICES = computed<\(Effort \| undefined\)\[\]>\(\(\) => \[undefined, \.\.\.variants\.value\]\)/.test(composer),
+  "and a model row's level menu offers exactly that model's levels, none in a side chat",
+  /function effortsFor\(model: ModelInfo\): Effort\[\] \{\s*return props\.side \? \[\] : model\.variants\s*\}/.test(composer),
   true,
 )
 

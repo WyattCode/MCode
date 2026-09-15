@@ -16,27 +16,6 @@ export function findModel(providers: readonly ProviderStatus[], ref?: ModelRef):
 }
 
 /**
- * The step a session is actually running at, given what its model accepts.
- *
- * `resolveModelVariant` (out/renderer/assets/main-8t-QUXax.js @2829318):
- *
- *     if (input.selected === null) return void 0;
- *     if (input.selected && input.variants.includes(input.selected)) return input.selected;
- *     if (input.configured && input.variants.includes(input.configured)) return input.configured;
- *     return void 0;
- *
- * The `configured` arm is not carried over: there, a configured default is a
- * named level that can be shown in place of the session's own; here the head of
- * the menu means "follow the app default" without naming it, and the app
- * default is applied server-side. What matters is the last line - a stored step
- * the model does not take resolves to nothing, and nothing is erased, so
- * leaving a model and coming back brings the step back with it.
- */
-export function resolveVariant(variants: readonly Effort[], selected?: Effort): Effort | undefined {
-  return selected && variants.includes(selected) ? selected : undefined
-}
-
-/**
  * The next step along, with "follow the default" between the last and the first.
  *
  * `cycleModelVariant` (@2829562), minus the same `configured` arm: an empty
