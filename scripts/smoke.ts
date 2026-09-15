@@ -67,6 +67,8 @@ import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
 import { sessionArtifacts, sessionReferences } from "../src/shared/session-files"
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
+import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
+import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import type { TurnEvent } from "../src/server/provider/types"
 import { toProviderMessages, usageFrom } from "../src/server/provider/anthropic"
@@ -3804,6 +3806,55 @@ async function main() {
   ].join(".")
   const claims = decodeClaims(idToken)
   check("account id is read from the nested id_token claim", claims && accountId(claims) === "acct_42")
+
+  // ---------------------------------------------------------------- artifacts page and export
+  section("Artifacts page and conversation export (round 3 AR)")
+  {
+    const MIN = 60_000
+    const base = new Date(2026, 8, 15, 12, 0, 0).getTime()
+    check("under a minute is just now", artifactAge(base - 59_000, base).unit === "just")
+    check("minutes are floored", JSON.stringify(artifactAge(base - 5 * MIN - 59_000, base)) === '{"unit":"m","n":5}')
+    check("hours below a day", JSON.stringify(artifactAge(base - 23 * 60 * MIN, base)) === '{"unit":"h","n":23}')
+    check("days below a week", JSON.stringify(artifactAge(base - 6 * 1440 * MIN, base)) === '{"unit":"d","n":6}')
+    const old = artifactAge(new Date(2026, 0, 5, 9).getTime(), base)
+    check("a week or more is an unpadded Y/M/D", old.unit === "date" && `${old.y}/${old.mo}/${old.day}` === "2026/1/5", old)
+    check("a clock behind the file still reads just now", artifactAge(base + 5000, base).unit === "just")
+
+    check("kind colours are MiMo's", badgeOf("a/b.docx").fg === "#2b6cb0" && badgeOf("s.pptx").fg === "#c43e1c" && badgeOf("t.xlsx").fg === "#21a366" && badgeOf("r.pdf").fg === "#d93831")
+    check("text, web, image and file kinds", badgeOf("n.md").kind === "txt" && badgeOf("p.html").fg === "#2f6fed" && badgeOf("i.png").fg === "#0e9488" && badgeOf("x.bin").fg === "#8c8c86")
+    check("legacy Office names share the new kinds", badgeOf("old.doc").kind === "docx" && badgeOf("old.xls").kind === "xlsx" && badgeOf("old.ppt").kind === "pptx")
+    check("tabs bucket documents, pages and the rest", artifactCategory("a.csv") === "doc" && artifactCategory("b.htm") === "app" && artifactCategory("c.png") === "other")
+    check("the page size is MiMo's 50", ARTIFACT_PAGE === 50)
+    check("relative artifact paths join the project", artifactAbsolute("D:\\p\\", "out/a.md") === "D:\\p/out/a.md" && artifactAbsolute("/p", "/tmp/a.md") === "/tmp/a.md")
+
+    const labels = { untitled: "未命名对话", user: "**我：**", assistant: "**MCode:**", done: "(已完成)" }
+    const at = { created: 1 }
+    const said = [
+      { id: "u1", sessionID: "s", role: "user" as const, text: "写一份报告", attachments: [], time: at },
+      {
+        id: "a1", sessionID: "s", role: "assistant" as const, model: { provider: "p", id: "m" }, agent: "build" as const,
+        parts: [
+          { type: "reasoning" as const, id: "r", text: "thinking", time: at },
+          { type: "text" as const, id: "t1", text: "好的。" },
+          { type: "text" as const, id: "t2", text: "已完成报告。" },
+        ],
+        finish: "end_turn" as const, time: at,
+      },
+      { id: "a2", sessionID: "s", role: "assistant" as const, model: { provider: "p", id: "m" }, agent: "build" as const, parts: [], finish: "end_turn" as const, time: at },
+      { id: "a3", sessionID: "s", role: "assistant" as const, model: { provider: "p", id: "m" }, agent: "build" as const, parts: [], finish: "aborted" as const, time: at },
+    ] as unknown as Parameters<typeof conversationMarkdown>[1]
+    const md = conversationMarkdown("季度报告", said, labels)
+    check(
+      "Markdown is the title, then one prefixed paragraph per message",
+      md === "# 季度报告\n\n**我：** 写一份报告\n\n**MCode:** 好的。\n\n已完成报告。\n\n**MCode:** (已完成)",
+      md,
+    )
+    check("an untitled conversation gets MiMo's heading", conversationMarkdown("  ", [], labels) === "# 未命名对话\n\n")
+    const long = "a".repeat(90)
+    check("the file name keeps its length", exportFileName(long) === `${long}.md`)
+    check("reserved characters become hyphens and the name is trimmed", exportFileName(' a/b:c*d?"e<f>g|h ') === "a-b-c-d--e-f-g-h.md")
+    check("an empty name falls back to conversation", exportFileName("  ") === "conversation.md")
+  }
 
   // ---------------------------------------------------------------- tooltips
   section("Tooltips (MiMo's Radix values)")
