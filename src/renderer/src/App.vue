@@ -85,8 +85,27 @@ const confirmDock = useQuestions()
 
 /** "home" is the launcher; "session" is a project workspace. */
 const view = ref<"home" | "session" | "artifacts" | "plugins">("home")
-/** The 2.0 side column; up unless it has been put away. */
-const leftPanel = ref(true)
+/*
+ * The 2.0 side column; up unless it has been put away. MiMo saves the user's own
+ * fold and starts from it; a fold made for a narrow window is not saved.
+ */
+const SIDE_COLLAPSED_KEY = "mcode.sidebarCollapsed"
+const leftPanel = ref(
+  (() => {
+    try {
+      return localStorage.getItem(SIDE_COLLAPSED_KEY) !== "true"
+    } catch {
+      return true
+    }
+  })(),
+)
+function setSide(open: boolean) {
+  leftPanel.value = open
+  try {
+    localStorage.setItem(SIDE_COLLAPSED_KEY, String(!open))
+  } catch {}
+}
+const toggleSide = () => setSide(!leftPanel.value)
 /* The project a task typed on the home screen will be created in. */
 const homeDirectory = ref<string>()
 /* The folder the home screen has picked, which its bottom panel's terminal opens in. */
@@ -1160,7 +1179,7 @@ onMounted(() => window.addEventListener("resize", onWindowResize))
 onBeforeUnmount(() => window.removeEventListener("resize", onWindowResize))
 
 /* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
-const revealSide = () => (leftPanel.value = true)
+const revealSide = () => setSide(true)
 onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
 onBeforeUnmount(() => window.removeEventListener("mcode:reveal-side", revealSide))
 let sideAutoFolded = false
@@ -2662,7 +2681,7 @@ const bindableCommands = computed((): AppCommand[] => {
       title: leftPanel.value ? t("cmd.hideSessions") : t("cmd.showSessions"),
       hint: "Ctrl+B",
       // On every screen, as MiMo's is: the home screen has a side column to fold too.
-      run: () => (leftPanel.value = !leftPanel.value),
+      run: () => toggleSide(),
     },
     // MiMo's panel and browser chords.
     {
@@ -3595,7 +3614,7 @@ function onKeydown(event: KeyboardEvent) {
     // MiMo's files tab, and the reference's attach on its key.
     p: openFilesTab,
     u: () => composer.value?.pick(),
-    b: () => (leftPanel.value = !leftPanel.value),
+    b: () => toggleSide(),
     "`": () => (terminalOpen.value = !terminalOpen.value),
     m: () => composer.value?.openModelMenu(),
     ",": openSettings,
@@ -3643,7 +3662,7 @@ const menuCommands: Record<string, () => void> = {
   "open-project": () => void browse(),
   settings: openSettings,
   terminal: () => (terminalOpen.value = !terminalOpen.value),
-  sidebar: () => (leftPanel.value = !leftPanel.value),
+  sidebar: () => toggleSide(),
   abort: () => void app.abort(),
   model: () => composer.value?.openModelMenu(),
   "delete-session": () => {
@@ -4132,7 +4151,7 @@ onBeforeUnmount(() => {
         @search="searchOpen = true"
         @back="back"
         @forward="forward"
-        @toggle="leftPanel = !leftPanel"
+        @toggle="toggleSide"
         @browse="browse"
         @dropFolders="addDroppedProjects"
         @open="openFromSide"
