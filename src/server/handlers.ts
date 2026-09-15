@@ -29,6 +29,7 @@ import { listCommands } from "./command"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { revertTurnFiles } from "./session/turn-revert"
+import { suggestTasks } from "./home-suggest"
 import type { ShellOwner } from "./shell"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
@@ -948,6 +949,21 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "file.list":
       return { files: await listFiles(request.directory, request.query) } satisfies Handled<"file.list">
 
+    /* The @ menu's browsing: one level at a time, as MiMo's listDir answers. */
+    case "file.listDir":
+      return { entries: await listDirectory(request.directory, request.sub) } satisfies Handled<"file.listDir">
+
+    /* The @ menu's search, scoped to the folder being browsed. */
+    case "file.search":
+      return (await searchFolder(request.directory, request.query, request.sub, request.limit)) satisfies Handled<"file.search">
+
+    /* 继续: the interrupted last turn runs on, with no new message. */
+    case "session.resume":
+      return { messageID: await runtime.runner.resumeTurn(request.sessionID) } satisfies Handled<"session.resume">
+
+    case "home.suggest":
+      return (await suggestTasks(runtime, request.directory, request.language)) satisfies Handled<"home.suggest">
+
     case "file.read": {
       const resolved = path.resolve(request.path)
       /*
@@ -1118,6 +1134,85 @@ async function waitForIdle(runtime: Runtime, timeoutMs = 3000): Promise<void> {
   while (!runtime.runner.idle && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50))
   }
+}
+
+/* Where a request's `sub` lands, refused when it climbs out of the project. */
+function insideProject(directory: string, sub?: string): { root: string; target: string } {
+  const root = path.resolve(directory)
+  const target = path.resolve(root, sub ?? "")
+  const relative = path.relative(root, target)
+  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Outside the project: ${sub}`)
+  return { root, target }
+}
+
+/* One folder level for the @ menu: folders first, then files, each by name. An unreadable folder throws. */
+async function listDirectory(directory: string, sub?: string): Promise<Handled<"file.listDir">["entries"]> {
+  const { target } = insideProject(directory, sub)
+  const listed = await fs.readdir(target, { withFileTypes: true })
+  const out: Handled<"file.listDir">["entries"] = []
+  for (const entry of listed) {
+    if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
+    let folder = entry.isDirectory()
+    // A link is shown as what it points at.
+    if (entry.isSymbolicLink()) {
+      folder = await fs
+        .stat(path.join(target, entry.name))
+        .then((stats) => stats.isDirectory())
+        .catch(() => false)
+    }
+    out.push({ name: entry.name, type: folder ? "dir" : "file" })
+  }
+  const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
+  return out.sort((a, b) => (a.type === b.type ? byName.compare(a.name, b.name) : a.type === "dir" ? -1 : 1))
+}
+
+const SEARCH_LIMIT = 50
+/* A walk this long is a huge tree; what was found by then is what is shown. */
+const SEARCH_VISITS = 20_000
+
+/*
+ * Files under a folder whose path from that folder holds the query. A hit in
+ * the file's own name ranks ahead of one further up its path, then shorter
+ * paths first.
+ */
+async function searchFolder(directory: string, query: string, sub?: string, limit?: number): Promise<Handled<"file.search">> {
+  const { root, target } = insideProject(directory, sub)
+  const needle = query.trim().toLowerCase()
+  const cap = Math.max(1, Math.min(200, limit ?? SEARCH_LIMIT))
+  const hits: Handled<"file.search">["entries"] = []
+  if (!needle) return { entries: hits, truncated: false }
+  const queue = [target]
+  let visits = 0
+  let overflow = false
+  while (queue.length && visits < SEARCH_VISITS && !overflow) {
+    const dir = queue.shift()!
+    const listed = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+    for (const entry of listed) {
+      visits += 1
+      if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
+      const absolute = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        queue.push(absolute)
+        continue
+      }
+      const within = path.relative(target, absolute).split(path.sep).join("/")
+      if (!within.toLowerCase().includes(needle)) continue
+      const rel = path.relative(root, absolute).split(path.sep).join("/")
+      const cut = rel.lastIndexOf("/")
+      hits.push({ name: entry.name, rel, dir: cut < 0 ? "" : rel.slice(0, cut) })
+      // Enough gathered to rank; more would only be cut off.
+      if (hits.length > cap * 4) {
+        overflow = true
+        break
+      }
+    }
+  }
+  const ranked = hits.sort(
+    (a, b) =>
+      Number(!a.name.toLowerCase().includes(needle)) - Number(!b.name.toLowerCase().includes(needle)) ||
+      a.rel.length - b.rel.length,
+  )
+  return { entries: ranked.slice(0, cap), truncated: overflow || ranked.length > cap }
 }
 
 async function listFiles(directory: string, query?: string): Promise<FileEntry[]> {

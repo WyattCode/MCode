@@ -1105,6 +1105,31 @@ export const useApp = defineStore("app", () => {
     running.value.delete(target)
   }
 
+  /**
+   * 继续: the interrupted last turn runs on with no new message.
+   *
+   * False when the server would not carry it on, so the box can say so. Marked
+   * running before the request, as a send is, because the turn's first events
+   * can arrive ahead of the answer.
+   */
+  async function resume(to?: string): Promise<boolean> {
+    const target = to ?? currentID.value
+    if (!target || running.value.has(target)) return false
+    if (target === sideID.value) sideError.value = undefined
+    else error.value = undefined
+    noteError(target, undefined)
+    running.value.add(target)
+    turnStarted.set(target, Date.now())
+    try {
+      await api().request({ type: "session.resume", sessionID: target })
+      return true
+    } catch {
+      running.value.delete(target)
+      turnStarted.delete(target)
+      return false
+    }
+  }
+
   /** The request whose answer is in flight, so the panel can disable itself. */
   const responding = ref<string>()
 
@@ -1527,6 +1552,7 @@ export const useApp = defineStore("app", () => {
     systemPrompt,
     send,
     abort,
+    resume,
     respond,
     setModel,
     setSmart,

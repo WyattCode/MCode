@@ -16,8 +16,11 @@
 /** The longest single recording. A minute of speech is already a long message. */
 const MAX_MS = 60_000
 
-/** What the recorder is doing, for a button that has to say so. */
-export type VoiceState = "idle" | "recording" | "working"
+/**
+ * What the recorder is doing, for a button that has to say so: pressed and
+ * waiting for the microphone, listening, or having it written down.
+ */
+export type VoiceState = "idle" | "starting" | "recording" | "working"
 
 export interface Recording {
   /** The audio, base64, ready for the protocol - which is JSON and takes no bytes. */
@@ -41,15 +44,45 @@ function bestFormat(): string | undefined {
   return FORMATS.find((type) => MediaRecorder.isTypeSupported(type))
 }
 
+/* Speech sits well under full scale; this lifts a normal voice to most of the waveform's height. */
+const LEVEL_GAIN = 4
+/* How much of the previous reading a new one keeps, so the bars move rather than flicker. */
+const LEVEL_SMOOTHING = 0.6
+
 export class VoiceRecorder {
   private recorder?: MediaRecorder
   private stream?: MediaStream
   private chunks: Blob[] = []
   private startedAt = 0
   private timer?: number
+  private audio?: AudioContext
+  private analyser?: AnalyserNode
+  private samples?: Uint8Array<ArrayBuffer>
+  private smoothed = 0
 
   get running(): boolean {
     return this.recorder?.state === "recording"
+  }
+
+  /**
+   * How loud the microphone is right now, 0 to 1, smoothed between readings.
+   *
+   * Read once per animation frame by the capsule's waveform. Zero whenever
+   * nothing is recording, or when the machine offers no audio analysis.
+   */
+  get level(): number {
+    const analyser = this.analyser
+    const samples = this.samples
+    if (!analyser || !samples || !this.running) return 0
+    analyser.getByteTimeDomainData(samples)
+    let sum = 0
+    for (const sample of samples) {
+      const centred = (sample - 128) / 128
+      sum += centred * centred
+    }
+    const rms = Math.sqrt(sum / samples.length)
+    this.smoothed = this.smoothed * LEVEL_SMOOTHING + Math.min(1, rms * LEVEL_GAIN) * (1 - LEVEL_SMOOTHING)
+    return this.smoothed
   }
 
   /**
@@ -73,9 +106,28 @@ export class VoiceRecorder {
     }
     recorder.start()
     this.recorder = recorder
+    this.listen(stream)
     /* A recording nobody stopped stops itself, rather than holding the
        microphone open for as long as the window is left alone. */
     this.timer = window.setTimeout(() => void this.stop().catch(() => {}), MAX_MS)
+  }
+
+  /* The level meter; a machine without Web Audio still records, with a flat waveform. */
+  private listen(stream: MediaStream) {
+    try {
+      const audio = new AudioContext()
+      const analyser = audio.createAnalyser()
+      analyser.fftSize = 512
+      audio.createMediaStreamSource(stream).connect(analyser)
+      this.audio = audio
+      this.analyser = analyser
+      this.samples = new Uint8Array(new ArrayBuffer(analyser.fftSize))
+      this.smoothed = 0
+    } catch {
+      this.audio = undefined
+      this.analyser = undefined
+      this.samples = undefined
+    }
   }
 
   /** Stops, releases the microphone, and hands back what was heard. */
@@ -116,6 +168,11 @@ export class VoiceRecorder {
     for (const track of this.stream?.getTracks() ?? []) track.stop()
     this.stream = undefined
     this.recorder = undefined
+    void this.audio?.close().catch(() => {})
+    this.audio = undefined
+    this.analyser = undefined
+    this.samples = undefined
+    this.smoothed = 0
   }
 }
 
