@@ -72,6 +72,8 @@ import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
 import { sessionArtifacts, sessionReferences } from "../src/shared/session-files"
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
+import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
+import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import type { TurnEvent } from "../src/server/provider/types"
 import { toProviderMessages, usageFrom } from "../src/server/provider/anthropic"
@@ -87,6 +89,7 @@ import {
   type OAuthProvider,
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
+import { arbitratePanel, boundChord, sideFits, toolHints } from "../src/renderer/src/lib/right-tools"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
 import { interruptedTurn } from "../src/shared/resume"
 import { detectCodeLanguage, insertFence } from "../src/renderer/src/lib/paste-code"
@@ -101,6 +104,7 @@ import {
 import type { Message } from "../src/shared/protocol"
 import { DELAY as TIP_DELAY, EDGE as TIP_EDGE, GAP as TIP_GAP, WARM as TIP_WARM, fit as fitTip, openDelay, tipText } from "../src/renderer/src/lib/tip"
 import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
+import { imagePreview, imagePreviewFileTools, imagePreviewKey, openImagePreview } from "../src/renderer/src/lib/image-preview"
 
 let passed = 0
 let failed = 0
@@ -330,6 +334,25 @@ async function main() {
   const none = filterMenu(moveRows, "zzz")
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
+
+  // The right panel's tool hints follow the shortcuts page, and MiMo's narrow-window rule.
+  const panelCommands = [
+    { id: "view.review", hint: "Ctrl+Shift+G" },
+    { id: "app.openFile", hint: "Ctrl+P" },
+    { id: "browser.tab", hint: "Ctrl+T" },
+    { id: "session.side", hint: "Ctrl+Alt+S" },
+  ]
+  const panelHints = toolHints(panelCommands, { "app.openFile": "Ctrl+Shift+O", "browser.tab": "" })
+  check("a panel tool's hint follows its rebinding", panelHints.files === "Ctrl+Shift+O", panelHints)
+  check("a panel tool whose binding was cleared names no hint", panelHints.browser === undefined, panelHints)
+  check("untouched panel tools keep their built-in hints", panelHints.review === "Ctrl+Shift+G" && panelHints.chat === "Ctrl+Alt+S" && panelHints.terminal === undefined, panelHints)
+  check("a command never rebound answers to its default chord", boundChord("view.right", "Ctrl+Alt+B", {}) === "Ctrl+Alt+B")
+  const crampedRoom = { viewport: 1200, sideWidth: 194, sideOpen: true, panelOpen: true, panelWidth: 500, fullscreen: false }
+  check("a cramped window shuts the panel when the side column was just opened", arbitratePanel(crampedRoom, true) === "close-panel")
+  check("a cramped window folds the side column otherwise", arbitratePanel(crampedRoom, false) === "collapse-side")
+  check("480 left for the conversation keeps both open", arbitratePanel({ ...crampedRoom, viewport: 1236 }, false) === "none")
+  check("an expanded panel is left out of the narrow-window rule", arbitratePanel({ ...crampedRoom, fullscreen: true }, false) === "none")
+  check("a folded side column fits again only once there is room", sideFits({ ...crampedRoom, viewport: 1300 }) && !sideFits(crampedRoom))
 
   const noticeOnce = notify("Copied")
   const noticeTwice = notify("Copied")
@@ -3810,6 +3833,55 @@ async function main() {
   const claims = decodeClaims(idToken)
   check("account id is read from the nested id_token claim", claims && accountId(claims) === "acct_42")
 
+  // ---------------------------------------------------------------- artifacts page and export
+  section("Artifacts page and conversation export (round 3 AR)")
+  {
+    const MIN = 60_000
+    const base = new Date(2026, 8, 15, 12, 0, 0).getTime()
+    check("under a minute is just now", artifactAge(base - 59_000, base).unit === "just")
+    check("minutes are floored", JSON.stringify(artifactAge(base - 5 * MIN - 59_000, base)) === '{"unit":"m","n":5}')
+    check("hours below a day", JSON.stringify(artifactAge(base - 23 * 60 * MIN, base)) === '{"unit":"h","n":23}')
+    check("days below a week", JSON.stringify(artifactAge(base - 6 * 1440 * MIN, base)) === '{"unit":"d","n":6}')
+    const old = artifactAge(new Date(2026, 0, 5, 9).getTime(), base)
+    check("a week or more is an unpadded Y/M/D", old.unit === "date" && `${old.y}/${old.mo}/${old.day}` === "2026/1/5", old)
+    check("a clock behind the file still reads just now", artifactAge(base + 5000, base).unit === "just")
+
+    check("kind colours are MiMo's", badgeOf("a/b.docx").fg === "#2b6cb0" && badgeOf("s.pptx").fg === "#c43e1c" && badgeOf("t.xlsx").fg === "#21a366" && badgeOf("r.pdf").fg === "#d93831")
+    check("text, web, image and file kinds", badgeOf("n.md").kind === "txt" && badgeOf("p.html").fg === "#2f6fed" && badgeOf("i.png").fg === "#0e9488" && badgeOf("x.bin").fg === "#8c8c86")
+    check("legacy Office names share the new kinds", badgeOf("old.doc").kind === "docx" && badgeOf("old.xls").kind === "xlsx" && badgeOf("old.ppt").kind === "pptx")
+    check("tabs bucket documents, pages and the rest", artifactCategory("a.csv") === "doc" && artifactCategory("b.htm") === "app" && artifactCategory("c.png") === "other")
+    check("the page size is MiMo's 50", ARTIFACT_PAGE === 50)
+    check("relative artifact paths join the project", artifactAbsolute("D:\\p\\", "out/a.md") === "D:\\p/out/a.md" && artifactAbsolute("/p", "/tmp/a.md") === "/tmp/a.md")
+
+    const labels = { untitled: "未命名对话", user: "**我：**", assistant: "**MCode:**", done: "(已完成)" }
+    const at = { created: 1 }
+    const said = [
+      { id: "u1", sessionID: "s", role: "user" as const, text: "写一份报告", attachments: [], time: at },
+      {
+        id: "a1", sessionID: "s", role: "assistant" as const, model: { provider: "p", id: "m" }, agent: "build" as const,
+        parts: [
+          { type: "reasoning" as const, id: "r", text: "thinking", time: at },
+          { type: "text" as const, id: "t1", text: "好的。" },
+          { type: "text" as const, id: "t2", text: "已完成报告。" },
+        ],
+        finish: "end_turn" as const, time: at,
+      },
+      { id: "a2", sessionID: "s", role: "assistant" as const, model: { provider: "p", id: "m" }, agent: "build" as const, parts: [], finish: "end_turn" as const, time: at },
+      { id: "a3", sessionID: "s", role: "assistant" as const, model: { provider: "p", id: "m" }, agent: "build" as const, parts: [], finish: "aborted" as const, time: at },
+    ] as unknown as Parameters<typeof conversationMarkdown>[1]
+    const md = conversationMarkdown("季度报告", said, labels)
+    check(
+      "Markdown is the title, then one prefixed paragraph per message",
+      md === "# 季度报告\n\n**我：** 写一份报告\n\n**MCode:** 好的。\n\n已完成报告。\n\n**MCode:** (已完成)",
+      md,
+    )
+    check("an untitled conversation gets MiMo's heading", conversationMarkdown("  ", [], labels) === "# 未命名对话\n\n")
+    const long = "a".repeat(90)
+    check("the file name keeps its length", exportFileName(long) === `${long}.md`)
+    check("reserved characters become hyphens and the name is trimmed", exportFileName(' a/b:c*d?"e<f>g|h ') === "a-b-c-d--e-f-g-h.md")
+    check("an empty name falls back to conversation", exportFileName("  ") === "conversation.md")
+  }
+
   // ---------------------------------------------------------------- tooltips
   section("Tooltips (MiMo's Radix values)")
   check("tip constants are MiMo's", TIP_GAP === 6 && TIP_EDGE === 8 && TIP_DELAY === 200 && TIP_WARM === 300, [
@@ -3909,6 +3981,23 @@ async function main() {
   check("limits take digits only", limitOf("32768").value === 32768 && !limitOf("32K").ok && limitOf("").ok)
   check("the 128K pill writes 131072 tokens", LIMIT_PRESETS.context.find((entry) => entry.label === "128K")?.value === 131072)
   check("an endpoint needs http(s) and a host", validEndpoint("https://api.example.com/v1") && !validEndpoint("ftp://x") && !validEndpoint("http://"))
+
+  // ---------------------------------------------------------------- image preview
+  section("Image preview (MiMo's keys and file tools)")
+  check("C and F do nothing for a picture without a file", imagePreviewKey("c", false) === undefined && imagePreviewKey("F", false) === undefined)
+  check("C copies and F reveals a picture with a file", imagePreviewKey("c", true) === "copy" && imagePreviewKey("C", true) === "copy" && imagePreviewKey("f", true) === "reveal" && imagePreviewKey("F", true) === "reveal")
+  check(
+    "the older keys keep their actions",
+    imagePreviewKey("Escape", false) === "close" && imagePreviewKey("=", false) === "zoomIn" && imagePreviewKey("_", false) === "zoomOut" &&
+      imagePreviewKey("0", false) === "reset" && imagePreviewKey("R", false) === "rotate" && imagePreviewKey("d", false) === "download" &&
+      imagePreviewKey("ArrowLeft", false) === "previous" && imagePreviewKey("ArrowRight", false) === "next" && imagePreviewKey("x", true) === undefined,
+  )
+  check("copy and reveal follow download only with a path", imagePreviewFileTools(true).join() === "download,copy,reveal" && imagePreviewFileTools(false).join() === "download")
+  openImagePreview("data:image/png;base64,AA==", { name: "a.png", path: "/tmp/a.png" })
+  check("the path travels with the opened picture", imagePreview.value?.path === "/tmp/a.png" && imagePreview.value?.name === "a.png")
+  openImagePreview("data:image/png;base64,AA==", { name: "b.png" })
+  check("a picture opened without a path has none", imagePreview.value?.path === undefined)
+  imagePreview.value = undefined
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

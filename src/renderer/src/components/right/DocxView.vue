@@ -120,7 +120,8 @@ async function load() {
   if (mine !== generation) return
   if (!read.ok || read.unchanged) {
     const reason = read.ok ? "" : read.reason
-    error.value = reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : t("office.serveFailed")
+    // As MiMo, and as the slide and sheet views: a missing file is named, any other reason is the server's failure.
+    error.value = reason === "noent" ? t("office.fileMissing") : t("office.serveFailed")
     loading.value = false
     restoring.value = false
     unhide()

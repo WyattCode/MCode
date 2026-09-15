@@ -682,9 +682,13 @@ app.whenReady().then(async () => {
     return await shell.openPath(target)
   })
 
+  /* Says why nothing was shown, so the artifacts page can tell a moved file from a refusal (MiMo's toasts). */
   ipcMain.handle("mcode:reveal-file", (_event, directory: string, relative: string) => {
     const target = inside(directory, relative)
-    if (target) shell.showItemInFolder(target)
+    if (!target) return { ok: false, error: "outside the project" }
+    if (!existsSync(target)) return { ok: false, missing: true }
+    shell.showItemInFolder(target)
+    return { ok: true }
   })
 
   // MiMo's Office tab: document bytes, watching, versions, legacy conversion.

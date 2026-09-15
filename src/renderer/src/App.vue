@@ -59,7 +59,9 @@ import { loadReleaseHighlights, normalizeVersion, type Highlight } from "./lib/c
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
-import { useRightPanel } from "./stores/right-panel"
+import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
+import { SIDE_COLUMN_WIDTH, arbitratePanel, boundChord, sideFits, toolHints } from "./lib/right-tools"
+import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
 import { editedFiles } from "./lib/edited-files"
 import { dismiss, notify, notifyFailure } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
@@ -1072,6 +1074,35 @@ const inConversation = computed(() => !isHome.value && !onboarding.value && Bool
  */
 const floatingComposer = computed(() => inConversation.value && rp.open && rp.fullscreen)
 
+/* The panel tools' shortcuts and the side panel toggle's, as bound now rather than as shipped. */
+const panelHints = computed(() => toolHints(bindableCommands.value, app.config?.keybinds ?? {}))
+const sidePanelHint = computed(() => boundChord("view.right", "Ctrl+Alt+B", app.config?.keybinds ?? {}))
+
+/*
+ * MiMo's narrow window: with the side column and the panel both open beside a
+ * conversation left under 480, the panel shuts if the column was just opened;
+ * otherwise the column folds, and comes back by itself once there is room.
+ */
+const windowWidth = ref(window.innerWidth)
+const onWindowResize = () => (windowWidth.value = window.innerWidth)
+onMounted(() => window.addEventListener("resize", onWindowResize))
+onBeforeUnmount(() => window.removeEventListener("resize", onWindowResize))
+let sideAutoFolded = false
+watch(
+  [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
+  ([viewport, sideOpen], [, sideBefore]) => {
+    if (onboarding.value) return
+    if (sideOpen) sideAutoFolded = false
+    const room = { viewport, sideWidth: SIDE_COLUMN_WIDTH, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
+    const outcome = arbitratePanel(room, sideOpen && !sideBefore)
+    if (outcome === "close-panel") rp.setOpen(false)
+    else if (outcome === "collapse-side") {
+      leftPanel.value = false
+      sideAutoFolded = true
+    } else if (!sideOpen && sideAutoFolded && sideFits({ ...room, sideOpen: true })) leftPanel.value = true
+  },
+)
+
 /* Ctrl+Shift+G: another review tab. */
 function openReviewTab() {
   if (inConversation.value) rp.openTool("review")
@@ -1554,6 +1585,8 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
     window.mcode.setClipboardText(transcriptMarkdown())
     notify(t("menu.copiedMarkdown"))
   },
+  /* Round 3 AR15 (artifacts agent): MiMo's 导出对话记录 saves the named conversation as Markdown without opening it. */
+  "session.export": (sessionID) => exportConversationById(sessionID),
   /* MiMo's copy notices are the title alone; what was copied is already on the clipboard. */
   "row.copyDirectory": (sessionID, header) => {
     const target = app.sessions.find((entry) => entry.id === sessionID)
@@ -1947,33 +1980,11 @@ async function createNamedProject(title: string, source?: string) {
 }
 
 /**
- * The conversation as a Markdown file.
- *
- * Tool traffic is left out: the point of an export is what was asked and what
- * was answered, and the six shell invocations in between are noise on paper.
+ * The conversation on show as Markdown, in MiMo's shape (lib/convo-export.ts).
+ * Round 3 AR16 (artifacts agent).
  */
 function transcriptMarkdown(): string {
-  const session = app.current
-  const when = (at: number) => new Date(at).toLocaleString()
-  const lines = [`# ${session ? sessionTitle(session.title) : t("session.new")}`, ""]
-  if (session) {
-    lines.push(`- ${session.directory}`, `- ${when(session.created)}`, "")
-  }
-
-  for (const message of app.messages) {
-    if (message.role === "user") {
-      lines.push(`## ${t("export.asked")}`, "", message.text, "")
-      continue
-    }
-    const text = message.parts
-      .filter((part) => part.type === "text")
-      .map((part) => (part.type === "text" ? part.text : ""))
-      .join("\n\n")
-      .trim()
-    if (!text) continue
-    lines.push(`### ${t("export.answered")}`, "", text, "")
-  }
-  return lines.join("\n")
+  return transcriptOf(app.current ? sessionTitle(app.current.title) : "", app.messages)
 }
 
 /**
@@ -2026,28 +2037,15 @@ function reasonOf(failure: unknown): string {
   return raw.replace(/^Error invoking remote method '[^']*':\s*/, "")
 }
 
+/* Round 3 AR17-AR18 (artifacts agent): MiMo's file name and single-line toasts, shared with the row menu's export. */
 async function exportSessionData() {
   if (!app.current) return
-  const data = { info: app.current, messages: app.messages }
-  try {
-    const saved = await window.mcode.saveText(exportFilename(), JSON.stringify(data, null, 2))
-    if (saved) notify(t("toast.exported"), saved, revealAction(saved))
-  } catch (failure) {
-    reportSaveFailure(t("toast.exportFailed"), failure)
-  }
+  await saveExport(exportFilename(), JSON.stringify({ info: app.current, messages: app.messages }, null, 2))
 }
 
 async function exportSession() {
   if (!app.messages.length) return
-  const name = (app.current ? sessionTitle(app.current.title) : "session")
-    .replace(/[\\/:*?"<>|]/g, "-")
-    .slice(0, 60)
-  try {
-    const saved = await window.mcode.saveText(`${name}.md`, transcriptMarkdown())
-    if (saved) notify(t("toast.exported"), saved, revealAction(saved))
-  } catch (failure) {
-    reportSaveFailure(t("toast.exportFailed"), failure)
-  }
+  await exportConversationMarkdown(app.current ? sessionTitle(app.current.title) : "", app.messages)
 }
 
 /**
@@ -2665,6 +2663,14 @@ const bindableCommands = computed(() => {
       title: t("key.sidePanel"),
       hint: "Ctrl+Alt+B",
       run: toggleSidePanel,
+    },
+    {
+      // MiMo's toggle-max-side: no default chord, and only while the panel is open.
+      id: "view.rightExpand",
+      group: "key.groupSession",
+      title: t("key.sidePanelExpand"),
+      enabled: rp.open,
+      run: () => rp.toggleFullscreen(),
     },
     {
       id: "view.terminal",
@@ -3931,7 +3937,7 @@ onBeforeUnmount(() => {
       :class="{ on: rp.open }"
       :aria-pressed="rp.open"
       :aria-label="t('key.sidePanel')"
-      v-tip="{ label: t('key.sidePanel'), hint: 'Ctrl+Alt+B' }"
+      v-tip="{ label: t('key.sidePanel'), hint: sidePanelHint }"
       @click="toggleSidePanel"
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -4177,7 +4183,11 @@ onBeforeUnmount(() => {
         :sessionID="isHome ? undefined : app.currentID"
         :directory="panelDirectory"
         :browserAllowed="browserAllowed"
-        :sidebarWidth="leftPanel ? 256 : 0"
+        :sidebarWidth="leftPanel ? SIDE_COLUMN_WIDTH : 0"
+        :sideCollapsed="!leftPanel"
+        :hints="panelHints"
+        :modalOpen="modalOpen"
+        :searchOpen="searchOpen"
         @open-settings="openSettings"
         @connect="connectOpen = true"
         @shell="runShellCommand"

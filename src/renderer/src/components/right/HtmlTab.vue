@@ -4,6 +4,8 @@ import type { Annotation } from "@shared/protocol"
 import type { RightTab } from "../../stores/right-panel"
 import { useRightPanel } from "../../stores/right-panel"
 import { useOfficeVersions } from "../../stores/office-versions"
+import { useApp } from "../../stores/app"
+import { fileManagerName } from "../../lib/path-open"
 import { annotationId, annotationRequest, requestAnnotation, type AnnotationRequest } from "../../lib/annotate"
 import { sendAnnotationNow } from "../../lib/annotation-send"
 import { aiTouch, aiWrite, normalPath } from "../../lib/ai-touch"
@@ -26,10 +28,12 @@ import VersionHistory from "./VersionHistory.vue"
 const props = defineProps<{ tab: RightTab; active: boolean }>()
 const rp = useRightPanel()
 const versions = useOfficeVersions()
+const app = useApp()
 
 const path = computed(() => props.tab.htmlPath ?? "")
 const url = ref("")
-const failed = ref(false)
+/* Why there is no page: MiMo says 无网页 for a page that is gone or cannot be served; a server that did not start keeps its own words. */
+const failed = ref<"" | "missing" | "server">("")
 const reloads = ref(0)
 const frame = ref<HTMLIFrameElement>()
 /* Whether the pointer is over the page, learned from the frame element's own enter and leave - which the page cannot fake. */
@@ -82,11 +86,11 @@ async function ensureVersions() {
 
 async function prepare() {
   url.value = ""
-  failed.value = false
+  failed.value = ""
   if (!path.value) return
   const served = await window.mcode.officeServe(path.value)
   if (!served.ok) {
-    failed.value = true
+    failed.value = served.error === "serverFailed" ? "server" : "missing"
     return
   }
   url.value = served.url
@@ -227,7 +231,8 @@ function toggleHistory(event: MouseEvent) {
 
 async function reveal() {
   const result = await window.mcode.revealPath(path.value)
-  if (result.ok) notify(t("office.revealed"))
+  // MiMo names the platform's file manager; the generic wording is only for a platform not yet known.
+  if (result.ok) notify(app.platform ? t("menu.revealedIn", { manager: fileManagerName(app.platform) }) : t("office.revealed"))
   else notifyFailure(t("office.revealFail", { err: result.error ?? "" }))
 }
 
@@ -265,9 +270,9 @@ onBeforeUnmount(() => {
           v-tip="{ label: tab.htmlEdit ? t('html.exitEdit') : t('html.edit') }"
           @click="rp.toggleHtmlEdit(tab.id)"
         >
-          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 20h9" />
-            <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+          <!-- MiMo's pen: a long baseline, a ferrule tick, and the nib at the bottom left. -->
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" data-html-edit-glyph>
+            <path d="M12 22.2h9.6M15 4.8l4.2 3.6M4.2 15.6 16.03 3.36a3.29 3.29 0 0 1 4.61 4.61L8.4 19.8l-6 1.8Z" />
           </svg>
         </button>
         <button
@@ -316,7 +321,9 @@ onBeforeUnmount(() => {
           @mouseenter="pointerOver = true"
           @mouseleave="pointerOver = false"
         />
-        <div v-else class="html-empty">{{ failed ? t("office.serveFailed") : t("office.loadingConvert") }}</div>
+        <div v-else class="html-empty" data-html-empty>
+          {{ failed === "missing" ? t("html.noPage") : failed === "server" ? t("office.serveFailed") : t("office.loadingConvert") }}
+        </div>
       </div>
       <VersionHistory v-if="history" :path="path" :anchor="history" @close="history = null" />
     </template>
@@ -386,11 +393,13 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
-.fc-btn:hover:not(:disabled) {
+/* As MiMo's rule, which also fills a disabled button under the pointer and dims it to .55. */
+.fc-btn:hover {
   background: var(--surface-hover);
 }
 
 .fc-btn:disabled {
+  opacity: 0.55;
   cursor: default;
 }
 

@@ -2,7 +2,9 @@
 import { computed, reactive, ref, watch } from "vue"
 import type { RightTab } from "../../stores/right-panel"
 import { useOfficeVersions } from "../../stores/office-versions"
+import { useApp } from "../../stores/app"
 import { notify, notifyFailure } from "../../lib/toast"
+import { fileManagerName } from "../../lib/path-open"
 import { t } from "../../lib/i18n"
 import LucideIcon from "../LucideIcon.vue"
 import PdfView from "./PdfView.vue"
@@ -20,6 +22,7 @@ import VersionHistory from "./VersionHistory.vue"
  */
 const props = defineProps<{ tab: RightTab; active: boolean }>()
 const versions = useOfficeVersions()
+const app = useApp()
 
 const TYPES = {
   xlsx: { icon: "file-spreadsheet", color: "#21a366", label: "Excel" },
@@ -38,8 +41,9 @@ watch(path, () => {
   fallback.pptx = false
 })
 
+/* MiMo keeps a spreadsheet's undo, redo and history even on the structured fallback. */
 const versioned = computed(
-  () => (type.value === "xlsx" && !fallback.xlsx) || (type.value === "docx" && !fallback.docx) || (type.value === "pptx" && !fallback.pptx) || type.value === "pdf",
+  () => type.value === "xlsx" || (type.value === "docx" && !fallback.docx) || (type.value === "pptx" && !fallback.pptx) || type.value === "pdf",
 )
 
 function sizeText(bytes: number | undefined) {
@@ -63,7 +67,8 @@ const viewer = ref<{ enterPresent?: () => void }>()
 
 async function reveal() {
   const result = await window.mcode.revealPath(path.value)
-  if (result.ok) notify(t("office.revealed"))
+  // MiMo names the platform's file manager; the generic wording is only for a platform not yet known.
+  if (result.ok) notify(app.platform ? t("menu.revealedIn", { manager: fileManagerName(app.platform) }) : t("office.revealed"))
   else notifyFailure(t("office.revealFail", { err: result.error ?? "" }))
 }
 </script>
@@ -203,11 +208,13 @@ async function reveal() {
   white-space: nowrap;
 }
 
-.fc-btn:hover:not(:disabled) {
+/* As MiMo's rule, which also fills a disabled button under the pointer. */
+.fc-btn:hover {
   background: var(--surface-hover);
 }
 
 .fc-btn:disabled {
+  opacity: 0.55;
   cursor: default;
 }
 

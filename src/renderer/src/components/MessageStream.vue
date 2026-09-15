@@ -51,16 +51,25 @@ const app = useApp()
  * the open one. Everything the stream reads about "its" conversation goes
  * through these, so the two can never be mixed.
  */
-const props = defineProps<{ side?: boolean }>()
-const shownMessages = computed(() => (props.side ? app.sideMessages : app.visible))
-const shownBusy = computed(() => (props.side ? app.sideBusy : app.busy))
+const props = defineProps<{
+  side?: boolean
+  /* round3-panel: the side chat tab's own conversation, so a tab kept mounted out of sight keeps its transcript. */
+  sideId?: string
+  /* round3-panel: MiMo's floating chat card - only the latest turn, with no actions, question or jump button. */
+  latest?: boolean
+}>()
+const sideKey = computed(() => props.sideId ?? app.sideID)
+const shownMessages = computed(() => (props.side ? app.sideMessagesOf(sideKey.value) : app.visible))
+const shownBusy = computed(() => (props.side ? app.sideBusyOf(sideKey.value) : app.busy))
 const shownCompacting = computed(() => (props.side ? false : app.compacting))
-const shownSession = computed(() => (props.side ? app.side : app.current))
-const shownID = computed(() => (props.side ? app.sideID : app.currentID))
+const shownSession = computed(() => (props.side ? app.sideSessionOf(sideKey.value) : app.current))
+const shownID = computed(() => (props.side ? sideKey.value : app.currentID))
 /* The project the shown conversation works in; a side conversation shares the main one's. */
 const shownDirectory = computed(() => app.current?.directory)
-const shownStreaming = computed(() => (props.side ? app.sideStreaming : app.streaming))
-const shownError = computed(() => (props.side ? app.sideError : app.error))
+const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.value) : app.streaming))
+const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.error))
+/* round3-panel (P5-12/13): MiMo's side chat and floating card draw a reply with showActions false. */
+const bare = computed(() => Boolean(props.side || props.latest))
 const scroller = ref<HTMLElement>()
 
 /** A message sent into a turn while it was running - MiMo's 插话 - and where among the turn's parts it landed. */
@@ -408,7 +417,7 @@ function foldedMatchCount(needle: string): number {
 
 let releaseFoldedCounter: (() => void) | undefined
 onMounted(() => {
-  if (!props.side) releaseFoldedCounter = registerFoldedCounter(foldedMatchCount)
+  if (!props.side && !props.latest) releaseFoldedCounter = registerFoldedCounter(foldedMatchCount)
 })
 onBeforeUnmount(() => releaseFoldedCounter?.())
 
@@ -749,7 +758,7 @@ function emptyReply(turn: Turn): boolean {
  * is still running, or when there is no question to send, it says so instead.
  */
 async function retry(turn: Turn) {
-  const sessionID = props.side ? app.sideID : app.currentID
+  const sessionID = props.side ? sideKey.value : app.currentID
   const message = shownMessages.value.find((entry) => entry.id === turn.id)
   if (!sessionID || shownBusy.value || reverting.value || message?.role !== "user") {
     notifyFailure(t("stream.retryUnavailable"))
@@ -798,7 +807,7 @@ defineExpose({ stepMessage, scroller })
         MiMo's marker at the top of a branched conversation: a hairline either
         side of a link back to the conversation it came from.
       -->
-      <div v-if="!side && shownSession?.forkOf" class="fork-row" data-fork-row>
+      <div v-if="!bare && shownSession?.forkOf" class="fork-row" data-fork-row>
         <div class="fork-line" />
         <button type="button" class="fork-label" :data-fork-src="shownSession.forkOf" @click="backToSource(shownSession.forkOf)">
           <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true">
@@ -814,9 +823,11 @@ defineExpose({ stepMessage, scroller })
         </button>
         <div class="fork-line" />
       </div>
-      <div v-for="(turn, at) in turns" :key="turn.id" class="turn" :data-turn="turn.id">
+      <template v-for="(turn, at) in turns" :key="turn.id">
+      <!-- round3-panel: the floating card draws the latest turn only, without its question. -->
+      <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id">
         <div
-          v-if="turn.text !== undefined || turn.attachments?.length"
+          v-if="!latest && (turn.text !== undefined || turn.attachments?.length)"
           class="msg user"
           :class="{ editing: editingAsked === turn.id }"
         >
@@ -1077,7 +1088,7 @@ defineExpose({ stepMessage, scroller })
             MiMo's action row under a reply: copy and branch, always there, 26px
             each; then the time it finished, which shows under the pointer only.
           -->
-          <div v-if="turn.finish && !turn.error && turn.last" class="msg-actions" data-msg-actions>
+          <div v-if="!bare && turn.finish && !turn.error && turn.last" class="msg-actions" data-msg-actions>
             <button
               type="button"
               class="msg-act"
@@ -1122,14 +1133,14 @@ defineExpose({ stepMessage, scroller })
             <span class="err-text">{{
               !turn.error ? t("stream.thinkOnlyNoAnswer") : turn.errorCode ? t(turn.errorCode, turn.errorParams) : turn.error
             }}</span>
-            <button class="retry-pill" data-retry @click="retry(turn)">
+            <button v-if="!bare" class="retry-pill" data-retry @click="retry(turn)">
               <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.8v2.9h-2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
               {{ t("stream.retry") }}
             </button>
           </div>
-          <template v-else-if="turn.finish === 'aborted' || emptyReply(turn)">
+          <template v-else-if="!bare && (turn.finish === 'aborted' || emptyReply(turn))">
             <div class="note finished" :class="{ empty: emptyReply(turn) }" data-turn-finished>
               {{
                 emptyReply(turn)
@@ -1175,8 +1186,9 @@ defineExpose({ stepMessage, scroller })
           <span class="compacted-line" />
         </div>
       </div>
+      </template>
 
-      <div v-if="shownError" class="err banner">{{ shownError }}</div>
+      <div v-if="shownError && !latest" class="err banner">{{ shownError }}</div>
     </div>
 
     <!--
@@ -1186,7 +1198,7 @@ defineExpose({ stepMessage, scroller })
       over the conversation it is covering.
     -->
     <button
-      v-if="!following"
+      v-if="!following && !latest"
       class="jump"
       data-jump-to-bottom
       :aria-label="t('stream.jumpToBottom')"
