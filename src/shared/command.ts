@@ -5,12 +5,12 @@
  * Both halves are transcriptions of the reference's own code rather than
  * re-derivations, and they live in `shared` because the two ends of this app
  * need different halves: the server derives `hints` while building the command
- * list (node-BBwF64dM.js @32867267), and the composer expands the template
- * when the line is sent, which the reference does in `SessionPrompt.command`
- * (@32957943). The reference can keep both server-side because a slash line
- * there goes back to the server as `session.command`; this app has no such
- * request, so the expansion happens in the window and the same rules have to
- * be reachable from both.
+ * list (node-BBwF64dM.js @32867267), and a template is filled in when the line
+ * is sent, which the reference does in `SessionPrompt.command` (@32957943). A
+ * project or global command is filled in by the backend (`command.expand`),
+ * since its shell placeholders run there; an MCP prompt is filled in by the
+ * composer and runs nothing. The argument rules are the same for both, so they
+ * live here.
  */
 
 /**
