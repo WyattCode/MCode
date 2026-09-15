@@ -39,11 +39,34 @@ export const SINGLE_TITLE_MAX = 120
 export const OUTPUT_CAP = 3000
 
 /** The tools the tables name in every state. `apply_patch` speaks as an edit. */
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task"])
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task", "pdf_locate", "present_files"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
-const BUILT_IN = new Set(["read", "edit", "write", "apply_patch", "patch", "bash", "grep", "glob", "list", "webfetch", "todowrite", "question", "invalid"])
+const BUILT_IN = new Set([
+  "read",
+  "edit",
+  "write",
+  "apply_patch",
+  "patch",
+  "bash",
+  "grep",
+  "glob",
+  "list",
+  "webfetch",
+  "todowrite",
+  "question",
+  "invalid",
+  "pdf_locate",
+  "present_files",
+  "get_desktop_settings",
+  "set_desktop_setting",
+])
+
+/** MiMo's title for a locate step: the start of the quoted passage. */
+const LOCATE_TITLE_MAX = 60
+/** MiMo's title for a present step: the files' names, cut at 80. */
+const PRESENT_TITLE_MAX = 80
 
 /** The fields a JSON title is reduced to, first one present wins. */
 const TITLE_FIELDS = ["query", "description", "prompt", "path", "name", "pattern", "url", "command"]
@@ -117,6 +140,9 @@ const ICONS: Record<string, StepIconName> = {
   todowrite: "todo",
   invalid: "invalid",
   question: "question",
+  // MiMo's desktop tools: a locate reads a document, a present hands files over, the settings tools fall back.
+  pdf_locate: "read",
+  present_files: "list",
 }
 
 /** The 14px mark in front of a step: by name, then by what an unknown name suggests. */
@@ -169,6 +195,20 @@ export function stepTitle(part: ToolPart): string {
       if (action === "models") return ""
       return part.title || text(input.subagent_id)
     }
+    case "pdf_locate":
+      return text(input.snippet).slice(0, LOCATE_TITLE_MAX)
+    case "present_files":
+      return Array.isArray(input.files)
+        ? input.files
+            .filter((entry): entry is string => typeof entry === "string" && Boolean(entry))
+            .map((entry) => entry.split(/[\\/]/).pop() || entry)
+            .join(", ")
+            .slice(0, PRESENT_TITLE_MAX)
+        : ""
+    case "set_desktop_setting":
+      return text(input.key) ? `${text(input.key)} → ${text(input.value)}` : ""
+    case "get_desktop_settings":
+      return ""
   }
   if (BUILT_IN.has(part.name)) return part.title || ""
   // Anything else - an MCP tool - is described by what it was given.

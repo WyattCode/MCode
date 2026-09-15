@@ -195,10 +195,11 @@ function demoted(file: string, batch: readonly string[]): boolean {
 /**
  * What a conversation produced, for the info card's 产物.
  *
- * The rule, since MCode has no present-files tool to say which files were
- * meant for the reader:
- * - only a file a completed `write` created counts; editing a file that was
- *   already there is a change, and the review is where changes are shown;
+ * The rule:
+ * - a file a completed `present_files` call handed over is a deliverable,
+ *   whatever it is and however it came to be, as MiMo's role "deliverable" is;
+ * - otherwise only a file a completed `write` created counts; editing a file
+ *   that was already there is a change, and the review is where changes are shown;
  * - a created document, sheet, deck, PDF, web page, markdown, notebook, table,
  *   picture, video or recording is a deliverable; anything else created
  *   (code, configuration, scripts, data, plain text) is intermediate;
@@ -210,10 +211,23 @@ export function sessionArtifacts(messages: readonly Message[], directory: string
   const created = new Map<string, number>()
   const key = (file: string) => file.toLowerCase()
   const shown = new Map<string, string>()
+  const presented = new Set<string>()
   for (const message of messages) {
     if (message.role !== "assistant") continue
     for (const raw of message.parts) {
       const part = raw as Partial<ToolPart>
+      if (part.type === "tool" && part.name === "present_files" && part.status === "completed") {
+        const handed = Array.isArray(part.metadata?.files) ? part.metadata.files : []
+        for (const entry of handed) {
+          const target = typeof entry === "object" && entry !== null ? (entry as { path?: unknown }).path : undefined
+          const file = typeof target === "string" ? projectRelative(directory, target) : undefined
+          if (!file) continue
+          presented.add(key(file))
+          if (!created.has(key(file))) created.set(key(file), part.time?.completed ?? part.time?.created ?? message.time.created)
+          shown.set(key(file), file)
+        }
+        continue
+      }
       if (part.type !== "tool" || part.name !== "write" || part.status !== "completed") continue
       if (part.metadata?.created !== true) continue
       const target = part.input?.path
@@ -232,7 +246,9 @@ export function sessionArtifacts(messages: readonly Message[], directory: string
     .map((file) => ({
       ...file,
       kind: artifactKind(file.path),
-      role: (candidates.includes(file.path) && !demoted(file.path, candidates) ? "deliverable" : "intermediate") as ArtifactRole,
+      role: (presented.has(key(file.path)) || (candidates.includes(file.path) && !demoted(file.path, candidates))
+        ? "deliverable"
+        : "intermediate") as ArtifactRole,
     }))
     .sort((a, b) => b.at - a.at)
 }

@@ -12,6 +12,7 @@ import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
 import { McpServers } from "./mcp"
 import { handle } from "./handlers"
+import { bindDesktopSettings } from "./tool/desktop-settings"
 
 export interface Runtime {
   storage: Storage
@@ -47,6 +48,8 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   await config.load()
   // Hand edits to config.json take effect without reopening the app, as MiMo's do.
   config.watch()
+  // The desktop settings tools change settings through this config's own patch path.
+  bindDesktopSettings(config)
 
   const permissions = new Permissions(bus, config)
   const sessions = new SessionStore(storage, bus)

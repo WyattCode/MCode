@@ -18,6 +18,8 @@ import { renderMarkdown } from "../lib/markdown"
 import { highlightWithin } from "../lib/highlight"
 import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
+import DeliveredFilesCard from "./DeliveredFilesCard.vue"
+import { followDeliveries } from "../lib/delivered"
 import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
@@ -75,6 +77,13 @@ const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.
 const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.error))
 /* round3-panel (P5-12/13): MiMo's side chat and floating card draw a reply with showActions false. */
 const bare = computed(() => Boolean(props.side || props.latest))
+/* MiMo's present_files and pdf_locate: the main stream opens what a completing call names in the right panel. */
+followDeliveries({
+  enabled: () => !props.side && !props.latest && !props.subagent,
+  session: () => shownID.value,
+  messages: () => shownMessages.value,
+  directory: () => shownDirectory.value,
+})
 const scroller = ref<HTMLElement>()
 
 /** A message sent into a turn while it was running - MiMo's 插话 - and where among the turn's parts it landed. */
@@ -1191,6 +1200,13 @@ defineExpose({ stepMessage, scroller })
             :directory="shownDirectory"
             :reverted="turn.last?.reverted === true"
             :actions="!side"
+          />
+
+          <!-- MiMo's delivered-file cards: what the turn's present_files calls handed over. -->
+          <DeliveredFilesCard
+            v-if="!(at === turns.length - 1 && shownBusy) && !playingOut(turn)"
+            :parts="turn.parts"
+            :directory="shownDirectory"
           />
 
           <!--

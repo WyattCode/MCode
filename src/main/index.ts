@@ -18,6 +18,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
 import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
+import { saveCopy } from "./save-copy"
 import {
   act,
   clearBrowsingData,
@@ -830,6 +831,9 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:installed-app-icons", () =>
     installedOpenAppIcons(async (file) => (await app.getFileIcon(file, { size: "small" })).toDataURL(), process.platform),
   )
+
+  // MiMo's 下载副本 on a delivered file: a copy in Downloads, no dialog.
+  ipcMain.handle("mcode:save-copy", (_event, file: unknown) => saveCopy(file, app.getPath("downloads")))
 
   ipcMain.handle("mcode:open-file", async (_event, directory: string, relative: string, openWith?: unknown) => {
     const target = inside(directory, relative)
