@@ -110,6 +110,7 @@
 - 各处 60 项：缺的提示补上（模型 / 权限按钮、会话行「更多」「置顶」等）、文案（「返回」「发送」「停止」「停止语音输入」等）、该用原生 `title` 的换回（输入框拖拽条、文件面板、产物页、注释标签、置顶标记），附件缩略图去掉提示，上下文用量圆环改用组件的卡片（原 `.ctx-card` 删除）。
 - 删除键：`title.back`、`term.hide`、`composer.permTip`（与 `composer.accessTip` 相同）；`wrap` 选项删除。
 - 探针 mcode-round2-tips.cjs 18 项。
+- 随后清理：删掉 107 个没人再用的界面文案键（`stream.count.*` / `stream.explored` / `stream.ran`、旧侧栏 / 首页 / 设置遗留等，d8d6f9a）；其中 `set.mcpForm.type_*` 和 `set.theme*` 五个是拼出来的键名，已放回（9a30913）。以后删键要以 i18ncheck 通过为准，它会查拼接前缀。
 
 用户决定不做（不要再主动提）：
 
