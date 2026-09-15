@@ -3,9 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
 import ConnectDialog from "./ConnectDialog.vue"
-import CustomProviderForm from "./CustomProviderForm.vue"
+import CustomModelDialog from "./CustomModelDialog.vue"
 import ProviderIcon from "./ProviderIcon.vue"
-import { groupConnected, groupProviders, waysFor, type Group } from "../lib/connect"
+import { groupProviders, waysFor, type Group } from "../lib/connect"
 import {
   DEFAULT_PERMISSIONS,
   ENFORCED_KINDS,
@@ -29,9 +29,16 @@ import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
-import { chordOf, isBindable } from "../lib/keys"
+import { chordOf, formatChord, isBindable } from "../lib/keys"
+import { pageRows } from "../lib/shortcut-page"
 import { notifyFailure, notify } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
+import { installUpdate, updateState } from "./UpdatePill.vue"
+
+/* MiMo's 当前版本 button reads the update capsule's phase; a download announced by the app counts as ready. */
+const updatePhase = computed(() =>
+  updateState.phase === "idle" && props.updateReady ? "ready" : updateState.phase,
+)
 
 const emit = defineEmits<{ close: []; "check-updates": []; "install-update": [] }>()
 const app = useApp()
@@ -146,18 +153,6 @@ async function loadPaths() {
 /* The file the models page names as where providers and their models are kept. */
 const configFile = computed(() => paths.value?.files.find((file) => file.name === "config.json"))
 
-function revealPath(file: AppPath) {
-  const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
-  if (cut < 0) return
-  window.mcode.revealFile(file.path.slice(0, cut), file.path.slice(cut + 1))
-}
-
-function openPath(file: AppPath) {
-  const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
-  if (cut < 0) return
-  window.mcode.openFile(file.path.slice(0, cut), file.path.slice(cut + 1))
-}
-
 /*
  * MiMo's 配置 page: the config file, and the global AGENTS.md with its state -
  * read into every conversation, switched off, or not written - and what can be
@@ -209,14 +204,21 @@ async function removeAgents() {
  * page edits that map through patchConfig and the backend reconnects to match;
  * each server's status comes from the store, which follows the backend's events.
  */
+/* `saved` marks a row whose value is stored but not sent back; blank keeps it, as MiMo's form does. */
+interface McpPair {
+  key: string
+  value: string
+  saved?: boolean
+}
+
 interface McpForm {
   name: string
   type: "stdio" | "http"
   command: string
   url: string
   args: string[]
-  env: { key: string; value: string }[]
-  headers: { key: string; value: string }[]
+  env: McpPair[]
+  headers: McpPair[]
 }
 
 const MCP_KINDS = ["stdio", "http"] as const
@@ -255,17 +257,29 @@ function blankMcpForm(): McpForm {
   return { name: "", type: "stdio", command: "", url: "", args: [], env: [], headers: [] }
 }
 
+/*
+ * MiMo's pills: 已禁用 when off; 检测中… while an enabled server has no answer
+ * yet; its known states by name; anything else 未知.
+ */
 const mcpRows = computed(() =>
   Object.entries(app.config?.mcpServers ?? {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, entry]) => {
       const state = app.mcpServers.find((server) => server.name === name)
       const enabled = entry.enabled !== false
+      const status: McpStatus | "checking" | "unknown" = !enabled
+        ? "disabled"
+        : !state
+          ? "checking"
+          : state.status in MCP_TONE
+            ? state.status
+            : "unknown"
       return {
         name,
         remote: entry.type === "remote",
         enabled,
-        status: (enabled ? (state?.status ?? "pending") : "disabled") as McpStatus,
+        status,
+        tone: status in MCP_TONE ? MCP_TONE[status as McpStatus] : "muted",
         error: state?.error,
       }
     }),
@@ -284,14 +298,20 @@ function splitCommand(line: string): string[] {
   return parts
 }
 
-function recordOf(rows: { key: string; value: string }[]): Record<string, string> | undefined {
+function recordOf(rows: McpPair[]): Record<string, string> | undefined {
   const out: Record<string, string> = {}
   for (const row of rows) if (row.key.trim()) out[row.key.trim()] = row.value
   return Object.keys(out).length ? out : undefined
 }
 
-function rowsOf(record?: Record<string, string>) {
-  return Object.entries(record ?? {}).map(([key, value]) => ({ key, value }))
+/* As MiMo's edit does, stored values come back blank and flagged as saved rather than readable. */
+function rowsOf(record?: Record<string, string>): McpPair[] {
+  return Object.keys(record ?? {}).map((key) => ({ key, value: "", saved: true }))
+}
+
+/* The saved rows left blank, whose stored values the server keeps. */
+function keptOf(rows: McpPair[]): string[] {
+  return rows.filter((row) => row.saved && row.key.trim() && row.value === "").map((row) => row.key.trim())
 }
 
 function httpURL(value: string): boolean {
@@ -358,7 +378,11 @@ async function saveMcp() {
   // An edit keeps the server as switched on or off as it was.
   if (app.config?.mcpServers?.[name]?.enabled === false) entry.enabled = false
   try {
-    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: entry } })
+    // Saved rows left blank keep their stored values; the server fills them in, as the window never had them.
+    const keep = { env: keptOf(form.env), headers: keptOf(form.headers) }
+    const result = await app.client?.request({ type: "mcp.save", name, entry, keep })
+    if (!result) throw new Error("not connected")
+    app.config = result.config
   } catch {
     notifyFailure(t("set.mcpForm.saveFailed"))
     return
@@ -554,9 +578,12 @@ async function addProject() {
   if (!directory) return
   const closed = app.config?.closedProjects ?? []
   if (closed.includes(directory)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
-  // A folder with no conversation is not yet a project here; one is started so it can be.
+  /*
+   * A folder with no conversation is not yet a project here, so one is made -
+   * but, as MiMo's add stays on this page, it is not opened behind the dialog.
+   */
   if (!app.sessions.some((session) => session.directory === directory && !session.archived && !session.scratch)) {
-    await app.create(directory)
+    await app.create(directory, { open: false })
   }
   void loadTrees()
 }
@@ -575,15 +602,29 @@ function configure(directory: string) {
   envName.value = app.config?.projectNames?.[directory] ?? ""
 }
 
-/** The name is the project's display name, the same one renaming it in the side column sets. */
+/*
+ * The name is the project's display name, the same one renaming it in the side
+ * column sets. MiMo's rules: a blank name, or the current one, renames nothing;
+ * a name another project already shows is refused with a warning.
+ */
 async function saveEnv() {
   const directory = configuring.value
   if (!directory) return
-  const names = { ...(app.config?.projectNames ?? {}) }
   const name = envName.value.trim()
-  if (name) names[directory] = name
-  else delete names[directory]
-  await app.patchConfig({ projectNames: names })
+  const current = projectName(directory, app.config?.projectNames)
+  if (!name || name === current) {
+    envName.value = app.config?.projectNames?.[directory] ?? ""
+    notify(t("set.envSaved"))
+    return
+  }
+  const taken = envProjects.value.some(
+    (other) => other !== directory && projectName(other, app.config?.projectNames) === name,
+  )
+  if (taken) {
+    notifyFailure(t("set.envSavedNameTaken", { name }))
+    return
+  }
+  await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [directory]: name } })
   notify(t("set.envSaved"))
 }
 
@@ -718,10 +759,8 @@ const DIFF_MARKS = ["color", "signs"] as const
 
 /*
  * The column's search, after MiMo's: narrows the entries to those whose name
- * matches, and Enter opens the first of them. Being the first text field in
- * the dialog it is also where focus lands on opening - before it, that was the
- * first text box on the General page, the UI font, and opening settings
- * scrolled the page halfway down to show it.
+ * matches, and Enter opens the first of them. Focus no longer lands here on
+ * opening: MiMo focuses the dialog itself (see dialogEl below).
  */
 const navQuery = ref("")
 const NAV_LABELS: Record<Section, string> = {
@@ -840,9 +879,39 @@ function leaveEnvironment() {
   })
 }
 
-function requestClose() {
-  requestLeave(() => emit("close"))
+/*
+ * MiMo's close: the overlay keeps rendering for its .12s fade before it goes.
+ * Reduced motion has no fade to wait for.
+ */
+const closing = ref(false)
+
+function reducedMotion(): boolean {
+  const motion = document.documentElement.getAttribute("data-motion")
+  return motion === "on" || (motion !== "off" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
 }
+
+function requestClose() {
+  requestLeave(() => {
+    if (closing.value) return
+    if (reducedMotion()) {
+      emit("close")
+      return
+    }
+    closing.value = true
+    window.setTimeout(() => emit("close"), 120)
+  })
+}
+
+/*
+ * MiMo focuses the dialog itself on open rather than a field, so a typed
+ * character does not land in the search and the search shows no focus ring.
+ * This reverses MCode's earlier choice of focusing the nav search.
+ */
+const dialogEl = ref<HTMLElement>()
+/* MiMo lights a hovered nav row only after the pointer has moved in the column. */
+const pointerMoved = ref(false)
+
+onMounted(() => dialogEl.value?.focus())
 
 const saved = ref<string>()
 
@@ -897,18 +966,27 @@ function bucketTitle(bucket: PermissionKind): string {
  * reaches the app underneath - otherwise pressing Ctrl+W to record it would
  * close the tab while recording.
  */
+/* MiMo's ranges for the two size rows: UI 10-24, code 9-24. */
+const SIZE_RANGE = { uiFontSize: [10, 24], codeFontSize: [9, 24] } as const
+
+/* As MiMo does, every keystroke that makes a whole in-range number resizes the interface live. */
+function typeSize(field: "uiFontSize" | "codeFontSize", event: Event) {
+  const text = (event.target as HTMLInputElement).value.trim()
+  const value = Number(text)
+  const [min, max] = SIZE_RANGE[field]
+  if (!/^\d+$/.test(text) || value < min || value > max) return
+  if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
+}
+
 /*
- * A size typed into one of the two rows: a whole number in the range the
- * interface can still be laid out at, else the row goes back to what it was.
+ * MiMo's normalisation when the field is left: not a number or not above zero
+ * goes back to the base size; anything else is rounded and clamped.
  */
-function setSize(field: "uiFontSize" | "codeFontSize", event: Event, fallback: number) {
+function setSize(field: "uiFontSize" | "codeFontSize", event: Event, base: number) {
   const input = event.target as HTMLInputElement
-  const value = Math.round(Number(input.value))
-  const [min, max] = field === "uiFontSize" ? [10, 24] : [8, 24]
-  if (!input.value.trim() || !Number.isFinite(value) || value < min || value > max) {
-    input.value = String(app.config?.[field] ?? fallback)
-    return
-  }
+  const typed = Number(input.value.trim())
+  const [min, max] = SIZE_RANGE[field]
+  const value = !input.value.trim() || !Number.isFinite(typed) || typed <= 0 ? base : Math.round(Math.min(max, Math.max(min, typed)))
   input.value = String(value)
   if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
 }
@@ -943,6 +1021,11 @@ const recordConflict = computed(() => {
   return props.commands.find((entry) => entry.id !== recording.value && boundKeys(entry) === chord)
 })
 
+/* A conflicting command is named the way the page names it, or by its own title off the page. */
+function commandLabel(command: { id: string; title: string }): string {
+  return shortcutPage.value.find((row) => row.id === command.id)?.title ?? command.title
+}
+
 function onRecordKey(event: KeyboardEvent) {
   event.preventDefault()
   event.stopImmediatePropagation()
@@ -950,8 +1033,17 @@ function onRecordKey(event: KeyboardEvent) {
     cancelRecord()
     return
   }
+  // Read by physical key, skipping composition; MiMo needs a modifier plus a key.
   const chord = chordOf(event)
   if (isBindable(chord)) recordChord.value = chord
+}
+
+/* MiMo's one line for any shortcut write that fails. */
+function saveKeybinds(next: Record<string, string>): Promise<void> {
+  return app.patchConfig({ keybinds: next }).catch(() => {
+    notifyFailure(t("set.keys.saveFailed"))
+    throw new Error("keybinds not saved")
+  })
 }
 
 function onRecordPress(event: MouseEvent) {
@@ -974,28 +1066,37 @@ function cancelRecord() {
   recordChord.value = undefined
 }
 
-function confirmRecord() {
+/* As MiMo does, a failed save keeps the recording open so the chord can be tried again. */
+async function confirmRecord() {
   const command = recording.value
   const chord = recordChord.value
   if (!command || !chord || recordConflict.value) return
-  void app.patchConfig({ keybinds: { ...(app.config?.keybinds ?? {}), [command]: chord } })
-  cancelRecord()
+  try {
+    await saveKeybinds({ ...(app.config?.keybinds ?? {}), [command]: chord })
+    cancelRecord()
+  } catch {
+    /* already said */
+  }
 }
 
 /* Deleting a built-in chord saves an empty one, so the default stops answering too. */
 function deleteBinding(command: string) {
-  void app.patchConfig({ keybinds: { ...(app.config?.keybinds ?? {}), [command]: "" } })
+  void saveKeybinds({ ...(app.config?.keybinds ?? {}), [command]: "" }).catch(() => undefined)
 }
 
 function resetBinding(command: string) {
   const next = { ...(app.config?.keybinds ?? {}) }
   delete next[command]
-  void app.patchConfig({ keybinds: next })
+  void saveKeybinds(next).catch(() => undefined)
 }
 
 async function resetAllBindings() {
-  await app.patchConfig({ keybinds: {} })
-  notify(t("set.keys.resetAllDone"))
+  try {
+    await saveKeybinds({})
+    notify(t("set.keys.resetAllDone"))
+  } catch {
+    /* already said */
+  }
 }
 
 /* MiMo's key search: while on, the next chord pressed is what the table is narrowed to; Escape clears it. */
@@ -1072,8 +1173,11 @@ async function reopenProject(directory: string) {
   })
 }
 
+/* MiMo lists the newest-archived first; a session archived before the stamp existed falls back to its last update. */
 const archived = computed(() =>
-  app.sessions.filter((session) => session.archived).sort((a, b) => b.updated - a.updated),
+  app.sessions
+    .filter((session) => session.archived)
+    .sort((a, b) => (b.archivedAt ?? b.updated) - (a.archivedAt ?? a.updated)),
 )
 
 /* MiMo's row line: 已归档 · 项目「name」 · time, or without the project for a scratch task. */
@@ -1110,9 +1214,18 @@ function toggleAllPicked() {
   picked.value = allPicked.value ? [] : archived.value.map((session) => session.id)
 }
 
+/* MiMo confirms a restore with one toast, and a batch with one counted toast rather than one each. */
+async function restoreOne(sessionID: string) {
+  await app.archive(sessionID, false)
+  notify(t("toast.convoRestored"))
+}
+
 async function restorePicked() {
-  for (const sessionID of pickedLive.value) await app.archive(sessionID, false)
+  const ids = [...pickedLive.value]
+  for (const sessionID of ids) await app.archive(sessionID, false)
   stopSelecting()
+  if (ids.length === 1) notify(t("toast.convoRestored"))
+  else if (ids.length) notify(t("toast.convosRestored", { n: ids.length }))
 }
 
 /** What the delete dialog is about: one named conversation, or the selection. */
@@ -1124,6 +1237,8 @@ async function confirmRemove() {
   if (!target) return
   for (const sessionID of target.ids) await app.remove(sessionID)
   if (target.title === undefined) stopSelecting()
+  if (target.ids.length === 1) notify(t("toast.convoDeleted"))
+  else if (target.ids.length) notify(t("toast.convosDeleted", { n: target.ids.length }))
 }
 
 // Nothing left to manage ends the selection, as the toggle disappears with the list.
@@ -1177,61 +1292,35 @@ async function resetEverything() {
   emit("close")
 }
 
-/*
- * Grouped the way opencode groups them, and in its order, so the two pages can
- * be read side by side. Only bindings this app actually honours are listed - a
- * shortcuts page that lies is worse than a short one.
- */
-/*
- * The page is derived from the commands themselves rather than listed here.
- *
- * A hand-written table has to be kept in step with the command list by hand,
- * and it was not: rows named chords nothing implemented, and commands added
- * elsewhere never appeared. Deriving it means a command is bindable the moment
- * it exists, and the thirty-seven themes and eighteen languages get their rows
- * for free - which is what the reference's own page shows.
- */
-const SECTIONS = [
-  "key.groupGeneral",
-  "key.groupSession",
-  "key.groupNavigation",
-  "key.groupModels",
-  "key.groupTerminal",
-  "key.groupPrompt",
-  "key.groupDisplay",
-] as const
-
-/**
- * What the shortcuts page is narrowed to.
- *
- * The page carries every command, which now includes thirty-seven themes and
- * eighteen languages - the reference's own page is long for the same reason,
- * and ships a search box for the same reason. Matched against the name and the
- * chord, so both "terminal" and "ctrl+b" find their row.
- */
+/** What the shortcuts page is narrowed to by typing. */
 const keyFilter = ref("")
 
 /*
- * MiMo's shortcut list: one table rather than groups, narrowed either by what
- * is typed (a command's name or its chord) or, in key search, by the chord
- * pressed. Ordered by group and then name, so related commands still sit
- * together. A hidden command - one the palette does not offer - stays off it.
+ * MiMo's fixed shortcut list, in its order, each row a label over a
+ * description (see lib/shortcut-page). The per-theme, per-language and other
+ * picker commands stay bindable from the palette but are off this page, as
+ * the user chose.
+ */
+const shortcutPage = computed(() => pageRows(props.commands, t))
+
+/** A chord as MiMo prints it on the key cap. */
+function shownChord(chord: string): string {
+  return formatChord(chord, app.platform)
+}
+
+/*
+ * Narrowed by what is typed - matched against the label, the description and
+ * the chord as printed - or, in key search, by the chord pressed.
  */
 const shortcutRows = computed(() => {
   const needle = keyFilter.value.trim().toLowerCase()
   const chord = keySearchChord.value?.toLowerCase()
-  const rows = props.commands.filter((command) => {
-    if (command.hidden) return false
-    if (keySearch.value) return !chord || boundKeys(command).toLowerCase() === chord
-    return !needle || `${command.title} ${boundKeys(command)}`.toLowerCase().includes(needle)
+  return shortcutPage.value.filter((row) => {
+    if (keySearch.value) return !chord || boundKeys(row).toLowerCase() === chord
+    if (!needle) return true
+    const bound = boundKeys(row)
+    return [row.title, row.desc, shownChord(bound), bound].some((text) => text.toLowerCase().includes(needle))
   })
-  const rank = (group?: string) => {
-    const at = (SECTIONS as readonly string[]).indexOf(group ?? "key.groupGeneral")
-    return at < 0 ? SECTIONS.length : at
-  }
-  return rows
-    .map((command) => ({ id: command.id, title: command.title, hint: command.hint, group: command.group }))
-    .sort((a, b) => rank(a.group) - rank(b.group) || a.title.localeCompare(b.title))
 })
 
 
@@ -1363,10 +1452,11 @@ function groupDescription(group: Group): string {
   return t(group.entries[0].description)
 }
 
-/** Vendors with nothing connected yet, which is what the list below offers. */
-const availableGroups = computed(() =>
-  groupProviders(app.providers).filter((group) => !groupConnected(group)),
-)
+/*
+ * MiMo lists every preset whether or not one is added, since several models per
+ * vendor can be; a connected vendor's chip opens its connect screen on 已连接.
+ */
+const presetGroups = computed(() => groupProviders(app.providers))
 const busy = ref<string>()
 /**
  * The last thing that went wrong, and which row it belongs to.
@@ -1383,7 +1473,6 @@ function say(text: string, id?: string) {
 function noticeFor(id: string): string | undefined {
   return notice.value?.id === id ? notice.value.text : undefined
 }
-const customOpen = ref(false)
 /** Per-provider endpoint overrides being edited, keyed by provider id. */
 const endpoints = ref<Record<string, string>>({})
 
@@ -1420,9 +1509,6 @@ async function saveEndpoint(provider: string) {
   say(t("set.saved"), provider)
   setTimeout(() => (notice.value = undefined), 2000)
 }
-
-/** Connected first, then recommended, then the rest - the order people scan. */
-const connected = computed(() => app.providers.filter((provider) => provider.configured))
 
 /*
  * The rows the providers page draws, which is not the same set as the ones that
@@ -1463,33 +1549,6 @@ function fromEnvironment(provider: ProviderStatus): boolean {
 }
 
 
-function key(provider: string, model: string) {
-  return `${provider}/${model}`
-}
-
-/*
- * Smart's two models. An empty choice follows the default model; it is stored
- * as an empty reference rather than removed, because a patch cannot remove a
- * field once it has been set.
- */
-const smartOptions = computed(() => [
-  { value: "", label: t("set.smartDefault") },
-  ...connected.value.flatMap((provider) =>
-    provider.models.map((model) => ({ value: key(provider.id, model.id), label: `${provider.name} · ${model.name}` })),
-  ),
-])
-
-function smartValue(field: "smartFast" | "smartMain") {
-  const chosen = app.config?.[field]
-  return chosen?.provider ? key(chosen.provider, chosen.model) : ""
-}
-
-function setSmartModel(field: "smartFast" | "smartMain", value: string) {
-  const at = value.indexOf("/")
-  const chosen = at > 0 ? { provider: value.slice(0, at), model: value.slice(at + 1) } : { provider: "", model: "" }
-  void app.patchConfig(field === "smartFast" ? { smartFast: chosen } : { smartMain: chosen })
-}
-
 /* Clearing what the in-app browser has stored, after a confirmation, as MiMo asks for one. */
 const confirmingClear = ref(false)
 
@@ -1498,28 +1557,6 @@ async function clearBrowsing() {
   const reason = await window.mcode.browserClearData()
   if (reason) notifyFailure(t("set.browsingDataFailed", { error: reason }))
   else notify(t("set.browsingDataCleared"))
-}
-
-/**
- * An empty list means "not curated yet", in which case everything is offered -
- * so the first toggle has to seed the list from what is currently visible,
- * otherwise turning one model off would appear to turn every other one off.
- */
-function modelEnabled(provider: string, model: string) {
-  const chosen = app.config?.enabledModels ?? []
-  return chosen.length === 0 || chosen.includes(key(provider, model))
-}
-
-async function toggleModel(provider: string, model: string) {
-  const chosen = app.config?.enabledModels ?? []
-  const seeded = chosen.length
-    ? chosen
-    : app.providers.flatMap((entry) =>
-        entry.configured ? entry.models.map((candidate) => key(entry.id, candidate.id)) : [],
-      )
-  const target = key(provider, model)
-  const next = seeded.includes(target) ? seeded.filter((entry) => entry !== target) : [...seeded, target]
-  await app.patchConfig({ enabledModels: next })
 }
 
 /**
@@ -1550,16 +1587,11 @@ async function refresh(provider: string) {
 }
 
 
-/**
- * Deleting a custom provider from the config.
- *
- * This is the only way out for one that was added without a key, so a failure
- * is put on the row instead of being dropped on the floor - a button that
- * silently does nothing would leave the provider as stranded as it was before
- * it started being drawn at all.
+/*
+ * MiMo's add / edit model dialog, opened by the 自定义 chip and by 编辑; here the
+ * custom provider that holds the models is what is added or edited.
  */
-/* MiMo's 编辑 / 复制 on a saved custom model; here on the custom provider that holds the models. */
-const editingCustom = ref<string>()
+const modelDialog = ref<{ mode: "add" } | { mode: "edit"; id: string }>()
 
 function customEntry(id: string) {
   return app.config?.customProviders?.find((entry) => entry.id === id)
@@ -1570,25 +1602,48 @@ function editCustom(id: string) {
     notifyFailure(t("set.models.editFailed"))
     return
   }
-  editingCustom.value = editingCustom.value === id ? undefined : id
+  modelDialog.value = { mode: "edit", id }
 }
 
+/* As MiMo's copy does, the copy becomes the model in use, then says so. */
 async function copyCustom(provider: { id: string; name: string }) {
   try {
-    await app.copyCustomProvider(provider.id, t("set.models.copyName", { name: provider.name }))
-    notify(t("set.models.copied"))
+    const id = await app.copyCustomProvider(provider.id, t("set.models.copyName", { name: provider.name }))
+    const first = app.providers.find((entry) => entry.id === id)?.models[0]
+    if (first) {
+      const model = { provider: id, model: first.id }
+      if (app.currentID) await app.setModel(model)
+      else await app.patchConfig({ model, smart: false })
+    }
+    notify(t("set.models.copied"), { level: "success" })
   } catch {
     notifyFailure(t("set.models.copyFailed"))
   }
 }
 
-async function removeCustom(provider: string) {
-  busy.value = provider
-  notice.value = undefined
+/*
+ * MiMo asks before deleting a custom model, and toasts the result; a built-in
+ * provider's disconnect asks the same way. If the model in use goes, the store
+ * falls back to another usable one.
+ */
+const removing = ref<{ id: string; name: string; custom: boolean }>()
+
+async function confirmRemoveProvider() {
+  const target = removing.value
+  removing.value = undefined
+  if (!target) return
+  busy.value = target.id
   try {
-    await app.removeCustomProvider(provider)
-  } catch (err) {
-    say(err instanceof Error ? err.message : String(err), provider)
+    if (target.custom) {
+      await app.removeCustomProvider(target.id)
+      notify(t("set.models.removed", { name: target.name }), { level: "success" })
+    } else {
+      await disconnect(target.id)
+      notify(t("set.models.disconnected", { name: target.name }), { level: "success" })
+    }
+    await app.ensureUsableModel()
+  } catch {
+    notifyFailure(t(target.custom ? "set.models.removeFailed" : "set.models.disconnectFailed"))
   } finally {
     busy.value = undefined
   }
@@ -1626,16 +1681,16 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </script>
 
 <template>
-  <div class="overlay" @mousedown.self="requestClose">
-    <div v-modal class="dialog">
+  <div class="overlay" :class="{ closing }" data-settings-overlay data-modal-no-exit @mousedown.self="requestClose">
+    <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus>
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
-      <button class="close" :aria-label="t('common.close')" @click="requestClose">
+      <button class="close" :aria-label="t('common.close')" data-settings-close @click="requestClose">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         </svg>
       </button>
-      <nav class="nav">
+      <nav class="nav" :class="{ 'mouse-active': pointerMoved }" @pointermove="pointerMoved = true">
         <div class="nav-title">{{ t("rail.settings") }}</div>
         <input
           v-model="navQuery"
@@ -2099,19 +2154,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
 
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.notifyError") }}</div>
-                <div class="line-sub">{{ t("set.notifyErrorSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.notifyError }"
-                @click="app.patchConfig({ notifyError: !app.config?.notifyError })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
           </div>
 
           <h3 data-section="display">{{ t("set.display") }}</h3>
@@ -2162,20 +2204,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :options="shellOptions"
                 @update:model-value="app.patchConfig({ shell: $event })"
               />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.reasoning") }}</div>
-                <div class="line-sub">{{ t("set.reasoningSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showReasoning }"
-                @click="app.patchConfig({ showReasoning: !app.config?.showReasoning })"
-              >
-                <span class="knob" />
-              </button>
             </div>
 
             <div class="line">
@@ -2413,6 +2441,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   inputmode="numeric"
                   spellcheck="false"
                   :aria-label="t('set.uiFontSize')"
+                  data-size-input="ui"
+                  @input="typeSize('uiFontSize', $event)"
                   @change="setSize('uiFontSize', $event, 14)"
                   @keydown.enter="($event.target as HTMLInputElement).blur()"
                 />
@@ -2432,6 +2462,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   inputmode="numeric"
                   spellcheck="false"
                   :aria-label="t('set.codeFontSize')"
+                  data-size-input="code"
+                  @input="typeSize('codeFontSize', $event)"
                   @change="setSize('codeFontSize', $event, 12)"
                   @keydown.enter="($event.target as HTMLInputElement).blur()"
                 />
@@ -2522,23 +2554,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
               />
             </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.wrapCode") }}</div>
-                <div class="line-sub">{{ t("set.wrapCodeSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.wrapCode ?? true }"
-                role="switch"
-                :aria-checked="app.config?.wrapCode ?? true"
-                :aria-label="t('set.wrapCode')"
-                @click="app.patchConfig({ wrapCode: !(app.config?.wrapCode ?? true) })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
           </div>
         </template>
 
@@ -2546,11 +2561,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <h2>{{ t("set.personal") }}</h2>
           <p class="page-sub">{{ t("set.personalSub") }}</p>
           <h3>{{ t("set.instructions") }}</h3>
+          <!-- MiMo's 了解更多 follows the sentence with no space between. -->
           <p class="page-sub ci-sub">
-            {{ t("set.instructionsSub") }}
-            <button type="button" class="ci-link" :aria-expanded="ciHelpOpen" @click="ciHelpOpen = !ciHelpOpen">
-              {{ t("set.learnMore") }}
-            </button>
+            {{ t("set.instructionsSub") }}<button type="button" class="ci-link" data-ci-link :aria-expanded="ciHelpOpen" @click="ciHelpOpen = !ciHelpOpen">{{ t("set.learnMore") }}</button>
           </p>
           <div v-if="ciHelpOpen" class="ci-help" data-ci-help>
             <span>{{ t("set.ciHelp1") }}</span>
@@ -2565,7 +2578,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             :aria-label="t('set.instructions')"
           />
           <div class="ci-actions">
-            <button class="ctl-btn" :disabled="!dirty" @click="saveInstructions">
+            <!-- MiMo's save turns into the primary button once there is something to save. -->
+            <button class="ctl-btn ci-save" :class="{ 'update-install': dirty }" data-ci-save :disabled="!dirty" @click="saveInstructions">
               {{ t("common.save") }}
             </button>
           </div>
@@ -2663,7 +2677,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   v-model="row.value"
                   class="mcp-input small"
                   :type="mcpRevealed[`env:${at}`] ? 'text' : 'password'"
-                  placeholder="value"
+                  :placeholder="row.saved ? t('set.mcpForm.savedKeepBlank') : 'value'"
                   :data-mcp-env-val="at"
                   spellcheck="false"
                 />
@@ -2689,7 +2703,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   v-model="row.value"
                   class="mcp-input small"
                   :type="mcpRevealed[`hdr:${at}`] ? 'text' : 'password'"
-                  placeholder="value"
+                  :placeholder="row.saved ? t('set.mcpForm.savedKeepBlank') : 'value'"
                   :data-mcp-header-val="at"
                   spellcheck="false"
                 />
@@ -2761,6 +2775,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </div>
             </template>
           </template>
+          <!-- MiMo's note under the sources: where skills are read from, and that other tools' folders are not scanned. -->
+          <p class="page-sub mcp-skills-note" data-mcp-import-skills-note>{{ t("set.mcp.importSkillsNote") }}</p>
           <div class="mcp-import-actions">
             <button class="ctl-btn" data-mcp-import-back @click="mcpView = 'list'">{{ t("set.mcp.importBack") }}</button>
             <button
@@ -2785,7 +2801,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   <div class="line-title">{{ row.name }}</div>
                   <div class="line-sub mcp-row-desc">
                     <span>{{ t(row.remote ? "set.mcp.remote" : "set.mcp.local") }}</span>
-                    <span class="mcp-status" :class="MCP_TONE[row.status]" :data-mcp-status="row.status" :title="row.error">
+                    <span class="mcp-status" :class="row.tone" :data-mcp-status="row.status" :title="row.error">
                       <span class="mcp-status-dot" />
                       {{ t(`set.mcp.status.${row.status}`) }}
                     </span>
@@ -2872,25 +2888,29 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <template v-else-if="section === 'environment' && configuring">
-          <button class="env-back" @click="leaveEnvironment">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M10 4 6 8l4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            {{ t("set.envBack") }}
-          </button>
-          <h3>{{ t("set.localEnv") }}</h3>
-          <div class="card">
-            <div class="line env-local">
-              <div class="line-text">
-                <div class="line-title">{{ projectName(configuring, app.config?.projectNames) }}</div>
-                <div class="line-sub path">{{ configuring }}</div>
+          <!-- MiMo's detail: capped at 820, a plain back link, plain labels, the local card with its folder icon. -->
+          <div class="env-detail" data-env-detail>
+            <button class="env-back" data-env-back @click="leaveEnvironment">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+              {{ t("set.envBack") }}
+            </button>
+            <div class="env-flabel">{{ t("set.localEnv") }}</div>
+            <div class="env-local" data-env-local>
+              <svg class="env-local-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+              <div class="env-local-text">
+                <div class="env-local-name">{{ projectName(configuring, app.config?.projectNames) }}</div>
+                <div class="env-local-path" :title="configuring">{{ configuring }}</div>
               </div>
             </div>
-          </div>
-          <h3>{{ t("set.envName") }}</h3>
-          <input v-model="envName" class="env-input" :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
-          <div class="env-save-row">
-            <button class="ctl-btn env-save" :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
+            <div class="env-flabel">{{ t("set.envName") }}</div>
+            <input v-model="envName" class="env-input" data-env-name :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
+            <div class="env-save-row">
+              <button class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
+            </div>
           </div>
           <!-- MiMo's leave guard: not destructive, so the plain confirm button. -->
           <Teleport to="body">
@@ -2912,10 +2932,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
           <div class="sec-row">
             <h3>{{ t("set.selectProject") }}</h3>
-            <button class="ctl-btn add-project" @click="addProject">{{ t("set.addProject") }}</button>
+            <button class="ctl-btn add-project" data-env-add @click="addProject">{{ t("set.addProject") }}</button>
           </div>
           <div class="card env-projects">
-            <div v-for="directory in envProjects" :key="directory" class="line env-project">
+            <div v-for="directory in envProjects" :key="directory" class="line env-project" :data-env-project="directory">
               <div class="line-text">
                 <div class="line-title env-project-name">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -2930,28 +2950,29 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 </div>
                 <div class="line-sub path">{{ directory }}</div>
               </div>
-              <button
-                class="ctl-btn env-icon"
-                data-act="remove"
-                :aria-label="t('set.removeProject')"
-                v-tip="{ label: t('set.removeProject') }"
-                @click="removingProject = directory"
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <button
-                class="ctl-btn env-icon"
-                data-act="configure"
-                :aria-label="t('set.configureProject')"
-                v-tip="{ label: t('set.configureProject') }"
-                @click="configure(directory)"
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-                </svg>
-              </button>
+              <!-- MiMo's pair: secondary sm buttons 34 wide, a 16px trash that reddens on hover, then a text 「+」, 10 apart. -->
+              <span class="env-ctrl">
+                <button
+                  class="ctl-btn env-icon env-del"
+                  data-act="remove"
+                  :aria-label="t('set.removeProject')"
+                  v-tip="{ label: t('set.removeProject') }"
+                  @click="removingProject = directory"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+                  </svg>
+                </button>
+                <button
+                  class="ctl-btn env-icon env-plus"
+                  data-act="configure"
+                  :aria-label="t('set.configureProject')"
+                  v-tip="{ label: t('set.configureProject') }"
+                  @click="configure(directory)"
+                >
+                  +
+                </button>
+              </span>
             </div>
             <div v-if="!envProjects.length" class="line">
               <div class="line-text">
@@ -2965,31 +2986,30 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             <h3>{{ t("set.worktrees") }}</h3>
             <button
               class="env-refresh"
+              data-env-refresh
               :aria-label="t('set.refreshWorktrees')"
               v-tip="{ label: t('set.refreshWorktrees') }"
               @click="refreshTrees"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
               </svg>
             </button>
           </div>
-          <p v-if="!treesLoaded" class="page-sub wt-loading">{{ t("set.loading") }}</p>
-          <div v-else-if="!trees.length" class="card">
-            <div class="line wt-empty">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.noWorktreesTitle") }}</div>
-                <div class="line-sub">{{ t("set.noWorktreesSub") }}</div>
-              </div>
-            </div>
+          <p v-if="!treesLoaded" class="wt-status wt-loading">{{ t("set.loading") }}</p>
+          <!-- MiMo's empty state is a card of its own: a 14/500 title over a 13px muted line. -->
+          <div v-else-if="!trees.length" class="card wt-empty" data-wt-empty>
+            <div class="wt-empty-title">{{ t("set.noWorktreesTitle") }}</div>
+            <div class="wt-empty-desc">{{ t("set.noWorktreesSub") }}</div>
           </div>
           <template v-else>
-            <p class="page-sub wt-count">{{ t("set.worktreeCount", { n: String(trees.length) }) }}</p>
+            <p class="wt-status wt-count">{{ t("set.worktreeCount", { count: trees.length }) }}</p>
             <div class="card wt-list">
               <div v-for="tree in trees" :key="tree.directory" class="line wt-row">
                 <span class="wt-name" :title="tree.name">{{ tree.name }}</span>
-                <span class="tag">{{ tree.branch || t("set.detached") }}</span>
-                <span class="tag">{{ t("set.worktreeProject", { name: projectName(tree.project, app.config?.projectNames) }) }}</span>
+                <!-- A detached HEAD has no branch, and MiMo then draws no branch tag. -->
+                <span v-if="tree.branch" class="wt-tag" data-wt-branch>{{ tree.branch }}</span>
+                <span class="wt-tag">{{ t("set.worktreeProject", { name: projectName(tree.project, app.config?.projectNames) }) }}</span>
                 <span class="wt-path" :title="tree.directory">{{ tree.directory }}</span>
               </div>
             </div>
@@ -3081,11 +3101,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <div class="line-title">{{ t("set.version") }}</div>
                 <div class="line-sub">
                   MCode {{ app.version }}
-                  <span v-if="updateReady" class="update-hint" data-update-install-hint>{{ t("set.updateInstallHint") }}</span>
+                  <span v-if="updatePhase === 'ready'" class="update-hint" data-update-install-hint>{{ t("set.updateInstallHint") }}</span>
                 </div>
               </div>
-              <button v-if="updateReady" class="ctl-btn update-install" data-update-install @click="emit('install-update')">
-                {{ t("set.restartUpdate") }}
+              <!-- MiMo's button follows the capsule's phase: 重启更新, 更新中… (disabled), or 重试. -->
+              <button
+                v-if="updatePhase !== 'idle'"
+                class="ctl-btn update-install"
+                data-update-install
+                :data-update-phase="updatePhase"
+                :disabled="updatePhase === 'installing'"
+                @click="installUpdate()"
+              >
+                {{ t(updatePhase === "installing" ? "update.pillInstalling" : updatePhase === "failed" ? "update.pillRetry" : "set.restartUpdate") }}
               </button>
               <button v-else class="ctl-btn" data-check-update :disabled="updateChecking" @click="emit('check-updates')">
                 {{ t(updateChecking ? "set.checking" : "update.check") }}
@@ -3109,7 +3137,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         </template>
 
-        <template v-else-if="section === 'keys'">
+        <div v-else-if="section === 'keys'" class="keys-page" data-shortcuts-page>
           <h2>{{ t("set.shortcuts") }}</h2>
           <!--
             MiMo's shortcut page: a search bar that searches by words or, with
@@ -3118,7 +3146,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           -->
           <div class="keys-search" data-shortcuts-searchbar>
             <div v-if="keySearch" class="keys-search-capture" data-key-search-capture>
-              <span v-if="keySearchChord" class="keys-search-chord">{{ keySearchChord }}</span>
+              <span v-if="keySearchChord" class="keys-search-chord">{{ shownChord(keySearchChord) }}</span>
               <template v-else>{{ t("set.keys.pressToSearch") }}</template>
             </div>
             <input
@@ -3164,12 +3192,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <span>{{ t("set.keys.colBinding") }}</span>
             </div>
             <div v-for="shortcut in shortcutRows" :key="shortcut.id" class="keys-row" :data-shortcut-id="shortcut.id">
-              <div class="keys-command">{{ shortcut.title }}</div>
+              <div class="keys-command">
+                <div class="keys-label">{{ shortcut.title }}</div>
+                <div v-if="shortcut.desc" class="keys-desc" data-shortcut-desc>{{ shortcut.desc }}</div>
+              </div>
               <div class="keys-binding">
                 <div v-if="recording === shortcut.id" class="keys-record">
                   <div class="keys-record-line">
                     <span class="keys-record-box" :class="{ conflict: recordConflict }" data-record-box>
-                      {{ recordChord || t("set.keys.pressKey") }}
+                      {{ recordChord ? shownChord(recordChord) : t("set.keys.pressKey") }}
                     </span>
                     <button
                       v-if="recordChord && !recordConflict"
@@ -3185,11 +3216,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     </button>
                   </div>
                   <span v-if="recordConflict" class="keys-record-conflict" data-record-conflict>
-                    {{ t("set.keys.conflict", { label: recordConflict.title }) }}
+                    {{ t("set.keys.conflict", { label: commandLabel(recordConflict) }) }}
                   </span>
                 </div>
                 <template v-else>
-                  <kbd v-if="boundKeys(shortcut)" class="keys-kbd" data-binding>{{ boundKeys(shortcut) }}</kbd>
+                  <kbd v-if="boundKeys(shortcut)" class="keys-kbd" data-binding>{{ shownChord(boundKeys(shortcut)) }}</kbd>
                   <span v-else class="keys-unassigned" data-binding-unassigned>{{ t("set.keys.unassigned") }}</span>
                   <button
                     type="button"
@@ -3236,11 +3267,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
             <div v-if="!shortcutRows.length" class="keys-empty" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
           </div>
+          </div>
 
           <div class="keys-foot">
             <button class="ctl-btn" data-reset-all-shortcuts @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
           </div>
-        </template>
+        </div>
 
         <!-- Archive -->
         <template v-else-if="section === 'archive'">
@@ -3309,7 +3341,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   <div class="line-sub">{{ archivedDescription(session) }}</div>
                 </div>
                 <div v-if="!selecting" class="confirm">
-                  <button class="ctl-btn" data-archived-restore @click="app.archive(session.id, false)">{{ t("set.unarchive") }}</button>
+                  <button class="ctl-btn" data-archived-restore @click="restoreOne(session.id)">{{ t("set.unarchive") }}</button>
                   <button
                     class="archived-delete"
                     data-archived-delete
@@ -3389,10 +3421,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <!-- Providers -->
         <!--
-          Models, laid out as MiMo's page: quick add, what has been added, and the
-          file it is kept in. A provider is where MCode's models come from, so
-          connecting one happens here; each added provider carries the switches
-          for which of its models the chat menu offers.
+          Models, laid out exactly as MiMo's page: title and intro, quick add,
+          what has been added, and the file it is kept in. MCode's Smart block
+          and per-model switches are gone, as the user chose (MO5); Smart stays
+          in the composer's model menu.
         -->
         <template v-else>
           <h2>{{ t("set.models") }}</h2>
@@ -3400,9 +3432,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <div v-if="notice && !notice.id" class="notice">{{ notice.text }}</div>
 
           <h3>{{ t("set.models.quickAdd") }}</h3>
+          <!-- Every vendor stays listed, as MiMo lists every preset: a connected one opens on its 已连接 screen and takes another key. -->
           <div class="presets">
             <button
-              v-for="group in availableGroups"
+              v-for="group in presetGroups"
               :key="group.id"
               class="preset"
               :data-preset="group.id"
@@ -3411,15 +3444,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <ProviderIcon :id="group.entries[0].id" :name="group.name" class="preset-mark" />
               <span>{{ group.name }}</span>
             </button>
-            <button class="preset" :class="{ on: customOpen }" data-preset="custom" @click="customOpen = !customOpen">
+            <!-- MiMo's literal label, the same in every language. -->
+            <button class="preset" data-preset="custom" @click="modelDialog = { mode: 'add' }">
               <svg class="preset-plus" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 3v10M3 8h10" />
               </svg>
-              <span>{{ t("set.models.custom") }}</span>
+              <span>自定义 / Custom</span>
             </button>
-          </div>
-          <div v-if="customOpen" class="card cpanel">
-            <CustomProviderForm @connected="customOpen = false" />
           </div>
 
           <h3>{{ t("set.models.added") }}</h3>
@@ -3450,43 +3481,43 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 empty picker. The row is left with Remove, which is the one
                 thing that can be done about it.
               -->
-              <button
-                v-if="provider.kind === 'openai-compatible' && provider.configured && !provider.custom"
-                class="pbtn"
-                :disabled="busy === provider.id"
-                @click="refresh(provider.id)"
-              >
-                {{ t("provider.refresh") }}
-              </button>
-              <!--
-                Where the Disconnect link would be, on a row the app cannot
-                disconnect: the variable is the user's to unset, and saying so
-                is the only useful thing this corner of the row can do.
-              -->
-              <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
-                {{ t("provider.fromEnvironment") }}
-              </span>
-              <template v-else>
-                <!-- MiMo's 编辑 / 复制 on a saved custom model, before its 删除. -->
-                <template v-if="provider.custom">
-                  <button class="plink" :data-provider-edit="provider.id" @click="editCustom(provider.id)">
-                    {{ t("set.models.edit") }}
-                  </button>
-                  <button class="plink" :data-provider-copy="provider.id" @click="copyCustom(provider)">
-                    {{ t("set.models.copy") }}
+              <span class="ctl-pair">
+                <button
+                  v-if="provider.kind === 'openai-compatible' && provider.configured && !provider.custom"
+                  class="ctl-btn"
+                  :data-provider-refresh="provider.id"
+                  :disabled="busy === provider.id"
+                  @click="refresh(provider.id)"
+                >
+                  {{ t("provider.refresh") }}
+                </button>
+                <!--
+                  Where the disconnect button would be, on a row the app cannot
+                  disconnect: the variable is the user's to unset, and saying so
+                  is the only useful thing this corner of the row can do.
+                -->
+                <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
+                  {{ t("provider.fromEnvironment") }}
+                </span>
+                <template v-else>
+                  <!-- MiMo's three secondary sm buttons on a saved custom model: 编辑, 复制, 删除 with a danger hover. -->
+                  <template v-if="provider.custom">
+                    <button class="ctl-btn" :data-provider-edit="provider.id" @click="editCustom(provider.id)">
+                      {{ t("set.models.edit") }}
+                    </button>
+                    <button class="ctl-btn" :data-provider-copy="provider.id" @click="copyCustom(provider)">
+                      {{ t("set.models.copy") }}
+                    </button>
+                  </template>
+                  <button
+                    class="ctl-btn danger-hover"
+                    :data-provider-remove="provider.id"
+                    @click="removing = { id: provider.id, name: provider.name, custom: Boolean(provider.custom) }"
+                  >
+                    {{ provider.custom ? t("set.models.remove") : t("set.disconnect") }}
                   </button>
                 </template>
-                <button class="plink" @click="provider.custom ? removeCustom(provider.id) : disconnect(provider.id)">
-                  {{ provider.custom ? t("provider.remove") : t("set.disconnect") }}
-                </button>
-              </template>
-            </div>
-            <div
-              v-if="provider.custom && editingCustom === provider.id && customEntry(provider.id)"
-              class="card cpanel"
-              data-provider-edit-form
-            >
-              <CustomProviderForm :editing="customEntry(provider.id)" :autofocus="false" @connected="editingCustom = undefined" />
+              </span>
             </div>
 
             <div v-if="provider.kind === 'openai-compatible' && !provider.custom" class="pform">
@@ -3507,63 +3538,37 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
             <div v-if="noticeFor(provider.id)" class="pnotice standalone">{{ noticeFor(provider.id) }}</div>
-              <template v-if="provider.configured">
-                <div v-for="model in provider.models" :key="model.id" class="line model-line">
-                  <div class="line-title">{{ model.name }}</div>
-                  <button
-                    class="switch"
-                    :class="{ on: modelEnabled(provider.id, model.id) }"
-                    role="switch"
-                    :aria-checked="modelEnabled(provider.id, model.id)"
-                    :aria-label="model.name"
-                    @click="toggleModel(provider.id, model.id)"
-                  >
-                    <span class="knob" />
-                  </button>
-                </div>
-              </template>
             </template>
           </div>
 
-          <!-- Smart's two models, which the composer's Smart row picks between. -->
-          <h3>{{ t("model.smart") }}</h3>
-          <p class="note">{{ t("set.smartNote") }}</p>
+          <!-- MiMo's config row: no buttons, the path on one line, a sentence while it is still unknown. -->
+          <h3>{{ t("set.models.configFile") }}</h3>
           <div class="card">
-            <div class="line">
+            <div class="line config-file" data-models-config>
               <div class="line-text">
-                <div class="line-title">{{ t("set.smartFast") }}</div>
+                <div class="line-title">{{ t("set.models.configFileTitle") }}</div>
+                <div class="line-sub config-path" :title="configFile?.path">{{ configFile?.path ?? t("set.models.configFileDesc") }}</div>
               </div>
-              <SelectMenu
-                :model-value="smartValue('smartFast')"
-                :options="smartOptions"
-                :width="240"
-                @update:model-value="setSmartModel('smartFast', $event)"
-              />
-            </div>
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.smartMain") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="smartValue('smartMain')"
-                :options="smartOptions"
-                :width="240"
-                @update:model-value="setSmartModel('smartMain', $event)"
-              />
             </div>
           </div>
 
-          <h3>{{ t("set.models.configFile") }}</h3>
-          <div class="card">
-            <div class="line config-file">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.models.configFileTitle") }}</div>
-                <div class="line-sub path">{{ configFile?.path ?? "" }}</div>
-              </div>
-              <button v-if="configFile?.exists" class="ctl-btn" @click="openPath(configFile)">{{ t("files.open") }}</button>
-              <button v-if="configFile" class="ctl-btn" @click="revealPath(configFile)">{{ t("set.reveal") }}</button>
-            </div>
-          </div>
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="removing"
+              :title="t(removing.custom ? 'set.models.deleteTitle' : 'set.models.disconnectTitle')"
+              :body="t(removing.custom ? 'set.models.deleteBody' : 'set.models.disconnectBody', { name: removing.name })"
+              :confirm-label="removing.custom ? t('set.models.remove') : t('set.disconnect')"
+              @confirm="confirmRemoveProvider"
+              @close="removing = undefined"
+            />
+          </Teleport>
+          <Teleport to="body">
+            <CustomModelDialog
+              v-if="modelDialog"
+              :editing="modelDialog.mode === 'edit' ? customEntry(modelDialog.id) : undefined"
+              @close="modelDialog = undefined"
+            />
+          </Teleport>
         </template>
             </div>
     </div>
@@ -3588,18 +3593,37 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   gap: 6px;
 }
 
+/* MiMo's th-numin: 64 by 26, a 1px line border, 9 round, right-aligned 14px on the input fill. */
 .size-input {
+  box-sizing: border-box;
   width: 64px;
+  height: 26px;
+  padding: 0 10px;
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background: #ffffff;
+  border: 1px solid #f3efeb;
+  border-radius: 9px;
   box-shadow: none;
-  text-align: center;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 
 .unit {
-  color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  color: var(--text-weaker);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .size-input {
+  background: #181818;
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .size-input {
+    background: #181818;
+    border-color: #3d3d3d;
+  }
 }
 
 .font-field {
@@ -3739,12 +3763,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 }
 
 .nav-item:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-.nav-item:hover .nav-ico,
-.nav-item.on .nav-ico {
   color: var(--text-strong);
 }
 
@@ -4237,17 +4255,70 @@ h3 {
   min-width: 0;
 }
 
+/* MiMo's shortcuts page: title and search pinned, only the list scrolls, reset-all pinned at the foot. */
+.content:has(> .keys-page) {
+  overflow: hidden;
+}
+
+.keys-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.keys-page > h2,
+.keys-page > .keys-search {
+  flex: none;
+}
+
+.keys-list {
+  flex: 1;
+  min-height: 0;
+  margin-inline-end: -10px;
+  padding-inline-end: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.keys-page > .keys-foot {
+  flex: none;
+  margin-top: 0;
+  padding-top: 16px;
+}
+
+.keys-label {
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.keys-desc {
+  margin-top: 2px;
+  color: var(--text-weaker);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+/* MiMo's key cap sits on the code background: #f0f0f2 light, #2e2e2e dark. */
 .keys-kbd {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background: #f0f0f2;
   border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
   border-radius: 6px;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .keys-kbd {
+  background: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .keys-kbd {
+    background: #2e2e2e;
+  }
 }
 
 .keys-unassigned {
@@ -4605,10 +4676,6 @@ h3 {
   filter: brightness(1.08);
 }
 
-.plink.danger {
-  color: var(--text-critical);
-}
-
 /* Nine of these are now words rather than identifiers, so the monospace face
    that made `todowrite` legible is only right for the two that stayed raw. */
 .tool {
@@ -4758,6 +4825,45 @@ h3 {
   border-color: var(--border-strong);
 }
 
+/* MiMo's ci-input: the input fill (#fff / #181818) on a 1px line, the dim colour on focus. */
+.ci-input,
+.ci-help {
+  background: #ffffff;
+  border-color: #f3efeb;
+}
+
+.ci-input:focus {
+  border-color: var(--text-weaker);
+}
+
+/* Clean, MiMo's save is the secondary button at full opacity, its text not greyed. */
+.ci-save:disabled {
+  color: #151c13;
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .ci-input,
+:root[data-theme="dark"] .ci-help {
+  background: #181818;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .ci-save:disabled {
+  color: var(--text-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ci-input,
+  :root:not([data-theme="light"]) .ci-help {
+    background: #181818;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .ci-save:disabled {
+    color: var(--text-strong);
+  }
+}
+
 .ci-actions {
   display: flex;
   justify-content: flex-end;
@@ -4826,48 +4932,51 @@ h3 {
   font-weight: 500;
 }
 
+/*
+ * MiMo's th-seg: 26 tall including a 1px line border, 9 round, no dividers;
+ * segments on the page ground at 12px muted, the picked one solid
+ * selection-strong under white text (MiMo does not redefine it for dark).
+ */
 .choice {
   display: inline-flex;
   flex-shrink: 0;
+  box-sizing: border-box;
+  height: 26px;
   overflow: hidden;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  border: 1px solid #f3efeb;
+  border-radius: 9px;
 }
 
 .choice-btn {
-  min-width: 54px;
-  height: 26px;
-  padding: 0 10px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 12px;
   color: var(--text-weak);
-  background: transparent;
+  background: var(--surface-raised);
   border: 0;
   font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 400;
   cursor: pointer;
 }
 
-.choice-btn + .choice-btn {
-  border-inline-start: 1px solid var(--border-weak);
-}
-
 .choice-btn:hover {
-  color: var(--text-base);
-  background: var(--surface-hover);
+  color: var(--text-strong);
 }
 
-/*
- * Mixed against the ground this control actually has.
- *
- * `.choice` fills itself with --surface-base, and this was
- * --surface-raised-hover, which is the same #fafafa in the light scheme: the
- * selected segment of every permission control measured 250 on a 250 ground,
- * step 0, so which one was chosen was invisible. Found by sweeping the live
- * interface for fills that match what is behind them - the fourth of these
- * today, all the same shape.
- */
 .choice-btn.on {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-base));
+  color: #ffffff;
+  background: #151c13;
+}
+
+:root[data-theme="dark"] .choice {
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .choice {
+    border-color: #3d3d3d;
+  }
 }
 
 /* The one answer that stops something happening says so in the warning hue. */
@@ -5043,44 +5152,6 @@ h3 {
  * `13px/530/20px` at `-0.04px` in text-base. This was `0 12px` on a 6% fill
  * in text-strong at 440 - a filled pill where the reference draws a ghost.
  */
-.pbtn {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 11px;
-  color: var(--text-base);
-  background: transparent;
-  border-radius: 6px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 20px;
-  letter-spacing: -0.04px;
-  transition: background 0.12s, color 0.12s;
-}
-
-.pbtn:hover:not(:disabled) {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-.pbtn:disabled {
-  color: var(--text-weaker);
-  cursor: default;
-}
-
-.plink {
-  flex-shrink: 0;
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.plink:hover {
-  color: var(--text-strong);
-}
-
 /* Standing where the link stands, and quieter than it: this is a statement
    about the row, not something to press. */
 .penv {
@@ -5125,11 +5196,6 @@ h3 {
 
 /* The custom-provider form sits inside the provider card, so it brings the
    card's own inset and closing rule with it rather than knowing about them. */
-.cpanel {
-  padding: 4px 16px 16px;
-  border-bottom: 1px solid var(--border-weaker);
-}
-
 /* MiMo's quick-add chips: 34 tall on a hairline, a small mark and the vendor's name. */
 .presets {
   display: flex;
@@ -5180,6 +5246,33 @@ h3 {
   stroke-linecap: round;
 }
 
+/* MiMo's danger hover on 删除: red text on the light red wash. */
+.ctl-btn.danger-hover:hover:not(:disabled) {
+  color: #d93025;
+  background: #fdecea;
+}
+
+:root[data-theme="dark"] .ctl-btn.danger-hover:hover:not(:disabled) {
+  color: #ff9b7f;
+  background: #3a2320;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ctl-btn.danger-hover:hover:not(:disabled) {
+    color: #ff9b7f;
+    background: #3a2320;
+  }
+}
+
+/* MiMo draws the config path as a single line that ends in an ellipsis. */
+.config-path {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty-card {
   padding: 18px 16px;
 }
@@ -5197,10 +5290,6 @@ h3 {
   line-height: 1.6;
 }
 
-.model-line .line-title {
-  font-weight: 400;
-}
-
 /*
  * 2.0: Xiaomi MiMo's settings dialog, measured with it open.
  *
@@ -5211,29 +5300,68 @@ h3 {
  * labels, and cards a step lighter again with a 16px corner. Rows are a 14/500
  * name over a 12/500 line in the base text colour, 16 above and below.
  */
+/* MiMo's light scrim, its settings-full rule and the warm nav fill; dark values follow below. */
 .overlay {
-  background: rgb(0 0 0 / 0.24);
+  background: #0000001a;
+  animation: settings-overlay-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* MiMo fades the whole overlay in from .99 and out over .12s while it keeps rendering. */
+.overlay .dialog {
+  animation: none;
+}
+
+.overlay.closing {
+  animation: settings-overlay-out 0.12s ease-in forwards;
+}
+
+@keyframes settings-overlay-in {
+  from {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+@keyframes settings-overlay-out {
+  to {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+:root[data-motion="on"] .overlay,
+:root[data-motion="on"] .overlay.closing {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-motion="system"] .overlay,
+  :root[data-motion="system"] .overlay.closing {
+    animation: none;
+  }
 }
 
 .dialog {
   position: relative;
   width: min(960px, 92vw);
   height: min(660px, 86vh);
-  background: var(--surface-raised);
-  border: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--surface-raised));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 20px;
+  outline: none;
 }
 
+/* MiMo's u-modal-close: 14 from the corner, 28 square, muted, a ring on keyboard focus. */
 .close {
   position: absolute;
-  top: 18px;
-  inset-inline-end: 18px;
+  top: 14px;
+  inset-inline-end: 14px;
   z-index: 1;
   display: grid;
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-base);
+  color: var(--text-weak);
   border-radius: 8px;
 }
 
@@ -5242,13 +5370,52 @@ h3 {
   background: var(--surface-hover);
 }
 
+.close:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
+}
+
+.close:active {
+  scale: 0.96;
+}
+
 .nav {
   gap: 2px;
   width: 241px;
   min-width: 241px;
   padding: 19px 11px 12px;
-  background: var(--surface-raised);
-  border-inline-end: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-raised));
+  background: #f8f7f5;
+  border-inline-end: 1px solid #f3efeb;
+}
+
+:root[data-theme="dark"] .overlay {
+  background: #0000003d;
+}
+
+:root[data-theme="dark"] .dialog {
+  background: #1f1f1f;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .nav {
+  background: #141414;
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .overlay {
+    background: #0000003d;
+  }
+
+  :root:not([data-theme="light"]) .dialog {
+    background: #1f1f1f;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .nav {
+    background: #141414;
+    border-color: #3d3d3d;
+  }
 }
 
 .nav-title {
@@ -5289,23 +5456,40 @@ h3 {
   line-height: 20px;
 }
 
+/* MiMo's nav icons are 17 square in the label's own strong colour, on every row. */
 .nav-ico {
-  width: 18px;
-  height: 18px;
-  color: var(--text-base);
+  width: 17px;
+  height: 17px;
+  color: currentColor;
 }
 
+/* Hover shows only once the pointer has moved in the column, so a resting pointer under a fresh dialog lights nothing. */
 .nav-item:hover {
-  background: color-mix(in srgb, var(--text-strong) 5%, var(--surface-raised));
+  background: transparent;
 }
 
-.nav-item.on {
-  background: color-mix(in srgb, var(--text-strong) 8%, var(--surface-raised));
+.nav.mouse-active .nav-item:hover {
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
+}
+
+.nav-item.on,
+.nav.mouse-active .nav-item.on:hover {
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
 }
 
 .content {
   padding: 44px 40px;
-  background: var(--surface-menu);
+  background: #ffffff;
+}
+
+:root[data-theme="dark"] .content {
+  background: #1f1f1f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .content {
+    background: #1f1f1f;
+  }
 }
 
 h2 {
@@ -5322,10 +5506,11 @@ h3 {
   line-height: 22.4px;
 }
 
+/* MiMo's set-card: white on the white page in light, a faint warm rule between; #282828 on #1f1f1f in dark. */
 .card {
   padding: 0 17px;
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 16px;
   box-shadow: none;
 }
@@ -5336,7 +5521,29 @@ h3 {
 
 .line {
   padding: 16px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  border-bottom: 1px solid #f3efeb;
+}
+
+:root[data-theme="dark"] .card {
+  background: #282828;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .line,
+:root[data-theme="dark"] .nav-search {
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .card {
+    background: #282828;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .line,
+  :root:not([data-theme="light"]) .nav-search {
+    border-color: #3d3d3d;
+  }
 }
 
 .line-text {
@@ -5357,22 +5564,25 @@ h3 {
   line-height: 18.6px;
 }
 
-/* A round 32 by 20 switch: light track with a dark knob when on. */
+/*
+ * MiMo's settings switch: 32 by 20 with a 16px thumb travelling 14. Off is the
+ * neutral track under a white thumb; on is the primary track under the
+ * primary-foreground thumb. No hover change, as MiMo has none.
+ */
 .switch {
   width: 32px;
   height: 20px;
-  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-menu));
+  background: #e3e3e0;
   border-radius: 999px;
 }
 
-/* Hover changes the fill only; the shape is the switch's, not the pointer's. */
 .switch:hover {
-  background: color-mix(in srgb, var(--text-strong) 28%, var(--surface-menu));
+  background: #e3e3e0;
 }
 
 .switch.on,
 .switch.on:hover {
-  background: var(--icon-base);
+  background: #151c13;
 }
 
 .knob,
@@ -5380,39 +5590,123 @@ h3 {
   top: 2px;
   width: 16px;
   height: 16px;
-  /* Always the opposite of the track it sits on, in either scheme. */
-  background: var(--icon-base);
+  background: #ffffff;
   border-radius: 50%;
 }
 
 .switch.on .knob {
-  background: var(--surface-raised);
   inset-inline-start: 14px;
 }
 
+/* MiMo's secondary sm button: 28 tall, 8 round, 0 12, the secondary fill. */
 .ctl-btn {
   height: 28px;
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  padding: 0 12px;
+  color: #151c13;
+  background: #f1f1f1;
   border: 0;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
-/* The pickers in a row: a filled 28px chip, the way MiMo's language picker is. */
+.ctl-btn:hover:not(:disabled) {
+  background: #f1f0ec;
+}
+
+/* MiMo's select trigger in a settings row: 28 tall, a 1px input border, transparent in light. */
 .content :deep(.trigger) {
+  gap: 8px;
   height: 28px;
-  padding: 0 8px 0 10px;
-  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  padding: 0 8px 0 12px;
+  background: transparent;
+  border: 1px solid #e3e3e0;
   border-radius: 8px;
+  box-shadow: 0 1px 2px #0000000d;
   font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.content :deep(.trigger:hover),
+.content :deep(.trigger.open) {
+  background: transparent;
 }
 
 .content :deep(.trigger .label) {
   font-weight: 500;
   line-height: 20px;
+}
+
+.content :deep(.trigger .caret) {
+  color: currentColor;
+  opacity: 0.5;
+}
+
+:root[data-theme="dark"] .switch,
+:root[data-theme="dark"] .switch:hover {
+  background: #4a4a4a;
+}
+
+:root[data-theme="dark"] .switch.on,
+:root[data-theme="dark"] .switch.on:hover {
+  background: #ececec;
+}
+
+:root[data-theme="dark"] .switch.on .knob {
+  background: #0d0d0d;
+}
+
+:root[data-theme="dark"] .ctl-btn {
+  color: var(--text-strong);
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .ctl-btn:hover:not(:disabled) {
+  background: #ffffff1a;
+}
+
+:root[data-theme="dark"] .content :deep(.trigger) {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+:root[data-theme="dark"] .content :deep(.trigger:hover),
+:root[data-theme="dark"] .content :deep(.trigger.open) {
+  background: rgb(58 58 58 / 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .switch,
+  :root:not([data-theme="light"]) .switch:hover {
+    background: #4a4a4a;
+  }
+
+  :root:not([data-theme="light"]) .switch.on,
+  :root:not([data-theme="light"]) .switch.on:hover {
+    background: #ececec;
+  }
+
+  :root:not([data-theme="light"]) .switch.on .knob {
+    background: #0d0d0d;
+  }
+
+  :root:not([data-theme="light"]) .ctl-btn {
+    color: var(--text-strong);
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .ctl-btn:hover:not(:disabled) {
+    background: #ffffff1a;
+  }
+
+  :root:not([data-theme="light"]) .content :deep(.trigger) {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .content :deep(.trigger:hover),
+  :root:not([data-theme="light"]) .content :deep(.trigger.open) {
+    background: rgb(58 58 58 / 0.5);
+  }
 }
 
 /* The column's search field: MiMo's 36 tall with an 8px corner and a quiet rule. */
@@ -5479,23 +5773,42 @@ h3 {
 .env-icon {
   display: grid;
   place-items: center;
-  width: 30px;
+  min-width: 34px;
+  height: 26px;
   padding: 0;
 }
 
-.env-icon + .env-icon {
-  margin-inline-start: 6px;
+/* MiMo's control column: 10 between the two buttons. */
+.env-ctrl {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
 }
 
+.env-del svg {
+  color: var(--text-weak);
+}
+
+.env-del:hover svg {
+  color: #e5484d;
+}
+
+.env-plus {
+  font-size: calc(16px * var(--ui-font-scale, 1));
+  line-height: 1;
+}
+
+/* MiMo's sc-refresh: 28 square, 6 round, muted; the menu hover and strong text on hover. */
 .env-refresh {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  color: var(--text-base);
+  width: 28px;
+  height: 28px;
+  color: var(--text-weak);
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
 .env-refresh:hover {
@@ -5503,17 +5816,43 @@ h3 {
   background: var(--surface-hover);
 }
 
-.wt-count {
+/* The count and loading lines are MiMo's sc-empty-title: 14/500 strong. */
+.wt-status {
   margin: 4px 0 8px;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.card.wt-empty {
+  padding: 16px 18px;
+}
+
+.wt-empty-title {
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.wt-empty-desc {
+  margin-top: 4px;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .wt-row {
   gap: 8px;
 }
 
-.wt-row .tag {
+/* MiMo's worktree tags: 6 round at 1 by 6, 11px dim on the soft fill, no ring. */
+.wt-tag {
   flex-shrink: 0;
-  margin-inline-start: 0;
+  padding: 1px 6px;
+  color: var(--text-weaker);
+  background: var(--surface-hover);
+  border-radius: 6px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 400;
 }
 
 /* The name keeps its width up to half the row; the path is what gives way. */
@@ -5540,49 +5879,136 @@ h3 {
   white-space: nowrap;
 }
 
+/* MiMo's environment detail, capped at 820. */
+.env-detail {
+  max-width: 820px;
+}
+
+/* A plain back link: 14px muted with an 18px chevron, strong on hover, 18 below. */
 .env-back {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
-  padding: 0 8px 0 4px;
-  color: var(--text-base);
+  margin-bottom: 18px;
+  padding: 0;
+  color: var(--text-weak);
   background: transparent;
   border: 0;
-  border-radius: 8px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .env-back:hover {
   color: var(--text-strong);
-  background: var(--surface-hover);
 }
 
-.env-input {
-  width: 100%;
-  height: 36px;
-  margin-top: 8px;
-  padding: 0 12px;
+/* MiMo's env-flabel: a plain 13px label, 18 above and 4 below. */
+.env-flabel {
+  margin: 18px 0 4px;
   color: var(--text-strong);
-  background: var(--surface-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 400;
+}
+
+.env-back + .env-flabel {
+  margin-top: 0;
+}
+
+/* The local card: the side fill on a line, 10 round, 14 by 16, a 20px muted folder. */
+.env-local {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  outline: none;
+}
+
+.env-local-icon {
+  flex-shrink: 0;
+  color: var(--text-weak);
+}
+
+.env-local-text {
+  min-width: 0;
+}
+
+.env-local-name {
+  color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
-.env-input:focus {
-  border-color: var(--border-strong, var(--border-weak));
+.env-local-path {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* MiMo's env-field: 13px at 9 by 12, 8 round, the input fill on a line, the accent border on focus. */
+.env-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 12px;
+  color: var(--text-strong);
+  background: #ffffff;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  outline: none;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.env-input:focus {
+  border-color: #ff6a2b;
+}
+
+/* The save row: a rule above, 24 of margin and 16 of padding, the button at the end. */
 .env-save-row {
   display: flex;
   justify-content: flex-end;
-  margin-top: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-weak);
 }
 
 .env-save:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ctl-btn.env-save.dirty {
+  color: #ffffff;
+  background: #151c13;
+}
+
+:root[data-theme="dark"] .env-local {
+  background: #141414;
+}
+
+:root[data-theme="dark"] .env-input {
+  background: #181818;
+}
+
+:root[data-theme="dark"] .ctl-btn.env-save.dirty {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .env-local {
+    background: #141414;
+  }
+
+  :root:not([data-theme="light"]) .env-input {
+    background: #181818;
+  }
+
+  :root:not([data-theme="light"]) .ctl-btn.env-save.dirty {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 /*
  * Archived conversations in batch: MiMo's toolbar - a framed 10px-corner strip
@@ -5728,19 +6154,26 @@ h3 {
 
 /* MiMo's 用法详情: a link-styled span inside the description, underlined 2px below. */
 .usage-link {
-  color: #0077fa;
+  color: #2f6fed;
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
 
-:root[data-theme="dark"] .usage-link {
-  color: #6ea8fe;
+/* MiMo's text-blue, shared by 用法详情 and 了解更多. */
+.ci-link {
+  color: #2f6fed;
+}
+
+:root[data-theme="dark"] .usage-link,
+:root[data-theme="dark"] .ci-link {
+  color: #5a9cff;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .usage-link {
-    color: #6ea8fe;
+  :root:not([data-theme="light"]) .usage-link,
+  :root:not([data-theme="light"]) .ci-link {
+    color: #5a9cff;
   }
 }
 

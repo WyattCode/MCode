@@ -13,27 +13,46 @@ import { t } from "../lib/i18n"
 const props = defineProps<{ value: string }>()
 const emit = defineEmits<{ close: []; submit: [name: string, source?: string] }>()
 
-const draft = ref(props.value)
+/* MiMo caps a project name at 80 code points, however it was arrived at. */
+const MAX_NAME = 80
+
+/** Cut by code point, so an emoji or a CJK surrogate pair is never split in half. */
+function clamp(text: string): string {
+  const points = Array.from(text)
+  return points.length > MAX_NAME ? points.slice(0, MAX_NAME).join("") : text
+}
+
+const draft = ref(clamp(props.value))
 const touched = ref(false)
 const source = ref("")
 const field = ref<HTMLInputElement>()
 
 function typed(event: Event) {
   touched.value = true
-  draft.value = (event.target as HTMLInputElement).value
+  const input = event.target as HTMLInputElement
+  const next = clamp(input.value)
+  if (next !== input.value) input.value = next
+  draft.value = next
 }
 
 async function pickSource() {
   const [directory] = await window.mcode.pickDirectory(t("home.blankSource"), false)
   if (!directory) return
   source.value = directory
-  if (!touched.value) draft.value = directory.split(/[\\/]/).filter(Boolean).pop() || draft.value
+  if (!touched.value) draft.value = clamp(directory.split(/[\\/]/).filter(Boolean).pop() || draft.value)
 }
 
 function submit() {
-  const name = draft.value.trim()
+  const name = clamp(draft.value.trim())
   if (!name) return
   emit("submit", name, source.value || undefined)
+}
+
+/* Enter while an IME is composing picks a candidate; it must not create. */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  submit()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -76,9 +95,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         class="field"
         :value="draft"
         spellcheck="false"
-        maxlength="100"
+        :maxlength="MAX_NAME"
         @input="typed"
-        @keydown.enter.prevent="submit"
+        @keydown.enter="onEnter"
       />
 
       <div class="label">{{ t("home.blankSource") }}</div>
@@ -192,9 +211,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   border-radius: 9px;
 }
 
+/* MiMo's np-card field on focus: the dim colour, #151c1366 light and #777 dark. */
 .field:focus {
   outline: none;
-  border-color: var(--border-strong);
+  border-color: #151c1366;
 }
 
 .source {
@@ -243,19 +263,20 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   gap: 10px;
 }
 
+/* MiMo's np-btn: the page ground under a line, menu-hover on hover. */
 .btn {
   padding: 8px 18px;
   color: var(--text-base);
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  background: var(--surface-base);
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   cursor: pointer;
 }
 
 .btn:hover {
-  background: var(--surface-hover);
+  background: #f1f0ec;
 }
 
 .btn.primary {
@@ -271,5 +292,31 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .btn.primary:disabled {
   cursor: default;
   opacity: 0.45;
+}
+
+:root[data-theme="dark"] .field:focus {
+  border-color: #777777;
+}
+
+:root[data-theme="dark"] .btn:not(.primary) {
+  background: #1a1a1a;
+}
+
+:root[data-theme="dark"] .btn:not(.primary):hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .field:focus {
+    border-color: #777777;
+  }
+
+  :root:not([data-theme="light"]) .btn:not(.primary) {
+    background: #1a1a1a;
+  }
+
+  :root:not([data-theme="light"]) .btn:not(.primary):hover {
+    background: #ffffff0f;
+  }
 }
 </style>

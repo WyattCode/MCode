@@ -68,6 +68,8 @@ export interface SessionInfo {
   usage: Usage
   /** Put away rather than deleted: hidden everywhere, restorable from settings. */
   archived?: boolean
+  /** When it was put away (ms), so the archived list reads newest-archived first as MiMo's does. */
+  archivedAt?: number
   /**
    * Where the conversation was summarised, if it has been.
    *
@@ -1649,6 +1651,11 @@ export type Request =
   | { type: "mcp.authenticate"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
+  /**
+   * Saves one MCP server from the settings form. Environment and header rows
+   * named in `keep` that come back blank keep the values already stored.
+   */
+  | { type: "mcp.save"; name: string; entry: McpServerConfig; keep?: { env?: string[]; headers?: string[] } }
   | { type: "agents.state" }
   | { type: "agents.ensure" }
   | { type: "agents.setEnabled"; enabled: boolean }
@@ -1834,6 +1841,7 @@ export interface ResponseMap {
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }
+  "mcp.save": { config: AppConfig }
   "agents.state": { path: string; state: AgentsFileState }
   /** Writes a starting file when there is none. */
   "agents.ensure": { path: string; state: AgentsFileState }

@@ -12,7 +12,7 @@ import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
 import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
-import { installedOpenApps } from "./installed-apps"
+import { installedOpenAppIcons, installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
 import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
@@ -772,6 +772,10 @@ app.whenReady().then(async () => {
 
   /* Which open-with apps are installed, for the settings row and the open-location menu. */
   ipcMain.handle("mcode:installed-apps", () => installedOpenApps(process.platform))
+  // MiMo's 默认打开目标 draws each app's own icon; small icons, as data URLs the renderer can show.
+  ipcMain.handle("mcode:installed-app-icons", () =>
+    installedOpenAppIcons(async (file) => (await app.getFileIcon(file, { size: "small" })).toDataURL(), process.platform),
+  )
 
   ipcMain.handle("mcode:open-file", async (_event, directory: string, relative: string, openWith?: unknown) => {
     const target = inside(directory, relative)

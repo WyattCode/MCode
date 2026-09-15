@@ -100,15 +100,34 @@ footer {
   cursor: pointer;
 }
 
+/* MiMo's dialog cancel: the page ground under a line, menu-hover on hover. */
 .ghost {
   color: var(--text-base);
-  background: var(--surface-base);
+  background: #fffefd;
   border-color: var(--border-weak);
 }
 
 .ghost:hover {
   color: var(--text-strong);
-  background: var(--surface-hover);
+  background: #f1f0ec;
+}
+
+:root[data-theme="dark"] .ghost {
+  background: #1a1a1a;
+}
+
+:root[data-theme="dark"] .ghost:hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ghost {
+    background: #1a1a1a;
+  }
+
+  :root:not([data-theme="light"]) .ghost:hover {
+    background: #ffffff0f;
+  }
 }
 
 /* Not destructive: the app's primary button. */

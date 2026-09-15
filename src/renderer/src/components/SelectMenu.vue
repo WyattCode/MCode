@@ -15,16 +15,28 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
  * happened in settings: the menu was in the DOM and measured 129x169, but only
  * a sliver of its edge ever painted.
  */
+export interface SelectOption {
+  value: string
+  label: string
+  /** Draws a rule above that option, to set it apart from the list. */
+  divider?: boolean
+  /**
+   * MiMo's app picker draws each app's icon before its name. An empty string
+   * asks for the name's first letter on a tile instead; undefined draws nothing.
+   */
+  icon?: string
+}
+
 const props = defineProps<{
   modelValue: string
-  /** `divider` draws a rule above that option, to set it apart from the list. */
-  options: { value: string; label: string; divider?: boolean }[]
+  options: SelectOption[]
   /** Widen when the labels are long; the trigger sizes to this. */
   width?: number
 }>()
 
 const emit = defineEmits<{ "update:modelValue": [value: string] }>()
 
+/* MiMo's item: 6px above and below a 20px line. */
 const ROW = 32
 const GAP = 4
 const MARGIN = 12
@@ -35,16 +47,15 @@ const root = ref<HTMLElement>()
 const active = ref(-1)
 const box = ref({ left: 0, top: 0, width: 0, maxHeight: 0, flip: false })
 
-const label = computed(
-  () => props.options.find((option) => option.value === props.modelValue)?.label ?? props.modelValue,
-)
+const chosen = computed(() => props.options.find((option) => option.value === props.modelValue))
+const label = computed(() => chosen.value?.label ?? props.modelValue)
 
 /** Anchors the popup to the trigger, flipping up when the room below runs out. */
 function place() {
   const el = root.value
   if (!el) return
   const rect = el.getBoundingClientRect()
-  const wanted = props.options.length * ROW + props.options.filter((option) => option.divider).length * 9 + 8
+  const wanted = props.options.length * ROW + props.options.filter((option) => option.divider).length * 9 + 12
   const below = window.innerHeight - rect.bottom - MARGIN - GAP
   const above = rect.top - MARGIN - GAP
   const flip = below < wanted && above > below
@@ -160,6 +171,10 @@ onBeforeUnmount(() => {
   <div ref="root" class="select" :style="{ width: width ? `${width}px` : undefined }">
     <button class="trigger" :class="{ open }" @click="toggle">
       <slot name="icon" />
+      <template v-if="chosen?.icon !== undefined">
+        <img v-if="chosen.icon" class="opt-icon" :src="chosen.icon" alt="" data-select-icon />
+        <span v-else class="opt-letter" data-select-icon>{{ chosen.label.slice(0, 1) }}</span>
+      </template>
       <span class="label">{{ label }}</span>
       <svg class="caret" :class="{ up: open }" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
@@ -185,9 +200,13 @@ onBeforeUnmount(() => {
             @click="choose(option.value)"
             @mousemove="active = index"
           >
-            <span>{{ option.label }}</span>
-            <svg v-if="option.value === modelValue" width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
+            <template v-if="option.icon !== undefined">
+              <img v-if="option.icon" class="opt-icon" :src="option.icon" alt="" data-select-option-icon />
+              <span v-else class="opt-letter" data-select-option-icon>{{ option.label.slice(0, 1) }}</span>
+            </template>
+            <span class="item-label">{{ option.label }}</span>
+            <svg v-if="option.value === modelValue" class="item-check" width="14" height="14" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" />
             </svg>
           </button>
         </template>
@@ -212,16 +231,10 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The same shell as a text field, because it is the same kind of control: a
- * box you put a value in. Focus colours an outline that is always present, so
- * opening the menu does not nudge the label inside it.
- */
-/*
  * Measured on opencode's settings page: `height: 24px; padding: 4px 4px 4px
  * 8px; gap: 4px; border-radius: 4px`, transparent, no border, no shadow. The
- * value inside is 13px/530/16px and the chevron a 16-box. This was 28 tall on
- * `--surface-base` with a 1px border and radius 6 - a bordered field where the
- * reference draws a ghost button.
+ * value inside is 13px/530/16px and the chevron a 16-box. The settings dialog
+ * restyles it as MiMo's bordered select.
  */
 .trigger {
   box-sizing: border-box;
@@ -243,14 +256,6 @@ onBeforeUnmount(() => {
 /* A ghost shows itself on hover and while open, with the same overlay every
    other ghost control here uses. */
 .trigger:hover,
-.trigger.open {
-  background: var(--surface-hover);
-}
-
-.trigger:hover:not(.open) {
-  background: var(--surface-hover);
-}
-
 .trigger.open {
   background: var(--surface-hover);
 }
@@ -282,30 +287,27 @@ onBeforeUnmount(() => {
 /*
  * Unscoped: the popup is teleported out of the component, so a scoped rule
  * would not reach it. Sits above the settings dialog (z-index 120).
+ *
+ * MiMo's select popup: 12 round, a 1px line, the menu glass with its 18px blur,
+ * 5px of padding; rows 8 round at 6 / 32 / 6 / 8 with the check at the end.
  */
 .select-pop {
-  /* opencode's menu-v2-content: min-width 160px, max-width 23rem, content
-     between. It used to be pinned to the trigger's width, which no longer
-     says anything about how wide the options are. */
   width: max-content;
   min-width: 160px;
   max-width: 23rem;
   position: fixed;
   z-index: 200;
-  /* A select's listbox keeps four; the surface around it is the 2px one. */
-  padding: 4px;
+  box-sizing: border-box;
+  padding: 5px;
   background: var(--surface-menu);
-  border-radius: 6px;
+  border: 1px solid var(--border-weak);
+  border-radius: 12px;
   box-shadow: var(--shadow-lg);
-  /* Twelve rows of 28 and then it scrolls, which is where the reference cuts. */
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
   max-height: 12rem;
   overflow-x: hidden;
   overflow-y: auto;
-}
-
-/* Rows are spaced rather than touching, unlike the ones in a plain menu. */
-.select-pop .item + .item {
-  margin-top: 2px;
 }
 
 .select-pop .rule {
@@ -320,20 +322,29 @@ onBeforeUnmount(() => {
 }
 
 .select-pop .item {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
-  height: 28px;
-  padding: 0 12px;
+  padding: 6px 32px 6px 8px;
   color: var(--text-strong);
   text-align: start;
-  border-radius: 4px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 440;
-  letter-spacing: -0.04px;
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: 20px;
   white-space: nowrap;
+}
+
+.select-pop .item-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.select-pop .item-check {
+  position: absolute;
+  inset-inline-end: 10px;
 }
 
 .select-pop .item:hover,
@@ -341,18 +352,34 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
-/*
- * The chosen row is named by weight and colour, not by a background: the
- * background is what hover uses, and the two have to stay tellable apart when
- * the pointer is resting on the row that is already selected.
- */
-/*
- * The chosen option is marked by its fill and nothing else: opencode's
- * selected option measures the same `13px/440` and `rgb(250, 250, 250)` as its
- * neighbours, on `rgba(255, 255, 255, 0.06)` - the hover overlay. This used to
- * go bold and take the accent colour, which no option in the reference does.
- */
-.select-pop .item.on {
+/* MiMo's picked row carries only the check; the fill is the focused row's. */
+.select-pop .item.on:not(.active) {
+  background: transparent;
+}
+
+/* MiMo's app tile: an 18px icon on a 4px corner, or the name's first letter on the side fill. */
+.select .opt-icon,
+.select .opt-letter,
+.select-pop .opt-icon,
+.select-pop .opt-letter {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.select .opt-letter,
+.select-pop .opt-letter {
+  display: grid;
+  place-items: center;
+  color: var(--text-weak);
   background: var(--surface-hover);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  line-height: 1;
+}
+
+.select .opt-icon,
+.select .opt-letter {
+  margin-inline-end: 6px;
 }
 </style>

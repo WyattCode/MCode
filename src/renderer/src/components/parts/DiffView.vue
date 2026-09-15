@@ -81,12 +81,6 @@ const stat = computed(() => ({
   white-space: pre;
 }
 
-/* A folded line keeps its sign column: the text is what indents, not the row. */
-html[data-wrap="on"] .row {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .gutter {
   width: 20px;
   flex-shrink: 0;

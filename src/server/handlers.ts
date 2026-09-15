@@ -30,6 +30,7 @@ import { ChatGPTSubscription } from "./provider/chatgpt"
 import type { ProviderAdapter } from "./provider/types"
 import { listCommands } from "./command"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
+import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { revertTurnFiles } from "./session/turn-revert"
 import { turnFileDiffs } from "./session/turn-diff"
@@ -940,7 +941,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       // Archiving stops the work too: a turn writing into a session the user
       // has just put away is not something they asked for.
       if (request.archived) runtime.runner.abort(request.sessionID)
-      const session = await runtime.sessions.update(request.sessionID, { archived: request.archived })
+      // Stamped when put away and cleared when restored, so the archived list can order by it.
+      const session = await runtime.sessions.update(request.sessionID, {
+        archived: request.archived,
+        archivedAt: request.archived ? Date.now() : undefined,
+      })
       return { session } satisfies Handled<"session.archive">
     }
 
@@ -1234,6 +1239,14 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.importApply":
       return { imported: await applyMcpImports(runtime.config, request.items) } satisfies Handled<"mcp.importApply">
+
+    case "mcp.save": {
+      // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.
+      const servers = runtime.config.get().mcpServers ?? {}
+      const entry = mergeMcpSecrets(servers[request.name], request.entry, request.keep)
+      const config = await runtime.config.set({ mcpServers: { ...servers, [request.name]: entry } })
+      return { config } satisfies Handled<"mcp.save">
+    }
 
     case "agents.state": {
       const file = globalAgentsPath(runtime.storage.directory)

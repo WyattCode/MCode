@@ -1,31 +1,27 @@
 <script setup lang="ts">
-import { ref } from "vue"
+import { computed, ref } from "vue"
 import type { CustomModel, CustomProvider } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { notice } from "../lib/toast"
+import { LIMIT_PRESETS, limitOf, validEndpoint } from "../lib/custom-model"
 
 /**
- * Adding an OpenAI-compatible provider by base URL.
+ * Adding an OpenAI-compatible provider by base URL - MiMo's add / edit model
+ * form, holding several models where MiMo's holds one.
  *
- * One component because there are two ways in - the Providers page in settings
- * and the pinned first row of the connect dialog - and the reference does the
- * same thing for the same reason: its `CustomProviderForm` is referenced from
- * three chunks and constructed fresh at every one of them.
+ * Two hosts: the 640px add / edit model dialog on the models page, and the
+ * connect dialog's custom step. In the dialog the host draws the footer and
+ * calls `submit`; elsewhere the form keeps its own save button.
  *
- * Fresh matters. There is no edit path here, in the reference either: the store
- * is hardcoded to empty strings and changing a provider means adding it again
- * under the same id.
+ * As MiMo's: the endpoint carries its hint and turns red the moment it is not
+ * an http(s) URL with a host, Save stays off until the required fields are
+ * valid, the key is a password field with an eye, each limit is digits with a
+ * row of preset pills, and a save toasts and selects the saved model.
  *
- * Every rule below is the reference's `validateCustomProvider`, transcribed:
- * the two regexes, the per-row Required/Duplicate checks, the case-insensitive
- * header keys, the blank-header-row skip, and the `{env:VAR}` match on the key
- * field. Errors are computed on submit and cleared on the next keystroke in
- * that field - never on blur - which is why every input writes through
- * `setField` rather than binding with v-model.
- *
- * Each model row also carries MiMo's 高级配置: a three-state 图片输入 and the
- * input and output token limits, behind a disclosure because this form holds
- * many models where MiMo's holds one.
+ * MCode's own: the key is optional (a provider may authenticate with headers
+ * only) and `{env:VAR}` still works in it; each model row carries the
+ * 高级配置 disclosure because the form holds many models.
  */
 
 const props = defineProps<{
@@ -36,24 +32,21 @@ const props = defineProps<{
    * unless the key comes from a variable, which is only a name.
    */
   editing?: CustomProvider
+  /** Drawn inside a dialog that supplies its own footer. */
+  framed?: boolean
 }>()
-const emit = defineEmits<{ connected: [] }>()
+const emit = defineEmits<{ connected: [providerID: string] }>()
 
 const app = useApp()
 
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
-const HTTP_URL = /^https?:\/\//
-
-/* MiMo's preset suggestions, in tokens with K meaning 1024. */
-const CONTEXT_PRESETS = ["32K", "64K", "128K", "256K"]
-const OUTPUT_PRESETS = ["8K", "16K", "32K", "64K"]
 
 interface ModelRow {
   id: string
   name: string
   /** MiMo's three-state 图片输入: undefined follows the provider or catalog default. */
   attachment?: boolean
-  /** The two limits as typed: blank, a whole number, or a number with K. */
+  /** The two limits as typed: blank or a whole number of tokens. */
   context: string
   output: string
   /** Whether this row's 高级配置 is open. */
@@ -70,18 +63,11 @@ interface HeaderRow {
 const modelRow = (): ModelRow => ({ id: "", name: "", context: "", output: "", advanced: false, err: {} })
 const headerRow = (): HeaderRow => ({ key: "", value: "", err: {} })
 
-/* A saved limit shows in the unit it was most likely typed in. */
-function limitText(value?: number): string {
-  if (!value) return ""
-  return value % 1024 === 0 ? `${value / 1024}K` : String(value)
-}
-
 /*
  * Both repeaters start with one row and refuse to drop below it. For models
  * that is the point - at least one is mandatory, because nothing discovers
  * them for a custom provider - and for headers it means the form always shows
- * one empty pair that may simply be left blank. That is what the reference
- * does; the empty row is skipped at validation rather than prevented.
+ * one empty pair that may simply be left blank.
  */
 const editing = props.editing
 const form = ref({
@@ -95,29 +81,47 @@ const form = ref({
         id: model.id,
         name: model.name,
         attachment: model.attachment,
-        context: limitText(model.limit?.context),
-        output: limitText(model.limit?.output),
+        context: model.limit?.context ? String(model.limit.context) : "",
+        output: model.limit?.output ? String(model.limit.output) : "",
         advanced: model.attachment !== undefined || Boolean(model.limit),
       }))
     : [modelRow()],
   headers: Object.keys(editing?.headers ?? {}).length
     ? Object.entries(editing?.headers ?? {}).map(([key, value]) => ({ ...headerRow(), key, value }))
     : [headerRow()],
-  err: {} as { providerID?: string; name?: string; baseURL?: string },
+  err: {} as { providerID?: string; name?: string },
 })
 
 const busy = ref(false)
-const failure = ref<string>()
+/* A variable name is only a name, so an edit shows it; a typed key starts hidden. */
+const keyShown = ref(Boolean(editing?.environment))
 
 type Field = "providerID" | "name" | "baseURL" | "apiKey"
 
 function setField(field: Field, value: string) {
   form.value[field] = value
-  // The key field has no error to clear: it is never validated, because
-  // `{env:VAR}`, a literal key and nothing at all are all legitimate.
-  if (field === "apiKey") return
-  form.value.err[field] = undefined
+  if (field === "providerID" || field === "name") form.value.err[field] = undefined
 }
+
+/* MiMo's live check: red as soon as the text stops being an http(s) URL with a host. */
+const endpointBad = computed(() => Boolean(form.value.baseURL.trim()) && !validEndpoint(form.value.baseURL))
+
+/* Save is available only when everything required is valid, as MiMo's is. */
+const canSave = computed(() => {
+  const value = form.value
+  if (!PROVIDER_ID.test(value.providerID.trim()) || !value.name.trim() || !validEndpoint(value.baseURL)) return false
+  return value.models.every((row) => {
+    const context = limitOf(row.context)
+    const output = limitOf(row.output)
+    return (
+      row.id.trim() &&
+      row.name.trim() &&
+      context.ok &&
+      output.ok &&
+      !(output.value !== undefined && context.value === undefined)
+    )
+  })
+})
 
 function addModel() {
   form.value.models.push(modelRow())
@@ -142,17 +146,13 @@ function cycleImage(row: ModelRow) {
   row.attachment = row.attachment === undefined ? true : row.attachment ? false : undefined
 }
 
-/**
- * A limit as typed: blank is the provider default; otherwise a positive whole
- * number of tokens, where a trailing K means 1024.
- */
-function parseLimit(text: string): { ok: boolean; value?: number } {
-  const trimmed = text.trim()
-  if (!trimmed) return { ok: true }
-  const match = /^(\d+)\s*([kK])?$/.exec(trimmed)
-  if (!match) return { ok: false }
-  const value = Number(match[1]) * (match[2] ? 1024 : 1)
-  return Number.isSafeInteger(value) && value > 0 ? { ok: true, value } : { ok: false }
+/* MiMo's pills write the token count itself; digits are all the field takes. */
+function typeLimit(row: ModelRow, field: "context" | "output", event: Event) {
+  const input = event.target as HTMLInputElement
+  const digits = input.value.replace(/\D/g, "")
+  if (digits !== input.value) input.value = digits
+  row[field] = digits
+  row.err.limit = undefined
 }
 
 interface Resolved {
@@ -167,9 +167,8 @@ interface Resolved {
 /**
  * The form's answer, or undefined when something is wrong.
  *
- * Writes each message under the field it belongs to instead of raising one
- * sentence at the top: with four scalars and two repeaters, "something is
- * required" leaves the reader hunting.
+ * Writes each message under the field it belongs to: with four scalars and two
+ * repeaters, "something is required" leaves the reader hunting.
  */
 function validate(): Resolved | undefined {
   const providerID = form.value.providerID.trim()
@@ -177,13 +176,10 @@ function validate(): Resolved | undefined {
   const baseURL = form.value.baseURL.trim()
   /*
    * Every provider's id, not only the custom ones: taking a built-in's id
-   * would shadow it with no way back. The reference lets an id sitting in its
-   * `disabled_providers` list through, which is how it re-adds a provider that
-   * was removed - this app deletes rather than disabling, so a removed id is
-   * free again and that exception has nothing to apply to.
+   * would shadow it with no way back.
    */
   const taken = new Set(app.providers.map((entry) => entry.id))
-  const err: { providerID?: string; name?: string; baseURL?: string } = {
+  const err: { providerID?: string; name?: string } = {
     providerID: !providerID
       ? t("provider.custom.error.providerID.required")
       : !PROVIDER_ID.test(providerID)
@@ -192,22 +188,17 @@ function validate(): Resolved | undefined {
           ? t("provider.custom.error.providerID.exists")
           : undefined,
     name: !name ? t("provider.custom.error.name.required") : undefined,
-    baseURL: !baseURL
-      ? t("provider.custom.error.baseURL.required")
-      : !HTTP_URL.test(baseURL)
-        ? t("provider.custom.error.baseURL.format")
-        : undefined,
   }
   form.value.err = err
-  let ok = !err.providerID && !err.name && !err.baseURL
+  let ok = !err.providerID && !err.name && validEndpoint(baseURL)
 
   const models: CustomModel[] = []
   const seenModels = new Set<string>()
   for (const row of form.value.models) {
     const id = row.id.trim()
     const label = row.name.trim()
-    const context = parseLimit(row.context)
-    const output = parseLimit(row.output)
+    const context = limitOf(row.context)
+    const output = limitOf(row.output)
     // MiMo's rule: whole positive numbers, and an output limit only beside an input limit.
     const limitBad = !context.ok || !output.ok || (output.value !== undefined && context.value === undefined)
     row.err = {
@@ -262,107 +253,123 @@ function validate(): Resolved | undefined {
   return { id: providerID, name, baseURL, apiKey: form.value.apiKey.trim(), headers, models }
 }
 
-async function submit() {
-  if (busy.value) return
+/*
+ * Saves, then as MiMo does: a toast, and the saved model becomes the one in use
+ * - the open conversation's, or the default for the next one on home.
+ */
+async function submit(): Promise<boolean> {
+  if (busy.value || !canSave.value) return false
   const result = validate()
-  // The messages are already under their fields; nothing more to announce.
-  if (!result) return
+  if (!result) return false
   busy.value = true
-  failure.value = undefined
   try {
     if (editing) await app.updateCustomProvider(result)
     else await app.addCustomProvider(result)
-    emit("connected")
+    const model = { provider: result.id, model: result.models[0].id }
+    if (app.currentID) await app.setModel(model)
+    else await app.patchConfig({ model, smart: false })
+    if (editing) notice.info(t("model.changesSaved"))
+    else notice.success(t("model.added"))
+    emit("connected", result.id)
+    return true
   } catch (err) {
-    failure.value = err instanceof Error ? err.message : String(err)
+    notice.danger((err instanceof Error ? err.message : String(err)) || t("model.addFailed"))
+    return false
   } finally {
     busy.value = false
   }
 }
+
+defineExpose({ submit, canSave, busy })
 </script>
 
 <template>
   <!--
-    In the reference's own DOM order: description, four labelled scalars, the
-    models repeater, the headers repeater, then submit. Nothing here is
-    discovered - the models are the ones typed in - so the form is longer than
-    the three boxes it replaces, on purpose.
+    Four labelled scalars, the models repeater, the headers repeater, then (when
+    not in a dialog) save. Nothing here is discovered - the models are the ones
+    typed in - so the form is longer than MiMo's single-model one, on purpose.
   -->
-  <form class="cpform" @submit.prevent="submit">
-    <p class="cpintro">
-      {{ t("provider.custom.description.prefix")
-      }}<a
-        class="cplink"
-        href="https://opencode.ai/docs/providers/#custom-provider"
-        target="_blank"
-        rel="noreferrer"
-        >{{ t("provider.custom.description.link") }}</a
-      >{{ t("provider.custom.description.suffix") }}
-    </p>
+  <form class="cpform" data-custom-provider-form @submit.prevent="submit">
+    <div class="cpfield">
+      <label class="cplabel" for="cp-provider-id">{{ t("provider.custom.field.providerID.label") }}</label>
+      <input
+        id="cp-provider-id"
+        class="cpin mono"
+        :value="form.providerID"
+        :disabled="Boolean(editing)"
+        :autofocus="props.autofocus !== false"
+        :placeholder="t('provider.custom.field.providerID.placeholder')"
+        spellcheck="false"
+        autocomplete="off"
+        @input="setField('providerID', ($event.target as HTMLInputElement).value)"
+      />
+      <div class="cphelp">{{ t("provider.custom.field.providerID.description") }}</div>
+      <div v-if="form.err.providerID" class="cperror">{{ form.err.providerID }}</div>
+    </div>
 
-    <div class="cpfields">
-      <div class="cpfield">
-        <label class="cplabel" for="cp-provider-id">{{ t("provider.custom.field.providerID.label") }}</label>
-        <input
-          id="cp-provider-id"
-          class="cpin"
-          :value="form.providerID"
-          :disabled="Boolean(editing)"
-          :autofocus="props.autofocus !== false"
-          :placeholder="t('provider.custom.field.providerID.placeholder')"
-          spellcheck="false"
-          autocomplete="off"
-          @input="setField('providerID', ($event.target as HTMLInputElement).value)"
-        />
-        <div class="cphelp">{{ t("provider.custom.field.providerID.description") }}</div>
-        <div v-if="form.err.providerID" class="cperror">{{ form.err.providerID }}</div>
-      </div>
+    <div class="cpfield">
+      <label class="cplabel" for="cp-name">{{ t("provider.custom.field.name.label") }}</label>
+      <input
+        id="cp-name"
+        class="cpin"
+        :value="form.name"
+        :placeholder="t('provider.custom.field.name.placeholder')"
+        spellcheck="false"
+        @input="setField('name', ($event.target as HTMLInputElement).value)"
+      />
+      <div v-if="form.err.name" class="cperror">{{ form.err.name }}</div>
+    </div>
 
-      <div class="cpfield">
-        <label class="cplabel" for="cp-name">{{ t("provider.custom.field.name.label") }}</label>
-        <input
-          id="cp-name"
-          class="cpin"
-          :value="form.name"
-          :placeholder="t('provider.custom.field.name.placeholder')"
-          spellcheck="false"
-          @input="setField('name', ($event.target as HTMLInputElement).value)"
-        />
-        <div v-if="form.err.name" class="cperror">{{ form.err.name }}</div>
-      </div>
+    <!-- MiMo's 接口地址: the hint always under it, replaced by the red line while the URL is not valid. -->
+    <div class="cpfield">
+      <label class="cplabel" for="cp-base-url">{{ t("model.endpoint") }}</label>
+      <input
+        id="cp-base-url"
+        class="cpin"
+        :value="form.baseURL"
+        placeholder="https://api.example.com/v1"
+        spellcheck="false"
+        autocomplete="off"
+        data-custom-endpoint
+        @input="setField('baseURL', ($event.target as HTMLInputElement).value)"
+      />
+      <div v-if="endpointBad" class="cperror" data-endpoint-invalid>{{ t("model.endpointInvalid") }}</div>
+      <div v-else class="cphelp" data-endpoint-hint>{{ t("model.endpointHint") }}</div>
+    </div>
 
-      <div class="cpfield">
-        <label class="cplabel" for="cp-base-url">{{ t("provider.custom.field.baseURL.label") }}</label>
-        <input
-          id="cp-base-url"
-          class="cpin"
-          :value="form.baseURL"
-          :placeholder="t('provider.custom.field.baseURL.placeholder')"
-          spellcheck="false"
-          autocomplete="off"
-          @input="setField('baseURL', ($event.target as HTMLInputElement).value)"
-        />
-        <div v-if="form.err.baseURL" class="cperror">{{ form.err.baseURL }}</div>
-      </div>
-
-      <!--
-        Plain text, not a password box. This field is where {env:VAR} is typed,
-        and a reader who cannot see what they wrote cannot tell an indirection
-        from a mistyped one - which is why the reference passes no type here.
-      -->
-      <div class="cpfield">
-        <label class="cplabel" for="cp-api-key">{{ t("provider.custom.field.apiKey.label") }}</label>
+    <!-- A password field with MiMo's eye; `{env:VAR}` still works, and the eye shows what was written. -->
+    <div class="cpfield">
+      <label class="cplabel" for="cp-api-key">API Key</label>
+      <div class="cpsecret">
         <input
           id="cp-api-key"
           class="cpin"
+          :type="keyShown ? 'text' : 'password'"
           :value="form.apiKey"
-          :placeholder="editing ? t('provider.custom.field.apiKey.keep') : t('provider.custom.field.apiKey.placeholder')"
+          :placeholder="editing ? t('provider.custom.field.apiKey.keep') : t('model.apiKeyPlaceholder')"
           spellcheck="false"
           autocomplete="off"
+          data-custom-key
           @input="setField('apiKey', ($event.target as HTMLInputElement).value)"
         />
-        <div class="cphelp">{{ t("provider.custom.field.apiKey.description") }}</div>
+        <button
+          type="button"
+          class="cpeye"
+          :title="t(keyShown ? 'model.hideKey' : 'model.showKey')"
+          :aria-label="t(keyShown ? 'model.hideKey' : 'model.showKey')"
+          data-custom-key-toggle
+          @click="keyShown = !keyShown"
+        >
+          <svg v-if="keyShown" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13 13 0 0 1-1.7 2.7M6.6 6.6C3.5 8.7 2 12 2 12s3 7 10 7a9.7 9.7 0 0 0 5.4-1.6M2 2l20 20M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+          </svg>
+          <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
       </div>
+      <div class="cphelp">{{ t("provider.custom.field.apiKey.description") }}</div>
     </div>
 
     <div class="cpgroup">
@@ -371,7 +378,7 @@ async function submit() {
         <div class="cprow">
           <div class="cpcell">
             <input
-              class="cpin"
+              class="cpin mono"
               :value="row.id"
               :aria-label="t('provider.custom.models.id.label')"
               :placeholder="t('provider.custom.models.id.placeholder')"
@@ -400,7 +407,7 @@ async function submit() {
             :title="t('provider.custom.models.remove')"
             @click="removeModel(at)"
           >
-            <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
               <path
                 d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4"
                 stroke="currentColor"
@@ -442,40 +449,35 @@ async function submit() {
               <span>{{ t("provider.custom.imageInput") }}</span>
             </label>
             <div class="cplimits">
-              <label class="cplimit">
-                <span class="cplimit-label">{{ t("provider.custom.contextLimit") }}</span>
+              <div v-for="field in (['context', 'output'] as const)" :key="field" class="cplimit">
+                <label class="cplabel">{{ t(field === "context" ? "provider.custom.contextLimit" : "provider.custom.outputLimit") }}</label>
                 <input
                   class="cpin"
-                  data-model-context
-                  :list="`cp-context-presets-${at}`"
-                  :value="row.context"
+                  :data-model-limit="field"
+                  inputmode="numeric"
+                  :value="row[field]"
                   :placeholder="t('provider.custom.limitDefault')"
                   spellcheck="false"
                   autocomplete="off"
-                  @input="(row.context = ($event.target as HTMLInputElement).value), (row.err.limit = undefined)"
+                  @input="typeLimit(row, field, $event)"
                 />
-                <datalist :id="`cp-context-presets-${at}`">
-                  <option v-for="preset in CONTEXT_PRESETS" :key="preset" :value="preset" />
-                </datalist>
-              </label>
-              <label class="cplimit">
-                <span class="cplimit-label">{{ t("provider.custom.outputLimit") }}</span>
-                <input
-                  class="cpin"
-                  data-model-output
-                  :list="`cp-output-presets-${at}`"
-                  :value="row.output"
-                  :placeholder="t('provider.custom.limitDefault')"
-                  spellcheck="false"
-                  autocomplete="off"
-                  @input="(row.output = ($event.target as HTMLInputElement).value), (row.err.limit = undefined)"
-                />
-                <datalist :id="`cp-output-presets-${at}`">
-                  <option v-for="preset in OUTPUT_PRESETS" :key="preset" :value="preset" />
-                </datalist>
-              </label>
+                <!-- MiMo's preset pills, 8px under the field; the one matching the value is pressed. -->
+                <div class="cppills">
+                  <button
+                    v-for="preset in LIMIT_PRESETS[field]"
+                    :key="preset.value"
+                    type="button"
+                    class="cppill"
+                    :aria-pressed="row[field] === String(preset.value)"
+                    :data-limit-preset="preset.value"
+                    @click="(row[field] = String(preset.value)), (row.err.limit = undefined)"
+                  >
+                    {{ preset.label }}
+                  </button>
+                </div>
+              </div>
             </div>
-            <div v-if="row.err.limit" class="cperror cplimit-error" data-model-limit-error>{{ row.err.limit }}</div>
+            <div v-if="row.err.limit" class="cperror" data-model-limit-error>{{ row.err.limit }}</div>
           </div>
         </fieldset>
       </div>
@@ -487,7 +489,7 @@ async function submit() {
       <div v-for="(row, at) in form.headers" :key="`header-${at}`" class="cprow">
         <div class="cpcell">
           <input
-            class="cpin"
+            class="cpin mono"
             :value="row.key"
             :aria-label="t('provider.custom.headers.key.label')"
             :placeholder="t('provider.custom.headers.key.placeholder')"
@@ -499,7 +501,7 @@ async function submit() {
         </div>
         <div class="cpcell">
           <input
-            class="cpin"
+            class="cpin mono"
             :value="row.value"
             :aria-label="t('provider.custom.headers.value.label')"
             :placeholder="t('provider.custom.headers.value.placeholder')"
@@ -517,7 +519,7 @@ async function submit() {
           :title="t('provider.custom.headers.remove')"
           @click="removeHeader(at)"
         >
-          <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
             <path
               d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4"
               stroke="currentColor"
@@ -532,96 +534,99 @@ async function submit() {
       <button type="button" class="cpadd" @click="addHeader">+ {{ t("provider.custom.headers.add") }}</button>
     </div>
 
-    <div v-if="failure" class="cperror">{{ failure }}</div>
-
-    <button class="cpsubmit" type="submit" :disabled="busy">
-      {{ busy ? t("common.saving") : editing ? t("common.save") : t("common.submit") }}
+    <button v-if="!framed" class="cpsubmit" type="submit" :disabled="busy || !canSave" data-custom-save>
+      {{ busy ? t("common.saving") : t("common.save") }}
     </button>
   </form>
 </template>
 
 <style scoped>
-/* Every field carries a label, because six of the eight inputs are
-   indistinguishable from each other by placeholder alone, and two repeaters of
-   unlabelled boxes would be unreadable. */
+/* MiMo's add-model form: 20 between fields, 14/500 muted labels 8 above 40px 14px inputs. */
 .cpform {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-}
-
-.cpintro {
-  margin: 0;
-  color: var(--text-weak);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
-  line-height: 1.6;
-}
-
-.cplink {
-  color: var(--primary);
-  text-decoration: none;
-}
-
-.cplink:hover {
-  text-decoration: underline;
-}
-
-.cpfields {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
+  gap: 20px;
 }
 
 .cpfield {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 
-/*
- * The label is the quiet half, and the helper under it is the loud one.
- *
- * That reads backwards until you see opencode's own rule -
- * `[data-slot="input-label"] { color: var(--text-weak); font-size:
- * var(--font-size-small); font-weight: var(--font-weight-medium);
- * line-height: 18px }` - which this had inverted: a --text-strong label over
- * a --text-weak helper, so every field shouted its name and murmured the thing
- * the reader actually needed to know. The helper follows the same system's
- * description slots, which are --text-base (e.g. checkbox-checkbox-description).
- */
 .cplabel {
   color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 18px;
+  line-height: 20px;
 }
 
 .cpin {
+  box-sizing: border-box;
   width: 100%;
-  height: 30px;
-  padding: 0 10px;
+  height: 40px;
+  padding: 0 12px;
   color: var(--text-strong);
-  background: var(--surface-base);
+  background: var(--surface-raised);
   border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
-  font-family: var(--font-mono);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  border-radius: 8px;
+  font-family: var(--font-sans);
+  font-size: calc(14px * var(--ui-font-scale, 1));
   outline: none;
+}
+
+/* Ids and header cells stay monospace: they are identifiers, not prose. */
+.cpin.mono {
+  font-family: var(--font-mono);
+  font-size: calc(13px * var(--code-font-scale, 1));
 }
 
 .cpin:focus {
   border-color: var(--border-strong);
 }
 
+.cpin:disabled {
+  color: var(--text-weak);
+}
+
+/* MiMo's eye: a 28px button 2 from the field's end, the key field padded 36 to make room. */
+.cpsecret {
+  position: relative;
+}
+
+.cpsecret .cpin {
+  padding-inline-end: 36px;
+}
+
+.cpeye {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  transform: translateY(-50%);
+  cursor: pointer;
+}
+
+.cpeye:hover {
+  color: var(--text-strong);
+}
+
 .cphelp {
-  color: var(--text-base);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
 
 .cperror {
   color: var(--text-critical);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.5;
 }
 
@@ -634,7 +639,7 @@ async function submit() {
 .cpmodel {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 /* The two cells share the width evenly and the trash button keeps its own
@@ -658,12 +663,12 @@ async function submit() {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
   color: var(--text-weak);
   background: none;
   border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   cursor: pointer;
 }
 
@@ -720,8 +725,8 @@ async function submit() {
 .cpadvanced-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-block-start: 8px;
+  gap: 16px;
+  margin-block-start: 12px;
 }
 
 .cpcheck {
@@ -729,14 +734,14 @@ async function submit() {
   align-items: center;
   gap: 6px;
   color: var(--text-base);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
 /* Two limits side by side, 16 apart, stacking once the form is narrow. */
 .cplimits {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 16px;
 }
 
@@ -744,17 +749,36 @@ async function submit() {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 
-.cplimit-label {
+/* MiMo's preset row: 32px round pills at 12px, 8 apart; pressed has a line, a soft fill and strong text. */
+.cppills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cppill {
+  height: 32px;
+  padding: 0 6px;
+  min-width: 44px;
   color: var(--text-weak);
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 500;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  cursor: pointer;
 }
 
-.cplimit-error {
-  font-size: calc(12px * var(--ui-font-scale, 1));
+.cppill:hover,
+.cppill[aria-pressed="true"] {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+.cppill[aria-pressed="true"] {
+  border-color: var(--border-weak);
 }
 
 .cpadd {
@@ -762,7 +786,7 @@ async function submit() {
   color: var(--text-base);
   background: none;
   border: none;
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
@@ -771,20 +795,18 @@ async function submit() {
 }
 
 .cpsubmit {
-  align-self: flex-start;
-  min-width: 96px;
-  height: 30px;
-  padding: 0 14px;
-  color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
+  align-self: flex-end;
+  padding: 8px 18px;
+  color: var(--button-primary-text);
+  background: var(--button-primary);
+  border: 1px solid var(--button-primary);
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
   cursor: pointer;
 }
 
 .cpsubmit:disabled {
-  color: var(--text-weaker);
+  opacity: 0.5;
   cursor: default;
 }
 </style>

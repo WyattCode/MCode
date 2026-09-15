@@ -683,9 +683,10 @@ html[data-motion="on"] ::-webkit-scrollbar-thumb {
   animation: dialog-overlay-in 0.15s ease-out;
 }
 
+/* MiMo's shared dialog: the card fades in from .95 over its motion-slow .2s; closing is lib/modal.ts. */
 .scrim [role="dialog"],
 .overlay [role="dialog"] {
-  animation: dialog-content-in 0.15s ease-out;
+  animation: dialog-content-in 0.2s ease;
 }
 
 @keyframes dialog-overlay-in {
@@ -700,7 +701,7 @@ html[data-motion="on"] ::-webkit-scrollbar-thumb {
 @keyframes dialog-content-in {
   from {
     opacity: 0;
-    transform: scale(0.98);
+    transform: scale(0.95);
   }
   to {
     opacity: 1;
@@ -787,22 +788,6 @@ html[data-motion="on"] *::after {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
-}
-
-/*
- * Long lines fold rather than running off the side.
- *
- * `anywhere` rather than `break-word` because the long line in code is usually
- * one unbroken run - a path, a hash, a base64 blob - with nowhere a word
- * breaker would agree to split.
- *
- * Not in a reply: MiMo's reply code scrolls sideways and has no setting for it.
- */
-html[data-wrap="on"] .md-code:not([data-annotate="answer"] .md-code),
-html[data-wrap="on"] .md-code:not([data-annotate="answer"] .md-code) code {
-  overflow-x: visible;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 /*
