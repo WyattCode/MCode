@@ -48,6 +48,7 @@ import { mergeMcpSecrets } from "../src/server/mcp-save"
 import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../src/server/mcp"
 import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
 import type { McpServerConfig } from "../src/shared/protocol"
+import { ToolOutputs } from "../src/server/tool/truncate"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
   VOICE_EDIT_MAX,
@@ -751,6 +752,51 @@ async function main() {
   // E27: MiMo's desktop never hands a GPT model apply_patch; every model edits with edit and write.
   const surface = toolsFor("build").map((tool) => tool.name)
   check("every model is offered edit and write, and no apply_patch", surface.includes("edit") && surface.includes("write") && !surface.includes("apply_patch") && findTool("apply_patch") === undefined, surface)
+
+  // E21: MiMo's shared cap - over 2,000 lines or 50 KB is cut, and the whole output saved to a file the result names.
+  {
+    const outputsDir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-tool-output-"))
+    const outputs = new ToolOutputs(outputsDir)
+    const short = await outputs.cap("one\ntwo")
+    check("output inside the cap is left alone", short.text === "one\ntwo" && !short.truncated && short.file === undefined, short)
+    const many = Array.from({ length: 2500 }, (_, i) => `line ${i + 1}`).join("\n")
+    const cut = await outputs.cap(many)
+    const cutLines = cut.text.split("\n")
+    check(
+      "over 2,000 lines keeps the first 2,000 and says how many were cut",
+      cut.truncated && cutLines[0] === "line 1" && cutLines[1999] === "line 2000" && !cut.text.includes("line 2001") && cut.text.includes("500 lines cut"),
+      cut.text.slice(-300),
+    )
+    check("the complete output is saved and named", Boolean(cut.file) && cut.text.includes(cut.file ?? "?") && (await fs.readFile(cut.file ?? "", "utf8").catch(() => "")) === many)
+    const wide = await outputs.cap(`${"x".repeat(60 * 1024)}\nend`)
+    check("over 50 KB is cut by bytes", wide.truncated && wide.text.includes(`${60 * 1024 + 4} bytes cut`), wide.text.slice(0, 200))
+    const failing = await outputs.cap(Array.from({ length: 3000 }, (_, i) => `step ${i + 1}`).join("\n") + "\nError: the build failed")
+    check(
+      "an end that looks like a failure keeps the start and the end",
+      failing.truncated &&
+        failing.text.startsWith("step 1\n") &&
+        failing.text.includes("step 1400\n") &&
+        !failing.text.includes("step 1401\n") &&
+        failing.text.includes("Error: the build failed") &&
+        failing.text.includes("lines left out between the start and the end"),
+      failing.text.slice(0, 120),
+    )
+    check("a conversation that can start subagents is pointed at one", !cut.text.includes("subagent") && (await outputs.cap(many, true)).text.includes("explore subagent"))
+    check("only a saved output counts as the output folder", Boolean(cut.file) && outputs.holds(cut.file ?? "") && !outputs.holds(project))
+    const stopAsking = answer("reject")
+    const readBack = await findTool("read")!
+      .execute({ path: cut.file ?? "" }, { ...context("c-e21-read"), toolOutputs: outputs })
+      .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+    stopAsking()
+    check("a saved output is read without asking to leave the project", readBack.includes("line 1") && !readBack.startsWith("ERROR"), readBack.slice(0, 120))
+    const old = await outputs.save("old")
+    const fresh = await outputs.save("fresh")
+    const eightDaysAgo = (Date.now() - 8 * 24 * 60 * 60 * 1000) / 1000
+    await fs.utimes(old, eightDaysAgo, eightDaysAgo)
+    await outputs.sweep()
+    check("a saved output older than a week is swept and a new one kept", !(await exists(old)) && (await exists(fresh)))
+    await fs.rm(outputsDir, { recursive: true, force: true })
+  }
 
   const list = await findTool("list")!.execute({}, context("c4"))
   check("list renders a tree", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
@@ -2271,6 +2317,25 @@ async function main() {
     const bareKept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
     check("a refusal without a reason ends the turn too", found.last?.finish === "aborted" && bodies.length === requestsBeforeBare, [found.last?.finish, bodies.length - requestsBeforeBare])
     check("recorded as a plain reject", bareKept[0]?.decided === "reject" && bareKept[0]?.reason === undefined, bareKept)
+
+    // E21: a tool's long output is cut by the runner's shared cap before the model reads it, and the whole of it saved.
+    // 1,500 lines of 100 characters: inside read's own line limit, well past the cap's 50 KB.
+    const longLines = Array.from({ length: 1500 }, (_, i) => `row ${i + 1} ${"x".repeat(90)}`).join("\n")
+    await fs.writeFile(path.join(project, "steps-long.txt"), longLines)
+    replies.push(toolCall("call_long", "read", '{"path": "steps-long.txt"}'))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "read the long file" })
+    check("the turn with a long output finished", await idle(from))
+    found = await toolPart("call_long")
+    const savedAt = String(found.part?.metadata?.outputPath ?? "")
+    check(
+      "a long tool output is cut by the shared cap, and says where the rest is",
+      found.part?.status === "completed" && found.part?.metadata?.truncated === true && String(found.part?.output).includes(savedAt) && !String(found.part?.output).includes("row 1000 "),
+      { metadata: found.part?.metadata, tail: String(found.part?.output).slice(-300) },
+    )
+    check("the saved file holds the whole output", savedAt !== "" && (await fs.readFile(savedAt, "utf8").catch(() => "")).includes("row 1000 "))
+    check("and the model was sent the cut output", !JSON.stringify(bodies.at(-1) ?? {}).includes("row 1000 ") && JSON.stringify(bodies.at(-1) ?? {}).includes("row 1 "))
+    await fs.rm(path.join(project, "steps-long.txt"), { force: true })
 
     // A transient failure: retried in the open, then the turn completes.
     replies.push((response) => {

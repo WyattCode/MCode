@@ -29,6 +29,7 @@ import { Questions } from "../tool/question"
 import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
+import { ToolOutputs } from "../tool/truncate"
 import { retryDelay, waitFor } from "./retry"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
@@ -245,6 +246,8 @@ export class SessionRunner {
   /** Where the global AGENTS.md lives, next to the app's own config. */
   private readonly globalAgents: string
 
+  private readonly toolOutputs: ToolOutputs
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -254,6 +257,9 @@ export class SessionRunner {
     storage: Storage,
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
+    // Complete outputs the shared cap cut, kept a week, as MiMo keeps them.
+    this.toolOutputs = new ToolOutputs(storage.folder("tool-output"))
+    this.toolOutputs.start()
     this.globalAgents = globalAgentsPath(storage.directory)
     this.questions = new Questions(bus)
     // session chat: messages between conversations run through this runner's own prompt.
@@ -1899,6 +1905,7 @@ export class SessionRunner {
         signal: input.signal,
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
+        toolOutputs: this.toolOutputs,
         // session chat: a conversation's own calls only; a subagent has no contacts.
         chat: this.workers.has(input.session.id) ? undefined : this.chat,
         // subagents: offered to a conversation's own calls; a subagent's calls get none, so there is no nesting.
@@ -1910,10 +1917,15 @@ export class SessionRunner {
           publish()
         },
       })
+      // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
+      const capped =
+        result.metadata?.truncated === undefined
+          ? await this.toolOutputs.cap(result.output, !this.workers.has(input.session.id)).catch(() => undefined)
+          : undefined
       part.status = "completed"
-      part.output = result.output
+      part.output = capped?.text ?? result.output
       part.title = result.title ?? part.title
-      part.metadata = result.metadata
+      part.metadata = capped?.truncated ? { ...result.metadata, truncated: true, outputPath: capped.file } : result.metadata
     } catch (err) {
       part.status = "error"
       // Tool failures are told to the model as text so it can adapt; only

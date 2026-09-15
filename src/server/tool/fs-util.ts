@@ -86,6 +86,8 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
     : path.resolve(context.directory, target)
+  // A cut output's saved file is the model's to read, as MiMo allows its truncation folder outright.
+  if (context.toolOutputs?.holds(resolved)) return resolved
   /*
    * Compared by where the files really are, not by how the path is spelled. A
    * symlink - or a junction, which Windows creates without elevation - reads as
