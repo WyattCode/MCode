@@ -1125,7 +1125,7 @@ export interface AppConfig {
   /** Where to look for a newer release, if anywhere. */
   updateFeed: string
   /** The chime a task that ran past a minute makes when it ends. */
-  taskDoneSound: "off" | "settle" | "triple" | "sweep" | "duet" | "zen"
+  taskDoneSound: "off" | "rhodes" | "handpan" | "vibes" | "bloom" | "harp" | "kalimba" | "bowl" | "koto"
   /** Whether moving along or pressing the conversation navigator plays a scale. On by default. */
   spineSound: boolean
   /**

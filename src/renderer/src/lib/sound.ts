@@ -31,38 +31,56 @@ interface Voice {
 }
 
 /*
- * The long-task chimes. Each is a handful of voices rather than a recording, and
- * each is kept under two seconds so it announces the end without becoming a
- * tune someone has to wait out.
+ * The long-task chimes, MiMo's eight names drawn with MCode's own voices. Each
+ * is a handful of oscillators rather than a recording, and each is kept under
+ * two seconds so it announces the end without becoming a tune someone has to
+ * wait out.
  */
+
+/* A struck note: its fundamental, and one quieter partial at `ratio` that dies sooner. */
+function struck(from: number, at: number, seconds: number, gain: number, ratio: number, type: OscillatorType = "sine"): Voice[] {
+  return [
+    { from, at, seconds, gain, type },
+    { from: from * ratio, at, seconds: seconds * 0.45, gain: gain * 0.3 },
+  ]
+}
+
 const CHIME_VOICES: Record<ChimeName, Voice[]> = {
-  // Two notes falling a fourth: the sound of something set down.
-  settle: [
-    { from: 1175, at: 0, seconds: 0.35, gain: 0.05 },
-    { from: 880, at: 0.14, seconds: 0.7, gain: 0.055 },
+  // 琥珀: a warm electric-piano third, the upper note laid on the lower.
+  rhodes: [...struck(659, 0, 0.9, 0.05, 2), ...struck(831, 0.12, 1.0, 0.04, 2)],
+  // 空山: a low steel-drum fifth with an octave shimmer, left to ring.
+  handpan: [...struck(294, 0, 1.5, 0.06, 2.01), ...struck(440, 0.22, 1.4, 0.045, 2.01)],
+  // 铃语: three bright bars climbing, each with a high fourth-harmonic ring.
+  vibes: [...struck(1047, 0, 0.5, 0.04, 4), ...struck(1319, 0.11, 0.5, 0.04, 4), ...struck(1568, 0.22, 0.9, 0.045, 4)],
+  // 晨曦: a soft major arpeggio opening upward, the top note held longest.
+  bloom: [
+    { from: 523, at: 0, seconds: 0.6, gain: 0.04 },
+    { from: 659, at: 0.09, seconds: 0.6, gain: 0.04 },
+    { from: 784, at: 0.18, seconds: 0.7, gain: 0.04 },
+    { from: 1047, at: 0.27, seconds: 1.1, gain: 0.045 },
   ],
-  // Three quick notes climbing a major chord.
-  triple: [
-    { from: 1047, at: 0, seconds: 0.22, gain: 0.045 },
-    { from: 1319, at: 0.1, seconds: 0.22, gain: 0.045 },
-    { from: 1568, at: 0.2, seconds: 0.5, gain: 0.05 },
+  // 流萤: a quick plucked run up a pentatonic scale.
+  harp: [
+    { from: 587, at: 0, seconds: 0.35, gain: 0.04, type: "triangle" },
+    { from: 659, at: 0.06, seconds: 0.35, gain: 0.04, type: "triangle" },
+    { from: 784, at: 0.12, seconds: 0.35, gain: 0.04, type: "triangle" },
+    { from: 880, at: 0.18, seconds: 0.4, gain: 0.04, type: "triangle" },
+    { from: 1175, at: 0.24, seconds: 0.8, gain: 0.045, type: "triangle" },
   ],
-  // A bright glide up with a faint octave above it.
-  sweep: [
-    { from: 700, to: 1400, at: 0, seconds: 0.45, gain: 0.04 },
-    { from: 1400, to: 2800, at: 0.03, seconds: 0.42, gain: 0.012 },
+  // 山泉: two thumb-piano plinks, their bell-like partial out of tune on purpose.
+  kalimba: [...struck(1175, 0, 0.45, 0.05, 5.4), ...struck(1568, 0.16, 0.7, 0.05, 5.4)],
+  // 静水: one singing bowl, its uneven overtone beating slowly as it fades.
+  bowl: [
+    { from: 392, at: 0, seconds: 1.8, gain: 0.06 },
+    { from: 1058, at: 0, seconds: 1.4, gain: 0.014 },
+    { from: 1062, at: 0.02, seconds: 1.4, gain: 0.012 },
   ],
-  // Two voices a sixth apart, stepping once together.
-  duet: [
-    { from: 784, at: 0, seconds: 0.3, gain: 0.04, type: "triangle" },
-    { from: 1319, at: 0, seconds: 0.3, gain: 0.025 },
-    { from: 880, at: 0.18, seconds: 0.55, gain: 0.04, type: "triangle" },
-    { from: 1480, at: 0.18, seconds: 0.55, gain: 0.025 },
-  ],
-  // One low bell with a quiet overtone, left to ring out.
-  zen: [
-    { from: 440, at: 0, seconds: 1.6, gain: 0.06 },
-    { from: 1100, at: 0, seconds: 0.9, gain: 0.012 },
+  // 远山: two plucked strings a fourth apart, the second bending down as it settles.
+  koto: [
+    { from: 440, at: 0, seconds: 0.8, gain: 0.05, type: "triangle" },
+    { from: 880, at: 0, seconds: 0.3, gain: 0.012 },
+    { from: 600, to: 587, at: 0.2, seconds: 1.1, gain: 0.05, type: "triangle" },
+    { from: 1174, at: 0.2, seconds: 0.35, gain: 0.012 },
   ],
 }
 

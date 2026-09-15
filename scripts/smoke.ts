@@ -26,7 +26,7 @@ import { WebSocket } from "ws"
 import { startBackend } from "../src/server/index"
 import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
 import { readTask, smartRoute } from "../src/shared/smart"
-import { chimeOf, longTask } from "../src/shared/chime"
+import { chimeOf, longTask, migrateChime } from "../src/shared/chime"
 import { findInMessages, searchMessages, snippetAround } from "../src/server/search"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
@@ -480,8 +480,20 @@ async function main() {
     !longTask(60_000) && longTask(60_001) && !longTask(Number.NaN),
   )
   check(
-    "an unknown chime plays the default and off stays off",
-    chimeOf("bogus") === "settle" && chimeOf(undefined) === "settle" && chimeOf("off") === "off" && chimeOf("zen") === "zen",
+    "an unknown chime plays the default 晨曦 and off stays off",
+    chimeOf("bogus") === "bloom" && chimeOf(undefined) === "bloom" && chimeOf("off") === "off" && chimeOf("koto") === "koto",
+  )
+  // R2: a figure chosen from the retired five keeps being a choice, moved to its nearest of MiMo's eight.
+  check(
+    "a stored chime from the old five moves to its nearest new one; off and new ids stay",
+    migrateChime("settle") === "bloom" &&
+      migrateChime("triple") === "vibes" &&
+      migrateChime("sweep") === "harp" &&
+      migrateChime("duet") === "kalimba" &&
+      migrateChime("zen") === "bowl" &&
+      migrateChime("off") === "off" &&
+      migrateChime("handpan") === "handpan" &&
+      migrateChime("nonsense") === "bloom",
   )
 
   /*
