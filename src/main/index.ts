@@ -449,6 +449,17 @@ function createWindow(show = true): BrowserWindow {
   window.on("closed", () => windows.delete(window))
 
   /*
+   * MiMo's session-end: Windows is shutting down or logging off. That is a
+   * quit, so the close rule below lets the window go instead of hiding it to
+   * the tray, which would otherwise hold up the shutdown.
+   */
+  window.on("session-end", () => {
+    console.info("[quit] session-end (OS shutdown or logoff)")
+    quitting = true
+    beginIntentionalQuit()
+  })
+
+  /*
    * MiMo's close rule: the last window hides to the tray (always, on macOS)
    * instead of closing, and the app keeps running. A quit in progress, or any
    * other window still open, closes as usual. window-state's own close listener
