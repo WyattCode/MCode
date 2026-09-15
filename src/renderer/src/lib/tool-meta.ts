@@ -1,5 +1,5 @@
 import type { PermissionRecord, ToolPart } from "@shared/protocol"
-import { SUBAGENT_ACTIONS, taskAction } from "@shared/subagent"
+import { SUBAGENT_ACTIONS, actorAction, actorTarget } from "@shared/subagent"
 import { t } from "./i18n"
 
 /**
@@ -40,7 +40,7 @@ export const OUTPUT_CAP = 3000
 
 /** The tools the tables name in every state. `apply_patch` speaks as an edit. */
 // session chat: `contacts` is the one of its four tools MiMo's step tables name.
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task", "pdf_locate", "present_files", "contacts", "skill", "skill_search"])
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
@@ -114,13 +114,13 @@ export function toolVerb(name: string, state: StepState): string {
 }
 
 /**
- * subagents: a row's verb, with MiMo's words for a task call that named its
+ * subagents: a row's verb, with MiMo's words for an actor call that named its
  * action - 检查子任务状态, 等待子任务, 向子任务发送消息 and so on. A spawn, a call
- * with no action, and one refused for its arguments keep the task tool's own.
+ * with no action, and one refused for its arguments keep the actor tool's own.
  */
 export function stepVerb(part: ToolPart, state: StepState): string {
   const action = part.input?.action
-  if (part.name === "task" && state !== "skipped" && typeof action === "string" && action !== "spawn" && SUBAGENT_ACTIONS.some((known) => known === action)) {
+  if (part.name === "actor" && state !== "skipped" && typeof action === "string" && action !== "spawn" && SUBAGENT_ACTIONS.some((known) => known === action)) {
     return t(`toolLabel.subagentAction.${action}.${state}`)
   }
   return toolVerb(part.name, state)
@@ -192,11 +192,11 @@ export function stepTitle(part: ToolPart): string {
     case "list":
       return text(input.path) || part.title || ""
     // subagents: a call that starts one is named by its description; one about a subagent by the one it names; models by nothing.
-    case "task": {
-      const action = taskAction(input)
+    case "actor": {
+      const action = actorAction(input)
       if (action === "run" || action === "spawn") return text(input.description) || part.title || ""
       if (action === "models") return ""
-      return part.title || text(input.subagent_id)
+      return part.title || actorTarget(input)
     }
     case "pdf_locate":
       return text(input.snippet).slice(0, LOCATE_TITLE_MAX)

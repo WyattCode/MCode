@@ -25,6 +25,7 @@ import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
+import { readLegacyMessage } from "@shared/subagent"
 
 export const useApp = defineStore("app", () => {
   const client = shallowRef<Client>()
@@ -541,6 +542,8 @@ export const useApp = defineStore("app", () => {
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
       case "message.updated": {
+        // subagents: a saved subagent call from before the actor rename reads as an actor call.
+        event.message = readLegacyMessage(event.message)
         /*
          * subagents: news of background subagents can wake an idle conversation,
          * a turn the window did not send. It is marked busy when that turn's
@@ -967,9 +970,9 @@ export const useApp = defineStore("app", () => {
     }
     track(sessionID)
     recent.value = [sessionID, ...recent.value.filter((id) => id !== sessionID)].slice(0, 50)
-    messages.value = result.messages
+    messages.value = result.messages.map(readLegacyMessage)
     partIndex.clear()
-    result.messages.forEach(reindex)
+    messages.value.forEach(reindex)
     error.value = undefined
     noteError(sessionID, undefined)
     /*
@@ -995,9 +998,9 @@ export const useApp = defineStore("app", () => {
       .request({ type: "session.get", sessionID })
       .catch(() => undefined)
     if (!result || currentID.value !== sessionID) return
-    messages.value = result.messages
+    messages.value = result.messages.map(readLegacyMessage)
     partIndex.clear()
-    result.messages.forEach(reindex)
+    messages.value.forEach(reindex)
   }
 
   async function create(directory?: string, options: { scratch?: boolean } = {}) {
@@ -1776,8 +1779,9 @@ export const useApp = defineStore("app", () => {
     const result = await api().request({ type: "session.get", sessionID }).catch(() => undefined)
     if (!result || sideTranscripts.value[sessionID]) return
     sidePartIndexes.delete(sessionID)
-    result.messages.forEach((message) => sideReindex(sessionID, message))
-    sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: result.messages }
+    const read = result.messages.map(readLegacyMessage)
+    read.forEach((message) => sideReindex(sessionID, message))
+    sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: read }
   }
 
   /** subagents: reads a subagent's transcript, for the 子智能体 tab; false when it could not be read. */

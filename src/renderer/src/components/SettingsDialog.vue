@@ -987,7 +987,6 @@ const TITLED_BUCKETS = new Set<string>([
   "grep",
   "list",
   "bash",
-  "todowrite",
   "webfetch",
   "outside",
 ])
@@ -4727,8 +4726,8 @@ h3 {
   filter: brightness(1.08);
 }
 
-/* Nine of these are now words rather than identifiers, so the monospace face
-   that made `todowrite` legible is only right for the two that stayed raw. */
+/* Eight of these are words rather than identifiers, so the monospace face is
+   only right for the two that stayed raw. */
 .tool {
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
