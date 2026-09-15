@@ -143,7 +143,7 @@ for (const family of FAMILIES) {
  * where every other row shows a word, and a title appearing for `write` or
  * `mcp` is a hand-written string that came from nowhere.
  */
-const TITLED_BUCKETS = ["read", "edit", "glob", "grep", "list", "bash", "todowrite", "webfetch", "outside"]
+const TITLED_BUCKETS = ["read", "edit", "glob", "grep", "list", "bash", "webfetch", "outside"]
 const UNTITLED_BUCKETS = ["write", "mcp"]
 
 for (const bucket of TITLED_BUCKETS) {

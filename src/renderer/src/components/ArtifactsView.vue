@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
@@ -81,6 +81,18 @@ const shown = computed(() => (kind.value === "all" ? found.value : found.value.f
 const limit = ref(ARTIFACT_PAGE)
 watch([kind, needle], () => (limit.value = ARTIFACT_PAGE))
 const visible = computed(() => shown.value.slice(0, limit.value))
+
+/* MiMo's 加载中…: the button is off, and says so, until the next fifty are drawn. */
+const loadingMore = ref(false)
+async function loadMore() {
+  if (loadingMore.value) return
+  loadingMore.value = true
+  // A frame for the disabled button to show before the next page's tiles are laid out.
+  await new Promise((resolve) => requestAnimationFrame(resolve))
+  limit.value += ARTIFACT_PAGE
+  await nextTick()
+  loadingMore.value = false
+}
 
 const counts = computed(() => ({
   all: found.value.length,
@@ -365,7 +377,9 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
       </div>
 
       <div v-if="!failed && shown.length > visible.length" class="more">
-        <button type="button" class="page-btn" data-act="load-more" @click="limit += ARTIFACT_PAGE">{{ t("art.loadMore") }}</button>
+        <button type="button" class="page-btn" data-act="load-more" :disabled="loadingMore" @click="loadMore">
+          {{ t(loadingMore ? "art.loadingMore" : "art.loadMore") }}
+        </button>
       </div>
     </div>
   </div>
@@ -802,5 +816,9 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
 
 .page-btn:hover {
   background: var(--surface-hover);
+}
+
+.page-btn:disabled {
+  opacity: 0.5;
 }
 </style>

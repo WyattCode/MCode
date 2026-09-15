@@ -26,7 +26,9 @@ import { WebSocket } from "ws"
 import { startBackend } from "../src/server/index"
 import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
 import { readTask, smartRoute } from "../src/shared/smart"
-import { chimeOf, longTask } from "../src/shared/chime"
+import { chimeOf, longTask, migrateChime } from "../src/shared/chime"
+import { audioVerdict, isAudioFile, limitMinutes } from "../src/renderer/src/lib/audio-check"
+import { draftFileOf, emptyDraftFile, isEmptyDraftFile, readDraftFile, withLegacyHome, type SavedDraft } from "../src/renderer/src/lib/draft-file"
 import { findInMessages, searchMessages, snippetAround } from "../src/server/search"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
@@ -85,12 +87,12 @@ import { ToolError } from "../src/server/tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
 import { RETRY_BUDGETS, isRetryable, retryDecision } from "../src/server/session/retry"
 import { ProviderHttpError } from "../src/server/provider/types"
-import type { PermissionRecord } from "../src/shared/protocol"
+import type { Annotation, PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
+import { accessAction, defaultAccess, sessionAccess } from "../src/shared/access"
 import {
-  accessOf,
   accessPatch,
   fullAccessOff,
   composerAnswers,
@@ -118,6 +120,9 @@ import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
 import { sessionArtifacts, sessionReferences } from "../src/shared/session-files"
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
+import type { TaskItem } from "../src/shared/protocol"
+import { TASK_ARCHIVE_MS, applyTask, listedTasks, nextTaskID } from "../src/server/tool/task"
+import { buildRows } from "../src/renderer/src/lib/step-rows"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
 import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -135,7 +140,7 @@ import {
   type OAuthProvider,
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
-import { arbitratePanel, boundChord, sideFits, toolHints } from "../src/renderer/src/lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, sideFits, sideWidthMax, toolHints } from "../src/renderer/src/lib/right-tools"
 import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
 import { capDiff, normalizeLayout, parseDiffFiles, reviewRows, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
@@ -177,7 +182,8 @@ import { Config as SubagentConfig } from "../src/server/config"
 import { SessionStore as SubagentStore } from "../src/server/session/store"
 import { SessionRunner as SubagentRunner } from "../src/server/session/runner"
 import { reachOf } from "../src/server/tool/registry"
-import { SUBAGENT_TIMERS, isStalled, noticeText, subagentAnswer, subagentOutput, subagentTone, taskAction } from "../src/shared/subagent"
+import { SUBAGENT_TIMERS, isStalled, noticeText, subagentAnswer, subagentOutput, subagentTone, actorAction, answerSummary, readLegacyMessage, statusHeader } from "../src/shared/subagent"
+import { STRUCTURED_REMINDER } from "../src/server/tool/subagent"
 import { COMPLETED_CAP, isPill, noticeStatus, pillStatus, subagentItems, subagentTime } from "../src/renderer/src/lib/subagents"
 import { stepTitle as subagentStepTitle, stepVerb as subagentStepVerb } from "../src/renderer/src/lib/tool-meta"
 import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStatus } from "../src/shared/protocol"
@@ -211,6 +217,12 @@ import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/li
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
 import { roundFiveChecks } from "./smoke-round5"
+// skills: discovery, frontmatter and the slash list.
+import { parseFrontmatter } from "../src/server/frontmatter"
+import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
+import { listCommands } from "../src/server/command"
+import { SEARCH, SKILL_FILE_SAMPLE, SkillSearchTool, SkillTool, searchSkills, searchTokens } from "../src/server/tool/skill"
+import { stepTitle as skillStepTitle, toolVerb as skillToolVerb } from "../src/renderer/src/lib/tool-meta"
 
 let passed = 0
 let failed = 0
@@ -461,6 +473,12 @@ async function main() {
   check("480 left for the conversation keeps both open", arbitratePanel({ ...crampedRoom, viewport: 1236 }, false) === "none")
   check("an expanded panel is left out of the narrow-window rule", arbitratePanel({ ...crampedRoom, fullscreen: true }, false) === "none")
   check("a folded side column fits again only once there is room", sideFits({ ...crampedRoom, viewport: 1300 }) && !sideFits(crampedRoom))
+  // R5: MiMo's side column drag - 160 to 420 past the rail, less where the conversation's 480 and the panel need it.
+  check("the side column is dragged no wider than 420 on a wide window", sideWidthMax(2400, 380) === 420 && clampSideWidth(900, 2400, 380) === 420)
+  check("the side column is dragged no narrower than 160", clampSideWidth(40, 2400, 0) === 160)
+  check("a window beside an open panel narrows the side column's limit", sideWidthMax(1200, 380) === 1200 - 62 - 380 - 480 && clampSideWidth(400, 1200, 380) === 278)
+  check("a very narrow window still allows 160", sideWidthMax(700, 380) === 160 && clampSideWidth(300, 700, 380) === 160)
+  check("an unreadable stored width is the default 194", clampSideWidth(NaN, 1600, 0) === 194 && clampSideWidth(250.4, 1600, 0) === 250)
 
   const noticeOnce = notify("Copied")
   const noticeTwice = notify("Copied")
@@ -491,9 +509,70 @@ async function main() {
     !longTask(60_000) && longTask(60_001) && !longTask(Number.NaN),
   )
   check(
-    "an unknown chime plays the default and off stays off",
-    chimeOf("bogus") === "settle" && chimeOf(undefined) === "settle" && chimeOf("off") === "off" && chimeOf("zen") === "zen",
+    "an unknown chime plays the default 晨曦 and off stays off",
+    chimeOf("bogus") === "bloom" && chimeOf(undefined) === "bloom" && chimeOf("off") === "off" && chimeOf("koto") === "koto",
   )
+  // R2: a figure chosen from the retired five keeps being a choice, moved to its nearest of MiMo's eight.
+  check(
+    "a stored chime from the old five moves to its nearest new one; off and new ids stay",
+    migrateChime("settle") === "bloom" &&
+      migrateChime("triple") === "vibes" &&
+      migrateChime("sweep") === "harp" &&
+      migrateChime("duet") === "kalimba" &&
+      migrateChime("zen") === "bowl" &&
+      migrateChime("off") === "off" &&
+      migrateChime("handpan") === "handpan" &&
+      migrateChime("nonsense") === "bloom",
+  )
+
+  // R15: MiMo reads attached audio before a send; only a file it cannot read, or one past ten minutes, stops it.
+  check(
+    "only MiMo's six audio extensions are read before a send",
+    isAudioFile("C:/a/Voice.M4A") && isAudioFile("clip.flac") && !isAudioFile("clip.mp4") && !isAudioFile("notes.wav.txt"),
+  )
+  check(
+    "an unreadable clip stops the send, a clip past ten minutes stops it, anything else goes",
+    audioVerdict({ ok: false, unsupported: true }) === "unsupported" &&
+      audioVerdict({ ok: true, durationMs: 600_001 }) === "tooLong" &&
+      audioVerdict({ ok: true, durationMs: 600_000 }) === "ok" &&
+      audioVerdict({ ok: false, unsupported: false }) === "ok" &&
+      audioVerdict(undefined) === "ok" &&
+      limitMinutes() === 10,
+  )
+
+  // R1: MiMo's saved composer input - every box's draft, its files and chips, and the annotations waiting.
+  {
+    const note = { id: "a1", kind: "answer", text: "why", quote: "x" } as Annotation
+    const kept = new Map<string, SavedDraft>([
+      ["home", { text: "hi", attachments: [], mentioned: [], skills: [] }],
+      ["main:s1", { text: "", attachments: [{ path: "C:/a.png", mime: "image/png", data: "AAAA" }], mentioned: [], skills: ["review"] }],
+      ["main:empty", { text: "", attachments: [], mentioned: ["x"], skills: [] }],
+    ])
+    const file = draftFileOf(kept, { s1: [note], s2: [] }, "main:s1")
+    check(
+      "drafts with words, files or chips are written and empty ones are not",
+      Object.keys(file.drafts).sort().join(",") === "home,main:s1" && Object.keys(file.annotations).join(",") === "s1" && file.current === "main:s1",
+    )
+    check("the saved input reads back as it was written", JSON.stringify(readDraftFile(JSON.stringify(file))) === JSON.stringify(file))
+    let threw = false
+    try {
+      readDraftFile("{broken")
+    } catch {
+      threw = true
+    }
+    check("a file of another version reads as nothing, and one that is not JSON throws", readDraftFile('{"v":2,"drafts":{}}') === undefined && threw)
+    check(
+      "malformed entries are left out",
+      Object.keys(readDraftFile(JSON.stringify({ v: 1, drafts: { a: { text: 5, attachments: [{ path: 1 }] }, b: { text: "ok" } }, annotations: { s: [{ id: 1 }] } }))?.drafts ?? {}).join(",") === "b",
+    )
+    check(
+      "the old home draft is folded in, never over home words already saved",
+      withLegacyHome(emptyDraftFile(), "old words").drafts.home?.text === "old words" &&
+        withLegacyHome(file, "old words").drafts.home?.text === "hi" &&
+        withLegacyHome(emptyDraftFile(), "").drafts.home === undefined,
+    )
+    check("an empty state is recognised, so a failed load is never written over with one", isEmptyDraftFile(draftFileOf(new Map(), {})) && !isEmptyDraftFile(file))
+  }
 
   /*
    * The composer's middle access level. The classifier lets everyday commands
@@ -728,11 +807,10 @@ async function main() {
   const list = await findTool("list")!.execute({}, context("c4"))
   check("list renders a tree", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
 
-  const todo = await findTool("todowrite")!.execute(
-    { todos: [{ id: "1", content: "Write the thing", status: "in_progress" }] },
-    context("c5"),
-  )
-  check("todowrite summarizes progress", todo.output === "0/1 complete.", todo.output)
+  const taskless = await findTool("task")!
+    .execute({ action: "create", summary: "Write the thing" }, context("c5"))
+    .then(() => "", (err: Error) => err.message)
+  check("the task tool needs a conversation's registry to work on", taskless.includes("not available"), taskless)
 
   /*
    * Traversal must never proceed silently, however it is spelled. It is no
@@ -981,7 +1059,7 @@ async function main() {
     const allAllowed = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"]))
     check(
       "the level is read the way the composer chip reads it",
-      accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
+      defaultAccess({ accessLevel: "auto" }) === "auto" && defaultAccess({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && defaultAccess({ permissions: allAllowed }) === "full",
     )
 
     section("round 5: turning off the full access switch (D2)")
@@ -990,7 +1068,7 @@ async function main() {
       const toFull = accessPatch({ permissions: mine, accessLevel: "ask" }, "full")!
       check(
         "full allows every bucket but a deny, and keeps the map it replaced",
-        accessOf(toFull) === "full" && toFull.permissions.webfetch === "deny" && toFull.accessBefore?.bash === "allow",
+        defaultAccess(toFull) === "full" && toFull.permissions.webfetch === "deny" && toFull.accessBefore?.bash === "allow",
         toFull,
       )
       const off = fullAccessOff({ ...toFull })
@@ -999,7 +1077,7 @@ async function main() {
         off.dropped &&
           off.patch.allowFullAccess === false &&
           off.patch.accessLevel === "ask" &&
-          accessOf(off.patch) === "ask" &&
+          defaultAccess(off.patch) === "ask" &&
           off.patch.permissions?.bash === "allow" &&
           off.patch.permissions?.edit === PERMISSION_DEFAULTS.edit &&
           off.patch.accessBefore === undefined,
@@ -1056,6 +1134,41 @@ async function main() {
     gate.rejectAll("s-guide")
     await deleteAsk
     stopEdit()
+
+    // R3: MiMo keeps the access level per conversation; one without follows the default.
+    const own = { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: true }
+    check(
+      "a conversation without a level of its own follows the default",
+      sessionAccess(undefined, own) === "ask" && sessionAccess(undefined, { ...own, accessLevel: "auto" }) === "auto" && sessionAccess("bogus", own) === "ask",
+    )
+    check(
+      "a conversation's own level wins over the default",
+      sessionAccess("auto", own) === "auto" && sessionAccess("full", own) === "full" && sessionAccess("ask", { ...own, accessLevel: "auto" }) === "ask",
+    )
+    check("its own full access lapses once full access is not allowed", sessionAccess("full", { ...own, allowFullAccess: false }) === "ask")
+    const fullDefault = { permissions: { ...allAllowed, bash: "deny" }, accessBefore: { ...PERMISSION_DEFAULTS }, allowFullAccess: true }
+    check(
+      "below full access a conversation runs on the map full access set aside, and a refusal holds at every level",
+      defaultAccess(fullDefault) === "full" &&
+        accessAction("edit", "ask", fullDefault) === PERMISSION_DEFAULTS.edit &&
+        accessAction("edit", "full", fullDefault) === "allow" &&
+        accessAction("bash", "ask", fullDefault) === "deny" &&
+        accessAction("bash", "full", fullDefault) === "deny",
+    )
+    const levelsBus = new Bus()
+    const levels: Record<string, string | undefined> = { "s-own": "auto" }
+    const levelGate = new Permissions(levelsBus, { get: () => ({ ...own }) } as never)
+    levelGate.useSessions(async (id) => levels[id])
+    const editIn = (sessionID: string) => levelGate.ask({ sessionID, messageID: "m", callID: `c-${sessionID}`, kind: "edit", title: "t", subject: "a.ts" })
+    const within = (promise: Promise<void>) => Promise.race([promise.then(() => "ran"), new Promise((resolve) => setTimeout(() => resolve("waiting"), 50))])
+    const waitingEdit = editIn("s-other")
+    check(
+      "an edit runs in the conversation on 帮我审批 and waits in one on the default",
+      (await within(editIn("s-own"))) === "ran" && (await within(waitingEdit)) === "waiting",
+    )
+    levels["s-other"] = "full"
+    levelsBus.publish({ type: "session.updated", session: {} as never })
+    check("raising that one conversation's level lets its waiting edit through", (await within(waitingEdit)) === "ran" && levelGate.outstanding().length === 0)
   }
 
   section("Tool arguments")
@@ -1066,7 +1179,8 @@ async function main() {
     check("a missing required field is named", missing.length === 1 && missing[0] === "path is required", missing)
     const wrong = argumentProblems(readSchema, { path: 5 })
     check("a wrong type is named with what arrived", wrong[0] === "path should be string, got integer", wrong)
-    const todos = argumentProblems(findTool("todowrite")!.parameters, {
+    const nestedEnum = { type: "object", properties: { todos: { type: "array", items: { type: "object", properties: { status: { type: "string", enum: ["pending", "done"] } } } } } }
+    const todos = argumentProblems(nestedEnum, {
       todos: [{ id: "1", content: "x", status: "doing" }],
     })
     check("a nested enum is checked", todos.length === 1 && todos[0]!.startsWith("todos[0].status should be one of"), todos)
@@ -4349,10 +4463,24 @@ async function main() {
     check("an attachment is an upload", refs.uploads.length === 1 && refs.uploads[0] === "brief.pdf", refs)
     check("project files leave out what was written and what was uploaded", refs.project.join() === "docs/guide.md", refs)
 
-    const idle = infoTasks(said, false)
-    check("todowrite statuses read as MiMo's", idle.map((task) => task.status).join() === "done,stalled,open", idle)
+    const idle = infoTasks(undefined, said, false)
+    check("a saved todowrite plan still reads, in MiMo's statuses", idle.map((task) => task.status).join() === "done,stalled,open", idle)
     check("a child is drawn under its parent", idle[2]?.depth === 1, idle)
-    check("in progress during the turn that wrote it stays in progress", infoTasks(said, true)[1]?.status === "in_progress")
+    check("in progress during the turn that wrote it stays in progress", infoTasks(undefined, said, true)[1]?.status === "in_progress")
+    const week = 7 * 24 * 60 * 60 * 1000
+    const now = 30 * week
+    const registry: TaskItem[] = [
+      { id: "T1", summary: "plan", status: "done", created: 1, updated: now - 1000, ended: now - 1000 },
+      { id: "T2", summary: "build", status: "in_progress", created: 1, updated: 5 },
+      { id: "T2.1", summary: "ship", status: "blocked", parentID: "T2", created: 1, updated: 5 },
+      { id: "T3", summary: "long gone", status: "abandoned", created: 1, updated: 1, ended: now - week - 1 },
+    ]
+    const drawn = infoTasks(registry, said, false, now)
+    check(
+      "the card draws the conversation's task registry over any saved plan, nested, with finished tasks gone after a week",
+      drawn.map((task) => `${task.id}:${task.status}:${task.depth}`).join() === "T1:done:0,T2:stalled:0,T2.1:blocked:1",
+      drawn,
+    )
   }
 
   // ------------------------------------------------- chatgpt adapter ------
@@ -5514,12 +5642,216 @@ async function main() {
   await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
+  await skillChecks(root)
+  taskChecks()
   // round 5: the turn loop, providers, context and prompt, in their own file; its provider answers title requests apart.
   delete process.env.MCODE_GENERATE_TITLES
   await roundFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/** tasks: MiMo's task registry, as pure changes to a list. */
+function taskChecks() {
+  section("Tasks (registry)")
+  let list: TaskItem[] = []
+  const main = { owner: "main", subagent: false, now: 1000 }
+  const act = (input: Record<string, unknown>, who = main) => {
+    const applied = applyTask(list, input, who)
+    list = applied.tasks
+    return applied.result
+  }
+  const refused = (input: Record<string, unknown>) => {
+    try {
+      act(input)
+      return ""
+    } catch (err) {
+      return (err as Error).message
+    }
+  }
+  act({ action: "create", summary: "Alpha" })
+  act({ action: "create", summary: "Beta" })
+  act({ action: "create", summary: "Alpha one", parent_id: "T1" })
+  const second = act({ action: "create", summary: "Alpha two", parent_id: "T1" })
+  check("ids are T1, T2 at the top and T1.1, T1.2 under a task", list.map((task) => task.id).join() === "T1,T2,T1.1,T1.2" && second.output === "Created T1.2 (open): Alpha two", list.map((task) => task.id))
+  check("the next id is one past the highest used at that level", nextTaskID("T1", ["T1.1", "T1.3", "T1.3.1"]) === "T1.4" && nextTaskID(undefined, ["T1", "T3", "T3.1"]) === "T4")
+  act({ action: "start", id: "T1" })
+  check("start marks a task in progress for whoever starts it", list[0]?.status === "in_progress" && list[0].owner === "main")
+  check("starting one already in progress changes nothing", act({ action: "start", id: "T1" }).output.includes("already"))
+  act({ action: "start", id: "T1" }, { owner: "general-1", subagent: true, now: 1100 })
+  check("a subagent starting a task someone else holds leaves it with its holder", list[0]?.owner === "main")
+  act({ action: "block", id: "T2", event_summary: "waiting on a reply" })
+  check("block marks a task blocked and keeps the note", list[1]?.status === "blocked" && list[1].note === "waiting on a reply")
+  act({ action: "unblock", id: "T2" })
+  check("unblock puts it back to open", list[1]?.status === "open")
+  act({ action: "done", id: "T1.1" }, { ...main, now: 2000 })
+  act({ action: "abandon", id: "T1.2" }, { ...main, now: 2000 })
+  check("done and abandon end a task", list[2]?.status === "done" && list[2].ended === 2000 && list[3]?.status === "abandoned")
+  check("a finished task is not started again", act({ action: "start", id: "T1.1" }).output.includes("left as it is") && list[2]?.status === "done")
+  act({ action: "rename", id: "T2", summary: "Beta, renamed" })
+  check("rename changes the summary", list[1]?.summary === "Beta, renamed")
+  check("list shows open, in-progress and blocked tasks unless asked for more", act({ action: "list" }).output === "T1 in_progress - Alpha\nT2 open - Beta, renamed")
+  check("include_terminal adds done and abandoned ones, and status filters", act({ action: "list", include_terminal: true }).output.split("\n").length === 4 && act({ action: "list", status: "open" }).output === "T2 open - Beta, renamed")
+  check("finished tasks drop out after a week unless archived ones are asked for", listedTasks(list, { includeTerminal: true }, 2000 + TASK_ARCHIVE_MS).length === 2 && listedTasks(list, { includeTerminal: true, includeArchived: true }, 2000 + TASK_ARCHIVE_MS).length === 4)
+  check("get shows a task in full, and an unknown one says so without failing", JSON.parse(act({ action: "get", id: "T2" }).output).summary === "Beta, renamed" && act({ action: "get", id: "T7" }).output.includes("no task T7"))
+  check("changing a task that does not exist is refused", refused({ action: "done", id: "T7" }).includes("no task T7") && refused({ action: "launch" }).includes("Unknown action"))
+  check("the task tool replaces todowrite, and its permission row goes with it", Boolean(findTool("task")) && !findTool("todowrite") && !(PERMISSION_KINDS as readonly string[]).includes("todowrite"))
+}
+
+/** skills: where they are found, what their frontmatter may say, and how they reach the slash list. */
+async function skillChecks(root: string) {
+  section("Skills (discovery and frontmatter)")
+  const read = parseFrontmatter(
+    [
+      "---",
+      "name: demo",
+      'description: "Makes: things"',
+      "aliases: [one, 'two', \"three\"]",
+      "tags:",
+      "  - a",
+      "  - b",
+      "disable-model-invocation: true",
+      "long: first part",
+      "  second part",
+      "folded: >-",
+      "  line one",
+      "  line two",
+      "literal: |",
+      "  keep",
+      "  lines",
+      "metadata:",
+      "  author: me",
+      "  version: 1.0.0",
+      "---",
+      "Body here",
+    ].join("\n"),
+  )
+  check("frontmatter reads quoted, listed, flagged and multi-line values", !read.error && read.data.description === "Makes: things" && JSON.stringify(read.data.aliases) === '["one","two","three"]' && JSON.stringify(read.data.tags) === '["a","b"]' && read.data["disable-model-invocation"] === true, read)
+  check("a plain value carried over lines folds, `>-` folds and `|` keeps its lines", read.data.long === "first part second part" && read.data.folded === "line one line two" && read.data.literal === "keep\nlines\n", read.data)
+  check("a one-level map is read and the body follows the block", (read.data.metadata as Record<string, unknown>)?.author === "me" && read.body === "Body here", read)
+  check("frontmatter that is not key: value is an error, not a half-read", Boolean(parseFrontmatter("---\nname: x\nthis is not yaml\n---\nbody").error))
+  check("a file with no frontmatter is all body", parseFrontmatter("# Title\n").body === "# Title\n")
+
+  const base = path.join(root, "skills-case")
+  const builtin = path.join(base, "builtin")
+  const storage = path.join(base, "storage")
+  const outer = path.join(base, "outer")
+  const repo = path.join(outer, "repo")
+  const nested = path.join(repo, "packages", "app")
+  const write = async (file: string, text: string) => {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, text)
+  }
+  const skill = (name: string, description: string | undefined, extra = "", body = `Body of ${name}.`) =>
+    `---\nname: ${name}\n${description === undefined ? "" : `description: ${description}\n`}${extra}---\n${body}\n`
+  await write(path.join(builtin, "alpha", "SKILL.md"), skill("alpha", "shipped alpha"))
+  await write(path.join(builtin, "shipped", "SKILL.md"), skill("shipped", "only shipped"))
+  await write(path.join(storage, "skills", "alpha", "SKILL.md"), skill("alpha", "user alpha"))
+  await write(path.join(storage, "skill", "beta", "SKILL.md"), skill("beta", "global beta", "aliases:\n  - bee\n"))
+  await fs.mkdir(path.join(repo, ".git"), { recursive: true })
+  await write(path.join(repo, ".mcode", "skills", "gamma", "SKILL.md"), skill("gamma", "repo gamma"))
+  await write(path.join(nested, ".mcode", "skill", "gamma", "SKILL.md"), skill("gamma", "nested gamma"))
+  await write(path.join(nested, ".mcode", "skills", "hidden", "SKILL.md"), skill("hidden", "user only", "disable-model-invocation: true\n"))
+  await write(path.join(nested, ".mcode", "skills", "folder-x", "SKILL.md"), skill("renamed", "mismatched"))
+  await write(path.join(nested, ".mcode", "skills", "nodesc", "SKILL.md"), skill("nodesc", undefined))
+  await write(path.join(nested, ".claude", "skills", "claude-one", "SKILL.md"), skill("claude-one", "from claude"))
+  await write(path.join(nested, ".agents", "skills", "agents-one", "SKILL.md"), skill("agents-one", "from agents"))
+  await write(path.join(outer, ".mcode", "skills", "above", "SKILL.md"), skill("above", "above the repository"))
+
+  const found = await discoverSkills({ directory: nested, storageDirectory: storage, builtinRoot: builtin })
+  const named = (name: string) => found.skills.find((entry) => entry.name === name)
+  check("shipped, global and project skills are all found", Boolean(named("shipped") && named("beta") && named("gamma")), found.skills.map((entry) => entry.name))
+  check("a user skill replaces a shipped one of the same name", named("alpha")?.description === "user alpha" && named("alpha")?.builtin === false, named("alpha"))
+  check("a shipped skill is marked built-in", named("shipped")?.builtin === true)
+  check("the nearer project folder wins a name", named("gamma")?.description === "nested gamma", named("gamma"))
+  check("aliases are read as a list", JSON.stringify(named("beta")?.aliases) === '["bee"]', named("beta"))
+  check("disable-model-invocation is read", named("hidden")?.disableModelInvocation === true)
+  check(".claude and .agents folders are not read, as MiMo's desktop turns them off", !named("claude-one") && !named("agents-one"))
+  check("the walk stops at the repository root", !named("above"))
+  check("a skill with no description is skipped and reported", !named("nodesc") && found.problems.some((problem) => problem.path.includes("nodesc") && /description/.test(problem.message)), found.problems)
+  check("a name that does not match its folder is reported but still loads", Boolean(named("renamed")) && found.problems.some((problem) => problem.path.includes("folder-x")), found.problems)
+  check("the body is the content, frontmatter removed", named("gamma")?.content.trim() === "Body of gamma.", named("gamma")?.content)
+  check("a found skill's folder is not outside the project", isSkillPath(path.join(named("gamma")!.directory, "scripts", "x.py")) && !isSkillPath(path.join(base, "elsewhere")))
+
+  process.env.MCODE_BUILTIN_SKILLS = builtin
+  try {
+    const commands = await listCommands(
+      { config: { get: () => ({}) }, mcp: { prompts: async () => ({}), getPrompt: async () => "" }, storage: { directory: storage } },
+      nested,
+    )
+    const slash = (name: string) => commands.find((entry) => entry.name === name)
+    check("a skill's command template is its body only", slash("gamma")?.template.trim() === "Body of gamma." && !slash("gamma")?.template.includes("Base directory"), slash("gamma"))
+    check("a shipped skill's command is marked built-in and a user one is not", slash("shipped")?.builtin === true && !slash("gamma")?.builtin, [slash("shipped"), slash("gamma")])
+    check("a user-only skill is still in the slash list", slash("hidden")?.source === "skill")
+  } finally {
+    delete process.env.MCODE_BUILTIN_SKILLS
+  }
+
+  section("Skills (tools, prompt and /name)")
+  const skills = found.skills
+  const toolContext = { skills: async () => skills } as never
+  for (let at = 0; at < 12; at++) await write(path.join(named("gamma")!.directory, "scripts", `s${String(at).padStart(2, "0")}.py`), "print(1)\n")
+  const loaded = await SkillTool.execute({ name: "gamma" }, toolContext)
+  check("skill loads a skill's instructions with its folder", loaded.output.includes("Body of gamma.") && loaded.output.includes("loaded_skill") && loaded.output.includes("file:"), loaded.output)
+  check("skill lists at most ten of its files, never SKILL.md itself", (loaded.output.match(/<file>/g) ?? []).length === SKILL_FILE_SAMPLE && !/<file>[^<]*SKILL\.md</.test(loaded.output))
+  check("a load is titled by the skill", loaded.title === "gamma")
+  const refusal = await SkillTool.execute({ name: "hidden" }, toolContext).then(() => "", (err: Error) => err.message)
+  check("skill refuses a user-only skill and says to type /name", refusal.includes("/hidden"), refusal)
+  const unknown = await SkillTool.execute({ name: "nope" }, toolContext).then(() => "", (err: Error) => err.message)
+  check("an unknown name lists the skills that can be loaded, without the user-only ones", unknown.includes("gamma") && !unknown.includes("hidden"), unknown)
+  check("MiMo's search figures: three results, 0.85 loads, BM25 1.5 / 0.75 / 0.5, weights 0.55 and 0.35", SEARCH.maxResults === 3 && SEARCH.autoLoad === 0.85 && SEARCH.k1 === 1.5 && SEARCH.lengthWeight === 0.75 && SEARCH.smoothing === 0.5 && SEARCH.scoreWeight === 0.55 && SEARCH.coverageWeight === 0.35)
+  check("search words drop a plural s and read Chinese in pairs", searchTokens("documents 表格处理").join() === "document,表格,格处,处理", searchTokens("documents 表格处理"))
+  const byAlias = await SkillSearchTool.execute({ query: "I need the bee skill" }, toolContext)
+  check("a query naming an alias loads that skill outright", byAlias.metadata?.loaded === "beta" && byAlias.output.includes("Body of beta."), byAlias.metadata)
+  const none = await SkillSearchTool.execute({ query: "zzzz qqqq" }, toolContext)
+  check("a query matching nothing says no_match", JSON.parse(none.output).status === "no_match")
+  check("search never returns a user-only skill", !searchSkills("user only hidden", skills.filter((entry) => !entry.disableModelInvocation)).some((entry) => entry.name === "hidden") && (await SkillSearchTool.execute({ query: "hidden user only" }, toolContext)).metadata?.loaded !== "hidden")
+  check("search keeps at most three results", searchSkills("skill", skills.map((entry) => ({ ...entry, description: "skill skill" }))).length <= 3)
+
+  const once = skillReminders("/gamma please, and `/beta` in code\n```\n/alpha\n```", skills)
+  check("/name in a message loads that skill, but not a name inside code", once.length === 1 && once[0]!.includes("Body of gamma."), once)
+  check("a user-only skill loads when the user types its name", skillReminders("run /hidden now", skills).some((entry) => entry.includes("Body of hidden.")))
+  const many = skillReminders("/alpha /beta /gamma /shipped go", skills)
+  check("up to three load, and naming several adds a note that names the one left out", many.length === 4 && many.filter((entry) => entry.includes("loaded_skill")).length === 3 && many[3]!.includes("shipped"), many.length)
+  check("a path is not a skill", skillReminders("see src/gamma and C:/gamma", skills).length === 0)
+  const sent = withSkillReminders([{ role: "user", text: "hi", reminders: ["R1"] }, { role: "assistant" }])
+  check("the model reads a message's reminders after its words; the transcript keeps the words", sent[0]!.text === "hi\n\nR1" && sent[1]!.role === "assistant")
+
+  const prompt = await systemPrompt({ directory: nested, agent: "build", skills })
+  check("the prompt lists the skills the model may load, with where each lives", prompt.includes("<name>gamma</name>") && prompt.includes("nested gamma") && prompt.includes("<location>file:") && !prompt.includes("<name>hidden</name>"))
+  check("with none to list, the prompt says so", (await systemPrompt({ directory: nested, agent: "build", skills: [] })).includes("No skills are available"))
+  check("skill and skill_search are offered, appended, and change nothing", TOOLS.at(-2)?.name === "skill_search" && TOOLS.at(-1)?.name === "skill" && reachOf("skill") === "reads" && reachOf("skill_search") === "reads")
+  check("plan keeps both skill tools", toolsFor("plan").some((tool) => tool.name === "skill") && toolsFor("plan").some((tool) => tool.name === "skill_search"))
+  const skillPart = (name: string, input: Record<string, unknown>): ToolPart => ({ type: "tool", id: name, callID: name, name, status: "completed", input, time: { created: 1 } })
+  check("MiMo's step words and titles for a load and a search", skillToolVerb("skill", "completed") === translate("toolLabel.done.skill") && skillToolVerb("skill_search", "running") === translate("toolLabel.running.skill_search") && skillStepTitle(skillPart("skill", { name: "gamma" })) === "gamma" && skillStepTitle(skillPart("skill_search", { query: "make a deck" })) === "make a deck")
+
+  section("Skills (built-in, and the office document hint)")
+  const shippedRoot = builtinSkillsRoot()
+  const shipped = await discoverSkills({ directory: nested, storageDirectory: path.join(base, "no-storage") })
+  const shippedSkills = shipped.skills.filter((entry) => entry.builtin)
+  const shippedNames = shippedSkills.map((entry) => entry.name)
+  check("the app ships its own skills, Word, Excel, PowerPoint and PDF among them", Boolean(shippedRoot) && ["docx", "xlsx", "pptx", "pdf"].every((name) => shippedNames.includes(name)) && shippedNames.length >= 10, shippedNames)
+  check("every shipped skill loads without a problem", !shipped.problems.some((problem) => shippedRoot && problem.path.startsWith(shippedRoot)), shipped.problems)
+  const mentionedFiles = shippedSkills.flatMap((entry) =>
+    [...entry.content.matchAll(/(?<![\w/.-])((?:scripts|references|assets)\/[\w./-]+\w)/g)].map((match) => path.join(entry.directory, match[1]!)),
+  )
+  const absentFiles = (await Promise.all(mentionedFiles.map((file) => fs.access(file).then(() => "", () => file)))).filter(Boolean)
+  check("every script a shipped skill tells the model to run is shipped with it", mentionedFiles.length >= 6 && absentFiles.length === 0, absentFiles)
+  const hinted = skillReminders("please look", shippedSkills, [
+    { path: "C:/in/report.DOCX", mime: "" },
+    { path: "numbers.csv", mime: "text/plain" },
+    { path: "scan", mime: "application/pdf" },
+    { path: "notes.txt", mime: "text/plain" },
+  ])
+  check(
+    "attaching Word, a CSV and a PDF points the model at those skills' SKILL.md, and at nothing else",
+    hinted.length === 1 && /- docx: .*SKILL\.md/.test(hinted[0]!) && /- xlsx: /.test(hinted[0]!) && /- pdf: /.test(hinted[0]!) && !/- pptx: /.test(hinted[0]!),
+    hinted,
+  )
+  check("with no office document attached, no hint", skillReminders("hello", shippedSkills, [{ path: "a.png", mime: "image/png" }]).length === 0)
+  const hintThenSkill = skillReminders("/pdf now", shippedSkills, [{ path: "a.pptx", mime: "" }])
+  check("the hint comes before a skill the message loads", hintThenSkill.length === 2 && hintThenSkill[0]!.includes("- pptx:") && hintThenSkill[1]!.includes("loaded_skill"), hintThenSkill.length)
 }
 
 /**
@@ -5775,8 +6107,8 @@ async function deliveredToolChecks(root: string) {
 
   // The registry: appended after the task tool, no permission bucket, nothing to record in undo.
   // Read from task rather than from the end: tools appended after these (session chat's) leave the prefix as it was.
-  const taskAt = TOOLS.findIndex((tool) => tool.name === "task")
-  check("the four window tools are appended after task, keeping the cached prefix", taskAt >= 0 && TOOLS.slice(taskAt, taskAt + 5).map((tool) => tool.name).join(",") === ["task", ...names].join(","), TOOLS.map((tool) => tool.name))
+  const taskAt = TOOLS.findIndex((tool) => tool.name === "actor")
+  check("the four window tools are appended after actor, keeping the cached prefix", taskAt >= 0 && TOOLS.slice(taskAt, taskAt + 5).map((tool) => tool.name).join(",") === ["actor", ...names].join(","), TOOLS.map((tool) => tool.name))
   check("none of them asks for permission, as MiMo asks none", names.every((name) => findTool(name)?.permission === undefined))
   check("none of them counts as touching the project", names.every((name) => reachOf(name) === "reads"))
 
@@ -5991,12 +6323,12 @@ async function subagentChecks(root: string) {
   check("a numbered general subagent takes its own tone", subagentTone("general-1") === 0 && subagentTone("general-6") === 5)
   check("any other name hashes onto one of six tones", [..."abcdefgh"].every((c) => subagentTone(`explore-${c}`) >= 0 && subagentTone(`explore-${c}`) < 6))
   check("the answer comes back out of the call's output", subagentAnswer(subagentOutput("ses_1", "  the answer\n")) === "the answer")
-  check("task is recorded through its subagent's own calls", reachOf("task") === "reads")
+  check("actor is recorded through its subagent's own calls", reachOf("actor") === "reads")
   const partOf = (status: ToolPart["status"], extra: Partial<ToolPart> = {}): ToolPart => ({
     type: "tool",
     id: `p-${Math.random()}`,
     callID: `c-${Math.random()}`,
-    name: "task",
+    name: "actor",
     status,
     input: { description: "Look around", prompt: "x", subagent_type: "explore" },
     time: { created: 1000, started: 1000, completed: status === "running" ? undefined : 5000 },
@@ -6036,9 +6368,9 @@ async function subagentChecks(root: string) {
   )
 
   // MiMo's actor actions: the pure pieces.
-  check("a call that names no action is a run, as the tool always was", taskAction({ description: "x" }) === "run" && taskAction({ action: "spawn" }) === "spawn" && taskAction({ action: "later" }) === "run")
-  const spawned = partOf("completed", { input: { action: "spawn", description: "Look around", prompt: "x", subagent_type: "explore" }, output: "subagent_id: explore-1" })
-  const statusRow = partOf("completed", { input: { action: "status", subagent_id: "explore-1" }, output: JSON.stringify({ status: "running" }), title: "Look around" })
+  check("a call that names no action is a run, as the tool always was", actorAction({ description: "x" }) === "run" && actorAction({ action: "spawn" }) === "spawn" && actorAction({ action: "later" }) === "run")
+  const spawned = partOf("completed", { input: { action: "spawn", description: "Look around", prompt: "x", subagent_type: "explore" }, output: "actor_id: explore-1" })
+  const statusRow = partOf("completed", { input: { action: "status", actor_id: "explore-1" }, output: JSON.stringify({ status: "running" }), title: "Look around" })
   check("a spawn is a pill and a status call is a row", isPill(spawned) && !isPill(statusRow))
   check("a spawn reads 开始工作 once it has gone through; only a run that answered reads 已完成", pillStatus([spawned]) === "started" && pillStatus([partOf("completed")]) === "completed")
   const notice = (status: SubagentNoticeStatus, summary?: string): SubagentNotice => ({ subagentID: "explore-1", sessionID: "c1", description: "Look around", status, ...(summary ? { summary } : {}) })
@@ -6053,7 +6385,7 @@ async function subagentChecks(root: string) {
   check("MiMo's timings: a stall after six quiet minutes, abandoned after ten, a scan every 45s, ten minutes of waiting", SUBAGENT_TIMERS.stallMs === 360_000 && SUBAGENT_TIMERS.abandonMs === 600_000 && SUBAGENT_TIMERS.scanMs === 45_000 && SUBAGENT_TIMERS.waitMs === 600_000)
   check("quiet past the stall mark is a stall; past the abandon mark it is not reported", !isStalled(360_000, SUBAGENT_TIMERS) && isStalled(360_001, SUBAGENT_TIMERS) && !isStalled(600_001, SUBAGENT_TIMERS))
   const told = noticeText([{ notice: notice("completed", "first line"), result: "first line\nand the rest" }])
-  check("the model is told which subagent finished and the whole of its answer", told.includes("subagent_id: explore-1") && told.includes("and the rest") && told.startsWith("<subagent-notification>"))
+  check("the model is told which subagent finished and the whole of its answer", told.includes("actor_id: explore-1") && told.includes("and the rest") && told.startsWith("<actor-notification>"))
   const record = (subagent: SubagentSession["subagent"]): SubagentSession => ({
     id: "c1",
     title: "Look around",
@@ -6082,6 +6414,7 @@ async function subagentChecks(root: string) {
   // A scripted conversation: each request of the parent takes the next step, whatever came back.
   let parentSteps: Record<string, unknown>[][] = []
   const childTools: string[][] = []
+  const childSystems: string[] = []
   const childSpans: { prompt: string; start: number; end: number }[] = []
   const parentBodies: string[] = []
   let callCount = 0
@@ -6115,12 +6448,14 @@ async function subagentChecks(root: string) {
       if (!system.includes("Working as a subagent")) {
         parentBodies.push(body)
         const step = parentSteps.shift()
-        if (step) return call(step.map((input) => ({ name: "task", input })))
+        // A step names its tool with `__tool`; any other is an actor call.
+        if (step) return call(step.map(({ __tool, ...input }) => ({ name: typeof __tool === "string" ? __tool : "actor", input })))
         if (answered || !parentCalls.length) return say("parent done")
-        return call(parentCalls.map((input) => ({ name: "task", input })))
+        return call(parentCalls.map((input) => ({ name: "actor", input })))
       }
 
       childTools.push((asked.tools ?? []).map((tool) => tool.function?.name ?? ""))
+      childSystems.push(system)
       const prompt = JSON.stringify((asked.messages ?? []).filter((message) => message.role === "user"))
       if (prompt.includes("SLOW")) {
         for (let at = 0; at < 100 && !closed; at++) {
@@ -6134,6 +6469,22 @@ async function subagentChecks(root: string) {
         if (answered) return say("perm done")
         return call([{ name: "bash", input: { command: "echo subagent", description: "Say something" } }])
       }
+      // STRUCT returns its result through StructuredOutput; STRUCTLATE only once reminded; STRUCTNEVER never does.
+      if (prompt.includes("STRUCT")) {
+        if (answered) return say("struct done")
+        const offered = (asked.tools ?? []).some((tool) => tool.function?.name === "StructuredOutput")
+        const reminded = prompt.includes("You have not returned your result yet")
+        if (prompt.includes("STRUCTNEVER") || (prompt.includes("STRUCTLATE") && !reminded) || !offered) return say("an answer in prose")
+        return call([{ name: "StructuredOutput", input: { verdict: "ok", count: 3 } }])
+      }
+      // TASKCHILD files a task under its parent's T1, then answers.
+      if (prompt.includes("TASKCHILD")) {
+        if (answered) return say("child tasked")
+        return call([{ name: "task", input: { action: "create", summary: "Child part", parent_id: "T1" } }])
+      }
+      // HEADER and HEADERFAIL open their final message with MiMo's status header.
+      if (prompt.includes("HEADERFAIL")) return say("**Status**: failed\n**Summary**: could not finish\n\ndetails")
+      if (prompt.includes("HEADER")) return say("**Status**: partial\n**Summary**: half done\n\nbody")
       // QUIET writes nothing for a while, which the watchdog reads as a stall.
       if (prompt.includes("QUIET")) {
         await new Promise((resolve) => setTimeout(resolve, 1500))
@@ -6186,7 +6537,7 @@ async function subagentChecks(root: string) {
   }
   const taskParts = async (sessionID: string) =>
     (await store.messages(sessionID)).flatMap((message) =>
-      message.role === "assistant" ? message.parts.filter((part): part is ToolPart => part.type === "tool" && part.name === "task") : [],
+      message.role === "assistant" ? message.parts.filter((part): part is ToolPart => part.type === "tool" && part.name === "actor") : [],
     )
   const childrenOf = async (sessionID: string) => (await store.list()).filter((session) => session.parentID === sessionID)
 
@@ -6204,7 +6555,7 @@ async function subagentChecks(root: string) {
   check("the subagent keeps its own history", childMessages[0]?.role === "user" && childMessages[0].text === "ANSWER:forty-two" && childMessages.some((message) => message.role === "assistant"))
   check("its final message returns as the call's result", onePart?.status === "completed" && subagentAnswer(onePart.output) === "forty-two", onePart?.output)
   check("the parent's model reads the result and replies", (await store.messages(one.id)).some((message) => message.role === "assistant" && message.parts.some((part) => part.type === "text" && part.text === "parent done")))
-  check("a subagent is offered no task tool of its own", childTools.length > 0 && childTools.every((names) => !names.includes("task")), childTools)
+  check("a subagent is offered no actor tool of its own", childTools.length > 0 && childTools.every((names) => !names.includes("actor")), childTools)
   check("no subagent is left running", !oneChild || !runner.busySessions().includes(oneChild.id))
   const hits = await searchMessages(await store.list(), (id) => store.messages(id), "forty-two")
   check("search leaves a subagent's conversation out", !hits.some((hit) => hit.sessionID === oneChild?.id), hits)
@@ -6297,8 +6648,8 @@ async function subagentChecks(root: string) {
   parentBodies.length = 0
   parentSteps = [
     [{ action: "spawn", description: "Look in the background", prompt: "ANSWER:background PAUSE600", subagent_type: "explore" }],
-    [{ action: "status", subagent_id: "explore-1" }],
-    [{ action: "wait", subagent_id: "explore-1" }],
+    [{ action: "status", actor_id: "explore-1" }],
+    [{ action: "wait", actor_id: "explore-1" }],
   ]
   const six = await store.create({ directory: project, model })
   await runner.prompt({ sessionID: six.id, text: "spawn, look, wait" })
@@ -6310,7 +6661,7 @@ async function subagentChecks(root: string) {
   const sixChild = await firstChild(six.id)
   check(
     "spawn answers at once with the subagent's id, before the subagent is done",
-    sixSpawn?.status === "completed" && /subagent_id: explore-1/.test(sixSpawn.output ?? "") && (sixSpawn.time.completed ?? Infinity) < (sixChild?.subagent?.ended ?? 0),
+    sixSpawn?.status === "completed" && /actor_id: explore-1/.test(sixSpawn.output ?? "") && (sixSpawn.time.completed ?? Infinity) < (sixChild?.subagent?.ended ?? 0),
     { spawn: sixSpawn?.output, record: sixChild?.subagent },
   )
   check("status sees it still at work, by its description", reportOf(sixStatus).status === "running" && reportOf(sixStatus).description === "Look in the background", sixStatus?.output)
@@ -6318,7 +6669,7 @@ async function subagentChecks(root: string) {
   check("its record says it ran in the background and succeeded", sixChild?.subagent?.background === true && sixChild.subagent.status === "idle" && sixChild.subagent.outcome === "success", sixChild?.subagent)
   const sixNotices = await noticesIn(six.id)
   check("the conversation is told it completed, its answer as the summary", sixNotices.some((entry) => entry.status === "completed" && entry.subagentID === "explore-1" && entry.summary === "background"), sixNotices)
-  check("the conversation's model reads the notice", parentBodies.some((body) => body.includes("<subagent-notification>") && body.includes("subagent_id: explore-1")))
+  check("the conversation's model reads the notice", parentBodies.some((body) => body.includes("<actor-notification>") && body.includes("actor_id: explore-1")))
 
   // A background subagent that finishes after the conversation's turn has ended.
   parentBodies.length = 0
@@ -6341,7 +6692,7 @@ async function subagentChecks(root: string) {
   // Stop leaves a background subagent working; deleting the conversation stops it.
   parentSteps = [
     [{ action: "spawn", description: "Keep going", prompt: "SLOW", subagent_type: "explore" }],
-    [{ action: "wait", subagent_id: "explore-1", timeout_ms: 10_000 }],
+    [{ action: "wait", actor_id: "explore-1", timeout_ms: 10_000 }],
   ]
   const eight = await store.create({ directory: project, model })
   await runner.prompt({ sessionID: eight.id, text: "spawn and wait" })
@@ -6359,8 +6710,8 @@ async function subagentChecks(root: string) {
   // cancel.
   parentSteps = [
     [{ action: "spawn", description: "Cancel me", prompt: "SLOW", subagent_type: "explore" }],
-    [{ action: "cancel", subagent_id: "explore-1" }],
-    [{ action: "cancel", subagent_id: "explore-1" }],
+    [{ action: "cancel", actor_id: "explore-1" }],
+    [{ action: "cancel", actor_id: "explore-1" }],
   ]
   const nine = await store.create({ directory: project, model })
   await runner.prompt({ sessionID: nine.id, text: "spawn and cancel" })
@@ -6375,7 +6726,7 @@ async function subagentChecks(root: string) {
   // send, to a subagent that has finished.
   parentSteps = [
     [{ action: "run", description: "Answer twice", prompt: "ANSWER:first", subagent_type: "general" }],
-    [{ action: "send", subagent_id: "general-1", message: "ANSWER:second" }],
+    [{ action: "send", to_actor_id: "general-1", content: "ANSWER:second" }],
   ]
   const ten = await store.create({ directory: project, model })
   await runner.prompt({ sessionID: ten.id, text: "run, then send" })
@@ -6388,7 +6739,7 @@ async function subagentChecks(root: string) {
   const tenChildMessages = tenChild ? await store.messages(tenChild.id) : []
   const tenAnswers = tenChildMessages.flatMap((message) => (message.role === "assistant" ? message.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])) : []))
   check("run hands back the subagent's answer", subagentAnswer(tenRun?.output) === "first", tenRun?.output)
-  check("send queues a follow-up for a finished subagent", reportOf(tenSend).queued === true && reportOf(tenSend).subagent_id === "general-1", tenSend?.output)
+  check("send queues a follow-up for a finished subagent", reportOf(tenSend).queued === true && reportOf(tenSend).actor_id === "general-1", tenSend?.output)
   check("the follow-up joins the subagent's own history, marked as its parent's", tenChildMessages.some((message) => message.role === "user" && message.inbox?.from === "main" && message.text === "ANSWER:second"))
   check("the subagent answers it in another turn, keeping the one before", tenAnswers.join(",") === "first,second" && tenChild?.subagent?.turns === 2 && tenChild.subagent.outcome === "success", { tenAnswers, record: tenChild?.subagent })
   check("the conversation hears when that turn ends", (await noticesIn(ten.id)).some((entry) => entry.status === "completed" && entry.summary === "second"))
@@ -6431,6 +6782,137 @@ async function subagentChecks(root: string) {
   check("a model nobody has connected is refused", unknownModel?.status === "error" && /models action/.test(unknownModel.error ?? ""), unknownModel?.error)
   const chosen = (await childrenOf(twelve.id)).find((session) => session.title === "Chosen model")
   check("a subagent runs on the model it was given", chosen?.model.provider === "fake" && chosen.model.model === "m", chosen?.model)
+
+  section("Subagents (actor: saved calls, status header, structured output)")
+  const oldTool = (id: string, input: Record<string, unknown>): ToolPart => ({ type: "tool", id, callID: id, name: "task", status: "completed", input, time: { created: 1 } })
+  const oldReply = {
+    id: "old",
+    sessionID: "s",
+    role: "assistant" as const,
+    model,
+    agent: "build" as const,
+    time: { created: 1 },
+    parts: [
+      oldTool("o1", { description: "Old one", prompt: "x", subagent_type: "explore" }),
+      oldTool("o2", { action: "send", subagent_id: "general-1", message: "more" }),
+      oldTool("o3", { action: "status", subagent_id: "explore-1" }),
+      oldTool("o4", { action: "create", summary: "A task" }),
+    ],
+  }
+  const readOld = readLegacyMessage(oldReply)
+  const readPart = (at: number) => readOld.parts[at] as ToolPart
+  check(
+    "a saved task call that started a subagent reads as an actor call, its fields under the new names",
+    readPart(0).name === "actor" && readPart(1).name === "actor" && readPart(1).input?.to_actor_id === "general-1" && readPart(1).input?.content === "more" && readPart(2).input?.actor_id === "explore-1",
+    readOld.parts,
+  )
+  check("a task registry call is left as it is, and the saved copy is untouched", readPart(3).name === "task" && oldReply.parts[0]!.name === "task" && oldReply.parts[1]!.input?.subagent_id === "general-1")
+  check("a saved subagent call is drawn as the pill it was", isPill(readPart(0)))
+  check("a message with nothing old in it comes back as the same object", readLegacyMessage(spawnReply) === spawnReply)
+  check("an answer saved in the old tags is still read", subagentAnswer("subagent_id: x\n\n<subagent_result>\nold answer\n</subagent_result>") === "old answer")
+  check(
+    "MiMo's status header is read, and its summary stands for the answer",
+    statusHeader("**Status**: partial\n**Summary**: half done\n\nbody")?.status === "partial" && answerSummary("**Status**: success\n**Summary**: all good\nmore") === "all good" && !statusHeader("plain answer"),
+  )
+
+  const schema = { type: "object", properties: { verdict: { type: "string" }, count: { type: "number" } }, required: ["verdict"] }
+  const childReminders = async (sessionID: string) => {
+    const child = await firstChild(sessionID)
+    return child ? (await store.messages(child.id)).filter((message) => message.role === "user" && message.text === STRUCTURED_REMINDER).length : -1
+  }
+  parentSteps = [[{ action: "run", description: "Structured", prompt: "STRUCT now", subagent_type: "explore", output_schema: schema, command: "/probe-check" }]]
+  const thirteen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: thirteen.id, text: "structured" })
+  await settled(thirteen.id)
+  const [structuredPart] = await taskParts(thirteen.id)
+  const structuredChild = await firstChild(thirteen.id)
+  const structured = (() => {
+    try {
+      return JSON.parse(subagentAnswer(structuredPart?.output)) as Record<string, unknown>
+    } catch {
+      return undefined
+    }
+  })()
+  check("output_schema: the subagent hands back one object through StructuredOutput, and that object is the result", structured?.verdict === "ok" && structured.count === 3, structuredPart?.output)
+  check("its record keeps the schema and the command that started it", Boolean(structuredChild?.subagent?.outputSchema) && structuredChild?.subagent?.command === "/probe-check", structuredChild?.subagent)
+  check("only a subagent asked for structured output is offered the tool", childTools.some((names) => names.includes("StructuredOutput")) && childTools.some((names) => !names.includes("StructuredOutput")))
+
+  parentSteps = [[{ action: "run", description: "Late", prompt: "STRUCTLATE", subagent_type: "explore", output_schema: schema }]]
+  const fourteen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: fourteen.id, text: "structured late" })
+  await settled(fourteen.id)
+  const [latePart] = await taskParts(fourteen.id)
+  check("a subagent that answers in prose is reminded, and its later structured result counts", latePart?.status === "completed" && subagentAnswer(latePart.output).includes('"verdict": "ok"') && (await childReminders(fourteen.id)) === 1, latePart?.output)
+
+  parentSteps = [[{ action: "run", description: "Never", prompt: "STRUCTNEVER", subagent_type: "explore", output_schema: schema }]]
+  const fifteen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: fifteen.id, text: "structured never" })
+  await settled(fifteen.id)
+  const [neverPart] = await taskParts(fifteen.id)
+  check("after MiMo's two reminders without a result, the call fails and says why", neverPart?.status === "error" && /StructuredOutput/.test(neverPart.error ?? "") && (await childReminders(fifteen.id)) === 2, { error: neverPart?.error, reminders: await childReminders(fifteen.id) })
+
+  childSystems.length = 0
+  parentSteps = [[{ action: "run", description: "Header", prompt: "HEADER", subagent_type: "general" }], [{ action: "run", description: "No header", prompt: "ANSWER:plain", subagent_type: "explore" }]]
+  const sixteen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: sixteen.id, text: "header" })
+  await settled(sixteen.id)
+  const headerPart = (await taskParts(sixteen.id)).find((part) => part.input?.prompt === "HEADER")
+  check("a general subagent is asked to open with the status header; an explore one is not", childSystems.some((text) => text.includes("**Status**: success, partial, failed or blocked")) && childSystems.some((text) => !text.includes("**Status**:")), childSystems.length)
+  check("the header's status reaches the actor result", Boolean(headerPart?.output?.includes('<actor_result status="partial">')), headerPart?.output)
+
+  parentSteps = [[{ action: "spawn", description: "Header failed", prompt: "HEADERFAIL", subagent_type: "general" }]]
+  const seventeen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: seventeen.id, text: "header failed" })
+  await until(async () => (await noticesIn(seventeen.id)).length > 0, 5000)
+  await settled(seventeen.id)
+  const headerNotice = (await noticesIn(seventeen.id))[0]
+  check("a background subagent whose header says failed is reported failed, with its summary", headerNotice?.status === "failed" && headerNotice.summary === "could not finish", headerNotice)
+
+  section("Tasks (the registry through the runner)")
+  parentSteps = [
+    [{ __tool: "task", action: "create", summary: "Parent work" }],
+    [
+      { action: "run", description: "Bound", prompt: "TASKCHILD", subagent_type: "general", task_id: "T1" },
+      { action: "run", description: "Unbound", prompt: "ANSWER:x", subagent_type: "explore", task_id: "T9" },
+      { action: "run", description: "Malformed", prompt: "ANSWER:y", subagent_type: "explore", task_id: "task one" },
+    ],
+  ]
+  const eighteen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: eighteen.id, text: "tasks" })
+  await settled(eighteen.id)
+  const registered = (await store.get(eighteen.id))?.tasks ?? []
+  check("a task created in a conversation is kept on its record", registered.some((task) => task.id === "T1" && task.summary === "Parent work" && task.owner === "main"), registered)
+  check("a subagent's task goes into its parent's registry, under the parent's task, held by the subagent", registered.some((task) => task.id === "T1.1" && task.parentID === "T1" && task.owner === "general-1"), registered)
+  const children = await childrenOf(eighteen.id)
+  check("task_id naming a task binds the subagent to it", children.find((session) => session.title === "Bound")?.subagent?.taskID === "T1", children.map((session) => session.subagent))
+  const runs = await taskParts(eighteen.id)
+  const unbound = runs.find((part) => part.input?.task_id === "T9")
+  const malformed = runs.find((part) => part.input?.task_id === "task one")
+  check(
+    "a task_id the registry does not hold, or that is no task id, is dropped and the call says so",
+    /no task T9/.test(unbound?.output ?? "") && /not a task id/.test(malformed?.output ?? "") && !children.find((session) => session.title === "Unbound")?.subagent?.taskID,
+    [unbound?.output, malformed?.output],
+  )
+  check("a subagent keeps the task tool", childTools.some((names) => names.includes("task")))
+  const taskRow = (await store.messages(eighteen.id)).flatMap((message) => (message.role === "assistant" ? message.parts : [])).find((part) => part.type === "tool" && part.name === "task")
+  check("the transcript keeps the task call, but no step is drawn for it, as MiMo draws none", Boolean(taskRow) && buildRows([taskRow!]).length === 0)
+
+  section("Skills (through the runner)")
+  parentSteps = []
+  parentCalls = []
+  parentBodies.length = 0
+  const nineteen = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: nineteen.id, text: "/pdf read this", attachments: [{ path: path.join(project, "brief.pdf"), mime: "application/pdf", data: "" }] })
+  await settled(nineteen.id)
+  const skillMessage = (await store.messages(nineteen.id)).find((message) => message.role === "user")
+  const carriedReminders = skillMessage?.role === "user" ? (skillMessage.reminders ?? []) : []
+  check(
+    "a message attaching a PDF and naming /pdf keeps its words, and carries the hint and the loaded skill",
+    skillMessage?.role === "user" && skillMessage.text === "/pdf read this" && carriedReminders.length === 2 && carriedReminders[0]!.includes("- pdf:") && carriedReminders[1]!.includes('loaded_skill name="pdf"'),
+    carriedReminders.map((entry) => entry.slice(0, 60)),
+  )
+  check("the model reads both after the message", parentBodies.some((body) => body.includes("/pdf read this") && body.includes("- pdf:") && body.includes('loaded_skill name=\\"pdf\\"')))
+  check("the system prompt lists the shipped skills", parentBodies.some((body) => body.includes("<name>docx</name>")))
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }
@@ -6486,9 +6968,16 @@ async function sessionChatChecks(root: string, project: string) {
   if (typeof first === "object") first.action?.()
   check("the card lists a line per link; one whose peer exists jumps to it", cardLinks.length === 2 && jumped.join() === "ses_p" && typeof cardLinks[1] === "object" && !cardLinks[1].action)
   check(
-    "the four tools are appended last, after every tool already there, keeping the cached prefix",
-    TOOLS.slice(-4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
-      TOOLS.findIndex((tool) => tool.name === "task") < TOOLS.length - 4,
+    "the four tools are appended after every tool that came before them, keeping the cached prefix",
+    (() => {
+      const at = TOOLS.findIndex((tool) => tool.name === "contacts")
+      return (
+        TOOLS.slice(at, at + 4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
+        TOOLS[at - 1]?.name === "set_desktop_setting" &&
+        // Only tools added since (the skill tools) come after them.
+        TOOLS.slice(at + 4).every((tool) => tool.name === "skill_search" || tool.name === "skill")
+      )
+    })(),
     TOOLS.map((tool) => tool.name),
   )
   check("Plan keeps contacts and loses the three that act", toolsFor("plan").some((tool) => tool.name === "contacts") && !toolsFor("plan").some((tool) => ["talk_to_session", "create_session", "update_session"].includes(tool.name)))

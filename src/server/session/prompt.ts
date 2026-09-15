@@ -1,9 +1,11 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
+import { pathToFileURL } from "node:url"
 import { recentCommits, status } from "../git"
 import { globToRegExp } from "../tool/search"
 import { foldersUp } from "./worktree"
+import { modelInvocable, type SkillInfo } from "../skill"
 
 /** MiMo reads CLAUDE.md beside AGENTS.md only while the AGENTS.md files say less than this. */
 const AGENTS_SHORT = 500
@@ -12,7 +14,7 @@ const BASE = `You are MCode, an AI coding agent working inside a user's project 
 
 ## How to work
 
-Do what the user asked, no more. Read before you write: quote a file exactly as the read tool showed it to you. When a task takes several steps, record the plan with todowrite and keep it current so the user can follow along; skip it for single-step work.
+Do what the user asked, no more. Read before you write: quote a file exactly as the read tool showed it to you. When a task takes several steps, track it with the task tool - start each step as you begin it and mark it done as you finish - so the user can follow along; skip it for single-step work.
 
 Prefer the dedicated tools over shelling out. read, glob, and grep are faster than cat, find, and their shell equivalents, and their output is easier for you to use. Reach for bash for builds, tests, package managers, and version control.
 
@@ -39,6 +41,8 @@ export interface PromptContext {
   staged?: boolean
   /** MiMo's `instructions` setting: more instruction files, by glob, looked for up to the repository's top. */
   instructionFiles?: string[]
+  /** skills: every skill the conversation can reach; the ones kept from the model are left out of the list. */
+  skills?: SkillInfo[]
 }
 
 /**
@@ -71,7 +75,7 @@ stage you are in when you move into it.
    depends on is genuinely unclear, ask before going further - with the question
    tool when it is available. Do not ask about things you can find out by reading.
 2. Plan. Write down what will change, in which files, and how you will check it.
-   Record the steps with todowrite.
+   Record the steps with the task tool.
 3. Build. Make the changes the plan describes. If the plan turns out to be wrong,
    say so and revise it rather than quietly doing something else.
 4. Review. Compare what you changed against the plan, run the project's checks,
@@ -112,6 +116,9 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
   const commands = await projectCommands(context.directory)
   if (commands) sections.push(commands)
 
+  // skills: rarely changes, so before the environment and the repository.
+  if (context.skills) sections.push(skillsSection(context.skills))
+
   /*
    * Last: the environment, which changes per project. The repository's state
    * and the date change per turn, so they travel with each prompt instead
@@ -120,6 +127,33 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
    */
   sections.push(await environment(context.directory))
   return sections.join("\n\n")
+}
+
+/**
+ * skills: the ones the model may load, by name, what each is for, and where it
+ * lives, as MiMo's engine lists them; sorted so the list reads the same each turn.
+ */
+function skillsSection(skills: readonly SkillInfo[]): string {
+  const listed = modelInvocable(skills)
+  if (!listed.length) return "## Skills\n\nNo skills are available in this conversation."
+  const entries = [...listed]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((skill) => [
+      "  <skill>",
+      `    <name>${skill.name}</name>`,
+      `    <description>${skill.description}</description>`,
+      `    <location>${pathToFileURL(skill.location).href}</location>`,
+      "  </skill>",
+    ])
+  return [
+    "## Skills",
+    "",
+    "A skill is a folder of instructions, and often scripts, for one kind of work. When the task matches a skill below, load it with the skill tool before you start, and follow it. When none clearly fits but one might, skill_search looks for it by what the work is.",
+    "",
+    "<skills>",
+    ...entries,
+    "</skills>",
+  ].join("\n")
 }
 
 /**

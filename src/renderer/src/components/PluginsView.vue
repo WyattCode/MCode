@@ -38,6 +38,8 @@ interface Entry {
   enabled: boolean
   server?: McpServerState
   description?: string
+  /** A skill shipped with the app. */
+  builtin?: boolean
 }
 
 /* MiMo's filter: by state, then by type, each with its own "all". */
@@ -63,6 +65,7 @@ const entries = computed<Entry[]>(() => [
       name: command.name,
       enabled: true,
       description: command.description,
+      builtin: command.builtin === true,
     })),
 ])
 
@@ -256,7 +259,7 @@ function pickFilter(key: string) {
               <span class="knob" />
             </button>
           </template>
-          <span v-else class="card-state">{{ t("plugins.skill") }}</span>
+          <span v-else class="card-state" :data-builtin="entry.builtin ? '' : undefined">{{ entry.builtin ? t("plugins.builtinSkill") : t("plugins.skill") }}</span>
         </div>
       </div>
 

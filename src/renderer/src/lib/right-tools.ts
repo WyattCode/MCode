@@ -120,6 +120,20 @@ export function toolHints(
 export const RAIL_WIDTH = 62
 export const SIDE_COLUMN_WIDTH = 194
 export const MAIN_MIN_WIDTH = 480
+/* MiMo's side column drag: 160 to 420 past the rail. */
+export const SIDE_WIDTH_MIN = 160
+export const SIDE_WIDTH_MAX = 420
+
+/** The widest the side column may be dragged: 420, less where the conversation's 480 and an open panel need the room, never under 160. */
+export function sideWidthMax(viewport: number, panelWidth: number): number {
+  return Math.min(SIDE_WIDTH_MAX, Math.max(SIDE_WIDTH_MIN, viewport - RAIL_WIDTH - panelWidth - MAIN_MIN_WIDTH))
+}
+
+/** A stored or dragged width as the window allows it now; a value that is not a number is the default. */
+export function clampSideWidth(value: number, viewport: number, panelWidth: number): number {
+  const width = Number.isFinite(value) ? value : SIDE_COLUMN_WIDTH
+  return Math.round(Math.min(sideWidthMax(viewport, panelWidth), Math.max(SIDE_WIDTH_MIN, width)))
+}
 
 export interface PanelRoom {
   viewport: number

@@ -1,10 +1,11 @@
 import fs from "node:fs/promises"
-import os from "node:os"
 import path from "node:path"
 import type { AgentName, CommandDefinition, CommandInfo, Effort, ModelRef } from "@shared/protocol"
 import { AGENT_NAMES, EFFORTS } from "@shared/protocol"
 import { hints } from "@shared/command"
 import type { McpServers } from "./mcp"
+import { parseFrontmatter } from "./frontmatter"
+import { MAX_DEPTH, PROJECT_CONFIG_DIR, discoverSkills, scan } from "./skill"
 
 /**
  * Everything a slash can reach, from the three places the reference looks.
@@ -37,28 +38,13 @@ import type { McpServers } from "./mcp"
  *   where each prompt is one extra round trip per listing.
  */
 
-/** Where a project keeps its own commands and skills, the way `.opencode` does. */
-const PROJECT_CONFIG_DIR = ".mcode"
-
-/**
- * The folders the reference reads skills out of, minus its remote sources.
- *
- * `EXTERNAL_SKILL_PATTERN` is `skills/**\/SKILL.md` under `.claude` and
- * `.agents` (@22131300), and `OPENCODE_SKILL_PATTERN` is
- * `{skill,skills}/**\/SKILL.md` under each config directory. Its
- * `skills.urls` puller, which downloads a remote index into a cache, is not
- * replicated: nothing in this app configures one.
- */
-const EXTERNAL_SKILL_DIRS = [".claude", ".agents"]
-
-/** How deep any of these scans will walk before giving up. */
-const MAX_DEPTH = 8
-
 interface Deps {
   /** Only `get()` is used, so a check can hand this a plain object. */
   config: { get(): { commands?: Record<string, CommandDefinition> } }
   /** Only the prompt half of the MCP surface is used. */
   mcp: Pick<McpServers, "prompts" | "getPrompt">
+  /** The app's data directory, whose `skill(s)` folders hold the user's global skills. */
+  storage?: { directory: string }
 }
 
 export async function listCommands(deps: Deps, directory: string): Promise<CommandInfo[]> {
@@ -76,7 +62,7 @@ export async function listCommands(deps: Deps, directory: string): Promise<Comma
     commands[name] = prompt
   }
 
-  for (const skill of await skillCommands(directory)) {
+  for (const skill of await skillCommands(directory, deps.storage?.directory)) {
     // The one source that yields: a skill never displaces a command.
     if (commands[skill.name]) continue
     commands[skill.name] = skill
@@ -182,93 +168,28 @@ async function promptCommands(mcp: Deps["mcp"]): Promise<Record<string, CommandI
 /* ----------------------------------------------------------------- skills */
 
 /**
- * Every SKILL.md this project can see, as a command that sends its body.
+ * Every skill this conversation can reach, as a command that sends its body.
  *
- * The two lines appended after the body are the reference's, verbatim
- * (@32871000). They are what makes a skill's own `scripts/` and `references/`
- * paths resolvable, and a skill whose file sits at `<built-in>` gets neither -
- * this app has no built-in skill, so the branch is simply absent.
- *
- * Frontmatter must carry a `name`; the reference's `isSkillFrontmatter` accepts
- * exactly `name: string` with an optional `description: string`, and a file
- * failing that is skipped rather than named after its folder.
+ * MiMo's command service lists a skill with its content as the whole template
+ * - no base-directory lines after it, those belong to the skill tool's output -
+ * and marks the shipped ones `bundled`, which is `builtin` here.
  */
-async function skillCommands(directory: string): Promise<CommandInfo[]> {
-  const roots: string[] = []
-  for (const folder of ["skill", "skills"]) {
-    roots.push(path.join(directory, PROJECT_CONFIG_DIR, folder))
-  }
-  for (const external of EXTERNAL_SKILL_DIRS) {
-    roots.push(path.join(directory, external, "skills"))
-    roots.push(path.join(os.homedir(), external, "skills"))
-  }
-
-  const out: CommandInfo[] = []
-  const seen = new Set<string>()
-  for (const root of roots) {
-    for (const file of await skillFiles(root, MAX_DEPTH)) {
-      const parsed = await readDocument(file)
-      if (!parsed) continue
-      const name = text(parsed.data.name)
-      if (!name) continue
-      // The reference logs a duplicate skill name and keeps the first; the
-      // second is dropped either way, so only the keeping is replicated.
-      if (seen.has(name)) continue
-      seen.add(name)
-      const base = path.dirname(file)
-      out.push({
-        name,
-        description: text(parsed.data.description),
-        source: "skill",
-        template: [
-          parsed.body,
-          "",
-          `Base directory for this skill: ${base}`,
-          "Relative paths in this skill (e.g., scripts/, references/) are relative to this base directory.",
-        ].join("\n"),
-        hints: [],
-      })
-    }
-  }
-  return out
+async function skillCommands(directory: string, storageDirectory?: string): Promise<CommandInfo[]> {
+  const { skills } = await discoverSkills({ directory, storageDirectory })
+  return skills.map((skill) => ({
+    name: skill.name,
+    description: skill.description || undefined,
+    source: "skill" as const,
+    ...(skill.builtin ? { builtin: true } : {}),
+    template: skill.content,
+    hints: [],
+  }))
 }
 
 /* --------------------------------------------------------------- scanning */
 
 async function markdownFiles(root: string, depth: number): Promise<string[]> {
   return scan(root, depth, (name) => /\.md$/i.test(name))
-}
-
-async function skillFiles(root: string, depth: number): Promise<string[]> {
-  return scan(root, depth, (name) => name === "SKILL.md")
-}
-
-/**
- * Walks a folder for the files a scan wants, in a stable order.
- *
- * Sorted because the order decides which of two skills with the same declared
- * name is kept, and an unsorted `readdir` would make that answer depend on the
- * filesystem. A missing folder is not an error: most projects have none of
- * these, and the slash menu still has to open.
- */
-async function scan(root: string, depth: number, wanted: (name: string) => boolean): Promise<string[]> {
-  if (depth <= 0) return []
-  let entries: import("node:fs").Dirent[]
-  try {
-    entries = await fs.readdir(root, { withFileTypes: true })
-  } catch {
-    return []
-  }
-  const found: string[] = []
-  for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-    const full = path.join(root, entry.name)
-    if (entry.isDirectory()) {
-      found.push(...(await scan(full, depth - 1, wanted)))
-      continue
-    }
-    if (entry.isFile() && wanted(entry.name)) found.push(full)
-  }
-  return found
 }
 
 /* ------------------------------------------------------------ frontmatter */
@@ -278,32 +199,12 @@ interface Document {
   body: string
 }
 
-/**
- * A markdown file split into its frontmatter and its body.
- *
- * Deliberately not a YAML parser. Every key either of these two documents can
- * carry is a scalar - name, description, agent, model, variant, subtask - so
- * `key: value` with optional quotes is the whole grammar that is needed, and a
- * file using anything richer loses only the key it wrote that way. Bringing in
- * a YAML dependency to read six strings would be the larger mistake.
- */
+/** A command file split into its frontmatter and its body; one whose frontmatter cannot be read is skipped. */
 async function readDocument(file: string): Promise<Document | undefined> {
-  let raw: string
-  try {
-    raw = await fs.readFile(file, "utf8")
-  } catch {
-    return undefined
-  }
-  const text = raw.replace(/^﻿/, "")
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(text)
-  if (!match) return { data: {}, body: text }
-  const data: Record<string, unknown> = {}
-  for (const line of match[1].split(/\r?\n/)) {
-    const pair = /^([A-Za-z_][A-Za-z0-9_-]*)\s*:\s*(.*)$/.exec(line)
-    if (!pair) continue
-    data[pair[1]] = pair[2].trim().replace(/^["']|["']$/g, "")
-  }
-  return { data, body: text.slice(match[0].length) }
+  const raw = await fs.readFile(file, "utf8").catch(() => undefined)
+  if (raw === undefined) return undefined
+  const parsed = parseFrontmatter(raw)
+  return parsed.error ? undefined : { data: parsed.data, body: parsed.body }
 }
 
 function text(value: unknown): string | undefined {

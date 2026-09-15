@@ -49,7 +49,7 @@ const card = ref<HTMLElement>()
 const directory = computed(() => app.current?.directory ?? "")
 const sessionId = computed(() => app.currentID ?? undefined)
 
-const tasks = computed(() => infoTasks(app.messages, app.busy))
+const tasks = computed(() => infoTasks(app.current?.tasks, app.messages, app.busy))
 const tasksDone = computed(() => tasks.value.filter((task) => task.status === "done").length)
 const artifacts = computed(() => sessionArtifacts(app.messages, directory.value))
 const groups = computed(() => artifactGroups(artifacts.value))

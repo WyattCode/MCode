@@ -16,19 +16,16 @@ export function findModel(providers: readonly ProviderStatus[], ref?: ModelRef):
 }
 
 /**
- * The next step along, with "follow the default" between the last and the first.
- *
- * `cycleModelVariant` (@2829562), minus the same `configured` arm: an empty
- * list changes nothing at all, a step the model does not take starts again at
- * the first, and walking off the end returns to no setting rather than wrapping
- * - unset is not a sixth level, it is the session deferring to the app default,
- * and this is the only way back to it from the keyboard.
+ * The next step along, as MiMo cycles its one app-wide level: an empty list
+ * changes nothing at all, a step the model does not take starts again at the
+ * first, and walking off the end wraps to the first.
  */
 export function cycleVariant(variants: readonly Effort[], selected?: Effort): Effort | undefined {
   if (!variants.length) return undefined
   const at = selected ? variants.indexOf(selected) : -1
   if (at === -1) return variants[0]
-  return at + 1 >= variants.length ? undefined : variants[at + 1]
+  // The level is app-wide and always set, so the cycle wraps as MiMo's does.
+  return variants[(at + 1) % variants.length]
 }
 
 /**

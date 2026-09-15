@@ -1,10 +1,50 @@
-import { SUBAGENT_TYPES } from "@shared/protocol"
-import { SUBAGENT_ACTIONS, taskAction, taskTarget } from "@shared/subagent"
+import { SUBAGENT_TYPES, type Message } from "@shared/protocol"
+import { SUBAGENT_ACTIONS, actorAction, actorTarget } from "@shared/subagent"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 
+/** subagents: the tool a subagent asked for structured output ends with, under MiMo's name. */
+export const STRUCTURED_OUTPUT = "StructuredOutput"
+
+/** How many times a subagent that ended without it is reminded, as MiMo retries. */
+export const STRUCTURED_RETRIES = 2
+
+/** What a subagent that ended without its structured result is told. */
+export const STRUCTURED_REMINDER = `You have not returned your result yet. Call ${STRUCTURED_OUTPUT} now, once, with an object that matches its parameters.`
+
 /**
- * subagents: MiMo's actor tool, under this app's name and in its own words.
+ * The tool a subagent returns structured output through: its parameters are
+ * the schema it was given, so the arguments are checked against it before the
+ * call counts. A schema that is not an object is wrapped under `result`.
+ */
+export function structuredOutputTool(schema: Record<string, unknown>): ToolDefinition {
+  const wrapped = schema.type !== "object"
+  return {
+    name: STRUCTURED_OUTPUT,
+    description: "Return this task's result as data. Call it once, when the work is done, with an object that matches these parameters; it is your whole answer.",
+    parameters: wrapped ? { type: "object", properties: { result: schema }, required: ["result"] } : schema,
+    async execute(input) {
+      return { output: "Result recorded.", title: STRUCTURED_OUTPUT, metadata: { structured: wrapped ? input.result : input } }
+    },
+  }
+}
+
+/** The structured result a subagent returned since it was last given work, if it did. */
+export function structuredResult(messages: readonly Message[]): unknown {
+  const since = messages.map((message) => message.role === "user" && message.text !== STRUCTURED_REMINDER).lastIndexOf(true)
+  for (const message of messages.slice(since + 1).reverse()) {
+    if (message.role !== "assistant") continue
+    for (const part of [...message.parts].reverse()) {
+      if (part.type === "tool" && part.name === STRUCTURED_OUTPUT && part.status === "completed" && part.metadata && "structured" in part.metadata) {
+        return part.metadata.structured
+      }
+    }
+  }
+  return undefined
+}
+
+/**
+ * subagents: MiMo's actor tool, under its name and in this app's own words.
  *
  * A subagent is a conversation of its own, with its own history and tools,
  * started and kept by the session runner (`ToolContext.subagents`). `run`
@@ -13,27 +53,28 @@ import { ToolError } from "./types"
  * on one, wait for one, stop one, give one more work, or list the models one
  * can be given. A call that names no action is a run, as the tool always was.
  */
-export const TaskTool: ToolDefinition = {
-  name: "task",
+export const ActorTool: ToolDefinition = {
+  name: "actor",
   description: [
     "Hand work to subagents: conversations of their own, with their own history and tools. The action field picks what to do.",
     "",
-    "- spawn (the usual choice): start a subagent in the background and get its subagent_id straight away. You keep working while it runs, and several can run at once. When it finishes, fails, is cancelled or seems stuck, a notification arrives in this conversation, and if you have already finished your reply it starts a new turn. Needs description, prompt and subagent_type; model is optional.",
-    "- run: start a subagent and wait for its final message, which comes back as this call's result. It holds up this turn, so keep it for a short lookup whose answer you need before you can decide anything else. Needs description, prompt and subagent_type; model and timeout_ms (default 600000) are optional. A call without an action is a run.",
-    "- status: where a subagent stands, without waiting. Needs subagent_id.",
-    "- wait: wait until a subagent is idle and get its result, or a timeout status after timeout_ms (default 600000). Needs subagent_id. Only wait when you have nothing else to do until it answers.",
-    "- cancel: stop a running subagent. Needs subagent_id; cancelling one that is idle changes nothing.",
-    "- send: give a subagent more work. The message joins its own history, so it keeps everything it has done, and an idle subagent takes another turn; you are notified when that turn ends. Needs subagent_id and message.",
+    "- spawn (the usual choice): start a subagent in the background and get its actor_id straight away. You keep working while it runs, and several can run at once. When it finishes, fails, is cancelled or seems stuck, a notification arrives in this conversation, and if you have already finished your reply it starts a new turn. Needs description, prompt and subagent_type; model, task_id, output_schema and command are optional.",
+    "- run: start a subagent and wait for its final message, which comes back as this call's result. It holds up this turn, so keep it for a short lookup whose answer you need before you can decide anything else. Needs description, prompt and subagent_type; model, timeout_ms (default 600000), task_id, output_schema and command are optional. A call without an action is a run.",
+    "- status: where a subagent stands, without waiting. Needs actor_id.",
+    "- wait: wait until a subagent is idle and get its result, or a timeout status after timeout_ms (default 600000). Needs actor_id. Only wait when you have nothing else to do until it answers.",
+    "- cancel: stop a running subagent. Needs actor_id; cancelling one that is idle changes nothing.",
+    "- send: give a subagent more work. The message joins its own history, so it keeps everything it has done, and an idle subagent takes another turn; you are notified when that turn ends. Needs to_actor_id and content.",
     "- models: list the models a subagent can be given through model. vision: true lists only models that read images; limit caps the list (default 50).",
     "",
     "A new subagent knows nothing of this conversation: the prompt is all it has, so say what to do, where to look, what is already known and what to report back. The user does not see its answer until you pass on what matters.",
     'Use "explore" for work that only reads - finding code, tracing a behaviour, answering a question about the project - and "general" for work that may change files or run commands. Do not use this for a single quick lookup you can do yourself.',
+    "actor_id values (explore-1, general-2) are subagents; they are not the T1, T1.2 ids of the task tool.",
   ].join("\n"),
   parameters: {
     type: "object",
     properties: {
       action: { type: "string", enum: [...SUBAGENT_ACTIONS], description: "What to do; spawn unless you must wait for the answer in this turn" },
-      description: { type: "string", description: "run, spawn: a short name for the task, three to six words, shown to the user" },
+      description: { type: "string", description: "run, spawn: a short name for the task, three to five words, shown to the user" },
       prompt: { type: "string", description: "run, spawn: the complete instructions for the subagent" },
       subagent_type: {
         type: "string",
@@ -41,8 +82,15 @@ export const TaskTool: ToolDefinition = {
         description: "run, spawn: explore only reads; general can also edit files and run commands",
       },
       model: { type: "string", description: "run, spawn: provider/model to use instead of this conversation's model; see the models action" },
-      subagent_id: { type: "string", description: "status, wait, cancel, send: the subagent_id that spawn or run returned, such as explore-1" },
-      message: { type: "string", description: "send: the follow-up for the subagent" },
+      task_id: { type: "string", description: "run, spawn: the id of the task tool's task this subagent works on (T1, T2.1), when it works on one; an id the task tool has not returned in this conversation is dropped and the call says so" },
+      output_schema: {
+        type: "object",
+        description: "run, spawn: a JSON Schema; the subagent then ends by returning one object that matches it, and that object is its result instead of prose",
+      },
+      command: { type: "string", description: "run, spawn: the slash command that started this work, if one did" },
+      actor_id: { type: "string", description: "status, wait, cancel: the actor_id that spawn or run returned, such as explore-1" },
+      to_actor_id: { type: "string", description: "send: the actor_id of the subagent to send to" },
+      content: { type: "string", description: "send: the follow-up for the subagent" },
       timeout_ms: { type: "number", description: "run, wait: how long to wait, in milliseconds" },
       vision: { type: "boolean", description: "models: only models that read images" },
       limit: { type: "number", description: "models: at most this many" },
@@ -52,7 +100,7 @@ export const TaskTool: ToolDefinition = {
   async execute(input, context) {
     const control = context.subagents
     if (!control) throw new ToolError("A subagent cannot start or manage subagents of its own.")
-    const action = taskAction(input)
+    const action = actorAction(input)
     const text = (value: unknown) => (typeof value === "string" ? value.trim() : "")
     const count = (value: unknown) => (typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : undefined)
 
@@ -60,19 +108,27 @@ export const TaskTool: ToolDefinition = {
       const description = text(input.description)
       const prompt = text(input.prompt)
       if (!prompt) throw new ToolError("The prompt is empty, so there is nothing to hand over.")
-      const type = input.subagent_type === "explore" ? "explore" : "general"
-      const model = text(input.model) || undefined
-      return action === "run" ? control.run({ description, prompt, type, model }, count(input.timeout_ms)) : control.spawn({ description, prompt, type, model })
+      const schema = input.output_schema
+      const spec = {
+        description,
+        prompt,
+        type: input.subagent_type === "explore" ? ("explore" as const) : ("general" as const),
+        model: text(input.model) || undefined,
+        taskID: text(input.task_id) || undefined,
+        command: text(input.command) || undefined,
+        outputSchema: schema && typeof schema === "object" && !Array.isArray(schema) ? (schema as Record<string, unknown>) : undefined,
+      }
+      return action === "run" ? control.run(spec, count(input.timeout_ms)) : control.spawn(spec)
     }
     if (action === "models") return control.models({ vision: input.vision === true, limit: count(input.limit) })
 
-    const target = taskTarget(input)
-    if (!target) throw new ToolError(`The ${action} action needs the subagent_id that spawn or run returned.`)
+    const target = actorTarget(input)
+    if (!target) throw new ToolError(`The ${action} action needs the actor_id that spawn or run returned${action === "send" ? ", as to_actor_id" : ""}.`)
     if (action === "status") return control.status(target)
     if (action === "wait") return control.wait(target, count(input.timeout_ms))
     if (action === "cancel") return control.cancel(target)
-    const message = text(input.message)
-    if (!message) throw new ToolError("The message is empty, so there is nothing to send.")
-    return control.send(target, message)
+    const content = text(input.content)
+    if (!content) throw new ToolError("The content is empty, so there is nothing to send.")
+    return control.send(target, content)
   },
 }

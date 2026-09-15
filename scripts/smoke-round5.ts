@@ -611,7 +611,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("and the app note: MCP servers, where skills go, the question tool", first.includes("About this app") && first.includes("MCP servers") && first.includes(".mcode/skills") && first.includes("question tool"), first.slice(0, 900))
       check("before what the user typed", first.indexOf("Response language") < first.indexOf("FIRST message"))
       const stored = (await e.store.messages(session.id)).find((message) => message.role === "user")
-      check("the transcript keeps the words as typed, the notes apart", stored?.role === "user" && stored.text === "FIRST message" && (stored.reminders?.length ?? 0) === 2, stored)
+      check("the transcript keeps the words as typed, the notes apart", stored?.role === "user" && stored.text === "FIRST message" && (stored.context?.length ?? 0) === 2, stored)
 
       await e.config.set({ language: "fr" })
       await e.runner.prompt({ sessionID: session.id, text: "SECOND message" })
@@ -625,7 +625,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.runner.prompt({ sessionID: chat.id, text: "from elsewhere", inbox: { from: "Other", sessionID: session.id, direction: "request" } })
       await e.idle(chat.id)
       const inbound = (await e.store.messages(chat.id)).find((message) => message.role === "user")
-      check("a message from another conversation carries no runtime context", inbound?.role === "user" && !inbound.reminders, inbound)
+      check("a message from another conversation carries no runtime context", inbound?.role === "user" && !inbound.context, inbound)
     } finally {
       await e.close()
     }
@@ -979,7 +979,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.idle(session.id)
       const noted = wireText(e.bodies.at(-1))
       check("a change to a main worktree brings the note at the next step", noted.includes("main worktree of a git repository") && noted.includes("ask the user"), noted.slice(0, 700))
-      check("stored on the user's message, and the conversation marked", (await e.store.get(session.id))?.worktreeNotice === true && (await e.store.messages(session.id)).some((message) => message.role === "user" && message.reminders?.some((note) => note.includes("main worktree"))))
+      check("stored on the user's message, and the conversation marked", (await e.store.get(session.id))?.worktreeNotice === true && (await e.store.messages(session.id)).some((message) => message.role === "user" && message.context?.some((note) => note.includes("main worktree"))))
       e.replies.push(calls([{ name: "write", input: { path: "note.txt", content: "second" } }]))
       await e.runner.prompt({ sessionID: session.id, text: "WORKTREE again" })
       await e.idle(session.id)

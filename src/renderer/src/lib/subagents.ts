@@ -1,21 +1,21 @@
 import type { Message, SessionInfo, SubagentNotice, SubagentNoticeStatus, ToolPart } from "@shared/protocol"
-import { launches, subagentAnswer, taskAction, taskTarget, type SubagentAction } from "@shared/subagent"
+import { actorAction, actorTarget, answerSummary, launches, subagentAnswer, type SubagentAction } from "@shared/subagent"
 import { stepState } from "./tool-meta"
 
 /**
- * subagents: how the transcript and the 子智能体 tab read a conversation's task
+ * subagents: how the transcript and the 子智能体 tab read a conversation's actor
  * calls and the notices its background subagents send back, as MiMo reads its
  * actor steps and actor notifications. Pure, so it can be checked on its own.
  */
 
 export function actionOf(part: ToolPart): SubagentAction {
-  return taskAction(part.input)
+  return actorAction(part.input)
 }
 
-/** A task call MiMo draws as a pill: a run or spawn, working or done. Any other call, or state, is an ordinary step row. */
+/** An actor call MiMo draws as a pill: a run or spawn, working or done. Any other call, or state, is an ordinary step row. */
 export function isPill(part: ToolPart): boolean {
   // A call Stop cut off settles as done in the transcript, but it did not finish: it stays a row.
-  if (part.name !== "task" || part.metadata?.aborted === true || !launches(actionOf(part))) return false
+  if (part.name !== "actor" || part.metadata?.aborted === true || !launches(actionOf(part))) return false
   const state = stepState(part)
   return state === "running" || state === "completed"
 }
@@ -77,7 +77,7 @@ function recorded(state: SessionInfo["subagent"]): SubagentStatus | undefined {
   return state.outcome === "success" ? "completed" : undefined
 }
 
-/** The subagent a task call started, found by the call rather than the parent, so a branch still finds it. */
+/** The subagent an actor call started, found by the call rather than the parent, so a branch still finds it. */
 export function childFor(callID: string, children: readonly SessionInfo[]): SessionInfo | undefined {
   return children.find((session) => session.parentCallID === callID)
 }
@@ -100,13 +100,13 @@ export function subagentItems(messages: readonly Message[], children: readonly S
       continue
     }
     for (const part of message.parts) {
-      if (part.type !== "tool" || part.name !== "task" || !launches(actionOf(part))) continue
+      if (part.type !== "tool" || part.name !== "actor" || !launches(actionOf(part))) continue
       const child = childFor(part.callID, children)
       const status = subagentStatus(part)
       // Refused for its arguments before anything started: there is nothing to open.
       if (!child && status === "skipped") continue
       const name = text(part.input?.description) || child?.title || ""
-      const summary = status === "completed" ? subagentAnswer(part.output) : status === "running" ? name : (part.error ?? "")
+      const summary = status === "completed" ? answerSummary(subagentAnswer(part.output)) : status === "running" ? name : (part.error ?? "")
       const item: SubagentItem = {
         key: part.callID,
         sessionID: child?.id,
@@ -134,7 +134,7 @@ export function subagentItems(messages: readonly Message[], children: readonly S
 
 /** What a status, wait, cancel or send row names: the subagent's description once the call reports it, else its id. */
 export function targetOf(part: ToolPart): string {
-  return text(part.title) || taskTarget(part.input)
+  return text(part.title) || actorTarget(part.input)
 }
 
 /** MiMo's time column: seconds since it started while it works, else how long ago it ended. */

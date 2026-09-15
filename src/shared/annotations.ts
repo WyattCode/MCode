@@ -88,13 +88,17 @@ export function withAnnotations(text: string, list: readonly Annotation[] | unde
   return [fileNoticesBlock(notices), text, annotationsBlock(list)].filter(Boolean).join("\n\n")
 }
 
-/** What a provider is sent for a user message: the runner's notes first, each in a system-reminder, then the above. */
+/**
+ * What a provider is sent for a user message: the runner's context notes first,
+ * each in a system-reminder, then the above. (Skill reminders ride after the
+ * text instead, added by the runner - see `withSkillReminders`.)
+ */
 export function userText(message: {
   text: string
   annotations?: readonly Annotation[]
   fileNotices?: readonly FileNotice[]
-  reminders?: readonly string[]
+  context?: readonly string[]
 }): string {
-  const notes = (message.reminders ?? []).map((note) => `<system-reminder>\n${note.trim()}\n</system-reminder>`)
+  const notes = (message.context ?? []).map((note) => `<system-reminder>\n${note.trim()}\n</system-reminder>`)
   return [...notes, withAnnotations(message.text, message.annotations, message.fileNotices)].filter(Boolean).join("\n\n")
 }

@@ -1,5 +1,6 @@
 import type { PermissionAction, PermissionKind, PermissionRequest, QuestionAnswer, QuestionPrompt, QuestionRequest } from "@shared/protocol"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
+import { defaultAccess, type Access } from "@shared/access"
 
 /**
  * The rules behind the dock above the composer, kept apart from the components
@@ -79,15 +80,6 @@ export function freshGuide(): GuideState {
   return { allowCount: 0, dismissed: false, taskAllowOn: false }
 }
 
-export type Access = "ask" | "auto" | "full"
-
-/** The access level, read the way the composer's chip reads it. */
-export function accessOf(config: { accessLevel?: string; permissions?: Readonly<Record<string, string>> } | undefined): Access {
-  if (config?.accessLevel === "auto") return "auto"
-  const map = config?.permissions
-  if (!map) return "ask"
-  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
-}
 
 /** The parts of the config an access level is written into. */
 export interface AccessConfig {
@@ -120,7 +112,7 @@ export function accessPatch(config: AccessConfig, next: Access): AccessPatch | u
   if (next === "full") {
     for (const kind of PERMISSION_KINDS) if (permissions[kind] !== "deny") permissions[kind] = "allow"
     accessBefore = { ...map }
-  } else if (accessOf(config) === "full") {
+  } else if (defaultAccess(config) === "full" || config.accessLevel === "full") {
     const kept = config.accessBefore ?? {}
     permissions = { ...map }
     for (const kind of PERMISSION_KINDS) {
@@ -140,7 +132,7 @@ export function accessPatch(config: AccessConfig, next: Access): AccessPatch | u
  * level moved, so the caller can announce it.
  */
 export function fullAccessOff(config: AccessConfig): { patch: Partial<AccessPatch> & { allowFullAccess: false }; dropped: boolean } {
-  const fallback = accessOf(config) === "full" ? accessPatch(config, "ask") : undefined
+  const fallback = defaultAccess(config) === "full" ? accessPatch(config, "ask") : undefined
   return { patch: { allowFullAccess: false, ...fallback }, dropped: Boolean(fallback) }
 }
 
