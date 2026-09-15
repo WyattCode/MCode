@@ -46,6 +46,14 @@ import {
 } from "./overflow"
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
+import { interruptedTurn } from "@shared/resume"
+
+/*
+ * What a resumed turn is told at its first step, in MCode's own words. Sent in
+ * the request only, never written to the transcript: 继续 adds no message.
+ */
+const RESUME_PROMPT =
+  "The previous turn stopped before it was finished. Carry on with the task from where it stopped: do not redo work that is already done, and do not start over."
 
 /** A message the user sent: its words, its files, and the places it points at. */
 type PromptInput = { sessionID: string; text: string; attachments?: Attachment[]; annotations?: UserMessage["annotations"] }
@@ -1100,13 +1108,45 @@ export class SessionRunner {
     }
   }
 
+  /**
+   * Carries on a turn that broke off - stopped, failed, or cut short by a quit -
+   * on the transcript as it stands, with no new message from the user.
+   *
+   * The same setup a prompt goes through, minus the message. Refused while the
+   * conversation is rolled back: the new turn would be written after messages
+   * that are hidden and about to be dropped.
+   */
+  async resumeTurn(sessionID: string): Promise<string> {
+    if (this.running.has(sessionID)) throw new Error("This session is already working on something")
+    const controller = new AbortController()
+    this.running.set(sessionID, controller)
+    try {
+      const session = await this.store.require(sessionID)
+      if (session.revert) throw new Error("Resume is unavailable while part of the conversation is rolled back")
+      const messageID = interruptedTurn(await this.store.messages(sessionID))
+      if (!messageID) throw new Error("There is no interrupted turn to resume")
+      if (!this.config.usable(session.model.provider)) {
+        throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
+      }
+      this.pending.delete(sessionID)
+      // The turn answers the same question the broken one did, so a rollback to it reaches both.
+      this.turn(sessionID).messages = [messageID]
+      if (session.agent !== "plan") this.turn(sessionID).watching = this.snapshots.begin(session.directory)
+      this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, true)
+      return messageID
+    } catch (failure) {
+      this.running.delete(sessionID)
+      throw failure
+    }
+  }
+
   /** Runs a claimed session's turn and releases it afterwards. */
-  private launch(sessionID: string, apiKey: string, controller: AbortController): void {
+  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed = false): void {
     this.steering.set(sessionID, { waiting: [], written: Promise.resolve() })
 
     // Deliberately not awaited: the caller gets the message id immediately and
     // follows the turn through events.
-    void this.run(sessionID, apiKey, controller)
+    void this.run(sessionID, apiKey, controller, resumed)
       .catch((err) => {
         // A failure recorded on the message is already in front of the user.
         if (err instanceof Shown) return
@@ -1153,7 +1193,7 @@ export class SessionRunner {
       })
   }
 
-  private async run(sessionID: string, apiKey: string, controller: AbortController): Promise<void> {
+  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false): Promise<void> {
     let session = await this.store.require(sessionID)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
@@ -1246,7 +1286,20 @@ export class SessionRunner {
                 time: { created: Date.now() },
               },
             ]
-          : history,
+          : resumed && step === 0
+            ? [
+                ...history,
+                // A request that ends on the model's own broken reply reads as a prefill; a line from the user does not.
+                {
+                  id: `${assistant.id}:resume`,
+                  sessionID,
+                  role: "user" as const,
+                  text: RESUME_PROMPT,
+                  attachments: [],
+                  time: { created: Date.now() },
+                },
+              ]
+            : history,
         tools: lastStep ? [] : this.tools(session.agent, session.model.model),
         effort,
         showReasoning: config.showReasoning,

@@ -1551,6 +1551,14 @@ export type Request =
   /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
   | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
   | { type: "file.list"; directory: string; query?: string }
+  /* One folder level of a project for the @ menu; `sub` is relative to `directory`, empty for its root. */
+  | { type: "file.listDir"; directory: string; sub?: string }
+  /* Files under `sub` whose path holds the query, for the @ menu's search. */
+  | { type: "file.search"; directory: string; query: string; sub?: string; limit?: number }
+  /* Carries on the conversation's interrupted last turn, with no new message from the user. */
+  | { type: "session.resume"; sessionID: string }
+  /* Three example tasks for a project on the home screen, from the default model; empty when it cannot answer. */
+  | { type: "home.suggest"; directory: string; language?: string }
   | { type: "file.read"; path: string }
   /* A text file saved from the right panel's files tab. */
   | { type: "file.write"; path: string; content: string }
@@ -1595,6 +1603,30 @@ export interface FileEntry {
   path: string
   name: string
   directory: boolean
+}
+
+/* One row of a folder the @ menu is browsing. */
+export interface DirEntry {
+  name: string
+  type: "dir" | "file"
+}
+
+/* A file the @ menu's search found: `rel` from the project root, `dir` the folder part of it. */
+export interface FileHit {
+  name: string
+  rel: string
+  dir: string
+}
+
+/* The marks a home suggestion can carry; anything else a model answers becomes "idea". */
+export const SUGGESTION_ICONS = ["code", "bug", "test", "doc", "chart", "idea"] as const
+export type SuggestionIcon = (typeof SUGGESTION_ICONS)[number]
+
+/* An example task on the home screen: its row title, and the request that goes into the box. */
+export interface HomeSuggestion {
+  title: string
+  query: string
+  icon: SuggestionIcon
 }
 
 export interface ResponseMap {
@@ -1683,6 +1715,14 @@ export interface ResponseMap {
   "git.push": PushResult
   "git.commitMessage": { message: string; generated: boolean }
   "file.list": { files: FileEntry[] }
+  /* Folders first, then files, each by name; dot entries and the ignored folders left out. */
+  "file.listDir": { entries: DirEntry[] }
+  /* `truncated` when more matched than `limit` allowed. */
+  "file.search": { entries: FileHit[]; truncated: boolean }
+  /* The user message whose turn is being carried on. */
+  "session.resume": { messageID: string }
+  /* `generated` is false when no model answered, and the list is then empty. */
+  "home.suggest": { suggestions: HomeSuggestion[]; generated: boolean }
   /**
    * One file, ready to show.
    *

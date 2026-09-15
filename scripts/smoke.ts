@@ -67,6 +67,9 @@ import {
   type OAuthProvider,
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
+import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
+import { interruptedTurn } from "../src/shared/resume"
+import type { Message } from "../src/shared/protocol"
 import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
 
 let passed = 0
@@ -2473,6 +2476,186 @@ async function main() {
     )
     internals.steering.delete(steerSession.id)
     internals.pending.delete(steerSession.id)
+  }
+
+  section("The @ menu: folders and search")
+  {
+    await fs.mkdir(path.join(project, "node_modules", "pkg"), { recursive: true })
+    await fs.writeFile(path.join(project, ".hidden"), "x")
+    await fs.mkdir(path.join(project, "src", "deep"), { recursive: true })
+    await fs.writeFile(path.join(project, "src", "deep", "app-helper.ts"), "export {}\n")
+
+    const top = await call({ type: "file.listDir", directory: project })
+    const names: string[] = top.entries.map((entry: { type: string; name: string }) => `${entry.type}:${entry.name}`)
+    const firstFile = names.findIndex((name) => name.startsWith("file:"))
+    const lastDir = names.map((name) => name.startsWith("dir:")).lastIndexOf(true)
+    check("one level, folders before files", names.includes("dir:src") && names.includes("file:hello.ts") && lastDir < firstFile, names)
+    check("dot entries and ignored folders are left out", !names.some((name) => name.includes(".hidden") || name.includes("node_modules")), names)
+    check("nothing from a level below", !names.some((name) => name.includes("app.ts")), names)
+
+    const inner = await call({ type: "file.listDir", directory: project, sub: "src" })
+    const innerNames: string[] = inner.entries.map((entry: { type: string; name: string }) => `${entry.type}:${entry.name}`)
+    check("a sub folder lists its own level", innerNames.includes("dir:deep") && innerNames.includes("file:app.ts"), innerNames)
+    const escaped = await call({ type: "file.listDir", directory: project, sub: "../.." }).then(() => false, () => true)
+    check("a folder outside the project is refused", escaped)
+    const missing = await call({ type: "file.listDir", directory: project, sub: "no-such-folder" }).then(() => false, () => true)
+    check("an unreadable folder is an error the menu can show", missing)
+
+    const found = await call({ type: "file.search", directory: project, query: "app" })
+    const rels: string[] = found.entries.map((entry: { rel: string }) => entry.rel)
+    const helper = found.entries.find((entry: { rel: string }) => entry.rel === "src/deep/app-helper.ts")
+    check("search reaches into sub folders", rels.includes("src/app.ts") && helper?.dir === "src/deep" && helper?.name === "app-helper.ts", found.entries)
+    check("a shorter path ranks first", rels.indexOf("src/app.ts") < rels.indexOf("src/deep/app-helper.ts"), rels)
+    const scoped = await call({ type: "file.search", directory: project, query: "app", sub: "src/deep" })
+    check("search stays inside the folder being browsed", scoped.entries.length === 1 && scoped.entries[0].rel === "src/deep/app-helper.ts", scoped.entries)
+    const capped = await call({ type: "file.search", directory: project, query: "a", limit: 1 })
+    check("a capped search says it was cut short", capped.entries.length === 1 && capped.truncated === true, capped)
+
+    await fs.rm(path.join(project, "node_modules"), { recursive: true, force: true })
+    await fs.rm(path.join(project, ".hidden"), { force: true })
+    await fs.rm(path.join(project, "src", "deep"), { recursive: true, force: true })
+  }
+
+  section("Resuming an interrupted turn")
+  {
+    const asked = { id: "u1", sessionID: "s", role: "user", text: "go", attachments: [], time: { created: 1 } } as Message
+    const reply = (finish?: string) =>
+      ({ id: "a1", sessionID: "s", role: "assistant", model: { provider: "p", model: "m" }, agent: "build", parts: [], time: { created: 2 }, ...(finish ? { finish } : {}) }) as Message
+    check("no question, nothing to resume", interruptedTurn([]) === undefined)
+    check("a question with no reply broke off", interruptedTurn([asked]) === "u1")
+    check("a stopped reply broke off", interruptedTurn([asked, reply("aborted")]) === "u1")
+    check("a failed reply broke off", interruptedTurn([asked, reply("error")]) === "u1")
+    check("a reply cut short by a quit broke off", interruptedTurn([asked, reply()]) === "u1")
+    check("a finished reply did not", interruptedTurn([asked, reply("end_turn")]) === undefined)
+    check("nor a refused one", interruptedTurn([asked, reply("refusal")]) === undefined)
+
+    // A runtime that fails the first request and answers every one after it.
+    const bodies: unknown[] = []
+    let failNext = true
+    const flaky = createServer((request, response) => {
+      if ((request.url ?? "").includes("/models")) {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ data: [{ id: "qwen/qwen3.8-27b" }] }))
+        return
+      }
+      let raw = ""
+      request.on("data", (chunk) => (raw += chunk))
+      request.on("end", () => {
+        bodies.push(raw ? JSON.parse(raw) : undefined)
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        if (failNext) {
+          failNext = false
+          const failure = { error: { message: "request (22530 tokens) exceeds the available context size (8192 tokens), try increasing it" } }
+          response.end(`event: error\n\ndata: ${JSON.stringify(failure)}\n\n`)
+          return
+        }
+        response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: "carried on" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`)
+      })
+    })
+    await new Promise<void>((resolve) => flaky.listen(8811, "127.0.0.1", resolve))
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8811/v1" } } })
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
+    const made = await call({ type: "session.create", directory: project })
+    const resumeID: string = made.session.id
+    await call({ type: "session.model", sessionID: resumeID, model: { provider: "lmstudio", model: "qwen/qwen3.8-27b" } })
+
+    const idleSince = (from: number) =>
+      new Promise<boolean>((resolve) => {
+        const started = Date.now()
+        const poll = setInterval(() => {
+          const done = events.slice(from).some((event) => event.type === "session.idle" && event.sessionID === resumeID)
+          if (done || Date.now() - started > 60_000) {
+            clearInterval(poll)
+            resolve(done)
+          }
+        }, 50)
+      })
+
+    let mark = events.length
+    await call({ type: "session.prompt", sessionID: resumeID, text: "build the thing" })
+    check("the first turn ends", await idleSince(mark))
+    const broken = await call({ type: "session.get", sessionID: resumeID })
+    const question = broken.messages.find((message: Message) => message.role === "user")
+    check("and ends failed", broken.messages.at(-1)?.finish === "error", broken.messages.at(-1)?.finish)
+
+    mark = events.length
+    const sentBefore = bodies.length
+    const resumed = await call({ type: "session.resume", sessionID: resumeID })
+    check("resume names the question it carries on", resumed.messageID === question?.id, resumed)
+    check("and runs to the end", await idleSince(mark))
+    const after = await call({ type: "session.get", sessionID: resumeID })
+    const users = after.messages.filter((message: Message) => message.role === "user")
+    check("no new message is written", users.length === 1, users.length)
+    const last = after.messages.at(-1)
+    const lastText = last?.parts?.map((part: { text?: string }) => part.text ?? "").join("")
+    check("the carried-on reply finishes", last?.finish === "end_turn" && lastText === "carried on", last)
+    const request = bodies[sentBefore] as { messages?: { role: string; content: unknown }[] } | undefined
+    const tail = request?.messages?.at(-1)
+    check(
+      "the model is told to carry on, in the request only",
+      tail?.role === "user" && String(tail.content).toLowerCase().includes("carry on"),
+      tail,
+    )
+    const again = await call({ type: "session.resume", sessionID: resumeID }).then(
+      () => "ran",
+      (error: Error) => error.message,
+    )
+    check("a finished turn cannot be resumed", again !== "ran", again)
+
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
+    await call({ type: "config.set", patch: { providerEndpoints: {} } })
+    flaky.close()
+  }
+
+  section("Home suggestions")
+  {
+    const rows = parseSuggestions(
+      'Here you go:\n```json\n[{"title":"Fix the login bug","query":"Find why login fails","icon":"bug"},{"title":"Add tests","query":"Cover run()","icon":"rocket"},{"title":"Fix the login bug","query":"again"},{"title":"No request"},{"title":"Write docs","query":"Document the API","icon":"doc"},{"title":"Fourth","query":"one too many"}]\n```',
+    )
+    check("three rows are read out of a fenced answer", rows.map((row) => row.title).join("|") === "Fix the login bug|Add tests|Write docs", rows)
+    check("an icon outside the set becomes idea", rows[1]?.icon === "idea", rows[1])
+    check("prose is no rows", parseSuggestions("Sorry, I can't help with that.").length === 0)
+    check("a broken array is no rows", parseSuggestions('[{"title": "x",').length === 0)
+
+    forgetSuggestions()
+    const asked: string[] = []
+    const answer = JSON.stringify([
+      { title: "整理 hello.ts", query: "把 hello.ts 里的常量整理成一个对象导出", icon: "code" },
+      { title: "补测试", query: "为 src/app.ts 的 run 写单元测试", icon: "test" },
+      { title: "写说明", query: "根据 AGENTS.md 写一份 README", icon: "doc" },
+    ])
+    const stub = createServer((request, response) => {
+      if ((request.url ?? "").includes("/models")) {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify({ data: [{ id: "qwen/qwen3.8-27b" }] }))
+        return
+      }
+      let raw = ""
+      request.on("data", (chunk) => (raw += chunk))
+      request.on("end", () => {
+        asked.push(raw)
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: answer }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`)
+      })
+    })
+    await new Promise<void>((resolve) => stub.listen(8812, "127.0.0.1", resolve))
+    const modelBefore = (await call({ type: "config.get" })).config.model
+    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8812/v1" } } })
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
+    await call({ type: "config.set", patch: { model: { provider: "lmstudio", model: "qwen/qwen3.8-27b" } } })
+
+    const first = await call({ type: "home.suggest", directory: project, language: "zh-CN" })
+    check("the model's three tasks come back", first.generated === true && first.suggestions.length === 3 && first.suggestions[1]?.icon === "test", first)
+    check("the project listing and the language reach the model", asked.length === 1 && asked[0].includes("hello.ts") && asked[0].includes("zh-CN"), asked.length)
+    const second = await call({ type: "home.suggest", directory: project, language: "zh-CN" })
+    check("a second ask for the project is answered from memory", asked.length === 1 && second.suggestions.length === 3, asked.length)
+
+    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
+    const unusable = await call({ type: "home.suggest", directory: path.join(root, "another-project"), language: "en" })
+    check("with no usable model the area stays empty", unusable.generated === false && unusable.suggestions.length === 0, unusable)
+
+    await call({ type: "config.set", patch: { model: modelBefore, providerEndpoints: {} } })
+    stub.close()
   }
 
   section("Persistence")
