@@ -40,7 +40,7 @@ const updatePhase = computed(() =>
   updateState.phase === "idle" && props.updateReady ? "ready" : updateState.phase,
 )
 
-const emit = defineEmits<{ close: []; "check-updates": []; "install-update": [] }>()
+const emit = defineEmits<{ close: []; "check-updates": [] }>()
 const app = useApp()
 
 /*

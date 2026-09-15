@@ -149,10 +149,11 @@ watch(showingPage, (showing) => {
   if (!showing) annotating.value = false
 })
 
-/* Annotating is for a page; a blank tab has nothing to mark. */
-function toggleAnnotate() {
-  if (!showingPage.value) return
+/* Annotating is for a page; a blank tab has nothing to mark, and says so, so Ctrl+. can fall back. */
+function toggleAnnotate(): boolean {
+  if (!showingPage.value) return false
   annotating.value = !annotating.value
+  return true
 }
 
 /*

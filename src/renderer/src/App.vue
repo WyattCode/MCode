@@ -32,7 +32,7 @@ import VideoPreview from "./components/VideoPreview.vue"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
-import { installUpdate, markUpdateReady } from "./components/UpdatePill.vue"
+import { markUpdateReady } from "./components/UpdatePill.vue"
 import TerminalDrawer from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
@@ -1104,6 +1104,11 @@ const windowWidth = ref(window.innerWidth)
 const onWindowResize = () => (windowWidth.value = window.innerWidth)
 onMounted(() => window.addEventListener("resize", onWindowResize))
 onBeforeUnmount(() => window.removeEventListener("resize", onWindowResize))
+
+/* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
+const revealSide = () => (leftPanel.value = true)
+onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
+onBeforeUnmount(() => window.removeEventListener("mcode:reveal-side", revealSide))
 let sideAutoFolded = false
 watch(
   [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
@@ -1177,11 +1182,10 @@ function reloadBrowser(force = false) {
   if (browserShowing.value) void rightPanel.value?.activeBrowser()?.reload(force)
 }
 
-/* Ctrl+period is MiMo's annotate while a browser tab is showing; elsewhere it steps the agent. */
+/* Ctrl+period is MiMo's annotate while a browser tab shows a page; on a blank tab or elsewhere it steps the agent. */
 function annotateOrCycleAgent() {
   const pane = browserShowing.value ? rightPanel.value?.activeBrowser() : undefined
-  if (pane) pane.toggleAnnotate()
-  else void cycleAgent(1)
+  if (!pane?.toggleAnnotate()) void cycleAgent(1)
 }
 
 /*
@@ -1296,11 +1300,18 @@ async function newSessionIn(directory: string) {
   startIn(directory)
 }
 
+/*
+ * DL15, MiMo's open-folder: the home screen with the folder picked and no
+ * conversation made. Several may be chosen; each is brought back if it was
+ * closed, and the last one is the pick.
+ */
 async function browse() {
-  // Several at once, the way the reference opens projects. The last one chosen
-  // is the one landed on, so a batch still ends somewhere definite.
   const directories = await window.mcode.pickDirectory(t("cmd.openProject"), true)
-  for (const directory of directories) await openProject(directory)
+  if (!directories.length) return
+  const closed = app.config?.closedProjects ?? []
+  const kept = closed.filter((entry) => !directories.includes(entry))
+  if (kept.length !== closed.length) await app.patchConfig({ closedProjects: kept })
+  startIn(directories[directories.length - 1])
 }
 
 /**
@@ -1966,7 +1977,8 @@ async function createNamedProject(title: string, source?: string) {
     view.value = "session"
     return
   }
-  await addDroppedProjects([directory])
+  // DL15: MiMo lands on the home screen with the new project picked, and makes no conversation for it.
+  await newSessionIn(directory)
 }
 
 /**
@@ -2224,6 +2236,12 @@ function goPlugins() {
 async function openFromArtifacts(sessionID: string) {
   view.value = "session"
   await app.open(sessionID)
+}
+
+/* A8: a conversation found by what was said in it opens at that message, as MiMo's requestReveal does. */
+async function openFromSearch(sessionID: string, messageID?: string) {
+  await openFromArtifacts(sessionID)
+  if (messageID) app.revealMessage(messageID)
 }
 
 function goHome() {
@@ -4290,7 +4308,7 @@ onBeforeUnmount(() => {
       v-if="searchOpen"
       ref="searchOverlay"
       @close="searchOpen = false"
-      @open="openFromArtifacts"
+      @open="openFromSearch"
       @project="startIn"
     />
 
@@ -4337,7 +4355,6 @@ onBeforeUnmount(() => {
       :update-ready="downloadedUpdate"
       @close="settingsOpen = false"
       @check-updates="checkForUpdates"
-      @install-update="installUpdate"
     />
 
     <ProjectDialog

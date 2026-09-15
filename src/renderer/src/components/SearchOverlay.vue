@@ -15,7 +15,7 @@ import { projectName } from "../lib/project"
  * they were found. As in MiMo, rows are chosen with the pointer; only Escape is
  * bound.
  */
-const emit = defineEmits<{ close: []; open: [sessionID: string]; project: [directory: string] }>()
+const emit = defineEmits<{ close: []; open: [sessionID: string, messageID?: string]; project: [directory: string] }>()
 
 const app = useApp()
 const query = ref("")
@@ -39,6 +39,8 @@ interface Item {
   kind: Kind
   id: string
   target: string
+  /** For a conversation found by what was said in it: the message to open at. */
+  messageID?: string
   title: Span
   meta: string
   snippet?: Span
@@ -111,6 +113,7 @@ const items = computed<Item[]>(() => {
       kind: "convo",
       id: session.id,
       target: session.id,
+      messageID: hit?.messageID,
       title: titled ? { text: title, ranges: titled.ranges } : plain(title),
       meta: owner(session),
       snippet,
@@ -236,7 +239,7 @@ function close() {
 function choose(item?: Item) {
   if (!item) return
   if (item.kind === "project") emit("project", item.target)
-  else emit("open", item.target)
+  else emit("open", item.target, item.messageID)
   close()
 }
 
