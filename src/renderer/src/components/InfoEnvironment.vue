@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue"
 import type { GitSummary, PullRequestState } from "@shared/protocol"
 import { t } from "../lib/i18n"
+import { prRowState } from "../lib/pr-row"
 import { useApp } from "../stores/app"
 import { requestReview } from "../lib/review-request"
 import { useBranchSwitch } from "../lib/branch-switch"
@@ -23,7 +24,7 @@ const app = useApp()
  * MiMo's last row: the branch's pull request. GitHub is asked at most once per
  * project and branch every 30 seconds (its unauthenticated limit is 60 an
  * hour), never twice at once, and a failure after a good answer keeps the good
- * one. Unlike MiMo, a lookup that fails draws no row at all.
+ * one. A lookup that fails, or a detached HEAD, says the status is unavailable.
  */
 const PR_INTERVAL = 30_000
 const PR_LABEL = {
@@ -79,13 +80,10 @@ onBeforeUnmount(() => {
   prInFlight.clear()
 })
 
-/* undefined while asking; null when there is nothing to draw. */
-const prNow = computed(() => {
-  if (!props.summary.github) return null
-  if (pr.value?.key !== prKey()) return undefined
-  return pr.value.result.ok ? pr.value.result : null
-})
-const prFound = computed(() => (prNow.value && prNow.value.kind !== "none" ? prNow.value : null))
+const prResult = computed(() => (pr.value?.key === prKey() ? pr.value.result : undefined))
+const prRow = computed(() => prRowState(Boolean(props.summary.github), prResult.value))
+const prFound = computed(() => (prResult.value?.ok && prResult.value.kind !== "none" ? prResult.value : null))
+const PR_LINE = { loading: "info.prLoading", none: "info.prNone", unavailable: "info.prUnavailable" } as const
 
 function openPullRequest() {
   if (prFound.value) window.mcode.openExternal(prFound.value.url)
@@ -255,10 +253,10 @@ watch(
     <span class="label">#{{ prFound.number }} · {{ t(PR_LABEL[prFound.kind]) }}</span>
   </button>
   <div
-    v-else-if="prNow !== null"
+    v-else-if="prRow === 'loading' || prRow === 'none' || prRow === 'unavailable'"
     class="row disabled"
     data-info-environment-pr
-    :data-info-environment-pr-state="prNow ? 'none' : 'loading'"
+    :data-info-environment-pr-state="prRow"
     aria-disabled="true"
   >
     <svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -267,7 +265,7 @@ watch(
       <circle cx="12" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.2" />
       <path d="M4 5.1v5.8M12 10.9V6.8a2 2 0 0 0-2-2H7.6M9.1 3.3 7.6 4.8l1.5 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
-    <span class="label">{{ prNow ? t("info.prNone") : t("info.prLoading") }}</span>
+    <span class="label">{{ t(PR_LINE[prRow]) }}</span>
   </div>
 </template>
 

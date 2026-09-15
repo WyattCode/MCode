@@ -30,6 +30,10 @@ export interface MenuItem {
    * import the icons it names.
    */
   icon?: string
+  /** An app's own icon as a data URL, drawn where `icon` would be; an app without one shows `letter`. */
+  image?: string
+  /** The first letter drawn in a small square when an app has no icon to show. */
+  letter?: string
   /** The glyph's own colour, such as a file type's hue in the files tab; the row's ink otherwise. */
   iconColor?: string
   /** Drawn in the error colour: the row that destroys something. */

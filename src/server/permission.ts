@@ -202,7 +202,17 @@ export class Permissions {
   action(kind: string): PermissionAction {
     const bucket = bucketOf(kind)
     if (!bucket) return "ask"
-    return this.config.get().permissions?.[bucket] ?? DEFAULT_PERMISSIONS[bucket]
+    const config = this.config.get()
+    const set = config.permissions?.[bucket] ?? DEFAULT_PERMISSIONS[bucket]
+    /*
+     * Full access with its switch off is not full access, whatever wrote the
+     * config: an allow it granted falls back to what the level replaced, as
+     * the settings switch does when it is turned off.
+     */
+    if (set === "allow" && config.accessLevel === "full" && config.allowFullAccess === false) {
+      return config.accessBefore?.[bucket] ?? DEFAULT_PERMISSIONS[bucket]
+    }
+    return set
   }
 
   /** True when `target` sits under something already approved for this session. */
@@ -443,13 +453,6 @@ export class Permissions {
       pending.resolve("reject")
       this.bus.publish({ type: "permission.resolved", requestID: id, decided: "cancelled" })
     }
-  }
-
-  /** Drops every remembered approval - part of returning to first run. */
-  forget(): void {
-    for (const id of [...this.pending.keys()]) this.respond(id, "reject")
-    this.approved.clear()
-    this.outsideRoots.clear()
   }
 
   /**

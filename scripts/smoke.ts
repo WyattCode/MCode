@@ -47,7 +47,7 @@ import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSe
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
-import { normalizeChord } from "../src/shared/chord"
+import { RETIRED_DEFAULTS, normalizeChord, retireKeybinds } from "../src/shared/chord"
 import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
@@ -90,6 +90,8 @@ import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
 import {
   accessOf,
+  accessPatch,
+  fullAccessOff,
   composerAnswers,
   confirmQueue,
   guideShown,
@@ -181,7 +183,10 @@ import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStat
 // round 4: MiMo's built-in window tools and the pieces the window uses.
 import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
 import { LANGUAGE_IDS, bindDesktopSettings } from "../src/server/tool/desktop-settings"
-import { deliveredCard, deliveredFiles, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { deliveredCard, deliveredFiles, projectPath, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { prRowState } from "../src/renderer/src/lib/pr-row"
+import { addFileNotice, fileNoticesBlock } from "../src/shared/file-notices"
+import { withAnnotations } from "../src/shared/annotations"
 import { stepTitle as deliveredStepTitle, toolIcon as deliveredToolIcon, toolVerb as deliveredToolVerb } from "../src/renderer/src/lib/tool-meta"
 import { LANGUAGES as INTERFACE_LANGUAGES } from "../src/renderer/src/lib/i18n"
 import { freeCopyName, saveCopy } from "../src/main/save-copy"
@@ -973,6 +978,55 @@ async function main() {
       "the level is read the way the composer chip reads it",
       accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
     )
+
+    section("round 5: turning off the full access switch (D2)")
+    {
+      const mine = { ...PERMISSION_DEFAULTS, bash: "allow" as const, webfetch: "deny" as const }
+      const toFull = accessPatch({ permissions: mine, accessLevel: "ask" }, "full")!
+      check(
+        "full allows every bucket but a deny, and keeps the map it replaced",
+        accessOf(toFull) === "full" && toFull.permissions.webfetch === "deny" && toFull.accessBefore?.bash === "allow",
+        toFull,
+      )
+      const off = fullAccessOff({ ...toFull })
+      check(
+        "switching off at full access drops to the default level with the user's own answers back",
+        off.dropped &&
+          off.patch.allowFullAccess === false &&
+          off.patch.accessLevel === "ask" &&
+          accessOf(off.patch) === "ask" &&
+          off.patch.permissions?.bash === "allow" &&
+          off.patch.permissions?.edit === PERMISSION_DEFAULTS.edit &&
+          off.patch.accessBefore === undefined,
+        off,
+      )
+      const offAsk = fullAccessOff({ permissions: { ...PERMISSION_DEFAULTS }, accessLevel: "auto" })
+      check(
+        "switching off below full access only turns the switch off",
+        !offAsk.dropped && JSON.stringify(offAsk.patch) === JSON.stringify({ allowFullAccess: false }),
+        offAsk,
+      )
+      const guardConfig = { permissions: toFull.permissions, accessBefore: toFull.accessBefore, accessLevel: "full", allowFullAccess: false }
+      const guarded = new Permissions(new Bus(), { get: () => guardConfig } as never)
+      check(
+        "the server does not honour full access while its switch is off",
+        guarded.action("edit") === PERMISSION_DEFAULTS.edit && guarded.action("bash") === "allow" && guarded.action("webfetch") === "deny",
+      )
+      guardConfig.allowFullAccess = true
+      check("and honours it once the switch is on", guarded.action("edit") === "allow")
+
+      const fullData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-fullswitch-"))
+      const fullStorage = new SubagentStorage(path.join(fullData, "storage"))
+      await fullStorage.write("config", { permissions: allAllowed, accessLevel: "full", allowFullAccess: false })
+      const fullConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
+      await fullConfig.load()
+      check("a config already at full access keeps it on upgrade by turning the switch on", fullConfig.get().allowFullAccess === true)
+      await fullStorage.write("config", { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: false })
+      const askConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
+      await askConfig.load()
+      check("a config below full access leaves the switch off", askConfig.get().allowFullAccess === false)
+      await fs.rm(fullData, { recursive: true, force: true })
+    }
 
     // 帮我审批 turns on the middle level; what it lets through stops waiting, a delete does not.
     let level = "ask"
@@ -3228,7 +3282,12 @@ async function main() {
     check("Ctrl+T too", pageKeyAction(press("t", "KeyT", { control: true })).kind === "forward")
     check("Ctrl+period, for annotating", pageKeyAction(press(".", "Period", { control: true })).kind === "forward")
     check("Ctrl+Shift+B, by its capital letter", pageKeyAction(press("B", "KeyB", { control: true, shift: true })).kind === "forward")
-    check("Ctrl+Shift+period, typed as >", pageKeyAction(press(">", "Period", { control: true, shift: true })).kind === "forward")
+    check("Ctrl+Shift+slash, typed as ?", pageKeyAction(press("?", "Slash", { control: true, shift: true })).kind === "forward")
+    check(
+      "chords MiMo lacks are left to the page",
+      ["Ctrl+Shift+.", "Ctrl+U", "Ctrl+G", "Alt+←", "Ctrl+Alt+1"].every((chord) => !APP_CHORDS.includes(chord)) &&
+        pageKeyAction(press("u", "KeyU", { control: true })).kind === "none",
+    )
     check("Ctrl+R reloads the page itself", JSON.stringify(pageKeyAction(press("r", "KeyR", { control: true }))) === JSON.stringify({ kind: "reload", force: false }))
     check("Ctrl+Shift+R force-reloads it", JSON.stringify(pageKeyAction(press("R", "KeyR", { control: true, shift: true }))) === JSON.stringify({ kind: "reload", force: true }))
     check("Ctrl+C stays with the page", pageKeyAction(press("c", "KeyC", { control: true })).kind === "none")
@@ -3256,7 +3315,7 @@ async function main() {
     const plainKeys = keysIn(block("const handlers: Record<string, () => void> = {"))
     const shiftedKeys = keysIn(block("const shifted: Record<string, () => void> = {"))
     const altKeys = [...appSource.matchAll(/mod && event\.altKey && event\.key\.toLowerCase\(\) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
-    check("App.vue's handler tables were found", plainKeys.length > 15 && shiftedKeys.length > 12 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
+    check("App.vue's handler tables were found", plainKeys.length > 12 && shiftedKeys.length > 6 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
     const wanted = [
       ...plainKeys.filter((key) => key !== "F" && key !== "R").map((key) => `Ctrl+${key}`),
       ...shiftedKeys.filter((key) => key !== "R").map((key) => `Ctrl+Shift+${key}`),
@@ -4871,6 +4930,47 @@ async function main() {
     check("a chord saved after the migration is not rewritten again on the next load", again.get().keybinds["view.server"] === "Ctrl+Shift+{")
     await fs.rm(chordData, { recursive: true, force: true })
   }
+
+  section("round 5: chords MiMo lacks are gone, saved bindings keep working (R26)")
+  {
+    const retired = retireKeybinds({
+      "agent.cycle": "Ctrl+Shift+Y",
+      "app.attachFile": "Ctrl+U",
+      "session.prevUnread": "Alt+Shift+↑",
+      "app.mcp": "",
+      "project.3": "Ctrl+Alt+Q",
+      "session.new": "Ctrl+Alt+N",
+      "app.back": "",
+    })
+    check(
+      "a chord of the user's own on a command that lost its default stays",
+      retired["agent.cycle"] === "Ctrl+Shift+Y",
+      retired,
+    )
+    check(
+      "a binding that restated or cleared a dropped default goes",
+      !("app.attachFile" in retired) && !("session.prevUnread" in retired) && !("app.mcp" in retired),
+      retired,
+    )
+    check("the numbered project slots go with their bindings", !("project.3" in retired), retired)
+    check("bindings of MiMo's own commands are untouched", retired["session.new"] === "Ctrl+Alt+N" && retired["app.back"] === "", retired)
+    const appSource = await fs.readFile(path.join(process.cwd(), "src/renderer/src/App.vue"), "utf8")
+    const stillDefault = Object.entries(RETIRED_DEFAULTS).filter(([, chord]) => appSource.includes(`hint: "${chord}"`))
+    check("no command in App.vue still carries a dropped default", stillDefault.length === 0, stillDefault)
+    check("nor the numbered project slots", !appSource.includes("id: `project.${"))
+
+    const retireData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-retire-"))
+    const retireStorage = new SubagentStorage(path.join(retireData, "storage"))
+    await retireStorage.write("config", {
+      keybinds: { "agent.cycle": "Ctrl+Shift+Y", "workspace.new": "Ctrl+Shift+W" },
+      migrations: ["theme-mcode-2", "keybind-ids-r3", "keybind-chords-r4"],
+    })
+    const retireConfig = new SubagentConfig(retireStorage, new Bus(), path.join(retireData, "credentials.json"))
+    await retireConfig.load()
+    const loaded = retireConfig.get().keybinds
+    check("loading the config applies it once", loaded["agent.cycle"] === "Ctrl+Shift+Y" && !("workspace.new" in loaded), loaded)
+    await fs.rm(retireData, { recursive: true, force: true })
+  }
   const pageCommands = [
     { id: "session.archive", title: "Archive this session", hint: "Ctrl+Alt+A" },
     { id: "tab.close", title: "Close tab", hint: "Ctrl+W" },
@@ -5745,6 +5845,57 @@ async function deliveredToolChecks(root: string) {
   check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,url", items.map(deliveredCard))
   check("sizes read as MiMo writes them", sizeLabel(512) === "512 B" && sizeLabel(1536) === "1.5 KB" && sizeLabel(5 * 1024 * 1024) === "5.0 MB")
   check("a delivered file opens with an app by its path under the project", relativeInside("C:\\p\\", "C:/P/out/a.pdf") === "out/a.pdf" && relativeInside("C:\\p", "D:/q/a.pdf") === "")
+
+  section("round 5: media previews keep to the project, the pull request row, document change notices (D1, D10, D11)")
+  check(
+    "a delivered picture, video or sound is previewed, anything else keeps its card",
+    deliveredCard({ kind: "file", path: "C:/p/shot.png", name: "shot.png", size: 1 }) === "media" &&
+      deliveredCard({ kind: "file", path: "C:/p/clip.MP4", name: "clip.MP4", size: 1 }) === "media" &&
+      deliveredCard({ kind: "file", path: "C:/p/notes.txt", name: "notes.txt", size: 1 }) === "file",
+  )
+  check(
+    "a path in the project is read, as the absolute path under it",
+    projectPath("C:\\p\\out\\a.png", "C:\\p") === "C:/p/out/a.png" && projectPath("out/a.png", "C:\\p\\") === "C:/p/out/a.png" && projectPath("./a.mp3", "/home/me/p") === "/home/me/p/a.mp3",
+    [projectPath("C:\\p\\out\\a.png", "C:\\p"), projectPath("out/a.png", "C:\\p\\"), projectPath("./a.mp3", "/home/me/p")],
+  )
+  check(
+    "a path outside it, climbing out of it, from home or with a scheme is not",
+    [
+      projectPath("D:/q/a.png", "C:/p"),
+      projectPath("C:/p2/a.png", "C:/p"),
+      projectPath("../a.png", "C:/p"),
+      projectPath("C:/p/../secret.png", "C:/p"),
+      projectPath("~/a.png", "/home/me/p"),
+      projectPath("file:///C:/p/a.png", "C:/p"),
+      projectPath("a.png", undefined),
+    ].every((value) => value === undefined),
+  )
+  check(
+    "the pull request row: hidden off GitHub, then loading, none, unavailable or found",
+    prRowState(false, { ok: true, kind: "none" }) === "hidden" &&
+      prRowState(true, undefined) === "loading" &&
+      prRowState(true, { ok: true, kind: "none" }) === "none" &&
+      prRowState(true, { ok: false, code: "network" }) === "unavailable" &&
+      prRowState(true, { ok: false, code: "detached" }) === "unavailable" &&
+      prRowState(true, { ok: true, kind: "open", number: 3, title: "t", url: "https://github.com/a/b/pull/3" }) === "found",
+  )
+  {
+    let notices = addFileNotice([], { path: "C:/p/a.docx", source: "user", note: "cell B2", time: 1 })
+    notices = addFileNotice(notices, { path: "C:/p/b.xlsx", source: "external", time: 2 })
+    notices = addFileNotice(notices, { path: "C:/p/a.docx", source: "restore", time: 3 })
+    check(
+      "changes to one file merge into one notice that counts them and keeps the latest",
+      notices.length === 2 && notices[0].count === 2 && notices[0].source === "restore" && notices[0].note === undefined && notices[1].count === 1,
+      notices,
+    )
+    const told = withAnnotations("go on", undefined, notices)
+    check(
+      "the model reads the changes before the message, and a message with none is unchanged",
+      told.startsWith("<document-changes>") && told.endsWith("go on") && told.includes("C:/p/a.docx (2 changes") && withAnnotations("go on", undefined, []) === "go on",
+      told,
+    )
+    check("no notices, no block", fileNoticesBlock(undefined) === "" && fileNoticesBlock([]) === "")
+  }
   check("the step rows speak MiMo's verbs", deliveredToolVerb("present_files", "completed") !== "toolLabel.done.present_files" && deliveredToolVerb("pdf_locate", "running") !== "toolLabel.running.pdf_locate")
   check(
     "the step titles are the passage, the file names and the change",

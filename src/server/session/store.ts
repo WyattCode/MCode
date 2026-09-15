@@ -341,18 +341,6 @@ export class SessionStore {
   }
 
   /**
-   * Removes every session at once.
-   *
-   * Deleting them one by one races an aborted turn: abort only signals, so the
-   * turn still writes its partial transcript afterwards and recreates the
-   * directory that was just removed. Clearing the tree after everything has
-   * stopped leaves nothing behind.
-   */
-  async clear(): Promise<void> {
-    await this.storage.removeDirectory("session")
-  }
-
-  /**
    * A new session carrying this one's history up to a point.
    *
    * The reference's fork is a server call - `POST /session/{id}/fork` with a

@@ -43,7 +43,7 @@ export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[
           content.push({ type: "text", text: `<file path="${attachment.path}">\n${attachment.data}\n</file>` })
         }
       }
-      const text = withAnnotations(message.text, message.annotations)
+      const text = withAnnotations(message.text, message.annotations, message.fileNotices)
       if (text) content.push({ type: "text", text })
       if (content.length) out.push({ role: "user", content })
       continue
