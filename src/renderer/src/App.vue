@@ -959,6 +959,9 @@ watch(
  * there before instead of dropping the app to Times New Roman. The name is
  * quoted so a face with a space in it - "JetBrains Mono" - survives.
  */
+/* MiMo's terminal stack, the same as tokens.css's --font-terminal, for a chosen face to stand in front of. */
+const TERMINAL_FONT_STACK =
+  '"SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", monospace'
 watch(
   () => [app.config?.uiFont, app.config?.codeFont, app.config?.terminalFont] as const,
   ([ui, code, terminal]) => {
@@ -970,7 +973,8 @@ watch(
     }
     put("--font-sans", ui, "var(--font-sans-stack)")
     put("--font-mono", code, "var(--font-mono-stack)")
-    put("--font-terminal", terminal, "var(--font-mono-stack)")
+    // MiMo's terminal stack, as tokens.css has it: a chosen face goes in front of it.
+    put("--font-terminal", terminal, TERMINAL_FONT_STACK)
   },
   { immediate: true },
 )
@@ -1026,12 +1030,18 @@ const isHome = computed(
 const empty = computed(() => app.messages.length === 0)
 
 /*
- * The terminal docks along the foot of the main column. Not during onboarding;
- * on the home screen, as MiMo allows, once there is a project folder for it to
- * open in, since no conversation has one yet.
+ * The terminal docks along the foot of the main column. Not during onboarding
+ * or on the artifacts and plugins pages; on the home screen, as MiMo allows,
+ * once there is a project folder for it to open in, since no conversation has
+ * one yet.
  */
 const terminalUp = computed(
-  () => terminalOpen.value && !onboarding.value && (!isHome.value || Boolean(homeShellDirectory.value)),
+  () =>
+    terminalOpen.value &&
+    !onboarding.value &&
+    !isArtifacts.value &&
+    !isPlugins.value &&
+    (!isHome.value || Boolean(homeShellDirectory.value)),
 )
 
 /*
@@ -1046,8 +1056,12 @@ watch(
   (scope) => rp.setScope(scope),
   { immediate: true },
 )
+/* MiMo puts both the panel and the terminal away on its own pages. */
 watch([isArtifacts, isPlugins], ([artifacts, plugins]) => {
-  if (artifacts || plugins) rp.setOpen(false)
+  if (artifacts || plugins) {
+    rp.setOpen(false)
+    terminalOpen.value = false
+  }
 })
 
 /* A conversation that is gone takes its tabs' shells and pages with it. */
@@ -1319,21 +1333,6 @@ async function selectTab(id: string) {
 /** Starts a task from the 2.0 home screen, in the project picked there. */
 function newSession() {
   startIn(app.current?.directory)
-}
-
-/**
- * Another shell, opening the drawer first if it is not already up.
- *
- * The drawer owns the tabs, and it only exists while open, so the first call
- * has to wait a tick for it to mount before there is anything to ask.
- */
-async function newTerminal() {
-  const wasOpen = terminalOpen.value
-  terminalOpen.value = true
-  if (!wasOpen) await nextTick()
-  // A freshly mounted drawer already starts one shell; a second call here
-  // would leave two open for a single keystroke.
-  if (wasOpen) drawer.value?.add()
 }
 
 /**
@@ -2702,14 +2701,6 @@ const bindableCommands = computed(() => {
       enabled: inWorkspace,
       run: () => (terminalOpen.value = !terminalOpen.value),
     },
-    {
-      id: "terminal.new",
-      group: "key.groupTerminal",
-      title: t("key.newTerminal"),
-      hint: "Ctrl+Alt+T",
-      enabled: inWorkspace,
-      run: () => void newTerminal(),
-    },
 
     ...(["build", "plan"] as const).map((entry) => ({
       id: `agent.${entry}`,
@@ -3420,18 +3411,6 @@ function onKeydown(event: KeyboardEvent) {
     if (modalOpen.value || !app.current) return
     event.preventDefault()
     copySessionLink()
-    return
-  }
-
-  /*
-   * A new terminal, from wherever. This used to live inside the drawer, which
-   * is mounted only while the drawer is open, so the key did nothing in the one
-   * state where someone is most likely to press it.
-   */
-  if (mod && event.altKey && event.key.toLowerCase() === "t") {
-    if (modalOpen.value || isHome.value) return
-    event.preventDefault()
-    void newTerminal()
     return
   }
 
@@ -4260,15 +4239,18 @@ onBeforeUnmount(() => {
           has it: the full width of this column, under the composer, with its
           own edge to drag. Not in the right-hand column, which is the review's.
         -->
-        <TerminalDrawer
-          v-if="terminalUp"
-          :key="isHome ? `home:${homeShellDirectory}` : 'session'"
-          ref="drawer"
-          :sessionID="isHome ? undefined : app.currentID"
-          :directory="isHome ? homeShellDirectory : undefined"
-          @close="terminalOpen = false"
-          @height="(px: number) => (drawerHeight = px)"
-        />
+        <!-- The drawer styles bp-enter/leave itself; out-in so a new home folder closes one drawer before opening the next. -->
+        <Transition name="bp" mode="out-in">
+          <TerminalDrawer
+            v-if="terminalUp"
+            :key="isHome ? `home:${homeShellDirectory}` : 'session'"
+            ref="drawer"
+            :sessionID="isHome ? undefined : app.currentID"
+            :directory="isHome ? homeShellDirectory : undefined"
+            @close="terminalOpen = false"
+            @height="(px: number) => (drawerHeight = px)"
+          />
+        </Transition>
 
         <!-- MiMo's drop overlay over the main column; the drop itself is the composer's. -->
         <div v-if="fileDrag && !onboarding" class="drop-overlay" data-drop-overlay aria-hidden="true">

@@ -166,11 +166,11 @@
   --font-sans: var(--font-sans-stack);
   --font-mono: var(--font-mono-stack);
   /*
-   * The reference's own terminal stack, verbatim: its bundled Nerd Font first,
-   * then exactly the generic list above. A reader who names a font in settings
-   * is prepended to this rather than replacing it.
+   * MiMo's terminal stack, verbatim: system monospace faces first, then the
+   * Nerd Font symbol faces a prompt's glyphs need. A reader who names a font in
+   * settings is prepended to this rather than replacing it (App.vue repeats it).
    */
-  --font-terminal: "JetBrainsMono Nerd Font Mono", var(--font-mono-stack);
+  --font-terminal: "SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", monospace;
 
   /*
    * Thirteen on twenty-four, measured off opencode's own body rule. This app

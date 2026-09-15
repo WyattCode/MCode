@@ -1264,13 +1264,14 @@ watch(
  * The reference puts the font's own name in the placeholder - measured on the
  * running app, its sans box reads `value: "", placeholder: "System Sans"` - so
  * an unset field still tells you what is actually being used. This said
- * "Default", which says only that you have not chosen. The three names are its
- * own constants (`sansDefault`, `monoDefault`, `terminalDefault`), and being
- * font names they are the same in every language.
+ * "Default", which says only that you have not chosen. The sans and mono names
+ * are its own constants (`sansDefault`, `monoDefault`), and being font names
+ * they are the same in every language. MiMo's terminal default is its whole
+ * stack rather than one face, so that box has no name to show.
  */
 const FONT_SANS_DEFAULT = "System Sans"
 const FONT_MONO_DEFAULT = "System Mono"
-const FONT_TERMINAL_DEFAULT = "JetBrainsMono Nerd Font Mono"
+const FONT_TERMINAL_DEFAULT = ""
 
 const resetGate = ref<HTMLElement>()
 

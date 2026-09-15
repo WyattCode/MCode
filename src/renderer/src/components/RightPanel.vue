@@ -377,7 +377,6 @@ defineExpose({
             :directory="directory"
             @opened="(shellID: string, cwd: string) => rp.update(tab.id, { shellID, cwd })"
             @used="rp.update(tab.id, { used: true })"
-            @exited="rp.update(tab.id, { used: false })"
             @openNew="rp.openTool('terminal')"
           />
           <OfficeTab v-else-if="tab.type === 'office'" :tab="tab" :active="tab.id === rp.active && rp.open" />
@@ -399,6 +398,7 @@ defineExpose({
       :title="t(pendingClose.length > 1 ? 'rp.termClose.batchTitle' : 'rp.termClose.title')"
       :body="t(pendingClose.length > 1 ? 'rp.termClose.batchMessage' : 'rp.termClose.message', { count: pendingClose.length })"
       :confirmLabel="t('rp.termClose.confirm')"
+      :danger="false"
       @confirm="confirmClose"
       @close="pendingClose = []"
     />
