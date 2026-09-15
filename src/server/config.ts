@@ -618,22 +618,6 @@ export class Config {
     await this.persistCredentials()
   }
 
-  /**
-   * Returns the app to its first-run state: no keys, no subscription tokens, no
-   * discovered catalogs, no preferences. Sessions are cleared by the caller,
-   * which owns them.
-   */
-  async reset(): Promise<void> {
-    this.credentials = {}
-    this.oauth = {}
-    this.discovered = {}
-    await this.persistCredentials()
-    await this.storage.write("models", this.discovered)
-    this.current = defaults()
-    await this.storage.write("config", this.current)
-    this.bus.publish({ type: "config.updated", config: this.current })
-  }
-
   async setDiscovered(provider: string, models: ModelEntry[]): Promise<void> {
     this.discovered[provider] = models
     await this.storage.write("models", this.discovered)

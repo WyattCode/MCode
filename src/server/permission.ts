@@ -455,13 +455,6 @@ export class Permissions {
     }
   }
 
-  /** Drops every remembered approval - part of returning to first run. */
-  forget(): void {
-    for (const id of [...this.pending.keys()]) this.respond(id, "reject")
-    this.approved.clear()
-    this.outsideRoots.clear()
-  }
-
   /**
    * Every question still waiting for an answer.
    *

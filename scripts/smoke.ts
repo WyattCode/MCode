@@ -176,7 +176,10 @@ import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStat
 // round 4: MiMo's built-in window tools and the pieces the window uses.
 import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
 import { LANGUAGE_IDS, bindDesktopSettings } from "../src/server/tool/desktop-settings"
-import { deliveredCard, deliveredFiles, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { deliveredCard, deliveredFiles, projectPath, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { prRowState } from "../src/renderer/src/lib/pr-row"
+import { addFileNotice, fileNoticesBlock } from "../src/shared/file-notices"
+import { withAnnotations } from "../src/shared/annotations"
 import { stepTitle as deliveredStepTitle, toolIcon as deliveredToolIcon, toolVerb as deliveredToolVerb } from "../src/renderer/src/lib/tool-meta"
 import { LANGUAGES as INTERFACE_LANGUAGES } from "../src/renderer/src/lib/i18n"
 import { freeCopyName, saveCopy } from "../src/main/save-copy"
@@ -5516,6 +5519,57 @@ async function deliveredToolChecks(root: string) {
   check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,url", items.map(deliveredCard))
   check("sizes read as MiMo writes them", sizeLabel(512) === "512 B" && sizeLabel(1536) === "1.5 KB" && sizeLabel(5 * 1024 * 1024) === "5.0 MB")
   check("a delivered file opens with an app by its path under the project", relativeInside("C:\\p\\", "C:/P/out/a.pdf") === "out/a.pdf" && relativeInside("C:\\p", "D:/q/a.pdf") === "")
+
+  section("round 5: media previews keep to the project, the pull request row, document change notices (D1, D10, D11)")
+  check(
+    "a delivered picture, video or sound is previewed, anything else keeps its card",
+    deliveredCard({ kind: "file", path: "C:/p/shot.png", name: "shot.png", size: 1 }) === "media" &&
+      deliveredCard({ kind: "file", path: "C:/p/clip.MP4", name: "clip.MP4", size: 1 }) === "media" &&
+      deliveredCard({ kind: "file", path: "C:/p/notes.txt", name: "notes.txt", size: 1 }) === "file",
+  )
+  check(
+    "a path in the project is read, as the absolute path under it",
+    projectPath("C:\\p\\out\\a.png", "C:\\p") === "C:/p/out/a.png" && projectPath("out/a.png", "C:\\p\\") === "C:/p/out/a.png" && projectPath("./a.mp3", "/home/me/p") === "/home/me/p/a.mp3",
+    [projectPath("C:\\p\\out\\a.png", "C:\\p"), projectPath("out/a.png", "C:\\p\\"), projectPath("./a.mp3", "/home/me/p")],
+  )
+  check(
+    "a path outside it, climbing out of it, from home or with a scheme is not",
+    [
+      projectPath("D:/q/a.png", "C:/p"),
+      projectPath("C:/p2/a.png", "C:/p"),
+      projectPath("../a.png", "C:/p"),
+      projectPath("C:/p/../secret.png", "C:/p"),
+      projectPath("~/a.png", "/home/me/p"),
+      projectPath("file:///C:/p/a.png", "C:/p"),
+      projectPath("a.png", undefined),
+    ].every((value) => value === undefined),
+  )
+  check(
+    "the pull request row: hidden off GitHub, then loading, none, unavailable or found",
+    prRowState(false, { ok: true, kind: "none" }) === "hidden" &&
+      prRowState(true, undefined) === "loading" &&
+      prRowState(true, { ok: true, kind: "none" }) === "none" &&
+      prRowState(true, { ok: false, code: "network" }) === "unavailable" &&
+      prRowState(true, { ok: false, code: "detached" }) === "unavailable" &&
+      prRowState(true, { ok: true, kind: "open", number: 3, title: "t", url: "https://github.com/a/b/pull/3" }) === "found",
+  )
+  {
+    let notices = addFileNotice([], { path: "C:/p/a.docx", source: "user", note: "cell B2", time: 1 })
+    notices = addFileNotice(notices, { path: "C:/p/b.xlsx", source: "external", time: 2 })
+    notices = addFileNotice(notices, { path: "C:/p/a.docx", source: "restore", time: 3 })
+    check(
+      "changes to one file merge into one notice that counts them and keeps the latest",
+      notices.length === 2 && notices[0].count === 2 && notices[0].source === "restore" && notices[0].note === undefined && notices[1].count === 1,
+      notices,
+    )
+    const told = withAnnotations("go on", undefined, notices)
+    check(
+      "the model reads the changes before the message, and a message with none is unchanged",
+      told.startsWith("<document-changes>") && told.endsWith("go on") && told.includes("C:/p/a.docx (2 changes") && withAnnotations("go on", undefined, []) === "go on",
+      told,
+    )
+    check("no notices, no block", fileNoticesBlock(undefined) === "" && fileNoticesBlock([]) === "")
+  }
   check("the step rows speak MiMo's verbs", deliveredToolVerb("present_files", "completed") !== "toolLabel.done.present_files" && deliveredToolVerb("pdf_locate", "running") !== "toolLabel.running.pdf_locate")
   check(
     "the step titles are the passage, the file names and the change",
