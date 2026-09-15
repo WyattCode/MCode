@@ -64,6 +64,7 @@ import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/to
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
+import { homeFilled } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
@@ -333,7 +334,7 @@ function toggleSearch() {
 }
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<"general" | "keys" | "server" | "models" | "mcp">()
+const settingsSection = ref<"general" | "keys" | "server" | "models" | "mcp" | "archive">()
 
 /** The server control opens its own panel rather than general settings. */
 const serverPanel = ref(false)
@@ -357,7 +358,7 @@ const managingServers = ref(false)
  * does; the MCP command and Ctrl+; land on the MCP page, MiMo's only MCP screen.
  */
 function openSettings(section?: unknown) {
-  settingsSection.value = section === "models" || section === "mcp" ? section : undefined
+  settingsSection.value = section === "models" || section === "mcp" || section === "archive" ? section : undefined
   settingsOpen.value = true
 }
 
@@ -389,10 +390,25 @@ async function submitSessionRename(title: string) {
   if (target && title !== target.title) await app.rename(target.id, title)
 }
 
+/* MiMo's project rename: another project already under that name is refused, and the new name is said. */
 async function submitProjectRename(name: string) {
   const directory = renamingProject.value
   renamingProject.value = undefined
-  if (directory) await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [directory]: name } })
+  if (!directory) return
+  const names = app.config?.projectNames ?? {}
+  if (app.projects.some((other) => other !== directory && projectName(other, names) === name)) {
+    notify(t("toast.projectNameTaken", { name }), { level: "warning" })
+    return
+  }
+  await app.patchConfig({ projectNames: { ...names, [directory]: name } })
+  notify(t("toast.projectRenamedTo", { name }), { level: "success" })
+}
+
+/* MiMo's revealInFinder: the file manager's name once it is shown, or why it could not be. */
+async function revealFolder(directory: string) {
+  const result = await window.mcode.revealFile(directory, "")
+  if (result.ok) notify(revealLabel())
+  else notifyFailure(t("rp.files.revealFailed", { error: result.error || t("rp.files.pathNotExist") }))
 }
 const composer = ref<InstanceType<typeof Composer>>()
 const stream = ref<InstanceType<typeof MessageStream>>()
@@ -789,7 +805,7 @@ async function runBatch(action: "archive" | "move" | "delete" | "cancel" | "all"
   }
   if (!chosen.length) return
   if (action === "archive") {
-    for (const sessionID of chosen) await app.archive(sessionID, true)
+    await archiveSessions([...chosen])
     selecting.value = undefined
     return
   }
@@ -806,6 +822,38 @@ async function confirmDeleteMany() {
   deletingMany.value = undefined
   for (const sessionID of targets) await app.remove(sessionID)
   selecting.value = undefined
+  // MiMo's removeMany: one notice for the batch.
+  if (targets.length) notify(t("toast.convosDeleted", { n: targets.length }), { level: "success" })
+}
+
+/*
+ * MiMo's archive notice (store:threads): one per action, with 撤销 for the
+ * conversations still archived and 已归档 to the Settings page. With nothing
+ * to archive it says that instead.
+ */
+async function archiveSessions(ids: string[]) {
+  if (!ids.length) {
+    notify(t("toast.noConvosToArchive"))
+    return
+  }
+  for (const sessionID of ids) await app.archive(sessionID, true)
+  notify(ids.length === 1 ? t("toast.convoArchived") : t("toast.archivedNConvos", { count: ids.length }), {
+    level: "success",
+    links: [
+      { label: t("toast.archiveUndo"), run: () => void undoArchive(ids) },
+      { label: t("toast.viewArchived"), run: () => openSettings("archive") },
+    ],
+  })
+}
+
+/* Only what is still archived comes back; if none is, MiMo says the undo failed. */
+async function undoArchive(ids: readonly string[]) {
+  const still = ids.filter((id) => app.sessions.some((session) => session.id === id && session.archived))
+  if (!still.length) {
+    notifyFailure(t("toast.archiveUndoFailed"))
+    return
+  }
+  for (const sessionID of still) await app.archive(sessionID, false)
 }
 
 function openPalette(mode: PaletteMode) {
@@ -887,7 +935,7 @@ watch(
  */
 watch(
   () => app.config?.appIcon ?? DEFAULT_APP_ICON,
-  (id) => window.mcode.appIcon(id),
+  (id) => void window.mcode.appIcon(id),
   { immediate: true },
 )
 
@@ -1272,7 +1320,23 @@ function startIn(directory?: string) {
   void focusComposer()
 }
 
+/*
+ * MiMo's 已经是新任务了: the home screen is already up in that project with
+ * nothing typed, attached or chipped, so starting afresh would change nothing.
+ */
+function alreadyNewTask(directory: string | undefined): boolean {
+  if (view.value !== "home" || homeDirectory.value !== directory || homeFilled.value) return false
+  notify(t("toast.alreadyNewTask"))
+  return true
+}
+
+/* The side column's 新建任务, MiMo's newChatGlobal. */
+function newTaskFromSide() {
+  if (!alreadyNewTask(homeDirectory.value)) goHome()
+}
+
 async function newSessionIn(directory: string) {
+  if (alreadyNewTask(directory)) return
   await app.addProject(directory, { used: true, silent: true })
   startIn(directory)
 }
@@ -1301,7 +1365,7 @@ async function selectTab(id: string) {
 
 /** Starts a task from the 2.0 home screen, in the project picked there. */
 function newSession() {
-  startIn(app.current?.directory)
+  if (!alreadyNewTask(app.current?.directory)) startIn(app.current?.directory)
 }
 
 /**
@@ -1588,8 +1652,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
       notifyFailure(t("menu.noWorkDir"))
       return
     }
-    await window.mcode.revealFile(target.directory, "")
-    notify(revealLabel())
+    await revealFolder(target.directory)
   },
 }
 
@@ -1720,16 +1783,14 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
     notify(t(was ? "side.projectUnpinnedToast" : "side.projectPinnedToast"))
   },
   archive: async (directory) => {
-    for (const session of projectSessions(directory)) await app.archive(session.id, true)
+    await archiveSessions(projectSessions(directory).map((session) => session.id))
   },
   /* MiMo's project batch management chooses projects, starting with this one. */
   batch: (directory) => {
     selecting.value = undefined
     selectingProjects.value = [directory]
   },
-  reveal: (directory) => {
-    void window.mcode.revealFile(directory, "")
-  },
+  reveal: (directory) => revealFolder(directory),
   copyDirectory: (directory) => {
     window.mcode.setClipboardText(directory)
     notify(t("menu.copiedDirectory"))
@@ -1742,6 +1803,11 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
   relocate: async (directory) => {
     const [next] = await window.mcode.pickDirectory(t("menu.relocateProject"), false)
     if (!next || next === directory) return
+    // MiMo refuses a folder that is already another project's, rather than merging the two.
+    if (app.projects.includes(next) || app.sessions.some((entry) => entry.directory === next && !entry.archived)) {
+      notifyFailure(t("toast.projectPathTaken", { name: projectName(next, app.config?.projectNames) }))
+      return
+    }
     for (const session of app.sessions.filter((entry) => entry.directory === directory)) await app.move(session.id, next)
     const config = app.config
     if (!config) return
@@ -1755,6 +1821,7 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
       projectOrder: swap(config.projectOrder),
       closedProjects: swap(config.closedProjects),
     })
+    notify(t("toast.projectPathChanged", { name: projectName(next, app.config?.projectNames) }), { level: "success" })
   },
   /* Asked first, as MiMo asks: the project leaves the list, its conversations stay. */
   remove: (directory) => {
@@ -1872,7 +1939,9 @@ function renameFromSide(sessionID: string) {
 async function confirmDeleteSession() {
   const target = deletingSession.value
   deletingSession.value = undefined
-  if (target) await app.remove(target)
+  if (!target) return
+  await app.remove(target)
+  notify(t("toast.convoDeleted"), { level: "success" })
 }
 
 /* A project ticked or unticked in project selection mode. */
@@ -1900,6 +1969,8 @@ async function runProjectBatch(action: "archive" | "remove" | "exit" | "all" | "
       for (const session of projectSessions(directory)) await app.archive(session.id, true)
     }
     selectingProjects.value = undefined
+    // MiMo's batch project archive is silent per project and says the count once, with no links.
+    notify(t("toast.projectsArchivedN", { count: chosen.length }), { level: "success" })
     return
   }
   removingProjects.value = { directories: [...chosen], batch: true }
@@ -2188,7 +2259,7 @@ watch(priorityFilter, (on) => {
 
 /* The priority section's archive-all, which MiMo applies to every conversation. */
 async function archiveAll() {
-  for (const session of app.sessions.filter((entry) => !entry.archived)) await app.archive(session.id, true)
+  await archiveSessions(app.sessions.filter((entry) => !entry.archived).map((entry) => entry.id))
 }
 
 /* So is the plugins page, which MiMo opens in the workspace rather than over it. */
@@ -2555,7 +2626,7 @@ const bindableCommands = computed((): AppCommand[] => {
       hint: "Ctrl+Alt+A",
       enabled: hasSession,
       run: async () => {
-        if (app.currentID) await app.archive(app.currentID, true)
+        if (app.currentID) await archiveSessions([app.currentID])
       },
     },
     {
@@ -3351,7 +3422,7 @@ function onKeydown(event: KeyboardEvent) {
   if (mod && event.altKey && event.key.toLowerCase() === "a") {
     if (modalOpen.value || !app.currentID) return
     event.preventDefault()
-    void app.archive(app.currentID, true)
+    void archiveSessions([app.currentID])
     return
   }
 
@@ -3818,7 +3889,10 @@ async function cycleAgent(by: 1 | -1) {
   const current = app.current?.agent ?? app.config?.agent ?? "build"
   const at = AGENT_NAMES.indexOf(current)
   const next = AGENT_NAMES[(at + by + AGENT_NAMES.length) % AGENT_NAMES.length]
-  if (next) await app.setAgent(next)
+  if (!next) return
+  const before = app.modeOf(app.currentID)
+  await app.setAgent(next)
+  app.announceMode(before, app.currentID)
 }
 
 /**
@@ -4031,7 +4105,7 @@ onBeforeUnmount(() => {
         :can-forward="canGoForward"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"
-        @newTask="goHome"
+        @newTask="newTaskFromSide"
         @artifacts="goArtifacts"
         @menu="(id, x, y, nested) => (sessionMenu = { x, y, sessionID: id, nested })"
         @projectMenu="(directory, x, y) => (projectMenu = { x, y, directory })"

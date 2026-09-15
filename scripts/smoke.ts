@@ -36,6 +36,7 @@ import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../sr
 import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, transcribeFailure } from "../src/renderer/src/lib/voice"
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
+import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFile } from "../src/main/display-server"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
@@ -2577,6 +2578,27 @@ async function main() {
       splitSendWord("send the patch to review").text === "send the patch to review",
     )
     check("nothing said is nothing sent", splitSendWord("   ").send === false)
+  }
+
+  section("Display server (Linux)")
+  {
+    check("an unknown choice reads as auto", displayServerPref("gtk") === "auto" && displayServerPref(undefined) === "auto")
+    check("the three choices read as themselves", displayServerPref("wayland") === "wayland" && displayServerPref("x11") === "x11")
+    check("a missing or broken file is auto", readDisplayServerFile("") === "auto" && readDisplayServerFile("[1]") === "auto")
+    check("the written file reads back", readDisplayServerFile(JSON.stringify({ displayServer: "x11" })) === "x11")
+    check("auto follows a Wayland session", ozonePlatform("auto", { XDG_SESSION_TYPE: "wayland" }) === "wayland")
+    check("or a Wayland display", ozonePlatform("auto", { WAYLAND_DISPLAY: "wayland-0" }) === "wayland")
+    check("auto on X11 forces nothing", ozonePlatform("auto", { XDG_SESSION_TYPE: "x11" }) === undefined)
+    check("a choice overrides the session", ozonePlatform("x11", { XDG_SESSION_TYPE: "wayland" }) === "x11")
+    check("no switches off Linux", displaySwitches("win32", "wayland", {}).length === 0)
+    const onX11 = displaySwitches("linux", "auto", { XDG_SESSION_TYPE: "x11" })
+    check("X11 keeps GTK 3 and no platform", onX11.length === 1 && onX11[0]?.name === "gtk-version" && onX11[0]?.value === "3", onX11)
+    const onWayland = displaySwitches("linux", "wayland", {}).map((entry) => entry.name)
+    check(
+      "Wayland adds the platform and its input method, as MiMo does",
+      onWayland.join(",") === "gtk-version,ozone-platform,enable-wayland-ime,wayland-text-input-version",
+      onWayland,
+    )
   }
 
   section("Composer menus and home starters")

@@ -1,5 +1,5 @@
 import fs from "node:fs/promises"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
@@ -19,6 +19,14 @@ import { applyZoom } from "./zoom"
 import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { saveCopy } from "./save-copy"
+import {
+  DISPLAY_SERVER_FILE,
+  displayServerPref,
+  displaySwitches,
+  ozonePlatform,
+  readDisplayServerFile,
+  type DisplayServerPref,
+} from "./display-server"
 import {
   act,
   clearBrowsingData,
@@ -63,6 +71,24 @@ const APP_ID = "dev.mcode.app"
 if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
+
+/*
+ * MiMo's 显示服务器 (Linux). Chromium takes these switches only before the app
+ * is ready, so the choice is read here, as the module loads, from its own file.
+ */
+const displayServerFile = path.join(app.getPath("userData"), DISPLAY_SERVER_FILE)
+let displayServer: DisplayServerPref = "auto"
+if (process.platform === "linux") {
+  try {
+    displayServer = readDisplayServerFile(readFileSync(displayServerFile, "utf8"))
+  } catch {
+    // No file yet is 自动.
+  }
+  for (const entry of displaySwitches(process.platform, displayServer, process.env)) {
+    if (entry.value === undefined) app.commandLine.appendSwitch(entry.name)
+    else app.commandLine.appendSwitch(entry.name, entry.value)
+  }
+}
 
 let backend: Backend | undefined
 
@@ -1004,19 +1030,39 @@ app.whenReady().then(async () => {
     if (tray) refreshTray(true, createWindow)
   })
 
-  ipcMain.on("mcode:app-icon", (event, id: string) => {
+  /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */
+  ipcMain.handle("mcode:app-icon", (event, id: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window || process.platform === "darwin") return
-    if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return
+    if (!window || typeof id !== "string" || !/^[a-z][a-z0-9-]{0,30}$/.test(id)) return { ok: false }
+    // macOS takes its icon from the bundle; there is nothing to swap at run time.
+    if (process.platform === "darwin") return { ok: true }
     const file = app.isPackaged
       ? path.join(process.resourcesPath, "app-icons", id + ".png")
       : path.join(here, "../../resources/app-icons", id + ".png")
-    if (!existsSync(file)) return
+    if (!existsSync(file)) return { ok: false }
     const image = nativeImage.createFromPath(file)
-    if (!image.isEmpty()) window.setIcon(image)
+    if (image.isEmpty()) return { ok: false }
+    window.setIcon(image)
     /* The corner and the taskbar are the same app; they wear the same icon. */
     trayIcon = id
     if (tray) refreshTray(true, createWindow)
+    return { ok: true }
+  })
+
+  /* MiMo's 显示服务器 (Linux): the saved choice and what it resolves to; elsewhere, unsupported. */
+  ipcMain.handle("mcode:display-server", () =>
+    process.platform === "linux"
+      ? { supported: true, pref: displayServer, effective: ozonePlatform(displayServer, process.env) ?? null }
+      : { supported: false, pref: "auto", effective: null },
+  )
+
+  /* Written for the next launch; the running one keeps the switches it started with. */
+  ipcMain.handle("mcode:set-display-server", async (_event, raw: unknown) => {
+    if (process.platform !== "linux") return { ok: false }
+    const pref = displayServerPref(raw)
+    await fs.writeFile(displayServerFile, JSON.stringify({ displayServer: pref }), "utf8")
+    displayServer = pref
+    return { ok: true, pref }
   })
 
   ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {
