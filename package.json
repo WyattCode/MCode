@@ -58,6 +58,7 @@
     "electron-builder": "^26.0.0",
     "electron-vite": "^5.0.0",
     "exceljs": "4.4.0",
+    "js-synthesizer": "1.13.0",
     "jszip": "3.10.1",
     "katex": "0.16.47",
     "mermaid": "11.17.2",
