@@ -3,9 +3,9 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { useApp } from "../stores/app"
 import { useOpenWith } from "../lib/open-with"
 import ConnectDialog from "./ConnectDialog.vue"
-import CustomProviderForm from "./CustomProviderForm.vue"
+import CustomModelDialog from "./CustomModelDialog.vue"
 import ProviderIcon from "./ProviderIcon.vue"
-import { groupConnected, groupProviders, waysFor, type Group } from "../lib/connect"
+import { groupProviders, waysFor, type Group } from "../lib/connect"
 import {
   DEFAULT_PERMISSIONS,
   ENFORCED_KINDS,
@@ -152,18 +152,6 @@ async function loadPaths() {
 
 /* The file the models page names as where providers and their models are kept. */
 const configFile = computed(() => paths.value?.files.find((file) => file.name === "config.json"))
-
-function revealPath(file: AppPath) {
-  const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
-  if (cut < 0) return
-  window.mcode.revealFile(file.path.slice(0, cut), file.path.slice(cut + 1))
-}
-
-function openPath(file: AppPath) {
-  const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
-  if (cut < 0) return
-  window.mcode.openFile(file.path.slice(0, cut), file.path.slice(cut + 1))
-}
 
 /*
  * MiMo's 配置 page: the config file, and the global AGENTS.md with its state -
@@ -1464,10 +1452,11 @@ function groupDescription(group: Group): string {
   return t(group.entries[0].description)
 }
 
-/** Vendors with nothing connected yet, which is what the list below offers. */
-const availableGroups = computed(() =>
-  groupProviders(app.providers).filter((group) => !groupConnected(group)),
-)
+/*
+ * MiMo lists every preset whether or not one is added, since several models per
+ * vendor can be; a connected vendor's chip opens its connect screen on 已连接.
+ */
+const presetGroups = computed(() => groupProviders(app.providers))
 const busy = ref<string>()
 /**
  * The last thing that went wrong, and which row it belongs to.
@@ -1484,7 +1473,6 @@ function say(text: string, id?: string) {
 function noticeFor(id: string): string | undefined {
   return notice.value?.id === id ? notice.value.text : undefined
 }
-const customOpen = ref(false)
 /** Per-provider endpoint overrides being edited, keyed by provider id. */
 const endpoints = ref<Record<string, string>>({})
 
@@ -1521,9 +1509,6 @@ async function saveEndpoint(provider: string) {
   say(t("set.saved"), provider)
   setTimeout(() => (notice.value = undefined), 2000)
 }
-
-/** Connected first, then recommended, then the rest - the order people scan. */
-const connected = computed(() => app.providers.filter((provider) => provider.configured))
 
 /*
  * The rows the providers page draws, which is not the same set as the ones that
@@ -1564,33 +1549,6 @@ function fromEnvironment(provider: ProviderStatus): boolean {
 }
 
 
-function key(provider: string, model: string) {
-  return `${provider}/${model}`
-}
-
-/*
- * Smart's two models. An empty choice follows the default model; it is stored
- * as an empty reference rather than removed, because a patch cannot remove a
- * field once it has been set.
- */
-const smartOptions = computed(() => [
-  { value: "", label: t("set.smartDefault") },
-  ...connected.value.flatMap((provider) =>
-    provider.models.map((model) => ({ value: key(provider.id, model.id), label: `${provider.name} · ${model.name}` })),
-  ),
-])
-
-function smartValue(field: "smartFast" | "smartMain") {
-  const chosen = app.config?.[field]
-  return chosen?.provider ? key(chosen.provider, chosen.model) : ""
-}
-
-function setSmartModel(field: "smartFast" | "smartMain", value: string) {
-  const at = value.indexOf("/")
-  const chosen = at > 0 ? { provider: value.slice(0, at), model: value.slice(at + 1) } : { provider: "", model: "" }
-  void app.patchConfig(field === "smartFast" ? { smartFast: chosen } : { smartMain: chosen })
-}
-
 /* Clearing what the in-app browser has stored, after a confirmation, as MiMo asks for one. */
 const confirmingClear = ref(false)
 
@@ -1599,28 +1557,6 @@ async function clearBrowsing() {
   const reason = await window.mcode.browserClearData()
   if (reason) notifyFailure(t("set.browsingDataFailed", { error: reason }))
   else notify(t("set.browsingDataCleared"))
-}
-
-/**
- * An empty list means "not curated yet", in which case everything is offered -
- * so the first toggle has to seed the list from what is currently visible,
- * otherwise turning one model off would appear to turn every other one off.
- */
-function modelEnabled(provider: string, model: string) {
-  const chosen = app.config?.enabledModels ?? []
-  return chosen.length === 0 || chosen.includes(key(provider, model))
-}
-
-async function toggleModel(provider: string, model: string) {
-  const chosen = app.config?.enabledModels ?? []
-  const seeded = chosen.length
-    ? chosen
-    : app.providers.flatMap((entry) =>
-        entry.configured ? entry.models.map((candidate) => key(entry.id, candidate.id)) : [],
-      )
-  const target = key(provider, model)
-  const next = seeded.includes(target) ? seeded.filter((entry) => entry !== target) : [...seeded, target]
-  await app.patchConfig({ enabledModels: next })
 }
 
 /**
@@ -1651,16 +1587,11 @@ async function refresh(provider: string) {
 }
 
 
-/**
- * Deleting a custom provider from the config.
- *
- * This is the only way out for one that was added without a key, so a failure
- * is put on the row instead of being dropped on the floor - a button that
- * silently does nothing would leave the provider as stranded as it was before
- * it started being drawn at all.
+/*
+ * MiMo's add / edit model dialog, opened by the 自定义 chip and by 编辑; here the
+ * custom provider that holds the models is what is added or edited.
  */
-/* MiMo's 编辑 / 复制 on a saved custom model; here on the custom provider that holds the models. */
-const editingCustom = ref<string>()
+const modelDialog = ref<{ mode: "add" } | { mode: "edit"; id: string }>()
 
 function customEntry(id: string) {
   return app.config?.customProviders?.find((entry) => entry.id === id)
@@ -1671,25 +1602,48 @@ function editCustom(id: string) {
     notifyFailure(t("set.models.editFailed"))
     return
   }
-  editingCustom.value = editingCustom.value === id ? undefined : id
+  modelDialog.value = { mode: "edit", id }
 }
 
+/* As MiMo's copy does, the copy becomes the model in use, then says so. */
 async function copyCustom(provider: { id: string; name: string }) {
   try {
-    await app.copyCustomProvider(provider.id, t("set.models.copyName", { name: provider.name }))
-    notify(t("set.models.copied"))
+    const id = await app.copyCustomProvider(provider.id, t("set.models.copyName", { name: provider.name }))
+    const first = app.providers.find((entry) => entry.id === id)?.models[0]
+    if (first) {
+      const model = { provider: id, model: first.id }
+      if (app.currentID) await app.setModel(model)
+      else await app.patchConfig({ model, smart: false })
+    }
+    notify(t("set.models.copied"), { level: "success" })
   } catch {
     notifyFailure(t("set.models.copyFailed"))
   }
 }
 
-async function removeCustom(provider: string) {
-  busy.value = provider
-  notice.value = undefined
+/*
+ * MiMo asks before deleting a custom model, and toasts the result; a built-in
+ * provider's disconnect asks the same way. If the model in use goes, the store
+ * falls back to another usable one.
+ */
+const removing = ref<{ id: string; name: string; custom: boolean }>()
+
+async function confirmRemoveProvider() {
+  const target = removing.value
+  removing.value = undefined
+  if (!target) return
+  busy.value = target.id
   try {
-    await app.removeCustomProvider(provider)
-  } catch (err) {
-    say(err instanceof Error ? err.message : String(err), provider)
+    if (target.custom) {
+      await app.removeCustomProvider(target.id)
+      notify(t("set.models.removed", { name: target.name }), { level: "success" })
+    } else {
+      await disconnect(target.id)
+      notify(t("set.models.disconnected", { name: target.name }), { level: "success" })
+    }
+    await app.ensureUsableModel()
+  } catch {
+    notifyFailure(t(target.custom ? "set.models.removeFailed" : "set.models.disconnectFailed"))
   } finally {
     busy.value = undefined
   }
@@ -2200,19 +2154,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
 
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.notifyError") }}</div>
-                <div class="line-sub">{{ t("set.notifyErrorSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.notifyError }"
-                @click="app.patchConfig({ notifyError: !app.config?.notifyError })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
           </div>
 
           <h3 data-section="display">{{ t("set.display") }}</h3>
@@ -2263,20 +2204,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :options="shellOptions"
                 @update:model-value="app.patchConfig({ shell: $event })"
               />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.reasoning") }}</div>
-                <div class="line-sub">{{ t("set.reasoningSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showReasoning }"
-                @click="app.patchConfig({ showReasoning: !app.config?.showReasoning })"
-              >
-                <span class="knob" />
-              </button>
             </div>
 
             <div class="line">
@@ -2627,23 +2554,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
               />
             </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.wrapCode") }}</div>
-                <div class="line-sub">{{ t("set.wrapCodeSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.wrapCode ?? true }"
-                role="switch"
-                :aria-checked="app.config?.wrapCode ?? true"
-                :aria-label="t('set.wrapCode')"
-                @click="app.patchConfig({ wrapCode: !(app.config?.wrapCode ?? true) })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
           </div>
         </template>
 
@@ -2767,7 +2677,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   v-model="row.value"
                   class="mcp-input small"
                   :type="mcpRevealed[`env:${at}`] ? 'text' : 'password'"
-                  placeholder="value"
+                  :placeholder="row.saved ? t('set.mcpForm.savedKeepBlank') : 'value'"
                   :data-mcp-env-val="at"
                   spellcheck="false"
                 />
@@ -2793,7 +2703,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   v-model="row.value"
                   class="mcp-input small"
                   :type="mcpRevealed[`hdr:${at}`] ? 'text' : 'password'"
-                  placeholder="value"
+                  :placeholder="row.saved ? t('set.mcpForm.savedKeepBlank') : 'value'"
                   :data-mcp-header-val="at"
                   spellcheck="false"
                 />
@@ -2865,6 +2775,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </div>
             </template>
           </template>
+          <!-- MiMo's note under the sources: where skills are read from, and that other tools' folders are not scanned. -->
+          <p class="page-sub mcp-skills-note" data-mcp-import-skills-note>{{ t("set.mcp.importSkillsNote") }}</p>
           <div class="mcp-import-actions">
             <button class="ctl-btn" data-mcp-import-back @click="mcpView = 'list'">{{ t("set.mcp.importBack") }}</button>
             <button
@@ -2889,7 +2801,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   <div class="line-title">{{ row.name }}</div>
                   <div class="line-sub mcp-row-desc">
                     <span>{{ t(row.remote ? "set.mcp.remote" : "set.mcp.local") }}</span>
-                    <span class="mcp-status" :class="MCP_TONE[row.status]" :data-mcp-status="row.status" :title="row.error">
+                    <span class="mcp-status" :class="row.tone" :data-mcp-status="row.status" :title="row.error">
                       <span class="mcp-status-dot" />
                       {{ t(`set.mcp.status.${row.status}`) }}
                     </span>
@@ -2976,25 +2888,29 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <template v-else-if="section === 'environment' && configuring">
-          <button class="env-back" @click="leaveEnvironment">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M10 4 6 8l4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            {{ t("set.envBack") }}
-          </button>
-          <h3>{{ t("set.localEnv") }}</h3>
-          <div class="card">
-            <div class="line env-local">
-              <div class="line-text">
-                <div class="line-title">{{ projectName(configuring, app.config?.projectNames) }}</div>
-                <div class="line-sub path">{{ configuring }}</div>
+          <!-- MiMo's detail: capped at 820, a plain back link, plain labels, the local card with its folder icon. -->
+          <div class="env-detail" data-env-detail>
+            <button class="env-back" data-env-back @click="leaveEnvironment">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="m15 18-6-6 6-6" />
+              </svg>
+              {{ t("set.envBack") }}
+            </button>
+            <div class="env-flabel">{{ t("set.localEnv") }}</div>
+            <div class="env-local" data-env-local>
+              <svg class="env-local-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+              <div class="env-local-text">
+                <div class="env-local-name">{{ projectName(configuring, app.config?.projectNames) }}</div>
+                <div class="env-local-path" :title="configuring">{{ configuring }}</div>
               </div>
             </div>
-          </div>
-          <h3>{{ t("set.envName") }}</h3>
-          <input v-model="envName" class="env-input" :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
-          <div class="env-save-row">
-            <button class="ctl-btn env-save" :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
+            <div class="env-flabel">{{ t("set.envName") }}</div>
+            <input v-model="envName" class="env-input" data-env-name :placeholder="t('set.envNamePlaceholder')" spellcheck="false" />
+            <div class="env-save-row">
+              <button class="ctl-btn env-save" :class="{ dirty: envDirty }" data-env-save :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
+            </div>
           </div>
           <!-- MiMo's leave guard: not destructive, so the plain confirm button. -->
           <Teleport to="body">
@@ -3016,10 +2932,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
           <div class="sec-row">
             <h3>{{ t("set.selectProject") }}</h3>
-            <button class="ctl-btn add-project" @click="addProject">{{ t("set.addProject") }}</button>
+            <button class="ctl-btn add-project" data-env-add @click="addProject">{{ t("set.addProject") }}</button>
           </div>
           <div class="card env-projects">
-            <div v-for="directory in envProjects" :key="directory" class="line env-project">
+            <div v-for="directory in envProjects" :key="directory" class="line env-project" :data-env-project="directory">
               <div class="line-text">
                 <div class="line-title env-project-name">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -3034,28 +2950,29 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 </div>
                 <div class="line-sub path">{{ directory }}</div>
               </div>
-              <button
-                class="ctl-btn env-icon"
-                data-act="remove"
-                :aria-label="t('set.removeProject')"
-                v-tip="{ label: t('set.removeProject') }"
-                @click="removingProject = directory"
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
-              <button
-                class="ctl-btn env-icon"
-                data-act="configure"
-                :aria-label="t('set.configureProject')"
-                v-tip="{ label: t('set.configureProject') }"
-                @click="configure(directory)"
-              >
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-                </svg>
-              </button>
+              <!-- MiMo's pair: secondary sm buttons 34 wide, a 16px trash that reddens on hover, then a text 「+」, 10 apart. -->
+              <span class="env-ctrl">
+                <button
+                  class="ctl-btn env-icon env-del"
+                  data-act="remove"
+                  :aria-label="t('set.removeProject')"
+                  v-tip="{ label: t('set.removeProject') }"
+                  @click="removingProject = directory"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />
+                  </svg>
+                </button>
+                <button
+                  class="ctl-btn env-icon env-plus"
+                  data-act="configure"
+                  :aria-label="t('set.configureProject')"
+                  v-tip="{ label: t('set.configureProject') }"
+                  @click="configure(directory)"
+                >
+                  +
+                </button>
+              </span>
             </div>
             <div v-if="!envProjects.length" class="line">
               <div class="line-text">
@@ -3069,31 +2986,30 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             <h3>{{ t("set.worktrees") }}</h3>
             <button
               class="env-refresh"
+              data-env-refresh
               :aria-label="t('set.refreshWorktrees')"
               v-tip="{ label: t('set.refreshWorktrees') }"
               @click="refreshTrees"
             >
-              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
               </svg>
             </button>
           </div>
-          <p v-if="!treesLoaded" class="page-sub wt-loading">{{ t("set.loading") }}</p>
-          <div v-else-if="!trees.length" class="card">
-            <div class="line wt-empty">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.noWorktreesTitle") }}</div>
-                <div class="line-sub">{{ t("set.noWorktreesSub") }}</div>
-              </div>
-            </div>
+          <p v-if="!treesLoaded" class="wt-status wt-loading">{{ t("set.loading") }}</p>
+          <!-- MiMo's empty state is a card of its own: a 14/500 title over a 13px muted line. -->
+          <div v-else-if="!trees.length" class="card wt-empty" data-wt-empty>
+            <div class="wt-empty-title">{{ t("set.noWorktreesTitle") }}</div>
+            <div class="wt-empty-desc">{{ t("set.noWorktreesSub") }}</div>
           </div>
           <template v-else>
-            <p class="page-sub wt-count">{{ t("set.worktreeCount", { count: trees.length }) }}</p>
+            <p class="wt-status wt-count">{{ t("set.worktreeCount", { count: trees.length }) }}</p>
             <div class="card wt-list">
               <div v-for="tree in trees" :key="tree.directory" class="line wt-row">
                 <span class="wt-name" :title="tree.name">{{ tree.name }}</span>
-                <span class="tag">{{ tree.branch || t("set.detached") }}</span>
-                <span class="tag">{{ t("set.worktreeProject", { name: projectName(tree.project, app.config?.projectNames) }) }}</span>
+                <!-- A detached HEAD has no branch, and MiMo then draws no branch tag. -->
+                <span v-if="tree.branch" class="wt-tag" data-wt-branch>{{ tree.branch }}</span>
+                <span class="wt-tag">{{ t("set.worktreeProject", { name: projectName(tree.project, app.config?.projectNames) }) }}</span>
                 <span class="wt-path" :title="tree.directory">{{ tree.directory }}</span>
               </div>
             </div>
@@ -3505,10 +3421,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <!-- Providers -->
         <!--
-          Models, laid out as MiMo's page: quick add, what has been added, and the
-          file it is kept in. A provider is where MCode's models come from, so
-          connecting one happens here; each added provider carries the switches
-          for which of its models the chat menu offers.
+          Models, laid out exactly as MiMo's page: title and intro, quick add,
+          what has been added, and the file it is kept in. MCode's Smart block
+          and per-model switches are gone, as the user chose (MO5); Smart stays
+          in the composer's model menu.
         -->
         <template v-else>
           <h2>{{ t("set.models") }}</h2>
@@ -3516,9 +3432,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <div v-if="notice && !notice.id" class="notice">{{ notice.text }}</div>
 
           <h3>{{ t("set.models.quickAdd") }}</h3>
+          <!-- Every vendor stays listed, as MiMo lists every preset: a connected one opens on its 已连接 screen and takes another key. -->
           <div class="presets">
             <button
-              v-for="group in availableGroups"
+              v-for="group in presetGroups"
               :key="group.id"
               class="preset"
               :data-preset="group.id"
@@ -3527,15 +3444,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <ProviderIcon :id="group.entries[0].id" :name="group.name" class="preset-mark" />
               <span>{{ group.name }}</span>
             </button>
-            <button class="preset" :class="{ on: customOpen }" data-preset="custom" @click="customOpen = !customOpen">
+            <!-- MiMo's literal label, the same in every language. -->
+            <button class="preset" data-preset="custom" @click="modelDialog = { mode: 'add' }">
               <svg class="preset-plus" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M8 3v10M3 8h10" />
               </svg>
-              <span>{{ t("set.models.custom") }}</span>
+              <span>自定义 / Custom</span>
             </button>
-          </div>
-          <div v-if="customOpen" class="card cpanel">
-            <CustomProviderForm @connected="customOpen = false" />
           </div>
 
           <h3>{{ t("set.models.added") }}</h3>
@@ -3566,43 +3481,43 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 empty picker. The row is left with Remove, which is the one
                 thing that can be done about it.
               -->
-              <button
-                v-if="provider.kind === 'openai-compatible' && provider.configured && !provider.custom"
-                class="pbtn"
-                :disabled="busy === provider.id"
-                @click="refresh(provider.id)"
-              >
-                {{ t("provider.refresh") }}
-              </button>
-              <!--
-                Where the Disconnect link would be, on a row the app cannot
-                disconnect: the variable is the user's to unset, and saying so
-                is the only useful thing this corner of the row can do.
-              -->
-              <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
-                {{ t("provider.fromEnvironment") }}
-              </span>
-              <template v-else>
-                <!-- MiMo's 编辑 / 复制 on a saved custom model, before its 删除. -->
-                <template v-if="provider.custom">
-                  <button class="plink" :data-provider-edit="provider.id" @click="editCustom(provider.id)">
-                    {{ t("set.models.edit") }}
-                  </button>
-                  <button class="plink" :data-provider-copy="provider.id" @click="copyCustom(provider)">
-                    {{ t("set.models.copy") }}
+              <span class="ctl-pair">
+                <button
+                  v-if="provider.kind === 'openai-compatible' && provider.configured && !provider.custom"
+                  class="ctl-btn"
+                  :data-provider-refresh="provider.id"
+                  :disabled="busy === provider.id"
+                  @click="refresh(provider.id)"
+                >
+                  {{ t("provider.refresh") }}
+                </button>
+                <!--
+                  Where the disconnect button would be, on a row the app cannot
+                  disconnect: the variable is the user's to unset, and saying so
+                  is the only useful thing this corner of the row can do.
+                -->
+                <span v-if="!provider.custom && fromEnvironment(provider)" class="penv">
+                  {{ t("provider.fromEnvironment") }}
+                </span>
+                <template v-else>
+                  <!-- MiMo's three secondary sm buttons on a saved custom model: 编辑, 复制, 删除 with a danger hover. -->
+                  <template v-if="provider.custom">
+                    <button class="ctl-btn" :data-provider-edit="provider.id" @click="editCustom(provider.id)">
+                      {{ t("set.models.edit") }}
+                    </button>
+                    <button class="ctl-btn" :data-provider-copy="provider.id" @click="copyCustom(provider)">
+                      {{ t("set.models.copy") }}
+                    </button>
+                  </template>
+                  <button
+                    class="ctl-btn danger-hover"
+                    :data-provider-remove="provider.id"
+                    @click="removing = { id: provider.id, name: provider.name, custom: Boolean(provider.custom) }"
+                  >
+                    {{ provider.custom ? t("set.models.remove") : t("set.disconnect") }}
                   </button>
                 </template>
-                <button class="plink" @click="provider.custom ? removeCustom(provider.id) : disconnect(provider.id)">
-                  {{ provider.custom ? t("provider.remove") : t("set.disconnect") }}
-                </button>
-              </template>
-            </div>
-            <div
-              v-if="provider.custom && editingCustom === provider.id && customEntry(provider.id)"
-              class="card cpanel"
-              data-provider-edit-form
-            >
-              <CustomProviderForm :editing="customEntry(provider.id)" :autofocus="false" @connected="editingCustom = undefined" />
+              </span>
             </div>
 
             <div v-if="provider.kind === 'openai-compatible' && !provider.custom" class="pform">
@@ -3623,63 +3538,37 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
             <div v-if="noticeFor(provider.id)" class="pnotice standalone">{{ noticeFor(provider.id) }}</div>
-              <template v-if="provider.configured">
-                <div v-for="model in provider.models" :key="model.id" class="line model-line">
-                  <div class="line-title">{{ model.name }}</div>
-                  <button
-                    class="switch"
-                    :class="{ on: modelEnabled(provider.id, model.id) }"
-                    role="switch"
-                    :aria-checked="modelEnabled(provider.id, model.id)"
-                    :aria-label="model.name"
-                    @click="toggleModel(provider.id, model.id)"
-                  >
-                    <span class="knob" />
-                  </button>
-                </div>
-              </template>
             </template>
           </div>
 
-          <!-- Smart's two models, which the composer's Smart row picks between. -->
-          <h3>{{ t("model.smart") }}</h3>
-          <p class="note">{{ t("set.smartNote") }}</p>
+          <!-- MiMo's config row: no buttons, the path on one line, a sentence while it is still unknown. -->
+          <h3>{{ t("set.models.configFile") }}</h3>
           <div class="card">
-            <div class="line">
+            <div class="line config-file" data-models-config>
               <div class="line-text">
-                <div class="line-title">{{ t("set.smartFast") }}</div>
+                <div class="line-title">{{ t("set.models.configFileTitle") }}</div>
+                <div class="line-sub config-path" :title="configFile?.path">{{ configFile?.path ?? t("set.models.configFileDesc") }}</div>
               </div>
-              <SelectMenu
-                :model-value="smartValue('smartFast')"
-                :options="smartOptions"
-                :width="240"
-                @update:model-value="setSmartModel('smartFast', $event)"
-              />
-            </div>
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.smartMain") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="smartValue('smartMain')"
-                :options="smartOptions"
-                :width="240"
-                @update:model-value="setSmartModel('smartMain', $event)"
-              />
             </div>
           </div>
 
-          <h3>{{ t("set.models.configFile") }}</h3>
-          <div class="card">
-            <div class="line config-file">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.models.configFileTitle") }}</div>
-                <div class="line-sub path">{{ configFile?.path ?? "" }}</div>
-              </div>
-              <button v-if="configFile?.exists" class="ctl-btn" @click="openPath(configFile)">{{ t("files.open") }}</button>
-              <button v-if="configFile" class="ctl-btn" @click="revealPath(configFile)">{{ t("set.reveal") }}</button>
-            </div>
-          </div>
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="removing"
+              :title="t(removing.custom ? 'set.models.deleteTitle' : 'set.models.disconnectTitle')"
+              :body="t(removing.custom ? 'set.models.deleteBody' : 'set.models.disconnectBody', { name: removing.name })"
+              :confirm-label="removing.custom ? t('set.models.remove') : t('set.disconnect')"
+              @confirm="confirmRemoveProvider"
+              @close="removing = undefined"
+            />
+          </Teleport>
+          <Teleport to="body">
+            <CustomModelDialog
+              v-if="modelDialog"
+              :editing="modelDialog.mode === 'edit' ? customEntry(modelDialog.id) : undefined"
+              @close="modelDialog = undefined"
+            />
+          </Teleport>
         </template>
             </div>
     </div>
@@ -4787,10 +4676,6 @@ h3 {
   filter: brightness(1.08);
 }
 
-.plink.danger {
-  color: var(--text-critical);
-}
-
 /* Nine of these are now words rather than identifiers, so the monospace face
    that made `todowrite` legible is only right for the two that stayed raw. */
 .tool {
@@ -5267,44 +5152,6 @@ h3 {
  * `13px/530/20px` at `-0.04px` in text-base. This was `0 12px` on a 6% fill
  * in text-strong at 440 - a filled pill where the reference draws a ghost.
  */
-.pbtn {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 11px;
-  color: var(--text-base);
-  background: transparent;
-  border-radius: 6px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 20px;
-  letter-spacing: -0.04px;
-  transition: background 0.12s, color 0.12s;
-}
-
-.pbtn:hover:not(:disabled) {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-.pbtn:disabled {
-  color: var(--text-weaker);
-  cursor: default;
-}
-
-.plink {
-  flex-shrink: 0;
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.plink:hover {
-  color: var(--text-strong);
-}
-
 /* Standing where the link stands, and quieter than it: this is a statement
    about the row, not something to press. */
 .penv {
@@ -5349,11 +5196,6 @@ h3 {
 
 /* The custom-provider form sits inside the provider card, so it brings the
    card's own inset and closing rule with it rather than knowing about them. */
-.cpanel {
-  padding: 4px 16px 16px;
-  border-bottom: 1px solid var(--border-weaker);
-}
-
 /* MiMo's quick-add chips: 34 tall on a hairline, a small mark and the vendor's name. */
 .presets {
   display: flex;
@@ -5404,6 +5246,33 @@ h3 {
   stroke-linecap: round;
 }
 
+/* MiMo's danger hover on 删除: red text on the light red wash. */
+.ctl-btn.danger-hover:hover:not(:disabled) {
+  color: #d93025;
+  background: #fdecea;
+}
+
+:root[data-theme="dark"] .ctl-btn.danger-hover:hover:not(:disabled) {
+  color: #ff9b7f;
+  background: #3a2320;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ctl-btn.danger-hover:hover:not(:disabled) {
+    color: #ff9b7f;
+    background: #3a2320;
+  }
+}
+
+/* MiMo draws the config path as a single line that ends in an ellipsis. */
+.config-path {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty-card {
   padding: 18px 16px;
 }
@@ -5419,10 +5288,6 @@ h3 {
   color: var(--text-weak);
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 1.6;
-}
-
-.model-line .line-title {
-  font-weight: 400;
 }
 
 /*
@@ -5908,23 +5773,42 @@ h3 {
 .env-icon {
   display: grid;
   place-items: center;
-  width: 30px;
+  min-width: 34px;
+  height: 26px;
   padding: 0;
 }
 
-.env-icon + .env-icon {
-  margin-inline-start: 6px;
+/* MiMo's control column: 10 between the two buttons. */
+.env-ctrl {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 10px;
 }
 
+.env-del svg {
+  color: var(--text-weak);
+}
+
+.env-del:hover svg {
+  color: #e5484d;
+}
+
+.env-plus {
+  font-size: calc(16px * var(--ui-font-scale, 1));
+  line-height: 1;
+}
+
+/* MiMo's sc-refresh: 28 square, 6 round, muted; the menu hover and strong text on hover. */
 .env-refresh {
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  color: var(--text-base);
+  width: 28px;
+  height: 28px;
+  color: var(--text-weak);
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
 }
 
 .env-refresh:hover {
@@ -5932,17 +5816,43 @@ h3 {
   background: var(--surface-hover);
 }
 
-.wt-count {
+/* The count and loading lines are MiMo's sc-empty-title: 14/500 strong. */
+.wt-status {
   margin: 4px 0 8px;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.card.wt-empty {
+  padding: 16px 18px;
+}
+
+.wt-empty-title {
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.wt-empty-desc {
+  margin-top: 4px;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .wt-row {
   gap: 8px;
 }
 
-.wt-row .tag {
+/* MiMo's worktree tags: 6 round at 1 by 6, 11px dim on the soft fill, no ring. */
+.wt-tag {
   flex-shrink: 0;
-  margin-inline-start: 0;
+  padding: 1px 6px;
+  color: var(--text-weaker);
+  background: var(--surface-hover);
+  border-radius: 6px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 400;
 }
 
 /* The name keeps its width up to half the row; the path is what gives way. */
@@ -5969,49 +5879,136 @@ h3 {
   white-space: nowrap;
 }
 
+/* MiMo's environment detail, capped at 820. */
+.env-detail {
+  max-width: 820px;
+}
+
+/* A plain back link: 14px muted with an 18px chevron, strong on hover, 18 below. */
 .env-back {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 28px;
-  padding: 0 8px 0 4px;
-  color: var(--text-base);
+  margin-bottom: 18px;
+  padding: 0;
+  color: var(--text-weak);
   background: transparent;
   border: 0;
-  border-radius: 8px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
 .env-back:hover {
   color: var(--text-strong);
-  background: var(--surface-hover);
 }
 
-.env-input {
-  width: 100%;
-  height: 36px;
-  margin-top: 8px;
-  padding: 0 12px;
+/* MiMo's env-flabel: a plain 13px label, 18 above and 4 below. */
+.env-flabel {
+  margin: 18px 0 4px;
   color: var(--text-strong);
-  background: var(--surface-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 400;
+}
+
+.env-back + .env-flabel {
+  margin-top: 0;
+}
+
+/* The local card: the side fill on a line, 10 round, 14 by 16, a 20px muted folder. */
+.env-local {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
   border: 1px solid var(--border-weak);
   border-radius: 10px;
-  outline: none;
+}
+
+.env-local-icon {
+  flex-shrink: 0;
+  color: var(--text-weak);
+}
+
+.env-local-text {
+  min-width: 0;
+}
+
+.env-local-name {
+  color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
-.env-input:focus {
-  border-color: var(--border-strong, var(--border-weak));
+.env-local-path {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
+/* MiMo's env-field: 13px at 9 by 12, 8 round, the input fill on a line, the accent border on focus. */
+.env-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 4px;
+  padding: 9px 12px;
+  color: var(--text-strong);
+  background: #ffffff;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  outline: none;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.env-input:focus {
+  border-color: #ff6a2b;
+}
+
+/* The save row: a rule above, 24 of margin and 16 of padding, the button at the end. */
 .env-save-row {
   display: flex;
   justify-content: flex-end;
-  margin-top: 12px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-weak);
 }
 
 .env-save:disabled {
   opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ctl-btn.env-save.dirty {
+  color: #ffffff;
+  background: #151c13;
+}
+
+:root[data-theme="dark"] .env-local {
+  background: #141414;
+}
+
+:root[data-theme="dark"] .env-input {
+  background: #181818;
+}
+
+:root[data-theme="dark"] .ctl-btn.env-save.dirty {
+  color: #0d0d0d;
+  background: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .env-local {
+    background: #141414;
+  }
+
+  :root:not([data-theme="light"]) .env-input {
+    background: #181818;
+  }
+
+  :root:not([data-theme="light"]) .ctl-btn.env-save.dirty {
+    color: #0d0d0d;
+    background: #ececec;
+  }
 }
 /*
  * Archived conversations in batch: MiMo's toolbar - a framed 10px-corner strip

@@ -702,20 +702,6 @@ html[data-motion="on"] *::after {
 }
 
 /*
- * Long lines fold rather than running off the side.
- *
- * `anywhere` rather than `break-word` because the long line in code is usually
- * one unbroken run - a path, a hash, a base64 blob - with nowhere a word
- * breaker would agree to split.
- */
-html[data-wrap="on"] .md-code,
-html[data-wrap="on"] .md-code code {
-  overflow-x: visible;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-/*
  * Syntax colours carry GitHub's light and dark in each token (shiki's dual
  * themes). The light is the token's own colour; under a dark theme - chosen, or
  * followed from the system - the dark one takes over, as MiMo's stylesheet does.
