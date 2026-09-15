@@ -115,9 +115,9 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
         :title="`${t('annotations.stash')}\n${t('annotations.stashTip')}`"
         @click="emit('stash', text)"
       >
-        <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <path d="M8.5 2.5H3.5a1.5 1.5 0 0 0-1.5 1.5v6.5a1.5 1.5 0 0 0 1.5 1.5H5v2.5l3-2.5h4.5a1.5 1.5 0 0 0 1.5-1.5V7.5" />
-          <path d="M12.5 1v4.5M10.25 3.25h4.5" />
+        <!-- Remix Icon chat-new-line (Apache-2.0), the filled glyph MiMo draws here. -->
+        <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor" aria-hidden="true" data-ca-stash-glyph>
+          <path d="M9.33334 2V3.33333H2.66668V12.2567L3.84189 11.3333H13.3333V6.66667H14.6667V12C14.6667 12.3682 14.3682 12.6667 14 12.6667H4.30304L1.33334 15V2.66667C1.33334 2.29848 1.63182 2 2.00001 2H9.33334ZM12.6667 2V0H14V2H16V3.33333H14V5.33333H12.6667V3.33333H10.6667V2H12.6667Z" />
         </svg>
       </button>
     </div>
@@ -165,7 +165,8 @@ onBeforeUnmount(() => document.removeEventListener("pointerdown", outside, true)
   outline: none;
   resize: none;
   font-family: inherit;
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  /* Fixed as in MiMo's note box. */
+  font-size: 12px;
   line-height: 18px;
 }
 

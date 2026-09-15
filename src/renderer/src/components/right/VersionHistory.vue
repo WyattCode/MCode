@@ -34,7 +34,9 @@ function when(ts: number) {
   return new Date(ts).toLocaleDateString()
 }
 
-function noteOf(source: string, note: string) {
+function noteOf(source: string, raw: string) {
+  // A note of blanks is no note: the row falls back to the default wording.
+  const note = (raw ?? "").trim()
   if (source === "ai" || source === "ai_local") return !note || note === t("office.versionNoteAi") ? t("office.versionNoteAi") : `${t("office.versionSourceAi")}${note}`
   if (source === "user") return note ? `${t("office.versionSourceUser")}${note}` : t("office.versionNoteUser")
   if (source === "external") return t("office.versionSourceExternal")
@@ -54,13 +56,14 @@ function revert(index: number) {
   emit("close")
 }
 
-/* The whole note, when the row cuts it short. */
+/* The whole note, when the row cuts it short: under the note's column (note and badge), as MiMo places it. */
 const tip = ref<{ text: string; left: number; top: number } | null>(null)
 function hover(event: MouseEvent, text: string) {
-  const note = event.currentTarget as HTMLElement
-  if (note.scrollWidth <= note.clientWidth + 1) return
-  const row = (note.closest("[data-version-row]") as HTMLElement).getBoundingClientRect()
-  tip.value = { text, left: Math.max(8, Math.min(row.left, window.innerWidth - 320)), top: Math.min(row.bottom + 4, window.innerHeight - 60) }
+  const middle = event.currentTarget as HTMLElement
+  const note = middle.querySelector<HTMLElement>("[data-note]")
+  if (!note || note.scrollWidth <= note.clientWidth + 1) return
+  const box = middle.getBoundingClientRect()
+  tip.value = { text, left: Math.max(8, Math.min(box.left, window.innerWidth - 320)), top: Math.min(box.bottom + 4, window.innerHeight - 60) }
 }
 
 function onKey(event: KeyboardEvent) {
@@ -99,8 +102,8 @@ onBeforeUnmount(() => {
             </span>
             <span class="vp-time">{{ when(row.version.ts) }}</span>
           </div>
-          <div class="vp-middle">
-            <span class="vp-note" data-note @mouseenter="hover($event, noteOf(row.version.source, row.version.note))" @mouseleave="tip = null">
+          <div class="vp-middle" @mouseenter="hover($event, noteOf(row.version.source, row.version.note))" @mouseleave="tip = null">
+            <span class="vp-note" data-note>
               {{ noteOf(row.version.source, row.version.note) }}
             </span>
             <span v-if="row.index === state?.cursor" class="vp-current" data-current-badge>{{ t("office.versionCurrent") }}</span>
@@ -246,6 +249,9 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.5;
   white-space: normal;
+  /* A long unbroken note (a path, an address) wraps inside the box. */
+  word-break: break-word;
+  overflow-wrap: anywhere;
   pointer-events: none;
 }
 </style>
