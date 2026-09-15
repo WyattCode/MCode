@@ -113,7 +113,7 @@
 - 随后清理：删掉 107 个没人再用的界面文案键（`stream.count.*` / `stream.explored` / `stream.ran`、旧侧栏 / 首页 / 设置遗留等，d8d6f9a）；其中 `set.mcpForm.type_*` 和 `set.theme*` 五个是拼出来的键名，已放回（9a30913）。以后删键要以 i18ncheck 通过为准，它会查拼接前缀。
 
 
-**第三轮对照（2026-09-15 起）：进行中。** 四路只读审计（再各拆子审计）逐项核对了此前没细查的区域，规格在 scratchpad：`r3-part-A..F.md`（右侧面板：外壳与侧边聊天 23、审查与文件 38、浏览器 25、终端 20、Office 10、PDF/网页/视频 14）、`round3-global.md`（全局 33）、`round3-part-P1..P6.md`（对话：遗留 9、12 种语言的 MiMo 译文、停靠栏与卡片 15、回复渲染 10、错误/停止/侧聊/分支 20、首页与模型菜单 18）、`r3p/part-*.md`（整页与设置：常规外观 21、模型 19、快捷键与服务器 16、MCP 5、环境与弹窗 20、产物与导出 18；插件页因用户要求隐藏而跳过 PL1–PL11）。共约 330 项，实现规则与决定见 `round3-rules.md`。
+**第三轮对照（2026-09-15）：已完成。** 四路只读审计（再各拆子审计）逐项核对了此前没细查的区域，规格在 scratchpad：`r3-part-A..F.md`（右侧面板：外壳与侧边聊天 23、审查与文件 38、浏览器 25、终端 20、Office 10、PDF/网页/视频 14）、`round3-global.md`（全局 33）、`round3-part-P1..P6.md`（对话：遗留 9、12 种语言的 MiMo 译文、停靠栏与卡片 15、回复渲染 10、错误/停止/侧聊/分支 20、首页与模型菜单 18）、`r3p/part-*.md`（整页与设置：常规外观 21、模型 19、快捷键与服务器 16、MCP 5、环境与弹窗 20、产物与导出 18；插件页因用户要求隐藏而跳过 PL1–PL11）。共约 330 项，实现规则与决定见 `round3-rules.md`。
 
 用户 2026-09-15 的决定（第三轮）：
 - 一律跟 MiMo，包括去掉 MCode 独有、MiMo 没有的界面：计划清单停靠栏与已回滚消息停靠栏、「显示推理摘要」、回复代码默认换行、快捷键页的主题/语言行、搜索浮层上下键、终端额外按键（Ctrl+点击链接、Ctrl+Shift+C、Ctrl+Alt+T、中键关闭、退出红点）、模型页 Smart 区块与模型开关；PDF 重载缩放回 100%；网页缺失显示「无网页」。
@@ -138,6 +138,7 @@
 - 右侧面板展开后浮动输入框沿用主输入框的 44px 高度（A18）；输入框移入 / 移出浮动位置时重新适配高度。
 - 第三轮探针核对的共同根因（不是应用 bug）：`showInactive()` 的探针窗口约 9 秒后会被外部最小化，最小化后每秒约 1 帧、鼠标事件迟到、过渡动画停在首帧、`setSize` 无效；所有探针已加「被最小化就重新 showInactive」守卫并改为等待事件真正到达。另：对可拖动元素做合成拖动会进入 Windows 系统拖动循环、阻塞主进程直到真实鼠标松开，探针需要在该手势里取消 `dragstart`。
 - 快捷键页没有加 MiMo 的「插件 Ctrl+Shift+P」行（插件页按用户要求隐藏）；「新建任务」行不显示 MiMo 的「开始一个无项目任务」说明（对 MCode 不成立，`desc: false` 为有意）。
+- **最终验证（aecd3d7 之后的构建）**：typecheck、i18ncheck、wiringcheck、themecheck、mdcheck、promptcheck 54、smoke 929 全过；第三轮探针 previews 25、panel 25、artifacts 15、terminal 29（连跑三次无崩溃，其中一次 `D11_clampedAt640` 偶发未过、另两次通过）、browser 24、files 37、reply 29、global 19（G19 仅 macOS 跳过）、stream 34、composer 31、settings 38、handoffs 13、subagents 12，第二轮 tips 18、sidebar 23、info 23、dock 18、steps 23、composer 22、markdown 16、settings 23，convo-card 8、find-bar 6、right-panel 12，全部通过。F14（批注输入框里的「添加到对话」实心图标）探针够不到跨域页面框架，标 n/a，源码已是实心图标。
 - 各分支自带探针此前从未运行，由三个核对任务逐项区分探针问题 / 负载 / 待交接 / 真 bug；探针修正都在 scratchpad，带 "Triage" 注释。
 
 （审计中发现并已修：删无用文案键时误删的 `time.*` 相对时间文案导致已归档页显示键名，a8ced00 放回；原生菜单文案列表去掉 21 个主进程不再使用的键，74ea932。）
