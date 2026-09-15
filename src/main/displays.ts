@@ -1,5 +1,27 @@
-import { BrowserWindow, screen } from "electron"
+import { app, BrowserWindow, powerMonitor, screen } from "electron"
 import { clampToWorkAreas } from "./work-area"
+
+/**
+ * MiMo's repaint after sleep, unlock and restore: every live window's contents
+ * are invalidated, so a GPU surface lost while the machine slept or the window
+ * sat minimised is drawn again rather than left black or stale. Nothing is
+ * done while the app is quitting. Call once the app is ready.
+ */
+export function repaintAfterWake(quitting: () => boolean): void {
+  const repaint = (window: BrowserWindow) => {
+    try {
+      if (quitting() || window.isDestroyed() || window.webContents.isDestroyed()) return
+      window.webContents.invalidate()
+    } catch {
+      // Torn down between the check and the call.
+    }
+  }
+  const all = () => BrowserWindow.getAllWindows().forEach(repaint)
+  powerMonitor.on("resume", all)
+  powerMonitor.on("unlock-screen", all)
+  for (const window of BrowserWindow.getAllWindows()) window.on("restore", () => repaint(window))
+  app.on("browser-window-created", (_event, window) => window.on("restore", () => repaint(window)))
+}
 
 /**
  * MiMo's pull-back when displays change: a monitor unplugged, a laptop leaving
