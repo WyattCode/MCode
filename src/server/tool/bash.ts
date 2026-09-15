@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
+import { scanCommand } from "./bash-scan"
 
 const DEFAULT_TIMEOUT = 120_000
 /** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
@@ -249,19 +250,33 @@ export const BashTool: ToolDefinition = {
     const description = typeof input.description === "string" ? input.description : ""
 
     const cwd = input.workdir ? await resolvePath(context, String(input.workdir)) : context.directory
+    const { command: bin, args, powershell } = shellFor(context.shell)
 
-    await context.permissions.ask({
+    /*
+     * MiMo's order: folders outside the project that the command's file
+     * arguments name are asked about first; then a command that deletes gets a
+     * question of its own, listing what it deletes, asked every time and never
+     * remembered - unless everything it deletes is in the temp folder; anything
+     * else is one question whose "always" keeps each command's prefix. A bare
+     * `cd` asks nothing.
+     */
+    const scan = await scanCommand(command, cwd, context.directory, powershell)
+    for (const dir of scan.dirs) await resolvePath(context, dir)
+    const question = {
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,
-      kind: "bash",
+      kind: "bash" as const,
       directory: context.directory,
       title: description || "Run command",
       subject: command,
       preview: command,
-    })
-
-    const { command: bin, args } = shellFor(context.shell)
+    }
+    if (scan.deletes.length && !scan.tempOnlyDeletes) {
+      await context.permissions.ask({ ...question, patterns: scan.deletes, always: [], forced: true })
+    } else if (scan.patterns.length) {
+      await context.permissions.ask({ ...question, patterns: scan.patterns, always: scan.always, forced: false })
+    }
 
     return await new Promise((resolve, reject) => {
       /*

@@ -57,6 +57,7 @@ import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mc
 import type { McpServerConfig } from "../src/shared/protocol"
 import { ToolOutputs } from "../src/server/tool/truncate"
 import { wildcardMatch } from "../src/server/permission"
+import { arityPrefix, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
@@ -1116,6 +1117,85 @@ async function main() {
     const negative = await bash.execute({ command: "echo x", timeout: -1 }, bashContext("b-e22-6")).then(() => "ran", (error: Error) => error.message)
     check("a negative timeout is refused before anything runs", negative.includes("timeout"), negative)
     clearInterval(approving)
+  }
+
+  // E23: what bash asks, as MiMo's tool reads a command - prefixes for "always", deletes asked on their own, outside folders first.
+  {
+    const e23 = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-scan-"))
+    const elsewhere = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-elsewhere-"))
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-temp-"))
+    await fs.writeFile(path.join(e23, "notes.txt"), "x")
+    await fs.writeFile(path.join(elsewhere, "secret.txt"), "x")
+
+    const posix = await scanCommand("FOO=1 git status --short && npm run build -- --watch 2>&1 | tee log.txt; cd sub", e23, e23, false)
+    check(
+      "a command line is read as its simple commands, each saved by its prefix, a bare cd asking nothing",
+      JSON.stringify(posix.always) === JSON.stringify(["git status *", "npm run build *", "tee *"]) && posix.patterns.length === 3 && posix.deletes.length === 0,
+      posix,
+    )
+    check("substitutions are read too", simpleCommands('echo "$(rm -rf out)" `rm x`', false).some((entry) => entry.tokens[0] === "rm"))
+    check("MiMo's arities decide the prefix", arityPrefix(["docker", "compose", "up", "-d"]).join(" ") === "docker compose up" && arityPrefix(["kubectl", "get", "pods"]).join(" ") === "kubectl get" && arityPrefix(["myscript", "a"]).join(" ") === "myscript")
+    const deleting = await scanCommand("git push --force; Remove-Item -Recurse -Force build", e23, e23, true)
+    check("deletes and force pushes are picked out, PowerShell's too", deleting.deletes.length === 2 && !deleting.tempOnlyDeletes, deleting)
+    check("a plain push is not a delete", (await scanCommand("git push origin main", e23, e23, false)).deletes.length === 0)
+    const reaching = await scanCommand(`cat "${path.join(elsewhere, "secret.txt")}"`, e23, e23, false)
+    check("a file argument outside the project names its folder", reaching.dirs.length === 1 && path.resolve(reaching.dirs[0]) === path.resolve(elsewhere), reaching)
+    check("a delete only of files in the temp folder needs no question of its own", (await scanCommand(`rm "${path.join(scratch, "old.txt")}"`, e23, e23, false)).tempOnlyDeletes)
+    check("but one inside the project does, and so does one whose target is not known", !(await scanCommand("rm notes.txt", e23, e23, false)).tempOnlyDeletes && !(await scanCommand("rm $TARGET", e23, e23, false)).tempOnlyDeletes)
+
+    const gate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS } }) } as never)
+    const seen: PermissionRequest[] = []
+    const replies: Record<string, PermissionResponse> = {}
+    const answering = setInterval(() => {
+      for (const request of gate.outstanding()) {
+        seen.push(request)
+        gate.respond(request.id, replies[request.kind] ?? "reject")
+      }
+    }, 10)
+    let calls = 0
+    const bashIn = (sessionID: string, command: string) =>
+      findTool("bash")!
+        .execute({ command }, { ...context(`b-e23-${++calls}`), sessionID, directory: e23, permissions: gate })
+        .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+
+    await bashIn("s-e23", "rm notes.txt")
+    check("a delete is asked on its own, as one that is never remembered", seen.at(-1)?.kind === "bash" && seen.at(-1)?.forced === true, seen.at(-1))
+    check("and nothing was deleted when it was refused", await exists(path.join(e23, "notes.txt")))
+    const before = seen.length
+    await bashIn("s-e23", `cat "${path.join(elsewhere, "secret.txt")}"`)
+    check("a folder outside the project is asked about before the command", seen[before]?.kind === "outside" && seen.length === before + 1, seen.slice(before))
+    replies.outside = "once"
+    const tempAt = seen.length
+    await bashIn("s-e23", `rm "${path.join(scratch, "old.txt")}"`)
+    const tempBash = seen.slice(tempAt).find((request) => request.kind === "bash")
+    check("a delete of temp files asks as an ordinary command", tempBash !== undefined && tempBash.forced !== true, seen.slice(tempAt))
+    replies.bash = "always"
+    await bashIn("s-e23-a", "git status")
+    const alwaysAt = seen.length
+    await bashIn("s-e23-b", "git status --short")
+    check("always on a command covers its prefix in another conversation of the project", seen.length === alwaysAt, seen.slice(alwaysAt))
+
+    // As MiMo forces its delete question: commands allowed, or full access, still ask before a delete; only Deny refuses first.
+    const allowing = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, bash: "allow" }, accessLevel: "full" }) } as never)
+    const deleteUnderAllow = allowing
+      .ask({ sessionID: "s-allow", messageID: "m", callID: "c-allow-rm", kind: "bash", title: "t", subject: "rm x", forced: true })
+      .then(() => "allowed", (error: Error) => error.message)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const parkedDelete = allowing.outstanding()[0]
+    check("a delete asks even when commands are allowed, at full access", parkedDelete?.forced === true, parkedDelete)
+    if (parkedDelete) allowing.respond(parkedDelete.id, "reject")
+    await deleteUnderAllow
+    const ordinaryUnderAllow = await allowing
+      .ask({ sessionID: "s-allow", messageID: "m", callID: "c-allow-npm", kind: "bash", title: "t", subject: "npm test", forced: false })
+      .then(() => "allowed", (error: Error) => error.message)
+    check("while an ordinary command under allow does not", ordinaryUnderAllow === "allowed" && allowing.outstanding().length === 0)
+    const denying = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, bash: "deny" } }) } as never)
+    const deniedDelete = await denying
+      .ask({ sessionID: "s-deny", messageID: "m", callID: "c-deny-rm", kind: "bash", title: "t", subject: "rm x", forced: true })
+      .then(() => "allowed", (error: Error) => error.message)
+    check("Deny refuses a delete before anything is asked", deniedDelete.startsWith("Refused") && denying.outstanding().length === 0, deniedDelete)
+    clearInterval(answering)
+    for (const dir of [e23, elsewhere, scratch]) await fs.rm(dir, { recursive: true, force: true })
   }
 
   // -------------------------------------------------------------- permission

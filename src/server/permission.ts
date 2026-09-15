@@ -309,19 +309,21 @@ export class Permissions {
      * off would not take effect until the app was restarted.
      */
     if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
-    if (action === "allow") return
-    // The middle access level. A refusal set in settings has already won above.
-    if (this.config.get().accessLevel === "auto") {
-      if (autoAllows(input.kind, input.subject)) return
-      if (input.kind === "bash" && (await this.reviewed(input.sessionID, input.subject))) return
-    }
     /*
      * A command that loses work is asked about every time, whatever was said
      * for the bucket before: "always run commands" was an answer about builds
-     * and tests, not about deleting things.
+     * and tests, not about deleting things. As MiMo forces its delete question,
+     * that holds when commands are allowed and at full access too, and neither
+     * the middle level nor the model's review ever answers it.
      */
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
     const forced = input.forced ?? (risk !== undefined && LOST_WORK.includes(risk))
+    if (action === "allow" && !forced) return
+    // The middle access level. A refusal set in settings has already won above.
+    if (!forced && this.config.get().accessLevel === "auto") {
+      if (autoAllows(input.kind, input.subject)) return
+      if (input.kind === "bash" && (await this.reviewed(input.sessionID, input.subject))) return
+    }
     const key = projectKey(input)
     const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
     const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
