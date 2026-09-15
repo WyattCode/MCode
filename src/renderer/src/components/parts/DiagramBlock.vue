@@ -125,7 +125,9 @@ function exported() {
 
 function enlarge() {
   const out = exported()
-  if (out) openImagePreview(svgDataUrl(out.xml), { name: props.mode === "mermaid" ? "mermaid.svg" : downloadName.value })
+  // MiMo zooms the preview out of the drawn diagram itself, not the scroller around it.
+  const rect = scroller.value?.querySelector("svg")?.getBoundingClientRect()
+  if (out) openImagePreview(svgDataUrl(out.xml), { name: props.mode === "mermaid" ? "mermaid.svg" : downloadName.value, rect })
 }
 
 async function picture(): Promise<Blob> {
