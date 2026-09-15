@@ -113,7 +113,7 @@ const api = {
   quitApp: (): void => ipcRenderer.send("mcode:quit"),
 
   /** Both take a project root and a path relative to it; see the main process. */
-  revealFile: (directory: string, relative: string): Promise<void> =>
+  revealFile: (directory: string, relative: string): Promise<{ ok: boolean; missing?: boolean; error?: string }> =>
     ipcRenderer.invoke("mcode:reveal-file", directory, relative),
   /**
    * `openWith` names the application to start, for the review panel's "Open in"
