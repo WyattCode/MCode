@@ -691,8 +691,7 @@ const retiredChords = computed(() => {
   for (const command of bindableCommands.value) {
     const custom = binds[command.id]
     // Absent means untouched; an empty string means its built-in chord was deleted on the shortcuts page.
-    // The send row's Enter is the composer's own key, never retired window-wide.
-    if (custom === undefined || !command.hint || custom === command.hint || command.id === "composer.send") continue
+    if (custom === undefined || !command.hint || custom === command.hint) continue
     if (claimed.has(command.hint)) continue
     out.add(command.hint)
   }
@@ -1178,8 +1177,10 @@ function focusBrowserAddress() {
   else composer.value?.focus()
 }
 
+/* C25: Ctrl+R reloads the browser tab on show, else the panel's first browser tab, as MiMo's lj() picks. */
+const hasBrowserTab = computed(() => rp.tabs.some((tab) => tab.type === "browser"))
 function reloadBrowser(force = false) {
-  if (browserShowing.value) void rightPanel.value?.activeBrowser()?.reload(force)
+  void rightPanel.value?.reloadTarget()?.reload(force)
 }
 
 /* Ctrl+period is MiMo's annotate while a browser tab shows a page; on a blank tab or elsewhere it steps the agent. */
@@ -2454,28 +2455,23 @@ async function forward() {
  * The palette narrows this to what is actionable; the shortcuts page must not,
  * because a chord belongs to a command rather than to a moment.
  */
-/*
- * MiMo's shortcut page, row for row, by the command that stands for each. Its
- * plugins, automations and phone rows have no MCode counterpart, and its voice
- * and compose-mode rows wait on the composer exposing those toggles.
- */
-const MIMO_SHORTCUT_ROWS = new Set([
-  "session.archive", "session.new", "session.side", "session.pin", "session.rename", "view.priority",
-  "browser.address", "input.focus", "app.back", "app.forward", "session.nextRecent", "session.next",
-  "session.prevRecent", "session.previous", "browser.tab", "view.review", "view.bottom", "view.browser",
-  "view.left", "view.right", "view.terminal", "project.open", "app.settings", "window.close",
-  "model.variant.cycle", "model.variant.decrease", "model.variant.increase", "view.model", "composer.send",
-  "session.copyMarkdown", "session.copyLink", "session.copyID", "app.copyDirectory", "session.forkChat",
-  "browser.forceReload", "command.palette", "browser.reload", "app.openFile", "app.shortcuts",
-  ...Array.from({ length: 9 }, (_, index) => `tab.goto.${index + 1}`),
-  "view.rightMax",
-])
+/* One command, as the palette, the menus, the key table and the shortcuts page all read it. */
+interface AppCommand {
+  id: string
+  group: string
+  title: string
+  hint?: string
+  enabled?: boolean | (() => boolean)
+  hidden?: boolean
+  danger?: boolean
+  run: () => unknown
+}
 
-const bindableCommands = computed(() => {
+const bindableCommands = computed((): AppCommand[] => {
   const hasSession = Boolean(app.currentID)
   const inWorkspace = !isHome.value
 
-  const all = [
+  const all: AppCommand[] = [
     // Session
     { id: "session.new", group: "key.groupGeneral", title: t("cmd.newSession"), hint: "Ctrl+N", run: newSession },
     {
@@ -2647,7 +2643,7 @@ const bindableCommands = computed(() => {
       group: "key.groupGeneral",
       title: t("key.browserReload"),
       hint: "Ctrl+R",
-      enabled: browserShowing.value,
+      enabled: hasBrowserTab.value,
       run: () => reloadBrowser(),
     },
     {
@@ -2655,7 +2651,7 @@ const bindableCommands = computed(() => {
       group: "key.groupGeneral",
       title: t("key.browserForceReload"),
       hint: "Ctrl+Shift+R",
-      enabled: browserShowing.value,
+      enabled: hasBrowserTab.value,
       run: () => reloadBrowser(true),
     },
     {
@@ -2687,14 +2683,6 @@ const bindableCommands = computed(() => {
       title: t("key.sidePanel"),
       hint: "Ctrl+Alt+B",
       run: toggleSidePanel,
-    },
-    {
-      // MiMo's toggle-max-side: no default chord, and only while the panel is open.
-      id: "view.rightExpand",
-      group: "key.groupSession",
-      title: t("key.sidePanelExpand"),
-      enabled: rp.open,
-      run: () => rp.toggleFullscreen(),
     },
     {
       id: "view.terminal",
@@ -2790,7 +2778,6 @@ const bindableCommands = computed(() => {
       id: "composer.send",
       group: "key.groupPrompt",
       title: t("cmd.sendMessage"),
-      hint: "Enter",
       enabled: hasSession,
       run: () => void composer.value?.submit(),
     },
@@ -2939,16 +2926,30 @@ const bindableCommands = computed(() => {
       run: () => void cycleEffort(),
     },
     {
-      id: "model.variant.decrease",
+      id: "effort.decrease",
       group: "key.groupModels",
       title: t("key.decreaseEffort"),
       run: () => void stepEffort(-1),
     },
     {
-      id: "model.variant.increase",
+      id: "effort.increase",
       group: "key.groupModels",
       title: t("key.increaseEffort"),
       run: () => void stepEffort(1),
+    },
+    {
+      // MiMo's 切换语音模式, unbound: voice input between 智能编辑 and 快速输入.
+      id: "voice.toggle",
+      group: "key.groupPrompt",
+      title: t("key.label.toggle-voice"),
+      run: () => void app.toggleVoiceMode(),
+    },
+    {
+      // MiMo's 切换编排模式, unbound: for the open conversation, or on the home screen for the next task.
+      id: "composer.staged.toggle",
+      group: "key.groupPrompt",
+      title: t("key.label.toggle-plan"),
+      run: () => void app.toggleComposeMode(isHome.value),
     },
     {
       id: "project.previous",
@@ -2985,6 +2986,14 @@ const bindableCommands = computed(() => {
       hint: "Ctrl+Shift+L",
       enabled: hasSession,
       run: () => composer.value?.focus(),
+    },
+    {
+      // MiMo's 查找: the find bar in the conversation. Ctrl+F itself is answered in onKeydown.
+      id: "app.find",
+      group: "key.groupGeneral",
+      title: t("key.label.find"),
+      hint: "Ctrl+F",
+      run: () => void openFind(),
     },
     {
       // MiMo's: the window closes, hiding to the tray when that is on. A tab closes from its own ✕.
@@ -3088,14 +3097,11 @@ const bindableCommands = computed(() => {
     { id: "app.back", group: "key.groupGeneral", title: t("key.back"), hint: "Ctrl+[", run: () => void back() },
     { id: "app.forward", group: "key.groupGeneral", title: t("key.forward"), hint: "Ctrl+]", run: () => void forward() },
     {
-      // Hidden the way the reference hides it: opening the palette from inside
-      // the palette is not an offer worth making, but the chord is still worth
-      // being able to change.
-      id: "command.palette",
+      // MiMo's 搜索: the search overlay.
+      id: "app.search",
       group: "key.groupGeneral",
       title: t("key.palette"),
       hint: "Ctrl+K",
-      hidden: true,
       run: () => {
         searchOpen.value = true
       },
@@ -3160,7 +3166,7 @@ const bindableCommands = computed(() => {
       run: () => (connectOpen.value = true),
     },
     { id: "app.settings", group: "key.groupGeneral", title: t("cmd.settings"), hint: "Ctrl+,", run: openSettings },
-    // MiMo's unbound rows: copy as Markdown, fork the chat, and the maximised side panel.
+    // MiMo's unbound rows: copy as Markdown, and the maximised side panel (only while the panel is open).
     {
       id: "session.copyMarkdown",
       group: "key.groupSession",
@@ -3171,7 +3177,7 @@ const bindableCommands = computed(() => {
       },
     },
     {
-      id: "view.rightMax",
+      id: "panel.maximize",
       group: "key.groupSession",
       title: t("key.toggleMaxSide"),
       enabled: rp.open,
@@ -3179,11 +3185,8 @@ const bindableCommands = computed(() => {
     },
   ]
 
-  /*
-   * The shortcuts page lists MiMo's rows and nothing else. Every other command
-   * keeps its chord and its menu entry; it is only left off the page.
-   */
-  return all.map((command) => ({ ...command, hidden: !MIMO_SHORTCUT_ROWS.has(command.id) }))
+  /* The shortcuts page draws lib/shortcut-page's fixed list out of these; every command keeps its chord. */
+  return all
 })
 
 const commands = computed(() => bindableCommands.value.filter((command) => command.enabled !== false))
@@ -3528,6 +3531,13 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
+  /*
+   * The table below is Ctrl alone. With Alt held a chord is a different one -
+   * Ctrl+Alt+T is not Ctrl+T (MiMo has no Ctrl+Alt+T) - and AltGr, which types
+   * brackets on many layouts, arrives as Ctrl+Alt and is not a shortcut.
+   */
+  if (event.altKey) return
+
   const handlers: Record<string, () => void> = {
     k: toggleSearch,
     // MiMo's files tab, and the reference's attach on its key.
@@ -3618,7 +3628,7 @@ const MENU_COMMAND_IDS: Record<string, string> = {
   "next-project": "project.next",
   "open-project": "project.open",
   settings: "app.settings",
-  palette: "command.palette",
+  palette: "app.search",
   terminal: "view.terminal",
   sidebar: "view.left",
   abort: "session.abort",
@@ -3670,7 +3680,7 @@ function commandDisabled(id: string): boolean {
  * command - attach, the MCP dialog - are unaffected and keep answering.
  */
 const KEY_COMMAND_IDS: Record<string, string> = {
-  k: "command.palette",
+  k: "app.search",
   p: "app.openFile",
   b: "view.left",
   "`": "view.terminal",

@@ -4640,13 +4640,13 @@ async function main() {
   const firstHunk = twoFiles[0]?.hunks[0]?.lines ?? []
   check("lines carry both numbers", firstHunk[0]?.old === 1 && firstHunk[0]?.new === 1 && firstHunk[3]?.new === 2, firstHunk)
   check("a bare edit-tool patch is one file", parseDiffFiles("--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-a\n+b\n").length === 1)
-  const reviewed = reviewRows("--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/y.md b/y.md\nindex 1..2 100644\n--- a/y.md\n+++ b/y.md\n@@ -3 +3 @@\n-c\n+d\n")
+  const boxRows = reviewRows("--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-a\n+b\ndiff --git a/y.md b/y.md\nindex 1..2 100644\n--- a/y.md\n+++ b/y.md\n@@ -3 +3 @@\n-c\n+d\n")
   check(
     "the review box draws a second file's headers as neither removed nor added rows",
-    reviewed.map((row) => row.kind).join(",") === "hunk,del,add,hunk,del,add" &&
-      reviewed.every((row) => !row.text.startsWith("-- a/") && !row.text.startsWith("++ b/") && !row.text.startsWith("iff --git")) &&
-      reviewed[4]?.old === 3 && reviewed[5]?.new === 3,
-    reviewed,
+    boxRows.map((row) => row.kind).join(",") === "hunk,del,add,hunk,del,add" &&
+      boxRows.every((row) => !row.text.startsWith("-- a/") && !row.text.startsWith("++ b/") && !row.text.startsWith("iff --git")) &&
+      boxRows[4]?.old === 3 && boxRows[5]?.new === 3,
+    boxRows,
   )
   const sidePairs = splitRows(firstHunk)
   check(

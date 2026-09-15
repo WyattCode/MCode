@@ -250,7 +250,10 @@ defineExpose({
     addressInput.value?.focus()
     addressInput.value?.select()
   },
-  reload: (force = false) => act(force ? "forceReload" : "reload"),
+  /* Its own page, even while another tab is on show (C25); a tab that never opened one has nothing to reload. */
+  reload: async (force = false) => {
+    if (props.pageId) apply(await window.mcode.browserAct(force ? "forceReload" : "reload", props.pageId))
+  },
   toggleAnnotate,
 })
 </script>

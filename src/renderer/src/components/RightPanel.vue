@@ -261,8 +261,13 @@ function setBrowserPane(id: string, instance: unknown) {
 }
 
 defineExpose({
-  /* Ctrl+L and Ctrl+R reach the browser tab on show. */
+  /* Ctrl+L and Ctrl+. reach the browser tab on show. */
   activeBrowser: () => (rp.activeTab?.type === "browser" ? browserPanes.value[rp.activeTab.id] : undefined),
+  /* C25, MiMo's lj(): Ctrl+R reloads the browser tab on show, else the panel's first browser tab even behind another. */
+  reloadTarget: () => {
+    const tab = rp.activeTab?.type === "browser" ? rp.activeTab : rp.tabs.find((entry) => entry.type === "browser")
+    return tab ? browserPanes.value[tab.id] : undefined
+  },
 })
 </script>
 

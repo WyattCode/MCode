@@ -871,9 +871,9 @@ app.whenReady().then(async () => {
     return window ? navigate(window, String(input)) : undefined
   })
 
-  ipcMain.handle("mcode:browser-act", (event, what: BrowserAct) => {
+  ipcMain.handle("mcode:browser-act", (event, what: BrowserAct, id?: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    return window ? act(window, what) : undefined
+    return window ? act(window, what, typeof id === "string" && id ? id : undefined) : undefined
   })
 
   ipcMain.handle("mcode:browser-screenshot", async (event) => {
