@@ -62,6 +62,11 @@ function mapStatus(status: string): InfoTaskStatus {
 /** Finished tasks leave the card this long after they end, as MiMo archives them. */
 const ARCHIVE_MS = 7 * 24 * 60 * 60 * 1000
 
+/** How deep a dotted id says it is: `T1.2.3` sits two under the top. */
+function dottedDepth(id: string): number {
+  return id.split(".").length - 1
+}
+
 /**
  * The task list as the card draws it: parents before their children, and an
  * item still in progress shown as stalled unless it changed during the turn
@@ -69,9 +74,13 @@ const ARCHIVE_MS = 7 * 24 * 60 * 60 * 1000
  *
  * The conversation's task registry when it has one; a conversation saved
  * before the registry shows the last plan its todowrite calls recorded.
+ *
+ * As in MiMo, abandoned work is left out altogether - not drawn, and so not in
+ * the card's done / total either - and an item is indented by the deeper of
+ * its dotted id and one under its parent.
  */
 export function infoTasks(registry: readonly TaskItem[] | undefined, messages: readonly Message[], running: boolean, now = Date.now()): InfoTask[] {
-  const entries: { id: string; summary: string; status: string; parentID?: string; at: number }[] = registry?.length
+  const listed: { id: string; summary: string; status: string; parentID?: string; at: number }[] = registry?.length
     ? registry
         .filter((task) => !(task.ended !== undefined && (task.status === "done" || task.status === "abandoned") && now - task.ended >= ARCHIVE_MS))
         .map((task) => ({ id: task.id, summary: task.summary, status: task.status, parentID: task.parentID, at: task.updated }))
@@ -79,6 +88,7 @@ export function infoTasks(registry: readonly TaskItem[] | undefined, messages: r
         const { todos, at } = latestTodoWrite(messages)
         return todos.map((todo) => ({ id: todo.id, summary: todo.content, status: todo.status, parentID: todo.parentId, at }))
       })()
+  const entries = listed.filter((entry) => mapStatus(entry.status) !== "abandoned")
   if (!entries.length) return []
   let runStarted = Infinity
   if (running) {
@@ -97,26 +107,41 @@ export function infoTasks(registry: readonly TaskItem[] | undefined, messages: r
     const parent = entry.parentID && ids.has(entry.parentID) && entry.parentID !== entry.id ? entry.parentID : ""
     byParent.set(parent, [...(byParent.get(parent) ?? []), entry])
   }
+  const byId = new Map(entries.map((entry) => [entry.id, entry]))
+  const depths = new Map<string, number>()
+  // A parent loop stops at the item met twice, which keeps its dotted depth.
+  const depthOf = (entry: (typeof entries)[number], path: Set<string>): number => {
+    const known = depths.get(entry.id)
+    if (known !== undefined) return known
+    let depth = dottedDepth(entry.id)
+    if (!path.has(entry.id)) {
+      path.add(entry.id)
+      const parent = entry.parentID && entry.parentID !== entry.id ? byId.get(entry.parentID) : undefined
+      if (parent) depth = Math.max(depth, depthOf(parent, path) + 1)
+    }
+    depths.set(entry.id, depth)
+    return depth
+  }
   const out: InfoTask[] = []
   const seen = new Set<string>()
   const shown = (entry: (typeof entries)[number]): InfoTaskStatus => {
     const mapped = mapStatus(entry.status)
     return mapped === "in_progress" && !(running && entry.at >= runStarted) ? "stalled" : mapped
   }
-  const walk = (parent: string, depth: number) => {
+  const walk = (parent: string) => {
     for (const entry of byParent.get(parent) ?? []) {
       if (seen.has(entry.id)) continue
       seen.add(entry.id)
-      out.push({ id: entry.id, summary: entry.summary, status: shown(entry), depth })
-      walk(entry.id, depth + 1)
+      out.push({ id: entry.id, summary: entry.summary, status: shown(entry), depth: depthOf(entry, new Set()) })
+      walk(entry.id)
     }
   }
-  walk("", 0)
+  walk("")
   // Anything caught in a parent loop is still listed, at the top.
   for (const entry of entries) {
     if (seen.has(entry.id)) continue
     seen.add(entry.id)
-    out.push({ id: entry.id, summary: entry.summary, status: mapStatus(entry.status), depth: 0 })
+    out.push({ id: entry.id, summary: entry.summary, status: mapStatus(entry.status), depth: dottedDepth(entry.id) })
   }
   return out
 }

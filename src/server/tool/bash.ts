@@ -102,7 +102,7 @@ const REFUSED: { pattern: RegExp; reason: string }[] = [
  */
 const POWERSHELL_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
 
-function shell(chosen?: string): { command: string; args: (script: string) => string[] } {
+export function shell(chosen?: string): { command: string; args: (script: string) => string[] } {
   const name = (chosen ?? "").trim()
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? ""
 

@@ -1012,13 +1012,18 @@ async function submit() {
   }
 
   const named = await mentionAttachments(value, carried, target)
+  const filled = await fillCommand(value, target)
+  // A file the command names that was also mentioned goes once.
+  const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
 
   // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
-  const subtask = props.side ? undefined : subtaskOf(value)
+  const subtask = props.side || !filled ? undefined : subtaskOf(filled)
   // A rejected message should not cost the user what they typed, or gathered.
-  const accepted = subtask
-    ? await app.subtask(value, subtask)
-    : await app.send(withSkills(outgoing(value), chips), [...sent, ...named], target, pointed)
+  const accepted = !filled
+    ? false
+    : subtask
+      ? await app.subtask(value, subtask)
+      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -1070,44 +1075,64 @@ async function compactFromBox(line: string) {
 /**
  * What actually goes to the model when the draft is a command line.
  *
- * The reference sends `session.command` and lets its server look the name up
- * and fill the template in (main-8t-QUXax.js @4461049 into
- * `SessionPrompt.command` @32957943); this app has no such request, so the
- * template travels with the command list and is filled in here. The visible
- * result is the same either way: the transcript shows the expanded prompt,
- * because the reference's server puts the template's own parts on the user
- * message rather than the slash line.
+ * MiMo sends `session.command` and its engine fills the template in. Here a
+ * project or global command is filled in by the backend the same way
+ * (`command.expand`): arguments, then its ``!`cmd` `` placeholders run in the
+ * conversation's folder, then the files it names with `@` come back to be
+ * attached. An MCP prompt is filled in here from the listed template and runs
+ * nothing; a skill's `/name` line goes as typed, for the server to load it.
+ * The transcript shows the filled-in prompt, as MiMo's does.
  *
  * NOT carried across, because `session.prompt` has nowhere to put them: a
- * command's `agent` and `model`. The reference runs the turn as whichever
- * agent and model the command names; here it runs as whatever the session is
- * already set to. A command marked `subtask` does not come through here at all:
- * see `subtaskOf`.
+ * command's `agent` and `model`. MiMo runs the turn as whichever agent and
+ * model the command names; here it runs as whatever the session is already set
+ * to.
+ *
+ * Undefined when the backend could not fill the command in; the failure has
+ * been said and the draft should come back.
  */
+async function fillCommand(value: string, to?: string): Promise<{ text: string; attachments: Attachment[]; command?: CommandInfo } | undefined> {
+  const line = splitCommandLine(value)
+  const command = line && serverCommand(line.name)
+  if (!line || !command || command.source === "skill") return { text: value, attachments: [] }
+  const root = commandRoot(to)
+  if (command.source === "mcp" || !root || !app.client) {
+    const expanded = expandTemplate(command.template, line.args)
+    // An MCP prompt whose fetch failed has no template. Sending nothing would be
+    // refused by the store and the draft would bounce back with no explanation,
+    // so the line goes as it was typed instead.
+    return { text: expanded.trim() ? expanded : value, attachments: [], command }
+  }
+  let filled: { prompt: string; files: { name: string; path: string }[] }
+  try {
+    filled = await app.client.request({ type: "command.expand", directory: root, name: line.name, arguments: line.args })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return undefined
+  }
+  // The named files go by their absolute path, as a mention does: the server reads each when the model is asked.
+  const attachments: Attachment[] = filled.files.map((file) => ({ path: file.path, mime: "", data: "", byPath: true }))
+  return { text: filled.prompt.trim() ? filled.prompt : value, attachments, command }
+}
+
 /**
  * subagents: a command marked `subtask`, as MiMo runs one - its filled-in
  * template goes to a subagent, named by the command's description, and the line
  * as typed stays the user's message. Undefined for anything else.
  */
-function subtaskOf(value: string): { description: string; prompt: string } | undefined {
-  const line = splitCommandLine(value)
-  const command = line && serverCommand(line.name)
-  if (!line || !command?.subtask) return undefined
-  const prompt = expandTemplate(command.template, line.args).trim()
+function subtaskOf(filled: { text: string; command?: CommandInfo }): { description: string; prompt: string } | undefined {
+  const command = filled.command
+  if (!command?.subtask) return undefined
+  const prompt = filled.text.trim()
   if (!prompt) return undefined
   return { description: command.description?.trim() || `/${command.name}`, prompt }
 }
 
-function outgoing(value: string): string {
-  const line = splitCommandLine(value)
-  const command = line && serverCommand(line.name)
-  // skills: a `/name` line goes as typed; the server loads the skill it names into the message.
-  if (!command || command.source === "skill") return value
-  const expanded = expandTemplate(command.template, line!.args)
-  // An MCP prompt whose fetch failed has no template. Sending nothing would be
-  // refused by the store and the draft would bounce back with no explanation,
-  // so the line goes as it was typed instead.
-  return expanded.trim() ? expanded : value
+/** The folder a message from this box is sent from: its conversation's, or the side chat's. */
+function commandRoot(to?: string): string | undefined {
+  // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
+  const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
+  return props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
 }
 
 /**
@@ -1118,9 +1143,7 @@ function outgoing(value: string): string {
  * that cannot be read by then reaches the model as a note saying so.
  */
 async function mentionAttachments(value: string, chosen: Set<string>, to?: string): Promise<Attachment[]> {
-  // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
-  const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
-  const root = props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
+  const root = commandRoot(to)
   if (!root || !chosen.size) return []
   const out: Attachment[] = []
   for (const path of mentionedIn(value)) {
@@ -2087,15 +2110,14 @@ const rowsOf = (group: { provider: { id: string }; models: ModelInfo[] }): Model
 
 /*
  * MiMo's split: its own models at the top level, everyone else's behind "more
- * models" under a heading per vendor, and custom models in a group of their own
- * below that. Here the first connected built-in provider stands where MiMo's
- * own models do.
+ * models" in one flat list, and custom models in a group of their own below
+ * that. Here the first connected built-in provider stands where MiMo's own
+ * models do.
  */
 const builtinGroups = computed(() => groups.value.filter((group) => !group.provider.custom))
 const primaryGroup = computed(() => builtinGroups.value[0])
-const moreGroups = computed(() => builtinGroups.value.slice(1))
 const primaryRows = computed(() => (primaryGroup.value ? rowsOf(primaryGroup.value) : []))
-const moreRows = computed(() => moreGroups.value.flatMap(rowsOf))
+const moreRows = computed(() => builtinGroups.value.slice(1).flatMap(rowsOf))
 const customRows = computed(() => groups.value.filter((group) => group.provider.custom).flatMap(rowsOf))
 
 function closeModelSubs() {
@@ -2998,25 +3020,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   :style="{ left: `${morePlace.left}px`, top: `${morePlace.top}px` }"
                 >
                   <div class="more-scroll" @scroll="moreSub = undefined">
-                    <div v-for="group in moreGroups" :key="group.provider.id" class="vendor">
-                      <div class="vendor-head">{{ group.provider.name }}</div>
-                      <ModelMenuRow
-                        v-for="row in rowsOf(group)"
-                        :key="row.key"
-                        :model="row.model"
-                        :row-key="row.key"
-                        :on="currentKey === row.key"
-                        :hot="subKey === row.key"
-                        :efforts="effortsFor(row.model)"
-                        :effort="effortLevel"
-                        :sub-open="moreSub === row.key"
-                        :effort-hot="moreSub === row.key ? levelOf(sub2Key) : undefined"
-                        @enter="hoverMore(row.key)"
-                        @choose="chooseModel(row.provider, row.model.id)"
-                        @effort="chooseModelEffort(row.provider, row.model.id, $event)"
-                        @effort-hover="sub2Key = effortKey($event)"
-                      />
-                    </div>
+                    <ModelMenuRow
+                      v-for="row in moreRows"
+                      :key="row.key"
+                      :model="row.model"
+                      :row-key="row.key"
+                      :on="currentKey === row.key"
+                      :hot="subKey === row.key"
+                      :efforts="effortsFor(row.model)"
+                      :effort="effortLevel"
+                      :sub-open="moreSub === row.key"
+                      :effort-hot="moreSub === row.key ? levelOf(sub2Key) : undefined"
+                      @enter="hoverMore(row.key)"
+                      @choose="chooseModel(row.provider, row.model.id)"
+                      @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                      @effort-hover="sub2Key = effortKey($event)"
+                    />
                   </div>
                 </div>
               </div>
@@ -4593,32 +4612,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   animation: sub-in 0.15s ease-out;
 }
 
+/* One flat list, 1 apart, as MiMo's 更多模型 now draws it. */
 .more-scroll {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 1px;
   min-height: 0;
   padding: 5px;
   overflow-y: auto;
-}
-
-.vendor {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.vendor + .vendor {
-  margin-top: 4px;
-}
-
-/* MiMo's vendor heading: 11/500 at 0.02em, 8 12 4, muted and not selectable. */
-.vendor-head {
-  padding: 8px 12px 4px;
-  color: var(--text-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 16px;
-  letter-spacing: 0.02em;
-  user-select: none;
 }
 
 /* MiMo's level on the chip, 「· 高」: the level at 0.62, the dot at 0.7 of that and 5 before the level. */

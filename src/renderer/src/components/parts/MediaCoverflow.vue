@@ -7,8 +7,8 @@ import { t } from "../../lib/i18n"
 /**
  * MiMo's coverflow for several video cards: the covers fanned in 3D around the
  * one in front, its title and platform beneath, and ‹ n / N › to step. A press
- * on a side cover brings it forward; a press on the front one plays it. Left
- * and right arrows step, Enter plays.
+ * on a side cover brings it forward; a press on the front one opens it. Left
+ * and right arrows step, Enter opens.
  */
 const props = defineProps<{ metas: MediaMeta[]; active: number }>()
 const emit = defineEmits<{ select: [index: number]; play: [url: string] }>()
@@ -65,7 +65,6 @@ function coverFailed(url: string) {
         :title="meta.title"
         data-media-card
         :data-media-url="meta.url"
-        :data-media-play="meta.play"
         :aria-current="at === index ? 'true' : undefined"
         @click="press(at)"
       >

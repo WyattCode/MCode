@@ -180,6 +180,11 @@ function defaults(): AppConfig {
   }
 }
 
+/** MiMo's defaults when nothing is stored: the middle level, and the full access switch on. */
+export function firstInstall(): Pick<AppConfig, "accessLevel" | "allowFullAccess"> {
+  return { accessLevel: "auto", allowFullAccess: true }
+}
+
 /**
  * What a config document on disk says about permissions.
  *
@@ -433,6 +438,13 @@ export class Config {
   async load(): Promise<void> {
     const stored = await this.storage.read<Partial<AppConfig>>("config")
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    /*
+     * A first install - no config on disk at all - starts where MiMo's does:
+     * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
+     * an absent file counts: a stored config that lacks the fields was written
+     * under the old defaults and keeps meaning them.
+     */
+    if (stored === undefined) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
     if (this.migrate()) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}

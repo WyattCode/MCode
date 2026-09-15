@@ -30,7 +30,7 @@ import { AnthropicAdapter } from "./provider/anthropic"
 import { OpenAICompatible } from "./provider/openai"
 import { ChatGPTSubscription } from "./provider/chatgpt"
 import type { ProviderAdapter } from "./provider/types"
-import { listCommands } from "./command"
+import { expandCommand, listCommands } from "./command"
 import { discoverSkills } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { mergeMcpSecrets } from "./mcp-save"
@@ -507,6 +507,18 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {
         commands: await listCommands(runtime, request.directory),
       } satisfies Handled<"command.list">
+
+    /*
+     * A project or global command being sent. Filled in here rather than in the
+     * window because its shell placeholders run, as MiMo runs them, in the
+     * configured shell and the conversation's folder.
+     */
+    case "command.expand":
+      return (await expandCommand(runtime, {
+        directory: request.directory,
+        name: request.name,
+        arguments: request.arguments,
+      })) satisfies Handled<"command.expand">
 
     /*
      * Replayed for exactly the reason `session.list` replays permissions:
