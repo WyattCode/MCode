@@ -157,12 +157,13 @@ watch(
  */
 .confirm-dock {
   position: relative;
-  max-width: 776px;
+  /* The composer's column and fill (Composer.vue's `.shell` and `.box`), so the pair keeps one edge. */
+  max-width: 712px;
   max-height: 72vh;
   margin: 0 auto 10px;
   padding: 10px 14px;
   overflow-y: auto;
-  background: var(--surface-raised);
+  background: var(--surface-menu);
   border: 0.5px solid #151c130f;
   border-radius: 20px;
   box-shadow: 0 2px 10px #0000000a;

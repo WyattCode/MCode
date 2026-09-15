@@ -4580,7 +4580,8 @@ onBeforeUnmount(() => {
   padding-inline-end: v-bind(infoInset);
 }
 
-.main.info-open :deep(.composer) {
+.main.info-open :deep(.composer),
+.main.info-open :deep(.confirm-wrap) {
   padding-inline-end: calc(24px + v-bind(infoInset));
 }
 
