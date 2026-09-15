@@ -70,8 +70,8 @@ export interface SessionInfo {
   parentID?: string
   parentMessageID?: string
   parentCallID?: string
-  /** subagents: its kind and its numbered name within the parent (`general-1`), which picks its avatar. */
-  subagent?: { type: SubagentType; id: string }
+  /** subagents: its kind and its numbered name within the parent (`general-1`), which picks its avatar, and where it stands. */
+  subagent?: SubagentState
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */
@@ -212,6 +212,47 @@ export interface UserMessage {
   steered?: boolean
   /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
   annotations?: Annotation[]
+  /**
+   * subagents: written by the runner, not the user - what became of background
+   * subagents. `text` is what the model reads; the transcript draws pills.
+   */
+  notices?: SubagentNotice[]
+  /** subagents: a follow-up the parent sent this subagent, drawn under 来自 {source} 的消息. */
+  inbox?: { from: string }
+}
+
+/** subagents: what a background subagent's parent is told, in MiMo's five outcomes. */
+export type SubagentNoticeStatus = "completed" | "failed" | "cancelled" | "stalled" | "ended"
+
+export interface SubagentNotice {
+  /** The numbered name the model uses (`explore-1`). */
+  subagentID: string
+  sessionID: string
+  description: string
+  status: SubagentNoticeStatus
+  /** The first line of its answer or its error, shown as the pill's title. */
+  summary?: string
+  /** For a stall: how many seconds nothing has happened in it. */
+  quietSeconds?: number
+}
+
+/**
+ * subagents: a subagent's own record. `status` is running while a turn of it
+ * is under way and idle between turns; `outcome` is how its last turn ended.
+ * Sessions stored before background subagents carry only `type` and `id`.
+ */
+export interface SubagentState {
+  type: SubagentType
+  id: string
+  /** Started with spawn, so it works on after the parent's turn and reports back. */
+  background?: boolean
+  status?: "running" | "idle"
+  outcome?: "success" | "failure" | "cancelled"
+  error?: string
+  /** Turns taken, counting each follow-up sent to it. */
+  turns?: number
+  /** When its last turn ended. */
+  ended?: number
 }
 
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */

@@ -4,9 +4,11 @@ import type {
   AssistantPart,
   Attachment,
   Message,
+  ModelRef,
   PermissionRecord,
   ReasoningPart,
   SessionInfo,
+  SubagentNotice,
   TextPart,
   ToolPart,
   UserMessage,
@@ -24,7 +26,7 @@ import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { findTool, reachOf, toolsFor } from "../tool/registry"
 import { Questions } from "../tool/question"
-import type { SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
+import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { retryDelay, waitFor } from "./retry"
@@ -48,7 +50,7 @@ import {
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { interruptedTurn } from "@shared/resume"
-import { subagentOutput } from "@shared/subagent"
+import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, subagentOutput, type SubagentTimers } from "@shared/subagent"
 
 /*
  * What a resumed turn is told at its first step, in MCode's own words. Sent in
@@ -188,8 +190,14 @@ export class SessionRunner {
    * next one.
    */
   private readonly steering = new Map<string, Steering>()
-  /** subagents: the subagents running under each conversation, so Stop reaches them. */
+  /** subagents: the subagents a running turn is waiting on (run), so Stop reaches them. Background ones are not here. */
   private readonly children = new Map<string, Set<string>>()
+  /** subagents: every subagent taking a turn, by its own session id. An idle one has no entry. */
+  private readonly workers = new Map<string, Worker>()
+  /** subagents: how background work is timed; MiMo's figures unless the checks or `MCODE_SUBAGENT_TIMERS` say otherwise. */
+  readonly subagentTimers: SubagentTimers = { ...SUBAGENT_TIMERS, ...timersFromEnvironment() }
+  /** subagents: the stall watchdog, running while any background subagent is. */
+  private watchdog?: ReturnType<typeof setInterval>
   /**
    * subagents: the conversation whose turn a running subagent works for. Its
    * file changes are recorded into that turn, and a refusal stops that turn.
@@ -235,6 +243,13 @@ export class SessionRunner {
     this.globalAgents = globalAgentsPath(storage.directory)
     this.questions = new Questions(bus)
     permissions.useReviewer((input) => this.reviewCommand(input))
+    // subagents: anything a working subagent writes is a sign of life to the watchdog.
+    bus.subscribe((event) => {
+      const id = event.type === "message.updated" ? event.message.sessionID : event.type === "message.delta" ? event.sessionID : undefined
+      const worker = id ? this.workers.get(id) : undefined
+      if (worker) worker.activity = Date.now()
+    })
+    void this.recoverSubagents(Date.now())
   }
 
   /**
@@ -707,7 +722,10 @@ export class SessionRunner {
     for (const message of stored.slice(at)) await this.store.deleteMessage(sessionID, message.id)
     // subagents: the subagents the deleted turns started go with them.
     for (const child of await this.store.list()) {
-      if (child.parentID === sessionID && child.parentMessageID && !kept.has(child.parentMessageID)) await this.store.delete(child.id)
+      if (child.parentID !== sessionID || !child.parentMessageID || kept.has(child.parentMessageID)) continue
+      // A background one may still be working; it is stopped quietly first.
+      await this.stopSubagent(child.id)
+      await this.store.delete(child.id)
     }
     if (session.compacted && !kept.has(session.compacted.messageID)) {
       session = await this.store.update(sessionID, { compacted: undefined })
@@ -975,6 +993,8 @@ export class SessionRunner {
   private join(
     steering: Steering,
     input: PromptInput,
+    // subagents: a notice for the parent, or a follow-up for a subagent, joins the same way.
+    extra: Pick<UserMessage, "notices" | "inbox"> = {},
   ): Promise<string> {
     const user: UserMessage = {
       id: Identifier.message(),
@@ -983,6 +1003,7 @@ export class SessionRunner {
       text: input.text,
       attachments: input.attachments ?? [],
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
+      ...extra,
       time: { created: Date.now() },
       // Marked, so the transcript can show it inside the turn it joined.
       steered: true,
@@ -1855,16 +1876,9 @@ export class SessionRunner {
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
         // subagents: offered to a conversation's own calls; a subagent's calls get none, so there is no nesting.
-        subagents: this.owners.has(input.session.id)
+        subagents: this.workers.has(input.session.id)
           ? undefined
-          : (spec) =>
-              this.runSubagent({
-                parentID: input.session.id,
-                messageID: assistant.id,
-                callID: part.callID,
-                signal: input.signal,
-                spec,
-              }),
+          : this.subagentControl({ parentID: input.session.id, messageID: assistant.id, callID: part.callID, signal: input.signal }),
         progress: (text) => {
           part.output = text
           publish()
@@ -1908,24 +1922,32 @@ export class SessionRunner {
     if (refusedByUser) this.abort(owner)
   }
 
+  /** subagents: the task tool's actions, bound to the conversation and call they were asked from. */
+  private subagentControl(call: SubagentCall): SubagentControl {
+    return {
+      run: (spec, timeoutMs) => this.runSubagent(call, spec, timeoutMs),
+      spawn: (spec) => this.spawnSubagent(call, spec),
+      status: (id) => this.subagentStatus(call.parentID, id),
+      wait: (id, timeoutMs) => this.waitSubagent(call, id, timeoutMs),
+      cancel: (id) => this.cancelSubagent(call.parentID, id),
+      send: (id, message) => this.sendSubagent(call.parentID, id, message),
+      models: async (options) => this.subagentModels(options),
+    }
+  }
+
   /**
-   * subagents: runs one subagent to its end and hands back its final message.
+   * subagents: makes a subagent's conversation and starts its first turn.
    *
    * The subagent is a conversation of its own, linked to the call that started
    * it, and runs through the same loop, store and permission queue as any other:
    * its questions reach the dock under its own id, which the window files under
-   * the parent. It is listed as running while it works, it is stopped with the
-   * turn that started it, and what it does to files is recorded into that turn.
+   * the parent. A run's changes are recorded into the turn waiting for it; a
+   * background one's are its own, since the turn that started it may be long over.
    */
-  private async runSubagent(input: {
-    parentID: string
-    messageID: string
-    callID: string
-    signal: AbortSignal
-    spec: SubagentSpec
-  }): Promise<ToolResult> {
-    const parent = await this.store.require(input.parentID)
-    const type = input.spec.type
+  private async startSubagent(call: SubagentCall, spec: SubagentSpec, background: boolean): Promise<{ child: SessionInfo; worker: Worker }> {
+    const parent = await this.store.require(call.parentID)
+    const model = spec.model ? this.modelFor(spec.model) : parent.model
+    const type = spec.type
     const counted = `${parent.id}:${type}`
     const earlier = (await this.store.list()).filter((session) => session.parentID === parent.id && session.subagent?.type === type)
     // Read and reserved with nothing awaited between, so calls started together never share a number.
@@ -1938,66 +1960,495 @@ export class SessionRunner {
     const agent: AgentName = type === "explore" || parent.agent === "plan" ? "plan" : "build"
     const child = await this.store.create({
       directory: parent.directory,
-      model: parent.model,
+      model,
       agent,
       effort: parent.effort,
-      title: input.spec.description || name,
+      title: spec.description || name,
       parentID: parent.id,
-      parentMessageID: input.messageID,
-      parentCallID: input.callID,
-      subagent: { type, id: name },
+      parentMessageID: call.messageID,
+      parentCallID: call.callID,
+      subagent: { type, id: name, ...(background ? { background: true } : {}), status: "running", turns: 1 },
     })
     await this.store.saveMessage({
       id: Identifier.message(),
       sessionID: child.id,
       role: "user",
-      text: input.spec.prompt,
+      text: spec.prompt,
       attachments: [],
       time: { created: Date.now() },
     })
+    const worker = this.work(child, { background, owner: background ? undefined : (this.owners.get(parent.id) ?? parent.id) })
+    return { child, worker }
+  }
 
+  /** subagents: claims a subagent's session and runs its turn in the background of whoever asked. */
+  private work(child: SessionInfo, options: { background: boolean; owner?: string }): Worker {
     const controller = new AbortController()
     this.running.set(child.id, controller)
-    this.owners.set(child.id, this.owners.get(parent.id) ?? parent.id)
-    const siblings = this.children.get(parent.id) ?? new Set<string>()
-    siblings.add(child.id)
-    this.children.set(parent.id, siblings)
-    const stop = () => this.abort(child.id)
-    input.signal.addEventListener("abort", stop, { once: true })
-    if (input.signal.aborted) stop()
+    if (options.owner) this.owners.set(child.id, options.owner)
+    // Open to follow-ups from the start, as a conversation's own turn is to the user's.
+    this.steering.set(child.id, { waiting: [], written: Promise.resolve() })
+    const worker: Worker = {
+      sessionID: child.id,
+      parentID: child.parentID ?? "",
+      name: child.subagent?.id ?? child.id,
+      description: child.title,
+      background: options.background,
+      notify: options.background,
+      activity: Date.now(),
+      stalledNoticed: false,
+      settled: Promise.resolve({ kind: "cancelled" }),
+    }
+    this.workers.set(child.id, worker)
+    worker.settled = this.childTurn(child, worker, controller)
+    if (options.background) this.watch()
+    return worker
+  }
 
+  /** subagents: one turn of a subagent, then its record, then word to its parent if it is owed any. */
+  private async childTurn(child: SessionInfo, worker: Worker, controller: AbortController): Promise<ChildOutcome> {
     let failure: unknown
     try {
-      await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
+      do {
+        await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
+        await this.steering.get(child.id)?.written
+        // A follow-up that landed as the last step ended is answered in this turn too.
+      } while (!controller.signal.aborted && this.steered(child.id))
     } catch (err) {
       failure = err
       if (!(err instanceof Shown)) this.bus.publish({ type: "session.error", sessionID: child.id, error: describe(err) })
     } finally {
-      input.signal.removeEventListener("abort", stop)
+      // Closed with nothing awaited since the last look, so a follow-up either made it in or finds the turn over.
+      this.steering.delete(child.id)
+      if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
       this.running.delete(child.id)
       this.owners.delete(child.id)
-      siblings.delete(child.id)
-      if (!siblings.size && this.children.get(parent.id) === siblings) this.children.delete(parent.id)
+      if (this.workers.get(child.id) === worker) this.workers.delete(child.id)
+      this.unwatch()
       this.bus.publish({ type: "session.idle", sessionID: child.id })
     }
 
-    const messages = await this.store.messages(child.id)
+    const outcome = await this.outcomeOf(child.id, controller.signal.aborted, failure)
+    const current = await this.store.get(child.id)
+    if (current?.subagent) {
+      await this.store
+        .update(child.id, {
+          subagent: {
+            ...current.subagent,
+            status: "idle",
+            outcome: outcome.kind,
+            error: outcome.kind === "failure" ? outcome.error : undefined,
+            ended: Date.now(),
+          },
+        })
+        .catch(() => undefined)
+    }
+    if (worker.notify && current) await this.notifyParent(worker.parentID, this.noticeOf(current, outcome)).catch(() => undefined)
+    return outcome
+  }
+
+  /** subagents: how a subagent's turn ended, read from its transcript. */
+  private async outcomeOf(sessionID: string, aborted: boolean, failure: unknown): Promise<ChildOutcome> {
+    if (aborted) return { kind: "cancelled" }
+    const messages = await this.store.messages(sessionID).catch((): Message[] => [])
     const last = [...messages].reverse().find((message): message is AssistantMessage => message.role === "assistant")
-    if (controller.signal.aborted) throw new ToolError("The subagent was stopped before it finished.")
     if (failure !== undefined || last?.finish === "error" || last?.finish === "refusal") {
-      const reason = last?.error ?? describe(failure instanceof Shown ? failure.reason : failure)
-      throw new ToolError(`The subagent failed: ${reason}`)
+      return { kind: "failure", error: last?.error ?? describe(failure instanceof Shown ? failure.reason : failure) }
     }
-    const answer = (last?.parts ?? [])
-      .filter((part): part is TextPart => part.type === "text")
-      .map((part) => part.text)
-      .join("\n")
-      .trim()
+    return { kind: "success", answer: answerIn(last) }
+  }
+
+  /** subagents: a subagent's last answer, for wait. */
+  private async answerOf(sessionID: string): Promise<string> {
+    const messages = await this.store.messages(sessionID).catch((): Message[] => [])
+    return answerIn([...messages].reverse().find((message): message is AssistantMessage => message.role === "assistant"))
+  }
+
+  /** subagents: MiMo's five outcomes, as the parent is told them. */
+  private noticeOf(child: SessionInfo, outcome: ChildOutcome): NoticeEntry {
+    const base = { subagentID: child.subagent?.id ?? child.id, sessionID: child.id, description: child.title }
+    if (outcome.kind === "cancelled") return { notice: { ...base, status: "cancelled" } }
+    if (outcome.kind === "failure") return { notice: { ...base, status: "failed", summary: firstLine(outcome.error) }, result: outcome.error }
+    if (!outcome.answer) return { notice: { ...base, status: "ended" } }
+    return { notice: { ...base, status: "completed", summary: firstLine(outcome.answer) }, result: outcome.answer }
+  }
+
+  /**
+   * subagents: tells a conversation what became of one of its background
+   * subagents, as MiMo's inbox does. A turn under way takes the notice at its
+   * next step; an idle conversation gets it as a message and a turn to read it.
+   */
+  private async notifyParent(parentID: string, entry: NoticeEntry): Promise<void> {
+    const parent = await this.store.get(parentID)
+    if (!parent) return
+    const text = noticeText([entry])
+    const steering = this.steering.get(parentID)
+    if (steering) {
+      await this.join(steering, { sessionID: parentID, text }, { notices: [entry.notice] })
+      return
+    }
+    // Set up, compacting or wrapping up a turn: asked again shortly, rather than a second turn being started.
+    if (this.running.has(parentID)) {
+      setTimeout(() => void this.notifyParent(parentID, entry).catch(() => undefined), 500)
+      return
+    }
+    const message: UserMessage = {
+      id: Identifier.message(),
+      sessionID: parentID,
+      role: "user",
+      text,
+      attachments: [],
+      notices: [entry.notice],
+      time: { created: Date.now() },
+    }
+    await this.store.saveMessage(message)
+    // Where no turn can start now, it waits in the transcript for the next message.
+    if (parent.revert || !this.config.usable(parent.model.provider)) return
+    const opened = this.steering.get(parentID)
+    if (opened) {
+      opened.waiting.push(message.id)
+      return
+    }
+    if (this.running.has(parentID)) return
+    void this.resume(parentID, [message.id])
+  }
+
+  /** subagents: run - wait for the subagent's final message, up to the timeout, then leave it working. */
+  private async runSubagent(call: SubagentCall, spec: SubagentSpec, timeoutMs = this.subagentTimers.waitMs): Promise<ToolResult> {
+    const { child, worker } = await this.startSubagent(call, spec, false)
+    const siblings = this.children.get(call.parentID) ?? new Set<string>()
+    siblings.add(child.id)
+    this.children.set(call.parentID, siblings)
+    const stop = () => this.abort(child.id)
+    call.signal.addEventListener("abort", stop, { once: true })
+    if (call.signal.aborted) stop()
+
+    let outcome: ChildOutcome | "timeout"
+    try {
+      outcome = await within(worker.settled, timeoutMs)
+    } finally {
+      call.signal.removeEventListener("abort", stop)
+      siblings.delete(child.id)
+      if (!siblings.size && this.children.get(call.parentID) === siblings) this.children.delete(call.parentID)
+    }
+
+    const name = child.subagent?.id ?? child.id
+    const metadata = { sessionID: child.id, subagent: child.subagent }
+    if (outcome === "timeout") {
+      // Left working, as MiMo leaves it. Its changes are its own from here: the turn it worked for has moved on.
+      this.owners.delete(child.id)
+      const note = "The subagent did not finish in the time allowed and is still working. Check on it with status or wait, or cancel it."
+      return { output: subagentOutput(name, note, "timeout"), title: child.title, metadata }
+    }
+    if (outcome.kind === "cancelled") throw new ToolError("The subagent was stopped before it finished.")
+    if (outcome.kind === "failure") throw new ToolError(`The subagent failed: ${outcome.error}`)
+    return { output: subagentOutput(name, outcome.answer || "(The subagent ended without a final message.)"), title: child.title, metadata }
+  }
+
+  /** subagents: spawn - start the subagent and answer at once; its outcome arrives as a notice. */
+  private async spawnSubagent(call: SubagentCall, spec: SubagentSpec): Promise<ToolResult> {
+    const { child } = await this.startSubagent(call, spec, true)
+    const name = child.subagent?.id ?? child.id
     return {
-      output: subagentOutput(child.id, answer || "(The subagent ended without a final message.)"),
+      output: [
+        `subagent_id: ${name}`,
+        "",
+        "Started in the background. Its outcome will arrive as a notification in this conversation; use status or wait if you need it sooner, and send to give it more work.",
+      ].join("\n"),
       title: child.title,
-      metadata: { sessionID: child.id, subagent: child.subagent },
+      metadata: { sessionID: child.id, subagent: child.subagent, background: true },
     }
+  }
+
+  /** subagents: a conversation's subagent, by the name the model was given or by its session id. */
+  private async findSubagent(parentID: string, id: string): Promise<SessionInfo | undefined> {
+    return (await this.store.list()).find((session) => session.parentID === parentID && (session.subagent?.id === id || session.id === id))
+  }
+
+  private unknownSubagent(id: string): ToolResult {
+    return { output: JSON.stringify({ status: "unknown", subagent_id: id }), title: id, metadata: { status: "unknown" } }
+  }
+
+  /** subagents: where a subagent stands, as status, wait and cancel report it. */
+  private snapshotOf(child: SessionInfo): Record<string, unknown> {
+    const state = child.subagent
+    const running = this.running.has(child.id)
+    return {
+      status: running ? "running" : "idle",
+      subagent_id: state?.id ?? child.id,
+      description: child.title,
+      subagent_type: state?.type,
+      background: state?.background === true,
+      turns: state?.turns ?? 1,
+      ...(!running && state?.outcome ? { outcome: state.outcome } : {}),
+      ...(!running && state?.error ? { error: state.error } : {}),
+      started: child.created,
+      ...(!running && state?.ended ? { ended: state.ended } : {}),
+    }
+  }
+
+  private reported(child: SessionInfo, output: Record<string, unknown>): ToolResult {
+    return { output: JSON.stringify(output), title: child.title, metadata: { sessionID: child.id, subagent: child.subagent, status: output.status } }
+  }
+
+  /** subagents: status - a look without waiting. */
+  private async subagentStatus(parentID: string, id: string): Promise<ToolResult> {
+    const child = await this.findSubagent(parentID, id)
+    return child ? this.reported(child, this.snapshotOf(child)) : this.unknownSubagent(id)
+  }
+
+  /** subagents: wait - until the subagent is idle, the timeout passes, or the turn asking is stopped. */
+  private async waitSubagent(call: SubagentCall, id: string, timeoutMs = this.subagentTimers.waitMs): Promise<ToolResult> {
+    let child = await this.findSubagent(call.parentID, id)
+    if (!child) return this.unknownSubagent(id)
+    const worker = this.workers.get(child.id)
+    if (worker) {
+      let stop: (() => void) | undefined
+      const stopped = new Promise<"stopped">((resolve) => {
+        stop = () => resolve("stopped")
+        call.signal.addEventListener("abort", stop, { once: true })
+        if (call.signal.aborted) resolve("stopped")
+      })
+      const ended = await within(Promise.race([worker.settled, stopped]), timeoutMs)
+      if (stop) call.signal.removeEventListener("abort", stop)
+      if (ended === "stopped") throw new ToolError("Stopped while waiting for the subagent.")
+      if (ended === "timeout") return this.reported(child, { status: "timeout", subagent_id: child.subagent?.id ?? id, description: child.title })
+      child = (await this.store.get(child.id)) ?? child
+    }
+    const snapshot = this.snapshotOf(child)
+    const answered = snapshot.status === "idle" && (child.subagent?.outcome ?? "success") === "success"
+    return this.reported(child, answered ? { ...snapshot, result: await this.answerOf(child.id) } : snapshot)
+  }
+
+  /** subagents: cancel - stop a running subagent; one that is idle is left as it is. */
+  private async cancelSubagent(parentID: string, id: string): Promise<ToolResult> {
+    const child = await this.findSubagent(parentID, id)
+    if (!child) return this.unknownSubagent(id)
+    const about = {
+      subagent_id: child.subagent?.id ?? id,
+      description: child.title,
+      subagent_type: child.subagent?.type,
+      background: child.subagent?.background === true,
+    }
+    const worker = this.workers.get(child.id)
+    if (!worker) return this.reported(child, { status: "idle", ...about })
+    this.abort(child.id)
+    await within(worker.settled, 10_000)
+    return this.reported(child, { status: "cancelled", ...about })
+  }
+
+  /**
+   * subagents: send - a follow-up into the subagent's own history. A turn under
+   * way takes it at its next step; an idle subagent takes a new turn for it. The
+   * parent is told when that turn ends, as it is for a background subagent.
+   */
+  private async sendSubagent(parentID: string, id: string, text: string): Promise<ToolResult> {
+    let child = await this.findSubagent(parentID, id)
+    if (!child) {
+      const refused = { queued: false, subagent_id: id, error: "There is no subagent with that subagent_id in this conversation." }
+      return { output: JSON.stringify(refused), title: id, metadata: { status: "unknown" } }
+    }
+    const inbox = { from: "main" }
+    const queued = (target: SessionInfo, messageID: string): ToolResult => ({
+      output: JSON.stringify({ queued: true, subagent_id: target.subagent?.id ?? id, message_id: messageID }),
+      title: target.title,
+      metadata: { sessionID: target.id, subagent: target.subagent },
+    })
+
+    const worker = this.workers.get(child.id)
+    const steering = this.steering.get(child.id)
+    if (worker && steering) {
+      worker.notify = true
+      return queued(child, await this.join(steering, { sessionID: child.id, text }, { inbox }))
+    }
+    // A turn that is closing is let close; the message then starts the next one.
+    if (worker) await worker.settled
+    child = (await this.store.get(child.id)) ?? child
+
+    const message: UserMessage = { id: Identifier.message(), sessionID: child.id, role: "user", text, attachments: [], inbox, time: { created: Date.now() } }
+    await this.store.saveMessage(message)
+    const state = child.subagent ?? { type: "general" as const, id }
+    child = await this.store.update(child.id, {
+      subagent: { ...state, status: "running", outcome: undefined, error: undefined, ended: undefined, turns: (state.turns ?? 1) + 1 },
+    })
+    // Another follow-up got there first and started the turn; this one joins it.
+    const opened = this.steering.get(child.id)
+    const running = this.workers.get(child.id)
+    if (opened && running) {
+      opened.waiting.push(message.id)
+      running.notify = true
+      return queued(child, message.id)
+    }
+    this.work(child, { background: true })
+    return queued(child, message.id)
+  }
+
+  /** subagents: models - what a subagent can be given, from the providers that are connected. */
+  private subagentModels(options: { vision: boolean; limit?: number }): ToolResult {
+    const all = this.config
+      .providers()
+      .filter((provider) => provider.configured)
+      .flatMap((provider) => provider.models.map((model) => ({ ref: `${provider.id}/${model.id}`, vision: model.inputs.image })))
+    const matching = (options.vision ? all.filter((entry) => entry.vision) : all).sort((a, b) => a.ref.localeCompare(b.ref))
+    const shown = matching.slice(0, options.limit ?? 50)
+    const heading = options.vision ? "Models that read images" : "Models"
+    const output = shown.length
+      ? [
+          `${heading} (${shown.length} of ${matching.length}):`,
+          ...shown.map((entry) => `${entry.ref}${entry.vision ? " (vision)" : ""}`),
+          ...(matching.length > shown.length ? [`... and ${matching.length - shown.length} more; raise limit to list them.`] : []),
+          "Pass one as model when you spawn or run a subagent.",
+        ].join("\n")
+      : options.vision
+        ? "No connected model reads images."
+        : "No models are connected."
+    return { output, title: heading, metadata: { count: shown.length, total: matching.length, vision: options.vision } }
+  }
+
+  /** subagents: a model the task tool named, as `provider/model` or as an id only one connected provider has. */
+  private modelFor(ref: string): ModelRef {
+    const providers = this.config.providers().filter((provider) => provider.configured)
+    const slash = ref.indexOf("/")
+    const named = slash > 0 ? providers.find((provider) => provider.id === ref.slice(0, slash)) : undefined
+    if (named && ref.length > slash + 1) return { provider: named.id, model: ref.slice(slash + 1) }
+    const matches = providers.filter((provider) => provider.models.some((model) => model.id === ref))
+    if (matches.length === 1) return { provider: matches[0]!.id, model: ref }
+    throw new ToolError(`No connected model matches "${ref}". Use the models action to list the ones a subagent can be given.`)
+  }
+
+  /** subagents: the stall watchdog, MiMo's: every scan, a background subagent quiet past the mark is reported once. */
+  private watch(): void {
+    if (this.watchdog) return
+    this.watchdog = setInterval(() => this.scanStalled(), this.subagentTimers.scanMs)
+    this.watchdog.unref?.()
+  }
+
+  /** subagents: the watchdog stops with the last background subagent, so the next one starts it on the timings then in force. */
+  private unwatch(): void {
+    if (!this.watchdog || [...this.workers.values()].some((worker) => worker.background)) return
+    clearInterval(this.watchdog)
+    this.watchdog = undefined
+  }
+
+  private scanStalled(): void {
+    const now = Date.now()
+    for (const worker of this.workers.values()) {
+      if (!worker.background) continue
+      const quiet = now - worker.activity
+      // Quiet enough to report, reported once per quiet spell; activity, or going past the abandon mark, ends the spell.
+      if (!isStalled(quiet, this.subagentTimers)) {
+        worker.stalledNoticed = false
+        continue
+      }
+      if (worker.stalledNoticed) continue
+      worker.stalledNoticed = true
+      const notice: SubagentNotice = {
+        subagentID: worker.name,
+        sessionID: worker.sessionID,
+        description: worker.description,
+        status: "stalled",
+        quietSeconds: Math.floor(quiet / 1000),
+      }
+      void this.notifyParent(worker.parentID, { notice }).catch(() => undefined)
+    }
+    this.unwatch()
+  }
+
+  /** subagents: stops one subagent without a word to its parent, and waits a little for it to settle. */
+  private async stopSubagent(sessionID: string): Promise<void> {
+    const worker = this.workers.get(sessionID)
+    if (!worker) return
+    worker.notify = false
+    this.abort(sessionID)
+    await within(worker.settled, 5000)
+  }
+
+  /** subagents: stops every subagent of a conversation that is being deleted. Stop alone leaves background ones working, as MiMo does. */
+  async dropSubagents(parentID: string): Promise<void> {
+    const leaving = [...this.workers.values()].filter((worker) => worker.parentID === parentID)
+    await Promise.all(leaving.map((worker) => this.stopSubagent(worker.sessionID)))
+  }
+
+  /**
+   * subagents: a subagent recorded as running that nothing is running - the app
+   * closed while it worked - is marked failed, as MiMo marks its orphans.
+   */
+  private async recoverSubagents(before: number): Promise<void> {
+    const sessions = await this.store.list().catch((): SessionInfo[] => [])
+    for (const session of sessions) {
+      if (session.subagent?.status !== "running" || session.updated > before || this.workers.has(session.id)) continue
+      await this.store
+        .update(session.id, {
+          subagent: { ...session.subagent, status: "idle", outcome: "failure", error: "The app closed while this subagent was working." },
+        })
+        .catch(() => undefined)
+    }
+  }
+}
+
+/** subagents: the conversation and call a task tool action was asked from. */
+interface SubagentCall {
+  parentID: string
+  messageID: string
+  callID: string
+  signal: AbortSignal
+}
+
+/** subagents: a subagent taking a turn. */
+interface Worker {
+  sessionID: string
+  parentID: string
+  name: string
+  description: string
+  /** Started with spawn, or woken by send: watched for stalls. */
+  background: boolean
+  /** Whether its parent is told when this turn ends. */
+  notify: boolean
+  /** When it last wrote anything. */
+  activity: number
+  /** This quiet spell has been reported already. */
+  stalledNoticed: boolean
+  /** Settles once the turn is over and recorded. */
+  settled: Promise<ChildOutcome>
+}
+
+type ChildOutcome = { kind: "success"; answer: string } | { kind: "failure"; error: string } | { kind: "cancelled" }
+
+type NoticeEntry = { notice: SubagentNotice; result?: string }
+
+/** subagents: a reply's final words. */
+function answerIn(message: AssistantMessage | undefined): string {
+  return (message?.parts ?? [])
+    .filter((part): part is TextPart => part.type === "text")
+    .map((part) => part.text)
+    .join("\n")
+    .trim()
+}
+
+/** subagents: a promise's value, or "timeout" once `ms` has passed. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), ms)
+  })
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer))
+}
+
+/** subagents: the probe's shortened timings, as JSON in `MCODE_SUBAGENT_TIMERS`; anything unreadable is ignored. */
+function timersFromEnvironment(): Partial<SubagentTimers> {
+  const raw = process.env.MCODE_SUBAGENT_TIMERS
+  if (!raw) return {}
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object") return {}
+    const out: Partial<SubagentTimers> = {}
+    for (const key of Object.keys(SUBAGENT_TIMERS) as (keyof SubagentTimers)[]) {
+      const value = (parsed as Record<string, unknown>)[key]
+      if (typeof value === "number" && value > 0) out[key] = value
+    }
+    return out
+  } catch {
+    return {}
   }
 }
 
