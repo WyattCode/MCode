@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
+import type { HomeSuggestion } from "@shared/protocol"
 import { useApp } from "../stores/app"
-import { t } from "../lib/i18n"
+import { language, t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
+import { SUGGESTION_ICON_PATHS, rememberedSuggestions } from "../lib/home-suggestions"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
 import NewProjectDialog from "./NewProjectDialog.vue"
@@ -185,20 +187,41 @@ async function existing() {
 /** The box below, so a starting point can be put into it rather than run. */
 const box = ref<InstanceType<typeof Composer>>()
 
-/*
- * What the chosen project offers to start from.
- *
- * MiMo lists example tasks of its own here; this lists the commands and skills
- * the project itself carries, which is the same offer made out of something
- * real. They are read per project, so changing the picker re-reads them.
- */
-const starters = computed(() => app.commands.slice(0, 3))
-
+/* The slash menu on this screen lists the chosen project's commands, so they are read per project. */
 watch(chosen, (next) => next && next !== NO_PROJECT && void app.refreshCommands(next), { immediate: true })
 
-function start(name: string) {
-  // A starting point names no files, so it carries no chips and no mentions.
-  box.value?.set({ text: `/${name} `, attachments: [], mentioned: new Set() })
+/*
+ * MiMo's example tasks under the tray: shown only once a project is chosen,
+ * three rows written for that project by the model (asked once per project),
+ * and a click puts the task's request into the box without sending it.
+ */
+const hasProject = computed(() => Boolean(chosen.value) && chosen.value !== NO_PROJECT)
+const suggestions = ref<HomeSuggestion[]>([])
+const suggesting = ref(false)
+
+watch(
+  () => [chosen.value, language.value, Boolean(app.client)] as const,
+  async ([directory, lang]) => {
+    suggestions.value = []
+    suggesting.value = false
+    const client = app.client
+    if (!directory || directory === NO_PROJECT || !client) return
+    suggesting.value = true
+    const rows = await rememberedSuggestions(directory, lang, async () => {
+      const result = await client.request({ type: "home.suggest", directory, language: lang })
+      return result.suggestions
+    })
+    // A newer pick may have overtaken this answer.
+    if (chosen.value !== directory || language.value !== lang) return
+    suggestions.value = rows
+    suggesting.value = false
+  },
+  { immediate: true },
+)
+
+function start(suggestion: HomeSuggestion) {
+  // A task's request names no files, so it carries no chips and no mentions.
+  box.value?.set({ text: suggestion.query, attachments: [], mentioned: new Set() })
   box.value?.focus()
 }
 
@@ -276,15 +299,21 @@ async function hop() {
 
       <NewProjectDialog v-if="naming" :value="t('home.blankDefault')" @close="naming = false" @submit="createBlank" />
 
-      <!-- Under the project row, which is the order MiMo reads in: the box,
-           what it points at, and then what you might start with. -->
-      <div v-if="starters.length" class="starters" :aria-label="t('home.starters')">
-        <button v-for="command in starters" :key="command.name" class="starter" @click="start(command.name)">
-          <svg class="starter-mark" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M2.8 4.2h10.4M2.8 8h10.4M2.8 11.8h6.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+      <!-- Under the project row, which is the order MiMo reads in: the box, what it points at, and what you might start with. -->
+      <div v-if="hasProject && (suggesting || suggestions.length)" id="home-suggest" class="home-suggest" :aria-label="t('home.starters')">
+        <div v-if="!suggestions.length" class="sug-loading">{{ t("composer.at.loading") }}</div>
+        <button
+          v-for="item in suggestions"
+          :key="item.title"
+          class="sug"
+          type="button"
+          :data-sug="item.title"
+          @click="start(item)"
+        >
+          <svg class="sug-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path v-for="d in SUGGESTION_ICON_PATHS[item.icon]" :key="d" :d="d" />
           </svg>
-          <span class="starter-name">/{{ command.name }}</span>
-          <span v-if="command.description" class="starter-note">{{ command.description }}</span>
+          <span class="sug-t">{{ item.title }}</span>
         </button>
       </div>
     </div>
@@ -367,54 +396,92 @@ async function hop() {
   padding-inline: 6px 10px;
 }
 
-/* Under the box, as MiMo keeps them: a row each, parted by a dashed rule. */
-.starters {
+/* MiMo's suggestion list: a column 8 under the tray. */
+.home-suggest {
   display: flex;
   flex-direction: column;
   align-self: stretch;
-  margin-top: 14px;
+  margin-top: 8px;
 }
 
-.starter {
+/* A row: 34 in at the start, icon and title 11 apart, 13/20 in the muted text colour. */
+.sug {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-width: 0;
-  height: 46px;
-  padding: 0 8px;
-  color: var(--text-strong);
-  border-bottom: 1px dashed var(--border-weak);
-  border-radius: 8px;
-  text-align: start;
-}
-
-.starter:last-child {
-  border-bottom: 0;
-}
-
-.starter:hover {
-  background: var(--surface-hover);
-}
-
-.starter-mark {
-  flex-shrink: 0;
-  color: var(--text-weak);
-}
-
-.starter-name {
-  flex-shrink: 0;
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 20px;
-}
-
-.starter-note {
-  overflow: hidden;
-  min-width: 0;
-  color: var(--text-weak);
+  gap: 11px;
+  width: 100%;
+  padding-block: 10px;
+  padding-inline: 34px 8px;
+  color: var(--text-base);
+  background: none;
+  border: 0;
+  font-family: inherit;
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 20px;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* A dotted hairline, 2 on and 2 off, across the top of every row but the first, held to the 712 column. */
+.sug::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  inset-inline: max(0px, 50% - 356px);
+  height: 1px;
+  background: var(--border-weak);
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 4px);
+  mask: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 4px);
+  pointer-events: none;
+}
+
+.sug:first-child::before {
+  display: none;
+}
+
+.sug:hover {
+  color: var(--text-strong);
+}
+
+.sug:hover .sug-t {
+  text-decoration: underline;
+}
+
+.sug-icon {
+  flex: none;
+  color: var(--text-weak);
+  opacity: 0.7;
+}
+
+.sug-icon path {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sug-t {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sug-loading {
+  padding: 13px 8px;
+  color: var(--text-weaker);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+/* MiMo's wide window: the tray grows to 944 and the dotted rules follow it. */
+@media (min-width: 2000px) {
+  .column {
+    width: min(944px, 100%);
+  }
+
+  .sug::before {
+    inset-inline: max(0px, 50% - 472px);
+  }
 }
 </style>
