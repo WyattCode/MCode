@@ -41,6 +41,8 @@ export const useApp = defineStore("app", () => {
   const sessions = ref<SessionInfo[]>([])
   const currentID = ref<string>()
   const messages = ref<Message[]>([])
+  /** The conversation switched to whose messages have not arrived; MiMo shows 正在加载对话… meanwhile. */
+  const loadingID = ref<string>()
   /**
    * Sessions with a turn in flight.
    *
@@ -959,8 +961,23 @@ export const useApp = defineStore("app", () => {
      */
     history.value = { undo: 0, redo: 0 }
     void refreshHistory(sessionID)
+    /*
+     * MiMo switches at once: the conversation clicked is the one on screen,
+     * saying 正在加载对话… until its messages arrive, and nothing of the one left
+     * stays to be clicked. Opening the one already on screen again (a resync)
+     * keeps what it shows. A failed read leaves the line up, as MiMo's does.
+     */
+    if (currentID.value !== sessionID) {
+      currentID.value = sessionID
+      loadingID.value = sessionID
+      messages.value = []
+      partIndex.clear()
+      error.value = undefined
+    }
     const result = await api().request({ type: "session.get", sessionID })
-    currentID.value = sessionID
+    // Left for another conversation while this one was read: its answer is not shown.
+    if (currentID.value !== sessionID) return
+    loadingID.value = undefined
     if (unseen.value.has(sessionID)) {
       const next = new Set(unseen.value)
       next.delete(sessionID)
@@ -1012,6 +1029,10 @@ export const useApp = defineStore("app", () => {
     if (!sessions.value.some((session) => session.id === result.session.id)) {
       sessions.value.unshift(result.session)
     }
+    // Known to be empty, so it opens straight onto its hero rather than a loading line.
+    currentID.value = result.session.id
+    messages.value = []
+    partIndex.clear()
     await open(result.session.id)
     return result.session
   }
@@ -1278,12 +1299,16 @@ export const useApp = defineStore("app", () => {
     report(undefined)
     noteError(target, undefined)
 
-    // Caught here rather than in the backend so it can be said in the user's
-    // language - the server has no idea which one that is.
+    /*
+     * MiMo's 暂无可用模型: a conversation whose model no connected provider
+     * serves is not sent. It is said as a notice rather than in the transcript,
+     * the model list is asked for again, and the draft stays.
+     */
     const chosen = (onSide ? sideSessionOf(target) : sessions.value.find((session) => session.id === target))?.model
     const provider = providers.value.find((entry) => entry.id === chosen?.provider)
-    if (provider && !provider.configured) {
-      report(t("error.noProvider", { name: provider.name }))
+    if (!chosen || !provider?.configured) {
+      notifyFailure(t("model.none"))
+      void refreshProviders().catch(() => undefined)
       return false
     }
 
@@ -1384,10 +1409,14 @@ export const useApp = defineStore("app", () => {
     }
   }
 
-  /** Undefined clears it, which is how a session goes back to the default. */
-  async function setEffort(effort?: Effort) {
-    if (!currentID.value) return
-    await api().request({ type: "session.effort", sessionID: currentID.value, effort })
+  /** MiMo's per-conversation access level; the home screen's chip changes the default instead. */
+  async function setAccess(sessionID: string, access: "ask" | "auto" | "full") {
+    await api().request({ type: "session.access", sessionID, access })
+  }
+
+  /** MiMo's effort is one app-wide level: every conversation, and the next, runs at it. */
+  async function setEffort(effort: Effort) {
+    await patchConfig({ effort })
   }
 
   async function setModel(model: ModelRef, to?: string) {
@@ -1856,6 +1885,7 @@ export const useApp = defineStore("app", () => {
     closeTab,
     moveTab,
     messages,
+    loadingID,
     busy,
     replacing,
     markReplacing,
@@ -1938,6 +1968,7 @@ export const useApp = defineStore("app", () => {
     setModel,
     setSmart,
     setEffort,
+    setAccess,
     setAgent,
     setStaged,
     patchConfig,

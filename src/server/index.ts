@@ -53,6 +53,16 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
 
   const permissions = new Permissions(bus, config)
   const sessions = new SessionStore(storage, bus)
+  // Each conversation's own access level; a side chat or subagent runs at the level of the conversation it belongs to.
+  permissions.useSessions(async (sessionID) => {
+    let session = await sessions.get(sessionID)
+    for (let depth = 0; session && depth < 5; depth++) {
+      const owner = session.parentID ?? session.sideOf
+      if (!owner) break
+      session = await sessions.get(owner)
+    }
+    return session?.access
+  })
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)

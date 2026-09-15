@@ -1324,11 +1324,14 @@ async function resetProjectRoot() {
 
 const CHIME_LABEL: Record<Chime, string> = {
   off: "set.chimeOff",
-  settle: "set.chimeSettle",
-  triple: "set.chimeTriple",
-  sweep: "set.chimeSweep",
-  duet: "set.chimeDuet",
-  zen: "set.chimeZen",
+  rhodes: "set.chimeRhodes",
+  handpan: "set.chimeHandpan",
+  vibes: "set.chimeVibes",
+  bloom: "set.chimeBloom",
+  harp: "set.chimeHarp",
+  kalimba: "set.chimeKalimba",
+  bowl: "set.chimeBowl",
+  koto: "set.chimeKoto",
 }
 
 const chimeOptions = computed(() =>

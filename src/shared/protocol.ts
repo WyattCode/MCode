@@ -24,15 +24,6 @@ export interface SessionInfo {
   model: ModelRef
   agent: AgentName
   /**
-   * This session's reasoning effort, or absent to follow the app default.
-   *
-   * Absent is a real state rather than a missing value - it is what the cycle
-   * returns to after the last step, and what a session starts in - but it
-   * resolves to the app-wide setting at the point the turn runs, not to
-   * "whatever the provider does".
-   */
-  effort?: Effort
-  /**
    * Whether this conversation works in stages: clarify, plan, build, review.
    *
    * Absent is off, which is what every conversation stored before this field
@@ -62,6 +53,11 @@ export interface SessionInfo {
   sideOf?: string
   /** The conversation this one was branched from, for the marker at its top. */
   forkOf?: string
+  /**
+   * This conversation's own access level, as MiMo keeps one per conversation.
+   * Absent follows the app's default level.
+   */
+  access?: "ask" | "auto" | "full"
   /*
    * subagents: a subagent's own conversation, and where in its parent it was
    * started - the parent conversation, the assistant message and the task call.
@@ -1129,7 +1125,7 @@ export interface AppConfig {
   /** Where to look for a newer release, if anywhere. */
   updateFeed: string
   /** The chime a task that ran past a minute makes when it ends. */
-  taskDoneSound: "off" | "settle" | "triple" | "sweep" | "duet" | "zen"
+  taskDoneSound: "off" | "rhodes" | "handpan" | "vibes" | "bloom" | "harp" | "kalimba" | "bowl" | "koto"
   /** Whether moving along or pressing the conversation navigator plays a scale. On by default. */
   spineSound: boolean
   /**
@@ -1216,7 +1212,7 @@ export interface AppConfig {
   projectIcons: Record<string, string>
   /** Per-project badge hue override; absent means derived from the path. */
   projectColors: Record<string, string>
-  /** Sampling effort a new session starts with; each may then differ. */
+  /** The reasoning effort every turn runs at: MiMo keeps one app-wide level, not one per conversation. */
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
@@ -1583,6 +1579,7 @@ export type Request =
   | { type: "session.revertTurn"; sessionID: string; messageIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
+  | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
   | { type: "session.staged"; sessionID: string; staged: boolean }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
@@ -1595,7 +1592,6 @@ export type Request =
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
-  | { type: "session.effort"; sessionID: string; effort?: Effort }
   | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[]; fileNotices?: FileNotice[] }
   | { type: "session.abort"; sessionID: string }
   /*
@@ -1862,6 +1858,7 @@ export interface ResponseMap {
    */
   "session.revert": { session: SessionInfo; files: number; history: HistoryDepth }
   "session.agent": { session: SessionInfo }
+  "session.access": { session: SessionInfo }
   "session.staged": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }
@@ -1876,7 +1873,6 @@ export interface ResponseMap {
   "session.fork": { session: SessionInfo }
   "session.model": { session: SessionInfo }
   "session.smart": { session: SessionInfo }
-  "session.effort": { session: SessionInfo }
   "session.prompt": { messageID: string }
   "session.abort": Record<string, never>
   "session.subtask": { messageID: string }

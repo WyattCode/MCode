@@ -26,7 +26,9 @@ import { WebSocket } from "ws"
 import { startBackend } from "../src/server/index"
 import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session-link"
 import { readTask, smartRoute } from "../src/shared/smart"
-import { chimeOf, longTask } from "../src/shared/chime"
+import { chimeOf, longTask, migrateChime } from "../src/shared/chime"
+import { audioVerdict, isAudioFile, limitMinutes } from "../src/renderer/src/lib/audio-check"
+import { draftFileOf, emptyDraftFile, isEmptyDraftFile, readDraftFile, withLegacyHome, type SavedDraft } from "../src/renderer/src/lib/draft-file"
 import { findInMessages, searchMessages, snippetAround } from "../src/server/search"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
@@ -84,12 +86,12 @@ import {
 import { ToolError } from "../src/server/tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
 import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/session/retry"
-import type { PermissionRecord } from "../src/shared/protocol"
+import type { Annotation, PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
+import { accessAction, defaultAccess, sessionAccess } from "../src/shared/access"
 import {
-  accessOf,
   accessPatch,
   fullAccessOff,
   composerAnswers,
@@ -134,7 +136,7 @@ import {
   type OAuthProvider,
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
-import { arbitratePanel, boundChord, sideFits, toolHints } from "../src/renderer/src/lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, sideFits, sideWidthMax, toolHints } from "../src/renderer/src/lib/right-tools"
 import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
 import { capDiff, normalizeLayout, parseDiffFiles, reviewRows, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
@@ -456,6 +458,12 @@ async function main() {
   check("480 left for the conversation keeps both open", arbitratePanel({ ...crampedRoom, viewport: 1236 }, false) === "none")
   check("an expanded panel is left out of the narrow-window rule", arbitratePanel({ ...crampedRoom, fullscreen: true }, false) === "none")
   check("a folded side column fits again only once there is room", sideFits({ ...crampedRoom, viewport: 1300 }) && !sideFits(crampedRoom))
+  // R5: MiMo's side column drag - 160 to 420 past the rail, less where the conversation's 480 and the panel need it.
+  check("the side column is dragged no wider than 420 on a wide window", sideWidthMax(2400, 380) === 420 && clampSideWidth(900, 2400, 380) === 420)
+  check("the side column is dragged no narrower than 160", clampSideWidth(40, 2400, 0) === 160)
+  check("a window beside an open panel narrows the side column's limit", sideWidthMax(1200, 380) === 1200 - 62 - 380 - 480 && clampSideWidth(400, 1200, 380) === 278)
+  check("a very narrow window still allows 160", sideWidthMax(700, 380) === 160 && clampSideWidth(300, 700, 380) === 160)
+  check("an unreadable stored width is the default 194", clampSideWidth(NaN, 1600, 0) === 194 && clampSideWidth(250.4, 1600, 0) === 250)
 
   const noticeOnce = notify("Copied")
   const noticeTwice = notify("Copied")
@@ -486,9 +494,70 @@ async function main() {
     !longTask(60_000) && longTask(60_001) && !longTask(Number.NaN),
   )
   check(
-    "an unknown chime plays the default and off stays off",
-    chimeOf("bogus") === "settle" && chimeOf(undefined) === "settle" && chimeOf("off") === "off" && chimeOf("zen") === "zen",
+    "an unknown chime plays the default 晨曦 and off stays off",
+    chimeOf("bogus") === "bloom" && chimeOf(undefined) === "bloom" && chimeOf("off") === "off" && chimeOf("koto") === "koto",
   )
+  // R2: a figure chosen from the retired five keeps being a choice, moved to its nearest of MiMo's eight.
+  check(
+    "a stored chime from the old five moves to its nearest new one; off and new ids stay",
+    migrateChime("settle") === "bloom" &&
+      migrateChime("triple") === "vibes" &&
+      migrateChime("sweep") === "harp" &&
+      migrateChime("duet") === "kalimba" &&
+      migrateChime("zen") === "bowl" &&
+      migrateChime("off") === "off" &&
+      migrateChime("handpan") === "handpan" &&
+      migrateChime("nonsense") === "bloom",
+  )
+
+  // R15: MiMo reads attached audio before a send; only a file it cannot read, or one past ten minutes, stops it.
+  check(
+    "only MiMo's six audio extensions are read before a send",
+    isAudioFile("C:/a/Voice.M4A") && isAudioFile("clip.flac") && !isAudioFile("clip.mp4") && !isAudioFile("notes.wav.txt"),
+  )
+  check(
+    "an unreadable clip stops the send, a clip past ten minutes stops it, anything else goes",
+    audioVerdict({ ok: false, unsupported: true }) === "unsupported" &&
+      audioVerdict({ ok: true, durationMs: 600_001 }) === "tooLong" &&
+      audioVerdict({ ok: true, durationMs: 600_000 }) === "ok" &&
+      audioVerdict({ ok: false, unsupported: false }) === "ok" &&
+      audioVerdict(undefined) === "ok" &&
+      limitMinutes() === 10,
+  )
+
+  // R1: MiMo's saved composer input - every box's draft, its files and chips, and the annotations waiting.
+  {
+    const note = { id: "a1", kind: "answer", text: "why", quote: "x" } as Annotation
+    const kept = new Map<string, SavedDraft>([
+      ["home", { text: "hi", attachments: [], mentioned: [], skills: [] }],
+      ["main:s1", { text: "", attachments: [{ path: "C:/a.png", mime: "image/png", data: "AAAA" }], mentioned: [], skills: ["review"] }],
+      ["main:empty", { text: "", attachments: [], mentioned: ["x"], skills: [] }],
+    ])
+    const file = draftFileOf(kept, { s1: [note], s2: [] }, "main:s1")
+    check(
+      "drafts with words, files or chips are written and empty ones are not",
+      Object.keys(file.drafts).sort().join(",") === "home,main:s1" && Object.keys(file.annotations).join(",") === "s1" && file.current === "main:s1",
+    )
+    check("the saved input reads back as it was written", JSON.stringify(readDraftFile(JSON.stringify(file))) === JSON.stringify(file))
+    let threw = false
+    try {
+      readDraftFile("{broken")
+    } catch {
+      threw = true
+    }
+    check("a file of another version reads as nothing, and one that is not JSON throws", readDraftFile('{"v":2,"drafts":{}}') === undefined && threw)
+    check(
+      "malformed entries are left out",
+      Object.keys(readDraftFile(JSON.stringify({ v: 1, drafts: { a: { text: 5, attachments: [{ path: 1 }] }, b: { text: "ok" } }, annotations: { s: [{ id: 1 }] } }))?.drafts ?? {}).join(",") === "b",
+    )
+    check(
+      "the old home draft is folded in, never over home words already saved",
+      withLegacyHome(emptyDraftFile(), "old words").drafts.home?.text === "old words" &&
+        withLegacyHome(file, "old words").drafts.home?.text === "hi" &&
+        withLegacyHome(emptyDraftFile(), "").drafts.home === undefined,
+    )
+    check("an empty state is recognised, so a failed load is never written over with one", isEmptyDraftFile(draftFileOf(new Map(), {})) && !isEmptyDraftFile(file))
+  }
 
   /*
    * The composer's middle access level. The classifier lets everyday commands
@@ -976,7 +1045,7 @@ async function main() {
     const allAllowed = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"]))
     check(
       "the level is read the way the composer chip reads it",
-      accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
+      defaultAccess({ accessLevel: "auto" }) === "auto" && defaultAccess({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && defaultAccess({ permissions: allAllowed }) === "full",
     )
 
     section("round 5: turning off the full access switch (D2)")
@@ -985,7 +1054,7 @@ async function main() {
       const toFull = accessPatch({ permissions: mine, accessLevel: "ask" }, "full")!
       check(
         "full allows every bucket but a deny, and keeps the map it replaced",
-        accessOf(toFull) === "full" && toFull.permissions.webfetch === "deny" && toFull.accessBefore?.bash === "allow",
+        defaultAccess(toFull) === "full" && toFull.permissions.webfetch === "deny" && toFull.accessBefore?.bash === "allow",
         toFull,
       )
       const off = fullAccessOff({ ...toFull })
@@ -994,7 +1063,7 @@ async function main() {
         off.dropped &&
           off.patch.allowFullAccess === false &&
           off.patch.accessLevel === "ask" &&
-          accessOf(off.patch) === "ask" &&
+          defaultAccess(off.patch) === "ask" &&
           off.patch.permissions?.bash === "allow" &&
           off.patch.permissions?.edit === PERMISSION_DEFAULTS.edit &&
           off.patch.accessBefore === undefined,
@@ -1051,6 +1120,41 @@ async function main() {
     gate.rejectAll("s-guide")
     await deleteAsk
     stopEdit()
+
+    // R3: MiMo keeps the access level per conversation; one without follows the default.
+    const own = { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: true }
+    check(
+      "a conversation without a level of its own follows the default",
+      sessionAccess(undefined, own) === "ask" && sessionAccess(undefined, { ...own, accessLevel: "auto" }) === "auto" && sessionAccess("bogus", own) === "ask",
+    )
+    check(
+      "a conversation's own level wins over the default",
+      sessionAccess("auto", own) === "auto" && sessionAccess("full", own) === "full" && sessionAccess("ask", { ...own, accessLevel: "auto" }) === "ask",
+    )
+    check("its own full access lapses once full access is not allowed", sessionAccess("full", { ...own, allowFullAccess: false }) === "ask")
+    const fullDefault = { permissions: { ...allAllowed, bash: "deny" }, accessBefore: { ...PERMISSION_DEFAULTS }, allowFullAccess: true }
+    check(
+      "below full access a conversation runs on the map full access set aside, and a refusal holds at every level",
+      defaultAccess(fullDefault) === "full" &&
+        accessAction("edit", "ask", fullDefault) === PERMISSION_DEFAULTS.edit &&
+        accessAction("edit", "full", fullDefault) === "allow" &&
+        accessAction("bash", "ask", fullDefault) === "deny" &&
+        accessAction("bash", "full", fullDefault) === "deny",
+    )
+    const levelsBus = new Bus()
+    const levels: Record<string, string | undefined> = { "s-own": "auto" }
+    const levelGate = new Permissions(levelsBus, { get: () => ({ ...own }) } as never)
+    levelGate.useSessions(async (id) => levels[id])
+    const editIn = (sessionID: string) => levelGate.ask({ sessionID, messageID: "m", callID: `c-${sessionID}`, kind: "edit", title: "t", subject: "a.ts" })
+    const within = (promise: Promise<void>) => Promise.race([promise.then(() => "ran"), new Promise((resolve) => setTimeout(() => resolve("waiting"), 50))])
+    const waitingEdit = editIn("s-other")
+    check(
+      "an edit runs in the conversation on 帮我审批 and waits in one on the default",
+      (await within(editIn("s-own"))) === "ran" && (await within(waitingEdit)) === "waiting",
+    )
+    levels["s-other"] = "full"
+    levelsBus.publish({ type: "session.updated", session: {} as never })
+    check("raising that one conversation's level lets its waiting edit through", (await within(waitingEdit)) === "ran" && levelGate.outstanding().length === 0)
   }
 
   section("Tool arguments")

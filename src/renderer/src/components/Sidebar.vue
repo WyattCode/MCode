@@ -7,6 +7,7 @@ import { convoCard } from "../lib/convo-card"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
+import { RAIL_WIDTH } from "../lib/right-tools"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
 import UpdatePill from "./UpdatePill.vue"
@@ -43,6 +44,8 @@ const props = defineProps<{
   /** Whether back and forward have anywhere to go; MiMo dims them when not. */
   canBack?: boolean
   canForward?: boolean
+  /** How wide the open column is past its rail, as dragged; the app clamps and keeps it. */
+  width: number
 }>()
 
 const emit = defineEmits<{
@@ -70,6 +73,8 @@ const emit = defineEmits<{
   rename: [sessionID: string]
   createIn: [directory: string]
   settings: []
+  /* The width asked for while dragging the edge; `done` once the button is let go. */
+  resize: [width: number, done: boolean]
 }>()
 
 const app = useApp()
@@ -423,21 +428,26 @@ async function folderDrop(event: DragEvent) {
   emit("dropFolders", await window.mcode.directoriesOf([...new Set(paths)]))
 }
 
-const pinnedOpen = ref(
-  (() => {
-    try {
-      return localStorage.getItem(PINNED_OPEN_KEY) !== "false"
-    } catch {
-      return true
-    }
-  })(),
-)
+/* MiMo saves each section's fold - 置顶, Projects, Recent - and starts every one open. */
+function storedOpen(key: string): boolean {
+  try {
+    return localStorage.getItem(key) !== "false"
+  } catch {
+    return true
+  }
+}
+
+function keepOpen(key: string, open: boolean) {
+  try {
+    localStorage.setItem(key, String(open))
+  } catch {}
+}
+
+const pinnedOpen = ref(storedOpen(PINNED_OPEN_KEY))
 
 function togglePinnedOpen() {
   pinnedOpen.value = !pinnedOpen.value
-  try {
-    localStorage.setItem(PINNED_OPEN_KEY, String(pinnedOpen.value))
-  } catch {}
+  keepOpen(PINNED_OPEN_KEY, pinnedOpen.value)
 }
 
 const pinnedMore = ref(false)
@@ -498,26 +508,21 @@ const columnBlocks = computed<ColumnBlock[]>(() => {
  * whose project has been closed still belongs here: it is the only place left
  * that can reach it.
  */
-/* How Recent is ordered, chosen from its heading's menu and remembered, as MiMo does. */
-const SORT_KEY = "mcode.recentSort"
-const recentSort = ref<"recent" | "name">(
-  (() => {
-    try {
-      return localStorage.getItem(SORT_KEY) === "name" ? "name" : "recent"
-    } catch {
-      return "recent"
-    }
-  })(),
-)
+/*
+ * How Recent is ordered, chosen from its heading's menu. MiMo starts every
+ * launch at 最近 and never saves the choice; the key earlier builds wrote is
+ * taken away so it cannot linger.
+ */
+try {
+  localStorage.removeItem("mcode.recentSort")
+} catch {}
+const recentSort = ref<"recent" | "name">("recent")
 
 /* MiMo's setSort: only a real change is said. */
 function setRecentSort(mode: "recent" | "name") {
   if (mode === recentSort.value) return
   recentSort.value = mode
   notify(t(mode === "name" ? "toast.sortByName" : "toast.sortByRecent"))
-  try {
-    localStorage.setItem(SORT_KEY, mode)
-  } catch {}
 }
 
 const recentAll = computed(() => {
@@ -801,8 +806,18 @@ function cycleTheme() {
   app.patchConfig({ theme: next })
 }
 
-const projectsOpen = ref(true)
-const recentOpen = ref(true)
+const PROJECTS_OPEN_KEY = "mcode.projectsOpen"
+const RECENT_OPEN_KEY = "mcode.recentOpen"
+const projectsOpen = ref(storedOpen(PROJECTS_OPEN_KEY))
+const recentOpen = ref(storedOpen(RECENT_OPEN_KEY))
+function toggleProjectsOpen() {
+  projectsOpen.value = !projectsOpen.value
+  keepOpen(PROJECTS_OPEN_KEY, projectsOpen.value)
+}
+function toggleRecentOpen() {
+  recentOpen.value = !recentOpen.value
+  keepOpen(RECENT_OPEN_KEY, recentOpen.value)
+}
 /** Which projects show their tasks. The one holding the open task always does. */
 const expanded = ref(new Set<string>())
 const isExpanded = (directory: string) =>
@@ -891,10 +906,84 @@ function pickNewProject(key: string) {
   if (key === "blank") emit("newBlank")
   else if (key === "existing") emit("browse")
 }
+
+/* MiMo's side resizer: a 7px strip over the column's end edge, dragged to set the width. */
+const dragging = ref(false)
+function beginResize(event: MouseEvent) {
+  const startX = event.clientX
+  const start = props.width
+  const sign = getComputedStyle(event.currentTarget as HTMLElement).direction === "rtl" ? -1 : 1
+  let last = start
+  dragging.value = true
+  document.body.classList.add("resizing")
+  const move = (moved: MouseEvent) => {
+    last = start + sign * (moved.clientX - startX)
+    emit("resize", last, false)
+  }
+  const done = () => {
+    dragging.value = false
+    document.body.classList.remove("resizing")
+    window.removeEventListener("mousemove", move)
+    window.removeEventListener("mouseup", done)
+    emit("resize", last, true)
+  }
+  window.addEventListener("mousemove", move)
+  window.addEventListener("mouseup", done)
+}
+
+/*
+ * MiMo's rail card: on the folded column, resting on 新建任务 opens a card after
+ * 200ms - a new task row, then the recent conversations - which closes 150ms
+ * after the pointer has left both. It stands where the rail's tooltip would.
+ */
+const QUICK_OPEN = 200
+const QUICK_CLOSE = 150
+const QUICK_WIDTH = 260
+const quick = ref<{ left: number; top: number; maxHeight: number }>()
+let quickTimer: ReturnType<typeof setTimeout> | undefined
+
+function quickEnter(event: PointerEvent) {
+  clearTimeout(quickTimer)
+  if (!props.collapsed || quick.value) return
+  const anchor = event.currentTarget as HTMLElement
+  quickTimer = setTimeout(() => {
+    const rect = anchor.getBoundingClientRect()
+    const rtl = getComputedStyle(anchor).direction === "rtl"
+    // Beside the rail 8px out, top edges lined up, kept 8px inside the window.
+    const top = Math.max(8, Math.round(rect.top))
+    const left = rtl ? Math.round(rect.left - 8 - QUICK_WIDTH) : Math.round(rect.right + 8)
+    quick.value = { left, top, maxHeight: Math.max(0, Math.min(320, window.innerHeight - top - 8)) }
+  }, QUICK_OPEN)
+}
+
+function quickLeave() {
+  clearTimeout(quickTimer)
+  if (quick.value) quickTimer = setTimeout(() => (quick.value = undefined), QUICK_CLOSE)
+}
+
+const quickStay = () => clearTimeout(quickTimer)
+
+function quickPick(sessionID?: string) {
+  clearTimeout(quickTimer)
+  quick.value = undefined
+  if (sessionID) emit("open", sessionID)
+  else emit("newTask")
+}
+
+watch(
+  () => props.collapsed,
+  (folded) => {
+    if (folded) return
+    clearTimeout(quickTimer)
+    quick.value = undefined
+  },
+)
+onBeforeUnmount(() => clearTimeout(quickTimer))
 </script>
 
 <template>
-  <aside class="side" :class="{ rail: collapsed }">
+  <aside class="side" :class="{ rail: collapsed, dragging }" :style="collapsed ? undefined : { width: `${RAIL_WIDTH + width}px` }">
+    <div v-if="!collapsed" class="resizer" data-side-resizer @mousedown.prevent="beginResize" />
     <!--
       Folded, MiMo keeps the column's controls just past the rail: the toggle
       three in from its edge, then back, forward and search.
@@ -971,7 +1060,14 @@ function pickNewProject(key: string) {
     </div>
 
     <nav class="nav">
-      <button class="row" v-tip="collapsed ? { label: t('side.railNewTask', { shortcut: 'Ctrl+N' }), placement: 'right' } : ''" @click="emit('newTask')">
+      <button
+        class="row"
+        data-new-task
+        :aria-label="collapsed ? t('side.newTask') : undefined"
+        @click="emit('newTask')"
+        @pointerenter="quickEnter"
+        @pointerleave="quickLeave"
+      >
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="10" cy="10" r="7" stroke="currentColor" />
           <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
@@ -996,6 +1092,43 @@ function pickNewProject(key: string) {
         <span class="row-label">{{ t("side.artifacts") }}</span>
       </button>
     </nav>
+
+    <Teleport to="body">
+      <div
+        v-if="quick"
+        class="rail-quick"
+        data-rail-quick-popup
+        :style="{ left: `${quick.left}px`, top: `${quick.top}px`, maxHeight: `${quick.maxHeight}px` }"
+        @pointerenter="quickStay"
+        @pointerleave="quickLeave"
+      >
+        <button type="button" class="quick-new" data-quick-new-task @click="quickPick()">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="10" cy="10" r="7" stroke="currentColor" />
+            <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
+          </svg>
+          <span class="quick-label">{{ t("side.newTask") }}</span>
+        </button>
+        <div class="quick-rule" />
+        <div class="quick-scroll" data-quick-recent-scroll>
+          <template v-if="recentAll.length">
+            <button
+              v-for="session in recentAll"
+              :key="session.id"
+              type="button"
+              class="quick-convo"
+              :class="{ on: session.id === app.currentID }"
+              :data-quick-convo="session.id"
+              :aria-current="session.id === app.currentID ? 'page' : undefined"
+              @click="quickPick(session.id)"
+            >
+              <span class="quick-label">{{ title(session.title) }}</span>
+            </button>
+          </template>
+          <div v-else class="quick-empty" data-quick-empty>{{ t("side.noTasks") }}</div>
+        </div>
+      </div>
+    </Teleport>
 
     <div ref="listsEl" class="lists" @dragover="folderOver" @dragleave="folderLeave" @drop="folderDrop">
       <div
@@ -1076,7 +1209,7 @@ function pickNewProject(key: string) {
           :class="{ held: Boolean(newProjectMenu) }"
           data-project-zone
         >
-        <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
+        <button class="section-head" :aria-expanded="projectsOpen" @click="toggleProjectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
@@ -1299,7 +1432,7 @@ function pickNewProject(key: string) {
       </template>
 
       <div v-if="!priority" class="section recent-head" :class="{ held: Boolean(recentMenu) }">
-        <button class="section-head" :aria-expanded="recentOpen" @click="recentOpen = !recentOpen">
+        <button class="section-head" :aria-expanded="recentOpen" @click="toggleRecentOpen">
           <span>{{ t("side.recent") }}</span>
           <svg class="chev" :class="{ shut: !recentOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
@@ -1571,6 +1704,7 @@ function pickNewProject(key: string) {
 <style scoped>
 /* Numbers from Xiaomi MiMo's side column, measured in CSS pixels. */
 .side {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -1580,6 +1714,119 @@ function pickNewProject(key: string) {
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
   user-select: none;
+}
+
+/* MiMo's .resizer.r-side: 7 wide, 3 of it past the column's end, drawing nothing. */
+.resizer {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: -3px;
+  z-index: 30;
+  width: 7px;
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
+}
+
+/* MiMo's rail card: 260 wide, 20 round on a hairline, 8 of padding, easing in from the rail. */
+.rail-quick {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 260px;
+  padding: 8px;
+  overflow: hidden;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 20px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  transform-origin: left top;
+  animation: rail-quick-in 0.15s ease-out;
+}
+
+@keyframes rail-quick-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-quick {
+    animation: none;
+  }
+}
+
+.quick-new,
+.quick-convo {
+  display: flex;
+  flex: none;
+  align-items: center;
+  width: 100%;
+  border-radius: 7px;
+  text-align: start;
+}
+
+.quick-new {
+  gap: 9px;
+  padding: 8px 9px;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.quick-rule {
+  flex: none;
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--border-weaker);
+}
+
+.quick-scroll {
+  min-height: 0;
+  padding-block: 1px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.quick-convo {
+  margin-block: 1px;
+  padding: 7px 9px;
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.quick-convo.on {
+  color: var(--text-strong);
+  background: var(--surface-selected);
+  font-weight: 500;
+}
+
+.quick-new:hover,
+.quick-new:focus-visible,
+.quick-convo:not(.on):hover,
+.quick-convo:not(.on):focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.quick-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-new svg {
+  flex: none;
+}
+
+.quick-empty {
+  padding: 10px 9px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 /* The window-control row: 44 tall, buttons 24x24 at 32px pitch. It drags the
