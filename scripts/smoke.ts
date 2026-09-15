@@ -1359,15 +1359,22 @@ async function main() {
     bg.markBackground("s-child", "s-parent")
     const command = (sessionID: string, callID: string, extra: Record<string, unknown> = {}) =>
       bg.ask({ sessionID, messageID: "m", callID, kind: "bash", title: "t", subject: "npm test", patterns: ["npm test"], always: ["npm test *"], directory: bgProject, ...extra })
-    const refusedChild = await command("s-child", "c-bg-1").then(() => "ran", (error: unknown) => error)
+    // Raced against a pause and anything left waiting refused, so a question raised by mistake fails the check rather than hanging the run.
+    const settledOrAsked = async (run: Promise<void>) => {
+      const result = await Promise.race([run.then(() => "ran", (error: unknown) => error), pause(200).then(() => "still waiting")])
+      bg.rejectAll("s-child")
+      await run.catch(() => {})
+      return result
+    }
+    const refusedChild = await settledOrAsked(command("s-child", "c-bg-1"))
     check("E37: a background subagent's call nothing allows is refused without a question", refusedChild instanceof PermissionDenied && !refusedChild.byUser && bg.outstanding().length === 0, refusedChild)
     const parentAsk = command("s-parent", "c-bg-2")
     await pause(20)
     const parentQuestion = bg.outstanding().find((entry) => entry.callID === "c-bg-2")
     if (parentQuestion) bg.respond(parentQuestion.id, "always")
     await parentAsk.catch(() => {})
-    check("one its project already allows with always runs", (await command("s-child", "c-bg-3").then(() => "ran", (error: unknown) => error)) === "ran")
-    const childDelete = await command("s-child", "c-bg-4", { subject: "rm x", patterns: ["rm x"], always: [], forced: true }).then(() => "ran", (error: unknown) => error)
+    check("one its project already allows with always runs", (await settledOrAsked(command("s-child", "c-bg-3"))) === "ran")
+    const childDelete = await settledOrAsked(command("s-child", "c-bg-4", { subject: "rm x", patterns: ["rm x"], always: [], forced: true }))
     check("and a delete from the background is refused, never asked", childDelete instanceof PermissionDenied && bg.outstanding().length === 0, childDelete)
     bg.markBackground("s-child", undefined)
     const foreground = command("s-child", "c-bg-5", { subject: "rm y", patterns: ["rm y"], always: [], forced: true })
@@ -1384,10 +1391,14 @@ async function main() {
     })
     const quietPort = await new Promise<number>((resolve) => quiet.listen(0, "127.0.0.1", () => resolve((quiet.address() as { port: number }).port)))
     const stallStarted = Date.now()
+    // The check's own limit: a stall that never fires fails here after 5s instead of hanging the run.
+    const giveUp = new AbortController()
+    const stopWaiting = setTimeout(() => giveUp.abort(new Error("the stall never fired")), 5000)
     const stalled = await OpenAICompatible.stream(
-      { apiKey: "k", model: { provider: "x", model: "m" }, system: "", history: [], tools: [], effort: "", variants: [], showReasoning: false, signal: new AbortController().signal, baseURL: `http://127.0.0.1:${quietPort}/v1` },
+      { apiKey: "k", model: { provider: "x", model: "m" }, system: "", history: [], tools: [], effort: "", variants: [], showReasoning: false, signal: giveUp.signal, baseURL: `http://127.0.0.1:${quietPort}/v1` },
       () => {},
     ).then(() => undefined, (error: unknown) => error)
+    clearTimeout(stopWaiting)
     check("E43: a stream that goes quiet is cut off after the stall timeout, as a failure to retry", stalled instanceof Error && Date.now() - stallStarted < 5000 && isRetryable(stalled), String(stalled))
     const waiting = stallGuard(new AbortController().signal, true)
     await pause(450)
