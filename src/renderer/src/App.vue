@@ -936,6 +936,23 @@ watch(
 watch(theme, (value) => window.mcode.nativeTheme(value), { immediate: true })
 
 /*
+ * MiMo's exit-full-screen button. On Windows the caption buttons are the OS's
+ * overlay, and full screen takes them away with nothing left to click; the
+ * button stands in until the window leaves full screen.
+ */
+const fullScreen = ref(false)
+let offFullscreen: (() => void) | undefined
+onMounted(() => {
+  void window.mcode
+    .isFullscreen()
+    .then((value) => (fullScreen.value = value))
+    .catch(() => {})
+  offFullscreen = window.mcode.onFullscreen((value) => (fullScreen.value = value))
+})
+onBeforeUnmount(() => offFullscreen?.())
+const exitFullScreen = () => window.mcode.exitFullscreen()
+
+/*
  * The icon the window wears. Main cannot read the config document, so it is
  * told - at startup as well as on a change, because a window created before
  * the config arrived is wearing the packaged default.
@@ -4536,6 +4553,20 @@ onBeforeUnmount(() => {
 
   <!-- Last in the document on purpose: see .rail-no-drag. -->
   <div v-if="!leftPanel && !onboarding" class="rail-no-drag" aria-hidden="true" />
+  <!-- MiMo's exit-full-screen button: Windows only, where full screen hides the overlay caption buttons. -->
+  <button
+    v-if="app.platform === 'win32' && fullScreen"
+    type="button"
+    class="exit-fs"
+    data-exit-fullscreen
+    :title="t('side.exitFullscreen')"
+    :aria-label="t('side.exitFullscreen')"
+    @click="exitFullScreen"
+  >
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+    </svg>
+  </button>
   <div v-if="!onboarding" class="toggles-no-drag" aria-hidden="true" />
 </template>
 
@@ -4698,6 +4729,34 @@ onBeforeUnmount(() => {
  * them. This patch is the last thing in the document, so its no-drag wins; it
  * takes no pointer events, so the clicks still land on the buttons beneath.
  */
+/*
+ * MiMo's exit-full-screen button: 26 square and 7 round, 20 in from the start
+ * edge and centred on the 44px controls row, over the side column's own row.
+ * Its 16px glyph is the four inward corners.
+ */
+.exit-fs {
+  position: fixed;
+  top: 9px;
+  inset-inline-start: 20px;
+  z-index: 205;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.exit-fs:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
 .rail-no-drag {
   position: fixed;
   top: 13px;

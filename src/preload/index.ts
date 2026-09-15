@@ -167,6 +167,15 @@ const api = {
 
   window: (action: "minimize" | "maximize" | "close"): void => ipcRenderer.send("mcode:window", action),
 
+  /** MiMo's winIsFullscreen / onWinFullscreen / winExitFullscreen, for the exit-full-screen button. */
+  isFullscreen: (): Promise<boolean> => ipcRenderer.invoke("mcode:is-fullscreen"),
+  onFullscreen: (handler: (fullScreen: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, fullScreen: boolean) => handler(fullScreen)
+    ipcRenderer.on("mcode:fullscreen", listener)
+    return () => ipcRenderer.off("mcode:fullscreen", listener)
+  },
+  exitFullscreen: (): void => ipcRenderer.send("mcode:exit-fullscreen"),
+
   zoom: (action: "in" | "out" | "reset"): void => ipcRenderer.send("mcode:zoom", action),
 
   /*

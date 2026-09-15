@@ -405,6 +405,10 @@ function createWindow(show = true): BrowserWindow {
   // A notification that could not be shown flashes the taskbar instead; coming back ends it.
   window.on("focus", () => window.flashFrame(false))
 
+  // MiMo's winFullscreen event: the renderer offers a way out while the caption buttons are gone.
+  window.on("enter-full-screen", () => window.webContents.send("mcode:fullscreen", true))
+  window.on("leave-full-screen", () => window.webContents.send("mcode:fullscreen", false))
+
   /*
    * MiMo's right-click on text and pictures: the OS menu, with only the rows
    * that can act. The app's own drawn menus cancel the event in the page, and a
@@ -1169,6 +1173,10 @@ app.whenReady().then(async () => {
   ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {
     setTitlebarMode(BrowserWindow.fromWebContents(event.sender), mode)
   })
+
+  /* MiMo's winIsFullscreen / winExitFullscreen, answered for the window that asks. */
+  ipcMain.handle("mcode:is-fullscreen", (event) => BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false)
+  ipcMain.on("mcode:exit-fullscreen", (event) => BrowserWindow.fromWebContents(event.sender)?.setFullScreen(false))
 
   ipcMain.on("mcode:window", (event, action: "minimize" | "maximize" | "close") => {
     const window = BrowserWindow.fromWebContents(event.sender)
