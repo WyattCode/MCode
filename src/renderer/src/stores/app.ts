@@ -1277,12 +1277,16 @@ export const useApp = defineStore("app", () => {
     report(undefined)
     noteError(target, undefined)
 
-    // Caught here rather than in the backend so it can be said in the user's
-    // language - the server has no idea which one that is.
+    /*
+     * MiMo's 暂无可用模型: a conversation whose model no connected provider
+     * serves is not sent. It is said as a notice rather than in the transcript,
+     * the model list is asked for again, and the draft stays.
+     */
     const chosen = (onSide ? sideSessionOf(target) : sessions.value.find((session) => session.id === target))?.model
     const provider = providers.value.find((entry) => entry.id === chosen?.provider)
-    if (provider && !provider.configured) {
-      report(t("error.noProvider", { name: provider.name }))
+    if (!chosen || !provider?.configured) {
+      notifyFailure(t("model.none"))
+      void refreshProviders().catch(() => undefined)
       return false
     }
 
