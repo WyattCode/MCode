@@ -31,7 +31,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog" data-voice-usage role="dialog" aria-labelledby="voice-usage-title">
+    <div v-modal class="dialog" data-voice-usage data-modal-keep-focus role="dialog" aria-labelledby="voice-usage-title">
       <div class="head">
         <h2 id="voice-usage-title">{{ t("voice.usage.title") }}</h2>
         <button class="close" type="button" :aria-label="t('common.close')" @click="emit('close')">

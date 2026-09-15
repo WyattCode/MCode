@@ -41,6 +41,8 @@ export const modal = {
     // Deferred: a dialog that focuses its own field does it on mount too, and
     // whichever ran last would win. Anything already inside is left alone.
     const claim = requestAnimationFrame(() => {
+      // Some of MiMo's dialogs open without taking focus; Tab still stays inside once it gets there.
+      if (el.hasAttribute("data-modal-keep-focus")) return
       if (el.contains(document.activeElement)) return
       const stops = reachable(el)
       /*
