@@ -267,6 +267,8 @@ onBeforeUnmount(() => {
         @mouseenter="enterRow(item, $event)"
         @click="pressRow(item, $event)"
       >
+        <img v-if="item.image" class="app-icon" :src="item.image" alt="" data-menu-app-icon />
+        <span v-else-if="item.letter" class="app-letter" data-menu-app-icon>{{ item.letter }}</span>
         <svg
           v-if="item.icon"
           class="glyph"
@@ -537,6 +539,24 @@ onBeforeUnmount(() => {
 
 .item:hover:not(:disabled) .glyph {
   color: var(--text-strong);
+}
+
+/* An app's own icon, or its first letter on a small square, sized as the settings picker draws them. */
+.app-icon,
+.app-letter {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.app-letter {
+  display: grid;
+  place-items: center;
+  color: var(--text-weak);
+  background: var(--surface-hover);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  line-height: 1;
 }
 
 /* MiMo's submenu mark: 14px at half strength, at the far end, pointing into the panel. */
