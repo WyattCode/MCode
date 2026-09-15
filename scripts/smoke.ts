@@ -118,6 +118,7 @@ import * as gitOps from "../src/server/git"
 import { sessionArtifacts, sessionReferences } from "../src/shared/session-files"
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
 import { retryReason } from "../src/renderer/src/lib/step-rows"
+import { wordMatch } from "../src/renderer/src/lib/word-match"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
 import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -438,6 +439,13 @@ async function main() {
   const none = filterMenu(moveRows, "zzz")
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
+
+  // MiMo's settings search: every typed word begins a word, camelCase split, CJK anywhere.
+  check("a settings query matches the start of a word, not its middle", wordMatch("Keyboard shortcuts", "short") && !wordMatch("Keyboard shortcuts", "cuts"))
+  check("every typed word has to begin some word", wordMatch("Keyboard shortcuts", "key sho") && !wordMatch("Keyboard shortcuts", "key zoom"))
+  check("a camelCase word matches by its parts", wordMatch("hardwareAcceleration", "accel") && wordMatch("MCPServers", "servers") && wordMatch("MCPServers", "mcp"))
+  check("a Chinese query matches anywhere", wordMatch("硬件加速 GPU", "加速") && !wordMatch("硬件加速", "减速"))
+  check("a settings query ignores case and an empty one matches all", wordMatch("GPU rendering", "gpu") && wordMatch("anything", "  "))
 
   // The reconnecting row's reason: one line, or nothing at all.
   check("a retry's reason is drawn on one line", retryReason("  overloaded\n  try later ") === "overloaded try later")
