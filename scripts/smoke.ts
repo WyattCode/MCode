@@ -605,8 +605,12 @@ async function main() {
     snapshot: async () => {},
   })
 
-  const read = await findTool("read")!.execute({ path: "hello.ts" }, context("c1"))
-  check("read numbers lines", read.output.includes("1\texport const greeting"), read.output.slice(0, 60))
+  const read = await findTool("read")!.execute({ file_path: "hello.ts" }, context("c1"))
+  check(
+    "read numbers lines as N: text inside its tags",
+    read.output.includes("<type>file</type>") && read.output.includes("1: export const greeting") && read.output.includes("(End of file - 2 lines in all)"),
+    read.output.slice(0, 200),
+  )
 
   /*
    * Leaving the project asks rather than refusing. Wanting to read the folder
@@ -644,7 +648,7 @@ async function main() {
 
   // "always" covers the tree, so walking into it does not ask a second time.
   const nested = await findTool("read")!
-    .execute({ path: path.join(outsideRoot, "nested", "note.txt") }, context("c-esc3"))
+    .execute({ file_path: path.join(outsideRoot, "nested", "note.txt") }, context("c-esc3"))
     .then((result) => result, (error: unknown) => error)
   check("an approved directory covers what is under it", !(nested instanceof Error), nested)
   check("no second prompt was raised", permissions.outstanding().length === 0)
@@ -720,10 +724,14 @@ async function main() {
   await fs.rm(outsideRoot, { recursive: true, force: true })
 
   const glob = await findTool("glob")!.execute({ pattern: "**/*.ts" }, context("c2"))
-  check("glob finds nested files", glob.output.includes("src/app.ts") && glob.output.includes("hello.ts"), glob.output)
+  check("glob lists absolute paths of nested files", glob.output.includes(path.join(project, "src", "app.ts")) && glob.output.includes(path.join(project, "hello.ts")), glob.output)
 
   const grep = await findTool("grep")!.execute({ pattern: "TODO" }, context("c3"))
-  check("grep reports file:line", grep.output.includes("src/app.ts:1"), grep.output)
+  check(
+    "grep groups its matches under each file as Line N rows",
+    grep.output.startsWith("Found 1 matches") && grep.output.includes(`${path.join(project, "src", "app.ts")}:\n  Line 1: // TODO: implement`),
+    grep.output,
+  )
 
   // E2: matched as ripgrep matches for MiMo - a name glob at any depth, hidden files searched, .git and ignored files not.
   {
@@ -743,22 +751,100 @@ async function main() {
     await put("debug.log", "needle\n")
     await put("keep.log", "needle\n")
     const inTree = (callID: string) => ({ ...context(callID), directory: tree })
-    const any = await findTool("glob")!.execute({ pattern: "*.ts" }, inTree("g-e2-1"))
-    check("glob *.ts matches at any depth", ["top.ts", "src/deep/inner.ts", "src/app.ts"].every((file) => any.output.includes(file)), any.output)
-    check("hidden files are searched, .git and .gitignore'd files are not", any.output.includes(".hidden/secret.ts") && !any.output.includes("ignored/skip.ts") && !any.output.includes("config.ts"), any.output)
-    const sub = await findTool("glob")!.execute({ pattern: "*.ts", directory: "src" }, inTree("g-e2-2"))
-    check("a name glob inside a subdirectory finds its files", sub.output.includes("src/app.ts") && sub.output.includes("src/deep/inner.ts") && !sub.output.includes("top.ts"), sub.output)
-    const anchored = await findTool("glob")!.execute({ pattern: "src/*.ts" }, inTree("g-e2-3"))
-    check("a glob with a slash is anchored to the folder searched", anchored.output.includes("src/app.ts") && !anchored.output.includes("inner.ts"), anchored.output)
-    const logs = await findTool("glob")!.execute({ pattern: "*.log" }, inTree("g-e2-4"))
-    check("an ignore rule can be negated", logs.output.includes("keep.log") && !logs.output.includes("debug.log"), logs.output)
-    const found = await findTool("grep")!.execute({ pattern: "needle", include: "*.ts" }, inTree("g-e2-5"))
+    // Paths come back absolute; compared with forward slashes so the checks read the same on every platform.
+    const posix = (output: string) => output.split("\\").join("/")
+    const any = posix((await findTool("glob")!.execute({ pattern: "*.ts" }, inTree("g-e2-1"))).output)
+    check("glob *.ts matches at any depth", ["top.ts", "src/deep/inner.ts", "src/app.ts"].every((file) => any.includes(file)), any)
+    check("hidden files are searched, .git and .gitignore'd files are not", any.includes(".hidden/secret.ts") && !any.includes("ignored/skip.ts") && !any.includes("config.ts"), any)
+    const sub = posix((await findTool("glob")!.execute({ pattern: "*.ts", path: "src" }, inTree("g-e2-2"))).output)
+    check("a name glob inside a subdirectory finds its files", sub.includes("src/app.ts") && sub.includes("src/deep/inner.ts") && !sub.includes("top.ts"), sub)
+    const anchored = posix((await findTool("glob")!.execute({ pattern: "src/*.ts" }, inTree("g-e2-3"))).output)
+    check("a glob with a slash is anchored to the folder searched", anchored.includes("src/app.ts") && !anchored.includes("inner.ts"), anchored)
+    const logs = posix((await findTool("glob")!.execute({ pattern: "*.log" }, inTree("g-e2-4"))).output)
+    check("an ignore rule can be negated", logs.includes("keep.log") && !logs.includes("debug.log"), logs)
+    const found = posix((await findTool("grep")!.execute({ pattern: "needle", include: "*.ts" }, inTree("g-e2-5"))).output)
     check(
       "grep's include matches at any depth and skips ignored files",
-      found.output.includes("src/deep/inner.ts") && found.output.includes(".hidden/secret.ts") && !found.output.includes("ignored/") && !found.output.includes(".log"),
-      found.output,
+      found.includes("src/deep/inner.ts") && found.includes(".hidden/secret.ts") && !found.includes("ignored/") && !found.includes(".log"),
+      found,
     )
     await fs.rm(tree, { recursive: true, force: true })
+  }
+
+  // E24 and E25: read, edit, glob and grep as MiMo's.
+  {
+    const e24 = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-read-"))
+    const put = async (rel: string, data: string | Buffer) => {
+      await fs.mkdir(path.dirname(path.join(e24, rel)), { recursive: true })
+      await fs.writeFile(path.join(e24, rel), data)
+    }
+    const inE24 = (callID: string) => ({ ...context(callID), sessionID: "ses_e24", directory: e24 })
+    const run = (tool: string, input: Record<string, unknown>, callID: string) =>
+      findTool(tool)!
+        .execute(input, inE24(callID))
+        .then(
+          (result) => ({ output: result.output, metadata: result.metadata }),
+          (error: Error) => ({ output: `ERROR ${error.message}`, metadata: undefined as Record<string, unknown> | undefined }),
+        )
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+
+    await put("AGENTS.md", "Root rule.\n")
+    await put("src/a.ts", "alpha\n")
+    await put("src/lib/b.ts", "beta\n")
+    const listing = await run("read", { file_path: "src" }, "r-dir")
+    check("reading a folder lists it, folders marked, with a count", listing.output.includes("<type>directory</type>") && listing.output.includes("a.ts\nlib/") && listing.output.includes("(2 entries)"), listing.output)
+    await put("wide.txt", "z".repeat(2500))
+    check("a line past 2,000 characters is cut with a note", (await run("read", { file_path: "wide.txt" }, "r-wide")).output.includes("(line cut at 2000 characters)"))
+    await put("big.txt", Array.from({ length: 1000 }, (_, i) => `${i + 1} ${"y".repeat(96)}`).join("\n"))
+    const big = await run("read", { file_path: "big.txt" }, "r-big")
+    check("50 KB of text stops the read and says where to continue", big.metadata?.truncated === true && big.output.includes("Stopped at 50 KB") && big.output.includes("offset="), big.output.slice(-200))
+    check("an offset past the end is refused", (await run("read", { file_path: "src/a.ts", offset: 50 }, "r-past")).output.startsWith("ERROR Offset 50 is past the end"))
+    check("an offset below 1 is refused", (await run("read", { file_path: "src/a.ts", offset: 0 }, "r-zero")).output.startsWith("ERROR offset"))
+    await put("blob.txt", Buffer.from([65, 0, 66]))
+    check("a file with a NUL in it is binary", (await run("read", { file_path: "blob.txt" }, "r-bin")).output.startsWith("ERROR Cannot read binary file"))
+    await put("pic.png", "not really")
+    const picture = await run("read", { file_path: "pic.png" }, "r-png")
+    check("an image is named and left unread, not an error", !picture.output.startsWith("ERROR") && picture.output.includes("cannot attach it"), picture.output)
+    await put("pkg/AGENTS.md", "Pkg rule: tabs.\n")
+    await put("pkg/deep/code.ts", "code\n")
+    const nestedRead = await run("read", { file_path: "pkg/deep/code.ts" }, "r-agents1")
+    check(
+      "instructions between the file and the project root come with it, the root's own do not",
+      nestedRead.output.includes("Pkg rule: tabs.") && !nestedRead.output.includes("Root rule.") && Array.isArray(nestedRead.metadata?.loaded) && (nestedRead.metadata?.loaded as unknown[]).length === 1,
+      nestedRead.output,
+    )
+    check("and only once in a conversation", !(await run("read", { file_path: "pkg/deep/code.ts" }, "r-agents2")).output.includes("Pkg rule: tabs."))
+
+    await put("crlf.txt", "one\r\ntwo\r\n")
+    await run("edit", { file_path: "crlf.txt", old_string: "one\ntwo", new_string: "uno\ndos" }, "e-crlf")
+    check("an edit keeps a file's CRLF line endings", (await fs.readFile(path.join(e24, "crlf.txt"), "utf8")) === "uno\r\ndos\r\n")
+    await run("edit", { file_path: "made/new.txt", old_string: "", new_string: "fresh\n" }, "e-create")
+    check("an empty old_string writes the whole file, creating it", (await fs.readFile(path.join(e24, "made", "new.txt"), "utf8").catch(() => "")) === "fresh\n")
+    await put("indent.txt", "    indented line\n")
+    const miss = await run("edit", { file_path: "indent.txt", old_string: "  indented   line", new_string: "x" }, "e-miss")
+    check("a text not found comes back with the closest text in the file", miss.output.startsWith("ERROR old_string was not found") && miss.output.includes("closest text") && miss.output.includes("    indented line"), miss.output)
+    await put("twice.txt", "x\nx\n")
+    check("two matches without replace_all say so", (await run("edit", { file_path: "twice.txt", old_string: "x", new_string: "y" }, "e-twice")).output.includes("replace_all is not set"))
+
+    for (let i = 0; i < 150; i++) await put(`many/f${i}.txt`, "n")
+    const many = await run("glob", { pattern: "*.txt", path: "many" }, "g-many")
+    check("glob lists at most 100 and says there were more", many.output.split("\n").filter((line) => line.endsWith(".txt")).length === 100 && many.metadata?.truncated === true, many.output.slice(-200))
+    check("glob's path has to be a folder", (await run("glob", { pattern: "*", path: "src/a.ts" }, "g-file")).output.includes("has to be a folder"))
+    const inFile = await run("grep", { pattern: "x", path: "twice.txt" }, "gr-file")
+    check("grep searches a single file named as its path", inFile.output === `Found 2 matches\n${path.join(e24, "twice.txt")}:\n  Line 1: x\n  Line 2: x`, inFile.output)
+    await put("old.md", "needle\n")
+    const hourAgo = (Date.now() - 3_600_000) / 1000
+    await fs.utimes(path.join(e24, "old.md"), hourAgo, hourAgo)
+    await put("new.md", "needle\n")
+    const sorted = await run("grep", { pattern: "needle", include: "*.md" }, "gr-sort")
+    check("grep lists the newest file first", sorted.output.indexOf("new.md") !== -1 && sorted.output.indexOf("new.md") < sorted.output.indexOf("old.md"), sorted.output)
+    await put("long.txt", `needle${"q".repeat(2500)}`)
+    const longHit = await run("grep", { pattern: "needle", path: "long.txt" }, "gr-long")
+    check("a matching line past 2,000 characters is cut", longHit.output.endsWith("...") && !longHit.output.includes("q".repeat(2001)), longHit.output.slice(-40))
+    clearInterval(approving)
+    await fs.rm(e24, { recursive: true, force: true })
   }
 
   // E27: MiMo's desktop never hands a GPT model apply_patch; every model edits with edit and write.
@@ -797,7 +883,7 @@ async function main() {
     check("only a saved output counts as the output folder", Boolean(cut.file) && outputs.holds(cut.file ?? "") && !outputs.holds(project))
     const stopAsking = answer("reject")
     const readBack = await findTool("read")!
-      .execute({ path: cut.file ?? "" }, { ...context("c-e21-read"), toolOutputs: outputs })
+      .execute({ file_path: cut.file ?? "" }, { ...context("c-e21-read"), toolOutputs: outputs })
       .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
     stopAsking()
     check("a saved output is read without asking to leave the project", readBack.includes("line 1") && !readBack.startsWith("ERROR"), readBack.slice(0, 120))
@@ -825,7 +911,7 @@ async function main() {
    * the project - but nothing reaches disk until the user has said yes.
    */
   const traversal = findTool("read")!
-    .execute({ path: "../../../etc/passwd" }, context("c6"))
+    .execute({ file_path: "../../../etc/passwd" }, context("c6"))
     .then(() => "read it", (error: unknown) => (error instanceof PermissionDenied ? "denied" : String(error)))
   await new Promise((resolve) => setTimeout(resolve, 60))
   const traversalPrompt = permissions.outstanding()
@@ -886,7 +972,7 @@ async function main() {
   section("Permissions")
   // edit is not auto-approved, so this must park until answered.
   const editPromise = findTool("edit")!.execute(
-    { path: "hello.ts", oldString: "const count = 1", newString: "const count = 2" },
+    { file_path: "hello.ts", old_string: "const count = 1", new_string: "const count = 2" },
     context("c8"),
   )
   await new Promise((resolve) => setTimeout(resolve, 60))
@@ -901,7 +987,7 @@ async function main() {
   check("file actually changed on disk", afterEdit.includes("count = 2"), afterEdit)
 
   const denyPromise = findTool("write")!
-    .execute({ path: "denied.ts", content: "nope" }, context("c9"))
+    .execute({ file_path: "denied.ts", content: "nope" }, context("c9"))
     .then(() => "allowed")
     .catch((err: Error) => err.message)
   await new Promise((resolve) => setTimeout(resolve, 60))
@@ -912,12 +998,12 @@ async function main() {
   check("rejected write created no file", !(await exists(path.join(project, "denied.ts"))))
 
   // "always" should suppress the next prompt in the same bucket.
-  const firstWrite = findTool("write")!.execute({ path: "a.txt", content: "one" }, context("c10"))
+  const firstWrite = findTool("write")!.execute({ file_path: "a.txt", content: "one" }, context("c10"))
   await new Promise((resolve) => setTimeout(resolve, 60))
   const third = permissions.outstanding()
   permissions.respond(third[0].id, "always")
   await firstWrite
-  await findTool("write")!.execute({ path: "b.txt", content: "two" }, context("c11"))
+  await findTool("write")!.execute({ file_path: "b.txt", content: "two" }, context("c11"))
   check("always suppresses the next prompt", permissions.outstanding().length === 0)
   check("both writes landed", (await exists(path.join(project, "a.txt"))) && (await exists(path.join(project, "b.txt"))))
 
@@ -1188,11 +1274,11 @@ async function main() {
   section("Tool arguments")
   {
     const readSchema = findTool("read")!.parameters
-    check("arguments that fit have no problems", argumentProblems(readSchema, { path: "a.ts", limit: 20 }).length === 0)
+    check("arguments that fit have no problems", argumentProblems(readSchema, { file_path: "a.ts", limit: 20 }).length === 0)
     const missing = argumentProblems(readSchema, {})
-    check("a missing required field is named", missing.length === 1 && missing[0] === "path is required", missing)
-    const wrong = argumentProblems(readSchema, { path: 5 })
-    check("a wrong type is named with what arrived", wrong[0] === "path should be string, got integer", wrong)
+    check("a missing required field is named", missing.length === 1 && missing[0] === "file_path is required", missing)
+    const wrong = argumentProblems(readSchema, { file_path: 5 })
+    check("a wrong type is named with what arrived", wrong[0] === "file_path should be string, got integer", wrong)
     const todos = argumentProblems(findTool("todowrite")!.parameters, {
       todos: [{ id: "1", content: "x", status: "doing" }],
     })
@@ -2346,7 +2432,7 @@ async function main() {
     }
 
     // Arguments that do not fit: refused before running, marked recoverable, and the turn goes on.
-    replies.push(toolCall("call_badargs", "read", '{"path": 5}'))
+    replies.push(toolCall("call_badargs", "read", '{"file_path": 5}'))
     let from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "read something" })
     check("the turn with a refused call finished", await idle(from))
@@ -2362,7 +2448,7 @@ async function main() {
     )
 
     // Arguments that are not JSON at all.
-    replies.push(toolCall("call_cutoff", "read", '{"path": "hel'))
+    replies.push(toolCall("call_cutoff", "read", '{"file_path": "hel'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "read again" })
     await idle(from)
@@ -2381,7 +2467,7 @@ async function main() {
           }
         }, 50)
       })
-    replies.push(toolCall("call_perm", "write", '{"path": "steps-denied.md", "content": "no"}'))
+    replies.push(toolCall("call_perm", "write", '{"file_path": "steps-denied.md", "content": "no"}'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "write a note" })
     const asked = await askedFor("call_perm", from)
@@ -2409,7 +2495,7 @@ async function main() {
     )
 
     // A refusal without a reason ends the turn the same way.
-    replies.push(toolCall("call_perm_bare", "write", '{"path": "steps-bare.md", "content": "no"}'))
+    replies.push(toolCall("call_perm_bare", "write", '{"file_path": "steps-bare.md", "content": "no"}'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "write another note" })
     const bareAsk = await askedFor("call_perm_bare", from)
@@ -2421,13 +2507,26 @@ async function main() {
     check("a refusal without a reason ends the turn too", found.last?.finish === "aborted" && bodies.length === requestsBeforeBare, [found.last?.finish, bodies.length - requestsBeforeBare])
     check("recorded as a plain reject", bareKept[0]?.decided === "reject" && bareKept[0]?.reason === undefined, bareKept)
 
-    // E21: a tool's long output is cut by the runner's shared cap before the model reads it, and the whole of it saved.
-    // 1,500 lines of 100 characters: inside read's own line limit, well past the cap's 50 KB.
-    const longLines = Array.from({ length: 1500 }, (_, i) => `row ${i + 1} ${"x".repeat(90)}`).join("\n")
-    await fs.writeFile(path.join(project, "steps-long.txt"), longLines)
-    replies.push(toolCall("call_long", "read", '{"path": "steps-long.txt"}'))
+    /*
+     * E21: a tool that does not cap its own output is cut by the runner's shared cap before the model reads it,
+     * and the whole of it saved. read, glob, grep and bash cap themselves, as MiMo's do, so an MCP tool carries it.
+     */
+    await call({ type: "config.set", patch: { mcpServers: { rich: { type: "local", command: ["node", path.join(process.cwd(), "scripts/fixtures/mcp-rich-server.cjs")] } } } })
+    const richUp = await (async () => {
+      const end = Date.now() + 20_000
+      while (Date.now() < end) {
+        const listed = await call({ type: "mcp.list" })
+        if (listed.servers.some((server: { name: string; status: string }) => server.name === "rich" && server.status === "connected")) return true
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      return false
+    })()
+    check("the MCP server with a long output connects", richUp)
+    replies.push(toolCall("call_long", "rich_big", "{}"))
     from = events.length
-    await call({ type: "session.prompt", sessionID: stepsID, text: "read the long file" })
+    await call({ type: "session.prompt", sessionID: stepsID, text: "fetch the long output" })
+    const longAsk = await askedFor("call_long", from)
+    if (longAsk) await call({ type: "permission.respond", requestID: longAsk, response: "once" })
     check("the turn with a long output finished", await idle(from))
     found = await toolPart("call_long")
     const savedAt = String(found.part?.metadata?.outputPath ?? "")
@@ -2438,7 +2537,7 @@ async function main() {
     )
     check("the saved file holds the whole output", savedAt !== "" && (await fs.readFile(savedAt, "utf8").catch(() => "")).includes("row 1000 "))
     check("and the model was sent the cut output", !JSON.stringify(bodies.at(-1) ?? {}).includes("row 1000 ") && JSON.stringify(bodies.at(-1) ?? {}).includes("row 1 "))
-    await fs.rm(path.join(project, "steps-long.txt"), { force: true })
+    await call({ type: "config.set", patch: { mcpServers: {} } })
 
     // A transient failure: retried in the open, then the turn completes.
     replies.push((response) => {
@@ -6988,7 +7087,7 @@ async function mcpChecks(project: string) {
   const countsBefore = counts.length
   await run("my_server_grow")
   const grew = await waitFor(() => Boolean(named("my_server_extra")), 3000)
-  check("tools/list_changed refetches a server's tools and says so", grew && counts.slice(countsBefore).includes(9), counts.slice(countsBefore))
+  check("tools/list_changed refetches a server's tools and says so", grew && counts.slice(countsBefore).includes(10), counts.slice(countsBefore))
   check("a server request reusing a waiting call's id is answered, not taken for the call's reply", (await run("my_server_collide")) === "pong:{}")
   check("Streamable HTTP: a call answered as an event stream, with the session sent back", (await run("web_echo", { text: "hi" })) === "http:hi" && httpSeen.session === "sess-1", httpSeen)
   check("and the server's own ping inside that stream is answered", await waitFor(() => httpSeen.pingAnswered, 2000))

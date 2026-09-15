@@ -86,7 +86,7 @@ function bucketOf(kind: string): PermissionKind | undefined {
  * what is being asked about rather than showing an empty line.
  */
 function subjectOf(tool: string, args: Record<string, unknown> | undefined): string {
-  for (const field of ["path", "pattern", "filePattern", "query", "url", "command"]) {
+  for (const field of ["file_path", "notebook_path", "path", "pattern", "filePattern", "query", "url", "command"]) {
     const value = args?.[field]
     if (typeof value === "string" && value.trim()) return value
   }

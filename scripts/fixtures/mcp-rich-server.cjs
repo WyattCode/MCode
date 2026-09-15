@@ -5,7 +5,8 @@
  * structured content), `where` (its working folder), `grow` (adds a tool and
  * says the list changed), `slow` (never answers), `cancelled` (the ids it was
  * told to stop), `collide` (sends its own ping with the id of the call it is
- * answering) and `ask-model` (a sampling request, answered with what came back).
+ * answering), `ask-model` (a sampling request, answered with what came back) and
+ * `big` (1,500 lines of 100 characters, past the shared output cap).
  */
 let buffer = ""
 let grown = false
@@ -46,6 +47,7 @@ function tools() {
     { name: "cancelled", inputSchema: { type: "object" } },
     { name: "collide", inputSchema: { type: "object" } },
     { name: "ask-model", inputSchema: { type: "object" } },
+    { name: "big", inputSchema: { type: "object" } },
   ]
   if (grown) list.push({ name: "extra", inputSchema: { type: "object" } })
   return list
@@ -87,6 +89,7 @@ async function handle(message) {
         },
       })
     } else if (name === "where") text(id, process.cwd())
+    else if (name === "big") text(id, Array.from({ length: 1500 }, (_, i) => `row ${i + 1} ${"x".repeat(90)}`).join("\n"))
     else if (name === "grow") {
       grown = true
       text(id, "grown")

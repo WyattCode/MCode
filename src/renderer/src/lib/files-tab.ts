@@ -89,7 +89,9 @@ const EDITING = new Set(["edit", "write", "patch"])
 /* Every file one edit, write or patch call names, by its input and by the diff it recorded. */
 export function editTargets(part: ToolPart): string[] {
   const out = new Set<string>()
-  if (typeof part.input?.path === "string" && part.input.path) out.add(part.input.path)
+  // `file_path` since the tools took MiMo's names; `path` on turns stored before.
+  const named = part.input?.file_path ?? part.input?.path
+  if (typeof named === "string" && named) out.add(named)
   const diff = part.metadata?.diff
   if (typeof diff === "string") for (const section of parseUnifiedDiff(diff)) if (section.file) out.add(section.file)
   return [...out]

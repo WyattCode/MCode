@@ -145,13 +145,13 @@ async function main(): Promise<void> {
 
     let refused = false
     await edit
-      .execute({ path: target, oldString: "alpha", newString: "gamma" }, context(controller.signal))
+      .execute({ file_path: target, old_string: "alpha", new_string: "gamma" }, context(controller.signal))
       .catch(() => (refused = true))
     check("an edit matching twice is refused rather than guessed at", refused)
     check("and the file is untouched", (await fs.readFile(target, "utf8")) === "alpha\nbeta\nalpha\n")
 
     await edit
-      .execute({ path: target, oldString: "beta", newString: "delta" }, context(controller.signal))
+      .execute({ file_path: target, old_string: "beta", new_string: "delta" }, context(controller.signal))
       .catch(() => undefined)
     check("an edit matching once lands", (await fs.readFile(target, "utf8")).includes("delta"))
   }
@@ -186,7 +186,7 @@ async function main(): Promise<void> {
       const controller = new AbortController()
       const miss = async (rel: string) => {
         try {
-          await read.execute({ path: rel }, context(controller.signal))
+          await read.execute({ file_path: rel }, context(controller.signal))
           return "(no error)"
         } catch (failure) {
           return (failure as Error).message

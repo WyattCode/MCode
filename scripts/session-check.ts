@@ -471,7 +471,7 @@ async function main(): Promise<void> {
     const mixed = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     script = [
       [
-        { name: "edit", input: { path: byEdit, oldString: "the first line", newString: "a different line" } },
+        { name: "edit", input: { file_path: byEdit, old_string: "the first line", new_string: "a different line" } },
         { name: "bash", input: rewrite },
       ],
     ]
@@ -520,7 +520,7 @@ async function main(): Promise<void> {
     await fs.writeFile(edited, "the first line\n", "utf8")
 
     const plain = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
-    script = [[{ name: "edit", input: { path: edited, oldString: "the first line", newString: "a different line" } }]]
+    script = [[{ name: "edit", input: { file_path: edited, old_string: "the first line", new_string: "a different line" } }]]
     const edits = idle(plain.id)
     await runner.prompt({ sessionID: plain.id, text: "edit it" })
     await edits
@@ -541,7 +541,7 @@ async function main(): Promise<void> {
     const opaque = await sessions.create({ directory: loose, model: { provider: "fake", model: "m" } })
     script = [
       [
-        { name: "edit", input: { path: edited, oldString: "the first line", newString: "changed again" } },
+        { name: "edit", input: { file_path: edited, old_string: "the first line", new_string: "changed again" } },
         { name: "bash", input: rewrite },
       ],
     ]
@@ -1747,7 +1747,7 @@ async function main(): Promise<void> {
     await say({ read: "deny" })
     const watch = listen(session.id)
     let refused: string | undefined
-    await call("read", "read", { path: "secrets.txt" }).catch((error: Error) => (refused = error.message))
+    await call("read", "read", { file_path: "secrets.txt" }).catch((error: Error) => (refused = error.message))
     check("a denied read is refused", (refused ?? "").includes("set to Deny"), String(refused))
     check("the subject is the file it was about", (refused ?? "").includes("secrets.txt"), String(refused))
     check("and no question was raised for it", watch.seen.length === 0, `${watch.seen.length} raised`)
@@ -1803,7 +1803,7 @@ async function main(): Promise<void> {
     const session = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     const watch = listen(session.id)
     const before = requests.length
-    script = [[{ name: "read", input: { path: "notes.txt" } }]]
+    script = [[{ name: "read", input: { file_path: "notes.txt" } }]]
     let done = idle(session.id)
     await runner.prompt({ sessionID: session.id, text: "read it" })
     await done
@@ -1833,7 +1833,7 @@ async function main(): Promise<void> {
     await say({})
     const openSession = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     const quiet = listen(openSession.id)
-    script = [[{ name: "read", input: { path: "notes.txt" } }]]
+    script = [[{ name: "read", input: { file_path: "notes.txt" } }]]
     done = idle(openSession.id)
     await runner.prompt({ sessionID: openSession.id, text: "read it" })
     await done
