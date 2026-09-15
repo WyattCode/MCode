@@ -174,6 +174,12 @@ export function reasoningRequest(
   return { reasoning: { effort, summary: showReasoning ? "auto" : "concise" } }
 }
 
+/** Whether a model keeps its default verbosity: anything but a GPT-5.x that is not codex or chat. */
+export function verbose(modelID: string): boolean {
+  const id = modelID.toLowerCase()
+  return !/(?:^|\/)gpt-5\.\d/.test(id) || id.includes("codex") || id.includes("-chat")
+}
+
 export const ChatGPTSubscription: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const base = (request.baseURL ?? "https://chatgpt.com/backend-api/codex").replace(/\/$/, "")
@@ -202,6 +208,8 @@ export const ChatGPTSubscription: ProviderAdapter = {
         store: false,
         stream: true,
         ...reasoningRequest(request.effort, request.variants, request.showReasoning),
+        // MiMo asks GPT-5.x for terse text, except the codex and chat models.
+        ...(verbose(request.model.model) ? {} : { text: { verbosity: "low" } }),
       }),
     })
 

@@ -71,6 +71,10 @@ export interface TurnRequest {
   maxOutput?: number
   /** The model's own output ceiling when the catalog knows it; an Anthropic request is held under it. */
   outputLimit?: number
+  /** MiMo's sampling for this model family (see sampling.ts); absent fields are not sent. */
+  sampling?: { temperature?: number; topP?: number; topK?: number }
+  /** Body fields a provider needs beside the usual ones (see `providerExtras`). */
+  extra?: Record<string, unknown>
   /**
    * How many times the SDK may quietly resend a failed request itself. The turn
    * loop passes 0 because it retries in the open, with a row saying so; other

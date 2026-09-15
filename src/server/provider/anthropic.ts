@@ -223,6 +223,10 @@ export const AnthropicAdapter: ProviderAdapter = {
           maxTokens,
           limit ?? wanted,
         ),
+        // MiMo's family sampling: none for Claude, set for another family reached over this protocol.
+        ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
+        ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
+        ...(request.sampling?.topK !== undefined ? { top_k: request.sampling.topK } : {}),
       },
       { signal: request.signal },
     )

@@ -55,7 +55,7 @@ export function modelKey(ref: ModelRef): string {
  * a catalog edit cannot leave a model advertising levels its family has never
  * accepted.
  */
-function modelInfo(kind: ProviderKind, model: ModelEntry): ModelInfo {
+function modelInfo(kind: ProviderKind, model: ModelEntry, provider: string): ModelInfo {
   const inputs = model.inputs ?? {}
   return {
     id: model.id,
@@ -76,7 +76,7 @@ function modelInfo(kind: ProviderKind, model: ModelEntry): ModelInfo {
       pdf: inputs.pdf ?? false,
     },
     cost: { input: model.input, output: model.output },
-    variants: modelVariants(kind, model),
+    variants: modelVariants(kind, model, provider),
   }
 }
 
@@ -781,7 +781,7 @@ export class Config {
     if (!entry) return undefined
     const kind = this.definition(ref.provider)?.kind
     if (!kind) return undefined
-    return modelVariants(kind, entry)
+    return modelVariants(kind, entry, ref.provider)
   }
 
   providers(): ProviderStatus[] {
@@ -802,7 +802,7 @@ export class Config {
       authenticated: Boolean(this.oauth[entry.id]),
       environment: this.environmentKey(entry.id),
       authMethods: entry.authMethods ?? [],
-      models: this.models(entry.id).map((model) => modelInfo(entry.kind, model)),
+      models: this.models(entry.id).map((model) => modelInfo(entry.kind, model, entry.id)),
     }))
   }
 

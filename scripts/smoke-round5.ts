@@ -16,6 +16,10 @@ import { ABORTED_TOOL, INTERRUPTED_RESULT, requestHistory } from "../src/server/
 import { toMessages } from "../src/server/provider/openai"
 import { repeatsCall } from "../src/server/session/reminders"
 import { UNTITLED, clampTitle, cleanTitle, fallbackTitle } from "../src/server/session/title"
+import { providerExtras, samplingFor } from "../src/server/provider/sampling"
+import { modelVariants } from "../src/server/provider/variants"
+import { OpenAICompatible } from "../src/server/provider/openai"
+import { verbose } from "../src/server/provider/chatgpt"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -527,6 +531,41 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.until(() => e.titleBodies.length > before)
       await new Promise((resolve) => setTimeout(resolve, 300))
       check("a refused title leaves the fallback", (await e.store.get(refused.id))?.title === "Check the logs", await e.store.get(refused.id))
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: sampling parameters and effort mapping (E19)")
+  {
+    check("qwen samples at 0.55 with top-p 1 when it takes a temperature", JSON.stringify(samplingFor("qwen3-coder-plus", true)) === JSON.stringify({ temperature: 0.55, topP: 1 }))
+    check("without the capability only top-p goes", JSON.stringify(samplingFor("qwen3-coder-plus", false)) === JSON.stringify({ topP: 1 }))
+    check("Claude gets none", JSON.stringify(samplingFor("claude-opus-5", true)) === "{}")
+    check("Gemini is 1 / 0.95 / 64", JSON.stringify(samplingFor("gemini-3-pro", true)) === JSON.stringify({ temperature: 1, topP: 0.95, topK: 64 }))
+    check("MiniMax-M2.5 takes top-k 40, M2 20", samplingFor("minimax-m2.5", true).topK === 40 && samplingFor("minimax-m2", true).topK === 20)
+    check("Kimi K2 is 0.6, its thinking model 1", samplingFor("kimi-k2-instruct", true).temperature === 0.6 && samplingFor("kimi-k2-thinking", true).temperature === 1)
+    check("MiMo samples at 1", samplingFor("mimo-v2.5", true).temperature === 1)
+
+    const reasoner = (id: string) => ({ id, name: id, contextWindow: 0, input: 0, output: 0, reasoning: true })
+    check("GLM, Mistral and Grok offer no effort", ["glm-5.2", "mistral-medium-3", "grok-4"].every((id) => modelVariants("openai-compatible", reasoner(id)).length === 0))
+    check("grok-3-mini keeps low and high", modelVariants("openai-compatible", reasoner("grok-3-mini")).join() === "low,high")
+    check("DeepSeek reasons at high and max on its own provider", modelVariants("openai-compatible", reasoner("deepseek-v4"), "deepseek").join() === "high,max")
+    check("and offers none elsewhere", modelVariants("openai-compatible", reasoner("deepseek-v4"), "openrouter").length === 0)
+    check("north-mini-code gets the three widely supported levels", modelVariants("openai-compatible", reasoner("north-mini-code")).join() === "low,medium,high")
+    check("Zhipu turns thinking on, DashScope for a reasoner", JSON.stringify(providerExtras("zhipu", false)) === JSON.stringify({ thinking: { type: "enabled", clear_thinking: false } }) && providerExtras("dashscope", true).enable_thinking === true && Object.keys(providerExtras("dashscope", false)).length === 0)
+    check("GPT-5.x asks for low verbosity, codex and chat do not", !verbose("gpt-5.5") && verbose("gpt-5.3-codex") && verbose("gpt-5.1-chat"))
+
+    // On the wire.
+    const e = await engine()
+    try {
+      const signal = new AbortController().signal
+      await OpenAICompatible.stream(
+        { apiKey: "k", model: { provider: "zhipu", model: "glm-4.7" }, system: "s", history: [], tools: [], effort: "high", showReasoning: false, signal, baseURL: `http://127.0.0.1:${e.port}/v1`, sampling: { temperature: 1, topP: 0.9, topK: 20 }, extra: providerExtras("zhipu", true) },
+        () => {},
+      )
+      const body = e.bodies.at(-1)
+      check("temperature and top_p reach the request, top_k does not", body?.temperature === 1 && body.top_p === 0.9 && body.top_k === undefined, body)
+      check("and Zhipu's thinking switch rides along", body?.thinking?.type === "enabled", body?.thinking)
     } finally {
       await e.close()
     }

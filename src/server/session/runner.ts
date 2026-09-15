@@ -51,6 +51,7 @@ import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt } from "./prompt"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
+import { providerExtras, samplingFor } from "../provider/sampling"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
@@ -1280,6 +1281,8 @@ export class SessionRunner {
           accountId: tokens?.accountId,
           maxOutput: maxOutputTokens(session.model, entry),
           outputLimit: entry?.maxOutput,
+          // MiMo's title agent runs at 0.5, where the model takes a temperature.
+          sampling: { ...samplingFor(session.model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
         },
         (event) => {
           if (event.type === "text.delta") answer += event.text
@@ -1620,6 +1623,9 @@ export class SessionRunner {
         accountId: tokens?.accountId,
         maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
         outputLimit: this.config.modelEntry(session.model)?.maxOutput,
+        // MiMo's family sampling and provider switches.
+        sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
+        extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true),
       })
       } catch (failure) {
         /*
