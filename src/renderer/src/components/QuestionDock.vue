@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from "vue"
 import PermissionDialog from "./PermissionDialog.vue"
 import QuestionForm from "./parts/QuestionForm.vue"
 import { useQuestions } from "../stores/questions"
+import { t } from "../lib/i18n"
 
 /**
  * MiMo's confirm dock, above the composer: the first undecided permission or
@@ -86,9 +87,10 @@ function onDockKey(event: KeyboardEvent) {
   }
 }
 
+// A new request, or the guide giving way to its card, is taken up the same way.
 watch(
-  () => first.value?.id,
-  (id) => {
+  () => [first.value?.id, questions.guide] as const,
+  ([id]) => {
     if (id) void nextTick(takeFocus)
   },
   { immediate: true },
@@ -110,7 +112,33 @@ watch(
       @keydown="onDockKey"
       @pointerdown="engage"
     >
-      <PermissionDialog v-if="first.kind === 'permission'" :key="first.id" :request="first.request" :queue-total="total" />
+      <!-- MiMo's guide, over a permission card after enough approvals by hand. No primary: Enter answers nothing here. -->
+      <div v-if="questions.guide" :key="`guide-${first.id}`" class="perm-guide" data-perm-guide>
+        <div class="guide-head">
+          <span class="guide-title" data-perm-guide-title>{{ t("perm.guide.title") }}</span>
+          <span class="guide-count" data-perm-guide-count>{{ t("perm.guide.count", { n: questions.guideCount }) }}</span>
+        </div>
+        <p class="guide-body" data-perm-guide-body>{{ t("perm.guide.body") }}</p>
+        <div class="guide-actions">
+          <button type="button" class="guide-btn" data-cnav data-perm-guide-keep @click="questions.dismissGuide()">
+            {{ t("perm.guide.keepManual") }}
+          </button>
+          <button type="button" class="guide-btn" data-cnav data-perm-guide-edits @click="questions.acceptEdits()">
+            {{ t("perm.guide.acceptEdits") }}
+          </button>
+          <button
+            type="button"
+            class="guide-btn primary"
+            data-cnav
+            data-perm-guide-task
+            :title="t('perm.guide.taskHint')"
+            @click="questions.allowTask()"
+          >
+            {{ t("perm.guide.task") }}
+          </button>
+        </div>
+      </div>
+      <PermissionDialog v-else-if="first.kind === 'permission'" :key="first.id" :request="first.request" :queue-total="total" />
       <QuestionForm v-else :key="first.id" :request="first.request" :queue-total="total" @page="takeFocus" />
     </div>
   </div>
@@ -139,6 +167,96 @@ watch(
   border-radius: 20px;
   box-shadow: 0 2px 10px #0000000a;
   outline: none;
+}
+
+.perm-guide {
+  min-width: 0;
+}
+
+.guide-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-base);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+}
+
+.guide-title {
+  flex: none;
+  font-weight: 500;
+}
+
+.guide-count {
+  margin-inline-start: auto;
+  color: #919191;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.guide-body {
+  margin: 8px 0 0;
+  color: #909091;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 1.5;
+}
+
+.guide-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* The permission card's own buttons. */
+.guide-btn {
+  padding: 5px 12px;
+  color: var(--text-base);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: 1.5;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.guide-btn:hover {
+  background: var(--surface-hover);
+}
+
+.guide-btn.primary {
+  color: var(--surface-raised);
+  background: var(--text-strong);
+  border-color: var(--text-strong);
+}
+
+.guide-btn.primary:hover {
+  opacity: 0.9;
+}
+
+.guide-btn:focus-visible {
+  outline: 2px solid var(--border-selected);
+  outline-offset: 1px;
+}
+
+:root[data-theme="dark"] .guide-count {
+  color: #777777;
+}
+
+:root[data-theme="dark"] .guide-body {
+  color: #b8b8b8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .guide-count {
+    color: #777777;
+  }
+
+  :root:not([data-theme="light"]) .guide-body {
+    color: #b8b8b8;
+  }
 }
 
 :root[data-theme="dark"] .confirm-dock {

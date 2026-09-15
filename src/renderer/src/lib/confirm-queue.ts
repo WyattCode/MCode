@@ -1,4 +1,5 @@
 import type { PermissionRequest, QuestionAnswer, QuestionPrompt, QuestionRequest } from "@shared/protocol"
+import { PERMISSION_KINDS } from "@shared/protocol"
 
 /**
  * The rules behind the dock above the composer, kept apart from the components
@@ -60,6 +61,40 @@ export function nextStop(done: readonly boolean[], index: number): number | "sub
   if (index < done.length - 1) return index + 1
   const open = done.findIndex((entry) => !entry)
   return open === -1 ? "submit" : open
+}
+
+/** Approvals given by hand in one task before MiMo offers to ask less (its `vD`). */
+export const GUIDE_AFTER = 3
+
+/** One session's guide: hand approvals so far, whether it was waved off, and whether the task is allowed. */
+export interface GuideState {
+  allowCount: number
+  dismissed: boolean
+  taskAllowOn: boolean
+}
+
+export function freshGuide(): GuideState {
+  return { allowCount: 0, dismissed: false, taskAllowOn: false }
+}
+
+export type Access = "ask" | "auto" | "full"
+
+/** The access level, read the way the composer's chip reads it. */
+export function accessOf(config: { accessLevel?: string; permissions?: Readonly<Record<string, string>> } | undefined): Access {
+  if (config?.accessLevel === "auto") return "auto"
+  const map = config?.permissions
+  if (!map) return "ask"
+  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
+}
+
+/*
+ * MiMo's rule (`Mge`): only over a permission card, never a delete, only at the
+ * default level, not while the task is allowed or once waved off, and only
+ * after enough approvals by hand.
+ */
+export function guideShown(state: GuideState, access: Access, kind: ConfirmItem["kind"] | undefined, forced: boolean): boolean {
+  if (kind !== "permission" || forced || access !== "ask" || state.taskAllowOn || state.dismissed) return false
+  return state.allowCount >= GUIDE_AFTER
 }
 
 /** How a question call ended, as MiMo decides it: anything chosen is answered, nothing is a cancel. */

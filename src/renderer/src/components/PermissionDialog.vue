@@ -2,6 +2,7 @@
 import { computed, nextTick, ref, watch } from "vue"
 import type { PermissionRequest, PermissionResponse } from "@shared/protocol"
 import { useApp } from "../stores/app"
+import { useQuestions } from "../stores/questions"
 import DiffView from "./parts/DiffView.vue"
 import { t } from "../lib/i18n"
 
@@ -67,7 +68,11 @@ watch(reasoning, (open) => {
   if (open) void nextTick(() => reasonInput.value?.focus())
 })
 
+const questions = useQuestions()
+
 function answer(response: PermissionResponse) {
+  // Approvals pressed here are what MiMo counts before offering to ask less.
+  if (response !== "reject") questions.noteAllowed(props.request.sessionID)
   void app.respond(response)
 }
 

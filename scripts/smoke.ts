@@ -42,7 +42,16 @@ import type { PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
-import { composerAnswers, confirmQueue, mergeCustom, nextStop, questionOutcome, toggleChoice } from "../src/renderer/src/lib/confirm-queue"
+import {
+  accessOf,
+  composerAnswers,
+  confirmQueue,
+  guideShown,
+  mergeCustom,
+  nextStop,
+  questionOutcome,
+  toggleChoice,
+} from "../src/renderer/src/lib/confirm-queue"
 import type { PermissionRequest, QuestionRequest } from "../src/shared/protocol"
 import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
 import { annotationsBlock } from "../src/shared/annotations"
@@ -775,6 +784,54 @@ async function main() {
     check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')
     check("typed text is appended once", JSON.stringify(mergeCustom([["a"], []], ["b", " "])) === '[["a","b"],[]]' && JSON.stringify(mergeCustom([["a"]], ["a"])) === '[["a"]]')
     check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
+  }
+
+  section("Permission guide")
+  {
+    const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
+    check("offered after three approvals by hand", guideShown(counted, "ask", "permission", false))
+    check("not before", !guideShown({ ...counted, allowCount: 2 }, "ask", "permission", false))
+    check(
+      "never over a delete, a question, or once waved off",
+      !guideShown(counted, "ask", "permission", true) &&
+        !guideShown(counted, "ask", "question", false) &&
+        !guideShown({ ...counted, dismissed: true }, "ask", "permission", false),
+    )
+    check(
+      "nor while the task is allowed, or at another level",
+      !guideShown({ ...counted, taskAllowOn: true }, "ask", "permission", false) &&
+        !guideShown(counted, "auto", "permission", false) &&
+        !guideShown(counted, "full", "permission", false),
+    )
+    const allAllowed = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"]))
+    check(
+      "the level is read the way the composer chip reads it",
+      accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
+    )
+
+    // 帮我审批 turns on the middle level; what it lets through stops waiting, a delete does not.
+    let level = "ask"
+    const guideBus = new Bus()
+    const gate = new Permissions(guideBus, { get: () => ({ permissions: { ...PERMISSION_DEFAULTS }, accessLevel: level }) } as never)
+    const heardGuide: PermissionRecord[] = []
+    const stopEdit = gate.onDecided("c-guide-edit", (record) => heardGuide.push(record))
+    const settle = (callID: string, kind: "edit" | "bash", subject: string) =>
+      gate.ask({ sessionID: "s-guide", messageID: "m", callID, kind, title: "t", subject }).then(
+        () => "allowed",
+        (err: Error) => err.message,
+      )
+    const editAsk = settle("c-guide-edit", "edit", "a.ts")
+    const deleteAsk = settle("c-guide-rm", "bash", "rm -rf build")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    check("both wait at the default level", gate.outstanding().length === 2, gate.outstanding())
+    level = "auto"
+    guideBus.publish({ type: "config.updated", config: {} as never })
+    check("the edit goes through once the level changes", (await editAsk) === "allowed")
+    check("recorded as allowed for this time", heardGuide[0]?.decided === "allow-once", heardGuide)
+    check("while a delete still waits", gate.outstanding().length === 1 && gate.outstanding()[0]?.forced === true, gate.outstanding())
+    gate.rejectAll("s-guide")
+    await deleteAsk
+    stopEdit()
   }
 
   section("Tool arguments")

@@ -2,7 +2,18 @@ import { computed, ref, watch } from "vue"
 import { defineStore } from "pinia"
 import type { QuestionAnswer, QuestionRequest } from "@shared/protocol"
 import { useApp } from "./app"
-import { composerAnswers, confirmQueue } from "../lib/confirm-queue"
+import { accessOf, composerAnswers, confirmQueue, freshGuide, guideShown, type GuideState } from "../lib/confirm-queue"
+
+/* Waving the guide off holds for every conversation, and across restarts, as in MiMo. */
+const GUIDE_DISMISSED_KEY = "mcode.perm-guide-dismissed-v1"
+
+function readGuideDismissed(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(GUIDE_DISMISSED_KEY) === "1"
+  } catch {
+    return false
+  }
+}
 
 /**
  * The questions a turn is parked on, in this window, and the dock queue they
@@ -129,5 +140,105 @@ export const useQuestions = defineStore("questions", () => {
     },
   )
 
-  return { pending, forCall, busy, queue, reply, dismiss, answerFromComposer, refresh }
+  /*
+   * The approval guide ("想减少审批提示吗？"). Window memory per session, as
+   * MiMo keeps it: approvals given by hand, and whether this task is allowed.
+   */
+  const guides = ref(new Map<string, GuideState>())
+  const guideDismissed = ref(readGuideDismissed())
+
+  function guideFor(sessionID: string): GuideState {
+    const state = guides.value.get(sessionID) ?? freshGuide()
+    return { ...state, dismissed: state.dismissed || guideDismissed.value }
+  }
+
+  function patchGuide(sessionID: string, patch: Partial<GuideState>): void {
+    const next = new Map(guides.value)
+    next.set(sessionID, { ...(guides.value.get(sessionID) ?? freshGuide()), ...patch })
+    guides.value = next
+  }
+
+  /** Whether the dock shows the guide in place of the permission card at its head. */
+  const guide = computed(() => {
+    const first = queue.value[0]
+    const sessionID = app.currentID
+    if (!first || !sessionID || first.kind !== "permission") return false
+    return guideShown(guideFor(sessionID), accessOf(app.config), first.kind, first.request.forced === true)
+  })
+
+  const guideCount = computed(() => (app.currentID ? guideFor(app.currentID).allowCount : 0))
+
+  /** An approval pressed on the card. Automatic ones are not counted. */
+  function noteAllowed(sessionID: string): void {
+    patchGuide(sessionID, { allowCount: guideFor(sessionID).allowCount + 1 })
+  }
+
+  /** 保留手动审批: never offer the guide again, here or in any other conversation. */
+  function dismissGuide(): void {
+    guideDismissed.value = true
+    try {
+      globalThis.localStorage?.setItem(GUIDE_DISMISSED_KEY, "1")
+    } catch {
+      // Private storage refused; the guide stays away for this window at least.
+    }
+  }
+
+  /** 帮我审批: the composer's middle access level, which the server applies to what is already waiting. */
+  async function acceptEdits(): Promise<void> {
+    await app.patchConfig({ accessLevel: "auto" })
+  }
+
+  /*
+   * 本任务放行: everything but a delete is approved for the rest of this turn,
+   * starting with what is already waiting. Deletes still come to the card.
+   */
+  const autoAnswered = new Set<string>()
+
+  function allowOnce(requestID: string): void {
+    if (autoAnswered.has(requestID)) return
+    autoAnswered.add(requestID)
+    void app.client?.request({ type: "permission.respond", requestID, response: "once" }).catch(() => autoAnswered.delete(requestID))
+  }
+
+  function allowTask(): void {
+    const sessionID = app.currentID
+    if (!sessionID) return
+    patchGuide(sessionID, { taskAllowOn: true })
+  }
+
+  watch(
+    () =>
+      [...app.pendingPermissions.entries()].flatMap(([sessionID, requests]) =>
+        guides.value.get(sessionID)?.taskAllowOn ? requests.filter((request) => !request.forced).map((request) => request.id) : [],
+      ),
+    (ids) => ids.forEach(allowOnce),
+    { immediate: true },
+  )
+
+  // The task ends with the turn; the next one asks again.
+  watch(
+    () => [...app.running],
+    (now, before) => {
+      for (const sessionID of before ?? []) {
+        if (!now.includes(sessionID) && guides.value.get(sessionID)?.taskAllowOn) patchGuide(sessionID, { taskAllowOn: false })
+      }
+    },
+  )
+
+  return {
+    pending,
+    forCall,
+    busy,
+    queue,
+    reply,
+    dismiss,
+    answerFromComposer,
+    refresh,
+    guide,
+    guideCount,
+    noteAllowed,
+    dismissGuide,
+    acceptEdits,
+    allowTask,
+  }
 })

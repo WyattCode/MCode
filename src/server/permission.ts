@@ -401,13 +401,22 @@ export class Permissions {
    * approving these" is not to answer the one already on screen for them.
    */
   drainDecided(): void {
+    const auto = this.config.get().accessLevel === "auto"
     for (const [id, pending] of [...this.pending]) {
       const action = this.action(pending.request.kind)
-      if (action === "ask") continue
+      /*
+       * The middle level switched on while a question was up - MiMo's 帮我审批 -
+       * lets through what it would not have asked about, as an approval for once.
+       * A delete is never among them.
+       */
+      const bucket = bucketOf(pending.request.kind)
+      const released =
+        action === "ask" && auto && !pending.request.forced && bucket !== undefined && autoAllows(bucket, pending.request.subject)
+      if (action === "ask" && !released) continue
       this.pending.delete(id)
-      pending.decided = "policy"
-      pending.resolve(action === "allow" ? "once" : "reject")
-      this.bus.publish({ type: "permission.resolved", requestID: id, decided: "policy" })
+      pending.decided = released ? "allow-once" : "policy"
+      pending.resolve(action === "deny" ? "reject" : "once")
+      this.bus.publish({ type: "permission.resolved", requestID: id, decided: pending.decided })
     }
   }
 
