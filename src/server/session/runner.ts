@@ -51,6 +51,7 @@ import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
+import { frameSteered } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -1438,7 +1439,9 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only.
-      const history = withChatHeaders(this.contextFor(session, stored))
+      const chatted = withChatHeaders(this.contextFor(session, stored))
+      // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task.
+      const history = step > 0 ? frameSteered(chatted) : chatted
 
       const effort = session.effort ?? config.effort
 

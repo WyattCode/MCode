@@ -302,4 +302,34 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.close()
     }
   }
+
+  section("Round 5: messages sent during a turn are framed for the model (E16)")
+  {
+    const e = await engine()
+    try {
+      let release: () => void = () => {}
+      const gate = new Promise<void>((resolve) => (release = resolve))
+      e.replies.push(async (response, body) => {
+        await gate
+        calls([{ name: "list", input: { path: "." } }])(response, body)
+      })
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "look around" })
+      await e.until(() => e.bodies.length === 1)
+      await e.runner.prompt({ sessionID: session.id, text: "STEER: also check the tests" })
+      release()
+      await e.idle(session.id)
+      const second = wireText(e.bodies[1])
+      check(
+        "the next step carries the message inside a note that it was sent mid-task",
+        e.bodies.length >= 2 && second.includes("system-reminder") && second.includes("while you were working") && second.includes("STEER: also check the tests"),
+        second.slice(-600),
+      )
+      check("the first request had nothing to frame", !wireText(e.bodies[0]).includes("while you were working"))
+      const stored = (await e.store.messages(session.id)).find((message) => message.role === "user" && message.text.startsWith("STEER"))
+      check("the transcript keeps the words as typed", stored?.role === "user" && stored.text === "STEER: also check the tests", stored)
+    } finally {
+      await e.close()
+    }
+  }
 }
