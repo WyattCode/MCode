@@ -26,6 +26,7 @@ import { findModel, withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 import { readLegacyMessage } from "@shared/subagent"
+import { returnFileNotices, takeFileNotices } from "../lib/file-notices"
 
 export const useApp = defineStore("app", () => {
   const client = shallowRef<Client>()
@@ -1299,6 +1300,8 @@ export const useApp = defineStore("app", () => {
     const joined = running.value.has(target)
     running.value.add(target)
     if (!joined) turnStarted.set(target, Date.now())
+    // Documents the user changed since the last message go with this one, for the model to read first.
+    const fileNotices = onSide ? [] : takeFileNotices(target)
     try {
       await api().request({
         type: "session.prompt",
@@ -1306,9 +1309,11 @@ export const useApp = defineStore("app", () => {
         text,
         attachments,
         ...(annotations.length ? { annotations } : {}),
+        ...(fileNotices.length ? { fileNotices } : {}),
       })
       return true
     } catch (err) {
+      returnFileNotices(target, fileNotices)
       if (!joined) {
         running.value.delete(target)
         turnStarted.delete(target)
@@ -1593,22 +1598,6 @@ export const useApp = defineStore("app", () => {
     userCode?: string
     message?: string
   }>()
-
-  /** Wipes keys, subscriptions, preferences and history, then reopens setup. */
-  async function resetEverything() {
-    const result = await api().request({ type: "app.reset" })
-    config.value = result.config
-    providers.value = result.providers
-    sessions.value = []
-    tabs.value = []
-    currentID.value = undefined
-    messages.value = []
-    // Otherwise a device code from the login that was just wiped would still be
-    // sitting on the fresh onboarding screen.
-    authState.value = undefined
-    pendingPermissions.value = new Map()
-    unseen.value = new Set()
-  }
 
   async function gitStatus(directory: string, scope?: "worktree" | "branch") {
     return api().request({ type: "git.status", directory, scope })
@@ -1973,7 +1962,6 @@ export const useApp = defineStore("app", () => {
     gitInit,
     gitDiff,
     gitRevert,
-    resetEverything,
     beginAuth,
     cancelAuth,
     signOut,

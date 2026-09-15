@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { t } from "../lib/i18n"
+import { onMenuRowKey } from "../lib/menu-keys"
 
 /**
  * The info card's branch dropdown, after MiMo's non-modal menu: the local
@@ -32,6 +33,21 @@ watch(
   () => [props.loading, props.branches.length],
   () => void nextTick(position),
 )
+
+/* MiMo's menu takes focus on its first row once there are rows to take it. */
+watch(
+  () => props.loading,
+  async (loading) => {
+    if (loading) return
+    await nextTick()
+    rows()[0]?.focus({ preventScroll: true })
+  },
+  { immediate: true },
+)
+
+function rows(): HTMLElement[] {
+  return [...(menu.value?.querySelectorAll<HTMLElement>("button.item:not(:disabled)") ?? [])]
+}
 
 function onPointerDown(event: MouseEvent) {
   const target = event.target as Node | null
@@ -72,6 +88,7 @@ onBeforeUnmount(() => {
       data-info-popover
       data-info-branch-menu
       :style="{ top: `${place.top}px`, left: `${place.left}px`, minWidth: `${place.minWidth}px` }"
+      @keydown="onMenuRowKey($event, rows())"
     >
       <div v-if="loading" class="item muted" role="menuitem" aria-disabled="true" data-info-branch-loading>
         {{ t("info.loadingBranches") }}

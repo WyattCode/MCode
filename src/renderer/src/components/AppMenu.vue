@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, nextTick, ref } from "vue"
 import { t } from "../lib/i18n"
+import { isRovingKey } from "../lib/composer-menu"
+import { focusRow } from "../lib/menu-keys"
 
 /**
  * The application menu, drawn in the window.
@@ -40,7 +42,6 @@ const groups = computed<Group[]>(() => [
       { key: "new-session", label: t("menu.newSession"), hint: "Ctrl+N" },
       { key: "open-project", label: t("menu.openProject"), hint: "Ctrl+O" },
       { key: "settings", label: t("menu.settings"), hint: "Ctrl+," },
-      { key: "new-window", label: t("menu.newWindow"), hint: "Ctrl+Shift+N" },
       { key: "close", label: t("menu.close"), divided: true },
       { key: "quit", label: t("menu.quit") },
     ],
@@ -77,7 +78,7 @@ const groups = computed<Group[]>(() => [
     label: t("menu.session"),
     items: [
       { key: "abort", label: t("menu.stop"), hint: "Ctrl+." },
-      { key: "model", label: t("menu.switchModel"), hint: "Ctrl+M" },
+      { key: "model", label: t("menu.switchModel"), hint: "Ctrl+Shift+M" },
       { key: "delete-session", label: t("menu.deleteSession"), divided: true },
     ],
   },
@@ -160,17 +161,14 @@ function onKey(event: KeyboardEvent) {
     return
   }
 
-  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-    const walk = inSub ? items : rows
+  if (isRovingKey(event.key)) {
+    const walk: HTMLElement[] = inSub ? items : rows
     if (!walk.length) return
     event.preventDefault()
-    const at = walk.indexOf(active as HTMLElement & HTMLButtonElement)
-    const step = event.key === "ArrowDown" ? 1 : -1
-    // Wraps, which is what a menu does at either end.
-    const next = walk[(at + step + walk.length) % walk.length]
-    next.focus()
+    // Wraps at either end; Home and End jump there.
+    focusRow(walk, event.key)
     // Focusing a group opens it, the same way hovering one does.
-    if (!inSub) showFrom(next)
+    if (!inSub && document.activeElement instanceof HTMLElement) showFrom(document.activeElement)
     return
   }
 

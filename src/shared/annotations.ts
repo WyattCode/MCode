@@ -1,4 +1,5 @@
 import type { Annotation } from "./protocol"
+import { fileNoticesBlock, type FileNotice } from "./file-notices"
 
 /*
  * MiMo's annotations: places the user pointed at - a passage of a reply, a
@@ -82,7 +83,7 @@ export function annotationsBlock(list: readonly Annotation[] | undefined): strin
   ].join("\n")
 }
 
-/** A user message's text as the model is given it: what was typed, then its annotations. */
-export function withAnnotations(text: string, list: readonly Annotation[] | undefined): string {
-  return [text, annotationsBlock(list)].filter(Boolean).join("\n\n")
+/** A user message's text as the model is given it: any document changes, what was typed, then its annotations. */
+export function withAnnotations(text: string, list: readonly Annotation[] | undefined, notices?: readonly FileNotice[]): string {
+  return [fileNoticesBlock(notices), text, annotationsBlock(list)].filter(Boolean).join("\n\n")
 }

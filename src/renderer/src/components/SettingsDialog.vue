@@ -6,17 +6,7 @@ import ConnectDialog from "./ConnectDialog.vue"
 import CustomModelDialog from "./CustomModelDialog.vue"
 import ProviderIcon from "./ProviderIcon.vue"
 import { groupProviders, waysFor, type Group } from "../lib/connect"
-import {
-  DEFAULT_PERMISSIONS,
-  ENFORCED_KINDS,
-  NETWORK_KINDS,
-  PERMISSION_ACTIONS,
-  WRITING_KINDS,
-  type PermissionAction,
-  type PermissionKind,
-  type ProviderStatus,
-  EFFORTS,
-} from "@shared/protocol"
+import type { ProviderStatus } from "@shared/protocol"
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { folderName, projectName } from "../lib/project"
 import { listedProjects } from "@shared/projects"
@@ -32,6 +22,7 @@ import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToo
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
+import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
 import { installUpdate, updateState } from "./UpdatePill.vue"
@@ -43,27 +34,6 @@ const updatePhase = computed(() =>
 
 const emit = defineEmits<{ close: []; "check-updates": [] }>()
 const app = useApp()
-
-/*
- * Shells worth offering by name. "Automatic" is the empty string, which is
- * what the backend already means by "whatever this machine runs".
- */
-const shellOptions = computed(() => [
-  { value: "", label: t("set.shellAuto") },
-  ...(app.platform === "win32"
-    ? [
-        { value: "powershell.exe", label: "Windows PowerShell" },
-        { value: "pwsh.exe", label: "PowerShell" },
-        { value: "cmd.exe", label: "Command Prompt" },
-        { value: "bash.exe", label: "Git Bash" },
-      ]
-    : [
-        { value: "/bin/zsh", label: "zsh" },
-        { value: "/bin/bash", label: "bash" },
-        { value: "/bin/sh", label: "sh" },
-        { value: "/usr/bin/fish", label: "fish" },
-      ]),
-])
 
 type Section =
   | "general"
@@ -780,6 +750,28 @@ async function chooseDisplayServer(value: string) {
 }
 
 /*
+ * MiMo's 硬件加速: saved for the main process to read before the next launch is
+ * ready (Chromium takes it only then), so a change says a restart applies it -
+ * the same line 显示服务器 uses.
+ */
+const hardwareAcceleration = ref(true)
+void window.mcode
+  .hardwareAcceleration()
+  .then((state) => (hardwareAcceleration.value = state.enabled))
+  .catch(() => {})
+
+async function toggleHardwareAcceleration() {
+  const enabled = !hardwareAcceleration.value
+  hardwareAcceleration.value = enabled
+  try {
+    await window.mcode.setHardwareAcceleration(enabled)
+  } catch {
+    // MiMo says it either way; the next launch reads whatever was written.
+  }
+  notify(t("set.displayServerSaved"))
+}
+
+/*
  * The gallery's tiles. The drawn ones come from the same string their PNGs are
  * rasterised from; the original comes from its own file, because it is a
  * painted mark rather than these paths and a redrawing of it would be a
@@ -952,49 +944,6 @@ const pointerMoved = ref(false)
 onMounted(() => dialogEl.value?.focus())
 
 const saved = ref<string>()
-
-/*
- * The buckets a call is really checked against, which is not every bucket
- * there is: see ENFORCED_KINDS. Drawing a control for a bucket nothing
- * consults would put a switch on the screen that changes nothing, which is the
- * same class of defect as asking a question that has already been answered.
- */
-const BUCKETS = ENFORCED_KINDS
-const NETWORK = new Set<string>(NETWORK_KINDS)
-const WRITES = new Set<string>(WRITING_KINDS)
-const ACTIONS = PERMISSION_ACTIONS
-
-/**
- * The buckets the reference has a name for, and the two it does not.
- *
- * Nine of this app's eleven map onto a bucket in the reference's permission
- * schema, so those nine rows can carry its words instead of a raw lowercase
- * identifier - `outside` under the name the reference gives it, external
- * directory. The other two have no counterpart at all: the reference judges
- * every kind of file change as one `edit` ("Modify files, including edits,
- * writes, and patches") and has no notion of an MCP server, so there is no
- * string for `write` or `mcp` to adopt. They keep showing their id rather than
- * a title this app invented for them.
- *
- * Worth being precise about what this is: the reference ships no permissions
- * screen at all - its own copies of these strings are unread - so this is
- * borrowing its vocabulary for a screen of ours, not matching a screen of its.
- */
-const TITLED_BUCKETS = new Set<string>([
-  "read",
-  "edit",
-  "glob",
-  "grep",
-  "list",
-  "bash",
-  "webfetch",
-  "outside",
-])
-
-function bucketTitle(bucket: PermissionKind): string {
-  return TITLED_BUCKETS.has(bucket) ? t(`tool.title.${bucket}`) : bucket
-}
-
 
 /**
  * Recording a new chord for one command.
@@ -1179,19 +1128,6 @@ const themeOptions = computed(() => [
 ])
 const paletteOptions = THEMES.map((entry) => ({ value: entry.id, label: entry.name }))
 const languageOptions = computed(() => LANGUAGES.map((entry) => ({ value: entry.id, label: entry.label })))
-const effortOptions = computed(() =>
-  EFFORTS.map((level) => ({
-    value: level,
-    label: level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1),
-  })),
-)
-
-/**
- * Wipes the app back to first run - keys, subscription logins, preferences and
- * every session. It cannot be undone, so it asks once rather than firing on the
- * click that happens to land on it.
- */
-const confirmingReset = ref(false)
 
 /**
  * Projects hidden with "Close project".
@@ -1311,26 +1247,6 @@ const FONT_SANS_DEFAULT = "System Sans"
 const FONT_MONO_DEFAULT = "System Mono"
 const FONT_TERMINAL_DEFAULT = ""
 
-const resetGate = ref<HTMLElement>()
-
-async function armReset() {
-  confirmingReset.value = true
-  await nextTick()
-  resetGate.value?.scrollIntoView({ behavior: "smooth", block: "end" })
-  // Focused so Escape and Enter land here rather than on the page behind it.
-  resetGate.value?.querySelector<HTMLButtonElement>(".danger-btn")?.focus()
-}
-
-function cancelReset() {
-  confirmingReset.value = false
-}
-
-async function resetEverything() {
-  await app.resetEverything()
-  confirmingReset.value = false
-  emit("close")
-}
-
 /** What the shortcuts page is narrowed to by typing. */
 const keyFilter = ref("")
 
@@ -1376,48 +1292,21 @@ async function disconnect(provider: string) {
   await app.setApiKey(provider, "")
 }
 
-/** What a bucket does today, falling back to what it does untouched. */
-function permissionOf(bucket: PermissionKind): PermissionAction {
-  return app.config?.permissions?.[bucket] ?? DEFAULT_PERMISSIONS[bucket]
-}
-
-function actionLabel(action: PermissionAction): string {
-  if (action === "allow") return t("set.permAllow")
-  if (action === "deny") return t("set.permDeny")
-  return t("set.permAsk")
-}
-
-function setPermission(bucket: PermissionKind, action: PermissionAction) {
-  const current = { ...DEFAULT_PERMISSIONS, ...app.config?.permissions }
-  if (current[bucket] === action) return
-  void app.patchConfig({ permissions: { ...current, [bucket]: action } })
-}
-
-/**
- * True when nothing in this list will stop and ask.
- *
- * A bucket set to Deny counts as settled. This switch is about being
- * interrupted, and a refusal interrupts nobody - which also means it is not a
- * way to undo a "never": switching it on approves what would have asked and
- * leaves a refusal exactly as it was.
- */
-function autoApproveAll(): boolean {
-  return BUCKETS.every((bucket) => permissionOf(bucket) !== "ask")
-}
-
-function toggleAutoApproveAll() {
-  const on = autoApproveAll()
-  const next = { ...DEFAULT_PERMISSIONS, ...app.config?.permissions }
-  for (const bucket of BUCKETS) {
-    if (next[bucket] === "deny") continue
-    next[bucket] = on ? DEFAULT_PERMISSIONS[bucket] : "allow"
+/* MiMo's switch: turned off while at full access, the level drops to the default and says so. */
+async function toggleFullAccess() {
+  const config = app.config
+  if (!config) return
+  if (!config.allowFullAccess) {
+    await app.patchConfig({ allowFullAccess: true })
+    return
   }
-  void app.patchConfig({ permissions: next, accessLevel: on ? "ask" : "full" })
-}
-
-async function pickDirectory() {
-  const [directory] = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"))
-  if (directory) await app.patchConfig({ directory })
+  const { patch, dropped } = fullAccessOff(config)
+  try {
+    await app.patchConfig(patch)
+    if (dropped) app.announceAccess("ask")
+  } catch {
+    /* patchConfig has said so */
+  }
 }
 
 /** Where tasks with no project get their folders. Empty is the default under the home folder. */
@@ -1958,18 +1847,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 role="switch"
                 :aria-checked="Boolean(app.config?.allowFullAccess)"
                 :aria-label="t('set.allowFullAccess')"
-                @click="app.patchConfig({ allowFullAccess: !app.config?.allowFullAccess })"
+                @click="toggleFullAccess"
               >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.autoAccept") }}</div>
-                <div class="line-sub">{{ t("set.autoAcceptSub") }}</div>
-              </div>
-              <button class="switch" :class="{ on: autoApproveAll() }" @click="toggleAutoApproveAll">
                 <span class="knob" />
               </button>
             </div>
@@ -2143,242 +2022,25 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               </button>
             </div>
 
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.soundPermission") }}</div>
-                <div class="line-sub">{{ t("set.soundPermissionSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.soundPermission }"
-                @click="app.patchConfig({ soundPermission: !app.config?.soundPermission })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.soundError") }}</div>
-                <div class="line-sub">{{ t("set.soundErrorSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.soundError }"
-                @click="app.patchConfig({ soundError: !app.config?.soundError })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
           </div>
 
-          <h3 data-section="notifications">{{ t("set.notifications") }}</h3>
+          <!-- MiMo's 性能 section, right after 声音: one switch, applied at the next launch. -->
+          <h3 data-section="performance">{{ t("set.performance") }}</h3>
           <div class="card">
-            <div class="line">
+            <div class="line" data-hw-accel-row>
               <div class="line-text">
-                <div class="line-title">{{ t("set.notifyAgent") }}</div>
-                <div class="line-sub">{{ t("set.notifyAgentSub") }}</div>
+                <div class="line-title">{{ t("set.hwAccel") }}</div>
+                <div class="line-sub">{{ t("set.hwAccelSub") }}</div>
               </div>
               <button
                 class="switch"
-                :class="{ on: app.config?.notifyAgent }"
-                @click="app.patchConfig({ notifyAgent: !app.config?.notifyAgent })"
+                :class="{ on: hardwareAcceleration }"
+                :aria-pressed="hardwareAcceleration"
+                data-hw-accel-switch
+                @click="toggleHardwareAcceleration"
               >
                 <span class="knob" />
               </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.notifyPermission") }}</div>
-                <div class="line-sub">{{ t("set.notifyPermissionSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.notifyPermission }"
-                @click="app.patchConfig({ notifyPermission: !app.config?.notifyPermission })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-          </div>
-
-          <h3 data-section="display">{{ t("set.display") }}</h3>
-          <div class="card">
-            <!--
-              Ahead of the zoom gesture, which is where opencode has it: after
-              the three notification rows and before the display ones.
-            -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.releaseNotes") }}</div>
-                <div class="line-sub">{{ t("set.releaseNotesSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.releaseNotes }"
-                @click="app.patchConfig({ releaseNotes: !app.config?.releaseNotes })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.pinchZoom") }}</div>
-                <div class="line-sub">{{ t("set.pinchZoomSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.pinchZoom }"
-                @click="app.patchConfig({ pinchZoom: !app.config?.pinchZoom })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-          </div>
-
-          <!-- MCode's own conversation rows, which MiMo's General page has no place for, in a section of their own. -->
-          <h3 data-section="conversation">{{ t("set.sectionConversation") }}</h3>
-          <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.shell") }}</div>
-                <div class="line-sub">{{ t("set.shellSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.shell ?? ''"
-                :options="shellOptions"
-                @update:model-value="app.patchConfig({ shell: $event })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.expandShell") }}</div>
-                <div class="line-sub">{{ t("set.expandShellSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.expandShell }"
-                @click="app.patchConfig({ expandShell: !app.config?.expandShell })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.expandEdits") }}</div>
-                <div class="line-sub">{{ t("set.expandEditsSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.expandEdits }"
-                @click="app.patchConfig({ expandEdits: !app.config?.expandEdits })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.directory") }}</div>
-                <div class="line-sub">{{ t("set.directorySub") }}</div>
-              </div>
-              <button class="ctl-btn" @click="pickDirectory">{{ app.config?.directory ?? "-" }}</button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.effort") }}</div>
-                <div class="line-sub">{{ t("set.effortSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.effort ?? 'high'"
-                :options="effortOptions"
-                @update:model-value="app.patchConfig({ effort: $event as 'high' })"
-              />
-            </div>
-          </div>
-
-          <!--
-            What the title bar carries, and what a session offers. The bar
-            holds one control by default, the way opencode's does; these put
-            the rest back for anyone who wants them to hand.
-          -->
-          <h3>{{ t("set.advanced") }}</h3>
-          <div class="card">
-            <!-- The bottom-panel toggle in the bar, which a reader can take away. -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.showTerm") }}</div>
-                <div class="line-sub">{{ t("set.showTermSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.showTerminal }"
-                @click="app.patchConfig({ showTerminal: !app.config?.showTerminal })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-          </div>
-
-          <h3>{{ t("set.perTool") }}</h3>
-          <p class="note">{{ t("set.perToolSub") }}</p>
-          <div class="card">
-            <div v-for="bucket in BUCKETS" :key="bucket" class="line">
-              <div class="line-text">
-                <div class="line-title">
-                  <span class="tool" :class="{ raw: !TITLED_BUCKETS.has(bucket) }">{{ bucketTitle(bucket) }}</span>
-                  <!--
-                    The tag says in which way a bucket is consequential, and a
-                    bucket that is neither gets none: a read-only tool wearing a
-                    "makes changes" label would be worse than no label at all.
-                  -->
-                  <span v-if="NETWORK.has(bucket) || WRITES.has(bucket)" class="tag warn">
-                    {{ NETWORK.has(bucket) ? t("set.network") : t("set.writes") }}
-                  </span>
-                </div>
-                <div class="line-sub">{{ t(`tool.desc.${bucket}`) }}</div>
-              </div>
-              <div class="choice" role="radiogroup" :aria-label="bucketTitle(bucket)">
-                <button
-                  v-for="action in ACTIONS"
-                  :key="action"
-                  class="choice-btn"
-                  :class="{ on: permissionOf(bucket) === action, deny: action === 'deny' }"
-                  role="radio"
-                  :aria-checked="permissionOf(bucket) === action"
-                  @click="setPermission(bucket, action)"
-                >
-                  {{ actionLabel(action) }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <h3>{{ t("set.resetKey") }}</h3>
-          <div class="card">
-            <div class="line">
-              <div class="line-sub reset-note">{{ t("set.resetSub") }}</div>
-              <button v-if="!confirmingReset" class="ctl-btn" @click="armReset">
-                {{ t("set.resetAction") }}
-              </button>
-            </div>
-
-            <div v-if="confirmingReset" ref="resetGate" class="reset-gate">
-              <!-- Said in numbers, because "all sessions" does not feel like anything. -->
-              <p class="reset-count">{{ t("set.resetCount", { n: app.sessions.length }) }}</p>
-              <div class="confirm">
-                <button class="ctl-btn" @click="cancelReset">{{ t("common.cancel") }}</button>
-                <button class="danger-btn" @click="resetEverything">
-                  {{ t("set.resetConfirm") }}
-                </button>
-              </div>
             </div>
           </div>
         </template>
@@ -4682,58 +4344,10 @@ h3 {
   border-color: var(--border-strong);
 }
 
-.reset-gate {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 14px;
-  border-top: 1px solid var(--border-weak);
-}
-
-.reset-count {
-  margin: 0;
-  color: var(--error);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
-  font-weight: 530;
-}
-
-.danger-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.reset-note {
-  margin-top: 0;
-}
-
 .confirm {
   display: flex;
   flex-shrink: 0;
   gap: 8px;
-}
-
-.danger-btn {
-  flex-shrink: 0;
-  height: 30px;
-  padding: 0 14px;
-  color: #fff;
-  background: var(--error);
-  border-radius: var(--radius-md);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
-}
-
-.danger-btn:hover {
-  filter: brightness(1.08);
-}
-
-/* Eight of these are words rather than identifiers, so the monospace face is
-   only right for the two that stayed raw. */
-.tool {
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.tool.raw {
-  font-family: var(--font-mono);
 }
 
 /*
@@ -5027,17 +4641,6 @@ h3 {
   :root:not([data-theme="light"]) .choice {
     border-color: #3d3d3d;
   }
-}
-
-/* The one answer that stops something happening says so in the warning hue. */
-.choice-btn.on.deny {
-  color: var(--text-critical);
-  background: color-mix(in srgb, var(--error) 14%, transparent);
-}
-
-.tag.warn {
-  color: var(--text-warning);
-  background: color-mix(in srgb, var(--warning) 14%, transparent);
 }
 
 /*

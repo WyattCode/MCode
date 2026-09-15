@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue"
 import { LANGUAGES, t } from "../lib/i18n"
+import { onMenuRowKey } from "../lib/menu-keys"
 
 /**
  * MiMo's language picker: a bordered trigger that opens a searchable list.
@@ -84,6 +85,11 @@ function onSearchKey(event: KeyboardEvent) {
   }
 }
 
+/* MiMo's menu keys over the rows, once focus has left the search for them. */
+function onRowKey(event: KeyboardEvent) {
+  onMenuRowKey(event, [...(pop.value?.querySelectorAll<HTMLElement>(".lang-item") ?? [])])
+}
+
 function onPointerDown(event: MouseEvent) {
   if (!open.value) return
   const target = event.target as Node
@@ -134,6 +140,7 @@ onBeforeUnmount(() => {
         data-language-menu
         role="listbox"
         :style="{ left: `${box.left}px`, top: `${box.top}px`, maxHeight: `${box.maxHeight}px` }"
+        @keydown="onRowKey"
       >
         <div class="lang-search">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">

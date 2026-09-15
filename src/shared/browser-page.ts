@@ -145,14 +145,10 @@ export interface PageKeyInput {
  */
 export const APP_CHORDS: readonly string[] = [
   "Ctrl+Tab", "Ctrl+Shift+Tab",
-  "Alt+←", "Alt+→", "Alt+↑", "Alt+↓",
-  "Alt+Shift+↑", "Alt+Shift+↓", "Ctrl+Alt+↑", "Ctrl+Alt+↓", "Ctrl+Alt+Shift+↑", "Ctrl+Alt+Shift+↓",
-  "Ctrl+Alt+[", "Ctrl+Alt+]",
-  ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => `Ctrl+Alt+${digit}`),
-  ...["B", "P", "R", "A", "S", "U", "C", "L", "T"].map((key) => `Ctrl+Alt+${key}`),
+  ...["B", "P", "R", "A", "S", "U", "C", "L"].map((key) => `Ctrl+Alt+${key}`),
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => `Ctrl+${digit}`),
-  ...["K", "P", "U", "B", "`", "M", ",", ";", "N", "T", "J", "O", "W", "L", "'", ".", "[", "]", "G"].map((key) => `Ctrl+${key}`),
-  ...["[", "]", "M", "C", "G", "D", "A", "O", "W", "X", "E", "L", ".", "T", "S", "B", "?", "/"].map((key) => `Ctrl+Shift+${key}`),
+  ...["K", "P", "B", "`", ",", "N", "T", "J", "O", "W", "L", ".", "[", "]"].map((key) => `Ctrl+${key}`),
+  ...["[", "]", "M", "C", "G", "L", "B", "?", "/"].map((key) => `Ctrl+Shift+${key}`),
 ]
 
 /**

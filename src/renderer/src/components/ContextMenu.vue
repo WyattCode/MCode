@@ -2,6 +2,8 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue"
 import { filterMenu, type MenuItem } from "../lib/menu"
 import { besideRow } from "../lib/submenu"
+import { isRovingKey } from "../lib/composer-menu"
+import { focusRow } from "../lib/menu-keys"
 
 /**
  * The right-click menu, wherever one is wanted.
@@ -19,8 +21,6 @@ const props = defineProps<{
   x: number
   y: number
   items: MenuItem[]
-  /** Opened from the keyboard, so it should take focus and be navigable. */
-  keyboard?: boolean
   /** `y` is the menu's bottom edge: for a control at the foot of the window. */
   above?: boolean
   /** `x` is the menu's right edge: for a control at the end of a row. */
@@ -69,9 +69,12 @@ onMounted(async () => {
     at.value.y = Math.max(margin, window.innerHeight - margin - rect.height)
   }
 
-  // Only when the keyboard opened it: taking focus from a text field would
-  // leave the editing commands acting on this menu instead.
-  if (props.keyboard) box.value?.querySelector<HTMLButtonElement>(".item:not(:disabled)")?.focus()
+  /*
+   * MiMo's menu takes focus on its first row however it was opened, so Enter
+   * acts on the menu and not on the control under it. Text right-clicks use
+   * the system menu, so no editing command is left without its field.
+   */
+  box.value?.querySelector<HTMLButtonElement>(".item:not(:disabled)")?.focus({ preventScroll: true })
 })
 
 function place(row: HTMLElement, width: number, height: number) {
@@ -208,16 +211,16 @@ function onKey(event: KeyboardEvent) {
     }
     return
   }
-  if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
+  // A modal menu keeps Tab inside, walking its rows as the arrows do.
+  const key = event.key === "Tab" ? (event.shiftKey ? "ArrowUp" : "ArrowDown") : event.key
+  if (!isRovingKey(key)) return
 
   const scope = inSub ? subBox.value : box.value
   const items = [...(scope?.querySelectorAll<HTMLElement>(".item:not(:disabled)") ?? [])]
   if (!items.length) return
   event.preventDefault()
-  const current = items.indexOf(document.activeElement as HTMLElement)
-  const step = event.key === "ArrowDown" ? 1 : -1
-  // Wraps, which is what a menu does at either end.
-  items[(current + step + items.length) % items.length].focus()
+  // Wraps at either end; Home and End jump there.
+  focusRow(items, key)
 }
 
 /* A label ending in a full-width colon runs straight into its value; any other gets a space. */
@@ -264,6 +267,8 @@ onBeforeUnmount(() => {
         @mouseenter="enterRow(item, $event)"
         @click="pressRow(item, $event)"
       >
+        <img v-if="item.image" class="app-icon" :src="item.image" alt="" data-menu-app-icon />
+        <span v-else-if="item.letter" class="app-letter" data-menu-app-icon>{{ item.letter }}</span>
         <svg
           v-if="item.icon"
           class="glyph"
@@ -534,6 +539,24 @@ onBeforeUnmount(() => {
 
 .item:hover:not(:disabled) .glyph {
   color: var(--text-strong);
+}
+
+/* An app's own icon, or its first letter on a small square, sized as the settings picker draws them. */
+.app-icon,
+.app-letter {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+}
+
+.app-letter {
+  display: grid;
+  place-items: center;
+  color: var(--text-weak);
+  background: var(--surface-hover);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  line-height: 1;
 }
 
 /* MiMo's submenu mark: 14px at half strength, at the far end, pointing into the panel. */

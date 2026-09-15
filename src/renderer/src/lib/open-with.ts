@@ -63,10 +63,16 @@ export function useOpenWith(platform: () => string) {
   const chosenApp = computed(() => apps.value.find((entry) => entry.id === choice.value))
   const label = computed(() => (chosenApp.value ? t(chosenApp.value.label) : managerLabel.value))
 
-  /* As MiMo lists them: the apps it can open with, and nothing else. */
+  /* As MiMo lists them: the apps it can open with, and nothing else, each with its own icon or first letter. */
+  const row = (id: string, label: string): MenuItem => ({
+    key: `app.${id}`,
+    label,
+    checked: choice.value === id,
+    ...(icons.value[id] ? { image: icons.value[id] } : { letter: label.slice(0, 1) }),
+  })
   const items = computed<MenuItem[]>(() => [
-    { key: `app.${FILE_MANAGER_ID}`, label: managerLabel.value, checked: choice.value === FILE_MANAGER_ID },
-    ...apps.value.map((entry) => ({ key: `app.${entry.id}`, label: t(entry.label), checked: choice.value === entry.id })),
+    row(FILE_MANAGER_ID, managerLabel.value),
+    ...apps.value.map((entry) => row(entry.id, t(entry.label))),
   ])
 
   /* Opens, then says which app it went to - or why it did not. */
