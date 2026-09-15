@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { SessionInfo } from "@shared/protocol"
-import { computed, ref, watch } from "vue"
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
 import { convoCard } from "../lib/convo-card"
 import { useApp } from "../stores/app"
@@ -29,6 +29,10 @@ const props = defineProps<{
   collapsed?: boolean
   /** The conversations ticked in selection mode; absent when not in it. */
   selecting?: string[]
+  /** The projects ticked in project selection mode; absent when not in it. */
+  selectingProjects?: string[]
+  /** The project whose menu is open, so its row keeps its actions in view. */
+  menuDirectory?: string
   /** Whether MiMo's priority filter is on: attention first, then the week by day. */
   priority?: boolean
   /** Whether back and forward have anywhere to go; MiMo dims them when not. */
@@ -40,10 +44,15 @@ const emit = defineEmits<{
   artifacts: []
   "toggle-priority": []
   "archive-all": []
-  menu: [sessionID: string, x: number, y: number]
+  /* `nested` is a row listed under its project, whose menu MiMo draws without "show in folder". */
+  menu: [sessionID: string, x: number, y: number, nested: boolean]
   projectMenu: [directory: string, x: number, y: number]
   select: [sessionID: string]
-  batch: [action: "archive" | "move" | "delete" | "cancel"]
+  /* "all" carries the conversations the column is showing, which is what MiMo's select all takes. */
+  batch: [action: "archive" | "delete" | "cancel" | "all" | "none", ids?: string[]]
+  projectSelect: [directory: string]
+  projectBatch: [action: "archive" | "remove" | "exit" | "all" | "none", directories?: string[]]
+  newBlank: []
   newTask: []
   /* Folders dropped onto Projects; empty when what was dropped held none. */
   dropFolders: [directories: string[]]
@@ -86,11 +95,28 @@ function press(sessionID: string) {
 }
 
 /** Where the row's own menu opens from: the button, or the pointer. */
-function openMenu(sessionID: string, event: MouseEvent) {
+function openMenu(sessionID: string, event: MouseEvent, nested = false) {
   const from = (event.currentTarget as HTMLElement | null)?.getBoundingClientRect()
   const x = event.clientX || (from ? Math.round(from.left) : 0)
   const y = event.clientY || (from ? Math.round(from.bottom + 4) : 0)
-  emit("menu", sessionID, x, y)
+  emit("menu", sessionID, x, y, nested)
+}
+
+/*
+ * Project selection mode, MiMo's project batch management: unpinned projects
+ * tick instead of opening, and pinned ones cannot be chosen.
+ */
+const pickingProjects = computed(() => Array.isArray(props.selectingProjects))
+const projectTicked = (directory: string) => Boolean(props.selectingProjects?.includes(directory))
+
+function pressProject(directory: string) {
+  if (pickingProjects.value && !pinnedProject(directory)) emit("projectSelect", directory)
+  else toggleProject(directory)
+}
+
+function projectContext(directory: string, event: MouseEvent) {
+  if (pickingProjects.value) return
+  openProjectMenu(directory, event)
 }
 
 /* The project row's menu, from a right-click or from its own button. */
@@ -125,6 +151,92 @@ const projects = computed(() => {
 })
 
 type ProjectRow = (typeof projects.value)[number]
+
+/*
+ * The branch each project's folder is on, as MiMo keeps one per project. The
+ * backend reads it from HEAD, so it is cheap; it is asked again when the list
+ * of projects changes, when the window comes back into focus and when a turn
+ * ends, and at most every few seconds per folder.
+ */
+const branches = ref<Record<string, string>>({})
+const branchAsked = new Map<string, number>()
+const BRANCH_EVERY = 3000
+
+async function readBranches(force = false) {
+  if (!app.connected) return
+  const now = Date.now()
+  for (const project of projects.value) {
+    const directory = project.directory
+    if (!force && now - (branchAsked.get(directory) ?? 0) < BRANCH_EVERY) continue
+    branchAsked.set(directory, now)
+    const info = await app.workspaceInfo(directory).catch(() => undefined)
+    const branch = info?.branch ?? ""
+    if ((branches.value[directory] ?? "") !== branch) branches.value = { ...branches.value, [directory]: branch }
+  }
+}
+
+watch(
+  () => [app.connected, projects.value.map((project) => project.directory).join("\n")],
+  () => void readBranches(),
+  { immediate: true },
+)
+watch(
+  () => app.running.size,
+  (now, before) => {
+    if (now < before) void readBranches(true)
+  },
+)
+const branchesOnFocus = () => void readBranches()
+onMounted(() => window.addEventListener("focus", branchesOnFocus))
+onBeforeUnmount(() => window.removeEventListener("focus", branchesOnFocus))
+
+/* The fewest parent folders that tell same-named projects apart, as the home picker words them. */
+const pathSegments = (directory: string) => directory.split(/[\\/]/).filter(Boolean)
+
+function parentHints(group: string[]): Map<string, string> {
+  const parents = group.map((directory) => pathSegments(directory).slice(0, -1))
+  const deepest = Math.max(0, ...parents.map((parts) => parts.length))
+  for (let depth = 1; depth <= deepest; depth++) {
+    const tails = parents.map((parts) => parts.slice(-depth).join("/"))
+    if (new Set(tails).size === tails.length) return new Map(group.map((directory, index) => [directory, tails[index]!]))
+  }
+  return new Map()
+}
+
+/*
+ * MiMo's project labels. Projects are grouped by name: a name only one project
+ * has, or one whose projects are all on different branches, stays bare; any
+ * other group is told apart by parent folders. A label still shared after that
+ * shows each project's branch beside it - so ordinary projects show none.
+ */
+const projectLabels = computed(() => {
+  const groups = new Map<string, string[]>()
+  for (const project of projects.value) {
+    const base = name(project.directory)
+    groups.set(base, [...(groups.get(base) ?? []), project.directory])
+  }
+  const labels = new Map<string, string>()
+  for (const [base, group] of groups) {
+    const onBranches = group.map((directory) => branches.value[directory] ?? "")
+    const apart = group.length === 1 || (onBranches.every(Boolean) && new Set(onBranches).size === onBranches.length)
+    const hints = apart ? new Map<string, string>() : parentHints(group)
+    for (const directory of group) {
+      const hint = hints.get(directory)
+      labels.set(directory, hint ? `${base} (${hint})` : base)
+    }
+  }
+  const shared = new Map<string, number>()
+  for (const label of labels.values()) shared.set(label, (shared.get(label) ?? 0) + 1)
+  const out = new Map<string, { label: string; branch?: string }>()
+  for (const [directory, label] of labels) {
+    const branch = branches.value[directory]
+    out.set(directory, { label, branch: (shared.get(label) ?? 0) > 1 && branch ? branch : undefined })
+  }
+  return out
+})
+
+const projectLabel = (directory: string) => projectLabels.value.get(directory)?.label ?? name(directory)
+const projectBranch = (directory: string) => projectLabels.value.get(directory)?.branch
 
 /*
  * MiMo's 置顶 section, above Projects: pinned conversations in the order they
@@ -364,7 +476,7 @@ const columnBlocks = computed<ColumnBlock[]>(() => {
     ...(projectsOpen.value
       ? shownProjects.value.map((project): ColumnBlock => ({ key: `project:${project.directory}`, kind: "project", project }))
       : []),
-    ...(projectsOpen.value && !picking.value && (projectsLeft.value > 0 || projectsPaged.value)
+    ...(projectsOpen.value && !picking.value && !pickingProjects.value && (projectsLeft.value > 0 || projectsPaged.value)
       ? [{ key: "projects-pages", kind: "projects-pages" } as ColumnBlock]
       : []),
   ]
@@ -427,11 +539,23 @@ const recentLeft = computed(() => recentAll.value.length - recent.value.length)
 /* Recent's heading menu: archive everything, and how the list is ordered. */
 const recentMenu = ref<{ x: number; y: number }>()
 
+/*
+ * MiMo's: archive all, a rule, then 排序条件：最近 › - the order in force after
+ * the label - opening the two orders with a tick at the end of the current one.
+ */
 const recentMenuItems = computed<MenuItem[]>(() => [
   { key: "archive", label: t("side.archiveAll"), icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2" },
-  { key: "sort", label: t("side.sortBy"), heading: true, divided: true },
-  { key: "sort-recent", label: t("side.sortRecent"), checked: recentSort.value === "recent" },
-  { key: "sort-name", label: t("side.sortName"), checked: recentSort.value === "name" },
+  {
+    key: "sort",
+    label: t("side.sortBy"),
+    value: t(recentSort.value === "name" ? "side.sortName" : "side.sortRecent"),
+    icon: "M8 2.4a5.6 5.6 0 1 0 0 11.2A5.6 5.6 0 0 0 8 2.4zM8 5v3.2l2.2 1.4",
+    divided: true,
+    children: [
+      { key: "sort-recent", label: t("side.sortRecent"), checked: recentSort.value === "recent", checkEnd: true, active: recentSort.value === "recent" },
+      { key: "sort-name", label: t("side.sortName"), checked: recentSort.value === "name", checkEnd: true, active: recentSort.value === "name" },
+    ],
+  },
 ])
 
 function openRecentMenu(event: MouseEvent) {
@@ -705,16 +829,59 @@ function showAllTasks(directory: string) {
 const PROJECT_PAGE = 5
 const PROJECT_STEP = 10
 const projectsShown = ref(PROJECT_PAGE)
-const shownProjects = computed(() => (picking.value ? normalProjects.value : normalProjects.value.slice(0, projectsShown.value)))
+const anyPicking = computed(() => picking.value || pickingProjects.value)
+const shownProjects = computed(() => (anyPicking.value ? normalProjects.value : normalProjects.value.slice(0, projectsShown.value)))
 const projectsLeft = computed(() => normalProjects.value.length - shownProjects.value.length)
-const projectsPaged = computed(() => !picking.value && projectsShown.value > PROJECT_PAGE && normalProjects.value.length > PROJECT_PAGE)
+const projectsPaged = computed(() => !anyPicking.value && projectsShown.value > PROJECT_PAGE && normalProjects.value.length > PROJECT_PAGE)
 function moreProjects() {
   const shown = projectsShown.value
   projectsShown.value = Math.min(normalProjects.value.length, shown <= PROJECT_PAGE ? PROJECT_STEP : shown + PROJECT_STEP)
 }
-watch(picking, (on) => {
+watch(anyPicking, (on) => {
   if (on) projectsShown.value = PROJECT_PAGE
 })
+
+/* What MiMo's select all takes: every conversation the column is showing. */
+const selectableIDs = computed(() => {
+  const ids = new Set<string>()
+  for (const block of columnBlocks.value) {
+    if (block.session) ids.add(block.session.id)
+    if (block.project && isExpanded(block.project.directory)) {
+      for (const session of tasksOf(block.project)) ids.add(session.id)
+    }
+  }
+  if (props.priority || recentOpen.value) {
+    for (const row of listed.value) if (row.session) ids.add(row.session.id)
+  }
+  return [...ids]
+})
+const allTicked = computed(() => selectableIDs.value.length > 0 && selectableIDs.value.every(ticked))
+
+/* And for projects, every unpinned one, since selection lists them all. */
+const selectableProjects = computed(() => normalProjects.value.map((project) => project.directory))
+const allProjectsTicked = computed(
+  () => selectableProjects.value.length > 0 && selectableProjects.value.every(projectTicked),
+)
+
+/* The Projects heading's "+": a blank project, or a folder already on disk. */
+const FOLDER = "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1z"
+const newProjectMenu = ref<{ x: number; y: number }>()
+const newProjectItems = computed<MenuItem[]>(() => [
+  { key: "blank", label: t("side.newBlankProject"), icon: `${FOLDER}M8 7.2v3.6M6.2 9h3.6` },
+  { key: "existing", label: t("side.useExistingFolder"), icon: FOLDER },
+])
+
+/* Below the button, its end lined up with the button's, as MiMo opens it. */
+function openNewProjectMenu(event: MouseEvent) {
+  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  newProjectMenu.value = { x: Math.round(from.right), y: Math.round(from.bottom + 4) }
+}
+
+function pickNewProject(key: string) {
+  newProjectMenu.value = undefined
+  if (key === "blank") emit("newBlank")
+  else if (key === "existing") emit("browse")
+}
 </script>
 
 <template>
@@ -821,18 +988,6 @@ watch(picking, (on) => {
       </button>
     </nav>
 
-    <!--
-      The bar selection mode brings with it: what is chosen, and the three
-      things worth doing to several conversations at once.
-    -->
-    <div v-if="picking" class="batch">
-      <span class="batch-count">{{ t("batch.selected", { n: String(selecting?.length ?? 0) }) }}</span>
-      <button class="batch-act" :disabled="!selecting?.length" @click="emit('batch', 'archive')">{{ t("common.archive") }}</button>
-      <button class="batch-act" :disabled="!selecting?.length" @click="emit('batch', 'move')">{{ t("menu.moveToProject") }}</button>
-      <button class="batch-act danger" :disabled="!selecting?.length" @click="emit('batch', 'delete')">{{ t("common.delete") }}</button>
-      <button class="batch-act" @click="emit('batch', 'cancel')">{{ t("common.cancel") }}</button>
-    </div>
-
     <div ref="listsEl" class="lists" @dragover="folderOver" @dragleave="folderLeave" @drop="folderDrop">
       <div
         v-if="folderRing"
@@ -900,18 +1055,34 @@ watch(picking, (on) => {
             </button>
           </span>
         </div>
-        <div v-else-if="block.kind === 'projects-head'" class="section" data-project-zone>
+        <div
+          v-else-if="block.kind === 'projects-head'"
+          class="section projects-head"
+          :class="{ held: Boolean(newProjectMenu) }"
+          data-project-zone
+        >
         <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
           </svg>
         </button>
-        <button class="ico add" :aria-label="t('side.newProject')" v-tip="{ label: t('side.newProject'), hint: 'Ctrl+O' }" @click="emit('browse')">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-linecap="square" />
-          </svg>
-        </button>
+        <!-- MiMo's "+", out of sight until the heading is hovered, opening its two-row menu. -->
+        <span class="sec-actions">
+          <button
+            class="ico add project-new"
+            data-new-project-button
+            :aria-label="t('side.newProject')"
+            aria-haspopup="menu"
+            :aria-expanded="Boolean(newProjectMenu)"
+            v-tip="{ label: t('side.newProject') }"
+            @click.stop="openNewProjectMenu"
+          >
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-linecap="square" />
+            </svg>
+          </button>
+        </span>
       </div>
         <template v-else-if="block.project">
           <template v-for="project in [block.project]" :key="project.directory">
@@ -921,17 +1092,35 @@ watch(picking, (on) => {
               on: app.current?.directory === project.directory && !isExpanded(project.directory),
               carried: carrying('project', project.directory),
               'lands-before': landing('project', project.directory),
+              picked: pickingProjects && projectTicked(project.directory),
+              'menu-open': menuDirectory === project.directory,
             }"
             data-project-zone
             :data-project-drag="project.directory"
-            :draggable="!picking"
+            :draggable="!anyPicking"
             @dragstart="startCarry($event, 'project', project.directory)"
             @dragover="carryOver($event, 'project', project.directory)"
             @drop="setDown($event, 'project', project.directory)"
             @dragend="endCarry"
-            @contextmenu.prevent="openProjectMenu(project.directory, $event)"
+            @contextmenu.prevent="projectContext(project.directory, $event)"
           >
-            <button class="project-toggle" v-tip="{ label: project.directory, placement: 'right' }" @click="toggleProject(project.directory)">
+            <!-- MiMo's tick before the folder cell, only on projects that can be chosen. -->
+            <span
+              v-if="pickingProjects && !pinnedProject(project.directory)"
+              class="tick project-tick"
+              :class="{ on: projectTicked(project.directory) }"
+              data-project-tick
+              aria-hidden="true"
+            >
+              <svg v-if="projectTicked(project.directory)" width="11" height="11" viewBox="0 0 16 16" fill="none">
+                <path d="M3.5 8.2 6.4 11.2 12.5 4.6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <button
+              class="project-toggle"
+              v-tip="pickingProjects ? '' : { label: project.directory, placement: 'top' }"
+              @click="pressProject(project.directory)"
+            >
               <!-- Open while its tasks are listed under it, as MiMo draws an expanded project. -->
               <svg
                 v-if="isExpanded(project.directory)"
@@ -949,9 +1138,26 @@ watch(picking, (on) => {
               <svg v-else class="row-ico" data-folder="closed" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                 <path d="M3.5 5.5H8L9.5 7H16.5V15H3.5V5.5Z" stroke="currentColor" stroke-linejoin="round" />
               </svg>
-              <span class="row-label plain">{{ name(project.directory) }}</span>
+              <span class="row-label plain">{{ projectLabel(project.directory) }}</span>
+              <!--
+                MiMo's branch, only beside a name another project shares: the
+                branch text and then the live mark, faded out under the pointer
+                so the row's actions take the place.
+              -->
+              <span v-if="projectBranch(project.directory)" class="row-branch" data-project-branch>
+                <span class="branch-text">{{ projectBranch(project.directory) }}</span>
+                <span
+                  v-if="!isExpanded(project.directory) && projectStatus(project.children)"
+                  class="row-status"
+                  :data-status="projectStatus(project.children)"
+                >
+                  <span v-if="projectStatus(project.children) === 'running'" class="status-spin" aria-hidden="true" />
+                  <span v-else-if="projectStatus(project.children) === 'unread'" class="status-dot" aria-hidden="true" />
+                  <span v-else class="status-pill" :title="t('side.awaitingConfirm')">{{ t("side.awaitingPill") }}</span>
+                </span>
+              </span>
               <span
-                v-if="!isExpanded(project.directory) && projectStatus(project.children)"
+                v-else-if="!isExpanded(project.directory) && projectStatus(project.children)"
                 class="row-status"
                 :data-status="projectStatus(project.children)"
               >
@@ -963,9 +1169,9 @@ watch(picking, (on) => {
             <!--
               MiMo's pair on a project row: its menu, then a new task in it. Laid
               over the row's end on hover, as a task row's are, so the project's
-              name has the whole row until then.
+              name has the whole row until then. Not there while choosing projects.
             -->
-            <span class="row-actions">
+            <span v-if="!pickingProjects" class="row-actions">
               <button
                 class="row-menu"
                 :aria-label="t('side.projectOptions')"
@@ -978,7 +1184,12 @@ watch(picking, (on) => {
                   <circle cx="13" cy="8" r="1.1" fill="currentColor" />
                 </svg>
               </button>
-              <button class="ico inline" :aria-label="t('side.newTask')" v-tip="{ label: t('side.newTask') }" @click="emit('createIn', project.directory)">
+              <button
+                class="ico inline"
+                :aria-label="t('side.newTaskIn', { name: projectLabel(project.directory) })"
+                v-tip="{ label: t('side.newTaskIn', { name: projectLabel(project.directory) }) }"
+                @click="emit('createIn', project.directory)"
+              >
                 <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
                   <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-linecap="square" />
                 </svg>
@@ -998,7 +1209,7 @@ watch(picking, (on) => {
               @dragover="carryOver($event, 'task', session.id, project.directory)"
               @drop="setDown($event, 'task', session.id, project.directory)"
               @dragend="endCarry"
-              @contextmenu.prevent="openMenu(session.id, $event)"
+              @contextmenu.prevent="openMenu(session.id, $event, true)"
             >
               <button class="row-open" @click="press(session.id)">
                 <span v-if="picking" class="tick" :class="{ on: ticked(session.id) }" aria-hidden="true">
@@ -1023,7 +1234,7 @@ watch(picking, (on) => {
                 </span>
               </button>
               <span class="row-actions">
-                <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event)">
+                <button class="row-menu" :aria-label="t('session.options')" @click.stop="openMenu(session.id, $event, true)">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <circle cx="3" cy="8" r="1.1" fill="currentColor" />
                     <circle cx="8" cy="8" r="1.1" fill="currentColor" />
@@ -1176,6 +1387,56 @@ watch(picking, (on) => {
       </template>
     </div>
 
+    <!--
+      MiMo's selection bar, between the lists and the foot: select all, the
+      count and the way out on one line, and the two things worth doing to
+      several conversations at once under it.
+    -->
+    <div v-if="picking && !pickingProjects" class="select-bar" data-select-bar="threads">
+      <div class="sb-row">
+        <button
+          class="sb-text"
+          data-select-all
+          @click="allTicked ? emit('batch', 'none') : emit('batch', 'all', selectableIDs)"
+        >
+          {{ allTicked ? t("batch.selectNone") : t("batch.selectAll") }}
+        </button>
+        <span class="sb-count">{{ t("batch.selected", { n: String(selecting?.length ?? 0) }) }}</span>
+        <button class="sb-text" data-select-exit @click="emit('batch', 'cancel')">{{ t("batch.cancel") }}</button>
+      </div>
+      <div class="sb-row sb-actions">
+        <button class="sb-btn" data-batch="archive" :disabled="!selecting?.length" @click="emit('batch', 'archive')">
+          {{ t("batch.archiveShort") }}
+        </button>
+        <button class="sb-btn danger" data-batch="delete" :disabled="!selecting?.length" @click="emit('batch', 'delete')">
+          {{ t("batch.deleteShort") }}
+        </button>
+      </div>
+    </div>
+
+    <!-- The same card for projects: archive their conversations, or take them off the list. -->
+    <div v-if="pickingProjects" class="select-bar" data-select-bar="projects">
+      <div class="sb-row">
+        <button
+          class="sb-text"
+          data-select-all
+          @click="allProjectsTicked ? emit('projectBatch', 'none') : emit('projectBatch', 'all', selectableProjects)"
+        >
+          {{ allProjectsTicked ? t("batch.projectsSelectNone") : t("batch.projectsSelectAll") }}
+        </button>
+        <span class="sb-count">{{ t("batch.selected", { n: String(selectingProjects?.length ?? 0) }) }}</span>
+        <button class="sb-text" data-select-exit @click="emit('projectBatch', 'exit')">{{ t("batch.projectsExit") }}</button>
+      </div>
+      <div class="sb-row sb-actions">
+        <button class="sb-btn" data-batch="archive" :disabled="!selectingProjects?.length" @click="emit('projectBatch', 'archive')">
+          {{ t("batch.projectsArchive") }}
+        </button>
+        <button class="sb-btn" data-batch="remove" :disabled="!selectingProjects?.length" @click="emit('projectBatch', 'remove')">
+          {{ t("batch.projectsRemove") }}
+        </button>
+      </div>
+    </div>
+
     <div class="foot">
       <!--
         The scheme, one press away. It is in the appearance settings too - this
@@ -1245,6 +1506,8 @@ watch(picking, (on) => {
       :x="priorityMenu.x"
       :y="priorityMenu.y"
       :items="priorityMenuItems"
+      side
+      :min-width="208"
       @pick="pickPriorityMenu"
       @close="priorityMenu = undefined"
     />
@@ -1253,8 +1516,21 @@ watch(picking, (on) => {
       :x="recentMenu.x"
       :y="recentMenu.y"
       :items="recentMenuItems"
+      side
+      :min-width="208"
       @pick="pickRecentMenu"
       @close="recentMenu = undefined"
+    />
+    <ContextMenu
+      v-if="newProjectMenu"
+      :x="newProjectMenu.x"
+      :y="newProjectMenu.y"
+      :items="newProjectItems"
+      side
+      end
+      :min-width="184"
+      @pick="pickNewProject"
+      @close="newProjectMenu = undefined"
     />
   </aside>
 </template>
@@ -1613,7 +1889,10 @@ watch(picking, (on) => {
 
 .recent-head:hover .sec-actions,
 .recent-head:focus-within .sec-actions,
-.recent-head.held .sec-actions {
+.recent-head.held .sec-actions,
+.projects-head:hover .sec-actions,
+.projects-head:focus-within .sec-actions,
+.projects-head.held .sec-actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -1744,7 +2023,7 @@ watch(picking, (on) => {
 
 .side.rail .top > *,
 .side.rail .brand,
-.side.rail .batch,
+.side.rail .select-bar,
 .side.rail .lists {
   display: none;
 }
@@ -1863,48 +2142,163 @@ watch(picking, (on) => {
   border-color: var(--interactive);
 }
 
-.batch {
+/* A project's tick sits before its folder cell, 9 in and 7 before the folder, as MiMo's does. */
+.project-tick {
+  align-self: center;
+  margin-inline: 9px -7px;
+}
+
+.row.project.picked {
+  background: var(--surface-selected);
+}
+
+/*
+ * MiMo's selection bar: a card of two rows between the lists and the foot,
+ * 10 round with 8 by 10 of padding and 12px text.
+ */
+.select-bar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  margin: 0 8px 6px;
-  padding: 8px;
-  background: var(--surface-menu);
-  border: 0.5px solid var(--border-weak);
-  border-radius: 10px;
-}
-
-.batch-count {
-  flex: 1;
-  min-width: 100%;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 8px;
+  margin: 6px 8px 0;
+  padding: 8px 10px;
   color: var(--text-base);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
   font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
 }
 
-/* Six and five, not eight and six: at 256 the four labels came to 225 against
-   224 of room, and "cancel" fell to a second line by one pixel. */
-.batch-act {
-  height: 26px;
-  padding: 0 6px;
+.sb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sb-actions {
+  gap: 6px;
+}
+
+.sb-text {
+  flex: none;
+  padding: 0;
+  color: var(--text-base);
+  font-size: inherit;
+}
+
+.sb-text:hover {
   color: var(--text-strong);
-  border-radius: 7px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  transition: background 0.12s, color 0.12s;
 }
 
-.batch-act:hover:not(:disabled) {
+.sb-count {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-weak);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two equal buttons, 7 round on a 1px line, at 40% while there is nothing to act on. */
+.sb-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 7px;
+  font-size: inherit;
+  transition: background 0.12s;
+}
+
+.sb-btn:hover:not(:disabled) {
   background: var(--surface-hover);
 }
 
-.batch-act:disabled {
-  color: var(--text-weak);
+.sb-btn:disabled {
   cursor: default;
+  opacity: 0.4;
 }
 
-.batch-act.danger {
-  color: var(--error);
+/* MiMo's delete: the light red pair, darker under the pointer. */
+.sb-btn.danger {
+  color: #d93025;
+  background: #fdecea;
+  border-color: #fdecea;
+}
+
+.sb-btn.danger:hover:not(:disabled) {
+  background: #fadbd8;
+  border-color: #fadbd8;
+}
+
+:root[data-theme="dark"] .sb-btn.danger {
+  color: #ff9b7f;
+  background: #3a2320;
+  border-color: #3a2320;
+}
+
+:root[data-theme="dark"] .sb-btn.danger:hover:not(:disabled) {
+  background: #4a2c27;
+  border-color: #4a2c27;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .sb-btn.danger {
+    color: #ff9b7f;
+    background: #3a2320;
+    border-color: #3a2320;
+  }
+
+  :root:not([data-theme="light"]) .sb-btn.danger:hover:not(:disabled) {
+    background: #4a2c27;
+    border-color: #4a2c27;
+  }
+}
+
+/*
+ * MiMo's branch beside a shared project name: 10px in the dim colour, up to
+ * half the row, then the live mark. The whole span gives way to the row's
+ * actions under the pointer and while the row's menu is open.
+ */
+.row-branch {
+  display: flex;
+  flex-shrink: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 50%;
+  margin-inline-start: auto;
+  padding-inline-start: 8px;
+  transition: opacity 0.12s;
+}
+
+.branch-text {
+  overflow: hidden;
+  color: var(--text-weak);
+  font-size: calc(10px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-branch .row-status {
+  margin-inline-start: 0;
+  padding-inline-start: 0;
+}
+
+.row.project:hover .row-branch:not(:has(.status-pill)),
+.row.project:focus-within .row-branch:not(:has(.status-pill)),
+.row.project.menu-open .row-branch:not(:has(.status-pill)) {
+  opacity: 0;
+}
+
+/* The open menu's row keeps its actions showing, as the pointer would. */
+.row.project.menu-open .row-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 /* The quick pin MiMo keeps beside the row's menu: no menu needed to use it. */

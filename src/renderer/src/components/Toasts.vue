@@ -1,55 +1,62 @@
 <script setup lang="ts">
-import { dismiss, toasts } from "../lib/toast"
+import { dismiss, hold, release, toasts, type ToastLink } from "../lib/toast"
 import { t } from "../lib/i18n"
+
+/* A link runs its step, then the notice has done its job. */
+function follow(id: string, link: ToastLink) {
+  link.run()
+  dismiss(id)
+}
 </script>
 
 <template>
   <!--
-    Above the composer rather than centred: a confirmation should be findable
-    without taking over the view it is confirming something about.
+    MiMo's notices: one capsule per line, centred 8px under the top edge of the
+    window, the newest last. The column lets clicks through; only a capsule
+    takes the pointer.
   -->
   <div class="toasts" role="status" aria-live="polite">
     <TransitionGroup name="toast">
-      <div v-for="toast in toasts" :key="toast.id" class="toast" :class="toast.kind">
-        <!--
-          The mark says which of the two things happened. One tick for
-          everything meant a failure was confirmed as a success.
-        -->
-        <svg class="mark" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" />
-          <path
-            v-if="toast.kind === 'failed'"
-            d="M8 4.6V8.9"
-            stroke="currentColor"
-            stroke-width="1.4"
-            stroke-linecap="round"
-          />
-          <circle v-if="toast.kind === 'failed'" cx="8" cy="11.2" r="0.8" fill="currentColor" />
-          <path
-            v-else
-            d="M5.2 8.2 7.1 10.1 10.9 6.3"
-            stroke="currentColor"
-            stroke-width="1.4"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          />
-        </svg>
-        <div class="text">
-          <div class="title">{{ toast.title }}</div>
-          <div v-if="toast.body" class="body">{{ toast.body }}</div>
-        </div>
-        <button
-          v-if="toast.action"
-          class="act"
-          @click="(toast.action.run(), dismiss(toast.id))"
+      <div
+        v-for="toast in toasts"
+        :key="toast.id"
+        class="notice"
+        :class="toast.level"
+        :data-level="toast.level"
+        @mouseenter="hold(toast.id)"
+        @mouseleave="release(toast.id)"
+      >
+        <svg
+          class="mark"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
         >
-          {{ toast.action.label }}
-        </button>
-        <button class="close" v-tip="{ label: t('common.close'), placement: 'top' }" @click="dismiss(toast.id)">
-          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-          </svg>
-        </button>
+          <template v-if="toast.level === 'warning'">
+            <path d="M12 3.8 21.2 19.8H2.8z" />
+            <path d="M12 10v4.2M12 17v.2" />
+          </template>
+          <template v-else>
+            <circle cx="12" cy="12" r="9.2" />
+            <path v-if="toast.level === 'success'" d="m8 12.3 2.8 2.8 5.2-5.4" />
+            <path v-else-if="toast.level === 'danger'" d="m9.2 9.2 5.6 5.6M14.8 9.2l-5.6 5.6" />
+            <path v-else d="M12 11.2v5.2M12 7.6v.2" />
+          </template>
+        </svg>
+        <span class="text">
+          <span class="title">{{ toast.title }}</span>
+          <span v-if="toast.body" class="body">{{ toast.body }}</span>
+          <button v-for="link in toast.links" :key="link.label" class="link" @click="follow(toast.id, link)">
+            {{ link.label }}
+          </button>
+        </span>
+        <button v-if="toast.closable" class="close" :aria-label="t('common.close')" @click="dismiss(toast.id)">✕</button>
       </div>
     </TransitionGroup>
   </div>
@@ -58,130 +65,160 @@ import { t } from "../lib/i18n"
 <style scoped>
 .toasts {
   position: fixed;
-  /* The corner a line of text finishes in, so a toast arrives where the eye
-     already is and its own row - message, action, dismiss - still reads in
-     the order the rest of the app does. */
-  inset-inline-end: 32px;
-  bottom: 48px;
+  top: 8px;
+  inset-inline: 16px;
   z-index: 200;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  align-items: flex-end;
+  align-items: center;
   pointer-events: none;
 }
 
-.toast {
-  display: flex;
+/* MiMo's capsule, measured: 16 round, 8 by 12 of padding, 13px text on a 1.3 line. */
+.notice {
+  display: inline-flex;
   align-items: flex-start;
-  /*
-   * 12 between the icon and the text, and 320 wide - both opencode's:
-   * `[data-slot="toast-v2-header"] { gap: 12px }` and
-   * `.toast-v2-region { max-width: min(320px, calc(100vw - 64px)) }`. This was
-   * 20 and 400, which made a one-line toast a wide, loosely-spaced band.
-   */
-  gap: 12px;
-  width: min(320px, calc(100vw - 64px));
-  padding: 16px 20px;
-  background: var(--surface-raised);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg);
+  gap: 6px;
+  max-width: min(560px, 100%);
+  padding: 8px 12px;
+  color: var(--text-strong);
+  background: #ffffff;
+  border: 1px solid #ececec;
+  border-radius: 16px;
+  box-shadow:
+    0 8px 30px #0000002e,
+    0 1px 3px #0000001a;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.3;
   pointer-events: auto;
 }
 
-/* Sits between the message and the dismiss control, on the same baseline. */
-.act {
-  flex-shrink: 0;
-  align-self: center;
-  height: 24px;
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 500;
+.notice.success {
+  background: #e5f3ff;
+  border-color: #c9e6ff;
 }
 
-.act:hover {
-  background: var(--surface-hover);
-  border-color: var(--border-strong);
+.notice.warning {
+  background: #ffe7d9;
+  border-color: #ffd0b8;
 }
 
-/*
- * `16x20`, not 16 square: opencode's `[data-slot="toast-v2-icon"]` is 16 wide
- * and 20 tall, which is the text's line box, so the glyph centres against the
- * first line instead of being nudged down by a margin.
- */
+.notice.danger {
+  background: #ffd9d9;
+  border-color: #ffbdbd;
+}
+
+:root[data-theme="dark"] .notice {
+  background: #2e2e2e;
+  border-color: #3a3a3a;
+  box-shadow:
+    0 8px 30px #00000099,
+    0 1px 3px #00000066;
+}
+
+:root[data-theme="dark"] .notice.success {
+  background: #00284d;
+  border-color: #0a3f75;
+}
+
+:root[data-theme="dark"] .notice.warning {
+  background: #4a2206;
+  border-color: #6b3309;
+}
+
+:root[data-theme="dark"] .notice.danger {
+  background: #4d100e;
+  border-color: #711a16;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .notice {
+    background: #2e2e2e;
+    border-color: #3a3a3a;
+    box-shadow:
+      0 8px 30px #00000099,
+      0 1px 3px #00000066;
+  }
+
+  :root:not([data-theme="light"]) .notice.success {
+    background: #00284d;
+    border-color: #0a3f75;
+  }
+
+  :root:not([data-theme="light"]) .notice.warning {
+    background: #4a2206;
+    border-color: #6b3309;
+  }
+
+  :root:not([data-theme="light"]) .notice.danger {
+    background: #4d100e;
+    border-color: #711a16;
+  }
+}
+
+/* 14 square, a pixel down so it sits on the first line. */
 .mark {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 20px;
-  color: var(--success);
-}
-
-.toast.failed .mark {
-  color: var(--error);
+  flex: none;
+  margin-block-start: 1px;
 }
 
 .text {
-  flex: 1;
   min-width: 0;
-}
-
-/*
- * Both lines are 13/20 with the same tracking, and only the weight and the
- * colour separate them - which is what opencode's own rules say:
- *
- *   [data-slot="toast-v2-title"]       { 13px / 530 / 20px; -0.04px; text-base }
- *   [data-slot="toast-v2-description"] { 13px / 440 / 20px; -0.04px; text-muted }
- *
- * These were 13.5/1.45 and 12.5/1.55, two sizes and two leadings that met
- * nothing else in the app.
- */
-.title {
-  color: var(--text-strong);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 20px;
-  letter-spacing: -0.04px;
+  overflow-wrap: anywhere;
 }
 
 .body {
-  /* 4 between them, from `[data-slot="toast-v2-content"] { gap: 4px }`. */
-  margin-top: 4px;
-  color: var(--text-base);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 440;
-  line-height: 20px;
-  letter-spacing: -0.04px;
+  margin-inline-start: 6px;
+  color: var(--text-weak);
 }
 
+/* MiMo's links: blue, 8 after the title, underlined only under the pointer. */
+.link {
+  margin-inline-start: 8px;
+  padding: 0;
+  color: #2f6fed;
+  font: inherit;
+  line-height: inherit;
+  vertical-align: baseline;
+  background: none;
+  cursor: pointer;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+:root[data-theme="dark"] .link {
+  color: #5a9cff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .link {
+    color: #5a9cff;
+  }
+}
+
+/* The close mark is a glyph at half strength, fully drawn under the pointer. */
 .close {
-  display: grid;
-  flex-shrink: 0;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  color: var(--text-weaker);
-  border-radius: var(--radius-sm);
+  flex: none;
+  margin-inline-end: -4px;
+  padding: 0 4px;
+  color: inherit;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1.4;
+  background: none;
+  border-radius: 999px;
+  opacity: 0.5;
+  cursor: pointer;
 }
 
 .close:hover {
-  color: var(--text-strong);
   background: var(--surface-hover);
+  opacity: 1;
 }
 
-/*
- * Up from the edge it sits against, and back down the same way.
- *
- * Leaving is quicker than arriving: a toast on its way out is no longer being
- * read, and lingering makes the next one feel late.
- */
+/* Down from the top edge it sits against, and back up the same way. */
 .toast-enter-active {
   transition:
     opacity 0.15s ease-out,
@@ -197,7 +234,7 @@ import { t } from "../lib/i18n"
 .toast-enter-from,
 .toast-leave-to {
   opacity: 0;
-  transform: translateY(20px);
+  transform: translateY(-8px);
 }
 
 @media (prefers-reduced-motion: reduce) {

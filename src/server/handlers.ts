@@ -223,10 +223,28 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      * Nothing on disk moves - a session's transcript lives in this app's own
      * store, not in the project - so this is the one field and nothing else.
      */
+    /*
+     * Moved into a project, a conversation that had none stops being marked as
+     * having none: it is listed under that project from now on.
+     */
     case "session.move":
       return {
-        session: await runtime.sessions.update(request.sessionID, { directory: request.directory }),
+        session: await runtime.sessions.update(request.sessionID, { directory: request.directory, scratch: undefined }),
       } satisfies Handled<"session.move">
+
+    /*
+     * MiMo's "move out of project". MCode has no conversation without a folder,
+     * so it gets a fresh one of its own, made the way a task started with no
+     * project gets its folder. Checked first, so a missing session leaves no
+     * empty folder behind.
+     */
+    case "session.moveOut": {
+      await runtime.sessions.require(request.sessionID)
+      const directory = await scratchDirectory(new Date(), runtime.config.get().projectRoot)
+      return {
+        session: await runtime.sessions.update(request.sessionID, { directory, scratch: true }),
+      } satisfies Handled<"session.moveOut">
+    }
 
     /*
      * A second conversation that starts where this one was, rather than a blank

@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from "vue"
-import type { MenuItem } from "../lib/menu"
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue"
+import { filterMenu, type MenuItem } from "../lib/menu"
+import { besideRow } from "../lib/submenu"
 
 /**
  * The right-click menu, wherever one is wanted.
@@ -9,6 +10,10 @@ import type { MenuItem } from "../lib/menu"
  * things: staying on screen near an edge, closing on a click elsewhere or on
  * Escape, and sitting above every other layer. Those belong in one place; what
  * differs between them is only the list of actions.
+ *
+ * A row with children opens a second panel beside it, as MiMo's menus do: on
+ * hover, on a click, or on the arrow key pointing into it. Escape and the other
+ * arrow close that panel alone, and the menu stays.
  */
 const props = defineProps<{
   x: number
@@ -20,11 +25,28 @@ const props = defineProps<{
   above?: boolean
   /** `x` is the menu's right edge: for a control at the end of a row. */
   end?: boolean
+  /** MiMo's side column menus: 13px rows on a 14px corner inside 4px of padding. */
+  side?: boolean
+  /** The narrowest the panel may be, as each of MiMo's menus sets its own. */
+  minWidth?: number
 }>()
 const emit = defineEmits<{ pick: [key: string]; close: [] }>()
 
 const box = ref<HTMLElement>()
 const at = ref({ x: props.x, y: props.y })
+
+/* The child panel: which row opened it, where it sits, and what its search holds. */
+const sub = ref<{ key: string; left: number; top: number; toward: "left" | "right" }>()
+const subBox = ref<HTMLElement>()
+const query = ref("")
+const parent = computed(() => props.items.find((item) => item.key === sub.value?.key))
+const filtered = computed(() => filterMenu(parent.value?.children ?? [], query.value))
+
+/* MiMo's child panels are 184 wide unless the row says otherwise. */
+const CHILD_WIDTH = 184
+/* Long enough to cross a row on the way into the panel, short enough to feel immediate. */
+const CLOSE_DELAY = 220
+let closeTimer: ReturnType<typeof setTimeout> | undefined
 
 onMounted(async () => {
   // Measured rather than guessed: the width depends on the language.
@@ -50,51 +72,287 @@ onMounted(async () => {
   if (props.keyboard) box.value?.querySelector<HTMLButtonElement>(".item:not(:disabled)")?.focus()
 })
 
-function onKey(event: KeyboardEvent) {
+function place(row: HTMLElement, width: number, height: number) {
+  const rect = row.getBoundingClientRect()
+  const spot = besideRow(rect, width, height)
+  return { left: spot.left, top: spot.top, toward: spot.left >= rect.right - 1 ? "right" : "left" } as const
+}
+
+function cancelClose() {
+  if (closeTimer) clearTimeout(closeTimer)
+  closeTimer = undefined
+}
+
+/**
+ * Closes the child panel after a moment.
+ *
+ * `always` is for the pointer arriving on another row of this menu, which closes
+ * it even while its search has focus; merely leaving the panels does not, so a
+ * pointer that strays while someone types does not take the field away.
+ */
+function scheduleClose(always: boolean) {
+  cancelClose()
+  closeTimer = setTimeout(() => {
+    closeTimer = undefined
+    if (!always && subBox.value?.contains(document.activeElement)) return
+    closeSub(false)
+  }, CLOSE_DELAY)
+}
+
+function closeSub(refocus: boolean) {
+  const key = sub.value?.key
+  const hadFocus = Boolean(subBox.value?.contains(document.activeElement))
+  sub.value = undefined
+  query.value = ""
+  if (key && (refocus || hadFocus)) box.value?.querySelector<HTMLElement>(`[data-sub="${CSS.escape(key)}"]`)?.focus()
+}
+
+async function openSub(item: MenuItem, row: HTMLElement, focus: "first" | "search" | "none") {
+  cancelClose()
+  if (sub.value?.key !== item.key) {
+    query.value = ""
+    sub.value = { key: item.key, ...place(row, item.childWidth ?? CHILD_WIDTH, 120) }
+    await nextTick()
+    // Placed again once drawn, now that its real size is known.
+    const rect = subBox.value?.getBoundingClientRect()
+    if (rect && sub.value?.key === item.key) sub.value = { key: item.key, ...place(row, rect.width, rect.height) }
+  }
+  if (focus === "none") return
+  await nextTick()
+  const field = subBox.value?.querySelector<HTMLElement>(".sub-search input")
+  const first = subBox.value?.querySelector<HTMLElement>(".item:not(:disabled)")
+  ;(field ?? (focus === "first" ? first : undefined))?.focus()
+}
+
+function enterRow(item: MenuItem, event: MouseEvent) {
+  if (item.children && item.enabled !== false) {
+    void openSub(item, event.currentTarget as HTMLElement, item.search ? "search" : "none")
+    return
+  }
+  if (sub.value) scheduleClose(true)
+}
+
+function pressRow(item: MenuItem, event: MouseEvent) {
+  if (item.children) {
+    void openSub(item, event.currentTarget as HTMLElement, "first")
+    return
+  }
+  emit("pick", item.key)
+}
+
+function leaveMain(event: MouseEvent) {
+  if (!sub.value) return
+  if (subBox.value?.contains(event.relatedTarget as Node | null)) return
+  scheduleClose(false)
+}
+
+function leaveSub(event: MouseEvent) {
+  const next = event.relatedTarget as HTMLElement | null
+  if (next?.closest?.(`[data-sub]`)?.getAttribute("data-sub") === sub.value?.key) return
+  scheduleClose(false)
+}
+
+/** Keys typed into the search stay there: they neither move nor close the menu. */
+function searchKey(event: KeyboardEvent) {
   if (event.key === "Escape") {
+    event.preventDefault()
+    event.stopPropagation()
+    closeSub(true)
+    return
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault()
+    event.stopPropagation()
+    subBox.value?.querySelector<HTMLElement>(".item:not(:disabled)")?.focus()
+    return
+  }
+  if (event.key === "Enter") {
+    event.preventDefault()
+    event.stopPropagation()
+    const first = filtered.value.rows.find((item) => !item.sticky && item.enabled !== false)
+    if (first) emit("pick", first.key)
+    return
+  }
+  event.stopPropagation()
+}
+
+function onKey(event: KeyboardEvent) {
+  const inSub = Boolean(subBox.value?.contains(document.activeElement))
+  if (event.key === "Escape") {
+    // One level at a time: the child panel first, then the menu.
+    if (sub.value) {
+      event.preventDefault()
+      closeSub(true)
+      return
+    }
     emit("close")
+    return
+  }
+  if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+    const rtl = document.documentElement.dir === "rtl"
+    const inward = (event.key === "ArrowRight") !== rtl
+    const active = document.activeElement as HTMLElement | null
+    if (inward && !inSub && active?.dataset.sub) {
+      const item = props.items.find((entry) => entry.key === active.dataset.sub)
+      if (item) {
+        event.preventDefault()
+        void openSub(item, active, "first")
+      }
+      return
+    }
+    if (!inward && inSub) {
+      event.preventDefault()
+      closeSub(true)
+    }
     return
   }
   if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
 
-  const items = [...(box.value?.querySelectorAll<HTMLButtonElement>(".item:not(:disabled)") ?? [])]
+  const scope = inSub ? subBox.value : box.value
+  const items = [...(scope?.querySelectorAll<HTMLElement>(".item:not(:disabled)") ?? [])]
   if (!items.length) return
   event.preventDefault()
-  const at = items.indexOf(document.activeElement as HTMLButtonElement)
+  const current = items.indexOf(document.activeElement as HTMLElement)
   const step = event.key === "ArrowDown" ? 1 : -1
   // Wraps, which is what a menu does at either end.
-  items[(at + step + items.length) % items.length].focus()
+  items[(current + step + items.length) % items.length].focus()
 }
 
+/* A label ending in a full-width colon runs straight into its value; any other gets a space. */
+const joiner = (label: string) => (label.endsWith("：") ? "" : " ")
+
 onMounted(() => document.addEventListener("keydown", onKey))
-onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
+onBeforeUnmount(() => {
+  document.removeEventListener("keydown", onKey)
+  cancelClose()
+})
 </script>
 
 <template>
   <!-- Closes on any click, takes the next right-click, and leaves nothing behind. -->
   <div class="scrim" @mousedown="emit('close')" @contextmenu.prevent="emit('close')" @wheel="emit('close')" />
-  <div ref="box" class="menu" :style="{ left: `${at.x}px`, top: `${at.y}px` }">
+  <div
+    ref="box"
+    class="menu"
+    :class="{ side }"
+    role="menu"
+    :style="{ left: `${at.x}px`, top: `${at.y}px`, minWidth: minWidth ? `${minWidth}px` : undefined }"
+    @mouseleave="leaveMain"
+  >
     <template v-for="item in items" :key="item.key">
       <div v-if="item.divided" class="rule" />
       <div v-if="item.heading" class="heading">{{ item.label }}</div>
       <button
         v-else
         class="item"
-        :class="{ ticked: item.checked, danger: item.danger }"
+        :class="{
+          ticked: item.checked && !item.checkEnd,
+          danger: item.danger,
+          active: item.active,
+          'has-sub': Boolean(item.children),
+          open: sub?.key === item.key,
+        }"
+        role="menuitem"
         :disabled="item.enabled === false"
+        :data-key="item.key"
+        :data-sub="item.children ? item.key : undefined"
+        :aria-haspopup="item.children ? 'menu' : undefined"
+        :aria-expanded="item.children ? sub?.key === item.key : undefined"
         @mousedown.prevent
-        @click="emit('pick', item.key)"
+        @mouseenter="enterRow(item, $event)"
+        @click="pressRow(item, $event)"
       >
         <svg v-if="item.icon" class="glyph" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path :d="item.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
-        <span class="tick" aria-hidden="true">
+        <span v-if="!item.checkEnd" class="tick" aria-hidden="true">
           <svg v-if="item.checked" width="12" height="12" viewBox="0 0 20 20" fill="none">
             <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-linecap="square" />
           </svg>
         </span>
-        {{ item.label }}
+        <span class="label">{{ item.label }}<span v-if="item.value" class="value">{{ joiner(item.label) }}{{ item.value }}</span></span>
         <span v-if="item.hint" class="hint">{{ item.hint }}</span>
+        <svg v-if="item.children" class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M6 3.8 10.2 8 6 12.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <svg v-else-if="item.checkEnd" class="tick-end" :class="{ on: item.checked }" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </template>
+  </div>
+
+  <div
+    v-if="sub && parent"
+    ref="subBox"
+    class="menu sub"
+    :class="[{ side }, sub.toward]"
+    role="menu"
+    data-submenu
+    :style="{ left: `${sub.left}px`, top: `${sub.top}px`, minWidth: `${parent.childWidth ?? CHILD_WIDTH}px` }"
+    @mouseenter="cancelClose"
+    @mouseleave="leaveSub"
+  >
+    <div v-if="parent.search" class="sub-search">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <circle cx="7" cy="7" r="4.3" stroke="currentColor" stroke-width="1.2" />
+        <path d="M10.2 10.2 14 14" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+      </svg>
+      <input
+        v-model="query"
+        :class="{ filled: Boolean(query) }"
+        :placeholder="parent.search.placeholder"
+        :aria-label="parent.search.placeholder"
+        spellcheck="false"
+        autocomplete="off"
+        @mousedown.stop
+        @keydown="searchKey"
+      />
+    </div>
+    <template v-for="child in filtered.rows" :key="child.key">
+      <div v-if="child.divided && !query.trim()" class="rule" />
+      <button
+        class="item"
+        :class="{ ticked: child.checked && !child.checkEnd, danger: child.danger, active: child.active }"
+        role="menuitem"
+        :disabled="child.enabled === false"
+        :data-key="child.key"
+        @mousedown.prevent
+        @click="emit('pick', child.key)"
+      >
+        <svg v-if="child.icon" class="glyph" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path :d="child.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span v-if="!child.checkEnd" class="tick" aria-hidden="true">
+          <svg v-if="child.checked" width="12" height="12" viewBox="0 0 20 20" fill="none">
+            <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-linecap="square" />
+          </svg>
+        </span>
+        <span class="label">{{ child.label }}</span>
+        <span v-if="child.hint" class="hint">{{ child.hint }}</span>
+        <svg v-if="child.checkEnd" class="tick-end" :class="{ on: child.checked }" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+          <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </template>
+    <div v-if="parent.search && query.trim() && !filtered.matched" class="sub-empty" data-submenu-empty>{{ parent.search.empty }}</div>
+    <template v-if="parent.footer?.length">
+      <div class="rule" />
+      <button
+        v-for="foot in parent.footer"
+        :key="foot.key"
+        class="item"
+        :class="{ danger: foot.danger }"
+        role="menuitem"
+        :disabled="foot.enabled === false"
+        :data-key="foot.key"
+        @mousedown.prevent
+        @click="emit('pick', foot.key)"
+      >
+        <svg v-if="foot.icon" class="glyph" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path :d="foot.icon" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span class="label">{{ foot.label }}</span>
       </button>
     </template>
   </div>
@@ -112,10 +370,11 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 }
 
 .menu {
+  --pad: 2px;
   position: fixed;
   z-index: 321;
   min-width: 160px;
-  padding: 2px;
+  padding: var(--pad);
   /*
    * No border at all: the floating shadow ends in a half-pixel light ring, and
    * that ring is the edge. Drawing one on top of it framed the menu twice.
@@ -130,6 +389,29 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
    * 6px radius, 2px padding, and 28-tall items on `0 12px` at a 4px radius.
    */
   box-shadow: var(--shadow-lg);
+}
+
+/* A child panel scrolls on its own when a long list of projects outgrows the window. */
+.menu.sub {
+  z-index: 322;
+  max-height: min(420px, calc(100vh - 16px));
+  overflow-y: auto;
+}
+
+/* The gap between a row and its panel still counts as the panel, so the pointer can cross it. */
+.menu.sub::before {
+  position: absolute;
+  inset-block: 0;
+  width: 8px;
+  content: "";
+}
+
+.menu.sub.right::before {
+  right: 100%;
+}
+
+.menu.sub.left::before {
+  left: 100%;
 }
 
 /* A group's name, the way opencode's DropdownMenu.GroupLabel reads. */
@@ -177,8 +459,21 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   letter-spacing: -0.04px;
 }
 
-.item:hover:not(:disabled) {
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item:hover:not(:disabled),
+.item.open {
   background: var(--surface-hover);
+}
+
+/* The current choice, like the project a conversation already sits in. */
+.item.active {
+  background: var(--surface-selected);
 }
 
 .item:disabled {
@@ -194,12 +489,11 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 /* Drawn out past the panel's padding, so it divides the whole menu. */
 .rule {
   height: 1px;
-  width: calc(100% + 4px);
-  margin: 2px -2px;
+  width: calc(100% + 2 * var(--pad));
+  margin: 2px calc(-1 * var(--pad));
   background: var(--border-muted);
 }
 
-/* A glyph against every row, as MiMo draws its conversation menu. */
 /* A shortcut beside its row, pushed to the far edge so a column of them lines up. */
 .hint {
   margin-inline-start: auto;
@@ -210,6 +504,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
   white-space: nowrap;
 }
 
+/* A glyph against every row, as MiMo draws its conversation menu. */
 .glyph {
   flex-shrink: 0;
   color: var(--text-base);
@@ -217,6 +512,37 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 
 .item:hover:not(:disabled) .glyph {
   color: var(--text-strong);
+}
+
+/* MiMo's submenu mark: 14px at half strength, at the far end, pointing into the panel. */
+.chev {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  padding-inline-start: 0;
+  opacity: 0.5;
+}
+
+.chev:dir(rtl) {
+  transform: scaleX(-1);
+}
+
+.item.has-sub .label {
+  padding-inline-end: 12px;
+}
+
+/* A choice's tick at the far end, drawn only on the one in force. */
+.tick-end {
+  flex-shrink: 0;
+  margin-inline-start: auto;
+  opacity: 0;
+}
+
+.tick-end.on {
+  opacity: 1;
+}
+
+.item:has(.tick-end) .label {
+  padding-inline-end: 16px;
 }
 
 /* The row that destroys something says so before it is pressed. */
@@ -228,5 +554,84 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
 
 .item.danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+
+/*
+ * MiMo's search over a child panel: a 15px magnifier 7 before a 13px field,
+ * held at the top on the menu's own glass as the list scrolls under it.
+ */
+.sub-search {
+  position: sticky;
+  top: calc(-1 * var(--pad));
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: calc(-1 * var(--pad)) calc(-1 * var(--pad)) 4px;
+  padding: 11px 15px 6px;
+  color: var(--text-weak);
+  background: var(--surface-menu);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+
+.sub-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  color: var(--text-strong);
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.sub-search input.filled {
+  font-weight: 500;
+}
+
+.sub-search input::placeholder {
+  color: var(--text-weak);
+  font-weight: 400;
+}
+
+/* Nothing the search matched: a plain line, dimmer and smaller than a row. */
+.sub-empty {
+  padding: 5px 7px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+/*
+ * MiMo's side column menus, measured from its stylesheet: 4px of padding on a
+ * 12px corner, 13px rows 5 by 12 on a 14px corner with 9 between glyph and
+ * label, 16px glyphs, and rules 3 by 4 in from the edges.
+ */
+.menu.side {
+  --pad: 4px;
+  border-radius: 12px;
+}
+
+.menu.side .item {
+  gap: 9px;
+  height: auto;
+  min-height: 0;
+  padding: 5px 12px;
+  border-radius: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+
+.menu.side .glyph {
+  width: 16px;
+  height: 16px;
+}
+
+.menu.side .rule {
+  width: auto;
+  margin: 3px 4px;
 }
 </style>

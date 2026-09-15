@@ -36,6 +36,8 @@ import RenameDialog from "./components/RenameDialog.vue"
 import TerminalDrawer from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
+import NewProjectDialog from "./components/NewProjectDialog.vue"
+import type { MenuItem } from "./lib/menu"
 import ConnectDialog from "./components/ConnectDialog.vue"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import EditMenu from "./components/EditMenu.vue"
@@ -60,7 +62,7 @@ import { editedFiles } from "./lib/edited-files"
 import { notify, notifyFailure } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
-import { projectName } from "./lib/project"
+import { folderName, projectName } from "./lib/project"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import FindBar from "./components/FindBar.vue"
@@ -686,10 +688,15 @@ function toggleSelected(sessionID: string) {
  * rules that already hold - leaving an archived session, the confirmation
  * before a delete - hold here too.
  */
-async function runBatch(action: "archive" | "move" | "delete" | "cancel") {
+async function runBatch(action: "archive" | "move" | "delete" | "cancel" | "all" | "none", ids: string[] = []) {
   const chosen = selecting.value ?? []
   if (action === "cancel") {
     selecting.value = undefined
+    return
+  }
+  // MiMo's select all: every conversation the column lists; its other half ticks none.
+  if (action === "all" || action === "none") {
+    selecting.value = action === "all" ? [...ids] : []
     return
   }
   if (!chosen.length) return
@@ -1063,7 +1070,8 @@ function copyWorkingDirectory() {
   const directory = app.current?.directory
   if (!directory) return
   window.mcode.setClipboardText(directory)
-  notify(t("menu.copiedDirectory"), directory)
+  // MiMo's notice is the title alone; the path is already on the clipboard.
+  notify(t("menu.copiedDirectory"))
 }
 
 /*
@@ -1237,7 +1245,7 @@ const deletingSession = ref<string>()
 const appMenu = ref<{ x: number; y: number }>()
 
 /** Where the session's own menu was opened from, if it is open. */
-const sessionMenu = ref<{ x: number; y: number; sessionID?: string; header?: boolean }>()
+const sessionMenu = ref<{ x: number; y: number; sessionID?: string; header?: boolean; nested?: boolean }>()
 
 /* Which conversation the open menu is about: the row's, else the open one. */
 const menuSession = computed(() =>
@@ -1257,6 +1265,20 @@ const projectMenu = ref<{ x: number; y: number; directory: string }>()
  */
 const selecting = ref<string[]>()
 const deletingMany = ref<string[]>()
+
+/* Project selection mode, MiMo's project batch management: the projects ticked, or absent. */
+const selectingProjects = ref<string[]>()
+/* Projects waiting on the removal question: one from its menu, or the ticked set. */
+const removingProjects = ref<{ directories: string[]; batch: boolean }>()
+/* The new-project dialog, and the conversation to move into what it makes, if any. */
+const namingProject = ref<{ sessionID?: string }>()
+
+/* The title the delete question names, or MiMo's "untitled" for one never given a title. */
+const deletingTitle = computed(() => {
+  const session = app.sessions.find((entry) => entry.id === deletingSession.value)
+  const title = session && session.title !== "New session" ? session.title.trim() : ""
+  return title || t("confirm.untitledChat")
+})
 
 /**
  * The session menu's contents: what each entry does comes from the palette's
@@ -1278,7 +1300,15 @@ const deletingMany = ref<string[]>()
  * rather than "this session", there are no trailing dots, and every row
  * carries a glyph. The four groups are its own.
  */
-const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean; danger?: boolean }[] = [
+const FOLDER_ICON = "M2 4.4c0-.6.5-1 1-1h2.6l1.2 1.5h6.2c.5 0 1 .4 1 1v6.2c0 .6-.5 1-1 1H3c-.5 0-1-.4-1-1z"
+const COPY_ICON = "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2"
+
+/*
+ * MiMo's order since this round: rename, pin, read or unread, continue; move
+ * (a submenu), archive, batch; show in the file manager (not on a row under
+ * its project), copy the directory, export; delete.
+ */
+const SESSION_MENU: MenuRow[] = [
   { id: "session.rename", label: "common.rename", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" },
   { id: "row.pin", label: "menu.pin", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" },
   {
@@ -1303,12 +1333,8 @@ const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean
     icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2",
   },
   { id: "row.batch", label: "menu.batch", icon: "M2.4 4.4h1.6M6.6 4.4h7M2.4 8h1.6M6.6 8h7M2.4 11.6h1.6M6.6 11.6h7" },
-  {
-    id: "row.copyDirectory",
-    label: "menu.copyDirectory",
-    icon: "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2",
-    divided: true,
-  },
+  { id: "row.reveal", label: "menu.revealIn", icon: FOLDER_ICON, divided: true },
+  { id: "row.copyDirectory", label: "menu.copyDirectory", icon: COPY_ICON },
   { id: "session.export", label: "menu.export", icon: "M8 2.6v7.2M5.2 7.2 8 10l2.8-2.8M2.8 12.2h10.4" },
   {
     id: "session.delete",
@@ -1320,20 +1346,43 @@ const SESSION_MENU: { id: string; label: string; icon: string; divided?: boolean
 ]
 
 /* A row of either conversation menu. */
-type MenuRow = { id: string; label: string; icon: string; hint?: string; divided?: boolean; danger?: boolean }
+type MenuRow = {
+  id: string
+  label: string
+  icon: string
+  hint?: string
+  divided?: boolean
+  danger?: boolean
+  children?: MenuRow[]
+}
 
 /*
  * The conversation header's own menu, which MiMo keeps shorter than a row's:
- * pin, rename, archive and the side chat with their shortcuts beside them, then
- * copy and branch, then delete. Copy is the whole conversation as Markdown;
- * branch carries it all into a new conversation.
+ * pin, rename and archive with their shortcuts beside them, then the side chat,
+ * 复制 › (the working directory, the session ID, the session link, or the whole
+ * conversation as Markdown) and branch, then delete. Branch carries it all into
+ * a new conversation.
  */
 const HEADER_MENU: MenuRow[] = [
   { id: "row.pin", label: "menu.pin", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4", hint: "Ctrl+Alt+P" },
   { id: "session.rename", label: "menu.renameConversation", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z", hint: "Ctrl+Alt+R" },
   { id: "session.archive", label: "menu.archive", icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2", hint: "Ctrl+Alt+A" },
-  { id: "session.side", label: "menu.openSideChat", icon: "M2.4 3h11.2v10H2.4zM9.6 3v10", hint: "Ctrl+Alt+S" },
-  { id: "row.copyMarkdown", label: "menu.copyConversation", icon: "M5.6 5.6h7.2v7.2H5.6zM3.2 10.4V3.2h7.2", divided: true },
+  { id: "session.side", label: "menu.openSideChat", icon: "M2.4 3h11.2v10H2.4zM9.6 3v10", hint: "Ctrl+Alt+S", divided: true },
+  {
+    id: "row.copy",
+    label: "menu.copy",
+    icon: COPY_ICON,
+    children: [
+      { id: "row.copyDirectory", label: "menu.copyDirectory", icon: FOLDER_ICON },
+      { id: "row.copyID", label: "menu.copySessionID", icon: "M8 2.4a5.6 5.6 0 1 0 0 11.2A5.6 5.6 0 0 0 8 2.4zM8 5v3.2l2.2 1.4" },
+      {
+        id: "row.copyLink",
+        label: "menu.copySessionLink",
+        icon: "M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 0 0-3.7-3.7l-.9.9M9.2 6.8a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 0 0 3.7 3.7l.9-.9",
+      },
+      { id: "row.copyMarkdown", label: "menu.copyMarkdown", icon: "M2.2 4h11.6v8H2.2zM4.4 10V6l1.6 1.8L7.6 6v4M10.8 6v4M9.4 8.6l1.4 1.4 1.4-1.4" },
+    ],
+  },
   { id: "row.continue", label: "menu.branch", icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z" },
   { id: "session.delete", label: "menu.delete", icon: "M3 4.4h10M6.4 4.4V2.8h3.2v1.6M4.4 4.4l.7 8.4h5.8l.7-8.4M6.8 6.8v3.8M9.2 6.8v3.8", divided: true, danger: true },
 ]
@@ -1356,32 +1405,106 @@ const hintFor = (entry: MenuRow) =>
  * cannot take an argument here - the palette and the keyboard reach the same
  * table - so these live beside it and the menu dispatches both.
  */
-const ROW_ACTIONS: Record<string, (sessionID: string) => void | Promise<void>> = {
+/* Whether a row is showing its unread mark: a turn that finished, or failed, while away. */
+const showsUnread = (sessionID: string) => app.unseen.has(sessionID) || app.failed(sessionID)
+
+/* MiMo names the platform's file manager in the row: File Explorer, Finder, or a file manager. */
+const revealLabel = () =>
+  t("menu.revealIn", {
+    manager: t(
+      app.platform === "win32" ? "menu.fileManagerWin" : app.platform === "darwin" ? "menu.fileManagerMac" : "menu.fileManagerOther",
+    ),
+  })
+
+const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void | Promise<void>> = {
   "row.pin": (sessionID) => app.togglePinned(sessionID),
-  "row.unread": (sessionID) => app.markUnread(sessionID),
+  /* MiMo's toggle: a row showing its unread mark is marked read, any other unread. */
+  "row.unread": (sessionID) => {
+    if (showsUnread(sessionID)) app.markRead(sessionID)
+    else app.markUnread(sessionID)
+  },
   "row.continue": async (sessionID) => {
     if (app.currentID !== sessionID) await app.open(sessionID)
     const last = app.messages[app.messages.length - 1]
     if (last) await app.forkFrom(last.id)
   },
   "row.batch": (sessionID) => {
+    selectingProjects.value = undefined
     selecting.value = [sessionID]
   },
-  "row.move": (sessionID) => {
-    movingSession.value = sessionID
-    openPalette("projects")
+  /* Out of its project, into a folder of its own; the side column follows the session update. */
+  "row.moveOut": async (sessionID) => {
+    try {
+      await app.client?.request({ type: "session.moveOut", sessionID })
+    } catch (failure) {
+      notifyFailure(t("menu.moveOut"), reasonOf(failure))
+    }
+  },
+  "row.newProjectMove": (sessionID) => {
+    namingProject.value = { sessionID }
   },
   "row.copyMarkdown": async (sessionID) => {
     if (app.currentID !== sessionID) await app.open(sessionID)
     window.mcode.setClipboardText(transcriptMarkdown())
-    notify(t("menu.copiedConversation"))
+    notify(t("menu.copiedMarkdown"))
   },
-  "row.copyDirectory": (sessionID) => {
+  /* MiMo's copy notices are the title alone; what was copied is already on the clipboard. */
+  "row.copyDirectory": (sessionID, header) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target?.directory) {
+      notifyFailure(t(header ? "menu.noCwdLinked" : "menu.noWorkDir"))
+      return
+    }
+    window.mcode.setClipboardText(target.directory)
+    notify(t("menu.copiedDirectory"))
+  },
+  "row.copyID": (sessionID) => {
+    window.mcode.setClipboardText(sessionID)
+    notify(t("menu.copiedSessionID"))
+  },
+  "row.copyLink": (sessionID) => {
     const target = app.sessions.find((entry) => entry.id === sessionID)
     if (!target) return
-    window.mcode.setClipboardText(target.directory)
-    notify(t("menu.copiedDirectory"), target.directory)
+    window.mcode.setClipboardText(sessionLink(sessionID, target.directory))
+    notify(t("menu.copiedLink"))
   },
+  "row.reveal": async (sessionID) => {
+    const target = app.sessions.find((entry) => entry.id === sessionID)
+    if (!target?.directory) {
+      notifyFailure(t("menu.noWorkDir"))
+      return
+    }
+    await window.mcode.revealFile(target.directory, "")
+    notify(revealLabel())
+  },
+}
+
+/*
+ * What 移动至项目 › lists: the side column's projects, newest first, the one the
+ * conversation is in lit, 移出项目 above them while it is in one, and 新建项目…
+ * kept below whatever the search leaves.
+ */
+function moveMenu(target?: (typeof app.sessions)[number]): Pick<MenuItem, "children" | "search" | "footer" | "childWidth"> {
+  const closed = new Set(app.config?.closedProjects ?? [])
+  const recent = new Map<string, number>()
+  for (const session of app.sessions) {
+    if (session.archived || session.scratch || closed.has(session.directory)) continue
+    recent.set(session.directory, Math.max(recent.get(session.directory) ?? 0, session.updated))
+  }
+  const current = target && !target.scratch ? target.directory : undefined
+  const rows: MenuItem[] = [...recent.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([directory]) => ({
+      key: `move:${directory}`,
+      label: projectName(directory, app.config?.projectNames),
+      active: directory === current,
+    }))
+  return {
+    childWidth: 200,
+    search: { placeholder: t("menu.moveSearch"), empty: t("menu.moveNoMatch") },
+    children: current ? [{ key: "row.moveOut", label: t("menu.moveOut"), sticky: true }, ...rows] : rows,
+    footer: [{ key: "row.newProjectMove", label: t("menu.newProjectMove"), icon: `${FOLDER_ICON}M8 7.2v3.6M6.2 9h3.6` }],
+  }
 }
 
 /*
@@ -1391,49 +1514,54 @@ const ROW_ACTIONS: Record<string, (sessionID: string) => void | Promise<void>> =
  * session's menu lost Export entirely and came up two rows shorter than the
  * same menu a moment later.
  */
-const sessionMenuItems = computed(() =>
-  (sessionMenu.value?.header ? HEADER_MENU : (SESSION_MENU as MenuRow[])).map((entry) => {
-    const target = menuSession.value
-    if (ROW_ACTIONS[entry.id]) {
-      const pinned = target ? app.isPinned(target.id) : false
-      const label = entry.id === "row.pin" ? t(pinned ? "menu.unpin" : "menu.pin") : t(entry.label)
-      return {
-        key: entry.id,
-        label,
-        enabled: Boolean(target),
-        divided: Boolean(entry.divided),
-        icon: entry.icon,
-        danger: Boolean(entry.danger),
-        hint: hintFor(entry),
-      }
-    }
-    const command = bindableCommands.value.find((item) => item.id === entry.id)
-    if (!command) return undefined
-    const short = t(entry.label)
-    return {
-      key: entry.id,
-      // A key with no string of its own falls back to the command's sentence
-      // rather than showing the key, which is what `t` returns when it misses.
-      label: short === entry.label ? command.title : short,
-      enabled: command.enabled && Boolean(target),
-      divided: Boolean(entry.divided),
-      icon: entry.icon,
-      danger: Boolean(entry.danger),
-      hint: hintFor(entry),
-    }
-  }).filter(
-    (item): item is {
-      key: string
-      label: string
-      enabled: boolean
-      divided: boolean
-      icon: string
-      danger: boolean
-      hint: string | undefined
-    } =>
-      Boolean(item),
-  ),
-)
+function menuRow(entry: MenuRow): MenuItem | undefined {
+  const target = menuSession.value
+  const base = {
+    key: entry.id,
+    divided: Boolean(entry.divided),
+    icon: entry.icon,
+    danger: Boolean(entry.danger),
+    hint: hintFor(entry) || undefined,
+  }
+  if (entry.children) {
+    const children = entry.children.map(menuRow).filter((item): item is MenuItem => Boolean(item))
+    return { ...base, label: t(entry.label), enabled: Boolean(target), children }
+  }
+  if (entry.id === "row.move") return { ...base, label: t(entry.label), enabled: Boolean(target), ...moveMenu(target) }
+  if (ROW_ACTIONS[entry.id]) {
+    const label =
+      entry.id === "row.pin"
+        ? t(target && app.isPinned(target.id) ? "menu.unpin" : "menu.pin")
+        : entry.id === "row.unread"
+          ? t(target && showsUnread(target.id) ? "menu.markRead" : "menu.markUnread")
+          : entry.id === "row.reveal"
+            ? revealLabel()
+            : t(entry.label)
+    return { ...base, label, enabled: Boolean(target) }
+  }
+  const command = bindableCommands.value.find((item) => item.id === entry.id)
+  if (!command) return undefined
+  const short = t(entry.label)
+  return {
+    ...base,
+    // A key with no string of its own falls back to the command's sentence
+    // rather than showing the key, which is what `t` returns when it misses.
+    label: short === entry.label ? command.title : short,
+    enabled: command.enabled && Boolean(target),
+  }
+}
+
+const sessionMenuItems = computed(() => {
+  const header = Boolean(sessionMenu.value?.header)
+  let rows = header ? HEADER_MENU : SESSION_MENU
+  // A row listed under its project has no "show in" row, so copying the directory takes its rule.
+  if (!header && sessionMenu.value?.nested) {
+    rows = rows
+      .filter((entry) => entry.id !== "row.reveal")
+      .map((entry) => (entry.id === "row.copyDirectory" ? { ...entry, divided: true } : entry))
+  }
+  return rows.map(menuRow).filter((item): item is MenuItem => Boolean(item))
+})
 
 /*
  * MiMo's project menu, row for row: rename, pin, archive its conversations,
@@ -1483,15 +1611,17 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
   archive: async (directory) => {
     for (const session of projectSessions(directory)) await app.archive(session.id, true)
   },
+  /* MiMo's project batch management chooses projects, starting with this one. */
   batch: (directory) => {
-    selecting.value = projectSessions(directory).map((session) => session.id)
+    selecting.value = undefined
+    selectingProjects.value = [directory]
   },
   reveal: (directory) => {
     void window.mcode.revealFile(directory, "")
   },
   copyDirectory: (directory) => {
     window.mcode.setClipboardText(directory)
-    notify(t("menu.copiedDirectory"), directory)
+    notify(t("menu.copiedDirectory"))
   },
   /*
    * The folder was moved or renamed on disk: every conversation that worked in
@@ -1513,21 +1643,28 @@ const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void
       closedProjects: swap(config.closedProjects),
     })
   },
-  remove: async (directory) => {
-    const closed = app.config?.closedProjects ?? []
-    if (!closed.includes(directory)) await app.patchConfig({ closedProjects: [...closed, directory] })
+  /* Asked first, as MiMo asks: the project leaves the list, its conversations stay. */
+  remove: (directory) => {
+    removingProjects.value = { directories: [directory], batch: false }
   },
 }
 
-const projectMenuItems = computed(() => {
+/* Takes projects off the side column; opening the folder again brings each back. */
+async function closeProjects(directories: string[]) {
+  const closed = app.config?.closedProjects ?? []
+  const next = [...closed, ...directories.filter((directory) => !closed.includes(directory))]
+  if (next.length !== closed.length) await app.patchConfig({ closedProjects: next })
+}
+
+const projectMenuItems = computed<MenuItem[]>(() => {
   const directory = projectMenu.value?.directory
   const pinned = directory ? (app.config?.pinnedProjects ?? []).includes(directory) : false
   const live = directory ? projectSessions(directory).length : 0
-  return PROJECT_MENU.map((entry) => ({
+  return PROJECT_MENU.filter((entry) => !(entry.id === "batch" && pinned)).map((entry) => ({
     key: entry.id,
-    label: t(entry.id === "pin" && pinned ? "menu.unpinProject" : entry.label),
-    // Archiving and batch management need a conversation to act on.
-    enabled: Boolean(directory) && ((entry.id !== "archive" && entry.id !== "batch") || live > 0),
+    label: entry.id === "reveal" ? revealLabel() : t(entry.id === "pin" && pinned ? "side.unpinProject" : entry.label),
+    // Archiving needs a conversation to act on. Batch management chooses projects, and a pinned one has no such row.
+    enabled: Boolean(directory) && (entry.id !== "archive" || live > 0),
     divided: Boolean(entry.divided),
     icon: entry.icon,
     danger: Boolean(entry.danger),
@@ -1590,11 +1727,18 @@ function runAppMenu(key: string) {
  */
 async function runSessionMenu(key: string) {
   const target = menuSession.value?.id
+  const header = Boolean(sessionMenu.value?.header)
   sessionMenu.value = undefined
   if (!target) return
+  // A project chosen in the move submenu.
+  if (key.startsWith("move:")) {
+    const directory = key.slice("move:".length)
+    if (app.sessions.find((entry) => entry.id === target)?.directory !== directory) await app.move(target, directory)
+    return
+  }
   const own = ROW_ACTIONS[key]
   if (own) {
-    await own(target)
+    await own(target, header)
     return
   }
   if (app.currentID !== target) {
@@ -1617,6 +1761,77 @@ async function confirmDeleteSession() {
   const target = deletingSession.value
   deletingSession.value = undefined
   if (target) await app.remove(target)
+}
+
+/* A project ticked or unticked in project selection mode. */
+function toggleProjectSelected(directory: string) {
+  const current = selectingProjects.value ?? []
+  selectingProjects.value = current.includes(directory)
+    ? current.filter((entry) => entry !== directory)
+    : [...current, directory]
+}
+
+/* What MiMo's project selection bar asks for. */
+async function runProjectBatch(action: "archive" | "remove" | "exit" | "all" | "none", directories: string[] = []) {
+  if (action === "exit") {
+    selectingProjects.value = undefined
+    return
+  }
+  if (action === "all" || action === "none") {
+    selectingProjects.value = action === "all" ? [...directories] : []
+    return
+  }
+  const chosen = selectingProjects.value ?? []
+  if (!chosen.length) return
+  if (action === "archive") {
+    for (const directory of chosen) {
+      for (const session of projectSessions(directory)) await app.archive(session.id, true)
+    }
+    selectingProjects.value = undefined
+    return
+  }
+  removingProjects.value = { directories: [...chosen], batch: true }
+}
+
+async function confirmRemoveProjects() {
+  const removing = removingProjects.value
+  removingProjects.value = undefined
+  if (!removing) return
+  await closeProjects(removing.directories)
+  if (removing.batch) selectingProjects.value = undefined
+}
+
+/*
+ * The new-project dialog's answer, from the Projects "+" or from 新建项目… in the
+ * move submenu. With a source folder, that folder under the name given;
+ * without, a new empty folder. A conversation waiting on it moves in and opens;
+ * otherwise the project is added and opened, as a dropped folder is.
+ */
+async function createNamedProject(title: string, source?: string) {
+  const moving = namingProject.value?.sessionID
+  namingProject.value = undefined
+  let directory = source
+  if (!directory) {
+    try {
+      directory = (await app.client?.request({ type: "project.createBlank", name: title }))?.directory
+    } catch (failure) {
+      notifyFailure(t("menu.createFailed", { error: reasonOf(failure) }))
+      return
+    }
+  }
+  if (!directory) return
+  if (source && title !== folderName(source)) {
+    await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
+  }
+  if (moving) {
+    const closed = app.config?.closedProjects ?? []
+    if (closed.includes(directory)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
+    await app.move(moving, directory)
+    if (app.currentID !== moving) await app.open(moving)
+    view.value = "session"
+    return
+  }
+  await addDroppedProjects([directory])
 }
 
 /**
@@ -3620,11 +3835,16 @@ onBeforeUnmount(() => {
         @archive-all="archiveAll"
         @newTask="goHome"
         @artifacts="goArtifacts"
-        @menu="(id, x, y) => (sessionMenu = { x, y, sessionID: id })"
+        @menu="(id, x, y, nested) => (sessionMenu = { x, y, sessionID: id, nested })"
         @projectMenu="(directory, x, y) => (projectMenu = { x, y, directory })"
         :selecting="selecting"
+        :selecting-projects="selectingProjects"
+        :menu-directory="projectMenu?.directory"
         @select="toggleSelected"
         @batch="runBatch"
+        @projectSelect="toggleProjectSelected"
+        @projectBatch="runProjectBatch"
+        @newBlank="namingProject = {}"
         @search="searchOpen = true"
         @back="back"
         @forward="forward"
@@ -3925,6 +4145,7 @@ onBeforeUnmount(() => {
     :title="t('update.readyTitle')"
     :body="t('update.readyBody', { version: downloadedUpdate })"
     :confirm-label="t('update.installRestart')"
+    :danger="false"
     @confirm="installUpdate"
     @close="updatePrompt = false"
   />
@@ -3938,26 +4159,49 @@ onBeforeUnmount(() => {
     @close="deletingWorkspace = undefined"
   />
 
-  <!--
-    Several conversations at once, so the button says "Delete" rather than
-    "Delete this session" - the question above it is about a count.
-  -->
+  <!-- MiMo's wording for several at once: the count in the title and in the question. -->
   <ConfirmDialog
     v-if="deletingMany?.length"
-    :title="t('confirm.deleteSessions')"
-    :body="t('confirm.deleteSessionsBody', { n: String(deletingMany.length) })"
+    :title="t('batch.deleteN', { count: deletingMany.length })"
+    :body="t('batch.deleteManyBody', { count: deletingMany.length })"
     :confirm-label="t('common.delete')"
     @confirm="confirmDeleteMany"
     @close="deletingMany = undefined"
   />
 
+  <!-- And for one, the conversation's own title in the question. -->
   <ConfirmDialog
     v-if="deletingSession"
-    :title="t('confirm.deleteSession')"
-    :body="t('confirm.deleteSessionBody')"
-    :confirm-label="t('cmd.delete')"
+    :title="t('confirm.deleteChatTitle')"
+    :body="t('confirm.deleteChatBody', { title: deletingTitle })"
+    :confirm-label="t('common.delete')"
     @confirm="confirmDeleteSession"
     @close="deletingSession = undefined"
+  />
+
+  <!-- Removing a project, or the ticked set, only takes it off the list. -->
+  <ConfirmDialog
+    v-if="removingProjects"
+    :title="
+      removingProjects.batch
+        ? t('batch.projectsRemoveTitle', { count: removingProjects.directories.length })
+        : t('side.removeProjectTitle')
+    "
+    :body="
+      removingProjects.batch
+        ? t('batch.projectsRemoveBody', { count: removingProjects.directories.length })
+        : t('side.removeProjectBody', { name: projectName(removingProjects.directories[0] ?? '', app.config?.projectNames) })
+    "
+    :confirm-label="t('side.removeProjectOk')"
+    @confirm="confirmRemoveProjects"
+    @close="removingProjects = undefined"
+  />
+
+  <NewProjectDialog
+    v-if="namingProject"
+    :value="t('home.blankDefault')"
+    @close="namingProject = undefined"
+    @submit="createNamedProject"
   />
 
   <AppMenu
@@ -3969,11 +4213,14 @@ onBeforeUnmount(() => {
     @close="appMenu = undefined"
   />
 
+  <!-- MiMo's side column menus: the conversation row's at 164, the project's at 150. -->
   <ContextMenu
     v-if="sessionMenu"
     :x="sessionMenu.x"
     :y="sessionMenu.y"
     :items="sessionMenuItems"
+    :side="!sessionMenu.header"
+    :min-width="sessionMenu.header ? undefined : 164"
     @pick="runSessionMenu"
     @close="sessionMenu = undefined"
   />
@@ -3983,6 +4230,8 @@ onBeforeUnmount(() => {
     :x="projectMenu.x"
     :y="projectMenu.y"
     :items="projectMenuItems"
+    side
+    :min-width="150"
     @pick="runProjectMenu"
     @close="projectMenu = undefined"
   />
