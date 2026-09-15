@@ -3268,7 +3268,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
             <div v-if="!shortcutRows.length" class="keys-empty" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
           </div>
-          </div>
 
           <div class="keys-foot">
             <button class="ctl-btn" data-reset-all-shortcuts @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
