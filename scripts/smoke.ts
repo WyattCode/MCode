@@ -96,6 +96,7 @@ import {
 import type { Message } from "../src/shared/protocol"
 import { DELAY as TIP_DELAY, EDGE as TIP_EDGE, GAP as TIP_GAP, WARM as TIP_WARM, fit as fitTip, openDelay, tipText } from "../src/renderer/src/lib/tip"
 import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
+import { imagePreview, imagePreviewFileTools, imagePreviewKey, openImagePreview } from "../src/renderer/src/lib/image-preview"
 
 let passed = 0
 let failed = 0
@@ -3845,6 +3846,23 @@ async function main() {
   check("with room on neither side, the side overflowing less wins", cramped.side === "top", cramped)
   const limited = fitTip(tipBox(-50, 400, 20, 20), tipSelf, "top", tipView)
   check("the shift never detaches the tip from its control", limited.left === -30, limited)
+
+  // ---------------------------------------------------------------- image preview
+  section("Image preview (MiMo's keys and file tools)")
+  check("C and F do nothing for a picture without a file", imagePreviewKey("c", false) === undefined && imagePreviewKey("F", false) === undefined)
+  check("C copies and F reveals a picture with a file", imagePreviewKey("c", true) === "copy" && imagePreviewKey("C", true) === "copy" && imagePreviewKey("f", true) === "reveal" && imagePreviewKey("F", true) === "reveal")
+  check(
+    "the older keys keep their actions",
+    imagePreviewKey("Escape", false) === "close" && imagePreviewKey("=", false) === "zoomIn" && imagePreviewKey("_", false) === "zoomOut" &&
+      imagePreviewKey("0", false) === "reset" && imagePreviewKey("R", false) === "rotate" && imagePreviewKey("d", false) === "download" &&
+      imagePreviewKey("ArrowLeft", false) === "previous" && imagePreviewKey("ArrowRight", false) === "next" && imagePreviewKey("x", true) === undefined,
+  )
+  check("copy and reveal follow download only with a path", imagePreviewFileTools(true).join() === "download,copy,reveal" && imagePreviewFileTools(false).join() === "download")
+  openImagePreview("data:image/png;base64,AA==", { name: "a.png", path: "/tmp/a.png" })
+  check("the path travels with the opened picture", imagePreview.value?.path === "/tmp/a.png" && imagePreview.value?.name === "a.png")
+  openImagePreview("data:image/png;base64,AA==", { name: "b.png" })
+  check("a picture opened without a path has none", imagePreview.value?.path === undefined)
+  imagePreview.value = undefined
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

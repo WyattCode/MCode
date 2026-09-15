@@ -23,7 +23,7 @@ import {
   type UniverLike,
   type WorkbookLike,
 } from "../../lib/xlsx-overlays"
-import { notify, notifyFailure } from "../../lib/toast"
+import { notice, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
 import CellAffordance from "../CellAffordance.vue"
 import AnnotationFx from "../AnnotationFx.vue"
@@ -227,7 +227,8 @@ async function load() {
     return
   }
   if (!alive() || !container.value || !wrap.value) return
-  if (workbook.truncated) notify(t("office.tooLarge"))
+  // MiMo raises this as a danger notice.
+  if (workbook.truncated) notice.danger(t("office.tooLarge"))
   const created = engine.createSheetUniver(container.value)
   if (!alive()) {
     created.univer.dispose()
@@ -364,7 +365,7 @@ async function load() {
     if (command.id !== "sheet.command.set-worksheet-name") return
     const sheetId = (command.params as { subUnitId?: string } | undefined)?.subUnitId ?? root.getActiveWorkbook()?.getActiveSheet()?.getSheetId()
     if (sheetId && added.has(sheetId)) return
-    notify(t("office.renameSheetUnsupported"))
+    notice.warning(t("office.renameSheetUnsupported"))
     throw new engine.CustomCommandExecutionError("rename of pre-existing sheet is not persistable")
   })
   let saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -928,7 +929,8 @@ const keepOpen = () => true
   color: var(--text-weak);
   background: var(--surface-raised);
   border-radius: 6px;
-  font-size: calc(11px * var(--ui-font-scale, 1));
+  /* Fixed as in MiMo, which does not scale the status with the interface font. */
+  font-size: 11px;
   opacity: 0.9;
   pointer-events: none;
 }
@@ -949,7 +951,8 @@ const keepOpen = () => true
   border: none;
   border-radius: 999px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  /* Fixed as in MiMo, so the pill keeps matching its 116 by 30 placement box. */
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
 }
