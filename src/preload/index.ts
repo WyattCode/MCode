@@ -6,6 +6,11 @@ export interface OfficeVersionState {
   cursor: number
 }
 export type OfficeVersionResult = { ok: true; state: OfficeVersionState } | { ok: false; reason: string }
+/** The automatic updater's phase, and the downloaded version once one is ready. */
+export interface UpdateStatus {
+  phase: "idle" | "checking" | "downloading" | "ready"
+  ready: { version: string; notes: string } | null
+}
 
 /**
  * The only surface the renderer gets. Everything else - sessions, files, the
@@ -106,17 +111,22 @@ const api = {
   view: (action: "reload" | "devtools" | "fullscreen"): void => ipcRenderer.send("mcode:view", action),
 
   /**
-   * Asks the main process to read the update feed.
-   *
-   * The window cannot fetch it: its content policy allows a socket to the local
-   * backend and nothing else.
+   * MiMo's updateStatus: where the main process's automatic updater stands.
+   * The window never fetches the feed itself; its content policy allows a
+   * socket to the local backend and nothing else.
    */
-  checkUpdates: (feed: string): Promise<{ version: string; url: string; sha256: string; notes: string }> =>
-    ipcRenderer.invoke("mcode:check-updates", feed),
+  updateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke("mcode:update-status"),
 
-  /** Fetches the installer the feed named, and answers where it was put. */
-  downloadUpdate: (url: string, version: string, sha256?: string): Promise<string> =>
-    ipcRenderer.invoke("mcode:download-update", url, version, sha256),
+  /** MiMo's updateCheckNow: checks now, downloading a newer installer, and answers how it went. */
+  updateCheckNow: (): Promise<UpdateStatus & { outcome: "no-feed" | "current" | "no-installer" | "ready" | "failed" | "busy"; version?: string; error?: string; during?: "check" | "download" }> =>
+    ipcRenderer.invoke("mcode:update-check"),
+
+  /** Every phase change of the updater; `ready` names the downloaded version (MiMo's updateReady). */
+  onUpdateState: (handler: (state: UpdateStatus) => void): (() => void) => {
+    const listener = (_event: unknown, state: UpdateStatus) => handler(state)
+    ipcRenderer.on("mcode:update-state", listener)
+    return () => ipcRenderer.off("mcode:update-state", listener)
+  },
 
   /**
    * Runs the installer that was fetched, and quits.
@@ -125,9 +135,6 @@ const api = {
    * process is the only thing that knows what that was.
    */
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke("mcode:install-update"),
-
-  /** A second window on the same backend. */
-  newWindow: (): void => ipcRenderer.send("mcode:new-window"),
 
   /**
    * Restarts the app.
@@ -138,6 +145,8 @@ const api = {
    * backend on the way through.
    */
   relaunch: (): void => ipcRenderer.send("mcode:relaunch"),
+  /** A renderer diagnostics line for the day's log file (MiMo's diagLog). */
+  diagLog: (line: string): void => ipcRenderer.send("mcode:diag-log", line),
   /** The footer menu's Quit app: every window, the backend and its terminals. */
   quitApp: (): void => ipcRenderer.send("mcode:quit"),
 
@@ -168,6 +177,15 @@ const api = {
 
   window: (action: "minimize" | "maximize" | "close"): void => ipcRenderer.send("mcode:window", action),
 
+  /** MiMo's winIsFullscreen / onWinFullscreen / winExitFullscreen, for the exit-full-screen button. */
+  isFullscreen: (): Promise<boolean> => ipcRenderer.invoke("mcode:is-fullscreen"),
+  onFullscreen: (handler: (fullScreen: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, fullScreen: boolean) => handler(fullScreen)
+    ipcRenderer.on("mcode:fullscreen", listener)
+    return () => ipcRenderer.off("mcode:fullscreen", listener)
+  },
+  exitFullscreen: (): void => ipcRenderer.send("mcode:exit-fullscreen"),
+
   zoom: (action: "in" | "out" | "reset"): void => ipcRenderer.send("mcode:zoom", action),
 
   /*
@@ -177,12 +195,20 @@ const api = {
    */
   titlebarMode: (mode: "dark" | "light"): void => ipcRenderer.send("mcode:titlebar-mode", mode),
 
+  /** MiMo's setNativeTheme: native menus, dialogs and the window's first paint follow the app theme. */
+  nativeTheme: (theme: "system" | "light" | "dark"): void => ipcRenderer.send("mcode:native-theme", theme),
+
   /** Which colourway the window and the taskbar should wear; `ok` is false when the icon could not be applied. */
   appIcon: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcode:app-icon", id),
 
   /** MiMo's 显示服务器 (Linux): the saved choice and the backend it resolves to. */
   displayServer: (): Promise<{ supported: boolean; pref: "auto" | "wayland" | "x11"; effective: "wayland" | "x11" | null }> =>
     ipcRenderer.invoke("mcode:display-server"),
+  /** MiMo's 硬件加速: the saved choice, which the running app started with unless changed since. */
+  hardwareAcceleration: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke("mcode:hardware-acceleration"),
+  /** Takes effect at the next launch. */
+  setHardwareAcceleration: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> =>
+    ipcRenderer.invoke("mcode:set-hardware-acceleration", enabled),
   /** Takes effect at the next launch. */
   setDisplayServer: (pref: "auto" | "wayland" | "x11"): Promise<{ ok: boolean; pref?: "auto" | "wayland" | "x11" }> =>
     ipcRenderer.invoke("mcode:set-display-server", pref),

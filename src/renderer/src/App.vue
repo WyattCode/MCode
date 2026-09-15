@@ -32,7 +32,7 @@ import VideoPreview from "./components/VideoPreview.vue"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
-import { markUpdateReady } from "./components/UpdatePill.vue"
+import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
 import TerminalDrawer from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
@@ -185,29 +185,39 @@ onMounted(() => {
 onBeforeUnmount(() => mainObserver?.disconnect())
 
 /*
- * A version that has been fetched and is waiting to be run.
+ * A version the main process's updater has downloaded and is waiting to run.
  *
- * The download starts as soon as the check finds one, without asking - which
- * is what the reference does, and why the only thing it ever says out loud is
- * that a new version "is now available to install". Asking first would put a
- * question between the reader and an update they already asked for by running
- * the check.
+ * MiMo checks on its own, 5 s after launch and every 3 h, and downloads a newer
+ * installer without asking; the capsule, its bubble and the settings row take a
+ * ready update from here, and nothing interrupts.
  */
 const downloadedUpdate = ref<string>()
 /** A check in flight, so the update page can say 检查中… and not start another. */
 const updateChecking = ref(false)
 
-/* Fetched: MiMo's footer capsule and its bubble take it from here, and no modal interrupts. */
-async function fetchUpdate(url: string, version: string, sha256: string, notes: string) {
-  try {
-    await window.mcode.downloadUpdate(url, version, sha256)
-    downloadedUpdate.value = version
-    markUpdateReady(version, notes)
-    notify(t("update.readyToast"))
-  } catch (err) {
-    notifyFailure(t("update.failed"), reasonOf(err))
-  }
+type UpdateStatus = Awaited<ReturnType<typeof window.mcode.updateStatus>>
+
+function takeUpdateState(state: UpdateStatus) {
+  if (!state.ready) return
+  downloadedUpdate.value = state.ready.version
+  // A capsule already installing, or failed, for this same version keeps its phase.
+  if (updateState.phase === "idle" || updateState.version !== state.ready.version) markUpdateReady(state.ready.version, state.ready.notes)
 }
+
+let offUpdateState: (() => void) | undefined
+onMounted(() => {
+  // The ready event may have gone out before this window was listening.
+  void window.mcode
+    .updateStatus()
+    .then(takeUpdateState)
+    .catch(() => {})
+  offUpdateState = window.mcode.onUpdateState((state) => {
+    takeUpdateState(state)
+    /* A check asked for by hand says when it has moved on to downloading, as MiMo's toasts do. */
+    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: "update-check", duration: 0 })
+  })
+})
+onBeforeUnmount(() => offUpdateState?.())
 
 const terminalOpen = ref(false)
 /** How tall the docked terminal is, so the info card can end above it. */
@@ -632,48 +642,34 @@ async function applyServer(answer: string) {
 }
 
 /**
- * Asks the configured feed whether there is a newer release.
+ * MiMo's updateCheckNow, from the settings row, the menu or the palette.
  *
  * There is no update service behind this app, so the feed is whatever the user
- * points it at - a JSON document with a `version`. With none configured the
- * command says so rather than pretending to have checked.
+ * points it at - a JSON document with a `version`. The main process reads it
+ * and downloads a newer installer (the window's content policy reaches nothing
+ * but the local backend); this only says how it went. With no feed configured
+ * the command says so rather than pretending to have checked.
  */
 async function checkForUpdates() {
   if (updateChecking.value) return
-  const feed = app.config?.updateFeed?.trim()
-  if (!feed) {
+  if (!app.config?.updateFeed?.trim()) {
     notifyFailure(t("update.noFeed"))
     return
   }
   updateChecking.value = true
-  /* MiMo's sticky 正在检查更新…, up for as long as the check runs. */
+  /* MiMo's sticky 正在检查更新…, up for as long as the check (and a download) runs. */
   const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
   try {
-    /*
-     * Asked of the main process rather than fetched here. This window is served
-     * under a content policy that lets it open a socket to the local backend and
-     * reach nothing else, so its own fetch of the feed never left the process -
-     * the check reported "Failed to fetch" whatever the feed said.
-     */
-    const { version, url, sha256, notes } = await window.mcode.checkUpdates(feed)
-    if (!version) throw new Error("the feed named no version")
-    if (version === app.version) {
-      notify(t("update.current"))
-      return
-    }
-    /* A feed that names a version but no installer can only say where to get it. */
-    if (!url) {
-      notify(t("update.found", { version }))
-      return
-    }
-    notify(t("update.downloading"))
-    void fetchUpdate(url, version, sha256, notes)
+    const result = await window.mcode.updateCheckNow()
+    dismiss(checking)
+    takeUpdateState(result)
+    if (result.outcome === "current") notify(t("update.current"))
+    else if (result.outcome === "no-installer" && result.version) notify(t("update.found", { version: result.version }))
+    else if (result.outcome === "ready") notify(t("update.readyToast"))
+    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
+    else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
   } catch (err) {
-    /*
-     * Electron wraps anything thrown in a handler as "Error invoking remote
-     * method 'mcode:check-updates': ...", which tells the reader about our IPC
-     * rather than about their feed. Only the reason is worth showing.
-     */
+    // Electron prefixes the IPC plumbing; only the reason is worth showing.
     notifyFailure(t("update.checkFailed"), reasonOf(err))
   } finally {
     dismiss(checking)
@@ -927,6 +923,30 @@ watch(
   },
   { immediate: true },
 )
+
+/*
+ * MiMo's native theme: main sets the OS-drawn surfaces (context menus, the
+ * tray menu, message boxes, the pre-paint background) to the chosen scheme and
+ * keeps it for the next launch's first paint.
+ */
+watch(theme, (value) => window.mcode.nativeTheme(value), { immediate: true })
+
+/*
+ * MiMo's exit-full-screen button. On Windows the caption buttons are the OS's
+ * overlay, and full screen takes them away with nothing left to click; the
+ * button stands in until the window leaves full screen.
+ */
+const fullScreen = ref(false)
+let offFullscreen: (() => void) | undefined
+onMounted(() => {
+  void window.mcode
+    .isFullscreen()
+    .then((value) => (fullScreen.value = value))
+    .catch(() => {})
+  offFullscreen = window.mcode.onFullscreen((value) => (fullScreen.value = value))
+})
+onBeforeUnmount(() => offFullscreen?.())
+const exitFullScreen = () => window.mcode.exitFullscreen()
 
 /*
  * The icon the window wears. Main cannot read the config document, so it is
@@ -1884,10 +1904,6 @@ function runAppMenu(key: string) {
   }
   if (key === "reload" || key === "devtools" || key === "fullscreen") {
     window.mcode.view(key)
-    return
-  }
-  if (key === "new-window") {
-    window.mcode.newWindow()
     return
   }
   if (key === "zoom-in" || key === "zoom-out" || key === "zoom-reset") {
@@ -4533,6 +4549,20 @@ onBeforeUnmount(() => {
 
   <!-- Last in the document on purpose: see .rail-no-drag. -->
   <div v-if="!leftPanel && !onboarding" class="rail-no-drag" aria-hidden="true" />
+  <!-- MiMo's exit-full-screen button: Windows only, where full screen hides the overlay caption buttons. -->
+  <button
+    v-if="app.platform === 'win32' && fullScreen"
+    type="button"
+    class="exit-fs"
+    data-exit-fullscreen
+    :title="t('side.exitFullscreen')"
+    :aria-label="t('side.exitFullscreen')"
+    @click="exitFullScreen"
+  >
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+    </svg>
+  </button>
   <div v-if="!onboarding" class="toggles-no-drag" aria-hidden="true" />
 </template>
 
@@ -4695,6 +4725,34 @@ onBeforeUnmount(() => {
  * them. This patch is the last thing in the document, so its no-drag wins; it
  * takes no pointer events, so the clicks still land on the buttons beneath.
  */
+/*
+ * MiMo's exit-full-screen button: 26 square and 7 round, 20 in from the start
+ * edge and centred on the 44px controls row, over the side column's own row.
+ * Its 16px glyph is the four inward corners.
+ */
+.exit-fs {
+  position: fixed;
+  top: 9px;
+  inset-inline-start: 20px;
+  z-index: 205;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.exit-fs:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
 .rail-no-drag {
   position: fixed;
   top: 13px;
