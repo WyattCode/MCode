@@ -3,13 +3,13 @@ import type { ModelEntry } from "../config"
 
 /**
  * When a conversation has outgrown its model, and by how much a request may
- * ask for. The reference's numbers and its regexes, kept as they stand.
+ * ask for. MiMo's trigger and output rule; the overflow phrasings are the ones
+ * its engine inherits from OpenCode.
  *
- * Two triggers, both the reference's (`SessionCompaction.isOverflow` and
- * `ProviderError.isContextOverflow`):
+ * Two triggers (MiMo's `isOverflow` and `isContextOverflow`):
  *
  *  - by count: after a step, once the tokens the provider reports have reached
- *    the context window less the room an answer needs;
+ *    90% of the context window;
  *  - by error: a provider that refuses the request with one of the phrasings
  *    below, which a model whose limits are not known (`contextWindow: 0`, as
  *    a discovered model is) can only be caught by.
@@ -26,8 +26,8 @@ export const OUTPUT_TOKEN_MAX = 32_000
 /** What MiMo asks of a Claude, GPT or MiMo model, whatever that model's own ceiling says. */
 export const LARGE_OUTPUT_TOKEN_MAX = 128_000
 
-/** The reference's `COMPACTION_BUFFER`. */
-export const COMPACTION_BUFFER = 20_000
+/** MiMo's compaction trigger: this share of the model's window (`MIMOCODE_COMPACTION_TRIGGER_RATIO`). */
+export const COMPACTION_TRIGGER_RATIO = 0.9
 
 /**
  * What a summary may cost, from the reference's `SUMMARY_OUTPUT_TOKENS`.
@@ -76,24 +76,28 @@ export function maxOutputTokens(model: Pick<ModelRef, "provider" | "model">, ent
 }
 
 /**
- * The room a conversation has before it must be compacted, or 0 when the
- * model's window is not known - the reference's `usable`, which returns 0 for
- * `limit.context === 0` and so never compacts by count for such a model.
+ * The room a conversation has before it must be compacted: MiMo's `usable`,
+ * 90% of the model's window with nothing held back for the answer (180k of a
+ * 200k model). 0 when the window is not known, which never compacts by count.
  */
-export function usableContext(entry: Pick<ModelEntry, "contextWindow" | "maxOutput"> | undefined): number {
+export function usableContext(entry: Pick<ModelEntry, "contextWindow"> | undefined): number {
   const context = entry?.contextWindow ?? 0
-  if (context === 0) return 0
-  return Math.max(0, context - (Math.min(entry?.maxOutput ?? 0, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX))
+  if (context <= 0) return 0
+  return Math.floor(context * COMPACTION_TRIGGER_RATIO)
 }
 
-/** The reference's `isOverflow`: false for a model with no known window. */
+/**
+ * MiMo's `isOverflow`: the step's whole count - fresh input, output, reasoning
+ * and both cache figures, which together are the provider's total - has
+ * reached the usable room. False for a model with no known window.
+ */
 export function isOverflowByCount(
-  tokens: { input: number; output: number; cacheRead: number; cacheWrite: number },
-  entry: Pick<ModelEntry, "contextWindow" | "maxOutput"> | undefined,
+  tokens: { input: number; output: number; reasoning?: number; cacheRead: number; cacheWrite: number },
+  entry: Pick<ModelEntry, "contextWindow"> | undefined,
 ): boolean {
   const usable = usableContext(entry)
   if (usable === 0) return false
-  const total = tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite
+  const total = tokens.input + tokens.output + (tokens.reasoning ?? 0) + tokens.cacheRead + tokens.cacheWrite
   return total >= usable
 }
 

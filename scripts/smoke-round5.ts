@@ -6,7 +6,7 @@
  * Every request a provider would receive is inspected on the wire or through
  * the pure function that builds it. No model is called.
  */
-import { LARGE_OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MAX, maxOutputTokens } from "../src/server/session/overflow"
+import { LARGE_OUTPUT_TOKEN_MAX, OUTPUT_TOKEN_MAX, isOverflowByCount, maxOutputTokens, usableContext } from "../src/server/session/overflow"
 import { reasoningRequest as anthropicReasoning } from "../src/server/provider/anthropic"
 
 export type Check = (name: string, condition: boolean, detail?: unknown) => void
@@ -28,5 +28,14 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     )
     const high = anthropicReasoning("claude-haiku-4-5", "high", ["high", "max"], false, 64_000, 64_000)
     check("high is min(16000, limit / 2 - 1)", high.thinking?.type === "enabled" && high.thinking.budget_tokens === 16_000, high)
+  }
+
+  section("Round 5: the compaction trigger (E9)")
+  {
+    check("a 200k model compacts at 180k, not 168k", usableContext({ contextWindow: 200_000 }) === 180_000, usableContext({ contextWindow: 200_000 }))
+    check("an unknown window never compacts by count", usableContext({ contextWindow: 0 }) === 0)
+    const zero = { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 }
+    check("179,999 tokens is under the line", !isOverflowByCount({ ...zero, input: 100_000, cacheRead: 79_999 }, { contextWindow: 200_000 }))
+    check("180,000 reaches it, reasoning and cache writes counted", isOverflowByCount({ ...zero, input: 100_000, reasoning: 30_000, cacheWrite: 50_000 }, { contextWindow: 200_000 }))
   }
 }
