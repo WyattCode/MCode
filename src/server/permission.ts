@@ -15,9 +15,17 @@ import type { Bus } from "./bus"
 import type { Config } from "./config"
 
 export class PermissionDenied extends Error {
-  constructor(subject: string, reason?: string) {
+  /**
+   * True when a person pressed Deny, with or without a reason. The runner ends
+   * the turn on it, as MiMo stops the conversation; a refusal by a setting or a
+   * question closed by Stop does not carry it.
+   */
+  readonly byUser: boolean
+
+  constructor(subject: string, reason?: string, byUser = false) {
     super(reason ?? `Permission denied by the user: ${subject}`)
     this.name = "PermissionDenied"
+    this.byUser = byUser
   }
 }
 
@@ -300,13 +308,19 @@ export class Permissions {
       if (this.action(input.kind) === "deny") {
         throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
       }
+      /*
+       * A person said no. The turn ends on it; the reason, if any, stays in the
+       * call's result, which the model reads along with the next message.
+       */
+      const byUser = entry?.decided === "reject" || entry?.decided === "reject-with-reason"
       if (reason) {
         throw new PermissionDenied(
           input.subject,
           `Permission denied by the user: ${input.subject}\nThe user explained: ${reason}`,
+          byUser,
         )
       }
-      throw new PermissionDenied(input.subject)
+      throw new PermissionDenied(input.subject, undefined, byUser)
     }
   }
 
@@ -401,13 +415,22 @@ export class Permissions {
    * approving these" is not to answer the one already on screen for them.
    */
   drainDecided(): void {
+    const auto = this.config.get().accessLevel === "auto"
     for (const [id, pending] of [...this.pending]) {
       const action = this.action(pending.request.kind)
-      if (action === "ask") continue
+      /*
+       * The middle level switched on while a question was up - MiMo's 帮我审批 -
+       * lets through what it would not have asked about, as an approval for once.
+       * A delete is never among them.
+       */
+      const bucket = bucketOf(pending.request.kind)
+      const released =
+        action === "ask" && auto && !pending.request.forced && bucket !== undefined && autoAllows(bucket, pending.request.subject)
+      if (action === "ask" && !released) continue
       this.pending.delete(id)
-      pending.decided = "policy"
-      pending.resolve(action === "allow" ? "once" : "reject")
-      this.bus.publish({ type: "permission.resolved", requestID: id, decided: "policy" })
+      pending.decided = released ? "allow-once" : "policy"
+      pending.resolve(action === "deny" ? "reject" : "once")
+      this.bus.publish({ type: "permission.resolved", requestID: id, decided: pending.decided })
     }
   }
 

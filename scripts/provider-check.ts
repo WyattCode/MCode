@@ -81,7 +81,6 @@ async function main(): Promise<void> {
     for (const member of [
       'type: "question.list"',
       'type: "question.reply"; requestID: string; answers: QuestionAnswer[]',
-      'type: "question.reject"',
       'type: "command.list"; directory: string',
       'type: "question.asked"; request: QuestionRequest',
       'type: "question.replied"',

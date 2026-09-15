@@ -41,6 +41,18 @@ import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/sessio
 import type { PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
+import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
+import {
+  accessOf,
+  composerAnswers,
+  confirmQueue,
+  guideShown,
+  mergeCustom,
+  nextStop,
+  questionOutcome,
+  toggleChoice,
+} from "../src/renderer/src/lib/confirm-queue"
+import type { PermissionRequest, QuestionRequest } from "../src/shared/protocol"
 import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
 import { annotationsBlock } from "../src/shared/annotations"
 import { revertTurnFiles } from "../src/server/session/turn-revert"
@@ -701,6 +713,29 @@ async function main() {
     await decide("c-rec-stop", () => permissions.rejectAll("s-record"))
     check("a question closed by Stop is recorded as cancelled", heard[3]?.decided === "cancelled", heard[3])
 
+    // Who said no decides whether the turn ends: a person does; a setting or a Stop does not.
+    const refusalOf = async (gate: Permissions, callID: string, settle: (id: string) => void) => {
+      const asked = gate
+        .ask({ sessionID: "s-byuser", messageID: "m-byuser", callID, kind: "write", title: "t", subject: `${callID}.md` })
+        .then(() => undefined, (err: unknown) => err)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const request = gate.outstanding().find((entry) => entry.callID === callID)
+      if (request) settle(request.id)
+      return asked
+    }
+    const plainRefusal = await refusalOf(permissions, "c-by-plain", (id) => permissions.respond(id, "reject"))
+    const reasonedRefusal = await refusalOf(permissions, "c-by-reason", (id) => permissions.respond(id, "reject", "not here"))
+    const stoppedRefusal = await refusalOf(permissions, "c-by-stop", () => permissions.rejectAll("s-byuser"))
+    check(
+      "a person's refusal is marked as theirs, with or without a reason",
+      plainRefusal instanceof PermissionDenied && plainRefusal.byUser && reasonedRefusal instanceof PermissionDenied && reasonedRefusal.byUser,
+      [plainRefusal, reasonedRefusal],
+    )
+    check("a Stop is not", stoppedRefusal instanceof PermissionDenied && !stoppedRefusal.byUser, stoppedRefusal)
+    const denyingGate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, write: "deny" } }) } as never)
+    const settingRefusal = await refusalOf(denyingGate, "c-by-setting", () => {})
+    check("nor is a bucket set to Deny", settingRefusal instanceof PermissionDenied && !settingRefusal.byUser, settingRefusal)
+
     const before = heard.length
     const unheard = permissions
       .ask({ sessionID: "s-record", messageID: "m-record", callID: "c-rec-none", kind: "write", title: "t", subject: "x.md" })
@@ -710,6 +745,116 @@ async function main() {
     await unheard
     check("a call nobody listens for records nothing", heard.length === before, heard.slice(before))
     unsubscribe()
+  }
+
+  section("Question dock")
+  {
+    const asking = new Questions(bus)
+    const questionContext = (callID: string, signal: AbortSignal) => ({ ...context(callID), questions: asking, signal })
+    const input = {
+      questions: [
+        { question: "Which runtime?", header: "Runtime", options: [{ label: "Node", description: "" }, { label: "Bun", description: "" }] },
+        { question: "Which checks?", header: "Checks", options: [{ label: "lint", description: "" }], multiple: true },
+      ],
+    }
+
+    // The dock's X replies with every answer empty rather than refusing.
+    const running = QuestionTool.execute(input, questionContext("c-q-dismiss", controller.signal) as never)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const parked = asking.outstanding()[0]
+    check("a question is stamped with when it was asked", typeof parked?.time === "number" && parked.time > 0, parked)
+    if (parked) asking.reply(parked.id, parked.questions.map(() => []))
+    const dismissedResult = await running
+    check("dismissing replies with every answer empty", JSON.stringify(dismissedResult.metadata?.answers) === "[[],[]]", dismissedResult.metadata)
+    check("which the model reads as unanswered, not as an error", dismissedResult.output.includes('"Which runtime?"="Unanswered"'), dismissedResult.output)
+    check("and the transcript shows as cancelled", questionOutcome({ status: "completed", metadata: dismissedResult.metadata }) === "cancelled")
+    check("an answer shows as answered", questionOutcome({ status: "completed", metadata: { answers: [["Node"], []] } }) === "answered")
+    check("a stopped question is cancelled too", questionOutcome({ status: "error" }) === "cancelled")
+    check("a waiting one is neither", questionOutcome({ status: "running" }) === "pending")
+
+    const stopper = new AbortController()
+    const stopped = QuestionTool.execute(input, questionContext("c-q-stop", stopper.signal) as never).then(
+      () => undefined,
+      (err: unknown) => err,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    stopper.abort()
+    const stopError = await stopped
+    check("Stop refuses with a code, so nothing reads English", stopError instanceof ToolError && stopError.code === QUESTION_DISMISSED, stopError)
+    check("and leaves nothing parked", asking.outstanding().length === 0, asking.outstanding())
+
+    check("composer text answers question one only", JSON.stringify(composerAnswers("  use bun ", 3)) === '[["use bun"],[],[]]')
+    check("blank composer text answers nothing", composerAnswers("   ", 2) === undefined)
+
+    const perm = (id: string, sessionID: string, time: number): PermissionRequest => ({
+      id,
+      sessionID,
+      messageID: "m",
+      callID: `c-${id}`,
+      kind: "bash",
+      title: "t",
+      subject: "s",
+      time,
+    })
+    const ask = (id: string, sessionID: string, time: number): QuestionRequest => ({ id, sessionID, questions: [], time })
+    const queued = confirmQueue("s1", [perm("p1", "s1", 100), perm("p2", "s1", 300), perm("px", "s2", 50)], [ask("q1", "s1", 200), ask("qx", "s2", 10)])
+    check("the dock queues questions and permissions by arrival", queued.map((item) => item.id).join() === "p1,q1,p2", queued.map((item) => item.id))
+    check("1/N counts both kinds, this session only", queued.length === 3)
+    check("a question that arrived first is shown first", confirmQueue("s1", [perm("p1", "s1", 100)], [ask("q0", "s1", 90)])[0]?.kind === "question")
+    check("no session, no queue", confirmQueue(undefined, [perm("p1", "s1", 1)], []).length === 0)
+
+    check("a single choice picks, and a second click clears it", JSON.stringify(toggleChoice([], "a", false)) === '["a"]' && toggleChoice(["a"], "a", false).length === 0)
+    check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')
+    check("typed text is appended once", JSON.stringify(mergeCustom([["a"], []], ["b", " "])) === '[["a","b"],[]]' && JSON.stringify(mergeCustom([["a"]], ["a"])) === '[["a"]]')
+    check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
+  }
+
+  section("Permission guide")
+  {
+    const counted = { allowCount: 3, dismissed: false, taskAllowOn: false }
+    check("offered after three approvals by hand", guideShown(counted, "ask", "permission", false))
+    check("not before", !guideShown({ ...counted, allowCount: 2 }, "ask", "permission", false))
+    check(
+      "never over a delete, a question, or once waved off",
+      !guideShown(counted, "ask", "permission", true) &&
+        !guideShown(counted, "ask", "question", false) &&
+        !guideShown({ ...counted, dismissed: true }, "ask", "permission", false),
+    )
+    check(
+      "nor while the task is allowed, or at another level",
+      !guideShown({ ...counted, taskAllowOn: true }, "ask", "permission", false) &&
+        !guideShown(counted, "auto", "permission", false) &&
+        !guideShown(counted, "full", "permission", false),
+    )
+    const allAllowed = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"]))
+    check(
+      "the level is read the way the composer chip reads it",
+      accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
+    )
+
+    // 帮我审批 turns on the middle level; what it lets through stops waiting, a delete does not.
+    let level = "ask"
+    const guideBus = new Bus()
+    const gate = new Permissions(guideBus, { get: () => ({ permissions: { ...PERMISSION_DEFAULTS }, accessLevel: level }) } as never)
+    const heardGuide: PermissionRecord[] = []
+    const stopEdit = gate.onDecided("c-guide-edit", (record) => heardGuide.push(record))
+    const settle = (callID: string, kind: "edit" | "bash", subject: string) =>
+      gate.ask({ sessionID: "s-guide", messageID: "m", callID, kind, title: "t", subject }).then(
+        () => "allowed",
+        (err: Error) => err.message,
+      )
+    const editAsk = settle("c-guide-edit", "edit", "a.ts")
+    const deleteAsk = settle("c-guide-rm", "bash", "rm -rf build")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    check("both wait at the default level", gate.outstanding().length === 2, gate.outstanding())
+    level = "auto"
+    guideBus.publish({ type: "config.updated", config: {} as never })
+    check("the edit goes through once the level changes", (await editAsk) === "allowed")
+    check("recorded as allowed for this time", heardGuide[0]?.decided === "allow-once", heardGuide)
+    check("while a delete still waits", gate.outstanding().length === 1 && gate.outstanding()[0]?.forced === true, gate.outstanding())
+    gate.rejectAll("s-guide")
+    await deleteAsk
+    stopEdit()
   }
 
   section("Tool arguments")
@@ -1896,30 +2041,57 @@ async function main() {
     found = await toolPart("call_cutoff")
     check("arguments cut off mid-object are refused the same way", found.part?.metadata?.recoverable === true && String(found.part?.error).includes("not valid JSON"), found.part)
 
-    // A refusal with a reason: kept on the part, and still fed back rather than ending the turn.
+    // A refusal with a reason: kept on the part, and the turn ends there, as MiMo stops on a rejection.
+    const askedFor = (callID: string, since: number) =>
+      new Promise<string | undefined>((resolve) => {
+        const started = Date.now()
+        const poll = setInterval(() => {
+          const event = events.slice(since).find((entry) => entry.type === "permission.requested" && entry.request.callID === callID)
+          if (event?.type === "permission.requested" || Date.now() - started > 10_000) {
+            clearInterval(poll)
+            resolve(event?.type === "permission.requested" ? event.request.id : undefined)
+          }
+        }, 50)
+      })
     replies.push(toolCall("call_perm", "write", '{"path": "steps-denied.md", "content": "no"}'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "write a note" })
-    const asked = await new Promise<string | undefined>((resolve) => {
-      const started = Date.now()
-      const poll = setInterval(() => {
-        const event = events.slice(from).find((entry) => entry.type === "permission.requested" && entry.request.callID === "call_perm")
-        if (event?.type === "permission.requested" || Date.now() - started > 10_000) {
-          clearInterval(poll)
-          resolve(event?.type === "permission.requested" ? event.request.id : undefined)
-        }
-      }, 50)
-    })
+    const asked = await askedFor("call_perm", from)
     check("the write asked", asked !== undefined)
+    const requestsBeforeRefusal = bodies.length
     if (asked) await call({ type: "permission.respond", requestID: asked, response: "reject", reason: "keep notes elsewhere" })
     check("the refused turn finished", await idle(from))
     found = await toolPart("call_perm")
     const kept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
     check("the decision is kept on the part", kept.length === 1 && kept[0]?.decided === "reject-with-reason" && kept[0]?.reason === "keep notes elsewhere", kept)
     check("with the question it answered", kept[0]?.kind === "write" && typeof kept[0]?.requestID === "string", kept[0])
-    check("the refused call is still an ordinary error for the model", found.part?.status === "error" && String(found.part?.error).includes("keep notes elsewhere"), found.part?.error)
-    check("and a refusal does not stop the turn", found.last?.finish === "end_turn", found.last?.finish)
+    check("the refusal and its reason stay on the call", found.part?.status === "error" && String(found.part?.error).includes("keep notes elsewhere"), found.part?.error)
+    check("a refusal ends the turn", found.last?.finish === "aborted", found.last?.finish)
+    check("without handing the refusal back to the model", bodies.length === requestsBeforeRefusal, bodies.length - requestsBeforeRefusal)
     check("nothing was written", !(await exists(path.join(project, "steps-denied.md"))))
+
+    // The next message takes the refusal, and its reason, to the model as context.
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "then put it in docs" })
+    check("the next turn finished", await idle(from))
+    check(
+      "the model reads the reason with the next message",
+      JSON.stringify(bodies.at(-1) ?? {}).includes("keep notes elsewhere"),
+      JSON.stringify(bodies.at(-1) ?? {}).slice(0, 600),
+    )
+
+    // A refusal without a reason ends the turn the same way.
+    replies.push(toolCall("call_perm_bare", "write", '{"path": "steps-bare.md", "content": "no"}'))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "write another note" })
+    const bareAsk = await askedFor("call_perm_bare", from)
+    const requestsBeforeBare = bodies.length
+    if (bareAsk) await call({ type: "permission.respond", requestID: bareAsk, response: "reject" })
+    check("the bare refusal finished", await idle(from))
+    found = await toolPart("call_perm_bare")
+    const bareKept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
+    check("a refusal without a reason ends the turn too", found.last?.finish === "aborted" && bodies.length === requestsBeforeBare, [found.last?.finish, bodies.length - requestsBeforeBare])
+    check("recorded as a plain reject", bareKept[0]?.decided === "reject" && bareKept[0]?.reason === undefined, bareKept)
 
     // A transient failure: retried in the open, then the turn completes.
     replies.push((response) => {

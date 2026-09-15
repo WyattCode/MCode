@@ -334,10 +334,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       runtime.runner.questions.reply(request.requestID, request.answers)
       return {} satisfies Handled<"question.reply">
 
-    case "question.reject":
-      runtime.runner.questions.reject(request.requestID)
-      return {} satisfies Handled<"question.reject">
-
     case "config.get":
       return { config: runtime.config.get() } satisfies Handled<"config.get">
 

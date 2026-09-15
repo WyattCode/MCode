@@ -21,6 +21,7 @@ import {
 } from "../lib/mention"
 import { notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
+import { useQuestions } from "../stores/questions"
 import { HOME_SCOPE, SIDE_SCOPE, useAnnotations } from "../stores/annotations"
 import { annotationSend } from "../lib/annotate"
 import { openDocument } from "../lib/office-open"
@@ -596,6 +597,12 @@ async function submit() {
     text.value = ""
     await nextTick(resize)
     emit("shell", value)
+    return
+  }
+  // A waiting question takes plain text as the answer to its first question, as MiMo's composer does.
+  if (value && !attachments.value.length && sessionID.value && useQuestions().answerFromComposer(sessionID.value, value)) {
+    text.value = ""
+    await nextTick(resize)
     return
   }
   /*

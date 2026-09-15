@@ -46,6 +46,7 @@ export class Questions {
       sessionID: input.sessionID,
       questions: input.questions,
       tool: input.tool,
+      time: Date.now(),
     }
 
     return new Promise<QuestionAnswer[]>((resolve, reject) => {
@@ -60,7 +61,7 @@ export class Questions {
        * execute, and Stop can land inside it.
        */
       if (input.signal?.aborted) {
-        reject(new ToolError(DISMISSED))
+        reject(dismissed())
         return
       }
 
@@ -71,7 +72,7 @@ export class Questions {
       const onAbort = () => {
         settle()
         this.bus.publish({ type: "question.rejected", sessionID: request.sessionID, requestID: request.id })
-        reject(new ToolError(DISMISSED))
+        reject(dismissed())
       }
       input.signal?.addEventListener("abort", onAbort, { once: true })
 
@@ -112,12 +113,17 @@ export class Questions {
     return true
   }
 
-  /** Dismisses a question. The turn sees the reference's own refusal message. */
+  /**
+   * Refuses a question outright. The turn sees the reference's own refusal message.
+   *
+   * The dock's X does not come here: MiMo's dismiss replies with empty answers,
+   * so the call completes as "Unanswered". This is left for Stop and abort.
+   */
   reject(requestID: string): boolean {
     const parked = this.pending.get(requestID)
     if (!parked) return false
     this.bus.publish({ type: "question.rejected", sessionID: parked.request.sessionID, requestID })
-    parked.reject(new ToolError(DISMISSED))
+    parked.reject(dismissed())
     return true
   }
 
@@ -153,6 +159,16 @@ export class Questions {
  * answered, and carries on.
  */
 const DISMISSED = "The user dismissed this question"
+
+/*
+ * Carries a code as well as the model's sentence, so the transcript can tell a
+ * stopped question from a broken one without reading English.
+ */
+export const QUESTION_DISMISSED = "question.dismissed"
+
+function dismissed(): ToolError {
+  return new ToolError(DISMISSED, QUESTION_DISMISSED)
+}
 
 /**
  * The description handed to the model, verbatim.
