@@ -50,6 +50,12 @@ export function loadFluidSynth(): Promise<Synthesizer> {
     await loadGlue()
     const library = await import("js-synthesizer")
     await library.waitForReady()
+    /*
+     * The WebAssembly build reports each of its stubbed file calls (fluid_stat,
+     * fluid_file_test) as an error: over a thousand console lines per load. A
+     * real failure still rejects below, so only a panic is left to print.
+     */
+    library.disableLogging(library.LogLevel.Error)
     const reply = await window.mcode.soundfont()
     if (!reply.ok) throw new Error(`soundfont unavailable (${reply.reason})`)
     const synth = new library.Synthesizer()
