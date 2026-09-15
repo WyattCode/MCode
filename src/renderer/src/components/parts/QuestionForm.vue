@@ -696,19 +696,19 @@ const Actions: FunctionalComponent = () => {
   pointer-events: none;
 }
 
-:root[data-theme="dark"] :is(.q-icon, .q-desc) {
+:root[data-theme="dark"] .q-icon, :root[data-theme="dark"] .q-desc {
   color: #b8b8b8;
 }
 
-:root[data-theme="dark"] :is(.q-dim, .q-queue, .q-pager, .q-pencil, .q-ret) {
+:root[data-theme="dark"] .q-dim, :root[data-theme="dark"] .q-queue, :root[data-theme="dark"] .q-pager, :root[data-theme="dark"] .q-pencil, :root[data-theme="dark"] .q-ret {
   color: #777777;
 }
 
-:root[data-theme="dark"] :is(.q-page, .q-dismiss, .q-num) {
+:root[data-theme="dark"] .q-page, :root[data-theme="dark"] .q-dismiss, :root[data-theme="dark"] .q-num {
   color: #b8b8b8;
 }
 
-:root[data-theme="dark"] :is(.q-page:hover, .q-dismiss:hover) {
+:root[data-theme="dark"] .q-page:hover, :root[data-theme="dark"] .q-dismiss:hover {
   background: #2e2e2e;
 }
 
@@ -716,7 +716,7 @@ const Actions: FunctionalComponent = () => {
   background: #2e2e2e;
 }
 
-:root[data-theme="dark"] :is(.q-opt:hover, .q-opt:focus-visible, .q-custom:has(textarea:focus)) {
+:root[data-theme="dark"] .q-opt:hover, :root[data-theme="dark"] .q-opt:focus-visible, :root[data-theme="dark"] .q-custom:has(textarea:focus) {
   background: #ffffff0f;
 }
 
@@ -724,12 +724,12 @@ const Actions: FunctionalComponent = () => {
   background: #ffffff1a;
 }
 
-:root[data-theme="dark"] :is(.q-num, .q-check) {
+:root[data-theme="dark"] .q-num, :root[data-theme="dark"] .q-check {
   background: #2e2e2e;
   border-color: #2e2e2e;
 }
 
-:root[data-theme="dark"] :is(.q-num.on, .q-check.on) {
+:root[data-theme="dark"] .q-num.on, :root[data-theme="dark"] .q-check.on {
   color: #ffffff;
   background: #151c13;
   border-color: #151c13;
@@ -744,19 +744,19 @@ const Actions: FunctionalComponent = () => {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) :is(.q-icon, .q-desc) {
+  :root:not([data-theme="light"]) .q-icon, :root:not([data-theme="light"]) .q-desc {
     color: #b8b8b8;
   }
 
-  :root:not([data-theme="light"]) :is(.q-dim, .q-queue, .q-pager, .q-pencil, .q-ret) {
+  :root:not([data-theme="light"]) .q-dim, :root:not([data-theme="light"]) .q-queue, :root:not([data-theme="light"]) .q-pager, :root:not([data-theme="light"]) .q-pencil, :root:not([data-theme="light"]) .q-ret {
     color: #777777;
   }
 
-  :root:not([data-theme="light"]) :is(.q-page, .q-dismiss, .q-num) {
+  :root:not([data-theme="light"]) .q-page, :root:not([data-theme="light"]) .q-dismiss, :root:not([data-theme="light"]) .q-num {
     color: #b8b8b8;
   }
 
-  :root:not([data-theme="light"]) :is(.q-page:hover, .q-dismiss:hover) {
+  :root:not([data-theme="light"]) .q-page:hover, :root:not([data-theme="light"]) .q-dismiss:hover {
     background: #2e2e2e;
   }
 
@@ -764,7 +764,7 @@ const Actions: FunctionalComponent = () => {
     background: #2e2e2e;
   }
 
-  :root:not([data-theme="light"]) :is(.q-opt:hover, .q-opt:focus-visible, .q-custom:has(textarea:focus)) {
+  :root:not([data-theme="light"]) .q-opt:hover, :root:not([data-theme="light"]) .q-opt:focus-visible, :root:not([data-theme="light"]) .q-custom:has(textarea:focus) {
     background: #ffffff0f;
   }
 
@@ -772,12 +772,12 @@ const Actions: FunctionalComponent = () => {
     background: #ffffff1a;
   }
 
-  :root:not([data-theme="light"]) :is(.q-num, .q-check) {
+  :root:not([data-theme="light"]) .q-num, :root:not([data-theme="light"]) .q-check {
     background: #2e2e2e;
     border-color: #2e2e2e;
   }
 
-  :root:not([data-theme="light"]) :is(.q-num.on, .q-check.on) {
+  :root:not([data-theme="light"]) .q-num.on, :root:not([data-theme="light"]) .q-check.on {
     color: #ffffff;
     background: #151c13;
     border-color: #151c13;

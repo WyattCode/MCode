@@ -262,6 +262,37 @@ const ANSI_SLOTS = [
   }
 }
 
+
+/*
+ * Two scoped-style selectors that Vue compiles into something else entirely.
+ * `:global(X) .y` becomes a bare `X`, so the rule lands on html, :root or the
+ * dock instead of the element (the diff-marks setting once hid the window).
+ * A selector ending in `:is(...)` or `:where(...)` gets its scope attribute on
+ * the wrong compound, so a dark variant written that way never applies.
+ */
+function scopedBlocks(source: string): string[] {
+  return [...source.matchAll(/<style[^>]*scoped[^>]*>([\s\S]*?)<\/style>/g)].map((match) => match[1])
+}
+function walkVue(directory: string, out: string[] = []): string[] {
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const full = path.join(directory, entry.name)
+    if (entry.isDirectory()) walkVue(full, out)
+    else if (entry.name.endsWith(".vue")) out.push(full)
+  }
+  return out
+}
+for (const file of walkVue(path.join(componentDir, ".."))) {
+  const name = path.relative(path.join(componentDir, ".."), file)
+  for (const block of scopedBlocks(fs.readFileSync(file, "utf8"))) {
+    for (const match of block.matchAll(/:global\([^{}]*?\)\s+[.#\[a-zA-Z:*>]/g)) {
+      problems.push(`${name}: \`${match[0].trim()}\` in a scoped style compiles to the bare :global selector - write it as a plain scoped selector`)
+    }
+    for (const match of block.matchAll(/(?:^|[},\n])\s*([^{}]*?\s:(?:is|where)\([^{}]*\))\s*\{/g)) {
+      problems.push(`${name}: \`${match[1].trim()}\` ends in :is()/:where(), which the scope attribute misses - list the selectors instead`)
+    }
+  }
+}
+
 console.log(`themes: ${THEMES.length}, tokens each: ${Object.keys(themeTokens(oc2, true)).length}`)
 if (problems.length) {
   console.error(`FAILED with ${problems.length} problem(s):`)
