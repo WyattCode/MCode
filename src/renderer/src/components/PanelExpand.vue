@@ -54,6 +54,11 @@ const emit = defineEmits<{ toggle: [] }>()
   color: var(--text-strong);
 }
 
+/* MiMo on Windows: the title-bar glyphs in one solid colour on light and dark alike. */
+.app[data-platform="win32"] .panel-expand {
+  color: var(--text-strong);
+}
+
 .panel-expand:hover {
   color: var(--text-strong);
   background: var(--surface-hover);

@@ -1641,6 +1641,18 @@ function pickNewProject(key: string) {
   color: var(--text-strong);
 }
 
+/* MiMo on Windows: this row's glyphs 12px in one solid colour; a spent arrow and the lit bell keep their own. */
+.app[data-platform="win32"] .top .ico:not(:disabled):not(.on),
+.app[data-platform="win32"] .rail-tools .ico:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.app[data-platform="win32"] .top .ico svg,
+.app[data-platform="win32"] .rail-tools .ico svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* Nowhere to go back or forward to: MiMo leaves the arrow at a third, and it does nothing. */
 .ico:disabled,
 .ico:disabled:hover {
