@@ -671,7 +671,8 @@ const retiredChords = computed(() => {
   for (const command of bindableCommands.value) {
     const custom = binds[command.id]
     // Absent means untouched; an empty string means its built-in chord was deleted on the shortcuts page.
-    if (custom === undefined || !command.hint || custom === command.hint) continue
+    // The send row's Enter is the composer's own key, never retired window-wide.
+    if (custom === undefined || !command.hint || custom === command.hint || command.id === "composer.send") continue
     if (claimed.has(command.hint)) continue
     out.add(command.hint)
   }
@@ -2711,6 +2712,15 @@ const bindableCommands = computed(() => {
       hint: "Ctrl+Shift+X",
       enabled: hasSession,
       run: () => composer.value?.setMode("shell"),
+    },
+    // MiMo's 发送消息 row; Enter itself is answered by the composer.
+    {
+      id: "composer.send",
+      group: "key.groupPrompt",
+      title: t("cmd.sendMessage"),
+      hint: "Enter",
+      enabled: hasSession,
+      run: () => void composer.value?.submit(),
     },
     {
       id: "app.openFile",
