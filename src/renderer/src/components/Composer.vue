@@ -2,24 +2,28 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { VoiceRecorder, splitSendWord, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
-import type { Attachment, CommandInfo, Effort, ModelInfo } from "@shared/protocol"
+import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, ModelInfo } from "@shared/protocol"
+import { interruptedTurn } from "@shared/resume"
+import { detectCodeLanguage, insertFence } from "../lib/paste-code"
+import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
+import { drafts, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
+import SlashPill from "./SlashPill.vue"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
-import { openVideoPreview } from "../lib/image-preview"
+import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
 import { findModel, resolveVariant, withoutLatest } from "../lib/model"
 import {
   absolutePath,
-  fileDirectory,
   fileName,
   mentionAttachment,
   mentionSpan,
   mentionedIn,
   withMention,
 } from "../lib/mention"
-import { notify, notifyFailure } from "../lib/toast"
+import { notice, notify, notifyFailure } from "../lib/toast"
 import { useApp } from "../stores/app"
 import { HOME_SCOPE, SIDE_SCOPE, useAnnotations } from "../stores/annotations"
 import { annotationSend } from "../lib/annotate"
@@ -85,11 +89,15 @@ const annotations = useAnnotations()
 const annotationScope = computed(() => sessionID.value ?? (props.side ? SIDE_SCOPE : HOME_SCOPE))
 const waiting = computed(() => annotations.list(annotationScope.value))
 
-/* MiMo's attachment tile click: a video opens its preview, a document its tab; a picture does nothing here. */
-function onTileClick(item: Parameters<typeof videoUrl>[0]) {
+/* MiMo's attachment click: a picture or a video opens its preview, a document its tab. */
+function onTileClick(item: Attachment) {
   const url = videoUrl(item)
+  const picture = preview(item)
   if (url) openVideoPreview(url, { name: item.path })
-  else if (!preview(item) && item.path) openAttachment(item.path)
+  else if (picture) {
+    const group = attachments.value.map((entry) => preview(entry)).filter((entry): entry is string => Boolean(entry))
+    openImagePreview(picture, { name: item.path, group })
+  } else if (item.path) openAttachment(item.path)
 }
 
 /* MiMo's file chip click: a document opens in the Office tab, anything else in the files tab. */
@@ -111,10 +119,15 @@ const input = ref<HTMLTextAreaElement>()
  * ever held what this window had sent, so pressing Up in a session reopened
  * after a restart recalled nothing at all.
  */
-const history = computed(() =>
-  (props.side ? app.sideMessages : app.messages).filter((message) => message.role === "user").map((message) => message.text),
-)
-const historyIndex = ref(-1)
+const history = computed(() => promptHistory(props.side ? app.sideMessages : app.messages))
+/*
+ * MiMo's history walk: where Up has got to (null when not walking), and the
+ * draft the first Up set aside, which Down past the newest puts back.
+ */
+const historyIndex = ref<number | null>(null)
+const historyStash = ref("")
+/* Set while the walk itself writes the box, so that write does not end the walk. */
+let walkingHistory = false
 
 /**
  * The picker lists display names, so the pill has to as well - showing the raw
@@ -276,8 +289,20 @@ const dismissed = ref(false)
  */
 const mentioned = ref(new Set<string>())
 
+/* Mentions put in lately, from the menu or a drop, newest last: what Backspace takes whole. MiMo keeps a hundred. */
+const recentMentions: string[] = []
+
+function rememberMention(path: string) {
+  const at = recentMentions.indexOf(path)
+  if (at >= 0) recentMentions.splice(at, 1)
+  recentMentions.push(path)
+  if (recentMentions.length > 100) recentMentions.shift()
+}
+
 watch(text, (value) => {
   void nextTick(resize)
+  // Typing, a paste or a send ends a history walk; only the walk's own writes keep it going.
+  if (!walkingHistory) historyIndex.value = null
   /*
    * Whatever the box says now is what the menus answer to. A menu closed with
    * Escape comes back as soon as anything is typed, which is the reference's
@@ -311,6 +336,11 @@ function syncCaret() {
 const attachments = ref<Attachment[]>([])
 const picker = ref<HTMLInputElement>()
 const dragging = ref(false)
+
+/* MiMo's skill chips: skills picked from the slash menu or the plus menu, sent with the message. */
+const skills = ref<string[]>([])
+/* A chip on its way out, drawn shrinking for MiMo's 200ms before it goes. */
+const leavingSkill = ref<string>()
 
 async function take(files: readonly File[]) {
   if (!files.length) return
@@ -347,8 +377,21 @@ async function onPaste(event: ClipboardEvent) {
     return
   }
   const pasted = event.clipboardData?.getData("text/plain") ?? ""
-  // Anything shorter pastes as text, the way it always has.
-  if (pasted.length < PASTE_AS_FILE) return
+  if (pasted.length < PASTE_AS_FILE) {
+    // MiMo's code paste: text that reads as code goes in fenced, on lines of its own.
+    const language = detectCodeLanguage(pasted)
+    const box = input.value
+    if (!language || !box) return
+    event.preventDefault()
+    const next = insertFence(text.value, box.selectionStart, box.selectionEnd, language, pasted)
+    text.value = next.text
+    await nextTick()
+    resize()
+    box.focus({ preventScroll: true })
+    box.setSelectionRange(next.caret, next.caret)
+    caret.value = next.caret
+    return
+  }
   event.preventDefault()
   const name = `mcode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`
   if (new Blob([pasted]).size > MAX_BYTES) {
@@ -402,23 +445,65 @@ async function onDrop(event: DragEvent) {
    * the reference reads `file:` off the plain text and inserts `@path`, which
    * keeps a file that is already in the project referred to rather than sent.
    */
+  const root = projectRoot.value
   const dropped = event.dataTransfer?.getData("text/plain") ?? ""
   if (dropped.startsWith("file:")) {
     const path = decodeURI(dropped.slice("file:".length).replace(/^\/{2,3}/, ""))
     if (path) {
-      text.value = text.value ? `${text.value.replace(/\s+$/, "")} @${path} ` : `@${path} `
-      focus()
+      // Inside the project it is named from the project root, as MiMo names it.
+      const rel = root ? projectRelative(root, path) : undefined
+      addDroppedMentions(rel ? [{ rel, file: true }] : [{ rel: path, file: true }])
       return
     }
   }
 
+  /*
+   * MiMo's drop: a file inside the project (not a picture or a video) becomes
+   * an @mention from the project root, appended to the draft; everything else
+   * is attached. A folder is named but not carried, as a folder picked in the
+   * @ menu is.
+   */
   const files = [...(event.dataTransfer?.files ?? [])]
-  if (!files.length) return
-  await take(files)
+  const inside: { rel: string; absolute: string }[] = []
+  const attach: File[] = []
+  for (const file of files) {
+    const media = file.type.startsWith("image/") || file.type.startsWith("video/")
+    const absolute = window.mcode.pathForFile(file)
+    const rel = root && !media ? projectRelative(root, absolute) : undefined
+    if (rel) inside.push({ rel, absolute })
+    else attach.push(file)
+  }
+  if (inside.length) {
+    const folders = new Set(await window.mcode.directoriesOf(inside.map((entry) => entry.absolute)).catch(() => [] as string[]))
+    addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
+  }
+  if (attach.length) await take(attach)
+}
+
+/* The project a mention is named from: the conversation's folder, or the one the home screen will start in. */
+const projectRoot = computed(() =>
+  props.fresh ? (props.startScratch ? undefined : props.startDirectory) : session.value?.directory,
+)
+
+function addDroppedMentions(paths: { rel: string; file: boolean }[]) {
+  const unique = [...new Map(paths.map((entry) => [entry.rel, entry])).values()]
+  const next = appendMentions(
+    text.value,
+    unique.map((entry) => entry.rel),
+  )
+  mentioned.value = new Set([...mentioned.value, ...unique.filter((entry) => entry.file).map((entry) => entry.rel)])
+  for (const entry of unique) rememberMention(entry.rel)
+  text.value = next
+  void nextTick(() => {
+    resize()
+    input.value?.focus()
+    input.value?.setSelectionRange(next.length, next.length)
+    caret.value = next.length
+  })
 }
 
 /**
- * Silent once something has been attached; the tiles say what is going.
+ * What the empty box invites.
  *
  * It no longer changes while the model is working. It used to read "Working -
  * Esc to stop", which was the box telling you it would not take anything, and
@@ -428,13 +513,11 @@ async function onDrop(event: DragEvent) {
  */
 const placeholder = computed(() => {
   if (mode.value === "shell") return t("composer.shellPlaceholder")
-  /*
-   * It names both triggers now that both exist. The reference's own placeholder
-   * has always said this, and MCode's could not: for a long time neither a
-   * slash nor an @ did anything, and a box that advertises keys it ignores is
-   * worse than one that says nothing.
-   */
-  return attachments.value.length ? "" : t("composer.placeholder", { slash: "/", at: "@" })
+  // MiMo's order: a running compaction, then the mode's own line, then the everyday one. Attachments do not blank it.
+  if (compactingHere.value) return t("composer.compact.starting")
+  if (!props.side && agent.value === "plan") return t("composer.placeholderPlan")
+  if (!props.side && staged.value) return t("composer.stagedSub")
+  return t("composer.placeholder")
 })
 
 /** A drag can also end without a drop - cancelled, or dropped elsewhere. */
@@ -462,7 +545,43 @@ const mode = ref<"normal" | "shell">("normal")
  * there is nothing waiting to go. Anything typed puts send back, so the box
  * never becomes a dead end while the model works.
  */
-const stopping = computed(() => busyHere.value && !text.value.trim() && !attachments.value.length)
+const stopping = computed(
+  () => busyHere.value && !text.value.trim() && !attachments.value.length && !skills.value.length,
+)
+
+/* A compaction of this box's conversation is running; MiMo locks the box and spins the send button meanwhile. */
+const compactingHere = computed(() => !props.side && !props.fresh && app.compacting)
+
+/* The conversation as it now stands, without anything rolled back. */
+const messagesHere = computed(() => (props.side ? app.sideMessages : app.visible))
+
+/* MiMo keeps the AI note's room but hides it until the conversation has a reply. */
+const hasReply = computed(() => messagesHere.value.some((message) => message.role === "assistant"))
+
+/* Anything the send button would send. */
+const hasContent = computed(
+  () =>
+    Boolean(text.value.trim()) || attachments.value.length > 0 || skills.value.length > 0 || waiting.value.length > 0,
+)
+
+/*
+ * MiMo's 继续: the last turn broke off, nothing is running or waiting in the
+ * box, and nothing is rolled back - the send button becomes a play button that
+ * carries the turn on.
+ */
+const resumable = computed(
+  () =>
+    Boolean(sessionID.value) &&
+    !busyHere.value &&
+    !compactingHere.value &&
+    !hasContent.value &&
+    (props.side || !app.rolledBack.length) &&
+    interruptedTurn(messagesHere.value) !== undefined,
+)
+
+async function resumeTurn() {
+  if (!(await app.resume(sessionID.value))) notifyFailure(t("composer.resumeUnavailable"))
+}
 
 function setMode(next: "normal" | "shell") {
   mode.value = next
@@ -479,15 +598,47 @@ function setMode(next: "normal" | "shell") {
  */
 const recorder = new VoiceRecorder()
 const voice = ref<VoiceState>("idle")
+/* The microphone's level for the capsule's waveform, read once a frame while recording. */
+const voiceLevel = ref(0)
+/* Bumped by × so a transcription already on its way lands nowhere. */
+let voiceRun = 0
+/* MiMo's cue under the text while a spoken command is acted on, or empty. */
+const voiceCue = ref("")
 
 const voiceConfigured = computed(() => Boolean(app.config?.voiceModel?.model))
 
-onBeforeUnmount(() => recorder.cancel())
+let levelFrame = 0
+
+function followLevel() {
+  cancelAnimationFrame(levelFrame)
+  const step = () => {
+    if (voice.value !== "recording") {
+      voiceLevel.value = 0
+      return
+    }
+    voiceLevel.value = recorder.level
+    levelFrame = requestAnimationFrame(step)
+  }
+  levelFrame = requestAnimationFrame(step)
+}
+
+onBeforeUnmount(() => {
+  cancelAnimationFrame(levelFrame)
+  recorder.cancel()
+})
+
+/* MiMo's five bars: 4px at rest and up to 16 at full level, the middle one the tallest. */
+const WAVE_WEIGHTS = [0.5, 0.78, 1, 0.78, 0.5]
+const waveHeights = computed(() => WAVE_WEIGHTS.map((weight) => `${(4 + voiceLevel.value * 12 * weight).toFixed(1)}px`))
+
+/* How long the command cue stays before the command acts, as MiMo lingers it. */
+const CUE_MS = 420
 
 async function toggleVoice() {
-  if (voice.value === "working") return
+  if (voice.value === "working" || voice.value === "starting") return
   if (voice.value === "recording") {
     voice.value = "working"
+    const run = ++voiceRun
     try {
       const recording = await recorder.stop()
       /* A press and an immediate second press is a slip, not a message. */
@@ -498,6 +649,8 @@ async function toggleVoice() {
         mime: recording.mime,
         language: language.value,
       })
+      // Cancelled while it was being written down.
+      if (run !== voiceRun) return
       const said = (result?.text ?? "").trim()
       if (!said) return
       const { text: spoken, send } = splitSendWord(said)
@@ -508,11 +661,17 @@ async function toggleVoice() {
       }
       /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
       const sendsByVoice = (app.config?.voiceSend ?? false) && (app.config?.voiceMode ?? "smart") === "smart"
-      if (send && sendsByVoice && text.value.trim()) await submit()
+      if (send && sendsByVoice && text.value.trim()) {
+        voice.value = "idle"
+        voiceCue.value = t("voice.detected", { cmd: t("composer.send") })
+        await new Promise((resolve) => setTimeout(resolve, CUE_MS))
+        voiceCue.value = ""
+        if (run === voiceRun) await submit()
+      }
     } catch (err) {
-      notifyFailure(t("voice.failed"), reasonForVoice(err))
+      if (run === voiceRun) notifyFailure(t("voice.failed"), reasonForVoice(err))
     } finally {
-      voice.value = "idle"
+      if (run === voiceRun) voice.value = "idle"
     }
     return
   }
@@ -521,13 +680,24 @@ async function toggleVoice() {
     notifyFailure(t("voice.failed"), t("voice.notConfigured"))
     return
   }
+  // MiMo's starting capsule, between the press and the microphone answering.
+  voice.value = "starting"
   try {
     await recorder.start()
     voice.value = "recording"
+    followLevel()
   } catch (err) {
     voice.value = "idle"
     notifyFailure(t("voice.failed"), reasonForVoice(err))
   }
+}
+
+/* MiMo's ×: the recording, or the transcription on its way, is thrown away and nothing is typed. */
+function cancelVoice() {
+  voiceRun += 1
+  recorder.cancel()
+  voice.value = "idle"
+  voiceCue.value = ""
 }
 
 /** The app's own phrasing for the failures it can recognise. */
@@ -551,8 +721,8 @@ function attachFromMenu() {
   pick()
 }
 
+/* Always offered, as MiMo offers it: on the home screen the window opens its bottom terminal in the chosen folder. */
 function terminalFromMenu() {
-  if (!sessionID.value) return
   menu.value = undefined
   emit("terminal")
 }
@@ -573,20 +743,70 @@ const staged = computed(() =>
 )
 
 async function toggleStaged() {
+  const next = !staged.value
+  // MiMo's modes are one at a time: turning compose on leaves plan. The menu stays open.
+  if (next && agent.value === "plan") {
+    if (sessionID.value) await app.setAgent("build")
+    else await app.patchConfig({ agent: "build" })
+  }
   // A box starting a new task sets what that task will start with.
   if (!sessionID.value) {
-    await app.patchConfig({ staged: !staged.value })
+    await app.patchConfig({ staged: next })
     return
   }
-  await app.setStaged(!staged.value)
+  await app.setStaged(next)
 }
 
-/* A skill is started the way typing its name would start it. */
-async function useSkill(name: string) {
+/* MiMo's skill chip: a picked skill waits above the text and goes with the next message. */
+function addSkill(name: string) {
   menu.value = undefined
-  text.value = `/${name} `
-  await nextTick(resize)
+  if (!skills.value.includes(name)) skills.value = [...skills.value, name]
   focus()
+}
+
+function removeSkill(name: string) {
+  leavingSkill.value = name
+  setTimeout(() => {
+    skills.value = skills.value.filter((entry) => entry !== name)
+    if (leavingSkill.value === name) leavingSkill.value = undefined
+  }, 200)
+}
+
+/* The chips' skills spelled out ahead of the message, the way a skill command is expanded when typed. */
+function withSkills(message: string, chosen: string[]): string {
+  const expanded = chosen
+    .map((name) => serverCommand(name))
+    .filter((command): command is CommandInfo => Boolean(command?.template))
+    .map((command) => expandTemplate(command.template, "").trim())
+    .filter(Boolean)
+  return [...expanded, message].filter((part) => part.trim()).join("\n\n")
+}
+
+/* The plus menu's skills submenu: MiMo's search box over the project's skills, beside its row. */
+const skillQuery = ref("")
+const skillSubOpen = ref(false)
+const skillMenu = ref<HTMLElement>()
+const skillPlace = ref({ left: 0, top: 0 })
+
+const skillRows = computed(() => {
+  const needle = skillQuery.value.trim().toLowerCase()
+  const all = app.commands.filter((command) => command.source === "skill")
+  if (!needle) return all
+  return all.filter(
+    (command) =>
+      command.name.toLowerCase().includes(needle) || (command.description?.toLowerCase().includes(needle) ?? false),
+  )
+})
+const hasSkills = computed(() => app.commands.some((command) => command.source === "skill"))
+
+async function openSkillMenu(event: Event) {
+  const row = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  skillSubOpen.value = true
+  await nextTick()
+  const panel = skillMenu.value
+  if (!panel) return
+  skillPlace.value = besideRow(row, panel.offsetWidth, panel.offsetHeight)
+  panel.querySelector("input")?.focus()
 }
 
 async function submit() {
@@ -598,6 +818,11 @@ async function submit() {
     emit("shell", value)
     return
   }
+  // MiMo's /compact typed into the box runs the compaction, behind its guards.
+  if (/^\/compact(\s|$)/.test(value) && !serverCommand("compact")) {
+    await compactFromBox(value)
+    return
+  }
   /*
    * An attachment on its own is a message; the model can be asked to look at
    * it. There is deliberately no test for a turn being in flight: one that is
@@ -605,10 +830,19 @@ async function submit() {
    * would only force the user to stop the model and lose its work in order to
    * say one more sentence.
    */
-  if (!value && !attachments.value.length && !waiting.value.length) return
-  historyIndex.value = -1
+  if (!value && !attachments.value.length && !waiting.value.length && !skills.value.length) {
+    // MiMo never disables send for an empty box; sending one says what is missing.
+    notifyFailure(t("composer.emptyInput"))
+    return
+  }
+  if (compactingHere.value) {
+    notify(t("composer.compact.busy"))
+    return
+  }
+  historyIndex.value = null
   const sent = attachments.value
   const carried = mentioned.value
+  const chips = skills.value
   const scopeAtSend = annotationScope.value
   const pointed = scopeAtSend ? annotations.take(scopeAtSend) : []
   /*
@@ -620,6 +854,7 @@ async function submit() {
   text.value = ""
   attachments.value = []
   mentioned.value = new Set()
+  skills.value = []
   await nextTick(resize)
 
   /*
@@ -635,6 +870,7 @@ async function submit() {
       text.value = value
       attachments.value = sent
       mentioned.value = carried
+      skills.value = chips
       if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
       await nextTick(resize)
       notifyFailure(t("home.startFailed"), err instanceof Error ? err.message : String(err))
@@ -645,14 +881,51 @@ async function submit() {
   const named = await mentionAttachments(value, carried)
 
   // A rejected message should not cost the user what they typed, or gathered.
-  if (!(await app.send(outgoing(value), [...sent, ...named], props.side ? app.sideID : undefined, pointed))) {
+  if (!(await app.send(withSkills(outgoing(value), chips), [...sent, ...named], props.side ? app.sideID : undefined, pointed))) {
     text.value = value
     attachments.value = sent
     mentioned.value = carried
+    skills.value = chips
     // Back into the conversation the message was meant for - on the home screen, the one just made.
     const back = annotationScope.value
     if (back && pointed.length) annotations.put(back, [...pointed, ...annotations.list(back)])
     await nextTick(resize)
+  }
+}
+
+/*
+ * MiMo's /compact from the box: refused with its reason when it cannot run;
+ * otherwise the draft is cleared and the compaction is reported as it starts
+ * and as it ends.
+ */
+async function compactFromBox(line: string) {
+  if (line.replace(/^\/compact/, "").trim()) {
+    notifyFailure(t("composer.compact.args"))
+    return
+  }
+  const id = sessionID.value
+  if (!id || !messagesHere.value.length) {
+    notifyFailure(t("composer.compact.noSession"))
+    return
+  }
+  if (busyHere.value || compactingHere.value) {
+    notify(t("composer.compact.busy"))
+    return
+  }
+  if (attachments.value.length || skills.value.length || waiting.value.length) {
+    notifyFailure(t("composer.compact.attachments"))
+    return
+  }
+  text.value = ""
+  await nextTick(resize)
+  notify(t("composer.compact.starting"))
+  try {
+    await app.compact(id)
+    notice.success(t("composer.compact.success"))
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    const timedOut = /timed? ?out|ETIMEDOUT/i.test(reason)
+    notifyFailure(timedOut ? t("composer.compact.timeout") : t("composer.compact.failed"), reason)
   }
 }
 
@@ -713,102 +986,157 @@ async function mentionAttachments(value: string, chosen: Set<string>): Promise<A
   return out
 }
 
+/* ------------------------------------------------------------- @ menu -- */
+
+/**
+ * MiMo's @ menu: the project a folder at a time, or a search inside the folder
+ * being browsed.
+ *
+ * An empty query lists one level - a folder opens, a file goes into the draft;
+ * a query searches the files under the current folder after a short pause.
+ * With no project there is nothing to list, and one line says so.
+ */
+const atSub = ref("")
+const atEntries = ref<DirEntry[]>([])
+const atHits = ref<FileHit[]>([])
+const atTruncated = ref(false)
+const atStatus = ref<"idle" | "loading" | "ready" | "dirFailed" | "searchFailed">("idle")
+const atIndex = ref(0)
+/* Answers are matched to the latest ask, so a slow one cannot overwrite a newer one. */
+let atAsk = 0
+let atTimer: ReturnType<typeof setTimeout> | undefined
+
+const SEARCH_PAUSE_MS = 150
+
+/** The mention the caret is standing in, if it is standing in one. */
+const atSpan = computed(() => (mode.value === "shell" ? undefined : mentionSpan(text.value, caret.value)))
+
+interface AtRow {
+  kind: "dir" | "file"
+  name: string
+  rel: string
+  dir?: string
+}
+
+const joinRel = (folder: string, name: string) => (folder ? `${folder}/${name}` : name)
+
+const atRows = computed<AtRow[]>(() => {
+  const span = atSpan.value
+  if (!span || !projectRoot.value) return []
+  if (!span.query) {
+    return atEntries.value.map((entry) => ({ kind: entry.type, name: entry.name, rel: joinRel(atSub.value, entry.name) }))
+  }
+  return atHits.value.map((hit) => ({ kind: "file" as const, name: hit.name, rel: hit.rel, dir: hit.dir }))
+})
+
+/* The breadcrumb: the workspace, then each folder below it. */
+const atCrumbs = computed(() => [t("composer.at.workspace"), ...atSub.value.split("/").filter(Boolean)].join(" / "))
+
+function loadAt() {
+  const span = atSpan.value
+  const root = projectRoot.value
+  const client = app.client
+  clearTimeout(atTimer)
+  if (!span || !root || !client) return
+  const ask = ++atAsk
+  const sub = atSub.value
+  atStatus.value = "loading"
+  if (!span.query) {
+    client
+      .request({ type: "file.listDir", directory: root, sub })
+      .then((result) => {
+        if (ask !== atAsk) return
+        atEntries.value = result.entries
+        atStatus.value = "ready"
+      })
+      .catch(() => {
+        if (ask !== atAsk) return
+        atEntries.value = []
+        atStatus.value = "dirFailed"
+      })
+    return
+  }
+  const query = span.query
+  atTimer = setTimeout(() => {
+    client
+      .request({ type: "file.search", directory: root, query, sub })
+      .then((result) => {
+        if (ask !== atAsk) return
+        atHits.value = result.entries
+        atTruncated.value = result.truncated
+        atStatus.value = "ready"
+      })
+      .catch(() => {
+        if (ask !== atAsk) return
+        atHits.value = []
+        atTruncated.value = false
+        atStatus.value = "searchFailed"
+      })
+  }, SEARCH_PAUSE_MS)
+}
+
 watch(
-  () => app.currentID,
-  () => {
-    historyIndex.value = -1
-    // What was gathered belonged to the conversation being left.
-    attachments.value = []
-    mentioned.value = new Set()
-    // And the file list belonged to the project that conversation was in.
-    files.value = []
-    listedFor.value = undefined
+  () => [atSpan.value?.query, atSpan.value !== undefined, atSub.value, projectRoot.value] as const,
+  ([, open]) => {
+    if (open) {
+      loadAt()
+      return
+    }
+    // Closed: the next @ starts from the project root again.
+    atAsk += 1
+    clearTimeout(atTimer)
+    atSub.value = ""
+    atStatus.value = "idle"
   },
 )
 
-/* --------------------------------------------------------------- files -- */
-
-/**
- * The project's files, fetched once and filtered here.
- *
- * The server caps the list and walks the tree to build it, so asking again on
- * every keystroke would cost a directory crawl per letter. The palette settled
- * the same question the same way.
- */
-const files = ref<string[]>([])
-const listedFor = ref<string>()
-
-async function loadFiles() {
-  // A box starting a new task lists the folder that task will be made in.
-  const directory = props.fresh ? props.startDirectory : session.value?.directory
-  if (!directory || !app.client || listedFor.value === directory) return
-  listedFor.value = directory
-  try {
-    const result = await app.client.request({ type: "file.list", directory })
-    files.value = result.files.map((file) => file.path)
-  } catch {
-    // Nothing is said: the menu simply does not appear and the @ stays text.
-    // Cleared so the next @ tries again rather than being stuck on one failure.
-    listedFor.value = undefined
-  }
-}
-
-/** The mention the caret is standing in, if it is standing in one. */
-const atSpan = computed(() =>
-  mode.value === "shell" ? undefined : mentionSpan(text.value, caret.value),
-)
-
-// Nobody wants the file list until they have typed an @, so that is when it is
-// fetched - rather than on opening a session that may never mention a file.
-watch(atSpan, (span) => {
-  if (span) void loadFiles()
-})
-
-/**
- * A hit in the file's own name beats one further up the path.
- *
- * Someone typing "conf" is nearly always after config.ts, not after the
- * eighty files that happen to live under a directory called config.
- */
-function nameFirst(path: string, needle: string): number {
-  if (!needle) return 0
-  return path.slice(path.lastIndexOf("/") + 1).toLowerCase().includes(needle) ? 0 : 1
-}
-
-const atMatches = computed(() => {
-  const span = atSpan.value
-  if (!span || dismissed.value) return []
-  const needle = span.query.toLowerCase()
-  const found = needle ? files.value.filter((path) => path.toLowerCase().includes(needle)) : files.value
-  return [...found]
-    .sort((a, b) => nameFirst(a, needle) - nameFirst(b, needle) || a.length - b.length)
-    // Enough to choose from without covering the conversation behind it.
-    .slice(0, 8)
-})
-
 /*
- * An @ that matches nothing closes the menu rather than showing an empty one.
- *
- * The reference leaves it open on "No matching items", and while it is open it
- * swallows Enter - so a prompt that mentions a name the project does not have
- * cannot be sent at all until the menu is dismissed. The slash menu here has
- * always closed instead, and closing is both the kinder answer and the one
- * that keeps the two triggers behaving alike.
+ * Open while it has something to show: rows, a loading or failure line, or
+ * the line asking for a project. An @ that finds nothing closes, as MiMo's does,
+ * so a name the project lacks never holds Enter hostage.
  */
-const atOpen = computed(() => atMatches.value.length > 0)
-const atIndex = ref(0)
+const atOpen = computed(() => {
+  if (!atSpan.value || dismissed.value) return false
+  if (!projectRoot.value) return true
+  return atRows.value.length > 0 || ["loading", "dirFailed", "searchFailed"].includes(atStatus.value)
+})
 
-watch(atMatches, (rows) => {
+watch(atRows, (rows) => {
   if (atIndex.value >= rows.length) atIndex.value = 0
 })
 
-/** Puts the chosen path into the draft, and remembers that it was chosen. */
-async function chooseMention(at: number) {
+/* A folder opens in the menu; a file goes into the draft. */
+function chooseAt(at: number) {
+  const row = atRows.value[at]
+  if (!row) return
+  if (row.kind === "dir") enterFolder(row.rel)
+  else void insertMention(row.rel, true)
+}
+
+function enterFolder(rel: string) {
+  atSub.value = rel
+  atIndex.value = 0
+  input.value?.focus()
+}
+
+function folderUp() {
+  const cut = atSub.value.lastIndexOf("/")
+  atSub.value = cut < 0 ? "" : atSub.value.slice(0, cut)
+  atIndex.value = 0
+  input.value?.focus()
+}
+
+/*
+ * `@path ` in place of what was typed after the @. A file is remembered as
+ * chosen, so it travels with the message; a folder is only named in the text,
+ * which is all MiMo sends for one.
+ */
+async function insertMention(path: string, file: boolean) {
   const span = atSpan.value
-  const path = atMatches.value[at]
-  if (!span || !path) return
+  if (!span) return
   const next = withMention(text.value, span, path)
-  mentioned.value = new Set(mentioned.value).add(path)
+  if (file) mentioned.value = new Set(mentioned.value).add(path)
+  rememberMention(path)
   text.value = next.text
   atIndex.value = 0
   await nextTick()
@@ -816,6 +1144,10 @@ async function chooseMention(at: number) {
   input.value?.focus()
   input.value?.setSelectionRange(next.cursor, next.cursor)
   caret.value = next.cursor
+}
+
+function referenceFolder(rel: string) {
+  void insertMention(`${rel}/`, false)
 }
 
 /**
@@ -829,7 +1161,6 @@ function openContext() {
   const draft = text.value
   const opened = draft && !/\s$/.test(draft) ? `${draft} @` : `${draft}@`
   text.value = opened
-  void loadFiles()
   void nextTick(() => {
     resize()
     input.value?.focus()
@@ -846,6 +1177,7 @@ function mention(path: string) {
   if (!span) return
   const next = withMention(opened, span, path)
   mentioned.value = new Set(mentioned.value).add(path)
+  rememberMention(path)
   text.value = next.text
   void nextTick(() => {
     resize()
@@ -854,6 +1186,52 @@ function mention(path: string) {
     caret.value = next.cursor
   })
 }
+
+/* ------------------------------------------------------------- drafts -- */
+
+/*
+ * MiMo's drafts: one per conversation (the side chat's apart), and the home
+ * screen's own, which is also kept on disk. Switching conversations puts the
+ * words, files, mentions and skill chips of the one being left aside and
+ * brings back the other's.
+ */
+const draftKey = computed(() =>
+  props.fresh ? "home" : `${props.side ? "side" : "main"}:${sessionID.value ?? ""}`,
+)
+
+function saveDraft(key: string) {
+  if (text.value || attachments.value.length || skills.value.length) {
+    drafts.set(key, {
+      text: text.value,
+      attachments: attachments.value,
+      mentioned: [...mentioned.value],
+      skills: skills.value,
+    })
+  } else drafts.delete(key)
+}
+
+watch(
+  draftKey,
+  (next, previous) => {
+    historyIndex.value = null
+    if (previous) saveDraft(previous)
+    const kept = drafts.get(next)
+    text.value = kept?.text ?? (next === "home" ? loadHomeDraft() : "")
+    attachments.value = kept?.attachments ?? []
+    mentioned.value = new Set(kept?.mentioned ?? [])
+    skills.value = kept?.skills ?? []
+    caret.value = text.value.length
+    // The folder being browsed belonged to the project that conversation was in.
+    atSub.value = ""
+  },
+  { immediate: true },
+)
+
+watch(text, (value) => {
+  if (props.fresh) keepHomeDraft(value)
+})
+
+onBeforeUnmount(() => saveDraft(draftKey.value))
 
 /* ------------------------------------------------------------ commands -- */
 
@@ -904,29 +1282,19 @@ const serverEntries = computed<SlashEntry[]>(() =>
 const sessionEntries = computed<SlashEntry[]>(() => {
   const id = sessionID.value
   if (!id || serverCommand("compact")) return []
-  return [{ id: "session.compact", trigger: "compact", description: t("composer.compactDesc"), run: () => void app.compact(id) }]
+  return [
+    { id: "session.compact", trigger: "compact", description: t("composer.compactDesc"), run: () => void compactFromBox("/compact") },
+  ]
 })
 
 /*
- * A slash at the very start opens the list, and only there: a slash inside a
- * sentence is a slash, and a path pasted into the box is not a command.
+ * MiMo's slash trigger: the caret's line holds only spaces before a `/`, and
+ * nothing typed since that `/` is whitespace. Any line counts. A slash inside
+ * a sentence stays a slash, and the space after a name ends the search, so a
+ * command's arguments are never taken for a query.
  */
-const slashQuery = computed(() => {
-  if (mode.value === "shell") return undefined
-  const value = text.value
-  if (!value.startsWith("/") || value.includes("\n")) return undefined
-  /*
-   * Once the first word names a project command and a space has been typed,
-   * what follows is that command's arguments rather than a search. Without
-   * this the menu stayed up over `/deploy west`, and Enter - which a menu owns
-   * while it is open - would pick the row again and throw the arguments away.
-   * A UI command is exempt: those are matched on their titles, which contain
-   * spaces, and none of them takes an argument.
-   */
-  const line = splitCommandLine(value)
-  if (line && value.includes(" ") && serverCommand(line.name)) return undefined
-  return value.slice(1)
-})
+const slashSpan = computed(() => (mode.value === "shell" ? undefined : slashAt(text.value, caret.value)))
+const slashQuery = computed(() => slashSpan.value?.query)
 
 const slashMatches = computed(() => {
   const query = slashQuery.value
@@ -940,8 +1308,7 @@ const slashMatches = computed(() => {
           (entry.description?.toLowerCase().includes(needle) ?? false),
       )
     : all
-  // Enough to choose from without covering the conversation behind it.
-  return found.slice(0, 8)
+  return found
 })
 
 /*
@@ -958,30 +1325,54 @@ watch(slashMatches, (rows) => {
   if (slashIndex.value >= rows.length) slashIndex.value = 0
 })
 
+/* MiMo's menus take the room above the box, less 12, between 120 and 300. */
+const boxEl = ref<HTMLElement>()
+const menuRoom = ref(300)
+
+watch(
+  () => atOpen.value || slashOpen.value,
+  (open) => {
+    if (!open) return
+    const top = boxEl.value?.getBoundingClientRect().top ?? 318
+    menuRoom.value = Math.min(300, Math.max(120, Math.round(top - 6 - 12)))
+  },
+)
+
+/* The names the slash highlight answers to: the menu's commands. */
+const slashNames = computed(() => new Set([...sessionEntries.value, ...serverEntries.value].map((entry) => entry.trigger)))
+
 async function runSlash(at: number) {
   const command = slashMatches.value[at]
-  if (!command) return
+  const span = slashSpan.value
+  if (!command || !span) return
   slashIndex.value = 0
-  if (!command.run) {
-    /*
-     * A project command is not run from the menu. The reference writes
-     * `/${trigger} ` into the editor, closes the popover and leaves the caret
-     * at the end (@4534200), because what comes next is the command's
-     * arguments - choosing the row is naming the command, not sending it.
-     */
-    text.value = `/${command.trigger} `
+  const before = text.value.slice(0, span.start)
+  const after = text.value.slice(span.start + span.query.length + 1)
+  /*
+   * MiMo's pick: a skill becomes a chip and the typed `/query` goes; the
+   * session's own command runs; anything else is named where `/query` was -
+   * `/name ` with the caret after it, because what comes next is its arguments -
+   * and the rest of the draft stays.
+   */
+  const skill = serverCommand(command.trigger)?.source === "skill"
+  if (command.run || skill) {
+    text.value = before + after.replace(/^ /, "")
     await nextTick(resize)
-    // After the tick, because the text watcher clears this on every change.
-    dismissed.value = true
-    const end = text.value.length
-    focus()
-    input.value?.setSelectionRange(end, end)
-    caret.value = end
+    if (skill) addSkill(command.trigger)
+    else command.run?.()
+    input.value?.setSelectionRange(before.length, before.length)
+    caret.value = before.length
     return
   }
-  text.value = ""
+  const named = `/${command.trigger} `
+  text.value = before + named + after
   await nextTick(resize)
-  command.run()
+  // After the tick, because the text watcher clears this on every change.
+  dismissed.value = true
+  const end = before.length + named.length
+  focus()
+  input.value?.setSelectionRange(end, end)
+  caret.value = end
 }
 
 /**
@@ -1027,10 +1418,20 @@ function onKeydown(event: KeyboardEvent) {
    * beginning with a slash, and both can be true at once.
    */
   if (atOpen.value) {
-    if (moveMenu(event, atMatches.value.length, atIndex)) return
-    if (takesRow(event)) {
+    if (moveMenu(event, atRows.value.length, atIndex)) return
+    const row = atRows.value[atIndex.value]
+    // MiMo's Tab on a folder references it; Enter opens it. On a file both pick it.
+    if (row && takesRow(event)) {
       event.preventDefault()
-      void chooseMention(atIndex.value)
+      if (event.key === "Tab" && row.kind === "dir") referenceFolder(row.rel)
+      else chooseAt(atIndex.value)
+      return
+    }
+    // Backspace with nothing typed after the @, inside a folder, climbs out of it.
+    const plain = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+    if (event.key === "Backspace" && plain && atSub.value && atSpan.value?.query === "") {
+      event.preventDefault()
+      folderUp()
       return
     }
     if (event.key === "Escape") {
@@ -1057,6 +1458,40 @@ function onKeydown(event: KeyboardEvent) {
       event.preventDefault()
       dismissed.value = true
       return
+    }
+  }
+
+  // MiMo's Ctrl+Enter (Cmd+Enter): a newline at the caret, in place of any selection.
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
+    const box = input.value
+    if (!box) return
+    event.preventDefault()
+    const start = box.selectionStart
+    text.value = `${text.value.slice(0, start)}\n${text.value.slice(box.selectionEnd)}`
+    void nextTick(() => {
+      resize()
+      box.setSelectionRange(start + 1, start + 1)
+      caret.value = start + 1
+    })
+    return
+  }
+
+  // MiMo's whole-mention delete: Backspace just after a mention takes all of it.
+  if (event.key === "Backspace" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+    const box = input.value
+    if (box && box.selectionStart === box.selectionEnd) {
+      const known = [...new Set([...[...recentMentions].reverse(), ...mentioned.value])]
+      const next = mentionBackspace(text.value, box.selectionStart, known)
+      if (next) {
+        event.preventDefault()
+        text.value = next.text
+        void nextTick(() => {
+          resize()
+          box.setSelectionRange(next.caret, next.caret)
+          caret.value = next.caret
+        })
+        return
+      }
     }
   }
 
@@ -1087,27 +1522,47 @@ function onKeydown(event: KeyboardEvent) {
     }
   }
 
-  // Arrow history, but only from the edges of the text so it never fights
-  // with normal cursor movement in a multi-line draft.
+  /*
+   * MiMo's history walk. Up starts it from a collapsed caret at the very start
+   * of a one-line draft, setting that draft aside; once walking, Up and Down
+   * move from anywhere, and Down past the newest puts the draft back.
+   */
   const element = input.value
-  if (!element) return
-
-  if (event.key === "ArrowUp" && element.selectionStart === 0 && history.value.length) {
+  if (!element || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return
+  const collapsed = element.selectionStart === element.selectionEnd
+  const walking = historyIndex.value !== null
+  if (event.key === "ArrowUp" && history.value.length) {
+    if (!walking && !(collapsed && element.selectionStart === 0 && !text.value.includes("\n"))) return
     event.preventDefault()
-    const next = historyIndex.value === -1 ? history.value.length - 1 : Math.max(0, historyIndex.value - 1)
-    historyIndex.value = next
-    text.value = history.value[next]
-  } else if (event.key === "ArrowDown" && element.selectionStart === text.value.length && historyIndex.value !== -1) {
+    if (historyIndex.value === null) {
+      historyStash.value = text.value
+      showHistory(history.value.length - 1)
+    } else showHistory(Math.max(0, historyIndex.value - 1))
+  } else if (event.key === "ArrowDown" && walking) {
     event.preventDefault()
-    const next = historyIndex.value + 1
-    if (next >= history.value.length) {
-      historyIndex.value = -1
-      text.value = ""
-    } else {
-      historyIndex.value = next
-      text.value = history.value[next]
-    }
+    const next = (historyIndex.value ?? 0) + 1
+    showHistory(next >= history.value.length ? null : next)
   }
+}
+
+/* Writes a history entry, or the set-aside draft for null, with the caret at its end. */
+function showHistory(at: number | null) {
+  walkingHistory = true
+  historyIndex.value = at
+  const value = at === null ? historyStash.value : (history.value[at] ?? "")
+  text.value = value
+  void nextTick(() => {
+    walkingHistory = false
+    resize()
+    input.value?.setSelectionRange(value.length, value.length)
+    caret.value = value.length
+  })
+}
+
+/* A click moves the caret and ends a history walk. */
+function onBoxClick() {
+  historyIndex.value = null
+  syncCaret()
 }
 
 
@@ -1137,36 +1592,78 @@ function compactTokens(count: number): string {
  */
 const contextUsage = computed(() => {
   if (!sessionID.value) return undefined
-  const reading = readContext(props.side ? app.sideMessages : app.messages, app.providers)
+  const reading = readContext(messagesHere.value, app.providers)
   // MiMo draws no ring until a turn has spent something: an empty conversation has nothing to show.
   if (!reading) return undefined
   const current = session.value?.model
-  const window =
-    reading?.window ??
+  const limit =
+    reading.window ??
     (current
       ? app.providers.find((provider) => provider.id === current.provider)?.models.find((model) => model.id === current.model)
           ?.contextWindow
       : undefined)
-  const used = reading?.used ?? 0
-  if (!window) {
-    return {
-      percent: 0,
-      shareLine: t("composer.ctxUsedOnly", { used: compactTokens(used) }),
-      tokensLine: t("composer.ctxUnknown"),
-    }
+  // MiMo's figure leaves reasoning out: the prompt, cache reads and writes, and the output.
+  const usage = reading.usage
+  const used = usage.input + usage.cacheRead + usage.cacheWrite + usage.output
+  // The cache line only when the provider reported reads from its cache.
+  const cacheBase = usage.cacheRead + usage.cacheWrite + usage.input
+  const cacheLine =
+    usage.cacheRead > 0 && cacheBase > 0
+      ? t("composer.ctxCache", { pct: Math.round((usage.cacheRead / cacheBase) * 100) })
+      : undefined
+  if (!limit) {
+    return { percent: 0, shareLine: undefined, tokensLine: t("composer.ctxUsedOnly", { used: compactTokens(used) }), cacheLine }
   }
-  const share = (used / window) * 100
-  const decimal = new Intl.NumberFormat(language.value, { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  const share = (used / limit) * 100
   return {
-    percent: share,
-    shareLine: t("composer.ctxPercent", {
-      used: decimal.format(share),
-      left: decimal.format(Math.max(0, 100 - share)),
-    }),
-    tokensLine: t("composer.ctxTokens", { used: compactTokens(used), total: compactTokens(window) }),
+    // MiMo's ring: a whole percent, at least 1, and no arc at all past the window.
+    percent: used > limit ? 0 : Math.max(1, Math.round(share)),
+    shareLine: t("composer.ctxPercent", { used: share.toFixed(1), left: Math.max(0, 100 - share).toFixed(1) }),
+    tokensLine: t("composer.ctxTokens", { used: compactTokens(used), total: compactTokens(limit) }),
+    cacheLine,
   }
 })
 const pills = ref<HTMLElement>()
+const rowStart = ref<HTMLElement>()
+const rowEnd = ref<HTMLElement>()
+
+/*
+ * MiMo's bar: once its two groups no longer share a line and wrap, the
+ * permission and mode chips drop their words; under 480 wide the usage ring
+ * goes. Measured with the words showing, so dropping them cannot decide it.
+ */
+const labelsCollapsed = ref(false)
+const barNarrow = ref(false)
+let barObserver: ResizeObserver | undefined
+let barFrame = 0
+
+function measureBar() {
+  cancelAnimationFrame(barFrame)
+  barFrame = requestAnimationFrame(() => {
+    const bar = pills.value
+    const start = rowStart.value
+    const end = rowEnd.value
+    if (!bar || !start || !end) return
+    barNarrow.value = bar.clientWidth < 480
+    bar.classList.remove("collapsed")
+    const a = start.getBoundingClientRect()
+    const b = end.getBoundingClientRect()
+    const wrapped = b.top >= a.bottom - 1 || a.top >= b.bottom - 1
+    bar.classList.toggle("collapsed", wrapped)
+    labelsCollapsed.value = wrapped
+  })
+}
+
+onMounted(() => {
+  barObserver = new ResizeObserver(measureBar)
+  for (const element of [pills.value, rowStart.value, rowEnd.value]) if (element) barObserver.observe(element)
+  measureBar()
+})
+
+onBeforeUnmount(() => {
+  barObserver?.disconnect()
+  cancelAnimationFrame(barFrame)
+})
 
 /**
  * The access chip's three positions, as MiMo has them: the default, "approve
@@ -1211,12 +1708,18 @@ const ACCESS_ICONS: Record<Access, string[]> = {
  * foot, and a menu that would run within 60px of the bottom opens above instead.
  */
 const accessMenu = ref<HTMLElement>()
+const plusMenu = ref<HTMLElement>()
 const menuUp = ref(false)
 watch(menu, async (value) => {
   menuUp.value = false
-  if ((value !== "access" && value !== "model") || props.fresh) return
+  if (value !== "plus") {
+    skillSubOpen.value = false
+    skillQuery.value = ""
+  }
+  if ((value !== "access" && value !== "model" && value !== "plus") || props.fresh) return
   await nextTick()
-  const rect = (value === "access" ? accessMenu.value : modelMenu.value)?.getBoundingClientRect()
+  const shown = value === "access" ? accessMenu.value : value === "plus" ? plusMenu.value : modelMenu.value
+  const rect = shown?.getBoundingClientRect()
   if (rect && rect.bottom > window.innerHeight - 60) menuUp.value = true
 })
 
@@ -1599,7 +2102,8 @@ function set(next: Draft) {
   text.value = next.text
   attachments.value = next.attachments
   mentioned.value = next.mentioned
-  historyIndex.value = -1
+  skills.value = []
+  historyIndex.value = null
   /*
    * The caret is put at the end rather than left where the last draft had it:
    * the @ menu is a question about the characters in front of it, and a caret
@@ -1615,7 +2119,8 @@ function reset() {
   text.value = ""
   attachments.value = []
   mentioned.value = new Set()
-  historyIndex.value = -1
+  skills.value = []
+  historyIndex.value = null
   caret.value = 0
   void nextTick(resize)
 }
@@ -1643,9 +2148,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 </script>
 
 <template>
-  <div class="composer" :class="{ noted: sessionID }">
+  <div class="composer" :class="{ noted: sessionID && !side }" :data-compacting="compactingHere || undefined">
     <div class="shell">
       <div
+        ref="boxEl"
         class="box"
         :class="{ busy: busyHere, dropping: dragging, filled: attachments.length > 0, resized: manualHeight !== null }"
       >
@@ -1661,99 +2167,151 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           @pointercancel="endResize"
           @dblclick="resetResize"
         />
-        <!--
-          What was gathered, above the text it belongs to.
-
-          One row that scrolls, not a block that wraps: the reference keeps its
-          attachments on a single line with a fade at whichever end still has
-          more (`prompt-attachments-fade-left/right`, driven by the row's own
-          scroll timeline). Wrapping made the box grow a row taller for every
-          four files and pushed the conversation up the screen.
-        -->
-        <AnnotationChips v-if="annotationScope && waiting.length" class="box-annotations" :list="waiting" :scope="annotationScope" />
-        <div v-if="attachments.length" class="tiles-wrap">
-          <span class="tiles-fade start" aria-hidden="true" />
-          <span class="tiles-fade end" aria-hidden="true" />
-          <div class="tiles">
-            <div
-              v-for="(item, at) in attachments"
-              :key="at"
-              class="tile"
-              :class="{ picture: !!preview(item) || !!videoUrl(item), openable: !preview(item) && (Boolean(videoUrl(item)) || Boolean(item.path)) }"
-              data-attachment-tile
-              @click="onTileClick(item)"
-            >
-              <img v-if="preview(item)" :src="preview(item)" class="tile-image" alt="" />
+        <!-- MiMo's order above the text: attachments, then skill chips, then annotations. -->
+        <div v-if="attachments.length" class="atts">
+          <template v-for="(item, at) in attachments" :key="`${at}:${item.path}`">
+            <!-- A picture or a video: a bare thumbnail that opens its preview. -->
+            <div v-if="preview(item) || videoUrl(item)" class="att" data-attachment-tile>
+              <img
+                v-if="preview(item)"
+                :src="preview(item)"
+                class="att-thumb"
+                alt=""
+                v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                @click="onTileClick(item)"
+              />
               <video
-                v-else-if="videoUrl(item)"
+                v-else
                 :src="videoUrl(item)"
-                class="tile-image"
+                class="att-thumb"
                 data-attachment-video
                 muted
                 playsinline
                 preload="metadata"
                 v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                @click="onTileClick(item)"
               />
-              <svg v-else class="tile-mark" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                <path
-                  d="M13.5 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9.5L13.5 3Z"
-                  stroke="currentColor"
-                  stroke-width="1.4"
-                  stroke-linejoin="round"
-                />
-                <path d="M13.4 3.2V9.6H19.8" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
-              </svg>
-              <span class="tile-name" v-tip="{ label: item.path, placement: 'top' }">{{ item.path }}</span>
               <button
-                class="tile-x"
+                class="att-x"
+                type="button"
+                :aria-label="t('attach.remove')"
                 v-tip="{ label: t('attach.remove'), placement: 'top' }"
                 @click.stop="remove(at)"
               >
-                <svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true">
-                  <path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
                 </svg>
               </button>
             </div>
-          </div>
+            <!-- A file: a capsule with its type mark and name, the remove at its end. -->
+            <div
+              v-else
+              class="att-file"
+              :class="{ openable: Boolean(item.path) }"
+              data-attachment-tile
+              v-tip="{ label: item.path, placement: 'top' }"
+              @click="onTileClick(item)"
+            >
+              <span class="badge att-badge" :style="badgeStyle(fileBadge(fileName(item.path)))">
+                {{ fileBadge(fileName(item.path)).label }}
+              </span>
+              <span class="att-name">{{ fileName(item.path) }}</span>
+              <button
+                class="att-x inline"
+                type="button"
+                :aria-label="t('attach.remove')"
+                v-tip="{ label: t('attach.remove'), placement: 'top' }"
+                @click.stop="remove(at)"
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+              </button>
+            </div>
+          </template>
         </div>
-        <!--
-          The menu, above the text that is narrowing it. Drawn inside the box
-          so it moves with the composer rather than floating over the
-          conversation at a fixed place.
-
-          Two triggers share the one shape: an @ naming a file and a slash
-          naming a command are the same gesture with different subjects, so
-          they should not look like two different things. Only one is ever up -
-          the @ wins, because its trigger is about the word the caret is in
-          while the slash's is about the whole draft, and both can be true.
-        -->
-        <div v-if="atOpen" class="slash">
-          <div class="slash-head">{{ t("composer.context") }}</div>
-          <button
-            v-for="(path, at) in atMatches"
-            :key="path"
-            class="slash-row"
-            :class="{ on: at === atIndex }"
-            @mouseenter="atIndex = at"
-            @mousedown.prevent="chooseMention(at)"
-          >
-            <span class="badge" :style="badgeStyle(fileBadge(fileName(path)))">
-              {{ fileBadge(fileName(path)).label }}
+        <div v-if="skills.length" class="skill-chips">
+          <span v-for="name in skills" :key="name" class="cchip" :class="{ leaving: leavingSkill === name }" :data-skill="name">
+            <span class="cchip-ic" aria-hidden="true">
+              <svg viewBox="0 0 12 12" fill="none"><path d="M6.2 2.5h2.3a1 1 0 0 1 1 1v1.2a1.3 1.3 0 1 1 0 2.6v1.2a1 1 0 0 1-1 1H7.3a1.3 1.3 0 1 0-2.6 0H3.5a1 1 0 0 1-1-1V7.3a1.3 1.3 0 1 0 0-2.6V3.5a1 1 0 0 1 1-1z" /></svg>
             </span>
-            <span class="slash-title">{{ fileName(path) }}</span>
-            <span v-if="fileDirectory(path)" class="slash-hint">{{ fileDirectory(path) }}</span>
-          </button>
+            <span class="cchip-name">{{ name }}</span>
+            <button
+              class="cchip-rm"
+              type="button"
+              :aria-label="t('attach.remove')"
+              v-tip="{ label: t('attach.remove'), placement: 'top' }"
+              @click="removeSkill(name)"
+            >
+              ✕
+            </button>
+          </span>
+        </div>
+        <AnnotationChips v-if="annotationScope && waiting.length" class="box-annotations" :list="waiting" :scope="annotationScope" />
+        <!--
+          The menus, just above the box and moving with it. Only one is up at a
+          time: the @ wins, because it is about the word the caret is in.
+        -->
+        <div v-if="atOpen" class="slash at-menu" data-at-menu :style="{ maxHeight: `${menuRoom}px` }">
+          <div v-if="!projectRoot" class="at-note">{{ t("composer.at.pickProject") }}</div>
+          <template v-else>
+            <!-- MiMo's head: a breadcrumb that climbs out while browsing a folder, else what the list is. -->
+            <button v-if="atSub && !atSpan?.query" class="at-crumb" type="button" data-at-crumb @mousedown.prevent="folderUp">
+              ‹ {{ atCrumbs }}
+            </button>
+            <div v-else-if="atSpan?.query && atSub" class="slash-head">{{ t("composer.at.searchLabel", { path: atCrumbs }) }}</div>
+            <div v-else-if="atSpan?.query" class="slash-head">{{ t("composer.at.searchFiles") }}</div>
+            <div v-else class="slash-head">{{ t("composer.at.filesGroup") }}</div>
+            <div v-if="atStatus === 'dirFailed'" class="at-note">{{ t("composer.at.cannotReadDir") }}</div>
+            <div v-else-if="atStatus === 'searchFailed'" class="at-note">{{ t("composer.at.searchFailed") }}</div>
+            <div v-else-if="atStatus === 'loading' && !atRows.length" class="at-note">{{ t("composer.at.loading") }}</div>
+            <div
+              v-for="(row, at) in atRows"
+              :key="row.rel"
+              class="slash-row at-row"
+              :class="{ on: at === atIndex }"
+              role="option"
+              :aria-selected="at === atIndex"
+              :data-kind="row.kind"
+              :data-rel="row.rel"
+              @mouseenter="atIndex = at"
+              @mousedown.prevent="chooseAt(at)"
+            >
+              <svg class="at-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path v-if="row.kind === 'dir'" d="M2 4.5a1 1 0 0 1 1-1h3.2l1.3 1.5H13a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
+                <template v-else>
+                  <path d="M9.2 2H4.5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.3z" />
+                  <path d="M9.2 2v3.3h3.3" />
+                </template>
+              </svg>
+              <span class="at-name">{{ row.name }}</span>
+              <span v-if="row.dir" class="at-sub">{{ row.dir }}</span>
+              <span v-if="row.kind === 'dir'" class="at-actions">
+                <button class="at-ref" type="button" data-at-ref @mousedown.prevent.stop="referenceFolder(row.rel)">
+                  {{ t("composer.at.refFolder") }}
+                </button>
+                <button
+                  class="at-enter"
+                  type="button"
+                  :aria-label="t('composer.at.enterFolder')"
+                  v-tip="{ label: t('composer.at.enterFolder'), placement: 'top' }"
+                  @mousedown.prevent.stop="enterFolder(row.rel)"
+                >
+                  ›
+                </button>
+              </span>
+            </div>
+            <div v-if="atSpan?.query && atTruncated && atRows.length" class="at-truncated">
+              {{ t("composer.at.truncated", { count: atRows.length }) }}
+            </div>
+          </template>
         </div>
 
-        <div v-else-if="slashOpen" class="slash">
+        <div v-else-if="slashOpen" class="slash" :style="{ maxHeight: `${menuRoom}px` }">
           <div class="slash-head">{{ t("composer.commands") }}</div>
-          <!--
-            Nothing matching is a row of its own, not an absent menu: the
-            reference keeps the popover up with `prompt.popover.emptyCommands`
-            in it, so a name typed wrong says so.
-          -->
+          <!-- Nothing matching is a line of its own, not an absent menu, so a name typed wrong says so. -->
           <div v-if="!slashMatches.length" class="slash-empty">
-            {{ t("prompt.popover.emptyCommands") }}
+            {{ t("composer.slashEmpty") }}
           </div>
           <!-- MiMo's row: the /name chip, what it does, and where it came from at the far end. -->
           <button
@@ -1770,6 +2328,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </button>
         </div>
 
+        <!-- MiMo's highlight behind a known /command, under the text. -->
+        <SlashPill v-if="mode !== 'shell'" :input="input" :text="text" :known="slashNames" />
         <textarea
           ref="input"
           v-model="text"
@@ -1777,14 +2337,25 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           rows="1"
           spellcheck="false"
           :placeholder="placeholder"
+          :disabled="compactingHere"
+          :aria-busy="compactingHere || undefined"
           @keydown.escape="mode === 'shell' && setMode('normal')"
           @keydown="onKeydown"
           @keyup="syncCaret"
-          @click="syncCaret"
+          @click="onBoxClick"
           @select="syncCaret"
           @input="syncCaret"
           @paste="onPaste"
         />
+
+        <!-- MiMo's cue while a spoken command acts: a ticked ring and the command. -->
+        <div v-if="voiceCue" class="voice-cue" role="status">
+          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="6.2" />
+            <path d="M5.4 8.2 7.2 10l3.4-3.6" />
+          </svg>
+          <span>{{ voiceCue }}</span>
+        </div>
 
         <!--
           Attachments, agent, model and effort sit on one bar inside the box,
@@ -1800,89 +2371,102 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <span class="mode-exit">{{ t("composer.shellExit") }}</span>
         </div>
 
-        <div ref="pills" class="row">
+        <div ref="pills" class="row" :class="{ collapsed: labelsCollapsed, narrow: barNarrow }">
+          <div ref="rowStart" class="row-start">
           <input ref="picker" class="picker" type="file" multiple @change="onPicked" />
           <!--
-            The plus opens a menu rather than a file dialog, as the reference's
-            does: adding context is one of the things it offers, not the only
-            one. The class stays "attach" so everything that sizes or places
-            the button - including the side column's narrow layout - still
-            finds it.
+            MiMo's plus: a round button whose menu opens underneath it - files,
+            the terminal, compose mode, and the skills behind a submenu. The
+            class stays "attach" so the side column's narrow rules still find it.
           -->
           <div class="pill-wrap">
             <button
               class="attach"
+              type="button"
               :class="{ open: menu === 'plus' }"
               :aria-expanded="menu === 'plus'"
-              v-tip="{ label: t('composer.attach'), placement: 'top' }"
+              :aria-label="t('composer.plusTip')"
+              v-tip="{ label: t('composer.plusTip'), placement: 'top' }"
               @click="toggle('plus')"
             >
-              <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 16 16" aria-hidden="true">
                 <path d="M8 3.4v9.2M3.4 8h9.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
               </svg>
             </button>
-            <div v-if="menu === 'plus'" class="menu plus-menu">
-              <button class="item" @click="attachFromMenu">
+            <div v-if="menu === 'plus'" ref="plusMenu" class="menu plus-menu" :class="{ up: menuUp }" data-plus-menu>
+              <button class="item" data-plus-files @click="attachFromMenu">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M10.6 5.2 6 9.8a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5.2 5.2a4.2 4.2 0 0 0 6 6l4.2-4.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
                 </svg>
-                <span class="item-name">{{ t("composer.attach") }}</span>
+                <span class="item-name">{{ t("composer.addFiles") }}</span>
               </button>
-              <button v-if="!side" class="item" :disabled="!sessionID" @click="terminalFromMenu">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
-                  <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
-                </svg>
-                <span class="item-name">{{ t("composer.menuTerminal") }}</span>
-              </button>
-              <!--
-                Plan mode, as a switch beside staged mode now that the bar has
-                no agent picker: the chip it raises in the bar turns it off.
-              -->
-              <button
-                v-if="!side"
-                class="item staged-row"
-                role="switch"
-                data-mode="plan"
-                :aria-checked="agent === 'plan'"
-                @click="chooseAgent(agent === 'plan' ? 'build' : 'plan')"
-              >
-                <span class="staged-text">
-                  <span class="item-name">{{ t("composer.planMode") }}</span>
-                  <span class="staged-sub">{{ t("composer.planModeSub") }}</span>
-                </span>
-                <span class="staged-switch" :class="{ on: agent === 'plan' }"><span class="staged-knob" /></span>
-              </button>
-              <!--
-                Staged mode. A switch rather than a command, because it stays on:
-                it changes how the whole conversation is worked, not one reply.
-              -->
-              <button
-                v-if="!side"
-                class="item staged-row"
-                role="switch"
-                :aria-checked="staged"
-                @click="toggleStaged"
-              >
-                <span class="staged-text">
-                  <span class="item-name">{{ t("composer.staged") }}</span>
-                  <span class="staged-sub">{{ t("composer.stagedSub") }}</span>
-                </span>
-                <span class="staged-switch" :class="{ on: staged }"><span class="staged-knob" /></span>
-              </button>
-              <div class="rule" />
-              <div class="plus-head">{{ t("composer.menuSkills") }}</div>
-              <div class="plus-skills">
-                <button
-                  v-for="skill in app.commands"
-                  :key="skill.name"
-                  class="item"
-                  :title="skill.description || skill.name"
-                  @click="useSkill(skill.name)"
-                >
-                  <span class="item-name">/{{ skill.name }}</span>
+              <template v-if="!side">
+                <div class="rule" />
+                <button class="item" data-plus-terminal @click="terminalFromMenu">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" />
+                    <path d="M4.6 6.4 6.8 8.4 4.6 10.4M8.6 10.6h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+                  </svg>
+                  <span class="item-name">{{ t("composer.menuTerminal") }}</span>
                 </button>
-                <div v-if="!app.commands.length" class="plus-none">{{ t("composer.menuNoSkills") }}</div>
+                <div class="rule" />
+                <!-- Compose mode: a switch rather than a command, because it stays on; the menu stays open. -->
+                <button class="item staged-row" role="switch" data-mode="staged" :aria-checked="staged" @click="toggleStaged">
+                  <span class="staged-text">
+                    <span class="item-name">{{ t("composer.staged") }}</span>
+                    <span class="staged-sub">{{ t("composer.stagedSub") }}</span>
+                  </span>
+                  <span class="staged-switch" :class="{ on: staged }"><span class="staged-knob" /></span>
+                </button>
+              </template>
+              <div class="rule" />
+              <!-- MiMo's 技能 ›: a submenu with a search box, beside the row. -->
+              <button
+                class="item skill-row"
+                :class="{ hot: skillSubOpen }"
+                aria-haspopup="menu"
+                :aria-expanded="skillSubOpen"
+                data-plus-skills
+                @mouseenter="openSkillMenu"
+                @click="openSkillMenu"
+              >
+                <svg class="skill-mark" width="14" height="14" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M6.2 2.5h2.3a1 1 0 0 1 1 1v1.2a1.3 1.3 0 1 1 0 2.6v1.2a1 1 0 0 1-1 1H7.3a1.3 1.3 0 1 0-2.6 0H3.5a1 1 0 0 1-1-1V7.3a1.3 1.3 0 1 0 0-2.6V3.5a1 1 0 0 1 1-1z" /></svg>
+                <span class="item-name">{{ t("composer.menuSkills") }}</span>
+                <svg class="item-chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6.5 4.5 10 8l-3.5 3.5" />
+                </svg>
+              </button>
+              <div
+                v-if="skillSubOpen"
+                ref="skillMenu"
+                class="skill-menu"
+                role="menu"
+                data-skill-menu
+                :style="{ left: `${skillPlace.left}px`, top: `${skillPlace.top}px` }"
+              >
+                <input
+                  v-model="skillQuery"
+                  class="skill-search"
+                  type="text"
+                  spellcheck="false"
+                  :placeholder="t('composer.skillSearch')"
+                  @keydown.escape.stop.prevent="menu = undefined"
+                  @keydown.enter.prevent="skillRows[0] && addSkill(skillRows[0].name)"
+                />
+                <div class="skill-list">
+                  <div v-if="!hasSkills" class="skill-empty">{{ t("composer.skillEmpty") }}</div>
+                  <div v-else-if="!skillRows.length" class="skill-empty">{{ t("composer.skillNoMatch") }}</div>
+                  <button
+                    v-for="skill in skillRows"
+                    :key="skill.name"
+                    class="item skill-item"
+                    :title="skill.description || skill.name"
+                    @click="addSkill(skill.name)"
+                  >
+                    <svg class="skill-mark" width="14" height="14" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M6.2 2.5h2.3a1 1 0 0 1 1 1v1.2a1.3 1.3 0 1 1 0 2.6v1.2a1 1 0 0 1-1 1H7.3a1.3 1.3 0 1 0-2.6 0H3.5a1 1 0 0 1-1-1V7.3a1.3 1.3 0 1 0 0-2.6V3.5a1 1 0 0 1 1-1z" /></svg>
+                    <span class="item-name">{{ skill.name }}</span>
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1897,12 +2481,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <button
               class="pill access"
               :class="{ open: menu === 'access', full: access === 'full' }"
+              v-tip="{ label: t('composer.accessTip'), placement: 'top' }"
               @click="toggle('access')"
             >
               <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path v-for="d in ACCESS_ICONS[access]" :key="d" :d="d" />
               </svg>
-              <span>{{ t(`composer.access.${access}`) }}</span>
+              <span class="perm-label">{{ t(`composer.access.${access}`) }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
               </svg>
@@ -1934,41 +2519,34 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </div>
 
           <!--
-            MiMo keeps no agent switcher in the bar. A mode other than the
-            everyday one shows as a chip - plan, or working in stages - and
-            pressing the chip turns it off again. Both are switched on from the
-            plus menu.
+            MiMo's one mode chip: plan or compose, whichever is on. Pressing it
+            turns that mode off, back to build.
           -->
           <button
-            v-if="!side && agent === 'plan'"
+            v-if="!side && (agent === 'plan' || staged)"
             class="mode-chip"
-            data-mode="plan"
-            v-tip="{ label: t('composer.modeChipTip', { mode: t('composer.planMode') }), placement: 'top' }"
-            @click="chooseAgent('build')"
+            :data-mode="agent === 'plan' ? 'plan' : 'staged'"
+            v-tip="{
+              label: t('composer.modeChipTip', { mode: agent === 'plan' ? t('composer.planMode') : t('composer.staged') }),
+              placement: 'top',
+            }"
+            @click="agent === 'plan' ? chooseAgent('build') : toggleStaged()"
           >
-            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <svg v-if="agent === 'plan'" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M5.5 2.5h5v2h-5z" />
               <path d="M5 3.5H3.5v10h9v-10H11" />
               <path d="M5.5 8h5M5.5 10.5h3.5" />
             </svg>
-            <span>{{ t("composer.planChip") }}</span>
-          </button>
-          <button
-            v-if="!side && staged"
-            class="mode-chip"
-            data-mode="staged"
-            v-tip="{ label: t('composer.modeChipTip', { mode: t('composer.staged') }), placement: 'top' }"
-            @click="toggleStaged"
-          >
-            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <svg v-else viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M4.5 4v6a2 2 0 0 0 2 2h4" />
               <path d="M4.5 1.8a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z" />
               <path d="M12.2 10.4a1.6 1.6 0 1 0 0 3.2 1.6 1.6 0 0 0 0-3.2z" />
             </svg>
-            <span>{{ t("composer.staged") }}</span>
+            <span class="mode-label">{{ agent === "plan" ? t("composer.planChip") : t("composer.composeChip") }}</span>
           </button>
+          </div>
 
-          <span class="grow" />
+          <div ref="rowEnd" class="row-end">
 
           <!--
             The context ring, left of the model the way the reference has it.
@@ -1990,13 +2568,19 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             </button>
             <span v-if="contextUsage" class="ctx-card" :class="{ shown: menu === 'context' }" role="status">
               <span class="ctx-title">{{ t("composer.ctxTitle") }}</span>
-              <span>{{ contextUsage.shareLine }}</span>
+              <span v-if="contextUsage.shareLine">{{ contextUsage.shareLine }}</span>
               <span>{{ contextUsage.tokensLine }}</span>
+              <span v-if="contextUsage.cacheLine">{{ contextUsage.cacheLine }}</span>
             </span>
           </span>
 
           <div class="pill-wrap">
-            <button class="pill model-pill" :class="{ open: menu === 'model' }" @click="toggle('model')">
+            <button
+              class="pill model-pill"
+              :class="{ open: menu === 'model' }"
+              v-tip="{ label: t('composer.modelTip'), placement: 'top' }"
+              @click="toggle('model')"
+            >
               <span class="model-label">{{ modelName }}</span>
               <span v-if="!smartOn && !side && sessionID && variants.length && effortLevel" class="model-effort">{{ effortLevel }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -2124,51 +2708,117 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           </div>
 
           <!--
-            The microphone. Three states and a different shape for each: idle,
-            listening, and writing down what it heard. It is drawn even when no
-            transcription model is set, and says so when pressed - a control
-            that vanishes because of a setting elsewhere is a puzzle.
+            MiMo's voice capsule. Idle it is a round microphone; pressed it widens
+            into a pill that says what it is doing - starting, listening with a
+            live waveform, or writing down what it heard - with a × that throws the
+            recording away. Drawn even with no transcription model set, and says
+            so when pressed.
           -->
           <button
             class="mic"
-            :class="{ live: voice === 'recording', busy: voice === 'working' }"
-            :disabled="voice === 'working'"
-            :aria-label="t('voice.input')"
+            type="button"
+            :class="{ on: voice !== 'idle', proc: voice === 'working', starting: voice === 'starting' }"
+            :aria-label="voice === 'idle' ? t('voice.input') : t('voice.stopInput')"
             :aria-pressed="voice === 'recording'"
-            v-tip="{ label: voice === 'recording' ? t('voice.stop') : t('voice.input'), placement: 'top' }"
+            v-tip="{ label: voice === 'idle' ? t('voice.input') : t('voice.stopInput'), placement: 'top' }"
+            @mousedown.prevent
             @click="toggleVoice"
           >
-            <svg v-if="voice === 'recording'" width="15" height="15" viewBox="0 0 20 20" aria-hidden="true">
-              <rect x="5.5" y="5.5" width="9" height="9" rx="1.5" fill="currentColor" />
-            </svg>
-            <svg v-else width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <span v-if="voice === 'recording'" class="mic-live">
+              <span class="voice-wave" aria-hidden="true">
+                <i v-for="(height, bar) in waveHeights" :key="bar" :style="{ height }" />
+              </span>
+              <span class="voice-label">{{ t("voice.recording") }}</span>
+              <span
+                class="mic-x"
+                role="button"
+                tabindex="0"
+                :aria-label="t('voice.cancel')"
+                :title="t('voice.cancel')"
+                @mousedown.prevent.stop
+                @click.stop="cancelVoice"
+                @keydown.enter.stop.prevent="cancelVoice"
+                @keydown.space.stop.prevent="cancelVoice"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </span>
+            </span>
+            <span v-else-if="voice === 'working'" class="mic-live">
+              <span class="mic-spinner" aria-hidden="true" />
+              <span class="voice-label">{{ t("voice.transcribing") }}</span>
+              <span
+                class="mic-x"
+                role="button"
+                tabindex="0"
+                :aria-label="t('voice.cancel')"
+                :title="t('voice.cancel')"
+                @mousedown.prevent.stop
+                @click.stop="cancelVoice"
+                @keydown.enter.stop.prevent="cancelVoice"
+                @keydown.space.stop.prevent="cancelVoice"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </span>
+            </span>
+            <span v-else-if="voice === 'starting'" class="mic-live">
+              <span class="mic-spinner" aria-hidden="true" />
+              <span class="voice-label">{{ t("voice.starting") }}</span>
+            </span>
+            <svg v-else width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <rect x="7.4" y="2.6" width="5.2" height="9.2" rx="2.6" stroke="currentColor" stroke-width="1.3" />
               <path d="M4.8 9.6a5.2 5.2 0 0 0 10.4 0M10 14.8v2.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
             </svg>
           </button>
 
           <!--
-            One button, which is what the reference has. It stops the turn only
-            when there is nothing to send; type during a turn and it becomes
-            send again, because a message sent now joins the turn rather than
-            replacing it. That is the same capability the pair of buttons was
-            there to offer, without the pair - the reference never shows two.
+            MiMo's one button: a spinner while the conversation is compacted,
+            stop while a turn runs with nothing waiting, 继续 when the last turn
+            broke off and the box is empty, and send otherwise. Send is never
+            disabled for an empty box; pressing it says the box is empty.
           -->
           <button
+            v-if="compactingHere"
             class="send"
-            :disabled="!busyHere && !text.trim() && !attachments.length"
+            type="button"
+            disabled
+            :aria-label="t('composer.compact.starting')"
+            v-tip="{ label: t('composer.compact.starting'), placement: 'top' }"
+          >
+            <span class="send-spinner" aria-hidden="true" />
+          </button>
+          <button
+            v-else-if="resumable && mode !== 'shell'"
+            id="resume-turn-btn"
+            class="send ready"
+            type="button"
+            :aria-label="t('composer.resume')"
+            v-tip="{ label: t('composer.resume'), placement: 'top' }"
+            @click="resumeTurn"
+          >
+            <svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
+              <path d="M7 4.8v10.4a.8.8 0 0 0 1.2.7l8.2-5.2a.8.8 0 0 0 0-1.4L8.2 4.1A.8.8 0 0 0 7 4.8z" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            v-else
+            class="send"
+            type="button"
+            :class="{ empty: !stopping && !hasContent, ready: !stopping && hasContent, stop: stopping }"
+            :aria-label="stopping ? t('composer.stop') : t('composer.send')"
             v-tip="{ label: stopping ? t('composer.stop') : t('composer.send'), placement: 'top' }"
             @click="stopping ? app.abort(sessionID) : submit()"
           >
-            <!-- The reference's own shapes: a square with square corners, a
-                 solid arrow, and a turned arrow while the box runs commands. -->
-            <svg v-if="stopping" width="16" height="16" viewBox="0 0 20 20" aria-hidden="true">
-              <rect x="5" y="5" width="10" height="10" fill="currentColor" />
+            <svg v-if="stopping" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <rect width="12" height="12" rx="2" fill="currentColor" />
             </svg>
             <svg
               v-else-if="mode === 'shell'"
-              width="16"
-              height="16"
+              width="18"
+              height="18"
               viewBox="0 0 16 16"
               fill="none"
               aria-hidden="true"
@@ -2180,7 +2830,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 stroke-linecap="square"
               />
             </svg>
-            <svg v-else width="16" height="16" viewBox="0 0 20 20" aria-hidden="true">
+            <svg v-else width="18" height="18" viewBox="0 0 20 20" aria-hidden="true">
               <path
                 fill-rule="evenodd"
                 clip-rule="evenodd"
@@ -2189,12 +2839,18 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               />
             </svg>
           </button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Under a conversation's box, as MiMo has one: answers are generated, and can be wrong. -->
-    <p v-if="sessionID" class="ai-note">{{ t("composer.aiNote") }}</p>
+    <!--
+      Under a conversation's box, as MiMo has one: answers are generated and can
+      be wrong. Its room is kept, hidden, until the conversation has a reply.
+    -->
+    <p v-if="sessionID && !side" class="ai-note" :class="{ hidden: !hasReply }" :aria-hidden="!hasReply || undefined">
+      {{ t("composer.aiNote") }}
+    </p>
 
     <Teleport to="body">
       <ConfirmDialog
@@ -2277,6 +2933,118 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .slash-row.on {
   background: var(--surface-hover);
+}
+
+/* MiMo's @ rows: a 16px mark, the name, where it lives, and a folder's two actions at the end. */
+.slash-row.at-row {
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 7px 10px;
+  color: var(--text-strong);
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  cursor: default;
+}
+
+.at-icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-weak);
+}
+
+.at-icon path {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.at-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-weaker);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-inline-start: auto;
+}
+
+.at-ref {
+  padding: 2px 6px;
+  color: var(--text-base);
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  border: 0;
+  border-radius: 6px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  cursor: pointer;
+}
+
+.at-ref:hover {
+  color: var(--text-strong);
+}
+
+.at-enter {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--text-weak);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  cursor: pointer;
+}
+
+.at-enter:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+/* The breadcrumb head: dim, and the text colour under the pointer. */
+.at-crumb {
+  align-self: flex-start;
+  padding: 4px 10px 2px;
+  color: var(--text-weaker);
+  background: none;
+  border: 0;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  letter-spacing: 0.02em;
+  text-align: start;
+  cursor: pointer;
+}
+
+.at-crumb:hover {
+  color: var(--text-strong);
+}
+
+.at-note {
+  padding: 7px 10px;
+  color: var(--text-weaker);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.at-truncated {
+  padding: 4px 10px 2px;
+  color: var(--text-weaker);
+  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 /*
@@ -2444,11 +3212,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   transition: box-shadow 0.12s;
 }
 
-/* The tiles are the room now; the writing area need not hold any of its own. */
-.box.filled .input {
-  min-height: 0;
-}
-
 .box:focus-within {
   box-shadow: var(--shadow-md), 0 0 0 1px var(--border-strong);
 }
@@ -2484,10 +3247,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 0 8px;
 }
 
-.grow {
-  flex: 1;
-}
-
 .picker {
   display: none;
 }
@@ -2497,178 +3256,188 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 35%, transparent);
 }
 
-.tile.openable {
-  cursor: pointer;
-}
-
-/* Annotations waiting to be sent, lined up with the file tiles. */
+/* Annotations waiting to be sent, under the attachments and skill chips. */
 .box-annotations {
   padding: 12px 16px 0;
 }
 
-.tiles-wrap {
-  position: relative;
-  timeline-scope: --tiles-scroll;
-}
-
-.tiles {
+/* MiMo's attachments: a wrapping row, bottom-aligned, 8 apart, scrolling past 148. */
+.atts {
   display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  padding: 12px 16px 0;
-  overflow-x: auto;
-  scrollbar-width: none;
-  scroll-timeline: --tiles-scroll x;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+  max-height: 148px;
+  padding: 8px 8px 2px;
+  overflow-y: auto;
 }
 
-.tiles::-webkit-scrollbar {
-  display: none;
-}
-
-/*
- * A fade at whichever end still has more, over the box's own fill so the row
- * runs out rather than being cut off. Hidden by default and shown by the
- * scroll timeline, which is how the reference drives its pair: the near edge
- * appears as soon as the row has moved at all, and the far one goes at the
- * last pixel (`animation-range: 0 0.1px` and `calc(100% - 1.1px)`).
- */
-.tiles-fade {
-  position: absolute;
-  top: 12px;
-  bottom: 0;
-  z-index: 1;
-  width: 24px;
-  pointer-events: none;
-  visibility: hidden;
-}
-
-.tiles-fade.start {
-  inset-inline-start: 0;
-  background: linear-gradient(to inline-end, var(--surface-raised), transparent);
-}
-
-.tiles-fade.end {
-  inset-inline-end: 0;
-  background: linear-gradient(to inline-start, var(--surface-raised), transparent);
-}
-
-@supports (animation-timeline: --tiles-scroll) and (timeline-scope: --tiles-scroll) {
-  .tiles-fade.start {
-    animation: tiles-fade-start linear both;
-    animation-timeline: --tiles-scroll;
-    animation-range: 0 0.1px;
-  }
-
-  .tiles-fade.end {
-    animation: tiles-fade-end linear both;
-    animation-timeline: --tiles-scroll;
-    animation-range: calc(100% - 1.1px) calc(100% - 1px);
-  }
-}
-
-@keyframes tiles-fade-start {
-  from {
-    visibility: hidden;
-  }
-  to {
-    visibility: visible;
-  }
-}
-
-@keyframes tiles-fade-end {
-  from {
-    visibility: visible;
-  }
-  to {
-    visibility: hidden;
-  }
-}
-
-/* A row that scrolls cannot let its tiles shrink to fit. */
-.tiles .tile {
-  flex: 0 0 auto;
-}
-
-.tile {
+.att {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  width: 60px;
-  height: 60px;
-  padding: 6px;
-  color: var(--text-weaker);
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
+  flex: none;
 }
 
-/* An image is its own label; the name rides over the foot of it. */
-.tile.picture {
-  padding: 0;
-}
-
-.tile-image {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+/* A picture or a video: a bare 54px thumbnail on a hairline and a 9px corner. */
+.att-thumb {
+  display: block;
+  width: 54px;
+  height: 54px;
   object-fit: cover;
+  border: 1px solid var(--border-weak);
+  border-radius: 9px;
+  cursor: pointer;
 }
 
-.tile-mark {
-  flex-shrink: 0;
-}
-
-.tile-name {
-  position: relative;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--text-base);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: calc(10px * var(--ui-font-scale, 1));
-  line-height: 1.25;
-}
-
-.tile.picture .tile-name {
-  align-self: stretch;
-  margin-top: auto;
-  padding: 5px 3px 3px;
-  color: #fff;
-  text-align: start;
-  /*
-   * Only as much shading as the line of text needs. Sized by the padding above
-   * it, this reached the middle of the thumbnail and left the picture murky.
-   */
-  background: linear-gradient(to top, rgb(0 0 0 / 78%) 55%, transparent);
-}
-
-.tile-x {
+/* Its remove: an 18px disc in the send colour over the corner, shown on hover or focus. */
+.att-x {
   position: absolute;
-  top: 3px;
-  inset-inline-end: 3px;
+  top: -6px;
+  inset-inline-end: -6px;
   display: grid;
   place-items: center;
-  width: 16px;
-  height: 16px;
-  color: #fff;
-  background: rgb(0 0 0 / 55%);
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  color: var(--button-primary-text);
+  background: var(--button-primary);
+  border: 0;
   border-radius: 50%;
   opacity: 0;
-  transition: opacity 0.12s;
+  cursor: pointer;
+  transition: opacity 0.12s, background-color 0.12s, color 0.12s;
 }
 
-.tile:hover .tile-x,
-.tile-x:focus-visible {
+.att:hover .att-x,
+.att:focus-within .att-x,
+.att-file:hover .att-x,
+.att-file:focus-within .att-x {
   opacity: 1;
 }
 
-.tile-x:hover {
-  background: rgb(0 0 0 / 78%);
+/* A file: a capsule with its type mark and name, 12px text, the remove inline at its end. */
+.att-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 7px 10px;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 9px;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 16px;
+}
+
+.att-file.openable {
+  cursor: pointer;
+}
+
+.att-badge {
+  flex: none;
+}
+
+.att-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.att-x.inline {
+  position: static;
+  flex: none;
+  margin-inline-start: 4px;
+  color: var(--text-weak);
+  background: transparent;
+  border-radius: 6px;
+}
+
+.att-x.inline:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+/* MiMo's skill chips: 24px pills 6 apart, a 20px mark, the name and a small ×. */
+.skill-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 2px 6px;
+}
+
+.cchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 480px;
+  height: 24px;
+  padding-block: 0;
+  padding-inline: 8px 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  border-radius: 999px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  transition: opacity 0.2s, max-width 0.2s, transform 0.2s;
+}
+
+/* Going: it shrinks away over MiMo's 200ms. */
+.cchip.leaving {
+  max-width: 0;
+  opacity: 0;
+  transform: scale(0.85);
+  pointer-events: none;
+}
+
+.cchip-ic {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--text-strong);
+}
+
+.cchip-ic svg {
+  display: block;
+  width: 72%;
+  height: 72%;
+}
+
+.cchip-ic path,
+.skill-mark path {
+  stroke: currentColor;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+
+.cchip-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-base);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cchip-rm {
+  padding: 2px;
+  color: var(--text-weak);
+  background: none;
+  border: 0;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 1;
+  cursor: pointer;
+}
+
+.cchip-rm:hover {
+  color: var(--text-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cchip {
+    transition: none;
+  }
 }
 
 .mode-note {
@@ -2759,12 +3528,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   box-sizing: border-box;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  min-width: 208px;
+  gap: 2px;
+  min-width: 180px;
   padding: 10px 14px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 500;
-  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
   white-space: nowrap;
   color: var(--text-strong);
   background: var(--surface-menu);
@@ -2780,37 +3550,178 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .ctx-title {
-  color: var(--text-base);
+  color: var(--text-weak);
 }
 
+/* MiMo's voice capsule: the round button widens into a pill in the send colour while it is in use. */
 .mic {
-  display: inline-flex;
-  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    width 0.3s cubic-bezier(0.34, 1.4, 0.5, 1),
+    padding 0.3s cubic-bezier(0.34, 1.4, 0.5, 1),
+    background-color 0.24s,
+    border-color 0.24s,
+    color 0.2s;
+}
+
+.mic.on {
+  justify-content: flex-start;
+  gap: 6px;
+  width: 140px;
+  padding-block: 0;
+  padding-inline: 12px 8px;
+  color: var(--button-primary-text);
+  background: var(--button-primary);
+  border-color: var(--button-primary);
+  border-radius: 999px;
+  animation: recpulse 1.1s infinite;
+}
+
+.mic.on.proc,
+.mic.on.starting {
+  animation: none;
+}
+
+.mic.on.proc {
+  width: 128px;
+}
+
+.mic.on.starting {
+  width: 116px;
+  padding-inline: 13px;
+}
+
+.mic.on:hover {
+  opacity: 0.9;
+}
+
+@keyframes recpulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--button-primary) 38%, transparent);
+  }
+
+  50% {
+    box-shadow: 0 0 0 4px transparent;
+  }
+}
+
+.mic-live {
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  margin-inline-end: 4px;
-  color: var(--icon-base);
-  background: transparent;
-  border: 0;
-  border-radius: 50%;
+  gap: 6px;
+  width: 100%;
+  animation: mic-live-in 0.26s both;
+}
+
+@keyframes mic-live-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* Five 4px bars on a 16px line, each following the level at its own weight. */
+.voice-wave {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+}
+
+.voice-wave i {
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 999px;
+  transition: height 0.12s cubic-bezier(0.3, 0.85, 0.3, 1);
+}
+
+.voice-label {
+  flex: 1;
+  min-width: 3em;
+  overflow: hidden;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mic-x {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  opacity: 0.72;
   cursor: pointer;
 }
 
-.mic:hover:not(:disabled) {
-  background: var(--surface-hover);
+.mic-x:hover,
+.mic-x:focus-visible {
+  opacity: 1;
 }
 
-/* Listening says so in the warning hue: the microphone is open. */
-.mic.live {
-  color: var(--error);
-  background: color-mix(in srgb, var(--error) 14%, transparent);
+.mic-x svg {
+  display: block;
+  width: 12px;
+  height: 12px;
 }
 
-.mic.busy {
-  opacity: 0.6;
-  cursor: default;
+/* A 13px ring, one segment solid, turning every 0.7s. */
+.mic-spinner {
+  flex: none;
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: composer-spin 0.7s linear infinite;
+}
+
+@keyframes composer-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* MiMo's cue under the text while a spoken command acts. */
+.voice-cue {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 6px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 16px;
+  animation: mic-live-in 0.2s both;
+}
+
+.voice-cue svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.voice-cue path,
+.voice-cue circle {
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mic.on {
+    animation: none;
+  }
 }
 
 /* The one bright element in the composer, and a rounded square rather than a
@@ -2911,9 +3822,89 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
  * so that the two rules between them can reach the menu's edges. Padding on
  * the menu itself would inset the rules with everything else.
  */
-/* The plus menu: its skills scroll rather than growing past the window. */
+/* MiMo's plus menu opens under its button, and above it only where the dock would run it off the window. */
 .menu.plus-menu {
+  top: calc(100% + 4px);
+  bottom: auto;
   min-width: 220px;
+  padding: 4px;
+  border-radius: 12px;
+}
+
+.menu.plus-menu.up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.menu.plus-menu .item {
+  border-radius: 8px;
+}
+
+.menu.plus-menu .rule {
+  margin: 4px 6px;
+}
+
+.skill-mark {
+  flex: none;
+  color: color-mix(in srgb, var(--text-base) 87%, transparent);
+}
+
+.item-chev {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-inline-start: auto;
+  opacity: 0.5;
+}
+
+.item-chev path {
+  stroke: currentColor;
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* The skills submenu: fixed beside its row, a search box over the list. */
+.skill-menu {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  width: 240px;
+  max-height: min(360px, calc(100vh - 16px));
+  padding: 4px;
+  background: var(--surface-menu);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+
+.skill-search {
+  flex: none;
+  height: 30px;
+  margin: 2px 2px 4px;
+  padding-inline: 8px;
+  color: var(--text-strong);
+  background: transparent;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  outline: none;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.skill-list {
+  overflow-y: auto;
+}
+
+.skill-item {
+  height: 30px;
+  border-radius: 8px;
+}
+
+.skill-empty {
+  padding: 8px 10px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .item:disabled {
@@ -3033,24 +4024,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .staged-switch.on .staged-knob {
   background: var(--surface-raised);
   inset-inline-start: 14px;
-}
-
-.plus-head {
-  padding: 8px 12px 4px;
-  color: var(--text-weak);
-  font-size: calc(11.5px * var(--ui-font-scale, 1));
-  line-height: 16px;
-}
-
-.plus-skills {
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.plus-none {
-  padding: 4px 12px 8px;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 /* MiMo's model menu: under the chip at its end, 210 and up, rows of mark, name and check. */
@@ -3301,6 +4274,31 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   }
 }
 
+/* MiMo's wide window: a 1000 column for the dock, and a 70px floor for a box that fits its text. */
+@media (min-width: 2000px) {
+  .shell {
+    max-width: 1000px;
+  }
+
+  .box:not(.resized) .input {
+    min-height: 70px;
+  }
+}
+
+/* MiMo keeps the note's line but hides it until there is a reply, and never lets it take a click. */
+.ai-note {
+  pointer-events: none;
+}
+
+.ai-note.hidden {
+  visibility: hidden;
+}
+
+/* Not under the floating chat's box, as in MiMo. */
+:global(#float-dock) .ai-note {
+  display: none;
+}
+
 .box {
   padding: 8px;
   background: var(--surface-menu);
@@ -3318,11 +4316,24 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .input {
+  position: relative;
+  z-index: 1;
   min-height: 52px;
   padding: 5px 5px 8px;
+  background: transparent;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 21px;
+}
+
+/* MiMo sets what is written at 500; its placeholder stays at the regular weight. */
+.input:not(:placeholder-shown) {
+  font-weight: 500;
+}
+
+/* Locked while the conversation is compacted. */
+.input:disabled {
+  cursor: progress;
 }
 
 .input::placeholder {
@@ -3365,29 +4376,41 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--border-weak);
 }
 
-.tiles {
-  padding: 4px 5px 0;
-}
-
-.tiles-fade {
-  top: 4px;
-}
-
-.tiles-fade.start {
-  background: linear-gradient(to inline-end, var(--surface-menu), transparent);
-}
-
-.tiles-fade.end {
-  background: linear-gradient(to inline-start, var(--surface-menu), transparent);
-}
-
 /* Measured in MiMo: the first and last buttons twelve in from the card's
-   edge, and the bar three clear of its padding at the foot. */
+   edge, and the bar three clear of its padding at the foot. Its two groups
+   wrap onto a second line when the box is narrow. */
 .row {
+  flex-wrap: wrap;
+  justify-content: space-between;
   gap: 4px;
-  height: 32px;
+  row-gap: 6px;
+  height: auto;
+  min-height: 32px;
   margin-bottom: 3px;
   padding: 0 4px;
+}
+
+.row-start,
+.row-end {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.row-end {
+  margin-inline-start: auto;
+}
+
+/* Wrapped, the permission and mode chips keep only their marks, as MiMo's do. */
+.row.collapsed .perm-label,
+.row.collapsed .mode-label {
+  display: none;
+}
+
+/* Under 480 wide the usage ring goes, as MiMo's container rule has it. */
+.row.narrow .ctx-slot {
+  display: none;
 }
 
 /* The controls' grey: the base text colour let most of the way through. */
@@ -3396,10 +4419,34 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: color-mix(in srgb, var(--text-base) 87%, transparent);
 }
 
-.attach {
+/* MiMo's round buttons, the plus and the microphone: 30px circles on a hairline over the page colour. */
+.attach,
+.mic {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
   width: 30px;
   height: 30px;
+  padding: 0;
+  color: color-mix(in srgb, var(--text-base) 87%, transparent);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
   border-radius: 50%;
+}
+
+.attach:hover,
+.attach.open,
+.mic:not(.on):hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
+/* Pressed, the round buttons and send give a little. */
+.attach:active:not(:disabled),
+.mic:active:not(:disabled),
+.send:active:not(:disabled) {
+  scale: 0.96;
 }
 
 .pill {
@@ -3420,18 +4467,37 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .send {
+  flex: none;
   width: 30px;
   height: 30px;
   border-radius: 50%;
 }
 
+.send:hover:not(:disabled) {
+  filter: none;
+  opacity: 0.85;
+}
+
+/* MiMo's empty send: the muted fill, still pressable. */
+.send.empty,
 .send:disabled {
   color: var(--surface-base);
   background-color: color-mix(in srgb, var(--text-strong) 26%, var(--surface-menu));
 }
 
-/* The pills past the spacer sit at the card's far edge; their menus open inwards. */
-.grow ~ .pill-wrap .menu {
+/* The compaction spinner in the send slot: 16px, a 2px ring with one segment solid. */
+.send-spinner {
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: composer-spin 0.7s linear infinite;
+}
+
+/* The pills in the far group sit at the card's far edge; their menus open inwards. */
+.row-end .pill-wrap .menu {
   inset-inline-start: auto;
   inset-inline-end: 0;
 }
