@@ -152,7 +152,8 @@ onMounted(async () => {
      */
     allowProposedApi: true,
     theme: palette(),
-    scrollback: 10000,
+    // MiMo's terminal keeps xterm's own 1000 lines; the server's replay is byte-capped, and xterm trims what is over.
+    scrollback: 1000,
   })
   fit = new FitAddon()
   terminal.loadAddon(fit)
