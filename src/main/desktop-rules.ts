@@ -111,7 +111,8 @@ function editRows(params: TextMenuParams): TextMenuItem[] {
     if (flags.canCut ?? selected) rows.push("cut")
     if (flags.canPaste ?? true) rows.push("paste")
   }
-  if (editable ? (flags.canSelectAll ?? true) : selected) rows.push("selectAll")
+  // A field always offers select all, as MiMo does; Chromium reports canSelectAll false for an empty one.
+  if (editable || selected) rows.push("selectAll")
   return rows
 }
 

@@ -75,7 +75,8 @@ function editItems(params: PageMenuParams): PageMenuItem[] {
     if (flags.canCut ?? selected) out.push("cut")
     if (flags.canPaste ?? true) out.push("paste")
   }
-  if (editable ? (flags.canSelectAll ?? true) : selected) out.push("selectAll")
+  // A field always offers select all, as MiMo does; Chromium reports canSelectAll false for an empty one.
+  if (editable || selected) out.push("selectAll")
   return out
 }
 
