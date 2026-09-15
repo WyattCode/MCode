@@ -20,7 +20,8 @@ import PluginsView from "./components/PluginsView.vue"
 import RightPanel from "./components/RightPanel.vue"
 import RevertDock from "./components/RevertDock.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
-import PermissionDialog from "./components/PermissionDialog.vue"
+import QuestionDock from "./components/QuestionDock.vue"
+import { useQuestions } from "./stores/questions"
 import SettingsDialog from "./components/SettingsDialog.vue"
 import ProjectDialog from "./components/ProjectDialog.vue"
 import ServerPopover from "./components/ServerPopover.vue"
@@ -77,6 +78,8 @@ import { themeTokens } from "./lib/theme-engine"
 import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
 
 const app = useApp()
+// The confirm dock's queue: permissions and questions for the session on screen.
+const confirmDock = useQuestions()
 
 /** "home" is the launcher; "session" is a project workspace. */
 const view = ref<"home" | "session" | "artifacts" | "plugins">("home")
@@ -3997,7 +4000,8 @@ onBeforeUnmount(() => {
             one shape on an empty session and another the moment they sent - and
             the composer was torn down and rebuilt on that first message.
           -->
-          <PermissionDialog v-if="app.permission" :request="app.permission" />
+          <!-- MiMo's confirm dock: the first undecided permission or question, in arrival order. -->
+          <QuestionDock />
           <!--
             The plan, above the box it is being carried out from. Drawn only
             when a turn has recorded one, so an ordinary conversation is not
@@ -4037,9 +4041,9 @@ onBeforeUnmount(() => {
           <!--
             MiMo's "N files changed" pill, hung over the composer's top edge.
             Zero tall, so it takes no room from the conversation; not drawn
-            while a permission card is up, which it would sit on top of.
+            while the confirm dock is up, which it would sit on top of.
           -->
-          <div v-if="!empty && !app.permission" class="live-edit-anchor">
+          <div v-if="!empty && !confirmDock.queue.length" class="live-edit-anchor">
             <LiveEditPill :expanded="liveEditShowing" @toggle="toggleLiveReview" />
           </div>
           <div id="main-dock" class="main-dock" />

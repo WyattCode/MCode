@@ -41,6 +41,9 @@ import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/sessio
 import type { PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
+import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
+import { composerAnswers, confirmQueue, mergeCustom, nextStop, questionOutcome, toggleChoice } from "../src/renderer/src/lib/confirm-queue"
+import type { PermissionRequest, QuestionRequest } from "../src/shared/protocol"
 import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
 import { annotationsBlock } from "../src/shared/annotations"
 import { revertTurnFiles } from "../src/server/session/turn-revert"
@@ -710,6 +713,68 @@ async function main() {
     await unheard
     check("a call nobody listens for records nothing", heard.length === before, heard.slice(before))
     unsubscribe()
+  }
+
+  section("Question dock")
+  {
+    const asking = new Questions(bus)
+    const questionContext = (callID: string, signal: AbortSignal) => ({ ...context(callID), questions: asking, signal })
+    const input = {
+      questions: [
+        { question: "Which runtime?", header: "Runtime", options: [{ label: "Node", description: "" }, { label: "Bun", description: "" }] },
+        { question: "Which checks?", header: "Checks", options: [{ label: "lint", description: "" }], multiple: true },
+      ],
+    }
+
+    // The dock's X replies with every answer empty rather than refusing.
+    const running = QuestionTool.execute(input, questionContext("c-q-dismiss", controller.signal) as never)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const parked = asking.outstanding()[0]
+    check("a question is stamped with when it was asked", typeof parked?.time === "number" && parked.time > 0, parked)
+    if (parked) asking.reply(parked.id, parked.questions.map(() => []))
+    const dismissedResult = await running
+    check("dismissing replies with every answer empty", JSON.stringify(dismissedResult.metadata?.answers) === "[[],[]]", dismissedResult.metadata)
+    check("which the model reads as unanswered, not as an error", dismissedResult.output.includes('"Which runtime?"="Unanswered"'), dismissedResult.output)
+    check("and the transcript shows as cancelled", questionOutcome({ status: "completed", metadata: dismissedResult.metadata }) === "cancelled")
+    check("an answer shows as answered", questionOutcome({ status: "completed", metadata: { answers: [["Node"], []] } }) === "answered")
+    check("a stopped question is cancelled too", questionOutcome({ status: "error" }) === "cancelled")
+    check("a waiting one is neither", questionOutcome({ status: "running" }) === "pending")
+
+    const stopper = new AbortController()
+    const stopped = QuestionTool.execute(input, questionContext("c-q-stop", stopper.signal) as never).then(
+      () => undefined,
+      (err: unknown) => err,
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    stopper.abort()
+    const stopError = await stopped
+    check("Stop refuses with a code, so nothing reads English", stopError instanceof ToolError && stopError.code === QUESTION_DISMISSED, stopError)
+    check("and leaves nothing parked", asking.outstanding().length === 0, asking.outstanding())
+
+    check("composer text answers question one only", JSON.stringify(composerAnswers("  use bun ", 3)) === '[["use bun"],[],[]]')
+    check("blank composer text answers nothing", composerAnswers("   ", 2) === undefined)
+
+    const perm = (id: string, sessionID: string, time: number): PermissionRequest => ({
+      id,
+      sessionID,
+      messageID: "m",
+      callID: `c-${id}`,
+      kind: "bash",
+      title: "t",
+      subject: "s",
+      time,
+    })
+    const ask = (id: string, sessionID: string, time: number): QuestionRequest => ({ id, sessionID, questions: [], time })
+    const queued = confirmQueue("s1", [perm("p1", "s1", 100), perm("p2", "s1", 300), perm("px", "s2", 50)], [ask("q1", "s1", 200), ask("qx", "s2", 10)])
+    check("the dock queues questions and permissions by arrival", queued.map((item) => item.id).join() === "p1,q1,p2", queued.map((item) => item.id))
+    check("1/N counts both kinds, this session only", queued.length === 3)
+    check("a question that arrived first is shown first", confirmQueue("s1", [perm("p1", "s1", 100)], [ask("q0", "s1", 90)])[0]?.kind === "question")
+    check("no session, no queue", confirmQueue(undefined, [perm("p1", "s1", 1)], []).length === 0)
+
+    check("a single choice picks, and a second click clears it", JSON.stringify(toggleChoice([], "a", false)) === '["a"]' && toggleChoice(["a"], "a", false).length === 0)
+    check("a multi choice toggles each label", JSON.stringify(toggleChoice(["a"], "b", true)) === '["a","b"]' && JSON.stringify(toggleChoice(["a", "b"], "a", true)) === '["b"]')
+    check("typed text is appended once", JSON.stringify(mergeCustom([["a"], []], ["b", " "])) === '[["a","b"],[]]' && JSON.stringify(mergeCustom([["a"]], ["a"])) === '[["a"]]')
+    check("advancing goes on, then back to the first gap, then submits", nextStop([false, false], 0) === 1 && nextStop([false, true], 1) === 0 && nextStop([true, true], 1) === "submit")
   }
 
   section("Tool arguments")

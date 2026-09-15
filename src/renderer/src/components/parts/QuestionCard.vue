@@ -1,25 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { QuestionPrompt, ToolPart } from "@shared/protocol"
-import QuestionForm from "./QuestionForm.vue"
 import StepIcon from "./StepIcon.vue"
 import StepCollapse from "./StepCollapse.vue"
 import "./steps.css"
 import { t } from "../../lib/i18n"
-import { useQuestions } from "../../stores/questions"
 
 /**
  * A question call in the transcript, on its own row and never inside a group.
  *
  * Answered, MiMo draws a quiet box of each question over what was chosen, with
  * no heading. Dismissed or stopped, it draws 需要你确认 · 已取消, folded, with the
- * questions behind the chevron. While it is still waiting the form is shown
- * here, as it was before; the question dock is where that is heading.
+ * questions behind the chevron. While it is still waiting nothing is drawn
+ * here: the question lives in the dock above the composer.
  */
 const props = defineProps<{ part: ToolPart }>()
-
-const questions = useQuestions()
-const pending = computed(() => questions.forCall(props.part.callID))
 
 const asked = computed(() => {
   const raw = props.part.input?.questions
@@ -55,8 +50,7 @@ function toggle() {
 </script>
 
 <template>
-  <QuestionForm v-if="pending" :request="pending" />
-  <div v-else-if="settled && answered" class="hs-q-card" data-answer-state="answered" :data-question-card="part.id">
+  <div v-if="settled && answered" class="hs-q-card" data-answer-state="answered" :data-question-card="part.id">
     <div v-for="(entry, index) in asked" :key="index" class="hs-q">
       <div class="hs-q-text">{{ entry.question }}</div>
       <div class="hs-q-answer" data-question-answer>{{ answerText(index) }}</div>

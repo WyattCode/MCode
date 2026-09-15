@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue"
-import type { PermissionRequest } from "@shared/protocol"
+import { computed, nextTick, ref, watch } from "vue"
+import type { PermissionRequest, PermissionResponse } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import DiffView from "./parts/DiffView.vue"
 import { t } from "../lib/i18n"
 
-const props = defineProps<{ request: PermissionRequest }>()
+/**
+ * MiMo's permission card, drawn inside the confirm dock. The dock around it
+ * holds the surface, the focus and the keys; this is only the card.
+ */
+const props = defineProps<{ request: PermissionRequest; queueTotal: number }>()
 const app = useApp()
 
 /** True from the moment a button is pressed until the server has the answer. */
@@ -58,20 +62,14 @@ const showDiff = ref(false)
 const reasoning = ref(false)
 const reason = ref("")
 
-watch(
-  () => props.request.id,
-  () => {
-    showFull.value = false
-    showDiff.value = false
-    reasoning.value = false
-    reason.value = ""
-  },
-)
-
 const reasonInput = ref<HTMLInputElement>()
 watch(reasoning, (open) => {
   if (open) void nextTick(() => reasonInput.value?.focus())
 })
+
+function answer(response: PermissionResponse) {
+  void app.respond(response)
+}
 
 function rejectWithReason() {
   if (reason.value.trim()) void app.respond("reject", reason.value)
@@ -83,240 +81,118 @@ function onReasonKey(event: KeyboardEvent) {
   event.preventDefault()
   rejectWithReason()
 }
-
-/*
- * The keyboard.
- *
- * The dock takes focus when a request arrives, unless someone is part-way
- * through writing in the composer. Arrow keys walk the buttons and Enter gives
- * the primary answer - but only once the dock has really been engaged: focus
- * that was borrowed from an empty composer goes straight back on the first
- * other key, so a person who was about to type loses nothing and grants nothing.
- */
-const root = ref<HTMLElement>()
-let engaged = false
-let borrowedFrom: HTMLElement | null = null
-
-function takeFocus() {
-  const el = root.value
-  if (!el) return
-  const active = document.activeElement
-  const field = active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement
-  if (field && active.value.length > 0) {
-    engaged = false
-    borrowedFrom = null
-    return
-  }
-  engaged = !field
-  borrowedFrom = field ? active : null
-  el.focus()
-}
-
-function onDockKey(event: KeyboardEvent) {
-  const target = event.target as HTMLElement
-  if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") return
-  const el = root.value
-  if (!el) return
-  if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
-    const buttons = [...el.querySelectorAll<HTMLButtonElement>("[data-cnav]")].filter((button) => !button.disabled)
-    if (!buttons.length) return
-    event.preventDefault()
-    engaged = true
-    borrowedFrom = null
-    const forward = event.key === "ArrowRight" || event.key === "ArrowDown"
-    const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
-    const next = at === -1 ? (forward ? 0 : buttons.length - 1) : (at + (forward ? 1 : -1) + buttons.length) % buttons.length
-    buttons[next]!.focus()
-    return
-  }
-  if (event.key === "Tab") {
-    engaged = true
-    borrowedFrom = null
-    return
-  }
-  if (!engaged && borrowedFrom) {
-    const back = borrowedFrom
-    borrowedFrom = null
-    if (event.key === "Enter") event.preventDefault()
-    if (back.isConnected) back.focus()
-    return
-  }
-  if (event.key === "Enter" && !(document.activeElement instanceof HTMLButtonElement)) {
-    event.preventDefault()
-    if (!engaged) return
-    el.querySelector<HTMLButtonElement>("[data-cnav-primary]:not([disabled])")?.click()
-  }
-}
-
-function onDockPointer() {
-  engaged = true
-  borrowedFrom = null
-}
-
-/*
- * No Escape. MiMo gives the card no key that answers it outright: a press
- * meant for a popup or the composer would otherwise refuse the step the model
- * is waiting on, and the buttons and arrow keys are already one move away.
- */
-watch(
-  () => props.request.id,
-  () => void nextTick(takeFocus),
-)
-
-onMounted(takeFocus)
 </script>
 
 <template>
-  <!--
-    Anchored above the composer rather than floating in the middle of the
-    screen: the question is about the work still visible behind it, and a modal
-    that covers the transcript hides the very thing being judged.
-  -->
-  <div class="perm">
-    <div
-      ref="root"
-      class="dock"
-      data-confirm-dock
-      tabindex="-1"
-      @keydown="onDockKey"
-      @pointerdown="onDockPointer"
-    >
-      <div class="card" data-confirm-perm>
-        <div class="head">
-          <span class="icon" aria-hidden="true">
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
-              <path
-                d="M8 1.8 13 3.6v4.1c0 3-2.1 5.4-5 6.5-2.9-1.1-5-3.5-5-6.5V3.6z"
-                stroke="currentColor"
-                stroke-width="1.3"
-                stroke-linejoin="round"
-              />
-              <path d="M8 5.6v2.8M8 10.4h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-            </svg>
-          </span>
-          <span data-perm-title>{{ t("perm.request", { verb }) }}</span>
-          <span v-if="chip" class="chip" data-perm-chip>{{ chip }}</span>
-          <span class="queue-slot">
-            <span v-if="app.permissionQueue > 1" class="queue" data-confirm-queue :title="t('perm.queueTitle', { total: app.permissionQueue })">
-              1/{{ app.permissionQueue }}
-            </span>
-          </span>
-        </div>
-
-        <div class="cmd-wrap">
-          <pre class="cmd" :class="{ lossy: folded.lossy }" data-perm-cmd>{{ folded.lossy && !showFull ? folded.text : full }}</pre>
-          <button
-            v-if="folded.lossy"
-            type="button"
-            class="cmd-toggle"
-            data-perm-cmd-toggle
-            :title="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
-            :aria-label="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
-            :aria-expanded="showFull"
-            @click="showFull = !showFull"
-          >
-            <svg v-if="showFull" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="m5 2.5 3 3 3-3M5 13.5l3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="m5 5.5 3-3 3 3M5 10.5l3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          </button>
-        </div>
-
-        <template v-if="isDiff && request.preview">
-          <button type="button" class="diff-toggle" data-perm-diff-toggle :aria-expanded="showDiff" @click="showDiff = !showDiff">
-            {{ (showDiff ? "▾ " : "▸ ") + t(showDiff ? "perm.hideDiff" : "perm.viewDiff") }}
-          </button>
-          <div v-if="showDiff" class="diff" data-perm-diff>
-            <DiffView :diff="request.preview" />
-          </div>
-        </template>
-
-        <div v-if="request.forced" class="forced" data-perm-forced>{{ t("perm.forcedHint") }}</div>
-
-        <div class="actions">
-          <button type="button" class="perm-btn" data-cnav data-perm-reject :disabled="busy" @click="app.respond('reject')">
-            {{ t("perm.reject") }}
-          </button>
-          <button
-            type="button"
-            class="perm-btn muted"
-            data-cnav
-            data-perm-reason-toggle
-            :disabled="busy"
-            @click="reasoning = !reasoning"
-          >
-            {{ t("perm.rejectWithReason") }}
-          </button>
-          <button
-            v-if="!request.forced"
-            type="button"
-            class="perm-btn"
-            data-cnav
-            data-perm-always
-            :disabled="busy"
-            @click="app.respond('always')"
-          >
-            {{ t("perm.alwaysShort") }}
-          </button>
-          <button
-            type="button"
-            class="perm-btn primary"
-            data-cnav
-            data-cnav-primary
-            data-perm-once
-            :disabled="busy"
-            @click="app.respond('once')"
-          >
-            {{ t("perm.once") }}
-          </button>
-        </div>
-
-        <div v-if="reasoning" class="reason" data-perm-reason>
-          <input
-            ref="reasonInput"
-            v-model="reason"
-            type="text"
-            class="reason-input"
-            :placeholder="t('perm.reasonPlaceholder')"
-            @keydown="onReasonKey"
+  <div class="card" data-confirm-perm>
+    <div class="head">
+      <span class="icon" aria-hidden="true">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M8 1.8 13 3.6v4.1c0 3-2.1 5.4-5 6.5-2.9-1.1-5-3.5-5-6.5V3.6z"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linejoin="round"
           />
-          <button type="button" class="perm-btn" data-perm-reason-submit :disabled="busy" @click="rejectWithReason">
-            {{ t("perm.submit") }}
-          </button>
-        </div>
+          <path d="M8 5.6v2.8M8 10.4h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </svg>
+      </span>
+      <span data-perm-title>{{ t("perm.request", { verb }) }}</span>
+      <span v-if="chip" class="chip" data-perm-chip>{{ chip }}</span>
+      <span class="queue-slot">
+        <span v-if="queueTotal > 1" class="queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
+          1/{{ queueTotal }}
+        </span>
+      </span>
+    </div>
+
+    <div class="cmd-wrap">
+      <pre class="cmd" :class="{ lossy: folded.lossy }" data-perm-cmd>{{ folded.lossy && !showFull ? folded.text : full }}</pre>
+      <button
+        v-if="folded.lossy"
+        type="button"
+        class="cmd-toggle"
+        data-perm-cmd-toggle
+        :title="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
+        :aria-label="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
+        :aria-expanded="showFull"
+        @click="showFull = !showFull"
+      >
+        <svg v-if="showFull" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="m5 2.5 3 3 3-3M5 13.5l3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <svg v-else width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="m5 5.5 3-3 3 3M5 10.5l3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </div>
+
+    <template v-if="isDiff && request.preview">
+      <button type="button" class="diff-toggle" data-perm-diff-toggle :aria-expanded="showDiff" @click="showDiff = !showDiff">
+        {{ (showDiff ? "▾ " : "▸ ") + t(showDiff ? "perm.hideDiff" : "perm.viewDiff") }}
+      </button>
+      <div v-if="showDiff" class="diff" data-perm-diff>
+        <DiffView :diff="request.preview" />
       </div>
+    </template>
+
+    <div v-if="request.forced" class="forced" data-perm-forced>{{ t("perm.forcedHint") }}</div>
+
+    <div class="actions">
+      <button type="button" class="perm-btn" data-cnav data-perm-reject :disabled="busy" @click="answer('reject')">
+        {{ t("perm.reject") }}
+      </button>
+      <button
+        type="button"
+        class="perm-btn muted"
+        data-cnav
+        data-perm-reason-toggle
+        :disabled="busy"
+        @click="reasoning = !reasoning"
+      >
+        {{ t("perm.rejectWithReason") }}
+      </button>
+      <button
+        v-if="!request.forced"
+        type="button"
+        class="perm-btn"
+        data-cnav
+        data-perm-always
+        :disabled="busy"
+        @click="answer('always')"
+      >
+        {{ t("perm.alwaysShort") }}
+      </button>
+      <button
+        type="button"
+        class="perm-btn primary"
+        data-cnav
+        data-cnav-primary
+        data-perm-once
+        :disabled="busy"
+        @click="answer('once')"
+      >
+        {{ t("perm.once") }}
+      </button>
+    </div>
+
+    <div v-if="reasoning" class="reason" data-perm-reason>
+      <input
+        ref="reasonInput"
+        v-model="reason"
+        type="text"
+        class="reason-input"
+        :placeholder="t('perm.reasonPlaceholder')"
+        @keydown="onReasonKey"
+      />
+      <button type="button" class="perm-btn" data-perm-reason-submit :disabled="busy" @click="rejectWithReason">
+        {{ t("perm.submit") }}
+      </button>
     </div>
   </div>
 </template>
 
 <style scoped>
-/*
- * The same column as the composer it sits on: 776px centred inside a 24px
- * inset, which is what Composer draws too.
- */
-.perm {
-  padding: 0 24px;
-}
-
-/*
- * One surface, the composer's own, set a little above it. A tall request
- * scrolls inside the dock rather than pushing the composer off the screen.
- */
-.dock {
-  max-width: 776px;
-  max-height: 72vh;
-  margin: 0 auto 10px;
-  padding: 10px 14px;
-  overflow-y: auto;
-  background: var(--surface-raised);
-  border: 0.5px solid var(--border-weak);
-  border-radius: 20px;
-  box-shadow: var(--shadow-md);
-  outline: none;
-}
-
 .card {
   min-width: 0;
 }

@@ -536,6 +536,8 @@ export interface QuestionRequest {
   sessionID: string
   questions: QuestionPrompt[]
   tool?: { messageID: string; callID: string }
+  /** When it was asked, so the dock can queue it with permission requests in arrival order. */
+  time: number
 }
 
 /**
@@ -1457,11 +1459,6 @@ export type Request =
    */
   | { type: "question.reply"; requestID: string; answers: QuestionAnswer[] }
   /**
-   * Dismisses one without answering. The tool fails with "The user dismissed
-   * this question" rather than hanging - the reference's `RejectedError`.
-   */
-  | { type: "question.reject"; requestID: string }
-  /**
    * The commands a slash can reach in this project.
    *
    * Directory-scoped because that is what decides them: the project's own
@@ -1648,7 +1645,6 @@ export interface ResponseMap {
   "permission.respond": Record<string, never>
   "question.list": { questions: QuestionRequest[] }
   "question.reply": Record<string, never>
-  "question.reject": Record<string, never>
   "command.list": { commands: CommandInfo[] }
   "config.get": { config: AppConfig }
   "config.set": { config: AppConfig }
