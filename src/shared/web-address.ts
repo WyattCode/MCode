@@ -2,8 +2,9 @@
  * What an address bar should do with what was typed.
  *
  * Kept apart from the panel that uses it because it is pure string work with
- * two security decisions in it, and those are worth testing without starting
- * a window: only http and https are ever returned, and a port means http.
+ * security decisions in it, and those are worth testing without starting a
+ * window: a page may only ever be sent to http or https, a port means http,
+ * and the one other thing the address bar itself accepts is a local file.
  */
 
 /**
@@ -36,9 +37,9 @@ function withScheme(raw: string): string {
 /**
  * http and https, and nothing else.
  *
- * A `file://` in the address bar would turn a browser panel into a reader for
- * every file its user can open, and an app's own internal scheme is not
- * something a page gets to ask for.
+ * This is what a page is allowed to navigate to. An app's own internal scheme
+ * is not something a page gets to ask for, and a page from the web reaching for
+ * a local file is refused here as well as by Chromium.
  */
 export function safeURL(input: string): string | undefined {
   const raw = input.trim()
@@ -52,14 +53,64 @@ export function safeURL(input: string): string | undefined {
   }
 }
 
+/*
+ * Local files in the address bar.
+ *
+ * The user chose (2026-09-15) to let the panel open local files as MiMo's does,
+ * accepting that it becomes a viewer for anything they type the path of. The
+ * rule is kept to MiMo's: an absolute path - one starting with "/" or a drive
+ * letter - or a typed file:// address. Two things are narrower than MiMo on
+ * purpose: a network path ("\\server\share", "//server", file://server/) is
+ * refused, because Windows answers one by offering the user's credentials to
+ * that server; and nothing but the address bar produces a file address.
+ */
+const DRIVE_PATH = /^[a-z]:[\\/]/i
+
+/** MiMo's encoding of a path: forward slashes, encodeURI, and `#` and `?` kept as part of the name. */
+export function localPathToURL(path: string): string {
+  const encoded = encodeURI(path.replace(/\\/g, "/")).replace(/#/g, "%23").replace(/\?/g, "%3F")
+  return encoded.startsWith("/") ? `file://${encoded}` : `file:///${encoded}`
+}
+
+/** A file address on this machine, normalised, or nothing - a network share is not this machine. */
+export function localFileURL(input: string): string | undefined {
+  try {
+    const url = new URL(input)
+    if (url.protocol !== "file:") return undefined
+    if (url.hostname && url.hostname.toLowerCase() !== "localhost") return undefined
+    // "file:////server/share" has no host but is a network path all the same.
+    if (url.pathname.startsWith("//")) return undefined
+    return url.toString()
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Whether a page on `from` may go to `to` by itself (a link, a form, script).
+ *
+ * The web is always allowed. A file only from a file: a local page's links to
+ * its neighbours work, as they do in MiMo, while a page from the web still
+ * cannot move the panel onto a local file.
+ */
+export function pageMayNavigate(from: string, to: string): boolean {
+  if (safeURL(to)) return true
+  if (!localFileURL(to)) return false
+  return Boolean(localFileURL(from))
+}
+
 /**
  * Something that parses as a host is opened; anything else is a search, which
  * is what every address bar has done for fifteen years and what a reader
- * typing three words expects.
+ * typing three words expects. An absolute path or a file address opens that
+ * file.
  */
 export function addressToURL(input: string): string | undefined {
   const raw = input.trim()
   if (!raw) return undefined
+  if (raw.startsWith("\\\\") || raw.startsWith("//")) return undefined
+  if (raw.startsWith("/") || DRIVE_PATH.test(raw)) return localFileURL(localPathToURL(raw))
+  if (/^file:/i.test(raw)) return localFileURL(raw)
   const looksLikeHost =
     /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ||
     /^[^\s/]+\.[^\s/]{2,}(\/|$|:)/.test(raw) ||

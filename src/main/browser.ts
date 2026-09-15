@@ -1,5 +1,5 @@
 import { BrowserWindow, WebContentsView, clipboard, session } from "electron"
-import { addressToURL, safeURL } from "@shared/web-address"
+import { addressToURL, pageMayNavigate } from "@shared/web-address"
 import { stepZoom } from "@shared/browser-page"
 import { wirePage } from "./browser-page"
 
@@ -16,9 +16,10 @@ import { wirePage } from "./browser-page"
  *
  * What it may do is narrow on purpose:
  *
- * - http and https only, decided in @shared/web-address. A `file://` in the
- *   address bar would turn the panel into a file reader for anything the user
- *   can open, and internal schemes are not for a page to ask for.
+ * - http and https, decided in @shared/web-address, and a local file typed
+ *   into the address bar - the user chose (2026-09-15) to open local files as
+ *   MiMo does. A page may follow a link to a file only from a local page, never
+ *   from the web, and internal schemes are not for a page to ask for.
  * - No permissions. The window's own handler allows a microphone because a
  *   button asks for it; a site in this panel gets nothing at all.
  * - A popup becomes a tab of the panel, with the panel's address bar, as MiMo
@@ -147,9 +148,9 @@ function makeTab(panel: Panel): Tab {
     openTab: (url) => openFromPage(panel, url),
     changed: () => panel.publish(),
   })
-  /* A navigation to anything but the web is refused rather than followed. */
+  /* The web is followed; a file only from a local page (MiMo's local pages link to their neighbours); the rest is refused. */
   contents.on("will-navigate", (event, url) => {
-    if (!safeURL(url)) event.preventDefault()
+    if (!pageMayNavigate(contents.getURL(), url)) event.preventDefault()
   })
   for (const event of [
     "did-navigate",

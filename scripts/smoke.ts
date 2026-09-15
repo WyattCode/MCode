@@ -67,7 +67,7 @@ import { listedProjects, projectsByRecency, reconciledProjects } from "../src/sh
 import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
-import { addressToURL, safeURL } from "../src/shared/web-address"
+import { addressToURL, pageMayNavigate, safeURL } from "../src/shared/web-address"
 import * as mediaPlatform from "../src/shared/media-platform"
 import * as abcPlay from "../src/renderer/src/lib/abc-play"
 import {
@@ -3240,13 +3240,38 @@ async function main() {
 
   section("The address bar")
   {
-    /*
-     * The two refusals the panel rests on. A file:// in the address bar would
-     * turn a browser panel into a reader for every file the user owns.
-     */
-    check("a file path is refused", safeURL("file:///C:/Windows/win.ini") === undefined)
+    /* What a page may navigate to: the web, and nothing with another scheme. */
+    check("a page may not be sent to a file", safeURL("file:///C:/Windows/win.ini") === undefined)
     check("and so is anything else with a scheme", safeURL("mcode://settings") === undefined)
     check("http survives", safeURL("http://example.com/") === "http://example.com/")
+
+    /* The user's 2026-09-15 decision: MiMo's address bar opens local files, encoded as MiMo encodes them. */
+    check("a Windows path opens as a file", addressToURL("C:\\Users\\a b\\x#1?.html") === "file:///C:/Users/a%20b/x%231%3F.html", addressToURL("C:\\Users\\a b\\x#1?.html"))
+    check("a drive path with forward slashes too", addressToURL("d:/notes/index.html") === "file:///d:/notes/index.html", addressToURL("d:/notes/index.html"))
+    check("a path from the root too", addressToURL("/tmp/page.html") === "file:///tmp/page.html", addressToURL("/tmp/page.html"))
+    check("a typed file address opens", addressToURL("file:///C:/notes/") === "file:///C:/notes/")
+    check("file://localhost is this machine", addressToURL("file://localhost/C:/notes/a.txt") === "file:///C:/notes/a.txt", addressToURL("file://localhost/C:/notes/a.txt"))
+    check("a network share is refused as a path", addressToURL("\\\\server\\share\\a.html") === undefined)
+    check("and as //server", addressToURL("//server/share/a.html") === undefined)
+    check("and as a file address with a host", addressToURL("file://server/share/a.html") === undefined)
+    check("and as file://// with an empty host", addressToURL("file:////server/share/a.html") === undefined)
+    // Never opened as what they are: at most they are words to search for, as before.
+    const searchOnly = (typed: string) => {
+      const url = addressToURL(typed)
+      return url === undefined || url.startsWith("https://www.google.com/search?q=")
+    }
+    check("javascript stays refused", searchOnly("javascript:alert(1)"), addressToURL("javascript:alert(1)"))
+    check("data stays refused", searchOnly("data:text/html,<b>x</b>"), addressToURL("data:text/html,<b>x</b>"))
+    check("the app's own scheme stays refused", addressToURL("mcode://settings") === undefined)
+    check("so does devtools", addressToURL("devtools://devtools/bundled/inspector.html") === undefined)
+
+    /* Links: the web from anywhere, a file only from a local page. */
+    check("a local page may link to its neighbour", pageMayNavigate("file:///C:/notes/a.html", "file:///C:/notes/b.html"))
+    check("a local page may link to the web", pageMayNavigate("file:///C:/notes/a.html", "https://example.com/"))
+    check("a web page may not link to a file", !pageMayNavigate("https://example.com/", "file:///C:/Windows/win.ini"))
+    check("a blank page may not be sent to a file", !pageMayNavigate("", "file:///C:/Windows/win.ini"))
+    check("a local page may not reach a network share", !pageMayNavigate("file:///C:/notes/a.html", "file://server/share/x.html"))
+    check("a local page may not run javascript: as a navigation", !pageMayNavigate("file:///C:/notes/a.html", "javascript:alert(1)"))
 
     /*
      * A port means a development server, and a development server means http.
