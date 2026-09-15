@@ -95,7 +95,20 @@ import {
 } from "../src/renderer/src/lib/composer-text"
 import type { Message } from "../src/shared/protocol"
 import { DELAY as TIP_DELAY, EDGE as TIP_EDGE, GAP as TIP_GAP, WARM as TIP_WARM, fit as fitTip, openDelay, tipText } from "../src/renderer/src/lib/tip"
-import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
+import { dismiss, notice, notify, notifyFailure, toastID, toastTitle, toasts, zoomNotice } from "../src/renderer/src/lib/toast"
+import { t as translate } from "../src/renderer/src/lib/i18n"
+import { LINGER as SCROLLBAR_LINGER } from "../src/renderer/src/lib/scrollbars"
+import {
+  WINDOW_MIN,
+  badgeCount,
+  firstRunSize,
+  nextZoom,
+  noticeTitle,
+  quitPress,
+  readTaskNotice,
+  textMenuItems,
+  wantsNotice,
+} from "../src/main/desktop-rules"
 
 let passed = 0
 let failed = 0
@@ -345,7 +358,7 @@ async function main() {
   check("a notice's identity is its level and its title", toastID("info", "x") === toastID("info", "x") && toastID("info", "x") !== toastID("danger", "x"))
   const old = notify("Saved", "C:/log.txt", { label: "Show", run: () => {} })
   const oldEntry = toasts.value.find((entry) => entry.id === old)
-  check("an older caller's body and action still arrive", oldEntry?.body === "C:/log.txt" && oldEntry.links[0]?.label === "Show" && oldEntry.level === "info", oldEntry)
+  check("an older caller's body folds into the title and its action still arrives", oldEntry?.title === "Saved · C:/log.txt" && oldEntry.links[0]?.label === "Show" && oldEntry.level === "info", oldEntry)
   for (const entry of [...toasts.value]) dismiss(entry.id)
   check("dismissing every notice empties the stack", toasts.value.length === 0)
 
@@ -3845,6 +3858,68 @@ async function main() {
   check("with room on neither side, the side overflowing less wins", cramped.side === "top", cramped)
   const limited = fitTip(tipBox(-50, 400, 20, 20), tipSelf, "top", tipView)
   check("the shift never detaches the tip from its control", limited.left === -30, limited)
+
+  section("Desktop chrome (MiMo's main-process rules)")
+  check("the minimum window is 720 by 640", WINDOW_MIN.width === 720 && WINDOW_MIN.height === 640, WINDOW_MIN)
+  const fullHD = firstRunSize({ width: 1920, height: 1040 })
+  check("a 1920x1040 work area opens at 80% wide, the preferred 880 high", fullHD.width === 1536 && fullHD.height === 880, fullHD)
+  const wide = firstRunSize({ width: 2560, height: 1400 })
+  check("a large work area is capped at 1920 by 1120", wide.width === 1920 && wide.height === 1120, wide)
+  const laptop = firstRunSize({ width: 1280, height: 700 })
+  check("a work area under the preferred size is used whole", laptop.width === 1280 && laptop.height === 700, laptop)
+  const tiny = firstRunSize({ width: 600, height: 500 })
+  check("never below the minimum", tiny.width === 720 && tiny.height === 640, tiny)
+
+  const zoomSteps = [nextZoom(1, "in"), nextZoom(1.1, "in"), nextZoom(1.095, "in"), nextZoom(1, "out")]
+  check("zoom moves in whole ten-point steps", zoomSteps.join(",") === "1.1,1.2,1.2,0.9", zoomSteps)
+  check(
+    "zoom stays within 25% and 300%, and resets to 100%",
+    nextZoom(0.3, "out") === 0.25 && nextZoom(0.25, "out") === 0.25 && nextZoom(2.95, "in") === 3 && nextZoom(1.7, "reset") === 1,
+  )
+
+  check("a notification is titled project · conversation", noticeTitle("MCode", { project: "proj", title: "Fix it" }) === "proj · Fix it")
+  check("either half alone, or the app name", noticeTitle("MCode", { title: "Only" }) === "Only" && noticeTitle("MCode", {}) === "MCode")
+  const longTitle = noticeTitle("MCode", { project: "a-long-project-name", title: "and a long conversation title too" })
+  check("a title over 40 is cut to 39 and an ellipsis", longTitle.length === 40 && longTitle.endsWith("…"), longTitle)
+  const noticeRaw = readTaskNotice({ kind: "confirm", silent: "yes", sessionID: 4 })
+  check("an IPC notice is read field by field", noticeRaw.kind === "confirm" && noticeRaw.silent === false && noticeRaw.sessionID === undefined, noticeRaw)
+  check("an unknown kind is a finished task", readTaskNotice({ kind: "error" }).kind === "done")
+  const front = { destroyed: false, minimized: false, visible: true, focused: true }
+  check("no notification while the window is in front", !wantsNotice(front))
+  check(
+    "a notification while minimised, hidden or in the background",
+    wantsNotice({ ...front, minimized: true }) && wantsNotice({ ...front, visible: false }) && wantsNotice({ ...front, focused: false }),
+  )
+  check("none for a destroyed window", !wantsNotice({ ...front, destroyed: true, focused: false }))
+
+  const flags = (canCopy: boolean, canCut: boolean, canPaste: boolean, canSelectAll: boolean) => ({ canCopy, canCut, canPaste, canSelectAll })
+  const plainSelection = textMenuItems({ isEditable: false, selectionText: "hello", editFlags: flags(true, false, false, true) })
+  check("selected text offers copy and select all", plainSelection.join(",") === "copy,selectAll", plainSelection)
+  const emptyField = textMenuItems({ isEditable: true, selectionText: "", editFlags: flags(false, false, true, true) })
+  check("an empty field hides cut and copy rather than greying them", emptyField.join(",") === "paste,selectAll", emptyField)
+  const nothing = textMenuItems({ isEditable: false, selectionText: "", editFlags: flags(false, false, false, false) })
+  check("plain text or a link with nothing selected gets no menu", nothing.length === 0, nothing)
+  const picture = textMenuItems({ mediaType: "image", srcURL: "https://example.com/a.png", selectionText: "", editFlags: flags(true, false, false, true) })
+  check("an image leads with its two rows and copies no text", picture.join(",") === "copyImage,copyImageUrl", picture)
+
+  const armed = quitPress(undefined, 1000)
+  check("a first Cmd+Q only arms", !armed.quit && armed.armedAt === 1000, armed)
+  check("a second within two seconds quits", quitPress(1000, 2500).quit)
+  const late = quitPress(1000, 3500)
+  check("a later press arms again", !late.quit && late.armedAt === 3500, late)
+  check("the badge count is a whole non-negative number", badgeCount(-1) === 0 && badgeCount(2.7) === 2 && badgeCount("3") === 3)
+
+  section("Notices and scrollbars (MiMo)")
+  check("a notice's detail folds into its one line", toastTitle("Saved", "C:/x.txt") === "Saved · C:/x.txt" && toastTitle("Saved") === "Saved")
+  const folded = notify("Round3 folded", "a reason")
+  const foldedEntry = toasts.value.find((entry) => entry.id === folded)
+  check("a notice carries no second text", Boolean(foldedEntry) && foldedEntry?.title === "Round3 folded · a reason" && !("body" in (foldedEntry ?? {})), foldedEntry)
+  dismiss(folded)
+  check("the zoom notice at 100% says it is restored", zoomNotice(100, "win32") === translate("zoom.restored"))
+  const zoomed = zoomNotice(129.6, "win32")
+  check("the zoom notice names the whole percent and Ctrl+0", zoomed.includes("130") && zoomed.includes("Ctrl+0") && !zoomed.includes("{"), zoomed)
+  check("on macOS it names ⌘0", zoomNotice(80, "darwin").includes("⌘0"))
+  check("a scrollbar stays coloured 500ms after the last scroll", SCROLLBAR_LINGER === 500, SCROLLBAR_LINGER)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
