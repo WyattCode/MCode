@@ -161,21 +161,34 @@ const ANSI_SLOTS = [
   "brightBlue", "brightMagenta", "brightCyan", "brightWhite",
 ]
 
+/*
+ * MiMo has two tables - its own light set, and xterm's defaults written out for
+ * dark - and they live in lib/terminal.ts so the smoke test can read them. Each
+ * must be complete and spread into the palette, and the pane must use that palette.
+ */
 {
-  const source = fs.readFileSync(path.join(componentDir, "TerminalPane.vue"), "utf8")
-  const table = source.slice(source.indexOf("const ANSI = {"), source.indexOf("} as const"))
-  if (!table) {
-    problems.push("TerminalPane.vue: no ANSI table, so the terminal falls back to xterm's own colours")
-  } else {
+  const libFile = path.join(componentDir, "..", "lib", "terminal.ts")
+  const lib = fs.readFileSync(libFile, "utf8")
+  for (const name of ["ANSI_LIGHT", "ANSI_DARK"]) {
+    const from = lib.indexOf(`export const ${name} = {`)
+    const table = from === -1 ? "" : lib.slice(from, lib.indexOf("} as const", from))
+    if (!table) {
+      problems.push(`lib/terminal.ts: no ${name} table, so the terminal falls back to xterm's own colours`)
+      continue
+    }
     for (const slot of ANSI_SLOTS) {
       if (!new RegExp(`\\b${slot}:\\s*"#[0-9a-fA-F]{6}"`).test(table)) {
-        problems.push(`TerminalPane.vue: the ANSI table has no ${slot}, which xterm would fill from its own palette`)
+        problems.push(`lib/terminal.ts: ${name} has no ${slot}, which xterm would fill from its own palette`)
       }
     }
     // Handed to xterm, not merely declared.
-    if (!/\.\.\.ANSI,/.test(source)) {
-      problems.push("TerminalPane.vue: the ANSI table is never spread into the theme xterm is given")
+    if (!new RegExp(`\\.\\.\\.${name}\\b`).test(lib)) {
+      problems.push(`lib/terminal.ts: ${name} is never spread into the theme xterm is given`)
     }
+  }
+  const pane = fs.readFileSync(path.join(componentDir, "TerminalPane.vue"), "utf8")
+  if (!/theme:\s*palette\(\)/.test(pane) || !/terminalPalette\(/.test(pane)) {
+    problems.push("TerminalPane.vue: xterm is not given lib/terminal.ts's palette")
   }
 }
 

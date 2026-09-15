@@ -100,6 +100,18 @@ import type { Message } from "../src/shared/protocol"
 import { DELAY as TIP_DELAY, EDGE as TIP_EDGE, GAP as TIP_GAP, WARM as TIP_WARM, fit as fitTip, openDelay, tipText } from "../src/renderer/src/lib/tip"
 import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
 import { imagePreview, imagePreviewFileTools, imagePreviewKey, openImagePreview } from "../src/renderer/src/lib/image-preview"
+import {
+  clampPanelHeight,
+  isPasteKey,
+  nextTerminalNumber,
+  shouldRespawn,
+  showMismatch,
+  storedPanelHeight,
+  terminalLabel,
+  terminalPalette,
+} from "../src/renderer/src/lib/terminal"
+import { typedInput } from "../src/shared/terminal-input"
+import { Shells } from "../src/server/shell"
 
 let passed = 0
 let failed = 0
@@ -3934,6 +3946,86 @@ async function main() {
   openImagePreview("data:image/png;base64,AA==", { name: "b.png" })
   check("a picture opened without a path has none", imagePreview.value?.path === undefined)
   imagePreview.value = undefined
+  // ---------------------------------------------------------------- terminal
+  section("Terminal (MiMo's bottom panel and terminal tab)")
+  check("the first tab is the bare title", nextTerminalNumber([]) === 0)
+  check("a bare title counts as 1, so the next is 2", nextTerminalNumber([0]) === 2)
+  check("closing the bare tab frees 1 for the next", nextTerminalNumber([2]) === 1)
+  check("the lowest free number is taken", nextTerminalNumber([0, 3]) === 2 && nextTerminalNumber([0, 2]) === 3)
+  const restored: number[] = []
+  for (let i = 0; i < 3; i += 1) restored.push(nextTerminalNumber(restored))
+  check("restored shells are numbered in order", restored.join(",") === "0,2,3", restored)
+  check("labels read as MiMo's", terminalLabel(0, "终端") === "终端" && terminalLabel(2, "终端") === "终端 2")
+
+  check("height clamps to 120..640", clampPanelHeight(50) === 120 && clampPanelHeight(900) === 640 && clampPanelHeight(300.4) === 300)
+  check("no stored height is 240", storedPanelHeight(null) === 240 && storedPanelHeight("abc") === 240)
+  check("a stored height is clamped", storedPanelHeight("1000") === 640 && storedPanelHeight("200") === 200)
+
+  const light = terminalPalette("#ffffff")
+  check(
+    "light terminal colours are MiMo's",
+    light.foreground === "#1f1f1f" && light.cursor === "#1f1f1f" && light.selectionBackground === "#d6e4ff" &&
+      light.yellow === "#7a6100" && light.white === "#5f6368" && light.brightWhite === "#202124" && light.background === "#ffffff",
+    light,
+  )
+  const dark = terminalPalette("#161616")
+  check(
+    "dark terminal colours are MiMo's over xterm's defaults",
+    dark.foreground === "#ececec" && dark.selectionBackground === "#33415b" && dark.red === "#cc0000" &&
+      dark.brightWhite === "#eeeeec" && dark.black === "#2e3436" && dark.background === "#161616",
+    dark,
+  )
+
+  check("the same folder, spelled differently, is no mismatch", !shouldRespawn("D:\\a\\b", "d:/a/b/", false) && !showMismatch("D:\\a\\b", "d:/a/b/", true))
+  check("an unused terminal elsewhere is started again", shouldRespawn("/a", "/b", false) && !showMismatch("/a", "/b", false))
+  check("a used terminal elsewhere shows the notice instead", !shouldRespawn("/a", "/b", true) && showMismatch("/a", "/b", true))
+  check("no folder yet means nothing to decide", !shouldRespawn(undefined, "/b", false) && !showMismatch("/a", undefined, true))
+
+  const key = (over: Partial<Parameters<typeof isPasteKey>[0]>) => ({
+    type: "keydown",
+    key: "v",
+    code: "KeyV",
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    altKey: false,
+    ...over,
+  })
+  check("Ctrl+V pastes", isPasteKey(key({ ctrlKey: true }), false))
+  check("Ctrl+Shift+V and Ctrl+Alt+V are not the plain paste", !isPasteKey(key({ ctrlKey: true, shiftKey: true }), false) && !isPasteKey(key({ ctrlKey: true, altKey: true }), false))
+  check("Ctrl+C and a key-up reach the shell", !isPasteKey(key({ ctrlKey: true, key: "c", code: "KeyC" }), false) && !isPasteKey(key({ ctrlKey: true, type: "keyup" }), false))
+  check("a Mac pastes on Cmd+V, not Ctrl+V", isPasteKey(key({ metaKey: true }), true) && !isPasteKey(key({ ctrlKey: true }), true))
+
+  check("typing counts as use", typedInput("ls\r") && typedInput("\x1b[A"))
+  check(
+    "focus, device-attribute and cursor reports do not",
+    !typedInput("") && !typedInput("\x1b[I") && !typedInput("\x1b[O\x1b[I") && !typedInput("\x1b[?1;2c") && !typedInput("\x1b[12;40R"),
+  )
+
+  {
+    // A real shell: "used" is held by the backend, survives the exit, and reaches both list and attach.
+    // Its own folder: the shared project root is removed by the time this runs.
+    const termDir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-term-"))
+    const termBus = new Bus()
+    const printed: string[] = []
+    termBus.subscribe((event) => {
+      if (event.type === "shell.data") printed.push(event.data)
+    })
+    const shells = new Shells(termBus)
+    const shellID = shells.open("ses_smoke_terminal", termDir, undefined, { cols: 80, rows: 24 })
+    shells.write(shellID, "\x1b[I")
+    const untouched = shells.list("ses_smoke_terminal")[0]
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    check("a shell only focused is not used", untouched?.shellID === shellID && untouched.used === false, untouched ?? printed.join(""))
+    shells.write(shellID, "exit\r")
+    check("a shell typed into is used", shells.list("ses_smoke_terminal")[0]?.used === true && shells.attach(shellID)?.used === true)
+    for (let i = 0; i < 40 && shells.attach(shellID)?.alive; i += 1) await new Promise((resolve) => setTimeout(resolve, 250))
+    const ended = shells.attach(shellID)
+    check("used survives the shell's exit", ended?.alive === false && ended.used === true, ended)
+    await shells.closeAll()
+    check("a closed shell is gone from the list", shells.list("ses_smoke_terminal").length === 0)
+    await fs.rm(termDir, { recursive: true, force: true }).catch(() => undefined)
+  }
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

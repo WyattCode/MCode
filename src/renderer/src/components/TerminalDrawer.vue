@@ -1,16 +1,34 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import TerminalPane from "./TerminalPane.vue"
+import ConfirmDialog from "./ConfirmDialog.vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { clampPanelHeight, nextTerminalNumber, shouldRespawn, showMismatch, storedPanelHeight, terminalLabel } from "../lib/terminal"
 
 const emit = defineEmits<{ close: []; height: [px: number] }>()
 const app = useApp()
 
+/*
+ * Whose terminals these are: a conversation's, or - on the home screen, before
+ * there is one - the project folder picked there.
+ */
+const props = defineProps<{ sessionID?: string; directory?: string }>()
+
 const root = ref<HTMLElement>()
 
-/* MiMo's bottom panel opens 240 tall. */
-const height = ref(240)
+/* MiMo's `mimo.bph`: the height a drag left, kept across opens and restarts. */
+const HEIGHT_KEY = "mcode.bph"
+
+function readHeight() {
+  try {
+    return storedPanelHeight(localStorage.getItem(HEIGHT_KEY))
+  } catch {
+    return storedPanelHeight(null)
+  }
+}
+
+const height = ref(readHeight())
 
 /*
  * Told to the app so the info card can stop above the drawer. The card floats
@@ -31,45 +49,62 @@ watch(height, (px) => emit("height", px), { immediate: true })
  * print, and hands them back on `shell.list`, which is what reopening asks for.
  * Ending one is the tab's close button; whatever is left goes when the window
  * that opened it does.
+ *
+ * `num` is the tab's number, fixed when it opens as MiMo's label is (0 is the
+ * bare title). `pane` changes when an untouched shell is started again in
+ * another folder, which remounts its pane in the same tab.
  */
-const terms = ref<{ id: number; shellID?: string; cwd?: string; dead: boolean }[]>([])
+interface Entry {
+  id: number
+  num: number
+  shellID?: string
+  cwd?: string
+  used: boolean
+  pane: number
+}
+
+const terms = ref<Entry[]>([])
 const activeID = ref(1)
 let nextID = 1
 
-/*
- * Whose terminals these are: a conversation's, or - on the home screen, before
- * there is one - the project folder picked there.
- */
-const props = defineProps<{ sessionID?: string; directory?: string }>()
-
 type Pane = { focus: () => void; run: (command: string) => boolean }
 
-const panes = new Map<number, Pane>()
-function setPane(id: number, instance: unknown) {
-  if (instance) panes.set(id, instance as Pane)
-  else panes.delete(id)
+/* Keyed by the pane's own key, so a remounted pane's late null ref cannot remove its successor. */
+const panes = new Map<string, Pane>()
+const paneKey = (term: Entry) => `${term.id}:${term.pane}`
+
+function setPane(key: string, instance: unknown) {
+  if (instance) panes.set(key, instance as Pane)
+  else panes.delete(key)
 }
 
-/**
- * Runs a command in the terminal that is showing.
- *
- * The composer's shell mode sends here rather than opening a shell of its own,
- * so a command typed in the box and one typed in the drawer share a working
- * directory and a history.
- */
+function entry(id: number) {
+  return terms.value.find((term) => term.id === id)
+}
+
+function paneOf(id: number) {
+  const term = entry(id)
+  return term ? panes.get(paneKey(term)) : undefined
+}
+
 defineExpose({
-  /** Closes the focused shell; the drawer goes with the last one. */
-  closeActive: () => close(activeID.value),
+  /** Closes the focused shell, asking first if it was used; the drawer goes with the last one. */
+  closeActive: () => requestClose(activeID.value),
   /**
    * Open another shell. The drawer owns the tab strip, so the app cannot add
-   * one itself; it mounts the drawer and then asks. Ctrl+Alt+T used to be
-   * handled only in here, which meant it did nothing whenever the drawer was
-   * closed - the state in which someone is most likely to want a terminal.
+   * one itself; it mounts the drawer and then asks.
    */
   add: () => add(),
-  /** Returns false while the shell is still starting, so the caller can wait. */
+  /**
+   * Runs a command in the terminal that is showing.
+   *
+   * The composer's shell mode sends here rather than opening a shell of its
+   * own, so a command typed in the box and one typed in the drawer share a
+   * working directory and a history. Returns false while the shell is still
+   * starting, so the caller can wait.
+   */
   run: (command: string) => {
-    const pane = panes.get(activeID.value)
+    const pane = paneOf(activeID.value)
     if (!pane) return false
     const ran = pane.run(command)
     if (ran === false) return false
@@ -78,58 +113,69 @@ defineExpose({
   },
 })
 
-function label(id: number) {
-  const index = terms.value.findIndex((term) => term.id === id)
-  return terms.value.length === 1 ? t("term.title") : `${t("term.title")} ${index + 1}`
-}
-
 function select(id: number) {
   activeID.value = id
-  void nextTick(() => panes.get(id)?.focus())
+  void nextTick(() => paneOf(id)?.focus())
 }
 
-function add(shellID?: string, dead = false, cwd?: string) {
+function add(shellID?: string, cwd?: string, used = false) {
   const id = nextID
   nextID += 1
-  terms.value.push({ id, shellID, cwd, dead })
+  const num = nextTerminalNumber(terms.value.map((term) => term.num))
+  terms.value.push({ id, num, shellID, cwd, used, pane: 0 })
   select(id)
   return id
 }
 
 /** Records the backend id a fresh pane opened, so the tab can close it later. */
 function opened(id: number, shellID: string, cwd: string) {
-  const term = terms.value.find((entry) => entry.id === id)
+  const term = entry(id)
   if (!term) return
   term.shellID = shellID
   term.cwd = cwd
 }
 
-/*
- * The drawer stays up while the conversation changes, so the terminal on show
- * can belong to another project. MiMo says so above the terminal and offers a
- * new one here, or to leave it be; leaving it be holds for that project until
- * the drawer is opened again.
- */
-const dismissed = ref(new Set<string>())
-
-function samePlace(a: string, b: string) {
-  const plain = (value: string) => {
-    const flat = value.replace(/\\/g, "/").replace(/\/+$/, "")
-    return /^[a-zA-Z]:/.test(flat) ? flat.toLowerCase() : flat
-  }
-  return plain(a) === plain(b)
+function markUsed(id: number) {
+  const term = entry(id)
+  if (term) term.used = true
 }
 
+/*
+ * The drawer stays up while the conversation changes, so its terminals can
+ * belong to another project. As MiMo does: one nobody has typed into is ended
+ * and started again here, silently, in the same tab; one that was used gets the
+ * notice above it instead, with "Dismiss" holding for that tab until the
+ * workspace changes again.
+ */
+const here = computed(() => props.directory ?? app.current?.directory)
+const dismissed = ref(new Set<number>())
+
+function respawn(term: Entry) {
+  if (!shouldRespawn(term.cwd, here.value, term.used)) return
+  if (term.shellID) void app.client?.request({ type: "shell.close", shellID: term.shellID })
+  term.shellID = undefined
+  term.cwd = undefined
+  term.pane += 1
+}
+
+function attached(id: number) {
+  const term = entry(id)
+  if (term) respawn(term)
+}
+
+watch(here, () => {
+  dismissed.value = new Set()
+  for (const term of terms.value) respawn(term)
+})
+
 const mismatch = computed(() => {
-  const here = props.directory ?? app.current?.directory
-  const term = terms.value.find((entry) => entry.id === activeID.value)
-  if (!here || !term?.cwd || dismissed.value.has(here)) return false
-  return !samePlace(term.cwd, here)
+  const term = entry(activeID.value)
+  if (!term || dismissed.value.has(term.id)) return false
+  return showMismatch(term.cwd, here.value, term.used)
 })
 
 function dismissMismatch() {
-  const here = props.directory ?? app.current?.directory
-  if (here) dismissed.value = new Set(dismissed.value).add(here)
+  dismissed.value = new Set(dismissed.value).add(activeID.value)
 }
 
 /*
@@ -147,9 +193,25 @@ onMounted(async () => {
     return
   }
   const found = await client.request({ type: "shell.list", ...where }).catch(() => undefined)
-  if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, !shell.alive, shell.cwd)
+  if (found?.shells.length) for (const shell of found.shells) add(shell.shellID, shell.cwd, shell.used)
   else add()
 })
+
+/* A terminal someone typed into is held for MiMo's question; the rest close at once. */
+const pendingClose = ref<number>()
+
+function requestClose(id: number) {
+  const term = entry(id)
+  if (!term) return
+  if (term.used) pendingClose.value = id
+  else close(id)
+}
+
+function confirmClose() {
+  const id = pendingClose.value
+  pendingClose.value = undefined
+  if (id !== undefined) close(id)
+}
 
 /*
  * Closing the last terminal closes the drawer with it. A drawer holding no
@@ -170,68 +232,45 @@ function close(id: number) {
   if (activeID.value === id) select(terms.value[Math.min(index, terms.value.length - 1)].id)
 }
 
-function exited(id: number) {
-  const term = terms.value.find((entry) => entry.id === id)
-  if (term) term.dead = true
+/* MiMo clamps a kept height again whenever the window changes size. */
+function onWindowResize() {
+  height.value = clampPanelHeight(height.value)
 }
 
-/**
- * Terminal keys, taken before the window handler sees them.
- *
- * Both of these are already spoken for one level up - Ctrl+T starts a session
- * and Ctrl+W closes a tab - so the drawer has to claim them in the capture
- * phase and stop them there. Ctrl+W is claimed only while the focus is inside
- * the drawer, which keeps it closing tabs everywhere else.
- *
- * Stopping immediately rather than merely stopping: the window handler is on
- * the same node as this one, and an event whose target is the window itself
- * reaches every listener on it regardless of phase.
- */
-function onKeydown(event: KeyboardEvent) {
-  const mod = event.ctrlKey || event.metaKey
-  if (!mod) return
-  const key = event.key.toLowerCase()
-
-  if (event.altKey && key === "t") {
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    add()
-    return
-  }
-
-  if (!event.altKey && key === "w") {
-    const inside = root.value && document.activeElement && root.value.contains(document.activeElement)
-    if (!inside) return
-    event.preventDefault()
-    event.stopImmediatePropagation()
-    close(activeID.value)
-  }
-}
-
-onMounted(() => window.addEventListener("keydown", onKeydown, true))
-onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
+onMounted(() => window.addEventListener("resize", onWindowResize))
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", onWindowResize)
+  document.body.classList.remove("resizing", "resizing-v")
+})
 
 /**
  * Drags the drawer taller or shorter.
  *
  * Capturing the pointer is what keeps the drag alive over the terminal, which
- * would otherwise swallow the moves the moment the cursor crossed into it.
+ * would otherwise swallow the moves the moment the cursor crossed into it. The
+ * body carries MiMo's resizing classes meanwhile, for the row-resize cursor.
  */
 function startResize(event: PointerEvent) {
   const target = event.currentTarget as HTMLElement
   const startY = event.clientY
   const startHeight = height.value
   target.setPointerCapture(event.pointerId)
+  document.body.classList.add("resizing", "resizing-v")
 
   const move = (moved: PointerEvent) => {
-    const want = startHeight + (startY - moved.clientY)
-    height.value = Math.round(Math.min(window.innerHeight - 220, Math.max(120, want)))
+    height.value = clampPanelHeight(startHeight + (startY - moved.clientY))
   }
   const stop = () => {
     target.releasePointerCapture(event.pointerId)
     target.removeEventListener("pointermove", move)
     target.removeEventListener("pointerup", stop)
     target.removeEventListener("pointercancel", stop)
+    document.body.classList.remove("resizing", "resizing-v")
+    try {
+      localStorage.setItem(HEIGHT_KEY, String(height.value))
+    } catch {
+      /* Storage refused; the height still holds until the drawer is closed. */
+    }
   }
   target.addEventListener("pointermove", move)
   target.addEventListener("pointerup", stop)
@@ -240,70 +279,78 @@ function startResize(event: PointerEvent) {
 </script>
 
 <template>
-  <div ref="root" class="drawer" :style="{ height: `${height}px` }">
-    <div class="resize" @pointerdown.prevent="startResize" />
+  <!--
+    Two boxes of the same height: the outer one is what opens and closes (its
+    height runs from 0 when App.vue wraps it in <Transition name="bp">), the
+    inner one keeps the terminal at its full size throughout, so xterm is not
+    refitted - and the shell not resized - on every frame of the animation.
+  -->
+  <div ref="root" class="drawer" data-terminal-drawer :style="{ height: `${height}px` }">
+    <div class="resize" :title="t('term.resizeTitle')" @pointerdown.prevent="startResize" />
 
-    <div class="head" role="tablist">
-      <button
+    <div class="drawer-body" :style="{ height: `${height}px` }">
+      <div class="head" role="tablist">
+        <button
+          v-for="term in terms"
+          :key="term.id"
+          class="tab"
+          :class="{ on: term.id === activeID }"
+          role="tab"
+          :aria-selected="term.id === activeID"
+          @click="select(term.id)"
+        >
+          <span class="tab-label">{{ terminalLabel(term.num, t("term.title")) }}</span>
+          <span class="tab-close" role="button" :aria-label="t('term.close')" @click.stop="requestClose(term.id)">×</span>
+        </button>
+
+        <!-- MiMo's: a bare plus in the muted colour, named by the platform's own tooltip. -->
+        <button class="add" :title="t('term.new')" :aria-label="t('term.new')" @click="add()">+</button>
+
+        <span class="gap" />
+        <button class="icon-btn hide" :title="t('term.closePanel')" :aria-label="t('term.closePanel')" @click="emit('close')">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+
+      <div v-if="mismatch" class="mismatch" role="status">
+        <span class="mismatch-msg">{{ t("term.mismatch") }}</span>
+        <button class="mismatch-btn" @click="dismissMismatch">{{ t("ui.common.dismiss") }}</button>
+        <button class="mismatch-btn primary" @click="add()">{{ t("term.mismatchOpenNew") }}</button>
+      </div>
+
+      <!--
+        shellID is bound in camelCase deliberately. Vue hyphenates it to
+        shell-i-d, so `:shell-id` arrives as a prop named shellId and never
+        matches the declared shellID - measured: every restored tab silently
+        started a second shell beside the one it was meant to come back to.
+      -->
+      <TerminalPane
         v-for="term in terms"
-        :key="term.id"
-        class="tab"
-        :class="{ on: term.id === activeID }"
-        role="tab"
-        :aria-selected="term.id === activeID"
-        @click="select(term.id)"
-        @auxclick.middle.prevent="close(term.id)"
-      >
-        <span class="tab-label">{{ label(term.id) }}</span>
-        <span v-if="term.dead" class="dot" v-tip="{ label: t('term.exited'), placement: 'top' }" />
-        <span class="tab-close" role="button" :aria-label="t('term.close')" @click.stop="close(term.id)">×</span>
-      </button>
-
-      <!-- MiMo's: a bare plus in the muted colour, named by the platform's own tooltip. -->
-      <button class="add" :title="t('term.new')" :aria-label="t('term.new')" @click="add()">+</button>
-
-      <span class="gap" />
-      <button class="icon-btn hide" :title="t('term.closePanel')" :aria-label="t('term.closePanel')" @click="emit('close')">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
-          <path d="M18 6 6 18M6 6l12 12" />
-        </svg>
-      </button>
+        :key="paneKey(term)"
+        :ref="(instance) => setPane(paneKey(term), instance)"
+        :active="term.id === activeID"
+        :height="height"
+        :shellID="term.shellID"
+        :sessionID="sessionID"
+        :directory="directory"
+        @opened="(shellID: string, cwd: string) => opened(term.id, shellID, cwd)"
+        @used="markUsed(term.id)"
+        @attached="attached(term.id)"
+      />
     </div>
 
-    <div v-if="mismatch" class="mismatch" role="status">
-      <span class="mismatch-msg">{{ t("term.mismatch") }}</span>
-      <button class="mismatch-btn" @click="dismissMismatch">{{ t("ui.common.dismiss") }}</button>
-      <button class="mismatch-btn primary" @click="add()">{{ t("term.new") }}</button>
-    </div>
-
-    <!--
-      shellID is bound in camelCase deliberately. Vue hyphenates it to
-      shell-i-d, so `:shell-id` arrives as a prop named shellId and never
-      matches the declared shellID - measured: every restored tab silently
-      started a second shell beside the one it was meant to come back to.
-    -->
-    <TerminalPane
-      v-for="term in terms"
-      :key="term.id"
-      :ref="(instance) => setPane(term.id, instance)"
-      :active="term.id === activeID"
-      :height="height"
-      :shellID="term.shellID"
-      :sessionID="sessionID"
-      :directory="directory"
-      @exited="exited(term.id)"
-      @opened="(shellID: string, cwd: string) => opened(term.id, shellID, cwd)"
+    <!-- MiMo's question before a used terminal is closed, with its plain (not red) confirm. -->
+    <ConfirmDialog
+      v-if="pendingClose !== undefined"
+      :title="t('rp.termClose.title')"
+      :body="t('rp.termClose.message')"
+      :confirmLabel="t('rp.termClose.confirm')"
+      :danger="false"
+      @confirm="confirmClose"
+      @close="pendingClose = undefined"
     />
-
-    <!--
-      No bar along the bottom. It used to carry a standing warning that this
-      was a pipe and not a terminal, which a real pty made untrue; and showing
-      only the exit there instead would have been the third place the same fact
-      is told - the tab already carries a dot labelled with it, and the pane
-      itself prints [process exited] into the scrollback. Worse, a bar that
-      comes and goes with the exit takes 19px from the pane as it appears, so
-      the grid loses a row at the moment the shell dies.
-    -->
   </div>
 </template>
 
@@ -311,28 +358,46 @@ function startResize(event: PointerEvent) {
 /*
  * Docked along the foot of the conversation, as MiMo has it: the full width of
  * the column, butted against the transcript and set off from it by a hairline
- * along its top. The drag edge straddles that line, 7px tall.
+ * along its top, on MiMo's panel colour. The drag edge straddles that line.
  */
 .drawer {
   position: relative;
+  flex-shrink: 0;
+  min-height: 0;
+  background: var(--surface-raised);
+}
+
+.drawer-body {
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  box-sizing: border-box;
   border-top: 1px solid var(--border-weak);
 }
 
+/* MiMo's open and close: the height, over .2s on its sidebar curve, clipped meanwhile. */
+.drawer.bp-enter-active,
+.drawer.bp-leave-active {
+  overflow: hidden;
+  transition: height 0.2s cubic-bezier(0.7, 0.1, 0.5, 0.9);
+}
+
+.drawer.bp-enter-from,
+.drawer.bp-leave-to {
+  height: 0 !important;
+}
+
+/* MiMo's .resizer.r-top: 7 tall, 3 of it above the line, no fill on hover or drag. */
 .resize {
   position: absolute;
-  top: -4px;
-  left: 0;
-  right: 0;
+  inset-block-start: -3px;
+  inset-inline: 0;
   height: 7px;
   cursor: row-resize;
   z-index: 2;
 }
 
-.resize:hover {
-  background: var(--surface-selected);
+:global(body.resizing-v) {
+  cursor: row-resize;
 }
 
 /* MiMo's bar: 38 tall on a 5px/10px padding, four between the tabs, no rule under it. */
@@ -361,15 +426,27 @@ function startResize(event: PointerEvent) {
   padding-block: 0;
   padding-inline: 11px;
   color: var(--text-strong);
+  border: 1px solid transparent;
   border-radius: 7px;
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 18px;
 }
 
-/* The selected tab carries a 1px line round it - the whole difference from a tab at rest. */
+/* MiMo's .bp-tab.active: the page fill inside a warm hairline (#2e2e2e in dark). */
 .tab.on {
-  box-shadow: inset 0 0 0 1px var(--border-weak);
+  background: var(--surface-raised);
+  border-color: #f0ebe5;
+}
+
+:root[data-theme="dark"] .tab.on {
+  border-color: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tab.on {
+    border-color: #2e2e2e;
+  }
 }
 
 .tab-label {
@@ -398,9 +475,9 @@ function startResize(event: PointerEvent) {
 }
 
 /*
- * Putting the panel away is MiMo's 26px button at the far end of the bar.
- * `flex-shrink` matters: the head is a row, and without it the button was
- * squeezed narrower than whatever it was given.
+ * Putting the panel away is MiMo's 26px icon-btn xs at the far end of the bar:
+ * a 16px glyph, muted, on its menu-hover fill when pointed at. `flex-shrink`
+ * matters: the head is a row, and without it the button was squeezed.
  */
 .head .icon-btn.hide {
   flex-shrink: 0;
@@ -410,16 +487,19 @@ function startResize(event: PointerEvent) {
   border-radius: 7px;
 }
 
-/*
- * Marks a shell whose process is gone. The tab stays until it is closed, so
- * that its scrollback can still be read.
- */
-.dot {
-  flex-shrink: 0;
-  width: 6px;
-  height: 6px;
-  background: var(--error);
-  border-radius: 50%;
+.head .icon-btn.hide:hover {
+  color: var(--text-strong);
+  background: #f1f0ec;
+}
+
+:root[data-theme="dark"] .head .icon-btn.hide:hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .head .icon-btn.hide:hover {
+    background: #ffffff0f;
+  }
 }
 
 /* MiMo's close mark: a 13px ×, always there, muted, on a 4px corner. */
@@ -485,5 +565,4 @@ function startResize(event: PointerEvent) {
   background: var(--text-strong);
   border-color: transparent;
 }
-
 </style>
