@@ -86,6 +86,21 @@ function record(window: string, what: string, detail: Record<string, unknown> = 
 }
 
 /**
+ * An exception or rejection nothing in the main process caught (MiMo's
+ * uncaughtException / unhandledRejection handlers): recorded, and the app runs
+ * on. With a handler attached Electron no longer raises its modal "A JavaScript
+ * error occurred in the main process" box, which for a backend that lives in
+ * this process turned one stray throw into a frozen-looking app.
+ */
+export function recordProcessError(what: "uncaught exception" | "unhandled rejection", error: unknown): void {
+  try {
+    record("main", what, { error: formatArgs([error]) })
+  } catch {
+    // Recording is the last resort; a failure inside it has nowhere else to go.
+  }
+}
+
+/**
  * Keeps what the main process says: in memory for the report, and in the day's
  * log file.
  *

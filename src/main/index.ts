@@ -13,7 +13,7 @@ import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
-import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
+import { beginIntentionalQuit, captureConsole, recordProcessError, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
 import { installedOpenAppIcons, installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
@@ -102,6 +102,8 @@ if (process.platform === "linux") {
 const logs = new DailyLog({ dir: path.join(app.getPath("userData"), LOG_DIR) })
 captureConsole(logs)
 app.on("will-quit", () => void logs.close())
+process.on("uncaughtException", (error) => recordProcessError("uncaught exception", error))
+process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))
 
 let backend: Backend | undefined
 
