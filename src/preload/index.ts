@@ -169,8 +169,15 @@ const api = {
    */
   titlebarMode: (mode: "dark" | "light"): void => ipcRenderer.send("mcode:titlebar-mode", mode),
 
-  /** Which colourway the window and the taskbar should wear. */
-  appIcon: (id: string): void => ipcRenderer.send("mcode:app-icon", id),
+  /** Which colourway the window and the taskbar should wear; `ok` is false when the icon could not be applied. */
+  appIcon: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcode:app-icon", id),
+
+  /** MiMo's 显示服务器 (Linux): the saved choice and the backend it resolves to. */
+  displayServer: (): Promise<{ supported: boolean; pref: "auto" | "wayland" | "x11"; effective: "wayland" | "x11" | null }> =>
+    ipcRenderer.invoke("mcode:display-server"),
+  /** Takes effect at the next launch. */
+  setDisplayServer: (pref: "auto" | "wayland" | "x11"): Promise<{ ok: boolean; pref?: "auto" | "wayland" | "x11" }> =>
+    ipcRenderer.invoke("mcode:set-display-server", pref),
 
   /*
    * The browser panel. The window says where it goes and what to load; the

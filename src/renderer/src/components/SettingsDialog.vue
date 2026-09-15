@@ -723,6 +723,62 @@ function setVoiceModel(value: string) {
 /* The colourways the mark comes in, drawn from the one module that defines them. */
 const appIcon = computed(() => app.config?.appIcon ?? DEFAULT_APP_ICON)
 
+/* MiMo's icon pick: the window wears it first, and only an icon that took is kept and said. */
+async function chooseAppIcon(id: string) {
+  if (id === appIcon.value) return
+  const result = await window.mcode.appIcon(id).catch(() => ({ ok: false }))
+  if (!result.ok) {
+    notifyFailure(t("set.appIconApplyFail"))
+    return
+  }
+  try {
+    await app.patchConfig({ appIcon: id })
+  } catch {
+    // Not saved: the window goes back to the icon the config still names.
+    void window.mcode.appIcon(appIcon.value)
+    return
+  }
+  notify(t("set.appIconApplied"), { level: "success" })
+}
+
+/*
+ * MiMo's 显示服务器 (Linux only). The main process keeps the choice and reads
+ * it at launch, so a change is only saved here and takes a restart.
+ */
+const displayServer = ref<Awaited<ReturnType<typeof window.mcode.displayServer>>>({
+  supported: false,
+  pref: "auto",
+  effective: null,
+})
+if (app.platform === "linux") {
+  void window.mcode
+    .displayServer()
+    .then((state) => (displayServer.value = state))
+    .catch(() => {})
+}
+const displayServerOptions = computed(() => [
+  { value: "auto", label: t("set.dsAuto") },
+  { value: "wayland", label: t("set.dsWayland") },
+  { value: "x11", label: t("set.dsX11") },
+])
+const displayServerSub = computed(() =>
+  displayServer.value.pref === "auto"
+    ? `${t("set.displayServerSub")} · ${t(displayServer.value.effective === "wayland" ? "set.dsCurrentWayland" : "set.dsCurrentX11")}`
+    : t("set.displayServerSub"),
+)
+
+async function chooseDisplayServer(value: string) {
+  const pref = value === "wayland" || value === "x11" ? value : "auto"
+  if (pref === displayServer.value.pref) return
+  displayServer.value = { ...displayServer.value, pref }
+  try {
+    await window.mcode.setDisplayServer(pref)
+  } catch {
+    // MiMo says it either way; the next launch reads whatever was written.
+  }
+  notify(t("set.displayServerSaved"))
+}
+
 /*
  * The gallery's tiles. The drawn ones come from the same string their PNGs are
  * rasterised from; the original comes from its own file, because it is a
@@ -1219,8 +1275,9 @@ async function confirmRemove() {
   if (!target) return
   for (const sessionID of target.ids) await app.remove(sessionID)
   if (target.title === undefined) stopSelecting()
-  if (target.ids.length === 1) notify(t("toast.convoDeleted"))
-  else if (target.ids.length) notify(t("toast.convosDeleted", { n: target.ids.length }))
+  // MiMo's delete notices are success-level, the same from here as from the side column.
+  if (target.ids.length === 1) notify(t("toast.convoDeleted"), { level: "success" })
+  else if (target.ids.length) notify(t("toast.convosDeleted", { n: target.ids.length }), { level: "success" })
 }
 
 // Nothing left to manage ends the selection, as the toggle disappears with the list.
@@ -1668,7 +1725,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
     <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus>
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
-      <button class="close" :aria-label="t('common.close')" data-settings-close @click="requestClose">
+      <button class="close" :aria-label="t('set.close')" data-settings-close @click="requestClose">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         </svg>
@@ -1855,6 +1912,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :model-value="app.config?.language ?? ''"
                 @update:model-value="app.patchConfig({ language: $event })"
               />
+            </div>
+
+            <!-- MiMo's 显示服务器, Linux only: 自动 names the backend in use; a change takes a restart. -->
+            <div v-if="displayServer.supported" class="line" data-display-server-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.displayServer") }}</div>
+                <div class="line-sub">{{ displayServerSub }}</div>
+              </div>
+              <SelectMenu :model-value="displayServer.pref" :options="displayServerOptions" @update:model-value="chooseDisplayServer($event)" />
             </div>
 
             <!-- MiMo's tray row, worded per platform: while on, closing the last window hides it to the tray. -->
@@ -2364,7 +2430,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               role="radio"
               :aria-checked="appIcon === tile.spec.id"
               :aria-label="tile.spec.name"
-              @click="app.patchConfig({ appIcon: tile.spec.id })"
+              @click="chooseAppIcon(tile.spec.id)"
             >
               <img v-if="tile.image" class="tile-art" :src="tile.image" width="44" height="44" alt="" />
               <span v-else class="tile-art" v-html="tile.svg" />
