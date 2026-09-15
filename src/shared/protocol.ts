@@ -209,6 +209,8 @@ export interface SessionArtifacts {
   files: ArtifactFile[]
 }
 
+import type { FileNotice } from "./file-notices"
+
 export interface UserMessage {
   id: string
   sessionID: string
@@ -221,6 +223,8 @@ export interface UserMessage {
   steered?: boolean
   /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
   annotations?: Annotation[]
+  /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
+  fileNotices?: FileNotice[]
   /**
    * subagents: written by the runner, not the user - what became of background
    * subagents. `text` is what the model reads; the transcript draws pills.
@@ -1613,7 +1617,7 @@ export type Request =
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
   | { type: "session.effort"; sessionID: string; effort?: Effort }
-  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[] }
+  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[]; fileNotices?: FileNotice[] }
   | { type: "session.abort"; sessionID: string }
   /*
    * subagents: a slash command marked `subtask`. `text` is the line as typed,
@@ -1702,7 +1706,6 @@ export type Request =
   | { type: "auth.cancel"; provider: string }
   | { type: "auth.signOut"; provider: string }
   | { type: "workspace.info"; directory: string }
-  | { type: "app.reset" }
   /* "branch" widens the review past the working tree to the whole branch. */
   | { type: "app.paths"; directory?: string }
   | { type: "usage.summary"; days?: number }
@@ -1921,8 +1924,6 @@ export interface ResponseMap {
   "auth.signOut": { providers: ProviderStatus[] }
   /** Facts about a session's directory; absent fields are simply unknown. */
   "workspace.info": { exists: boolean; branch?: string; modified?: number }
-  /** Everything is gone; the renderer reloads into onboarding. */
-  "app.reset": { config: AppConfig; providers: ProviderStatus[] }
   "git.status": GitStatus
   "git.init": GitStatus
   "git.branches": BranchState

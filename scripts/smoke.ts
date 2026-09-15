@@ -37,10 +37,17 @@ import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, t
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
 import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFile } from "../src/main/display-server"
+import { PowerHold } from "../src/main/power"
+import { RecoverySchedule, RendererHealth, recoveryVisibility } from "../src/main/renderer-health"
+import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boot-prefs"
+import { createUpdater, parseFeed, type FeedEntry } from "../src/main/updater"
+import { deliveryOf, waitForDelivery } from "../src/main/install-notice"
+import { boundsOnShow, clampToWorkAreas, closeBounds } from "../src/main/work-area"
+import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
-import { normalizeChord } from "../src/shared/chord"
+import { RETIRED_DEFAULTS, normalizeChord, retireKeybinds } from "../src/shared/chord"
 import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
@@ -84,6 +91,8 @@ import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
 import {
   accessOf,
+  accessPatch,
+  fullAccessOff,
   composerAnswers,
   confirmQueue,
   guideShown,
@@ -175,7 +184,10 @@ import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStat
 // round 4: MiMo's built-in window tools and the pieces the window uses.
 import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
 import { LANGUAGE_IDS, bindDesktopSettings } from "../src/server/tool/desktop-settings"
-import { deliveredCard, deliveredFiles, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { deliveredCard, deliveredFiles, projectPath, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { prRowState } from "../src/renderer/src/lib/pr-row"
+import { addFileNotice, fileNoticesBlock } from "../src/shared/file-notices"
+import { withAnnotations } from "../src/shared/annotations"
 import { stepTitle as deliveredStepTitle, toolIcon as deliveredToolIcon, toolVerb as deliveredToolVerb } from "../src/renderer/src/lib/tool-meta"
 import { LANGUAGES as INTERFACE_LANGUAGES } from "../src/renderer/src/lib/i18n"
 import { freeCopyName, saveCopy } from "../src/main/save-copy"
@@ -971,6 +983,55 @@ async function main() {
       "the level is read the way the composer chip reads it",
       accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
     )
+
+    section("round 5: turning off the full access switch (D2)")
+    {
+      const mine = { ...PERMISSION_DEFAULTS, bash: "allow" as const, webfetch: "deny" as const }
+      const toFull = accessPatch({ permissions: mine, accessLevel: "ask" }, "full")!
+      check(
+        "full allows every bucket but a deny, and keeps the map it replaced",
+        accessOf(toFull) === "full" && toFull.permissions.webfetch === "deny" && toFull.accessBefore?.bash === "allow",
+        toFull,
+      )
+      const off = fullAccessOff({ ...toFull })
+      check(
+        "switching off at full access drops to the default level with the user's own answers back",
+        off.dropped &&
+          off.patch.allowFullAccess === false &&
+          off.patch.accessLevel === "ask" &&
+          accessOf(off.patch) === "ask" &&
+          off.patch.permissions?.bash === "allow" &&
+          off.patch.permissions?.edit === PERMISSION_DEFAULTS.edit &&
+          off.patch.accessBefore === undefined,
+        off,
+      )
+      const offAsk = fullAccessOff({ permissions: { ...PERMISSION_DEFAULTS }, accessLevel: "auto" })
+      check(
+        "switching off below full access only turns the switch off",
+        !offAsk.dropped && JSON.stringify(offAsk.patch) === JSON.stringify({ allowFullAccess: false }),
+        offAsk,
+      )
+      const guardConfig = { permissions: toFull.permissions, accessBefore: toFull.accessBefore, accessLevel: "full", allowFullAccess: false }
+      const guarded = new Permissions(new Bus(), { get: () => guardConfig } as never)
+      check(
+        "the server does not honour full access while its switch is off",
+        guarded.action("edit") === PERMISSION_DEFAULTS.edit && guarded.action("bash") === "allow" && guarded.action("webfetch") === "deny",
+      )
+      guardConfig.allowFullAccess = true
+      check("and honours it once the switch is on", guarded.action("edit") === "allow")
+
+      const fullData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-fullswitch-"))
+      const fullStorage = new SubagentStorage(path.join(fullData, "storage"))
+      await fullStorage.write("config", { permissions: allAllowed, accessLevel: "full", allowFullAccess: false })
+      const fullConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
+      await fullConfig.load()
+      check("a config already at full access keeps it on upgrade by turning the switch on", fullConfig.get().allowFullAccess === true)
+      await fullStorage.write("config", { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: false })
+      const askConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
+      await askConfig.load()
+      check("a config below full access leaves the switch off", askConfig.get().allowFullAccess === false)
+      await fs.rm(fullData, { recursive: true, force: true })
+    }
 
     // 帮我审批 turns on the middle level; what it lets through stops waiting, a delete does not.
     let level = "ask"
@@ -2620,6 +2681,325 @@ async function main() {
     )
   }
 
+  section("Turn power hold (MiMo's prevent-app-suspension while a turn runs)")
+  {
+    const calls: string[] = []
+    let next = 7
+    const hold = new PowerHold({
+      start: (type) => {
+        calls.push(`start:${type}`)
+        return next++
+      },
+      stop: (id) => void calls.push(`stop:${id}`),
+    })
+    hold.sync(["a"])
+    hold.sync(["a", "b"])
+    check("the first busy session starts one blocker, the second adds none", calls.join(",") === "start:prevent-app-suspension" && hold.state.id === 7, calls)
+    hold.sync(["b"])
+    check("the hold stays while any session is busy", calls.length === 1 && hold.state.held.join(",") === "b", hold.state)
+    hold.sync([])
+    check("the last session ending stops that blocker", calls.join(",") === "start:prevent-app-suspension,stop:7" && hold.state.id === undefined, calls)
+    hold.sync([])
+    check("idle again stops nothing twice", calls.length === 2)
+    hold.sync(["c"])
+    check("a later turn starts a fresh blocker", calls.at(-1) === "start:prevent-app-suspension" && hold.state.id === 8, calls)
+    const failing = new PowerHold({
+      start: () => {
+        throw new Error("no blocker")
+      },
+      stop: () => void calls.push("stop:unexpected"),
+    })
+    failing.sync(["x"])
+    failing.sync([])
+    check("a blocker that fails to start holds nothing and stops nothing", failing.state.held.length === 0 && !calls.includes("stop:unexpected"))
+  }
+
+  section("Automatic updates (MiMo's schedule and phases, MCode's feed)")
+  {
+    check("the feed reads version, installer, hash and notes", JSON.stringify(parseFeed({ version: " 1.2.0 ", url: "https://x/y.exe", sha256: "ABC", notes: 7 })) === JSON.stringify({ version: "1.2.0", url: "https://x/y.exe", sha256: "abc", notes: "" }))
+    check("a feed that is not an object reads as empty", parseFeed(null).version === "" && parseFeed("x").url === "")
+
+    const timers: { kind: "timeout" | "interval"; ms: number; run: () => void; id: number }[] = []
+    let timerId = 0
+    const scheduler = {
+      setTimeout: (run: () => void, ms: number) => (timers.push({ kind: "timeout", ms, run, id: ++timerId }), timerId),
+      setInterval: (run: () => void, ms: number) => (timers.push({ kind: "interval", ms, run, id: ++timerId }), timerId),
+      clearTimeout: (id: unknown) => void timers.splice(timers.findIndex((entry) => entry.id === id), 1),
+      clearInterval: (id: unknown) => void timers.splice(timers.findIndex((entry) => entry.id === id), 1),
+    }
+    let feed: FeedEntry = { version: "0.2.4", url: "", sha256: "", notes: "" }
+    let feedFails = false
+    let downloadFails = false
+    const files = new Map<string, Uint8Array>()
+    const downloads: string[] = []
+    const phases: string[] = []
+    let feedAddress = "https://feed.example/update.json"
+    const updater = createUpdater({
+      currentVersion: "0.2.4",
+      feedURL: () => feedAddress,
+      fetchFeed: async () => {
+        if (feedFails) throw new Error("HTTP 503")
+        return feed
+      },
+      installerFile: (entry) => `mcode-${entry.version}.exe`,
+      readFile: async (file) => files.get(file),
+      sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      download: async (entry, file) => {
+        downloads.push(entry.version)
+        if (downloadFails) throw new Error("the installer does not match the checksum the feed gave")
+        files.set(file, new TextEncoder().encode(`installer ${entry.version}`))
+      },
+      emit: (state) => phases.push(state.phase),
+      log: () => {},
+      scheduler,
+    })
+    updater.start()
+    updater.start()
+    check("starting schedules the first check at 5 s and then every 3 h, once", timers.length === 2 && timers[0]?.kind === "timeout" && timers[0]?.ms === 5000 && timers[1]?.kind === "interval" && timers[1]?.ms === 3 * 60 * 60 * 1000, timers.map((entry) => [entry.kind, entry.ms]))
+
+    const current = await updater.checkNow()
+    check("the running version is current and the phase returns to idle", current.outcome === "current" && current.phase === "idle" && phases.join(",") === "checking,idle", { current, phases })
+
+    feedAddress = ""
+    check("with no feed nothing is fetched", (await updater.checkNow()).outcome === "no-feed" && phases.length === 2)
+    feedAddress = "https://feed.example/update.json"
+
+    feed = { version: "0.3.0", url: "", sha256: "", notes: "" }
+    const nameOnly = await updater.checkNow()
+    check("a newer version without an installer is only named", nameOnly.outcome === "no-installer" && nameOnly.version === "0.3.0" && downloads.length === 0)
+
+    feedFails = true
+    const silent = await updater.checkNow()
+    check("a failed check is silent and falls back to idle", silent.outcome === "failed" && silent.during === "check" && silent.phase === "idle" && silent.error === "HTTP 503")
+    feedFails = false
+
+    const body = new TextEncoder().encode("installer 0.3.0")
+    feed = { version: "0.3.0", url: "https://x/mcode.exe", sha256: createHash("sha256").update(body).digest("hex"), notes: "- faster" }
+    downloadFails = true
+    const badDownload = await updater.checkNow()
+    check("a download that fails verification leaves nothing ready", badDownload.outcome === "failed" && badDownload.during === "download" && badDownload.ready === null && updater.readyFile() === undefined)
+    downloadFails = false
+
+    phases.length = 0
+    const pending = updater.checkNow()
+    check("a second check while one runs is skipped", (await updater.checkNow()).outcome === "busy")
+    const readyResult = await pending
+    check("a newer installer downloads and the update becomes ready", readyResult.outcome === "ready" && readyResult.ready?.version === "0.3.0" && readyResult.ready.notes === "- faster" && updater.readyFile() === "mcode-0.3.0.exe" && phases.join(",") === "checking,downloading,ready", { readyResult, phases })
+
+    const again = downloads.length
+    const same = await updater.checkNow()
+    check("the same version found again is not downloaded twice", same.outcome === "ready" && downloads.length === again && same.phase === "ready")
+    feedFails = true
+    check("a failure after that keeps the ready update", (await updater.checkNow()).phase === "ready" && updater.readyFile() === "mcode-0.3.0.exe")
+    feedFails = false
+
+    const fresh = createUpdater({
+      currentVersion: "0.2.4",
+      feedURL: () => "https://feed.example/update.json",
+      fetchFeed: async () => feed,
+      installerFile: (entry) => `mcode-${entry.version}.exe`,
+      readFile: async (file) => files.get(file),
+      sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      download: async (entry) => void downloads.push(`fresh ${entry.version}`),
+      emit: () => {},
+      log: () => {},
+      scheduler,
+    })
+    const before = downloads.length
+    const reused = await fresh.checkNow()
+    check("a cached installer whose sha256 matches is reused without downloading", reused.outcome === "ready" && downloads.length === before)
+    files.set("mcode-0.3.0.exe", new TextEncoder().encode("tampered"))
+    const refetch = createUpdater({ ...{ currentVersion: "0.2.4", feedURL: () => "f", fetchFeed: async () => feed, installerFile: (entry: FeedEntry) => `mcode-${entry.version}.exe`, readFile: async (file: string) => files.get(file), sha256: (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex"), download: async (entry: FeedEntry) => void downloads.push(`refetch ${entry.version}`), emit: () => {}, log: () => {}, scheduler } })
+    await refetch.checkNow()
+    check("a cached file that does not match is downloaded again", downloads.at(-1) === "refetch 0.3.0")
+    updater.stop()
+    check("stopping clears the schedule", timers.length === 0)
+  }
+
+  section("Installing notice (MiMo's wait for delivery before quitting)")
+  {
+    const fake = () => {
+      const pending: { run: () => void; ms: number; id: number }[] = []
+      let id = 0
+      return {
+        pending,
+        timers: {
+          setTimeout: (run: () => void, ms: number) => (pending.push({ run, ms, id: ++id }), id),
+          clearTimeout: (handle: unknown) => void pending.splice(pending.findIndex((entry) => entry.id === handle), 1),
+        },
+      }
+    }
+    let settled = false
+    const none = fake()
+    await waitForDelivery(undefined, 1500, none.timers)
+    check("with no notice there is nothing to wait for", none.pending.length === 0)
+
+    const shown = fake()
+    let show: () => void = () => {}
+    const delivered = new Promise<void>((resolve) => (show = resolve))
+    const waiting = waitForDelivery(delivered, 1500, shown.timers).then(() => (settled = true))
+    check("the wait is bounded at 1.5 s", shown.pending.length === 1 && shown.pending[0]?.ms === 1500)
+    show()
+    await waiting
+    check("a notice shown ends the wait at once and clears the bound", settled && shown.pending.length === 0)
+
+    const lost = fake()
+    settled = false
+    const never = waitForDelivery(new Promise<void>(() => {}), 1500, lost.timers).then(() => (settled = true))
+    lost.pending[0]?.run()
+    await never
+    check("a notice never delivered lets the quit go on after the bound", settled)
+
+    const failed = fake()
+    settled = false
+    const rejected = waitForDelivery(Promise.reject(new Error("no toast")), 1500, failed.timers).then(() => (settled = true))
+    await rejected
+    check("a delivery that fails ends the wait too", settled && failed.pending.length === 0)
+
+    const listeners = new Map<string, () => void>()
+    const notice = { once: (event: "show" | "failed", listener: () => void) => void listeners.set(event, listener) }
+    let fired = false
+    const ofShow = deliveryOf(notice).then(() => (fired = true))
+    listeners.get("failed")?.()
+    await ofShow
+    check("delivery settles on show or on failed", fired && listeners.has("show"))
+  }
+
+  section("Pre-ready choices (theme and hardware acceleration)")
+  {
+    check("no file or a broken one is the defaults", readBootPrefs("").theme === "system" && readBootPrefs("[]").hardwareAcceleration === true && readBootPrefs("{").theme === "system")
+    check("the saved theme reads back, anything else follows the system", readBootPrefs('{"theme":"dark"}').theme === "dark" && readBootPrefs('{"theme":"light"}').theme === "light" && readBootPrefs('{"theme":"dracula"}').theme === "system")
+    check("acceleration is only off when turned off", readBootPrefs('{"hardwareAcceleration":false}').hardwareAcceleration === false && readBootPrefs('{"hardwareAcceleration":"0"}').hardwareAcceleration === false && readBootPrefs('{"hardwareAcceleration":"no"}').hardwareAcceleration === true)
+    const written = writeBootPrefs({ theme: "dark", hardwareAcceleration: false })
+    check("what is written reads back the same", JSON.stringify(readBootPrefs(written)) === JSON.stringify({ theme: "dark", hardwareAcceleration: false }), written)
+    check("the first paint is MiMo's plane for each scheme", windowBackground(true) === "#181818" && windowBackground(false) === "#ffffff")
+  }
+
+  section("Work areas (windows pulled back onto a screen)")
+  {
+    const primary = { x: 0, y: 0, width: 1920, height: 1040 }
+    const right = { x: 1920, y: 0, width: 1280, height: 984 }
+    check("a window wholly on a screen stays where it is", clampToWorkAreas({ x: 100, y: 100, width: 800, height: 600 }, [primary, right]) === undefined)
+    check("with no displays reported nothing is moved", clampToWorkAreas({ x: 5000, y: 0, width: 800, height: 600 }, []) === undefined)
+    const straddling = clampToWorkAreas({ x: 1700, y: 200, width: 800, height: 600 }, [primary, right])
+    check("one straddling two goes into the screen it overlaps most", JSON.stringify(straddling) === JSON.stringify({ x: 1920, y: 200, width: 800, height: 600 }), straddling)
+    const orphan = clampToWorkAreas({ x: 3500, y: 300, width: 900, height: 700 }, [primary])
+    check("one left on an unplugged screen comes back to the nearest, at its edge", JSON.stringify(orphan) === JSON.stringify({ x: 1020, y: 300, width: 900, height: 700 }), orphan)
+    const huge = clampToWorkAreas({ x: -50, y: -50, width: 2600, height: 1400 }, [primary])
+    check("one larger than the screen is shrunk to it", JSON.stringify(huge) === JSON.stringify(primary), huge)
+    check(
+      "bounds a scaling round-trip moved by a pixel or so count as the same; a real move does not",
+      closeBounds(primary, { ...primary, width: primary.width + 1, height: primary.height - 2 }) && !closeBounds(primary, { ...primary, x: 5 }),
+    )
+    check("hiding from full screen restores nothing", boundsOnShow({ x: 10, y: 10, width: 900, height: 700 }, true, [primary]) === undefined && boundsOnShow(undefined, false, [primary]) === undefined)
+    check("recorded bounds on a live screen come back as they were", JSON.stringify(boundsOnShow({ x: 10, y: 10, width: 900, height: 700 }, false, [primary])) === JSON.stringify({ x: 10, y: 10, width: 900, height: 700 }))
+    check("recorded bounds on a screen since removed are pulled back", boundsOnShow({ x: 2000, y: 10, width: 900, height: 700 }, false, [primary])?.x === 1020)
+  }
+
+  section("Renderer recovery (MiMo's silent replacement)")
+  {
+    const a = {}
+    const b = {}
+    const health = new RendererHealth<object>()
+    health.track(a)
+    check("a new renderer is starting", health.state(a) === "starting" && health.state(undefined) === "missing")
+    check("a subframe failure or a cancelled load (-3) leaves it alone", !health.didFailLoad(a, { errorCode: -105, isMainFrame: false }) && !health.didFailLoad(a, { errorCode: -3, isMainFrame: true }) && health.state(a) === "starting")
+    check("finishing its first load makes it ready, and only once", health.didFinishLoad(a) && !health.didFinishLoad(a) && health.state(a) === "ready")
+    check("the startup watchdog does nothing to a ready renderer", !health.startupTimedOut(a))
+    check("a main-frame failure makes it gone, reported once", health.didFailLoad(a, { errorCode: -6, isMainFrame: true }) && !health.renderProcessGone(a) && health.state(a) === "missing")
+    check("destroying one already gone is not a second failure", !health.destroyed(a))
+    health.track(b)
+    check("a renderer that never finishes starting times out", health.startupTimedOut(b) && health.state(b) === "missing")
+    const c = {}
+    health.track(c)
+    check("destroyed contents that were alive are a failure", health.destroyed(c) && !health.destroyed(c))
+
+    check("nothing is recovered while quitting", recoveryVisibility({ becameUnavailable: true, windowClosing: false, quitting: true, platform: "win32" }) === "none")
+    check("a closing window is not brought back on Windows", recoveryVisibility({ becameUnavailable: true, windowClosing: true, quitting: false, platform: "win32" }) === "none")
+    check("on macOS a closing one comes back hidden", recoveryVisibility({ becameUnavailable: true, windowClosing: true, quitting: false, platform: "darwin" }) === "hidden")
+    check("otherwise the replacement keeps the old visibility", recoveryVisibility({ becameUnavailable: true, windowClosing: false, quitting: false, platform: "linux" }) === "preserve-visibility")
+
+    // Fake timers: each scheduled run is kept with its delay and fired by hand.
+    let clock: { run: () => void; ms: number; id: number }[] = []
+    let nextId = 1
+    const timers = {
+      schedule: (run: () => void, ms: number) => {
+        const id = nextId++
+        clock.push({ run, ms, id })
+        return id
+      },
+      cancel: (id: number) => void (clock = clock.filter((entry) => entry.id !== id)),
+    }
+    const fire = () => {
+      const entry = clock.shift()
+      entry?.run()
+      return entry?.ms
+    }
+    const recovery = new RecoverySchedule<number>(timers)
+    let made = 0
+    const failing = () => {
+      made++
+      return false
+    }
+    check("the first attempt is scheduled at once", recovery.request(failing) === "scheduled" && clock[0]?.ms === 0)
+    check("a second request while one is queued joins it", recovery.request(failing) === "pending" && clock.length === 1)
+    const delays = [fire(), fire(), fire(), fire()]
+    check("failed attempts retry after 0, 250, 1000 and 5000 ms, then stop", delays.join(",") === "0,250,1000,5000" && made === 4 && clock.length === 0 && recovery.snapshot.exhausted, { delays, made })
+    check("an exhausted schedule makes no more attempts", recovery.request(failing) === "exhausted" && clock.length === 0)
+
+    const fresh = new RecoverySchedule<number>(timers)
+    fresh.request(() => true)
+    fire()
+    check("a successful attempt ends the retries", fresh.snapshot.attempts === 1 && !fresh.snapshot.retryScheduled && clock.length === 0)
+    fresh.rendererReady()
+    check("a ready replacement starts the 30 s stable timer", fresh.snapshot.stableScheduled && clock[0]?.ms === 30_000)
+    fire()
+    check("staying up for it resets the attempt count", fresh.snapshot.attempts === 0 && !fresh.snapshot.stableScheduled)
+    fresh.request(() => true)
+    fresh.cancel()
+    check("cancelling on quit drops a queued attempt", clock.length === 0 && fresh.request(() => true) === "stopped")
+  }
+
+  section("Log files (MiMo's userData/logs, one file a day, 15 days)")
+  {
+    const at = (text: string) => new Date(`${text}T12:00:00`)
+    check("a file is named for its local day", logFileName(new Date(2026, 8, 5, 23, 59)) === "2026-09-05.log")
+    check("a dated name reads back and anything else does not", dayOfLogFile("2026-09-05.log")?.getDate() === 5 && dayOfLogFile("notes.log") === undefined && dayOfLogFile("2026-02-30.log") === undefined)
+    const names = ["2026-09-15.log", "2026-09-01.log", "2026-08-31.log", "2026-07-01.log", "notes.txt", "2026-08-01.log.bak"]
+    check(
+      "files 15 or more days old expire; 14 days and other files are kept",
+      expiredLogFiles(names, at("2026-09-15")).join(",") === "2026-08-31.log,2026-07-01.log",
+      expiredLogFiles(names, at("2026-09-15")),
+    )
+    const secret = "sk-" + "a1b2c3d4e5f6g7h8i9j0"
+    const redacted = redactSecrets(`request failed Authorization: Bearer abc.def-123 {"apiKey":"${secret}"} url?key=XYZ123&x=1 token=hunter2`)
+    check(
+      "keys, bearer tokens and key-like assignments never reach the line",
+      !redacted.includes(secret) && !redacted.includes("abc.def-123") && !redacted.includes("XYZ123") && !redacted.includes("hunter2") && redacted.includes("x=1"),
+      redacted,
+    )
+    check("an ordinary line is left as it is", redactSecrets("[update] check failed (silent): HTTP 404") === "[update] check failed (silent): HTTP 404")
+    const line = logLine("warn", "x".repeat(9000), new Date(Date.UTC(2026, 8, 15, 1, 2, 3)))
+    check("a line carries its time and level and is cut past 8000 characters", line.startsWith("2026-09-15T01:02:03.000Z [warn] ") && line.endsWith("[cut 1000 chars]"), line.slice(0, 40))
+
+    const dir = path.join(root, "logs")
+    await fs.mkdir(dir, { recursive: true })
+    for (const name of ["2026-08-20.log", "2026-09-10.log", "keep.txt"]) await fs.writeFile(path.join(dir, name), "old\n")
+    let now = at("2026-09-15")
+    const daily = new DailyLog({ dir, now: () => now })
+    check("opening the log prunes what has expired", !(await exists(path.join(dir, "2026-08-20.log"))) && (await exists(path.join(dir, "2026-09-10.log"))) && (await exists(path.join(dir, "keep.txt"))))
+    daily.write("info", "first day")
+    now = at("2026-09-26")
+    daily.write("error", `second day ${secret}`)
+    await daily.close()
+    daily.write("info", "after close")
+    const first = await fs.readFile(path.join(dir, "2026-09-15.log"), "utf8")
+    const second = await fs.readFile(path.join(dir, "2026-09-26.log"), "utf8")
+    check("each day's lines go to that day's file", first.includes("[info] first day") && second.includes("[error] second day"), { first, second })
+    check("a day change prunes again", !(await exists(path.join(dir, "2026-09-10.log"))))
+    check("the file never holds the secret, and nothing is written after close", !second.includes(secret) && !second.includes("after close"))
+  }
+
   section("Composer menus and home starters")
   {
     check("a level the new model takes is kept", clampEffort(["low", "medium", "high"], "high") === "high")
@@ -2914,7 +3294,12 @@ async function main() {
     check("Ctrl+T too", pageKeyAction(press("t", "KeyT", { control: true })).kind === "forward")
     check("Ctrl+period, for annotating", pageKeyAction(press(".", "Period", { control: true })).kind === "forward")
     check("Ctrl+Shift+B, by its capital letter", pageKeyAction(press("B", "KeyB", { control: true, shift: true })).kind === "forward")
-    check("Ctrl+Shift+period, typed as >", pageKeyAction(press(">", "Period", { control: true, shift: true })).kind === "forward")
+    check("Ctrl+Shift+slash, typed as ?", pageKeyAction(press("?", "Slash", { control: true, shift: true })).kind === "forward")
+    check(
+      "chords MiMo lacks are left to the page",
+      ["Ctrl+Shift+.", "Ctrl+U", "Ctrl+G", "Alt+←", "Ctrl+Alt+1"].every((chord) => !APP_CHORDS.includes(chord)) &&
+        pageKeyAction(press("u", "KeyU", { control: true })).kind === "none",
+    )
     check("Ctrl+R reloads the page itself", JSON.stringify(pageKeyAction(press("r", "KeyR", { control: true }))) === JSON.stringify({ kind: "reload", force: false }))
     check("Ctrl+Shift+R force-reloads it", JSON.stringify(pageKeyAction(press("R", "KeyR", { control: true, shift: true }))) === JSON.stringify({ kind: "reload", force: true }))
     check("Ctrl+C stays with the page", pageKeyAction(press("c", "KeyC", { control: true })).kind === "none")
@@ -2942,7 +3327,7 @@ async function main() {
     const plainKeys = keysIn(block("const handlers: Record<string, () => void> = {"))
     const shiftedKeys = keysIn(block("const shifted: Record<string, () => void> = {"))
     const altKeys = [...appSource.matchAll(/mod && event\.altKey && event\.key\.toLowerCase\(\) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
-    check("App.vue's handler tables were found", plainKeys.length > 15 && shiftedKeys.length > 12 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
+    check("App.vue's handler tables were found", plainKeys.length > 12 && shiftedKeys.length > 6 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
     const wanted = [
       ...plainKeys.filter((key) => key !== "F" && key !== "R").map((key) => `Ctrl+${key}`),
       ...shiftedKeys.filter((key) => key !== "R").map((key) => `Ctrl+Shift+${key}`),
@@ -4562,6 +4947,47 @@ async function main() {
     check("a chord saved after the migration is not rewritten again on the next load", again.get().keybinds["view.server"] === "Ctrl+Shift+{")
     await fs.rm(chordData, { recursive: true, force: true })
   }
+
+  section("round 5: chords MiMo lacks are gone, saved bindings keep working (R26)")
+  {
+    const retired = retireKeybinds({
+      "agent.cycle": "Ctrl+Shift+Y",
+      "app.attachFile": "Ctrl+U",
+      "session.prevUnread": "Alt+Shift+↑",
+      "app.mcp": "",
+      "project.3": "Ctrl+Alt+Q",
+      "session.new": "Ctrl+Alt+N",
+      "app.back": "",
+    })
+    check(
+      "a chord of the user's own on a command that lost its default stays",
+      retired["agent.cycle"] === "Ctrl+Shift+Y",
+      retired,
+    )
+    check(
+      "a binding that restated or cleared a dropped default goes",
+      !("app.attachFile" in retired) && !("session.prevUnread" in retired) && !("app.mcp" in retired),
+      retired,
+    )
+    check("the numbered project slots go with their bindings", !("project.3" in retired), retired)
+    check("bindings of MiMo's own commands are untouched", retired["session.new"] === "Ctrl+Alt+N" && retired["app.back"] === "", retired)
+    const appSource = await fs.readFile(path.join(process.cwd(), "src/renderer/src/App.vue"), "utf8")
+    const stillDefault = Object.entries(RETIRED_DEFAULTS).filter(([, chord]) => appSource.includes(`hint: "${chord}"`))
+    check("no command in App.vue still carries a dropped default", stillDefault.length === 0, stillDefault)
+    check("nor the numbered project slots", !appSource.includes("id: `project.${"))
+
+    const retireData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-retire-"))
+    const retireStorage = new SubagentStorage(path.join(retireData, "storage"))
+    await retireStorage.write("config", {
+      keybinds: { "agent.cycle": "Ctrl+Shift+Y", "workspace.new": "Ctrl+Shift+W" },
+      migrations: ["theme-mcode-2", "keybind-ids-r3", "keybind-chords-r4"],
+    })
+    const retireConfig = new SubagentConfig(retireStorage, new Bus(), path.join(retireData, "credentials.json"))
+    await retireConfig.load()
+    const loaded = retireConfig.get().keybinds
+    check("loading the config applies it once", loaded["agent.cycle"] === "Ctrl+Shift+Y" && !("workspace.new" in loaded), loaded)
+    await fs.rm(retireData, { recursive: true, force: true })
+  }
   const pageCommands = [
     { id: "session.archive", title: "Archive this session", hint: "Ctrl+Alt+A" },
     { id: "tab.close", title: "Close tab", hint: "Ctrl+W" },
@@ -5439,6 +5865,57 @@ async function deliveredToolChecks(root: string) {
   check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,url", items.map(deliveredCard))
   check("sizes read as MiMo writes them", sizeLabel(512) === "512 B" && sizeLabel(1536) === "1.5 KB" && sizeLabel(5 * 1024 * 1024) === "5.0 MB")
   check("a delivered file opens with an app by its path under the project", relativeInside("C:\\p\\", "C:/P/out/a.pdf") === "out/a.pdf" && relativeInside("C:\\p", "D:/q/a.pdf") === "")
+
+  section("round 5: media previews keep to the project, the pull request row, document change notices (D1, D10, D11)")
+  check(
+    "a delivered picture, video or sound is previewed, anything else keeps its card",
+    deliveredCard({ kind: "file", path: "C:/p/shot.png", name: "shot.png", size: 1 }) === "media" &&
+      deliveredCard({ kind: "file", path: "C:/p/clip.MP4", name: "clip.MP4", size: 1 }) === "media" &&
+      deliveredCard({ kind: "file", path: "C:/p/notes.txt", name: "notes.txt", size: 1 }) === "file",
+  )
+  check(
+    "a path in the project is read, as the absolute path under it",
+    projectPath("C:\\p\\out\\a.png", "C:\\p") === "C:/p/out/a.png" && projectPath("out/a.png", "C:\\p\\") === "C:/p/out/a.png" && projectPath("./a.mp3", "/home/me/p") === "/home/me/p/a.mp3",
+    [projectPath("C:\\p\\out\\a.png", "C:\\p"), projectPath("out/a.png", "C:\\p\\"), projectPath("./a.mp3", "/home/me/p")],
+  )
+  check(
+    "a path outside it, climbing out of it, from home or with a scheme is not",
+    [
+      projectPath("D:/q/a.png", "C:/p"),
+      projectPath("C:/p2/a.png", "C:/p"),
+      projectPath("../a.png", "C:/p"),
+      projectPath("C:/p/../secret.png", "C:/p"),
+      projectPath("~/a.png", "/home/me/p"),
+      projectPath("file:///C:/p/a.png", "C:/p"),
+      projectPath("a.png", undefined),
+    ].every((value) => value === undefined),
+  )
+  check(
+    "the pull request row: hidden off GitHub, then loading, none, unavailable or found",
+    prRowState(false, { ok: true, kind: "none" }) === "hidden" &&
+      prRowState(true, undefined) === "loading" &&
+      prRowState(true, { ok: true, kind: "none" }) === "none" &&
+      prRowState(true, { ok: false, code: "network" }) === "unavailable" &&
+      prRowState(true, { ok: false, code: "detached" }) === "unavailable" &&
+      prRowState(true, { ok: true, kind: "open", number: 3, title: "t", url: "https://github.com/a/b/pull/3" }) === "found",
+  )
+  {
+    let notices = addFileNotice([], { path: "C:/p/a.docx", source: "user", note: "cell B2", time: 1 })
+    notices = addFileNotice(notices, { path: "C:/p/b.xlsx", source: "external", time: 2 })
+    notices = addFileNotice(notices, { path: "C:/p/a.docx", source: "restore", time: 3 })
+    check(
+      "changes to one file merge into one notice that counts them and keeps the latest",
+      notices.length === 2 && notices[0].count === 2 && notices[0].source === "restore" && notices[0].note === undefined && notices[1].count === 1,
+      notices,
+    )
+    const told = withAnnotations("go on", undefined, notices)
+    check(
+      "the model reads the changes before the message, and a message with none is unchanged",
+      told.startsWith("<document-changes>") && told.endsWith("go on") && told.includes("C:/p/a.docx (2 changes") && withAnnotations("go on", undefined, []) === "go on",
+      told,
+    )
+    check("no notices, no block", fileNoticesBlock(undefined) === "" && fileNoticesBlock([]) === "")
+  }
   check("the step rows speak MiMo's verbs", deliveredToolVerb("present_files", "completed") !== "toolLabel.done.present_files" && deliveredToolVerb("pdf_locate", "running") !== "toolLabel.running.pdf_locate")
   check(
     "the step titles are the passage, the file names and the change",

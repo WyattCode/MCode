@@ -2270,26 +2270,6 @@
     "zhCN": "新建会话",
     "zhTW": "新增工作階段"
   },
-  "menu.newWindow": {
-    "ar": "نافذة جديدة",
-    "bs": "Novi prozor",
-    "da": "Nyt vindue",
-    "de": "Neues Fenster",
-    "en": "New Window",
-    "es": "Nueva ventana",
-    "fr": "Nouvelle fenêtre",
-    "ja": "新しいウインドウ",
-    "ko": "새 윈도우",
-    "nb": "Nytt vindu",
-    "pl": "Nowe okno",
-    "ptBR": "Nova janela",
-    "ru": "Новое окно",
-    "th": "หน้าต่างใหม่",
-    "tr": "Yeni pencere",
-    "uk": "Нове вікно",
-    "zhCN": "新建窗口",
-    "zhTW": "新增視窗"
-  },
   "menu.nextProject": {
     "ar": "المشروع التالي",
     "bs": "Sljedeći projekat",

@@ -1,5 +1,5 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
-import { normalizeChord } from "@shared/chord"
+import { normalizeChord, retireKeybinds } from "@shared/chord"
 import fs from "node:fs/promises"
 import { watch as watchFiles, type FSWatcher } from "node:fs"
 import path from "node:path"
@@ -394,6 +394,23 @@ export class Config {
       this.current.keybinds = binds
     })
 
+    // Round five dropped the chords MiMo lacks; see `retireKeybinds` for what a saved binding keeps.
+    once("keybind-retired-r5", () => {
+      this.current.keybinds = retireKeybinds(this.current.keybinds ?? {})
+    })
+
+    /*
+     * Full access now needs its settings switch, and the server holds a config
+     * at full access with the switch off to the default. A config that reached
+     * full access before that rule (the auto-accept chord, the per-tool rows)
+     * turns the switch on instead, so nobody's permissions change on upgrade.
+     */
+    once("full-access-switch-r5", () => {
+      const map = this.current.permissions
+      const full = this.current.accessLevel !== "auto" && PERMISSION_KINDS.every((kind) => map[kind] !== "ask")
+      if (full && !this.current.allowFullAccess) this.current.allowFullAccess = true
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
@@ -599,22 +616,6 @@ export class Config {
       }
     }
     await this.persistCredentials()
-  }
-
-  /**
-   * Returns the app to its first-run state: no keys, no subscription tokens, no
-   * discovered catalogs, no preferences. Sessions are cleared by the caller,
-   * which owns them.
-   */
-  async reset(): Promise<void> {
-    this.credentials = {}
-    this.oauth = {}
-    this.discovered = {}
-    await this.persistCredentials()
-    await this.storage.write("models", this.discovered)
-    this.current = defaults()
-    await this.storage.write("config", this.current)
-    this.bus.publish({ type: "config.updated", config: this.current })
   }
 
   async setDiscovered(provider: string, models: ModelEntry[]): Promise<void> {

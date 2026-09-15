@@ -77,7 +77,7 @@ function truncate(value: string): string {
 export function serialize(message: Message): string {
   if (message.role === "user") {
     const files = message.attachments.map((file) => `[Attached ${file.mime}: ${file.path}]`)
-    return [`[User]: ${withAnnotations(message.text, message.annotations)}`, ...files].join("\n")
+    return [`[User]: ${withAnnotations(message.text, message.annotations, message.fileNotices)}`, ...files].join("\n")
   }
   return message.parts
     .flatMap((part) => {

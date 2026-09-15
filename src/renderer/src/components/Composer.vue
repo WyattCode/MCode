@@ -8,7 +8,8 @@ import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { drafts, homeFilled, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
-import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
+import { PERMISSION_KINDS } from "@shared/protocol"
+import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
@@ -325,6 +326,11 @@ onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHe
  */
 const dismissed = ref(false)
 
+/* MiMo's: leaving the box closes the @ and slash menus. Typing again brings them back. */
+function onInputBlur() {
+  dismissed.value = true
+}
+
 /**
  * Paths that were chosen from the @ menu rather than merely typed.
  *
@@ -467,8 +473,21 @@ function dialogOpen(): boolean {
   return Boolean(document.querySelector(".scrim, .overlay"))
 }
 
+/*
+ * MiMo takes drops on the main column only - and on the box itself while it
+ * floats beside the side panel. A side chat's box, in the side panel, takes none.
+ */
+function inDropZone(event: DragEvent): boolean {
+  if (props.side) return false
+  return event.target instanceof Element && Boolean(event.target.closest(".main, #float-dock"))
+}
+
 function onDragOver(event: DragEvent) {
   if (dialogOpen()) return
+  if (!inDropZone(event)) {
+    dragging.value = false
+    return
+  }
   const types = event.dataTransfer?.types
   if (!types?.includes("Files") && !types?.includes("text/plain")) return
   // Without this the window navigates to the dropped file instead.
@@ -483,8 +502,10 @@ function onDragLeave(event: DragEvent) {
 
 async function onDrop(event: DragEvent) {
   if (dialogOpen()) return
-  event.preventDefault()
   dragging.value = false
+  // Anywhere else the window's own guard stops the browser opening the file, and nothing is added.
+  if (!inDropZone(event)) return
+  event.preventDefault()
 
   /*
    * A path dragged as text becomes a mention rather than a copy of the file:
@@ -954,7 +975,11 @@ async function submit() {
         // MiMo makes a side conversation on its first message; its tab hands over how.
         target = props.createSide ? await props.createSide() : undefined
         if (!target) throw new Error("")
-      } else await app.create(props.startDirectory, { scratch: props.startScratch })
+      } else {
+        await app.create(props.startDirectory, { scratch: props.startScratch })
+        // MiMo's newChat says so whenever the first send makes a new task.
+        notify(t("toast.newConvoCreated"))
+      }
     } catch (err) {
       text.value = value
       attachments.value = sent
@@ -1907,34 +1932,12 @@ async function confirmFull() {
   await applyAccess("full")
 }
 
-/*
- * Moving between the default and the middle level leaves the map alone - the
- * middle level is applied on top of it. Only entering and leaving full access
- * rewrites the map, and leaving it puts back what was there.
- */
+/* The map arithmetic is shared with the settings switch, which drops full access the same way. */
 async function applyAccess(next: Access) {
-  const map = app.config?.permissions
-  if (!map) return
-  const leavingFull = access.value === "full"
-  let permissions = map
-  let accessBefore = app.config?.accessBefore
-  if (next === "full") {
-    permissions = { ...map }
-    for (const kind of PERMISSION_KINDS) if (permissions[kind] !== "deny") permissions[kind] = "allow"
-    accessBefore = { ...map }
-  } else if (leavingFull) {
-    const kept = app.config?.accessBefore ?? {}
-    permissions = { ...map }
-    for (const kind of PERMISSION_KINDS) {
-      if (permissions[kind] === "deny") continue
-      const restored = kept[kind]
-      permissions[kind] =
-        restored && (PERMISSION_ACTIONS as readonly string[]).includes(restored) ? restored : DEFAULT_PERMISSIONS[kind]
-    }
-    accessBefore = undefined
-  }
+  const patch = app.config ? accessPatch(app.config, next) : undefined
+  if (!patch) return
   try {
-    await app.patchConfig({ permissions, accessBefore, accessLevel: next }, { quiet: true })
+    await app.patchConfig(patch, { quiet: true })
     app.announceAccess(next)
   } catch (err) {
     notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
@@ -2647,6 +2650,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           :aria-busy="compactingHere || undefined"
           @keydown.escape="mode === 'shell' && setMode('normal')"
           @keydown="onKeydown"
+          @blur="onInputBlur"
           @keyup="syncCaret"
           @click="onBoxClick"
           @select="syncCaret"

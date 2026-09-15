@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import { useApp } from "../stores/app"
+import { useRightPanel } from "../stores/right-panel"
 import ContextMenu from "./ContextMenu.vue"
 import { useOpenWith } from "../lib/open-with"
 import { sessionTitle, t } from "../lib/i18n"
@@ -35,8 +36,16 @@ const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""
 const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames) : undefined))
 const pinned = computed(() => Boolean(app.current && app.isPinned(app.current.id)))
 
-/* MiMo's open-location control: the folder the conversation works in. */
-const directory = computed(() => app.current?.directory)
+/*
+ * MiMo's open-location control: the folder the conversation works in. MiMo
+ * takes it away while the side panel shows a document, a browser or a web page,
+ * whose own bars say where they are.
+ */
+const rp = useRightPanel()
+const OWN_LOCATION = ["office", "browser", "html"]
+const directory = computed(() =>
+  rp.open && OWN_LOCATION.includes(rp.activeTab?.type ?? "") ? undefined : app.current?.directory,
+)
 const { label: openLabel, items: openItems, open: openIn, pick: pickOpen } = useOpenWith(() => app.platform)
 const appMenu = ref<{ x: number; y: number }>()
 

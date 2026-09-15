@@ -25,6 +25,8 @@ onErrorCaptured((error, _instance, info) => {
   if (!RENDER.test(String(info))) return undefined
   console.error("MCode: a region failed to render", error)
   failure.value = error instanceof Error ? error.message : String(error)
+  // Into the day's log as well, where a packaged build can still be asked about it.
+  window.mcode?.diagLog(`region failed to render: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`)
   return false
 })
 
