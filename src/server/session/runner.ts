@@ -1359,7 +1359,7 @@ export class SessionRunner {
         role: "assistant",
         model: session.model,
         agent: session.agent,
-        effort: session.effort ?? config.effort,
+        effort: config.effort,
         parts: [],
         time: { created: Date.now() },
       }
@@ -1412,7 +1412,8 @@ export class SessionRunner {
       // session chat: a message from another conversation says so, in the request only.
       const history = withChatHeaders(this.contextFor(session, stored))
 
-      const effort = session.effort ?? config.effort
+      // MiMo's effort is one app-wide value, not a conversation's own.
+      const effort = config.effort
 
       const assistant: AssistantMessage = {
         id: Identifier.message(),
@@ -1992,7 +1993,6 @@ export class SessionRunner {
       directory: parent.directory,
       model,
       agent,
-      effort: parent.effort,
       title: spec.description || name,
       parentID: parent.id,
       parentMessageID: call.messageID,

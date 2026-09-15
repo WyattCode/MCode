@@ -121,7 +121,8 @@ function defaults(): AppConfig {
     projectUsed: {},
     projectIcons: {},
     projectColors: {},
-    effort: "high",
+    // MiMo's 中: one app-wide level, medium until someone picks another.
+    effort: "medium",
     agent: "build",
     staged: false,
     openTabs: [],

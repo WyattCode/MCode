@@ -453,8 +453,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         session: await runtime.sessions.update(request.sessionID, { smart: true, smartRoute: undefined }),
       } satisfies Handled<"session.smart">
 
-    case "session.effort":
-      return { session: await runtime.sessions.update(request.sessionID, { effort: request.effort }) }
 
     case "session.agent":
       return { session: await runtime.sessions.update(request.sessionID, { agent: request.agent }) }

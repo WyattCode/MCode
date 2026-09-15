@@ -1975,7 +1975,7 @@ const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
  * model with levels always shows one.
  */
 const effortLevel = computed<Effort | undefined>(() =>
-  clampEffort(variants.value, session.value?.effort ?? app.config?.effort),
+  clampEffort(variants.value, app.config?.effort),
 )
 
 const effortLabel = computed(() => {
@@ -1986,8 +1986,8 @@ const effortLabel = computed(() => {
 
 /*
  * A level chosen in a model's submenu: that model and that level. On the home
- * screen both are the defaults the next task starts with, as MiMo's global
- * level is; in a conversation they are the conversation's.
+ * screen the model is the default the next task starts with; in a conversation
+ * it is the conversation's. The level is MiMo's global one either way.
  */
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
@@ -2327,11 +2327,8 @@ async function chooseModel(provider: string, model: string) {
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
   } else {
     await app.setModel({ provider, model }, sessionID.value)
-    if (!props.side) {
-      const inForce = session.value?.effort ?? app.config?.effort
-      const effort = clampEffort(variants, inForce)
-      if (effort && effort !== inForce) await app.setEffort(effort)
-    }
+    const effort = clampEffort(variants, app.config?.effort)
+    if (effort && effort !== app.config?.effort) await app.setEffort(effort)
   }
   app.announceModel(before, { provider, model })
 }

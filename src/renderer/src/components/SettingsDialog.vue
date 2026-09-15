@@ -15,7 +15,6 @@ import {
   type PermissionAction,
   type PermissionKind,
   type ProviderStatus,
-  EFFORTS,
 } from "@shared/protocol"
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { folderName, projectName } from "../lib/project"
@@ -1180,12 +1179,6 @@ const themeOptions = computed(() => [
 ])
 const paletteOptions = THEMES.map((entry) => ({ value: entry.id, label: entry.name }))
 const languageOptions = computed(() => LANGUAGES.map((entry) => ({ value: entry.id, label: entry.label })))
-const effortOptions = computed(() =>
-  EFFORTS.map((level) => ({
-    value: level,
-    label: level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1),
-  })),
-)
 
 /**
  * Wipes the app back to first run - keys, subscription logins, preferences and
@@ -2292,18 +2285,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <div class="line-sub">{{ t("set.directorySub") }}</div>
               </div>
               <button class="ctl-btn" @click="pickDirectory">{{ app.config?.directory ?? "-" }}</button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.effort") }}</div>
-                <div class="line-sub">{{ t("set.effortSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.effort ?? 'high'"
-                :options="effortOptions"
-                @update:model-value="app.patchConfig({ effort: $event as 'high' })"
-              />
             </div>
           </div>
 

@@ -1379,10 +1379,9 @@ export const useApp = defineStore("app", () => {
     }
   }
 
-  /** Undefined clears it, which is how a session goes back to the default. */
-  async function setEffort(effort?: Effort) {
-    if (!currentID.value) return
-    await api().request({ type: "session.effort", sessionID: currentID.value, effort })
+  /** MiMo's effort is one app-wide level: every conversation, and the next, runs at it. */
+  async function setEffort(effort: Effort) {
+    await patchConfig({ effort })
   }
 
   async function setModel(model: ModelRef, to?: string) {

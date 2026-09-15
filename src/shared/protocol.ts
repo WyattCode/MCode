@@ -24,15 +24,6 @@ export interface SessionInfo {
   model: ModelRef
   agent: AgentName
   /**
-   * This session's reasoning effort, or absent to follow the app default.
-   *
-   * Absent is a real state rather than a missing value - it is what the cycle
-   * returns to after the last step, and what a session starts in - but it
-   * resolves to the app-wide setting at the point the turn runs, not to
-   * "whatever the provider does".
-   */
-  effort?: Effort
-  /**
    * Whether this conversation works in stages: clarify, plan, build, review.
    *
    * Absent is off, which is what every conversation stored before this field
@@ -1212,7 +1203,7 @@ export interface AppConfig {
   projectIcons: Record<string, string>
   /** Per-project badge hue override; absent means derived from the path. */
   projectColors: Record<string, string>
-  /** Sampling effort a new session starts with; each may then differ. */
+  /** The reasoning effort every turn runs at: MiMo keeps one app-wide level, not one per conversation. */
   effort: Effort
   /** Which agent preset new sessions start in. */
   agent: AgentName
@@ -1591,7 +1582,6 @@ export type Request =
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
-  | { type: "session.effort"; sessionID: string; effort?: Effort }
   | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[] }
   | { type: "session.abort"; sessionID: string }
   /*
@@ -1873,7 +1863,6 @@ export interface ResponseMap {
   "session.fork": { session: SessionInfo }
   "session.model": { session: SessionInfo }
   "session.smart": { session: SessionInfo }
-  "session.effort": { session: SessionInfo }
   "session.prompt": { messageID: string }
   "session.abort": Record<string, never>
   "session.subtask": { messageID: string }

@@ -3952,35 +3952,28 @@ async function cycleAgent(by: 1 | -1) {
 }
 
 /**
- * And the reasoning effort - for this session, and with a way back to unset.
- *
- * Walking off the end returns to no setting at all rather than wrapping to the
- * first step. Unset is not a sixth level: it is the session deferring to the
- * app-wide default, and there is no other way back to that once a session has
- * been given a setting of its own.
+ * And the reasoning effort: MiMo's one app-wide level, cycled through the
+ * steps the model in use has and wrapping at the end.
  */
 async function cycleEffort() {
-  if (!app.currentID) return
   /*
    * The steps this model has, not all five: the pill beside it now offers only
    * those, and a keyboard that could still reach a sixth would be the pointer
    * and the keyboard disagreeing about what the control is. A model with no
-   * steps at all draws no pill and this does nothing, which is the reference's
-   * `if (variants.length === 0) return void 0` (main-8t-QUXax.js @2829562).
+   * steps at all draws no pill and this does nothing.
    */
-  const variants = findModel(app.providers, app.current?.model)?.variants ?? []
-  if (!variants.length) return
-  await app.setEffort(cycleVariant(variants, app.current?.effort))
+  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
+  const next = cycleVariant(variants, app.config?.effort)
+  if (next) await app.setEffort(next)
 }
 
 /** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
 async function stepEffort(by: 1 | -1) {
-  if (!app.currentID) return
-  const variants = findModel(app.providers, app.current?.model)?.variants ?? []
+  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
   if (!variants.length) return
-  const current = app.current?.effort
+  const current = app.config?.effort
   const at = current ? variants.indexOf(current) : -1
-  const next = at === -1 ? (by > 0 ? variants[0] : undefined) : variants[Math.max(0, Math.min(variants.length - 1, at + by))]
+  const next = at === -1 ? variants[0] : variants[at + by]
   if (next && next !== current) await app.setEffort(next)
 }
 
