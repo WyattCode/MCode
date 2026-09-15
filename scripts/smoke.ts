@@ -1232,7 +1232,11 @@ async function main() {
     await pause()
     const logAsk = waiting("c-rule-5")
     if (logAsk) permissions.respond(logAsk.id, "always")
-    check("answering always lets through a question already waiting that it covers", (await logOne) === "allowed" && (await logTwo) === "allowed" && !waiting("c-rule-6"))
+    // Raced against a pause and settled after, so a release that never comes fails here rather than hanging the run.
+    const secondSettled = await Promise.race([logTwo, new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 500))])
+    const stillParked = settleIfAsked("c-rule-6")
+    check("answering always lets through a question already waiting that it covers", (await logOne) === "allowed" && secondSettled === "allowed" && !stillParked, secondSettled)
+    await logTwo
     check("recorded as let through by that always", heard[0]?.decided === "allow-always", heard)
     stopHearing()
 
