@@ -111,6 +111,7 @@ function defaults(): AppConfig {
     directory: process.cwd(),
     closedProjects: [],
     projectNames: {},
+    projectUsed: {},
     projectIcons: {},
     projectColors: {},
     effort: "high",

@@ -4,7 +4,7 @@ import type { HomeSuggestion } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
-import { SUGGESTION_ICON_PATHS, rememberedSuggestions } from "../lib/home-suggestions"
+import { SUGGESTION_ICON_PATHS, builtinSuggestions, rememberedSuggestions } from "../lib/home-suggestions"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
 import NewProjectDialog from "./NewProjectDialog.vue"
@@ -14,11 +14,12 @@ import Composer from "./Composer.vue"
 /**
  * The 2.0 home screen: what a new task starts from.
  *
- * Laid out from Xiaomi MiMo's, measured: a centred column with a line of
- * greeting over a 712-wide composer card (#1f1f1f on the dark scheme, radius
- * 20, a half-pixel line and a soft drop shadow), and under it a picker for
- * the project the task goes into. The greeting is MCode's own, and so is the
- * mark above it.
+ * Laid out from Xiaomi MiMo's, measured: a scrolling grid of three rows, the
+ * middle one holding a line of greeting over a 712-wide composer card (#1f1f1f
+ * on the dark scheme, radius 20, a half-pixel line and a soft drop shadow) with
+ * a picker for the project underneath, and the example tasks hanging in the
+ * row below - so they never move the card when they change. The greeting is
+ * MCode's own, and so is the mark above it.
  *
  * The box is the real composer - the same component a conversation carries,
  * with the same controls. MiMo lets you type here and creates the task when the
@@ -46,13 +47,19 @@ const app = useApp()
 const name = (directory: string) =>
   app.config?.projectNames?.[directory] || directory.split(/[\\/]/).filter(Boolean).pop() || directory
 
+/*
+ * Most recent first, where "recent" is the later of the project's newest task
+ * and when it was last picked here - MiMo's picker lists by the pick, so a
+ * project just chosen comes first next time even before it has a task.
+ */
 const projects = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
   const latest = new Map<string, number>()
-  for (const session of app.sessions) {
-    if (session.scratch || closed.has(session.directory)) continue
-    latest.set(session.directory, Math.max(latest.get(session.directory) ?? 0, session.updated))
+  const note = (directory: string, at: number) => {
+    if (!closed.has(directory)) latest.set(directory, Math.max(latest.get(directory) ?? 0, at))
   }
+  for (const session of app.sessions) if (!session.scratch) note(session.directory, session.updated)
+  for (const [directory, at] of Object.entries(app.config?.projectUsed ?? {})) note(directory, at)
   return [...latest.entries()].sort((a, b) => b[1] - a[1]).map(([directory]) => directory)
 })
 
@@ -123,8 +130,25 @@ const pickerProjects = computed<PickerProject[]>(() => {
   return listed.map((entry) => ({ directory: entry, name: name(entry), hint: hinted.get(entry) }))
 })
 
+/* Remembered in config, so the picker lists this project first next time. */
+function markUsed(directory: string) {
+  void app.patchConfig({ projectUsed: { ...(app.config?.projectUsed ?? {}), [directory]: Date.now() } }).catch(() => {})
+}
+
+/*
+ * MiMo opens its sidebar when a project is browsed to. The side column belongs
+ * to the window, so it is asked for rather than reached into.
+ */
+function revealSide() {
+  window.dispatchEvent(new CustomEvent("mcode:reveal-side"))
+}
+
+/* MiMo's browseProject: the pick, its place at the top of the list, the sidebar, and a toast naming it. */
 function choose(directory: string) {
   picked.value = directory
+  markUsed(directory)
+  revealSide()
+  notify(t("home.currentProject", { name: name(directory) }))
   box.value?.focus()
 }
 
@@ -142,6 +166,15 @@ function none() {
 /* Set while the blank project's name is being asked for. */
 const naming = ref(false)
 
+/* A folder brought in or made here becomes the pick, is remembered, and opens the side column as MiMo's does. */
+function take(directory: string) {
+  added.value = directory
+  picked.value = directory
+  markUsed(directory)
+  revealSide()
+  box.value?.focus()
+}
+
 /*
  * The dialog's answer: with a source folder, that folder under the name given;
  * without, a new empty folder under the default project location. Either way
@@ -155,17 +188,13 @@ async function createBlank(title: string, source?: string) {
     if (closed.includes(source)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== source) })
     const folderName = source.split(/[\\/]/).filter(Boolean).pop()
     if (title !== folderName) await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
-    added.value = source
-    picked.value = source
-    box.value?.focus()
+    take(source)
     return
   }
   try {
     const made = await app.client?.request({ type: "project.createBlank", name: title })
     if (!made) return
-    added.value = made.directory
-    picked.value = made.directory
-    box.value?.focus()
+    take(made.directory)
   } catch (err) {
     notifyFailure(t("home.blankFailed"), err instanceof Error ? err.message : String(err))
   }
@@ -179,9 +208,7 @@ async function existing() {
   if (closed.includes(directory)) {
     await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
   }
-  added.value = directory
-  picked.value = directory
-  box.value?.focus()
+  take(directory)
 }
 
 /** The box below, so a starting point can be put into it rather than run. */
@@ -191,30 +218,32 @@ const box = ref<InstanceType<typeof Composer>>()
 watch(chosen, (next) => next && next !== NO_PROJECT && void app.refreshCommands(next), { immediate: true })
 
 /*
- * MiMo's example tasks under the tray: shown only once a project is chosen,
- * three rows written for that project by the model (asked once per project),
- * and a click puts the task's request into the box without sending it.
+ * MiMo's example tasks under the tray: shown only once a project is chosen.
+ * MCode's own three are there at once; the three the model writes for that
+ * project (asked once per project) replace them when they arrive, and if none
+ * come the built-in ones stay. A click puts the task's request into the box
+ * without sending it.
  */
 const hasProject = computed(() => Boolean(chosen.value) && chosen.value !== NO_PROJECT)
 const suggestions = ref<HomeSuggestion[]>([])
-const suggesting = ref(false)
 
 watch(
   () => [chosen.value, language.value, Boolean(app.client)] as const,
   async ([directory, lang]) => {
-    suggestions.value = []
-    suggesting.value = false
+    if (!directory || directory === NO_PROJECT) {
+      suggestions.value = []
+      return
+    }
+    suggestions.value = builtinSuggestions((key) => t(key))
     const client = app.client
-    if (!directory || directory === NO_PROJECT || !client) return
-    suggesting.value = true
+    if (!client) return
     const rows = await rememberedSuggestions(directory, lang, async () => {
       const result = await client.request({ type: "home.suggest", directory, language: lang })
       return result.suggestions
     })
     // A newer pick may have overtaken this answer.
     if (chosen.value !== directory || language.value !== lang) return
-    suggestions.value = rows
-    suggesting.value = false
+    if (rows.length) suggestions.value = rows
   },
   { immediate: true },
 )
@@ -259,7 +288,7 @@ async function hop() {
 <template>
   <div class="home-hero">
     <div class="drag" aria-hidden="true" />
-    <div class="column">
+    <div class="core">
       <div
         ref="wordmark"
         class="wordmark"
@@ -298,37 +327,43 @@ async function hop() {
       </div>
 
       <NewProjectDialog v-if="naming" :value="t('home.blankDefault')" @close="naming = false" @submit="createBlank" />
+    </div>
 
-      <!-- Under the project row, which is the order MiMo reads in: the box, what it points at, and what you might start with. -->
-      <div v-if="hasProject && (suggesting || suggestions.length)" id="home-suggest" class="home-suggest" :aria-label="t('home.starters')">
-        <div v-if="!suggestions.length" class="sug-loading">{{ t("composer.at.loading") }}</div>
-        <button
-          v-for="item in suggestions"
-          :key="item.title"
-          class="sug"
-          type="button"
-          :data-sug="item.title"
-          @click="start(item)"
-        >
-          <svg class="sug-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path v-for="d in SUGGESTION_ICON_PATHS[item.icon]" :key="d" :d="d" />
-          </svg>
-          <span class="sug-t">{{ item.title }}</span>
-        </button>
-      </div>
+    <!-- The row under the tray, which is the order MiMo reads in: the box, what it points at, and what you might start with. -->
+    <div v-if="hasProject && suggestions.length" id="home-suggest" class="home-suggest" :aria-label="t('home.starters')">
+      <button
+        v-for="item in suggestions"
+        :key="item.title"
+        class="sug"
+        type="button"
+        :data-sug="item.title"
+        @click="start(item)"
+      >
+        <svg class="sug-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path v-for="d in SUGGESTION_ICON_PATHS[item.icon]" :key="d" :d="d" />
+        </svg>
+        <span class="sug-t">{{ item.title }}</span>
+      </button>
     </div>
   </div>
 </template>
 
 <style scoped>
+/*
+ * MiMo's home layout: a scroll area whose content is a three-row grid, the
+ * hero and tray centred in the middle row and the suggestions hanging from the
+ * top of the last one, both lifted 64px. The two outer rows share what is left,
+ * so the tray sits where it sits however many suggestions there are.
+ */
 .home-hero {
   position: relative;
-  display: flex;
+  display: grid;
   flex: 1;
-  align-items: center;
-  justify-content: center;
+  grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr);
+  justify-items: center;
   min-height: 0;
-  padding: 0 24px 12vh;
+  overflow-y: auto;
+  padding: 24px 28px 60px;
 }
 
 /* With no header on this screen, the top strip is what drags the window. */
@@ -339,10 +374,18 @@ async function hop() {
   -webkit-app-region: drag;
 }
 
-.column {
+/*
+ * Lifted by a relative offset rather than a transform: a transform would hold
+ * the composer's fixed submenus to this box instead of the window.
+ */
+.core {
+  position: relative;
+  top: -64px;
   display: flex;
   flex-direction: column;
+  grid-row: 2;
   align-items: center;
+  align-self: center;
   width: min(712px, 100%);
 }
 
@@ -396,11 +439,15 @@ async function hop() {
   padding-inline: 6px 10px;
 }
 
-/* MiMo's suggestion list: a column 8 under the tray. */
+/* MiMo's suggestion list: 8 under the tray, at the top of the last row, lifted with it. */
 .home-suggest {
+  position: relative;
+  top: -64px;
   display: flex;
   flex-direction: column;
-  align-self: stretch;
+  grid-row: 3;
+  align-self: start;
+  width: min(712px, 100%);
   margin-top: 8px;
 }
 
@@ -423,12 +470,12 @@ async function hop() {
   cursor: pointer;
 }
 
-/* A dotted hairline, 2 on and 2 off, across the top of every row but the first, held to the 712 column. */
+/* A dotted hairline, 2 on and 2 off, across the top of every row but the first, held to the column. */
 .sug::before {
   content: "";
   position: absolute;
   top: 0;
-  inset-inline: max(0px, 50% - 356px);
+  inset-inline: 0;
   height: 1px;
   background: var(--border-weak);
   -webkit-mask: repeating-linear-gradient(90deg, #000 0 2px, transparent 2px 4px);
@@ -468,20 +515,11 @@ async function hop() {
   white-space: nowrap;
 }
 
-.sug-loading {
-  padding: 13px 8px;
-  color: var(--text-weaker);
-  font-size: calc(14px * var(--ui-font-scale, 1));
-}
-
-/* MiMo's wide window: the tray grows to 944 and the dotted rules follow it. */
+/* MiMo's wide window: the tray grows to 944 and the suggestions with it. */
 @media (min-width: 2000px) {
-  .column {
+  .core,
+  .home-suggest {
     width: min(944px, 100%);
-  }
-
-  .sug::before {
-    inset-inline: max(0px, 50% - 472px);
   }
 }
 </style>
