@@ -1,6 +1,6 @@
 import { BrowserWindow, WebContentsView, clipboard, session } from "electron"
-import { addressToURL, safeURL } from "@shared/web-address"
-import { stepZoom } from "@shared/browser-page"
+import { addressToURL, pageMayNavigate } from "@shared/web-address"
+import { pageFavicon, stepZoom } from "@shared/browser-page"
 import { wirePage } from "./browser-page"
 
 /**
@@ -16,9 +16,10 @@ import { wirePage } from "./browser-page"
  *
  * What it may do is narrow on purpose:
  *
- * - http and https only, decided in @shared/web-address. A `file://` in the
- *   address bar would turn the panel into a file reader for anything the user
- *   can open, and internal schemes are not for a page to ask for.
+ * - http and https, decided in @shared/web-address, and a local file typed
+ *   into the address bar - the user chose (2026-09-15) to open local files as
+ *   MiMo does. A page may follow a link to a file only from a local page, never
+ *   from the web, and internal schemes are not for a page to ask for.
  * - No permissions. The window's own handler allows a microphone because a
  *   button asks for it; a site in this panel gets nothing at all.
  * - A popup becomes a tab of the panel, with the panel's address bar, as MiMo
@@ -45,6 +46,8 @@ export interface BrowserTab {
   title: string
   url: string
   loading: boolean
+  /** The icon the page names for itself, once it has: an http(s) address or an inline image. */
+  favicon?: string
 }
 
 export interface BrowserState {
@@ -65,6 +68,7 @@ interface Tab {
   id: string
   view: WebContentsView
   failure?: { code: number; url: string; description: string }
+  favicon?: string
 }
 
 interface Panel {
@@ -104,6 +108,7 @@ function describe(tab: Tab): BrowserTab {
     title: contents.getTitle(),
     url: contents.getURL(),
     loading: contents.isLoading(),
+    ...(tab.favicon ? { favicon: tab.favicon } : {}),
   }
 }
 
@@ -147,9 +152,9 @@ function makeTab(panel: Panel): Tab {
     openTab: (url) => openFromPage(panel, url),
     changed: () => panel.publish(),
   })
-  /* A navigation to anything but the web is refused rather than followed. */
+  /* The web is followed; a file only from a local page (MiMo's local pages link to their neighbours); the rest is refused. */
   contents.on("will-navigate", (event, url) => {
-    if (!safeURL(url)) event.preventDefault()
+    if (!pageMayNavigate(contents.getURL(), url)) event.preventDefault()
   })
   for (const event of [
     "did-navigate",
@@ -172,6 +177,19 @@ function makeTab(panel: Panel): Tab {
     if (!isMainFrame || code === -3) return
     // The name is kept too: MiMo sorts an error by its name as well as its number.
     tab.failure = { code, url, description }
+    panel.publish()
+  })
+  /*
+   * MiMo's tab face. The event hands over the addresses the page names; the
+   * window only ever gets one of the kinds its own policy lets an image load,
+   * and a page that commits forgets the last one's until it names its own.
+   */
+  contents.on("did-navigate", () => {
+    tab.favicon = undefined
+    panel.publish()
+  })
+  contents.on("page-favicon-updated", (_event, favicons) => {
+    tab.favicon = pageFavicon(favicons)
     panel.publish()
   })
   return tab

@@ -40,6 +40,8 @@ async function main(): Promise<void> {
   const storage = new Storage(path.join(root, "storage"))
   const bus = new Bus()
   const config = new Config(storage, bus, path.join(root, "credentials.json"))
+  // A stored config, so the checks run at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   const permissions = new Permissions(bus, config)
 

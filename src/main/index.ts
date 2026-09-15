@@ -32,6 +32,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
 import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
+import { registerComposerInput } from "./composer-input"
 import { saveCopy } from "./save-copy"
 import {
   DISPLAY_SERVER_FILE,
@@ -41,8 +42,7 @@ import {
   readDisplayServerFile,
   type DisplayServerPref,
 } from "./display-server"
-import { registerMediaEmbeds, watchPlayerFrames } from "./media-embed"
-import { embedFrameMayNotGo, embedPopupRefused, isEmbedAddress } from "@shared/media-platform"
+import { registerMediaEmbeds } from "./media-embed"
 import {
   act,
   clearBrowsingData,
@@ -511,13 +511,10 @@ function createWindow(show = true): BrowserWindow {
 
   // Anything the page tries to open externally goes to the real browser, never
   // into an Electron window with preload access.
-  window.webContents.setWindowOpenHandler(({ url, referrer }) => {
-    // bilibili's player opens bilibili itself when its video is clicked; MiMo refuses that, and so does this.
-    if (embedPopupRefused(referrer.url, url)) return { action: "deny" }
+  window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://") || url.startsWith("http://")) void shell.openExternal(url)
     return { action: "deny" }
   })
-  watchPlayerFrames(window)
 
   const devServer = process.env.ELECTRON_RENDERER_URL
   const rendererPage = path.join(here, "../renderer/index.html")
@@ -543,8 +540,6 @@ function createWindow(show = true): BrowserWindow {
   })
   window.webContents.on("will-frame-navigate", (event) => {
     if (event.isMainFrame && !isAppPage(event.url)) event.preventDefault()
-    // A reply's video player stays a player page: it may not take its frame anywhere else.
-    else if (!event.isMainFrame && event.frame && embedFrameMayNotGo(event.frame.url, event.url)) event.preventDefault()
   })
 
   if (devServer) void window.loadURL(devServer)
@@ -971,6 +966,7 @@ app.whenReady().then(async () => {
 
   // MiMo's Office tab: document bytes, watching, versions, legacy conversion.
   registerOffice(ipcMain, app.getPath("userData"))
+  registerComposerInput(ipcMain, app.getPath("userData"))
 
   /* Which open-with apps are installed, for the settings row and the open-location menu. */
   ipcMain.handle("mcode:installed-apps", () => installedOpenApps(process.platform))
@@ -1124,17 +1120,12 @@ app.whenReady().then(async () => {
    * button for it that a reader presses; everything else - the camera, the
    * screen, the location, notifications through the web API - is refused,
    * because nothing in this app has a reason to want them.
-   *
-   * A reply's video player is someone else's page inside this window, so it
-   * gets none of the window's own permissions - never the microphone - and
-   * only what a video needs of its own: full screen.
    */
-  session.defaultSession.setPermissionRequestHandler((_contents, permission, done, details) => {
-    if (isEmbedAddress(details.requestingUrl)) done(permission === "fullscreen")
-    else done(permission === "media")
+  session.defaultSession.setPermissionRequestHandler((_contents, permission, done) => {
+    done(permission === "media")
   })
 
-  session.defaultSession.setPermissionCheckHandler((_contents, permission, requestingOrigin) => permission === "media" && !isEmbedAddress(requestingOrigin))
+  session.defaultSession.setPermissionCheckHandler((_contents, permission) => permission === "media")
 
   registerMediaEmbeds()
 

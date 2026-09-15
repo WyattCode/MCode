@@ -2,6 +2,8 @@ import type { Permissions } from "../permission"
 import type { Questions } from "./question"
 import type { SessionChat } from "../session/chat"
 import type { ToolOutputs } from "./truncate"
+import type { SkillInfo } from "../skill"
+import type { TaskItem } from "@shared/protocol"
 
 export interface ToolContext {
   sessionID: string
@@ -40,7 +42,7 @@ export interface ToolContext {
    */
   shell?: string
   /**
-   * subagents: the task tool's actions, bound to this call's conversation.
+   * subagents: the actor tool's actions, bound to this call's conversation.
    * Absent inside a subagent, which cannot start or manage subagents of its own.
    */
   subagents?: SubagentControl
@@ -48,6 +50,15 @@ export interface ToolContext {
   chat?: SessionChat
   /** Where outputs the shared cap cut are saved; a tool may read those wherever the project is. */
   toolOutputs?: ToolOutputs
+  /** skills: every skill this conversation can reach, read fresh from disk. */
+  skills?: () => Promise<SkillInfo[]>
+  /** tasks: the conversation's task registry; a subagent's is its parent's. */
+  tasks?: TaskControl
+}
+
+/** tasks: one change to a conversation's task list at a time, by whoever is asking. */
+export interface TaskControl {
+  update<T>(change: (list: TaskItem[], who: { owner: string; subagent: boolean }) => { list: TaskItem[]; result: T }): Promise<T>
 }
 
 /** subagents: what run and spawn ask for. */
@@ -57,6 +68,12 @@ export interface SubagentSpec {
   type: "general" | "explore"
   /** `provider/model`, or a model id only one configured provider has; absent takes the parent's. */
   model?: string
+  /** The task registry's task it works on (T1, T2.1). */
+  taskID?: string
+  /** The slash command that started the work. */
+  command?: string
+  /** A JSON Schema its result must match; it then answers with StructuredOutput instead of prose. */
+  outputSchema?: Record<string, unknown>
 }
 
 /** subagents: MiMo's actor actions, as the runner carries them out for one conversation. */

@@ -3,15 +3,16 @@ import { ReadTool } from "./read"
 import { EditTool, WriteTool } from "./edit"
 import { GlobTool, GrepTool, ListTool } from "./search"
 import { BashTool } from "./bash"
-import { TodoWriteTool } from "./task"
+import { TaskTool } from "./task"
 import { WebFetchTool } from "./webfetch"
 import { QuestionTool } from "./question"
 import { InvalidTool } from "./invalid"
-import { TaskTool } from "./subagent"
+import { ActorTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
 import { NotebookEditTool } from "./notebook"
+import { SkillSearchTool, SkillTool } from "./skill"
 
 /**
  * The tool surface offered to the model.
@@ -38,22 +39,26 @@ export const TOOLS: ToolDefinition[] = [
   GlobTool,
   GrepTool,
   BashTool,
-  TodoWriteTool,
+  // tasks: MiMo's task registry, where todowrite used to be.
+  TaskTool,
   WebFetchTool,
   // subagents: last, so the prefix every earlier request cached stays as it was.
-  TaskTool,
+  ActorTool,
   // MiMo's built-in desktop tools: appended, for the same reason.
   PdfLocateTool,
   PresentFilesTool,
   GetDesktopSettingsTool,
   SetDesktopSettingTool,
+  // MiMo's notebook_edit: after the window tools, before the session chat tools and skills that came after it.
+  NotebookEditTool,
   // session chat: appended after those for the same reason.
   ContactsTool,
   TalkToSessionTool,
   CreateSessionTool,
   UpdateSessionTool,
-  // MiMo's notebook_edit: appended last, for the same reason.
-  NotebookEditTool,
+  // skills: appended, in MiMo's order (search, then load), for the same reason.
+  SkillSearchTool,
+  SkillTool,
 ]
 
 /**
@@ -85,7 +90,7 @@ export function findTool(name: string): ToolDefinition | undefined {
 }
 
 /*
- * Tools that only ever read. `task` is here because it does nothing to files
+ * Tools that only ever read. `actor` is here because it does nothing to files
  * itself: its subagent's own calls are recorded into the parent's turn.
  */
 const READS = new Set([
@@ -93,11 +98,13 @@ const READS = new Set([
   "list",
   "glob",
   "grep",
-  "todowrite",
+  "task",
   "webfetch",
   "question",
   "invalid",
-  "task",
+  "actor",
+  // subagents: a subagent handing back its structured result.
+  "StructuredOutput",
   // They act on the window or the app's settings, never on the project's files.
   "pdf_locate",
   "present_files",
@@ -108,6 +115,9 @@ const READS = new Set([
   "talk_to_session",
   "create_session",
   "update_session",
+  // skills: loading instructions reads files, and changes none.
+  "skill",
+  "skill_search",
 ])
 
 /**

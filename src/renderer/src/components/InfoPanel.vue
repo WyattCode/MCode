@@ -49,7 +49,7 @@ const card = ref<HTMLElement>()
 const directory = computed(() => app.current?.directory ?? "")
 const sessionId = computed(() => app.currentID ?? undefined)
 
-const tasks = computed(() => infoTasks(app.messages, app.busy))
+const tasks = computed(() => infoTasks(app.current?.tasks, app.messages, app.busy))
 const tasksDone = computed(() => tasks.value.filter((task) => task.status === "done").length)
 const artifacts = computed(() => sessionArtifacts(app.messages, directory.value))
 const groups = computed(() => artifactGroups(artifacts.value))
@@ -242,7 +242,7 @@ onBeforeUnmount(() => {
             v-for="task in tasks"
             :key="task.id"
             class="task"
-            :class="[task.status, { settled: task.status === 'done' || task.status === 'abandoned' }]"
+            :class="[task.status, { settled: task.status === 'done' }]"
             :style="task.depth ? { paddingInlineStart: `${task.depth * 16}px` } : undefined"
             :title="t(`info.status.${task.status}`)"
             :data-info-task="task.status"
@@ -261,10 +261,6 @@ onBeforeUnmount(() => {
             <svg v-else-if="task.status === 'done'" class="mark" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" />
               <path d="M5.3 8.2 7.2 10l3.5-3.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-            <svg v-else-if="task.status === 'abandoned'" class="mark" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" />
-              <path d="M6 6l4 4M10 6l-4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
             </svg>
             <svg v-else class="mark" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" />

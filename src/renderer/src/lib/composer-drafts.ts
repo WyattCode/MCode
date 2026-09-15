@@ -1,39 +1,106 @@
 import { ref } from "vue"
-import type { Attachment } from "@shared/protocol"
+import type { Annotation } from "@shared/protocol"
+import { draftFileOf, emptyDraftFile, isEmptyDraftFile, readDraftFile, withLegacyHome, type DraftFile, type SavedDraft } from "./draft-file"
+
+export type { SavedDraft }
 
 /**
- * MiMo keeps a draft per conversation - the words, the files, the skill chips -
- * and puts it back on returning. Held for the life of the window, outside any
- * one composer, because the box is remounted as it moves between the hero, the
- * dock and the floating chat. The home screen's words are also kept on disk.
+ * MiMo keeps a draft per conversation - the words, the files, the skill chips
+ * and the annotations waiting - and puts it back on returning, and on the next
+ * launch. Held outside any one composer, because the box is remounted as it
+ * moves between the hero, the dock and the floating chat. Written through the
+ * main process 300ms after a change and once more as the page goes.
  */
-export interface SavedDraft {
-  text: string
-  attachments: Attachment[]
-  mentioned: string[]
-  skills: string[]
-}
-
 export const drafts = new Map<string, SavedDraft>()
 
 /* Whether the home screen's box holds words, files or skill chips; MiMo's 已经是新任务了 reads it. */
 export const homeFilled = ref(false)
 
-const HOME_KEY = "composer.draft.home"
+export const DRAFT_SAVE_DELAY = 300
 
-export function loadHomeDraft(): string {
+/* Where earlier builds kept the home screen's words; folded into the file once, then removed. */
+const LEGACY_HOME_KEY = "composer.draft.home"
+
+interface DraftSources {
+  annotations: () => Readonly<Record<string, readonly Annotation[]>>
+  current: () => string | undefined
+}
+
+let sources: DraftSources = { annotations: () => ({}), current: () => undefined }
+/* A load that failed must not be answered by writing an empty state over the file. */
+let loadFailed = false
+let legacyPending = false
+let timer: ReturnType<typeof setTimeout> | undefined
+
+/** Reads the saved input, once, before any composer mounts; answers everything restored. */
+export function loadDrafts(): DraftFile {
+  let file: DraftFile | undefined
   try {
-    return localStorage.getItem(HOME_KEY) ?? ""
+    const read = window.mcode.composerInputLoad()
+    if (!read.ok) throw new Error("unreadable")
+    file = read.text ? readDraftFile(read.text) : undefined
   } catch {
-    return ""
+    loadFailed = true
+  }
+  let legacy = ""
+  try {
+    legacy = localStorage.getItem(LEGACY_HOME_KEY) ?? ""
+  } catch {
+    // No storage: nothing older to bring along.
+  }
+  const restored = withLegacyHome(file ?? emptyDraftFile(), legacy)
+  drafts.clear()
+  for (const [key, draft] of Object.entries(restored.drafts)) drafts.set(key, draft)
+  if (legacy) {
+    legacyPending = true
+    scheduleDraftSave()
+  }
+  return restored
+}
+
+/** What else is saved with the drafts: the annotations waiting, and the box on screen. */
+export function bindDraftSources(next: DraftSources): void {
+  sources = next
+}
+
+function snapshot(): DraftFile | undefined {
+  const file = draftFileOf(drafts, sources.annotations(), sources.current())
+  return loadFailed && isEmptyDraftFile(file) ? undefined : file
+}
+
+/* The older home key goes only once the file holding its words is safely written. */
+function written(ok: boolean) {
+  if (!ok || !legacyPending) return
+  legacyPending = false
+  try {
+    localStorage.removeItem(LEGACY_HOME_KEY)
+  } catch {
+    // Left behind; the file already has the words, so it is never read again.
   }
 }
 
-export function keepHomeDraft(text: string): void {
+export function scheduleDraftSave(): void {
+  clearTimeout(timer)
+  timer = setTimeout(() => {
+    timer = undefined
+    const file = snapshot()
+    if (!file) return
+    void window.mcode
+      .composerInputSave(JSON.stringify(file))
+      .then(written)
+      .catch(() => undefined)
+  }, DRAFT_SAVE_DELAY)
+}
+
+/** The page is going: what is waiting is written before it does. */
+export function flushDrafts(): void {
+  clearTimeout(timer)
+  timer = undefined
+  const file = snapshot()
+  if (!file) return
   try {
-    if (text) localStorage.setItem(HOME_KEY, text)
-    else localStorage.removeItem(HOME_KEY)
+    written(window.mcode.composerInputFlush(JSON.stringify(file)))
   } catch {
-    // Kept for this window only.
+    // The window is already gone; the last scheduled write stands.
   }
 }

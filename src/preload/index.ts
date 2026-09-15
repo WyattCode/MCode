@@ -40,6 +40,12 @@ const api = {
   saveText: (suggested: string, text: string): Promise<string | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
 
+  /** MiMo's saved composer input: read once, synchronously, as the window starts. */
+  composerInputLoad: (): { ok: boolean; text?: string } => ipcRenderer.sendSync("mcode:composer-input-load"),
+  composerInputSave: (text: string): Promise<boolean> => ipcRenderer.invoke("mcode:composer-input-save", text),
+  /** The same write, finished before the page goes away. */
+  composerInputFlush: (text: string): boolean => ipcRenderer.sendSync("mcode:composer-input-flush", text),
+
   /** Menu bar labels; the translations live here, the menu is built there. */
   menuLabels: (labels: Record<string, string>): void => ipcRenderer.send("mcode:menu-labels", labels),
 
@@ -236,14 +242,6 @@ const api = {
   browserClearData: (): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-data"),
   /** MiMo's video cards: what each platform says about a reply's links, asked for by the main process; null where there is no card. */
   mediaEnrich: (urls: string[]): Promise<unknown[]> => ipcRenderer.invoke("mcode:media-enrich", urls),
-  /** An inline player's speed: read without a rate, set with one; null while the player has no video. */
-  mediaSpeed: (embedUrl: string, rate?: number): Promise<number | null> => ipcRenderer.invoke("mcode:media-speed", embedUrl, rate ?? null),
-  /** A player frame that failed to load, with Chromium's error code. */
-  onMediaFailed: (handler: (failure: { url: string; code: number; description: string }) => void): (() => void) => {
-    const listener = (_event: unknown, failure: { url: string; code: number; description: string }) => handler(failure)
-    ipcRenderer.on("mcode:media-failed", listener)
-    return () => ipcRenderer.off("mcode:media-failed", listener)
-  },
   /** A document's bytes, or that they have not changed since `ifUnchanged`. */
   readFileBytes: (
     root: string,

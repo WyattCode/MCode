@@ -1,4 +1,5 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
+import { migrateChime } from "@shared/chime"
 import { normalizeChord, retireKeybinds } from "@shared/chord"
 import fs from "node:fs/promises"
 import { watch as watchFiles, type FSWatcher } from "node:fs"
@@ -95,7 +96,7 @@ function defaults(): AppConfig {
     servers: [],
     defaultServer: "",
     updateFeed: "",
-    taskDoneSound: "settle",
+    taskDoneSound: "bloom",
     spineSound: true,
     projectRoot: "",
     soundPermission: false,
@@ -120,7 +121,8 @@ function defaults(): AppConfig {
     projectUsed: {},
     projectIcons: {},
     projectColors: {},
-    effort: "high",
+    // MiMo's 中: one app-wide level, medium until someone picks another.
+    effort: "medium",
     agent: "build",
     staged: false,
     openTabs: [],
@@ -176,6 +178,11 @@ function defaults(): AppConfig {
      */
     enabledModels: [],
   }
+}
+
+/** MiMo's defaults when nothing is stored: the middle level, and the full access switch on. */
+export function firstInstall(): Pick<AppConfig, "accessLevel" | "allowFullAccess"> {
+  return { accessLevel: "auto", allowFullAccess: true }
 }
 
 /**
@@ -394,6 +401,14 @@ export class Config {
       this.current.keybinds = binds
     })
 
+    /*
+     * Round five takes MiMo's eight chimes. A figure chosen from the old five
+     * moves to its nearest new one; off stays off.
+     */
+    once("chime-r5", () => {
+      this.current.taskDoneSound = migrateChime(this.current.taskDoneSound)
+    })
+
     // Round five dropped the chords MiMo lacks; see `retireKeybinds` for what a saved binding keeps.
     once("keybind-retired-r5", () => {
       this.current.keybinds = retireKeybinds(this.current.keybinds ?? {})
@@ -418,6 +433,13 @@ export class Config {
   async load(): Promise<void> {
     const stored = await this.storage.read<Partial<AppConfig>>("config")
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    /*
+     * A first install - no config on disk at all - starts where MiMo's does:
+     * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
+     * an absent file counts: a stored config that lacks the fields was written
+     * under the old defaults and keeps meaning them.
+     */
+    if (stored === undefined) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
     if (this.migrate()) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}

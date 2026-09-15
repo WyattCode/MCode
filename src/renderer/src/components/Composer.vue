@@ -6,12 +6,13 @@ import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, Model
 import { interruptedTurn } from "@shared/resume"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
-import { drafts, homeFilled, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
+import { drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
-import { PERMISSION_KINDS } from "@shared/protocol"
 import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
+import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
@@ -866,14 +867,10 @@ function removeSkill(name: string) {
   }, 200)
 }
 
-/* The chips' skills spelled out ahead of the message, the way a skill command is expanded when typed. */
+/* MiMo's chips: each chosen skill is named as `/name` ahead of the message, and the server loads what a message names. */
 function withSkills(message: string, chosen: string[]): string {
-  const expanded = chosen
-    .map((name) => serverCommand(name))
-    .filter((command): command is CommandInfo => Boolean(command?.template))
-    .map((command) => expandTemplate(command.template, "").trim())
-    .filter(Boolean)
-  return [...expanded, message].filter((part) => part.trim()).join("\n\n")
+  if (!chosen.length) return message
+  return [chosen.map((name) => `/${name}`).join(" "), message].filter((part) => part.trim()).join(" ")
 }
 
 /* The plus menu's skills submenu: MiMo's search box over the project's skills, beside its row. */
@@ -902,6 +899,9 @@ async function openSkillMenu(event: Event) {
   skillPlace.value = besideRow(row, panel.offsetWidth, panel.offsetHeight)
   panel.querySelector("input")?.focus()
 }
+
+/* Set while attached audio is being read before a send, so a second Enter does not start another. */
+let probingAudio = false
 
 async function submit() {
   const value = text.value.trim()
@@ -943,6 +943,27 @@ async function submit() {
   if (compactingHere.value) {
     notify(t("composer.compact.busy"))
     return
+  }
+  // MiMo reads each audio file first: one it cannot read, or one past its limit, stops the send and keeps the draft.
+  if (probingAudio) return
+  const audio = attachments.value.filter((file) => isAudioFile(file.path))
+  if (audio.length) {
+    probingAudio = true
+    try {
+      for (const file of audio) {
+        const verdict = audioVerdict(await probeAudio(file))
+        if (verdict === "unsupported") {
+          notifyFailure(t("composer.audioFormatUnsupported"))
+          return
+        }
+        if (verdict === "tooLong") {
+          notifyFailure(t("composer.audioTooLong", { minutes: limitMinutes() }))
+          return
+        }
+      }
+    } finally {
+      probingAudio = false
+    }
   }
   historyIndex.value = null
   const sent = attachments.value
@@ -993,13 +1014,18 @@ async function submit() {
   }
 
   const named = await mentionAttachments(value, carried, target)
+  const filled = await fillCommand(value, target)
+  // A file the command names that was also mentioned goes once.
+  const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
 
   // subagents: a command marked subtask is handed to a subagent in this conversation instead of sent as a prompt.
-  const subtask = props.side ? undefined : subtaskOf(value)
+  const subtask = props.side || !filled ? undefined : subtaskOf(filled)
   // A rejected message should not cost the user what they typed, or gathered.
-  const accepted = subtask
-    ? await app.subtask(value, subtask)
-    : await app.send(withSkills(outgoing(value), chips), [...sent, ...named], target, pointed)
+  const accepted = !filled
+    ? false
+    : subtask
+      ? await app.subtask(value, subtask)
+      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -1051,43 +1077,72 @@ async function compactFromBox(line: string) {
 /**
  * What actually goes to the model when the draft is a command line.
  *
- * The reference sends `session.command` and lets its server look the name up
- * and fill the template in (main-8t-QUXax.js @4461049 into
- * `SessionPrompt.command` @32957943); this app has no such request, so the
- * template travels with the command list and is filled in here. The visible
- * result is the same either way: the transcript shows the expanded prompt,
- * because the reference's server puts the template's own parts on the user
- * message rather than the slash line.
+ * MiMo sends `session.command` and its engine fills the template in. Here a
+ * project or global command is filled in by the backend the same way
+ * (`command.expand`): arguments, then its ``!`cmd` `` placeholders run in the
+ * conversation's folder, then the files it names with `@` come back to be
+ * attached. An MCP prompt is filled in here from the listed template and runs
+ * nothing; a skill's `/name` line goes as typed, for the server to load it.
+ * The transcript shows the filled-in prompt, as MiMo's does.
  *
  * NOT carried across, because `session.prompt` has nowhere to put them: a
- * command's `agent` and `model`. The reference runs the turn as whichever
- * agent and model the command names; here it runs as whatever the session is
- * already set to. A command marked `subtask` does not come through here at all:
- * see `subtaskOf`.
+ * command's `agent` and `model`. MiMo runs the turn as whichever agent and
+ * model the command names; here it runs as whatever the session is already set
+ * to.
+ *
+ * Undefined when the backend could not fill the command in; the failure has
+ * been said and the draft should come back.
  */
+async function fillCommand(value: string, to?: string): Promise<{ text: string; attachments: Attachment[]; command?: CommandInfo } | undefined> {
+  const line = splitCommandLine(value)
+  const command = line && serverCommand(line.name)
+  if (!line || !command || command.source === "skill") return { text: value, attachments: [] }
+  const root = commandRoot(to)
+  if (command.source === "mcp" || !root || !app.client) {
+    const expanded = expandTemplate(command.template, line.args)
+    // An MCP prompt whose fetch failed has no template. Sending nothing would be
+    // refused by the store and the draft would bounce back with no explanation,
+    // so the line goes as it was typed instead.
+    return { text: expanded.trim() ? expanded : value, attachments: [], command }
+  }
+  let filled: { prompt: string; files: { name: string; path: string }[] }
+  try {
+    filled = await app.client.request({ type: "command.expand", directory: root, name: line.name, arguments: line.args })
+  } catch (err) {
+    notifyFailure(t("common.requestFailed"), err instanceof Error ? err.message : String(err))
+    return undefined
+  }
+  const attachments: Attachment[] = []
+  for (const file of filled.files) {
+    try {
+      const attachment = mentionAttachment(file.name, await app.client.request({ type: "file.read", path: file.path }))
+      if (attachment) attachments.push(attachment)
+      else notifyFailure(t("attach.unreadable"), file.name)
+    } catch {
+      notifyFailure(t("attach.unreadable"), file.name)
+    }
+  }
+  return { text: filled.prompt.trim() ? filled.prompt : value, attachments, command }
+}
+
 /**
  * subagents: a command marked `subtask`, as MiMo runs one - its filled-in
  * template goes to a subagent, named by the command's description, and the line
  * as typed stays the user's message. Undefined for anything else.
  */
-function subtaskOf(value: string): { description: string; prompt: string } | undefined {
-  const line = splitCommandLine(value)
-  const command = line && serverCommand(line.name)
-  if (!line || !command?.subtask) return undefined
-  const prompt = expandTemplate(command.template, line.args).trim()
+function subtaskOf(filled: { text: string; command?: CommandInfo }): { description: string; prompt: string } | undefined {
+  const command = filled.command
+  if (!command?.subtask) return undefined
+  const prompt = filled.text.trim()
   if (!prompt) return undefined
   return { description: command.description?.trim() || `/${command.name}`, prompt }
 }
 
-function outgoing(value: string): string {
-  const line = splitCommandLine(value)
-  const command = line && serverCommand(line.name)
-  if (!command) return value
-  const expanded = expandTemplate(command.template, line!.args)
-  // An MCP prompt whose fetch failed has no template. Sending nothing would be
-  // refused by the store and the draft would bounce back with no explanation,
-  // so the line goes as it was typed instead.
-  return expanded.trim() ? expanded : value
+/** The folder a message from this box is sent from: its conversation's, or the side chat's. */
+function commandRoot(to?: string): string | undefined {
+  // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
+  const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
+  return props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
 }
 
 /**
@@ -1100,9 +1155,7 @@ function outgoing(value: string): string {
  * not go with it.
  */
 async function mentionAttachments(value: string, chosen: Set<string>, to?: string): Promise<Attachment[]> {
-  // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
-  const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
-  const root = props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
+  const root = commandRoot(to)
   if (!root || !app.client || !chosen.size) return []
   const out: Attachment[] = []
   for (const path of mentionedIn(value)) {
@@ -1326,9 +1379,9 @@ function mention(path: string) {
 
 /*
  * MiMo's drafts: one per conversation (the side chat's apart), and the home
- * screen's own, which is also kept on disk. Switching conversations puts the
- * words, files, mentions and skill chips of the one being left aside and
- * brings back the other's.
+ * screen's own, all kept on disk (lib/composer-drafts). Switching
+ * conversations puts the words, files, mentions and skill chips of the one
+ * being left aside and brings back the other's.
  */
 const draftKey = computed(() =>
   props.fresh ? "home" : `${props.side ? "side" : "main"}:${sessionID.value ?? ""}`,
@@ -1351,7 +1404,7 @@ watch(
     historyIndex.value = null
     if (previous) saveDraft(previous)
     const kept = drafts.get(next)
-    text.value = kept?.text ?? (next === "home" ? loadHomeDraft() : "")
+    text.value = kept?.text ?? ""
     attachments.value = kept?.attachments ?? []
     mentioned.value = new Set(kept?.mentioned ?? [])
     skills.value = kept?.skills ?? []
@@ -1362,9 +1415,15 @@ watch(
   { immediate: true },
 )
 
-watch(text, (value) => {
-  if (props.fresh) keepHomeDraft(value)
-})
+/* Every change is kept with its box at once and written to disk shortly after, as MiMo's are. */
+watch(
+  [text, attachments, mentioned, skills],
+  () => {
+    saveDraft(draftKey.value)
+    scheduleDraftSave()
+  },
+  { deep: true },
+)
 
 watch(
   () => [text.value.trim(), attachments.value.length, skills.value.length] as const,
@@ -1408,13 +1467,13 @@ const SOURCE_BADGE: Record<CommandInfo["source"], string> = {
   skill: "composer.slashSkill",
 }
 
-/** The project's own commands, its MCP prompts and its skills, badged by source. */
+/** The project's own commands, its MCP prompts and its skills, badged by source; a skill shipped with the app says so. */
 const serverEntries = computed<SlashEntry[]>(() =>
   app.commands.map((entry) => ({
     id: `custom.${entry.name}`,
     trigger: entry.name,
     description: entry.description,
-    badge: t(SOURCE_BADGE[entry.source]),
+    badge: entry.source === "skill" && entry.builtin ? t("composer.slashBuiltinSkill") : t(SOURCE_BADGE[entry.source]),
   })),
 )
 
@@ -1822,24 +1881,19 @@ onBeforeUnmount(() => {
 
 /**
  * The access chip's three positions, as MiMo has them: the default, "approve
- * for me" in the middle, and full access. "full" is what is left once nothing
- * asks - a map with a deny in it still counts, since a deny never prompts
- * either. The middle one is carried by `accessLevel`, and the server applies
- * it on top of whatever the map says.
+ * for me" in the middle, and full access. On the home screen the chip is the
+ * app's default level; in a conversation it is that conversation's own, which
+ * MiMo keeps per conversation and a conversation without one takes from the
+ * default (@shared/access).
  */
-const ACCESS_CHOICES = ["ask", "auto", "full"] as const
-type Access = (typeof ACCESS_CHOICES)[number]
-
-const access = computed<Access>(() => {
-  if (app.config?.accessLevel === "auto") return "auto"
-  const map = app.config?.permissions
-  if (!map) return "ask"
-  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
-})
+const accessHere = computed(() => !props.fresh && !props.side && Boolean(sessionID.value))
+const access = computed<Access>(() =>
+  accessHere.value ? sessionAccess(session.value?.access, app.config) : defaultAccess(app.config),
+)
 
 /* Full access is offered only once settings allow it - or while it is already on, so it can be left. */
 const accessChoices = computed(() =>
-  ACCESS_CHOICES.filter((entry) => entry !== "full" || app.config?.allowFullAccess || access.value === "full"),
+  ACCESS_LEVELS.filter((entry) => entry !== "full" || app.config?.allowFullAccess || access.value === "full"),
 )
 
 /* Set while the question before full access is on screen. */
@@ -1932,8 +1986,22 @@ async function confirmFull() {
   await applyAccess("full")
 }
 
-/* The map arithmetic is shared with the settings switch, which drops full access the same way. */
+/*
+ * In a conversation the level is saved with that conversation alone. On the
+ * home screen it is the default, written into the config; that map arithmetic
+ * is shared with the settings switch, which drops full access the same way.
+ */
 async function applyAccess(next: Access) {
+  const id = sessionID.value
+  if (accessHere.value && id) {
+    try {
+      await app.setAccess(id, next)
+      app.announceAccess(next)
+    } catch (err) {
+      notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+    }
+    return
+  }
   const patch = app.config ? accessPatch(app.config, next) : undefined
   if (!patch) return
   try {
@@ -1978,7 +2046,7 @@ const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
  * model with levels always shows one.
  */
 const effortLevel = computed<Effort | undefined>(() =>
-  clampEffort(variants.value, session.value?.effort ?? app.config?.effort),
+  clampEffort(variants.value, app.config?.effort),
 )
 
 const effortLabel = computed(() => {
@@ -1989,8 +2057,8 @@ const effortLabel = computed(() => {
 
 /*
  * A level chosen in a model's submenu: that model and that level. On the home
- * screen both are the defaults the next task starts with, as MiMo's global
- * level is; in a conversation they are the conversation's.
+ * screen the model is the default the next task starts with; in a conversation
+ * it is the conversation's. The level is MiMo's global one either way.
  */
 async function chooseModelEffort(provider: string, model: string, level: Effort) {
   menu.value = undefined
@@ -2060,15 +2128,14 @@ const rowsOf = (group: { provider: { id: string }; models: ModelInfo[] }): Model
 
 /*
  * MiMo's split: its own models at the top level, everyone else's behind "more
- * models" under a heading per vendor, and custom models in a group of their own
- * below that. Here the first connected built-in provider stands where MiMo's
- * own models do.
+ * models" in one flat list, and custom models in a group of their own below
+ * that. Here the first connected built-in provider stands where MiMo's own
+ * models do.
  */
 const builtinGroups = computed(() => groups.value.filter((group) => !group.provider.custom))
 const primaryGroup = computed(() => builtinGroups.value[0])
-const moreGroups = computed(() => builtinGroups.value.slice(1))
 const primaryRows = computed(() => (primaryGroup.value ? rowsOf(primaryGroup.value) : []))
-const moreRows = computed(() => moreGroups.value.flatMap(rowsOf))
+const moreRows = computed(() => builtinGroups.value.slice(1).flatMap(rowsOf))
 const customRows = computed(() => groups.value.filter((group) => group.provider.custom).flatMap(rowsOf))
 
 function closeModelSubs() {
@@ -2330,11 +2397,8 @@ async function chooseModel(provider: string, model: string) {
     await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
   } else {
     await app.setModel({ provider, model }, sessionID.value)
-    if (!props.side) {
-      const inForce = session.value?.effort ?? app.config?.effort
-      const effort = clampEffort(variants, inForce)
-      if (effort && effort !== inForce) await app.setEffort(effort)
-    }
+    const effort = clampEffort(variants, app.config?.effort)
+    if (effort && effort !== app.config?.effort) await app.setEffort(effort)
   }
   app.announceModel(before, { provider, model })
 }
@@ -2974,25 +3038,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   :style="{ left: `${morePlace.left}px`, top: `${morePlace.top}px` }"
                 >
                   <div class="more-scroll" @scroll="moreSub = undefined">
-                    <div v-for="group in moreGroups" :key="group.provider.id" class="vendor">
-                      <div class="vendor-head">{{ group.provider.name }}</div>
-                      <ModelMenuRow
-                        v-for="row in rowsOf(group)"
-                        :key="row.key"
-                        :model="row.model"
-                        :row-key="row.key"
-                        :on="currentKey === row.key"
-                        :hot="subKey === row.key"
-                        :efforts="effortsFor(row.model)"
-                        :effort="effortLevel"
-                        :sub-open="moreSub === row.key"
-                        :effort-hot="moreSub === row.key ? levelOf(sub2Key) : undefined"
-                        @enter="hoverMore(row.key)"
-                        @choose="chooseModel(row.provider, row.model.id)"
-                        @effort="chooseModelEffort(row.provider, row.model.id, $event)"
-                        @effort-hover="sub2Key = effortKey($event)"
-                      />
-                    </div>
+                    <ModelMenuRow
+                      v-for="row in moreRows"
+                      :key="row.key"
+                      :model="row.model"
+                      :row-key="row.key"
+                      :on="currentKey === row.key"
+                      :hot="subKey === row.key"
+                      :efforts="effortsFor(row.model)"
+                      :effort="effortLevel"
+                      :sub-open="moreSub === row.key"
+                      :effort-hot="moreSub === row.key ? levelOf(sub2Key) : undefined"
+                      @enter="hoverMore(row.key)"
+                      @choose="chooseModel(row.provider, row.model.id)"
+                      @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                      @effort-hover="sub2Key = effortKey($event)"
+                    />
                   </div>
                 </div>
               </div>
@@ -4569,32 +4630,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   animation: sub-in 0.15s ease-out;
 }
 
+/* One flat list, 1 apart, as MiMo's 更多模型 now draws it. */
 .more-scroll {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 1px;
   min-height: 0;
   padding: 5px;
   overflow-y: auto;
-}
-
-.vendor {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.vendor + .vendor {
-  margin-top: 4px;
-}
-
-/* MiMo's vendor heading: 11/500 at 0.02em, 8 12 4, muted and not selectable. */
-.vendor-head {
-  padding: 8px 12px 4px;
-  color: var(--text-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 16px;
-  letter-spacing: 0.02em;
-  user-select: none;
 }
 
 /* MiMo's level on the chip, 「· 高」: the level at 0.62, the dot at 0.7 of that and 5 before the level. */

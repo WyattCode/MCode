@@ -130,7 +130,6 @@ export class SessionStore {
     parentMessageID?: string
     parentCallID?: string
     subagent?: SessionInfo["subagent"]
-    effort?: SessionInfo["effort"]
   }): Promise<SessionInfo> {
     const now = Date.now()
     const session: SessionInfo = {
@@ -148,7 +147,6 @@ export class SessionStore {
       ...(input.parentMessageID ? { parentMessageID: input.parentMessageID } : {}),
       ...(input.parentCallID ? { parentCallID: input.parentCallID } : {}),
       ...(input.subagent ? { subagent: input.subagent } : {}),
-      ...(input.effort ? { effort: input.effort } : {}),
       created: now,
       updated: now,
       usage: emptyUsage(),
@@ -185,6 +183,27 @@ export class SessionStore {
     await this.storage.write(this.infoKey(sessionID), next)
     this.bus.publish({ type: "session.updated", session: next })
     return next
+  }
+
+  /*
+   * MiMo's per-conversation access level. Written without touching `updated`:
+   * choosing a level is not activity, and must not move the conversation up
+   * the side column.
+   */
+  async setAccess(sessionID: string, access: SessionInfo["access"]): Promise<SessionInfo> {
+    const session = await this.require(sessionID)
+    const next: SessionInfo = { ...session, access }
+    if (!access) delete next.access
+    await this.storage.write(this.infoKey(sessionID), next)
+    this.bus.publish({ type: "session.updated", session: next })
+    return next
+  }
+
+  /** Turning off full access puts every conversation that was at it back on the default, as MiMo does. */
+  async dropFullAccess(): Promise<void> {
+    for (const session of await this.list()) {
+      if (session.access === "full") await this.setAccess(session.id, undefined)
+    }
   }
 
   /** Folds one assistant turn's usage into the session running total. */

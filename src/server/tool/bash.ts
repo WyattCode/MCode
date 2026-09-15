@@ -147,7 +147,7 @@ const REFUSED: { pattern: RegExp; reason: string }[] = [
  */
 const POWERSHELL_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
 
-export function shellFor(chosen?: string): { command: string; args: (script: string) => string[]; powershell: boolean } {
+export function shell(chosen?: string): { command: string; args: (script: string) => string[]; powershell: boolean } {
   const name = (chosen ?? "").trim()
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? ""
 
@@ -250,7 +250,7 @@ export const BashTool: ToolDefinition = {
     const description = typeof input.description === "string" ? input.description : ""
 
     const cwd = input.workdir ? await resolvePath(context, String(input.workdir)) : context.directory
-    const { command: bin, args, powershell } = shellFor(context.shell)
+    const { command: bin, args, powershell } = shell(context.shell)
 
     /*
      * MiMo's order: folders outside the project that the command's file

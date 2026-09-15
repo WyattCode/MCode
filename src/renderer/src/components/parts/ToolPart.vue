@@ -26,7 +26,7 @@ import {
   titleIsLossy,
   toolIcon,
 } from "../../lib/tool-meta"
-import { launches, taskAction, taskTarget } from "@shared/subagent"
+import { actorAction, actorTarget, launches } from "@shared/subagent"
 
 /**
  * One tool call as MiMo's step list draws it.
@@ -147,10 +147,10 @@ function toggle() {
  */
 const pill = computed(() => isPill(props.part))
 const avatarSeed = computed(() => {
-  if (props.part.name !== "task") return undefined
-  const action = taskAction(props.part.input)
+  if (props.part.name !== "actor") return undefined
+  const action = actorAction(props.part.input)
   if (launches(action)) return childFor(props.part.callID, app.subagentSessions)?.subagent?.id ?? props.part.callID
-  return taskTarget(props.part.input) || undefined
+  return actorTarget(props.part.input) || undefined
 })
 </script>
 

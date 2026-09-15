@@ -8,6 +8,7 @@ import ProviderIcon from "./ProviderIcon.vue"
 import { groupProviders, waysFor, type Group } from "../lib/connect"
 import type { ProviderStatus } from "@shared/protocol"
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
+import { wordMatch } from "../lib/word-match"
 import { folderName, projectName } from "../lib/project"
 import { listedProjects } from "@shared/projects"
 import SelectMenu from "./SelectMenu.vue"
@@ -808,7 +809,7 @@ const NAV_LABELS: Record<Section, string> = {
   updates: "set.nav.updates",
 }
 
-/* MiMo matches a page by its name or by the words listed for it, so 托盘 finds 常规. */
+/* MiMo matches a page by its name or by the words listed for it, so 托盘 finds 常规 (lib/word-match.ts). */
 const NAV_KEYWORDS: Record<Section, string> = {
   general: "set.keywords.general",
   usage: "set.keywords.usage",
@@ -825,12 +826,8 @@ const NAV_KEYWORDS: Record<Section, string> = {
 }
 
 function navShows(entry: Section): boolean {
-  const needle = navQuery.value.trim().toLocaleLowerCase()
-  if (!needle) return true
-  return (
-    t(NAV_LABELS[entry]).toLocaleLowerCase().includes(needle) ||
-    t(NAV_KEYWORDS[entry]).toLocaleLowerCase().includes(needle)
-  )
+  const query = navQuery.value
+  return wordMatch(t(NAV_LABELS[entry]), query) || wordMatch(t(NAV_KEYWORDS[entry]), query)
 }
 
 const navMatches = computed(() => (Object.keys(NAV_LABELS) as Section[]).filter(navShows))
@@ -1324,11 +1321,14 @@ async function resetProjectRoot() {
 
 const CHIME_LABEL: Record<Chime, string> = {
   off: "set.chimeOff",
-  settle: "set.chimeSettle",
-  triple: "set.chimeTriple",
-  sweep: "set.chimeSweep",
-  duet: "set.chimeDuet",
-  zen: "set.chimeZen",
+  rhodes: "set.chimeRhodes",
+  handpan: "set.chimeHandpan",
+  vibes: "set.chimeVibes",
+  bloom: "set.chimeBloom",
+  harp: "set.chimeHarp",
+  kalimba: "set.chimeKalimba",
+  bowl: "set.chimeBowl",
+  koto: "set.chimeKoto",
 }
 
 const chimeOptions = computed(() =>

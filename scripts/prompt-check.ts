@@ -108,7 +108,7 @@ console.log("\nReasoning steps, per model")
   check("cycling a model with no steps does nothing", cycleVariant([], "low"), undefined)
   check("from unset, the first step", cycleVariant(["low", "medium", "high"], undefined), "low")
   check("then the next", cycleVariant(["low", "medium", "high"], "low"), "medium")
-  check("off the end returns to the default", cycleVariant(["low", "medium", "high"], "high"), undefined)
+  check("off the end wraps to the first, the level being app-wide", cycleVariant(["low", "medium", "high"], "high"), "low")
   check("a step this model lacks starts again", cycleVariant(["low", "medium", "high"], "xhigh"), "low")
 }
 

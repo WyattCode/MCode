@@ -1,3 +1,4 @@
+import path from "node:path"
 import type {
   AgentName,
   AssistantMessage,
@@ -24,6 +25,7 @@ import type { CommandRisk } from "../command-risk"
 import { PermissionDenied, REVIEW_TIMEOUT_MS } from "../permission"
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
+import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
 import { findTool, reachOf, toolsFor } from "../tool/registry"
 import { Questions } from "../tool/question"
 import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
@@ -53,7 +55,10 @@ import { systemPrompt, titleFrom } from "./prompt"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
-import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, subagentOutput, type SubagentTimers } from "@shared/subagent"
+import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, statusHeader, subagentOutput, type SubagentTimers } from "@shared/subagent"
+import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, structuredOutputTool, structuredResult } from "../tool/subagent"
+import { TASK_ID } from "../tool/task"
+import type { TaskControl } from "../tool/types"
 
 /*
  * What a resumed turn is told at its first step, in MCode's own words. Sent in
@@ -72,6 +77,23 @@ const SUBAGENT_NOTE = [
   "Another agent handed you one task. The first message is everything it told you; you cannot ask it anything.",
   "Do the task, then end with a final message that is a complete answer on its own: what you found or changed, with exact paths and names, and anything you could not do.",
   "That final message is all the other agent will read.",
+].join("\n")
+
+/* subagents: a general subagent opens its final message with a status and a summary, as MiMo's does, so the parent can read those first. */
+const RETURN_NOTE = [
+  "## Your final message",
+  "",
+  "Begin your final message with these two lines, with nothing before them:",
+  "**Status**: success, partial, failed or blocked",
+  "**Summary**: one sentence saying what happened",
+  "Then give what the task asked for. Where it applies, end with **Files changed**: the paths you changed, or (none).",
+].join("\n")
+
+/* subagents: a subagent asked for structured output returns it through its tool rather than in prose. */
+const STRUCTURED_NOTE = [
+  "## Your result",
+  "",
+  `This task wants its result as data. When the work is done, call ${STRUCTURED_OUTPUT} once with an object that matches its parameters. That object is your answer; do not repeat it in prose.`,
 ].join("\n")
 
 /* subagents: what the conversation's model is told, in the request only, after a `subtask` command's subagent has answered. */
@@ -181,7 +203,7 @@ const MAX_STEPS_PROMPT = [
  * turn while it is still running, and so an abort can land mid-tool.
  */
 /** Tools a subagent never gets: starting subagents, and talking to other conversations. */
-const SUBAGENT_WITHHELD = new Set(["task", "contacts", "talk_to_session", "create_session", "update_session"])
+const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -450,7 +472,8 @@ export class SessionRunner {
   }
 
   private contextFor(session: SessionInfo, messages: Message[]): Message[] {
-    messages = this.liveMessages(session, messages)
+    // subagents: a subagent call saved before the actor rename is sent as the actor call it is now.
+    messages = this.liveMessages(session, messages).map(readLegacyMessage)
 
     const mark = session.compacted
     if (!mark) return messages
@@ -1056,7 +1079,12 @@ export class SessionRunner {
      */
     this.turn(input.sessionID).messages.push(user.id)
 
-    const written = steering.written.then(() => this.store.saveMessage(user))
+    const written = steering.written.then(async () => {
+      // skills: what it names is loaded into it on the way to the transcript, in the order it was typed.
+      const reminders = await this.remindersFor(input)
+      if (reminders.length) user.reminders = reminders
+      return this.store.saveMessage(user)
+    })
     /*
      * A message that could not be written is taken off both lists again. Left
      * on the waiting one, the loop would keep asking for another step to
@@ -1072,6 +1100,19 @@ export class SessionRunner {
       if (answering && also >= 0) answering.splice(also, 1)
     })
     return written.then(() => user.id)
+  }
+
+  /** skills: every skill a conversation in this directory can reach, with the user's global ones from the app's data folder. */
+  private async skillsFor(directory: string): Promise<SkillInfo[]> {
+    return (await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents) })).skills
+  }
+
+  /** skills: what a user message carries for the model beyond its words - skills it names, and the hint its office documents bring. */
+  private async remindersFor(input: PromptInput, directory?: string): Promise<string[]> {
+    const attachments = input.attachments ?? []
+    if (!input.text.includes("/") && !attachments.length) return []
+    const where = directory ?? (await this.store.get(input.sessionID))?.directory
+    return where ? skillReminders(input.text, await this.skillsFor(where), attachments) : []
   }
 
   /** True while something the user typed is waiting to reach the model. */
@@ -1205,6 +1246,7 @@ export class SessionRunner {
       throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
     }
 
+    const reminders = await this.remindersFor(input, session.directory)
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
@@ -1215,6 +1257,8 @@ export class SessionRunner {
       ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       // session chat
       ...(input.inbox ? { inbox: input.inbox } : {}),
+      // skills
+      ...(reminders.length ? { reminders } : {}),
       time: { created: Date.now() },
     }
     await this.store.saveMessage(user)
@@ -1360,9 +1404,13 @@ export class SessionRunner {
       staged: session.staged,
       instructions: config.instructions,
       globalAgentsFile: this.globalAgents,
+      skills: await this.skillsFor(session.directory),
     })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
-    const system = session.parentID ? `${base}\n\n${SUBAGENT_NOTE}` : base
+    const outputSchema = session.subagent?.outputSchema
+    const system = session.parentID
+      ? [base, SUBAGENT_NOTE, ...(outputSchema ? [STRUCTURED_NOTE] : session.subagent?.type === "general" ? [RETURN_NOTE] : [])].join("\n\n")
+      : base
 
     /*
      * subagents: a `subtask` command's subagent works first, as a task call on
@@ -1375,7 +1423,7 @@ export class SessionRunner {
         role: "assistant",
         model: session.model,
         agent: session.agent,
-        effort: session.effort ?? config.effort,
+        effort: config.effort,
         parts: [],
         time: { created: Date.now() },
       }
@@ -1383,7 +1431,7 @@ export class SessionRunner {
         type: "tool",
         id: Identifier.part(),
         callID: `subtask_${Identifier.part()}`,
-        name: "task",
+        name: "actor",
         status: "pending",
         input: { description: lead.description, prompt: lead.prompt, subagent_type: lead.type },
         time: { created: Date.now() },
@@ -1425,10 +1473,11 @@ export class SessionRunner {
       await this.steering.get(sessionID)?.written
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
-      // session chat: a message from another conversation says so, in the request only.
-      const history = withChatHeaders(this.contextFor(session, stored))
+      // session chat: a message from another conversation says so, in the request only; skills: what a message loaded follows it.
+      const history = withSkillReminders(withChatHeaders(this.contextFor(session, stored)))
 
-      const effort = session.effort ?? config.effort
+      // MiMo's effort is one app-wide value, not a conversation's own.
+      const effort = config.effort
 
       const assistant: AssistantMessage = {
         id: Identifier.message(),
@@ -1497,9 +1546,15 @@ export class SessionRunner {
                   },
                 ]
               : history,
-        // subagents: a subagent is never handed the task tool, so it cannot start subagents of its own,
-        // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call.
-        tools: lastStep ? [] : this.tools(session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+        // subagents: a subagent is never handed the actor tool, so it cannot start subagents of its own,
+        // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call;
+        // one asked for structured output has the tool it returns it through.
+        tools: lastStep
+          ? []
+          : [
+              ...this.tools(session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+              ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
+            ],
         effort,
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,
@@ -1813,7 +1868,10 @@ export class SessionRunner {
      * nothing to correct from and looked in the transcript like the app had
      * broken.
      */
-    const lookup = (name: string) => findTool(name) ?? this.mcp?.tools().find((entry) => entry.name === name)
+    // subagents: a subagent asked for structured output has one more tool, made from its schema.
+    const schema = part.name === STRUCTURED_OUTPUT ? (await this.store.get(input.session.id))?.subagent?.outputSchema : undefined
+    const lookup = (name: string) =>
+      findTool(name) ?? (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ?? this.mcp?.tools().find((entry) => entry.name === name)
     let tool = lookup(part.name)
     if (!tool) {
       const lowered = part.name.toLowerCase()
@@ -1931,6 +1989,8 @@ export class SessionRunner {
           part.output = text
           publish()
         },
+        skills: () => this.skillsFor(input.session.directory),
+        tasks: tool.name === "task" ? await this.taskControl(input.session.id) : undefined,
       })
       // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
       const capped =
@@ -1975,7 +2035,29 @@ export class SessionRunner {
     if (refusedByUser) this.abort(owner)
   }
 
-  /** subagents: the task tool's actions, bound to the conversation and call they were asked from. */
+  /** tasks: changes to one conversation's registry, one after another, so parallel subagents never lose each other's. */
+  private readonly taskQueues = new Map<string, Promise<unknown>>()
+
+  /** tasks: the registry a call works on - a subagent's is its parent's, as MiMo's actors share their session's - and who is asking. */
+  private async taskControl(sessionID: string): Promise<TaskControl> {
+    const session = await this.store.get(sessionID)
+    const root = session?.parentID ?? sessionID
+    const who = { owner: session?.subagent?.id ?? "main", subagent: Boolean(session?.parentID) }
+    return {
+      update: (change) => {
+        const next = (this.taskQueues.get(root) ?? Promise.resolve()).then(async () => {
+          const current = (await this.store.get(root))?.tasks ?? []
+          const { list, result } = change(current, who)
+          if (JSON.stringify(list) !== JSON.stringify(current)) await this.store.update(root, { tasks: list })
+          return result
+        })
+        this.taskQueues.set(root, next.catch(() => undefined))
+        return next
+      },
+    }
+  }
+
+  /** subagents: the actor tool's actions, bound to the conversation and call they were asked from. */
   private subagentControl(call: SubagentCall): SubagentControl {
     return {
       run: (spec, timeoutMs) => this.runSubagent(call, spec, timeoutMs),
@@ -1997,8 +2079,18 @@ export class SessionRunner {
    * the parent. A run's changes are recorded into the turn waiting for it; a
    * background one's are its own, since the turn that started it may be long over.
    */
-  private async startSubagent(call: SubagentCall, spec: SubagentSpec, background: boolean): Promise<{ child: SessionInfo; worker: Worker }> {
+  private async startSubagent(call: SubagentCall, spec: SubagentSpec, background: boolean): Promise<{ child: SessionInfo; worker: Worker; taskNote?: string }> {
     const parent = await this.store.require(call.parentID)
+    // tasks: a task_id the registry does not hold is dropped and the call says so, as MiMo's does.
+    let taskID = spec.taskID
+    let taskNote: string | undefined
+    if (taskID && !TASK_ID.test(taskID)) {
+      taskNote = `note: task_id "${taskID}" is not a task id (T1, T1.2), so the subagent runs without one. Task ids come from the task tool.`
+      taskID = undefined
+    } else if (taskID && !(parent.tasks ?? []).some((task) => task.id === taskID)) {
+      taskNote = `note: there is no task ${taskID} in this conversation, so the subagent runs without one. Create it with the task tool first, or leave task_id out.`
+      taskID = undefined
+    }
     const model = spec.model ? this.modelFor(spec.model) : parent.model
     const type = spec.type
     const counted = `${parent.id}:${type}`
@@ -2015,12 +2107,20 @@ export class SessionRunner {
       directory: parent.directory,
       model,
       agent,
-      effort: parent.effort,
       title: spec.description || name,
       parentID: parent.id,
       parentMessageID: call.messageID,
       parentCallID: call.callID,
-      subagent: { type, id: name, ...(background ? { background: true } : {}), status: "running", turns: 1 },
+      subagent: {
+        type,
+        id: name,
+        ...(background ? { background: true } : {}),
+        status: "running",
+        turns: 1,
+        ...(taskID ? { taskID } : {}),
+        ...(spec.command ? { command: spec.command } : {}),
+        ...(spec.outputSchema ? { outputSchema: spec.outputSchema } : {}),
+      },
     })
     await this.store.saveMessage({
       id: Identifier.message(),
@@ -2031,7 +2131,7 @@ export class SessionRunner {
       time: { created: Date.now() },
     })
     const worker = this.work(child, { background, owner: background ? undefined : (this.owners.get(parent.id) ?? parent.id) })
-    return { child, worker }
+    return { child, worker, taskNote }
   }
 
   /** subagents: claims a subagent's session and runs its turn in the background of whoever asked. */
@@ -2062,11 +2162,27 @@ export class SessionRunner {
   private async childTurn(child: SessionInfo, worker: Worker, controller: AbortController): Promise<ChildOutcome> {
     let failure: unknown
     try {
-      do {
+      let reminded = 0
+      for (;;) {
         await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
         await this.steering.get(child.id)?.written
+        if (controller.signal.aborted) break
         // A follow-up that landed as the last step ended is answered in this turn too.
-      } while (!controller.signal.aborted && this.steered(child.id))
+        if (this.steered(child.id)) continue
+        // Asked for structured output and ended without it: reminded, at most twice, as MiMo retries.
+        const schema = (await this.store.get(child.id))?.subagent?.outputSchema
+        if (!schema || reminded >= STRUCTURED_RETRIES || structuredResult(await this.store.messages(child.id)) !== undefined) break
+        reminded++
+        await this.store.saveMessage({
+          id: Identifier.message(),
+          sessionID: child.id,
+          role: "user",
+          text: STRUCTURED_REMINDER,
+          attachments: [],
+          inbox: { from: "main" },
+          time: { created: Date.now() },
+        })
+      }
     } catch (err) {
       failure = err
       if (!(err instanceof Shown)) this.bus.publish({ type: "session.error", sessionID: child.id, error: describe(err) })
@@ -2108,6 +2224,12 @@ export class SessionRunner {
     if (failure !== undefined || last?.finish === "error" || last?.finish === "refusal") {
       return { kind: "failure", error: last?.error ?? describe(failure instanceof Shown ? failure.reason : failure) }
     }
+    // subagents: asked for structured output, the object it returned is its answer, and none is a failure.
+    if ((await this.store.get(sessionID))?.subagent?.outputSchema) {
+      const value = structuredResult(messages)
+      if (value === undefined) return { kind: "failure", error: `The subagent ended without returning its result through ${STRUCTURED_OUTPUT}.` }
+      return { kind: "success", answer: JSON.stringify(value, null, 2) }
+    }
     return { kind: "success", answer: answerIn(last) }
   }
 
@@ -2123,7 +2245,12 @@ export class SessionRunner {
     if (outcome.kind === "cancelled") return { notice: { ...base, status: "cancelled" } }
     if (outcome.kind === "failure") return { notice: { ...base, status: "failed", summary: firstLine(outcome.error) }, result: outcome.error }
     if (!outcome.answer) return { notice: { ...base, status: "ended" } }
-    return { notice: { ...base, status: "completed", summary: firstLine(outcome.answer) }, result: outcome.answer }
+    // A final message that opens with MiMo's status header says how it went in its own words.
+    const header = statusHeader(outcome.answer)
+    return {
+      notice: { ...base, status: header?.status === "failed" ? "failed" : "completed", summary: header?.summary ?? firstLine(outcome.answer) },
+      result: outcome.answer,
+    }
   }
 
   /**
@@ -2168,7 +2295,8 @@ export class SessionRunner {
 
   /** subagents: run - wait for the subagent's final message, up to the timeout, then leave it working. */
   private async runSubagent(call: SubagentCall, spec: SubagentSpec, timeoutMs = this.subagentTimers.waitMs): Promise<ToolResult> {
-    const { child, worker } = await this.startSubagent(call, spec, false)
+    const { child, worker, taskNote } = await this.startSubagent(call, spec, false)
+    const noted = (output: string) => (taskNote ? `${taskNote}\n${output}` : output)
     const siblings = this.children.get(call.parentID) ?? new Set<string>()
     siblings.add(child.id)
     this.children.set(call.parentID, siblings)
@@ -2191,20 +2319,25 @@ export class SessionRunner {
       // Left working, as MiMo leaves it. Its changes are its own from here: the turn it worked for has moved on.
       this.owners.delete(child.id)
       const note = "The subagent did not finish in the time allowed and is still working. Check on it with status or wait, or cancel it."
-      return { output: subagentOutput(name, note, "timeout"), title: child.title, metadata }
+      return { output: noted(subagentOutput(name, note, "timeout")), title: child.title, metadata }
     }
     if (outcome.kind === "cancelled") throw new ToolError("The subagent was stopped before it finished.")
     if (outcome.kind === "failure") throw new ToolError(`The subagent failed: ${outcome.error}`)
-    return { output: subagentOutput(name, outcome.answer || "(The subagent ended without a final message.)"), title: child.title, metadata }
+    return {
+      output: noted(subagentOutput(name, outcome.answer || "(The subagent ended without a final message.)", statusHeader(outcome.answer)?.status)),
+      title: child.title,
+      metadata,
+    }
   }
 
   /** subagents: spawn - start the subagent and answer at once; its outcome arrives as a notice. */
   private async spawnSubagent(call: SubagentCall, spec: SubagentSpec): Promise<ToolResult> {
-    const { child } = await this.startSubagent(call, spec, true)
+    const { child, taskNote } = await this.startSubagent(call, spec, true)
     const name = child.subagent?.id ?? child.id
     return {
       output: [
-        `subagent_id: ${name}`,
+        ...(taskNote ? [taskNote] : []),
+        `actor_id: ${name}`,
         "",
         "Started in the background. Its outcome will arrive as a notification in this conversation; use status or wait if you need it sooner, and send to give it more work.",
       ].join("\n"),
@@ -2219,7 +2352,7 @@ export class SessionRunner {
   }
 
   private unknownSubagent(id: string): ToolResult {
-    return { output: JSON.stringify({ status: "unknown", subagent_id: id }), title: id, metadata: { status: "unknown" } }
+    return { output: JSON.stringify({ status: "unknown", actor_id: id }), title: id, metadata: { status: "unknown" } }
   }
 
   /** subagents: where a subagent stands, as status, wait and cancel report it. */
@@ -2228,7 +2361,7 @@ export class SessionRunner {
     const running = this.running.has(child.id)
     return {
       status: running ? "running" : "idle",
-      subagent_id: state?.id ?? child.id,
+      actor_id: state?.id ?? child.id,
       description: child.title,
       subagent_type: state?.type,
       background: state?.background === true,
@@ -2265,7 +2398,7 @@ export class SessionRunner {
       const ended = await within(Promise.race([worker.settled, stopped]), timeoutMs)
       if (stop) call.signal.removeEventListener("abort", stop)
       if (ended === "stopped") throw new ToolError("Stopped while waiting for the subagent.")
-      if (ended === "timeout") return this.reported(child, { status: "timeout", subagent_id: child.subagent?.id ?? id, description: child.title })
+      if (ended === "timeout") return this.reported(child, { status: "timeout", actor_id: child.subagent?.id ?? id, description: child.title })
       child = (await this.store.get(child.id)) ?? child
     }
     const snapshot = this.snapshotOf(child)
@@ -2278,7 +2411,7 @@ export class SessionRunner {
     const child = await this.findSubagent(parentID, id)
     if (!child) return this.unknownSubagent(id)
     const about = {
-      subagent_id: child.subagent?.id ?? id,
+      actor_id: child.subagent?.id ?? id,
       description: child.title,
       subagent_type: child.subagent?.type,
       background: child.subagent?.background === true,
@@ -2298,12 +2431,12 @@ export class SessionRunner {
   private async sendSubagent(parentID: string, id: string, text: string): Promise<ToolResult> {
     let child = await this.findSubagent(parentID, id)
     if (!child) {
-      const refused = { queued: false, subagent_id: id, error: "There is no subagent with that subagent_id in this conversation." }
+      const refused = { queued: false, actor_id: id, error: "There is no subagent with that actor_id in this conversation." }
       return { output: JSON.stringify(refused), title: id, metadata: { status: "unknown" } }
     }
     const inbox = { from: "main" }
     const queued = (target: SessionInfo, messageID: string): ToolResult => ({
-      output: JSON.stringify({ queued: true, subagent_id: target.subagent?.id ?? id, message_id: messageID }),
+      output: JSON.stringify({ queued: true, actor_id: target.subagent?.id ?? id, message_id: messageID }),
       title: target.title,
       metadata: { sessionID: target.id, subagent: target.subagent },
     })
@@ -2358,7 +2491,7 @@ export class SessionRunner {
     return { output, title: heading, metadata: { count: shown.length, total: matching.length, vision: options.vision } }
   }
 
-  /** subagents: a model the task tool named, as `provider/model` or as an id only one connected provider has. */
+  /** subagents: a model the actor tool named, as `provider/model` or as an id only one connected provider has. */
   private modelFor(ref: string): ModelRef {
     const providers = this.config.providers().filter((provider) => provider.configured)
     const slash = ref.indexOf("/")
@@ -2439,7 +2572,7 @@ export class SessionRunner {
   }
 }
 
-/** subagents: the conversation and call a task tool action was asked from. */
+/** subagents: the conversation and call an actor tool action was asked from. */
 interface SubagentCall {
   parentID: string
   messageID: string

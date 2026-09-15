@@ -11,7 +11,7 @@ import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentNotice } from "@shared/protocol"
-import { buildRows, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
+import { buildRows, retryReason, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { preview, videoUrl } from "../lib/attach"
 import { openImagePreview, openVideoPreview, type ImagePreviewMeta } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
@@ -80,6 +80,8 @@ const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.
 const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.error))
 /* round3-panel (P5-12/13): MiMo's side chat and floating card draw a reply with showActions false. */
 const bare = computed(() => Boolean(props.side || props.latest))
+/* The open conversation was just switched to and its messages are still on their way. */
+const loadingHere = computed(() => !props.side && !props.latest && !props.subagent && Boolean(app.loadingID) && app.loadingID === app.currentID)
 /* MiMo's present_files and pdf_locate: the main stream opens what a completing call names in the right panel. */
 followDeliveries({
   enabled: () => !props.side && !props.latest && !props.subagent,
@@ -114,7 +116,7 @@ type Row =
   | { kind: "group"; id: string; items: StepItem[]; open: boolean }
   | { kind: "steer"; id: string; steer: Steer }
   /** MiMo's 正在重新连接 N, while the provider request is being tried again. */
-  | { kind: "retry"; id: string; attempt: number }
+  | { kind: "retry"; id: string; attempt: number; reason?: string }
 
 /** The rows for the parts between two points of the turn, with the errors that fell there. */
 function rows(turn: Turn, start: number, end: number, live: boolean): Row[] {
@@ -462,7 +464,7 @@ function shown(turn: Turn, at: number): Row[] {
   if (!live) return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "group" && row.kind !== "error")
 
   const retry = turn.last?.retry
-  if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt })
+  if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message) })
   // The last group with nothing said after it is the one being worked in.
   for (let index = all.length - 1; index >= 0; index--) {
     const row = all[index]!
@@ -844,12 +846,14 @@ function playingOut(turn: Turn): boolean {
 }
 
 /*
- * MiMo's search result: the conversation goes to the message and flashes it
- * for 1.6s. Asked through the store's revealMessage(id); the message may
- * still be loading when a search opens another conversation, so it is looked
- * for over a couple of seconds.
+ * MiMo's search result: the conversation goes to the message and flashes it,
+ * the class kept for 1.3s over a 1.2s fade. Asked through the store's
+ * revealMessage(id); the message may still be loading when a search opens
+ * another conversation, so it is looked for every 80ms for up to 2s.
  */
-const REVEAL_FLASH = 1600
+const REVEAL_FLASH = 1300
+const REVEAL_POLL = 80
+const REVEAL_GIVE_UP = 2000
 let revealTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
@@ -857,7 +861,7 @@ watch(
   async (asked) => {
     if (!asked || props.side) return
     const selector = `[data-message-id="${CSS.escape(asked.id)}"], [data-message-ids~="${CSS.escape(asked.id)}"]`
-    for (let attempt = 0; attempt < 20; attempt++) {
+    for (let attempt = 0; attempt <= REVEAL_GIVE_UP / REVEAL_POLL; attempt++) {
       await nextTick()
       const target = scroller.value?.querySelector<HTMLElement>(selector)
       if (target) {
@@ -872,7 +876,7 @@ watch(
         return
       }
       if (app.revealRequest !== asked) return
-      await new Promise((resolve) => setTimeout(resolve, 100))
+      await new Promise((resolve) => setTimeout(resolve, REVEAL_POLL))
     }
   },
 )
@@ -904,8 +908,10 @@ defineExpose({ stepMessage, scroller })
 </script>
 
 <template>
-  <div ref="scroller" class="stream" @scroll="onScroll">
+  <div ref="scroller" class="stream" :aria-busy="loadingHere || undefined" @scroll="onScroll">
     <div ref="inner" class="inner">
+      <!-- MiMo's line while a conversation just switched to has not brought its messages. -->
+      <div v-if="loadingHere" class="thread-loading" data-thread-loading>{{ t("stream.loadingConvo") }}</div>
       <!--
         MiMo's marker at the top of a branched conversation: a hairline either
         side of a link back to the conversation it came from.
@@ -1103,8 +1109,9 @@ defineExpose({ stepMessage, scroller })
         </div>
 
         <!-- One block answers with every assistant message of the turn: the first names it, and all of them are listed. -->
+        <!-- A retry drops what the failed attempt streamed, so a live turn retrying its first request has no parts yet and still shows its reconnecting row. -->
         <div
-          v-if="turn.parts.length || turn.error || turn.finish"
+          v-if="turn.parts.length || turn.error || turn.finish || (liveTurn(at) && turn.last?.retry)"
           class="msg assistant"
           :data-message-id="turn.messageIDs[0]"
           :data-message-ids="turn.messageIDs.join(' ')"
@@ -1189,7 +1196,7 @@ defineExpose({ stepMessage, scroller })
             <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" />
             <QuestionCard v-else-if="row.kind === 'question'" :part="row.part" />
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
-            <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" />
+            <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" />
             <TextPart v-else-if="row.part.type === 'text'" :part="row.part" />
           </div>
 
@@ -1871,6 +1878,14 @@ defineExpose({ stepMessage, scroller })
   scrollbar-gutter: stable both-edges;
 }
 
+/* MiMo's 正在加载对话…: centred, 13px and muted, 80 above and below. */
+.thread-loading {
+  padding-block: 80px;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-align: center;
+}
+
 /* subagents: 初始任务 over a subagent's first message, 12px dim, on the bubble's side. */
 .subagent-initial {
   margin-block-end: 4px;
@@ -2172,15 +2187,15 @@ defineExpose({ stepMessage, scroller })
 }
 
 /* A search result arrived at: a soft tint over the message that fades over MiMo's 1.6s. */
+/* MiMo's find-flash: radius 8, from 30% accent to clear over 1.2s, with no hold. */
 .revealed {
-  border-radius: 12px;
-  animation: reveal-flash 1.6s ease-out both;
+  border-radius: 8px;
+  animation: reveal-flash 1.2s ease-out both;
 }
 
 @keyframes reveal-flash {
-  0%,
-  35% {
-    background-color: color-mix(in srgb, var(--text-interactive) 14%, transparent);
+  0% {
+    background-color: color-mix(in srgb, var(--text-interactive) 30%, transparent);
   }
 
   100% {

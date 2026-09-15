@@ -1,13 +1,15 @@
 import { watch } from "vue"
+import { browserTabFace } from "@shared/browser-page"
 import { useApp } from "../stores/app"
 import { useRightPanel } from "../stores/right-panel"
 
 /**
  * What the browser panel's pages send back to the window, once for the window.
  *
- * Two things arrive from the main process: a page opened a link in a new tab,
- * and one of the app's chords was pressed while a page had focus. Neither
- * belongs to any one browser tab, so they are listened for here, from the
+ * Three things arrive from the main process: a page opened a link in a new tab,
+ * one of the app's chords was pressed while a page had focus, and the pages'
+ * titles and icons changed. None belongs to any one browser tab, so they are
+ * listened for here, from the
  * first browser tab on, and never let go - a page only exists once a tab has
  * asked for one.
  */
@@ -23,6 +25,22 @@ export function installBrowserBridge(): void {
   window.mcode.onBrowserOpenTab((pageId) => {
     const tab = rp.openTool("browser")
     rp.update(tab.id, { pageId })
+  })
+
+  /*
+   * MiMo's tab face: a browser tab shows its page's favicon and is named by its
+   * title. Every report lists all the panel's pages, so each tab holding one is
+   * brought up to date from it, not only the tab on show.
+   */
+  window.mcode.onBrowserState((state) => {
+    const pages = (state as { tabs?: { id: string; url?: string; title?: string; favicon?: string }[] } | undefined)?.tabs
+    if (!Array.isArray(pages)) return
+    for (const page of pages) {
+      const tab = rp.tabs.find((entry) => entry.type === "browser" && entry.pageId === page.id)
+      if (!tab) continue
+      const face = browserTabFace(page)
+      if (tab.faviconUrl !== face.faviconUrl || tab.pageTitle !== face.pageTitle) rp.update(tab.id, face)
+    }
   })
 
   /*
