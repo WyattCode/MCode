@@ -263,7 +263,7 @@ function startResize(event: PointerEvent) {
       <button class="add" :title="t('term.new')" :aria-label="t('term.new')" @click="add()">+</button>
 
       <span class="gap" />
-      <button class="icon-btn hide" :title="t('term.hide')" :aria-label="t('term.hide')" @click="emit('close')">
+      <button class="icon-btn hide" :title="t('term.closePanel')" :aria-label="t('term.closePanel')" @click="emit('close')">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
           <path d="M18 6 6 18M6 6l12 12" />
         </svg>

@@ -26,6 +26,15 @@ const props = defineProps<{ root?: string; viewFile?: string }>()
 const emit = defineEmits<{ view: [file: string] }>()
 const app = useApp()
 
+/* MiMo's reveal title names the platform's file manager: 在 {manager} 中显示. */
+const revealTitle = computed(() =>
+  t("menu.revealIn", {
+    manager: t(
+      app.platform === "win32" ? "menu.fileManagerWin" : app.platform === "darwin" ? "menu.fileManagerMac" : "menu.fileManagerOther",
+    ),
+  }),
+)
+
 const files = ref<FileEntry[]>([])
 const expanded = ref(new Set<string>())
 const filter = ref("")
@@ -375,7 +384,7 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
         class="fv-icon"
         :aria-pressed="treeOpen"
         :aria-label="t(treeOpen ? 'rp.files.collapseTree' : 'rp.files.expandTree')"
-        v-tip="{ label: t(treeOpen ? 'rp.files.collapseTree' : 'rp.files.expandTree'), placement: 'bottom' }"
+        :title="t(treeOpen ? 'rp.files.collapseTree' : 'rp.files.expandTree')"
         @click="treeOpen = !treeOpen"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -395,17 +404,17 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
         <button type="button" class="fc-btn" :disabled="saving" @click="editing = false">{{ t("rp.files.cancel") }}</button>
       </template>
       <template v-else-if="viewFile && opened">
-        <button v-if="isText" type="button" class="fv-icon" :aria-label="t('rp.files.edit')" v-tip="{ label: t('rp.files.edit'), placement: 'bottom' }" @click="startEdit">
+        <button v-if="isText" type="button" class="fv-icon" :aria-label="t('rp.files.edit')" :title="t('rp.files.edit')" @click="startEdit">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.9 3.9a2.1 2.1 0 0 1 3 3L8 17.8l-4 1 1-4z" /></svg>
         </button>
-        <button v-if="isHtml" type="button" class="fv-icon" :aria-label="t('rp.files.openInBrowser')" v-tip="{ label: t('rp.files.openInBrowser'), placement: 'bottom' }" @click="openInBrowser">
+        <button v-if="isHtml" type="button" class="fv-icon" :aria-label="t('rp.files.openInBrowser')" :title="t('rp.files.openInBrowser')" @click="openInBrowser">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3c2.5 2.5 3.6 5.5 3.6 9s-1.1 6.5-3.6 9c-2.5-2.5-3.6-5.5-3.6-9S9.5 5.5 12 3z" /></svg>
         </button>
-        <button type="button" class="fv-icon" :aria-label="t('files.reveal')" v-tip="{ label: t('files.reveal'), placement: 'bottom' }" @click="reveal(viewFile)">
+        <button type="button" class="fv-icon" :aria-label="revealTitle" :title="revealTitle" @click="reveal(viewFile)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
         </button>
       </template>
-      <button type="button" class="fv-icon" :aria-label="t('rp.files.refresh')" v-tip="{ label: t('rp.files.refresh'), placement: 'bottom' }" @click="refresh">
+      <button type="button" class="fv-icon" :aria-label="t('rp.files.refresh')" :title="t('rp.files.refresh')" @click="refresh">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" /></svg>
       </button>
     </div>
@@ -424,7 +433,7 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
               type="button"
               class="fv-row"
               :class="{ on: entry.path === viewFile }"
-              :title="entry.path"
+              :title="entry.name"
               @click="choose(entry.path)"
               @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, node: { path: entry.path, name: entry.name, directory: false, depth: 0 } }"
             >
@@ -440,7 +449,7 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
               class="fv-row"
               :class="{ on: node.path === viewFile }"
               :style="{ paddingInlineStart: `${8 + node.depth * 12}px` }"
-              :title="node.path"
+              :title="node.name"
               @click="node.directory ? toggleFolder(node.path) : choose(node.path)"
               @contextmenu.prevent="menu = { x: $event.clientX, y: $event.clientY, node }"
             >
@@ -454,7 +463,7 @@ const rootName = computed(() => (props.root ? baseName(props.root.replace(/\\/g,
             </button>
           </template>
         </div>
-        <div class="fv-grip" v-tip="{ label: t('rp.files.resizeTree'), placement: 'right' }" @pointerdown.prevent="beginTreeResize" />
+        <div class="fv-grip" :title="t('rp.files.resizeTree')" @pointerdown.prevent="beginTreeResize" />
       </aside>
 
       <div ref="viewer" class="fv-view" tabindex="-1" @keydown="onViewerKey">

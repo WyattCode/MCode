@@ -18,7 +18,7 @@ const emit = defineEmits<{ toggle: [] }>()
     data-panel-expand
     :aria-pressed="Boolean(full)"
     :aria-label="t(full ? 'launch.restoreWidth' : 'launch.expand')"
-    v-tip="{ label: t(full ? 'launch.restoreWidth' : 'launch.expand'), placement: 'bottom' }"
+    v-tip="{ label: t(full ? 'launch.restoreWidth' : 'launch.expand') }"
     @click="emit('toggle')"
   >
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

@@ -265,7 +265,7 @@ defineExpose({
             type="button"
             class="rpt-close"
             :aria-label="t('rp.tabs.close')"
-            v-tip="{ label: t('rp.tabs.close'), placement: 'bottom' }"
+            v-tip="t('rp.tabs.close')"
             @click.stop="requestClose([tab.id])"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
@@ -279,7 +279,7 @@ defineExpose({
         class="rp-add"
         data-rp-add
         :aria-label="t('launch.newTool')"
-        v-tip="{ label: t('launch.newTool'), placement: 'bottom' }"
+        v-tip="{ label: t('launch.newTool'), disabled: Boolean(addMenu) }"
         @click="openAddMenu"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
