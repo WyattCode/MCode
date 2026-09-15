@@ -74,11 +74,11 @@ export function commandWords(argumentLine: string): string[] {
  *   appended after a blank line. Without this rule a command with a fixed
  *   prompt would silently swallow whatever was typed beside it.
  *
- * NOT copied: the reference then expands ``!`cmd` `` by running each one
- * through the user's shell (@32959100). That happens on its server; doing it
- * here would run shell commands from the window, so a template that uses the
- * syntax keeps it as text. It is called out in the report rather than being
- * quietly dropped.
+ * This is only the argument half. A project or global command's ``!`cmd` ``
+ * placeholders are then run by the backend (`expandCommand` in
+ * server/command.ts), because the user decided on 2026-09-15 that command
+ * templates run shell commands as MiMo's do: on invocation only, in the
+ * configured shell, in the conversation's folder, after these substitutions.
  */
 export function expandTemplate(template: string, argumentLine: string): string {
   const words = commandWords(argumentLine)
@@ -115,3 +115,46 @@ export function splitCommandLine(text: string): { name: string; args: string } |
   const [first, ...rest] = text.split(" ")
   return { name: first.slice(1), args: rest.join(" ") }
 }
+
+/** MiMo's shell placeholder: everything between ``!` `` and the next backtick is one command. */
+const SHELL_PLACEHOLDER = /!`([^`]+)`/g
+
+/** The commands a filled-in template asks to run, in order, repeats included. */
+export function shellPlaceholders(template: string): string[] {
+  return [...template.matchAll(SHELL_PLACEHOLDER)].map((match) => match[1]!)
+}
+
+/**
+ * Each placeholder replaced by its command's output, in order.
+ *
+ * A replacer function rather than a string, so a `$&` or `$1` in the output is
+ * text and not a back-reference.
+ */
+export function substituteShell(template: string, outputs: readonly string[]): string {
+  let at = 0
+  return template.replace(SHELL_PLACEHOLDER, () => outputs[at++] ?? "")
+}
+
+/**
+ * MiMo's file reference: `@` not preceded by a word character or a backtick,
+ * then a path whose dots only count between other characters - so an email
+ * address is not a file and a sentence's closing full stop is not part of one.
+ */
+const FILE_REFERENCE = /(?<![\w`])@(\.?[^\s`,.]*(?:\.[^\s`,.]+)*)/g
+
+/** The paths a template names with `@`, once each, in the order written. */
+export function fileReferences(template: string): string[] {
+  const out: string[] = []
+  for (const match of template.matchAll(FILE_REFERENCE)) {
+    const name = match[1]!
+    if (name && !out.includes(name)) out.push(name)
+  }
+  return out
+}
+
+/**
+ * MiMo's built-in model tiers. With no `model_groups` configured - and this app
+ * has no such setting - MiMo resolves each of them to the default model; any
+ * other bare name is a group it cannot find.
+ */
+export const MODEL_TIERS = ["ultra", "standard", "lite"] as const
