@@ -18,7 +18,8 @@ import type { Attachment, AgentName,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
 import { t } from "../lib/i18n"
-import { notify, notifyFailure } from "../lib/toast"
+import { notice, notify, notifyFailure } from "../lib/toast"
+import { withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 
@@ -746,29 +747,47 @@ export const useApp = defineStore("app", () => {
   /** Which directory the command list was last asked about. */
   let commandsFor: string | undefined
 
+  /* Where that list stands, so MiMo's slash menu can say loading or failed rather than "no commands". */
+  const commandsState = ref<"idle" | "loading" | "ready" | "failed">("idle")
+
+  /* MiMo's background load tries once more this long after a failure. */
+  const COMMAND_RETRY_MS = 1500
+
   /**
    * Re-reads the commands a project offers.
    *
    * Asked per directory because two of the three sources are the project's own
-   * files. `?? []` rather than a throw on an unknown response: `command.list`
-   * has no case in the server's request switch yet (that line is handed back),
-   * and until it does the request resolves to undefined - the menu should then
-   * show this app's own commands and nothing else, not fail to open.
+   * files. A refused or missing answer is a failure, not an empty list: the
+   * menu says so, asks again the next time it opens, and a failed read is tried
+   * once more after a moment on its own.
    */
-  async function refreshCommands(directory?: string) {
+  async function refreshCommands(directory?: string, retry = true) {
     const where = directory ?? current.value?.directory ?? config.value?.directory
     if (!where) {
       commands.value = []
       commandsFor = undefined
+      commandsState.value = "idle"
       return
     }
     commandsFor = where
+    commandsState.value = "loading"
     const result = await client.value
       ?.request({ type: "command.list", directory: where })
       .catch(() => undefined)
     // A second refresh may have overtaken this one; the newer answer wins.
     if (commandsFor !== where) return
-    commands.value = result?.commands ?? []
+    if (!result) {
+      commands.value = []
+      commandsState.value = "failed"
+      if (retry) {
+        setTimeout(() => {
+          if (commandsFor === where && commandsState.value === "failed") void refreshCommands(where, false)
+        }, COMMAND_RETRY_MS)
+      }
+      return
+    }
+    commands.value = result.commands
+    commandsState.value = "ready"
   }
 
   /**
@@ -1211,6 +1230,27 @@ export const useApp = defineStore("app", () => {
     await patchConfig({ staged })
   }
 
+  /* MiMo's shortcut: voice input flips between 智能编辑 and 快速输入. */
+  async function toggleVoiceMode() {
+    await patchConfig({ voiceMode: (config.value?.voiceMode ?? "smart") === "fast" ? "smart" : "fast" })
+  }
+
+  /*
+   * MiMo's shortcut for 编排 (compose) mode: on or off for the open
+   * conversation, or - from the home screen (`home`) - for the next task. As
+   * the plus menu's switch does, turning it on leaves plan mode.
+   */
+  async function toggleComposeMode(home = false) {
+    const session = home ? undefined : current.value
+    const next = !(session ? (session.staged ?? false) : (config.value?.staged ?? false))
+    if (next && (session?.agent ?? config.value?.agent) === "plan") {
+      if (session) await setAgent("build")
+      else await patchConfig({ agent: "build" })
+    }
+    if (session) await setStaged(next)
+    else await patchConfig({ staged: next })
+  }
+
   async function patchConfig(patch: Partial<AppConfig>) {
     config.value = (await api().request({ type: "config.set", patch })).config
   }
@@ -1478,6 +1518,21 @@ export const useApp = defineStore("app", () => {
     return last?.role === "assistant" ? last : undefined
   })
 
+  /*
+   * The tray's 配置切换 answers with a toast, as MiMo's does. The window
+   * applies the pick; this only names it. MiMo adds "active in your next chat",
+   * which MCode leaves out because the switch applies at once.
+   */
+  if (typeof window !== "undefined" && window.mcode?.onTrayProfile) {
+    window.mcode.onTrayProfile((key) => {
+      const cut = key.indexOf("/")
+      if (cut <= 0) return
+      const provider = providers.value.find((entry) => entry.id === key.slice(0, cut))
+      const model = provider?.models.find((entry) => entry.id === key.slice(cut + 1))
+      notice.success(t("tray.switched", { name: model ? withoutLatest(model.name || model.id) : key.slice(cut + 1) }))
+    })
+  }
+
   return {
     client,
     connected,
@@ -1503,7 +1558,10 @@ export const useApp = defineStore("app", () => {
     config,
     providers,
     commands,
+    commandsState,
     refreshCommands,
+    toggleVoiceMode,
+    toggleComposeMode,
     permission,
     permissionQueue,
     revertTurn,

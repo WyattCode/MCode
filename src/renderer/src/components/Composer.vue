@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { VoiceRecorder, applyVoiceResult, type VoiceState } from "../lib/voice"
+import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, type VoiceCue, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
-import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, ModelInfo } from "@shared/protocol"
+import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
@@ -14,7 +14,7 @@ import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
-import { findModel, resolveVariant, withoutLatest } from "../lib/model"
+import { clampEffort, effortLabelKey, findModel, withoutLatest } from "../lib/model"
 import {
   absolutePath,
   fileName,
@@ -32,10 +32,10 @@ import { openDocument } from "../lib/office-open"
 import AnnotationChips from "./AnnotationChips.vue"
 import ModelMenuRow from "./ModelMenuRow.vue"
 import { besideRow } from "../lib/submenu"
+import { isRovingKey, rovingStep, type RovingKey } from "../lib/composer-menu"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import { readContext } from "./session-context"
-import ProviderIcon from "./ProviderIcon.vue"
 import { t, language } from "../lib/i18n"
 
 const emit = defineEmits<{
@@ -75,29 +75,70 @@ const props = defineProps<{
   fresh?: boolean
   /** This box speaks for the side chat in the side column, not the open conversation. */
   side?: boolean
+  /**
+   * The side conversation this box speaks for, when its tab names one. Without
+   * it (and without `createSide`) a side box speaks for the store's focused side chat.
+   */
+  sideId?: string
+  /**
+   * MiMo makes a side conversation on its first message, not when its tab
+   * opens. A side box whose tab has no conversation yet is given this, and
+   * calls it on send; it answers the new conversation's id.
+   */
+  createSide?: () => Promise<string | undefined>
   /** Whether its top edge drags it taller; off where MiMo docks it without one, over an expanded panel. */
   resizable?: boolean
 }>()
 
 const app = useApp()
 
+/*
+ * The right panel's per-id side chat readers (r3-handoff-composer-from-panel.md,
+ * on the panel branch). Read through this optional view so the box also works
+ * against a store that has only the one focused side chat; once the panel's
+ * store is merged every reader is present and the fallbacks go unused.
+ */
+interface SideReaders {
+  sideSessionOf: (id?: string) => SessionInfo | undefined
+  sideBusyOf: (id?: string) => boolean
+  sideMessagesOf: (id?: string) => Message[]
+}
+const sideStore = app as unknown as Partial<SideReaders>
+
+/* A side box whose tab names a conversation, or will make one, speaks for that; otherwise for the focused one. */
+const sideKey = computed(() => props.sideId ?? (props.createSide ? undefined : app.sideID))
+const focusedSide = computed(() => Boolean(sideKey.value) && sideKey.value === app.sideID)
+
+const sideSession = computed(() =>
+  sideStore.sideSessionOf ? sideStore.sideSessionOf(sideKey.value) : focusedSide.value ? app.side : undefined,
+)
+const sideBusy = computed(() =>
+  sideStore.sideBusyOf ? sideStore.sideBusyOf(sideKey.value) : focusedSide.value && app.sideBusy,
+)
+const sideMessages = computed<Message[]>(() =>
+  sideStore.sideMessagesOf ? sideStore.sideMessagesOf(sideKey.value) : focusedSide.value ? app.sideMessages : [],
+)
+
 /* The conversation this box speaks for: none in a box that starts a new task. */
-const sessionID = computed(() => (props.fresh ? undefined : props.side ? app.sideID : app.currentID))
-const session = computed(() => (props.fresh ? undefined : props.side ? app.side : app.current))
-const busyHere = computed(() => (props.side ? app.sideBusy : app.busy))
+const sessionID = computed(() => (props.fresh ? undefined : props.side ? sideKey.value : app.currentID))
+const session = computed(() => (props.fresh ? undefined : props.side ? sideSession.value : app.current))
+const busyHere = computed(() => (props.side ? sideBusy.value : app.busy))
 /* MiMo's annotations wait in the box they were made for, kept per conversation - the side chat's apart from the main one's. */
 const annotations = useAnnotations()
 const annotationScope = computed(() => sessionID.value ?? (props.side ? SIDE_SCOPE : HOME_SCOPE))
 const waiting = computed(() => annotations.list(annotationScope.value))
 
 /* MiMo's attachment click: a picture or a video opens its preview, a document its tab. */
-function onTileClick(item: Attachment) {
+function onTileClick(item: Attachment, event?: MouseEvent) {
   const url = videoUrl(item)
   const picture = preview(item)
   if (url) openVideoPreview(url, { name: item.path })
   else if (picture) {
     const group = attachments.value.map((entry) => preview(entry)).filter((entry): entry is string => Boolean(entry))
-    openImagePreview(picture, { name: item.path, group })
+    // MiMo's preview zooms out of the thumbnail that was clicked and back into it (r3-handoff-composer-from-reply.md).
+    const rect = (event?.currentTarget as HTMLElement | null)?.getBoundingClientRect()
+    const meta = { name: item.path, group, rect }
+    openImagePreview(picture, meta)
   } else if (item.path) openAttachment(item.path)
 }
 
@@ -120,7 +161,7 @@ const input = ref<HTMLTextAreaElement>()
  * ever held what this window had sent, so pressing Up in a session reopened
  * after a restart recalled nothing at all.
  */
-const history = computed(() => promptHistory(props.side ? app.sideMessages : app.messages))
+const history = computed(() => promptHistory(props.side ? sideMessages.value : app.messages))
 /*
  * MiMo's history walk: where Up has got to (null when not walking), and the
  * draft the first Up set aside, which Down past the newest puts back.
@@ -144,7 +185,7 @@ const modelName = computed(() => {
    */
   if (smartOn.value) return t("model.smart")
   const chosen = session.value?.model ?? app.config?.model
-  if (!chosen) return "no model"
+  if (!chosen) return t("model.selectPlaceholder")
   const provider = app.providers.find((entry) => entry.id === chosen.provider)
   const found = provider?.models.find((entry) => entry.id === chosen.model)
   // "(latest)" is a tag in the reference, not part of the name: its model store
@@ -554,7 +595,7 @@ const stopping = computed(
 const compactingHere = computed(() => !props.side && !props.fresh && app.compacting)
 
 /* The conversation as it now stands, without anything rolled back. */
-const messagesHere = computed(() => (props.side ? app.sideMessages : app.visible))
+const messagesHere = computed(() => (props.side ? sideMessages.value : app.visible))
 
 /* MiMo keeps the AI note's room but hides it until the conversation has a reply. */
 const hasReply = computed(() => messagesHere.value.some((message) => message.role === "assistant"))
@@ -603,8 +644,6 @@ const voice = ref<VoiceState>("idle")
 const voiceLevel = ref(0)
 /* Bumped by × so a transcription already on its way lands nowhere. */
 let voiceRun = 0
-/* MiMo's cue under the text while a spoken command is acted on, or empty. */
-const voiceCue = ref("")
 
 const voiceConfigured = computed(() => Boolean(app.config?.voiceModel?.model))
 
@@ -632,8 +671,24 @@ onBeforeUnmount(() => {
 const WAVE_WEIGHTS = [0.5, 0.78, 1, 0.78, 0.5]
 const waveHeights = computed(() => WAVE_WEIGHTS.map((weight) => `${(4 + voiceLevel.value * 12 * weight).toFixed(1)}px`))
 
-/* How long the command cue stays before the command acts, as MiMo lingers it. */
-const CUE_MS = 420
+/* MiMo's cue drawer: the command a recording was heard as, held 3s before it slides away. */
+const CUE_MS = 3000
+const cueText = ref("")
+const cueOn = ref(false)
+/* Bumped for each cue, so the ring draws itself again for a second command in a row. */
+const cueRun = ref(0)
+let cueTimer: ReturnType<typeof setTimeout> | undefined
+
+function showCue(cue: VoiceCue) {
+  cueText.value = t("voice.detected", { cmd: t(`voice.${cue}`) })
+  cueRun.value += 1
+  cueOn.value = true
+  clearTimeout(cueTimer)
+  // The words stay while the drawer slides down; only the next cue replaces them.
+  cueTimer = setTimeout(() => (cueOn.value = false), CUE_MS)
+}
+
+onBeforeUnmount(() => clearTimeout(cueTimer))
 
 async function toggleVoice() {
   if (voice.value === "working" || voice.value === "starting") return
@@ -660,21 +715,32 @@ async function toggleVoice() {
       // Cancelled while it was being written down.
       if (run !== voiceRun) return
       if (!result) return
+      const quick = (app.config?.voiceMode ?? "smart") === "fast"
+      /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
+      if (quick && isClearCommand(result.text)) {
+        text.value = ""
+        await nextTick(resize)
+        input.value?.setSelectionRange(0, 0)
+        showCue("cleared")
+        return
+      }
       const next = applyVoiceResult(draft, result)
+      const edited = editCue(draft.text, next.text, Boolean(result.edit))
       if (next.text !== text.value) {
         text.value = next.text
         await nextTick(resize)
       }
       input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
       /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
-      const sendsByVoice = (app.config?.voiceSend ?? false) && (app.config?.voiceMode ?? "smart") === "smart"
+      const sendsByVoice = (app.config?.voiceSend ?? false) && !quick
       if (next.send && sendsByVoice && text.value.trim()) {
         voice.value = "idle"
-        voiceCue.value = t("voice.detected", { cmd: t("composer.send") })
-        await new Promise((resolve) => setTimeout(resolve, CUE_MS))
-        voiceCue.value = ""
-        if (run === voiceRun) await submit()
+        // MiMo sends at once and then says so; a send is named over a rewrite heard in the same breath.
+        await submit()
+        showCue("sent")
+        return
       }
+      if (edited) showCue(edited)
     } catch (err) {
       if (run === voiceRun) notifyFailure(t("voice.failed"), reasonForVoice(err))
     } finally {
@@ -704,7 +770,7 @@ function cancelVoice() {
   voiceRun += 1
   recorder.cancel()
   voice.value = "idle"
-  voiceCue.value = ""
+  cueOn.value = false
 }
 
 /** The app's own phrasing for the failures it can recognise. */
@@ -876,9 +942,14 @@ async function submit() {
    * because somebody looked at the home screen is a row in the side column
    * that nobody asked for. If it cannot be made, the draft comes back.
    */
+  let target = props.side ? sessionID.value : undefined
   if (!sessionID.value) {
     try {
-      await app.create(props.startDirectory, { scratch: props.startScratch })
+      if (props.side) {
+        // MiMo makes a side conversation on its first message; its tab hands over how.
+        target = props.createSide ? await props.createSide() : undefined
+        if (!target) throw new Error("")
+      } else await app.create(props.startDirectory, { scratch: props.startScratch })
     } catch (err) {
       text.value = value
       attachments.value = sent
@@ -886,15 +957,15 @@ async function submit() {
       skills.value = chips
       if (scopeAtSend && pointed.length) annotations.put(scopeAtSend, pointed)
       await nextTick(resize)
-      notifyFailure(t("home.startFailed"), err instanceof Error ? err.message : String(err))
+      notifyFailure(t("home.startFailed"), (err instanceof Error ? err.message : String(err)) || undefined)
       return
     }
   }
 
-  const named = await mentionAttachments(value, carried)
+  const named = await mentionAttachments(value, carried, target)
 
   // A rejected message should not cost the user what they typed, or gathered.
-  if (!(await app.send(withSkills(outgoing(value), chips), [...sent, ...named], props.side ? app.sideID : undefined, pointed))) {
+  if (!(await app.send(withSkills(outgoing(value), chips), [...sent, ...named], target, pointed))) {
     text.value = value
     attachments.value = sent
     mentioned.value = carried
@@ -979,8 +1050,10 @@ function outgoing(value: string): string {
  * sentence still goes, mention and all, but the user has to know the file did
  * not go with it.
  */
-async function mentionAttachments(value: string, chosen: Set<string>): Promise<Attachment[]> {
-  const root = (props.side ? app.side : app.current)?.directory
+async function mentionAttachments(value: string, chosen: Set<string>, to?: string): Promise<Attachment[]> {
+  // A side chat made by this very message is not this box's session yet, so it is read by the id it was sent to.
+  const sideRoot = sideStore.sideSessionOf ? sideStore.sideSessionOf(to)?.directory : app.side?.directory
+  const root = props.side ? (sideRoot ?? session.value?.directory) : app.current?.directory
   if (!root || !app.client || !chosen.size) return []
   const out: Attachment[] = []
   for (const path of mentionedIn(value)) {
@@ -1333,6 +1406,11 @@ const slashMatches = computed(() => {
 const slashOpen = computed(() => !dismissed.value && slashQuery.value !== undefined)
 const slashIndex = ref(0)
 
+/* MiMo keeps no failed command list: the menu asks again the next time it opens. */
+watch(slashOpen, (open) => {
+  if (open && app.commandsState === "failed") void app.refreshCommands(projectRoot.value ?? session.value?.directory)
+})
+
 // Typing narrows the list, which can leave the highlight past the end of it.
 watch(slashMatches, (rows) => {
   if (slashIndex.value >= rows.length) slashIndex.value = 0
@@ -1657,6 +1735,13 @@ function measureBar() {
     const start = rowStart.value
     const end = rowEnd.value
     if (!bar || !start || !end) return
+    // Flattened into one row (the floating box), there is no bar of its own to wrap or narrow.
+    if (getComputedStyle(bar).display === "contents") {
+      bar.classList.remove("collapsed")
+      labelsCollapsed.value = false
+      barNarrow.value = false
+      return
+    }
     barNarrow.value = bar.clientWidth < 480
     bar.classList.remove("collapsed")
     const a = start.getBoundingClientRect()
@@ -1702,6 +1787,35 @@ const accessChoices = computed(() =>
 
 /* Set while the question before full access is on screen. */
 const confirmingFull = ref(false)
+
+/* The row the keyboard stands on in the access menu, which takes the same keys as the model menu. */
+const accessHot = ref<Access>()
+
+watch(menu, async (value) => {
+  if (value !== "access") return
+  accessHot.value = access.value
+  await nextTick()
+  accessMenu.value?.focus()
+})
+
+function onAccessKeys(event: KeyboardEvent) {
+  if (event.key === "Tab") return
+  event.stopPropagation()
+  if (event.key === "Escape") {
+    event.preventDefault()
+    menu.value = undefined
+    focus()
+    return
+  }
+  if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) return
+  if (isRovingKey(event.key)) {
+    event.preventDefault()
+    accessHot.value = rovingStep(accessChoices.value, accessHot.value, event.key)
+  } else if ((event.key === "Enter" || event.key === " ") && accessHot.value) {
+    event.preventDefault()
+    void chooseAccess(accessHot.value)
+  }
+}
 
 /* Each level's mark, on the chip and in the menu: a raised hand, a pencil, a shield with a warning in it. */
 const ACCESS_ICONS: Record<Access, string[]> = {
@@ -1822,21 +1936,33 @@ const currentModel = computed<ModelInfo | undefined>(() =>
 const variants = computed<Effort[]>(() => currentModel.value?.variants ?? [])
 
 
-/**
- * The session's step, if this model still takes it.
- *
- * The reference's `resolveModelVariant` (@2829318) returns nothing when the
- * stored variant is absent from the model's list, and deliberately does not
- * erase what was stored: switching to a model that lacks `xhigh` reads as
- * Default, and switching back brings `xhigh` up again. Clearing it here would
- * be tidier on the wire and lose the setting on every model change, so the
- * resolution stays a reading of the state rather than a write to it.
+/*
+ * The level the chip names: the conversation's own, else the default a new
+ * task starts with - clamped to what this model takes, as MiMo clamps it, so a
+ * model with levels always shows one.
  */
-const effortLevel = computed<Effort | undefined>(() => resolveVariant(variants.value, session.value?.effort))
+const effortLevel = computed<Effort | undefined>(() =>
+  clampEffort(variants.value, session.value?.effort ?? app.config?.effort),
+)
 
-/* A level chosen in a model's submenu: that model, then that level on the conversation. */
-async function chooseModelEffort(provider: string, model: string, level?: Effort) {
-  await chooseModel(provider, model)
+const effortLabel = computed(() => {
+  const model = currentModel.value
+  const level = effortLevel.value
+  return model && level ? t(effortLabelKey(model.id, model.name, level)) : ""
+})
+
+/*
+ * A level chosen in a model's submenu: that model and that level. On the home
+ * screen both are the defaults the next task starts with, as MiMo's global
+ * level is; in a conversation they are the conversation's.
+ */
+async function chooseModelEffort(provider: string, model: string, level: Effort) {
+  menu.value = undefined
+  if (!sessionID.value) {
+    await app.patchConfig({ model: { provider, model }, smart: false, effort: level })
+    return
+  }
+  await app.setModel({ provider, model }, sessionID.value)
   await app.setEffort(level)
 }
 
@@ -1877,42 +2003,76 @@ const activeKey = ref("")
 const modelSub = ref<string>()
 const moreSub = ref<string>()
 const morePlace = ref({ left: 0, top: 0 })
+/* Where the keyboard stands inside the open submenu, and inside that submenu's own. */
+const subKey = ref<string>()
+const sub2Key = ref<string>()
+
+function modelKey(provider: string, model: string) {
+  return `${provider}:${model}`
+}
+
+interface ModelRow {
+  key: string
+  provider: string
+  model: ModelInfo
+}
+
+const rowsOf = (group: { provider: { id: string }; models: ModelInfo[] }): ModelRow[] =>
+  group.models.map((model) => ({ key: modelKey(group.provider.id, model.id), provider: group.provider.id, model }))
 
 /*
  * MiMo's split: its own models at the top level, everyone else's behind "more
- * models" under a heading per vendor. Here the first connected provider stands
- * where MiMo's own models do.
+ * models" under a heading per vendor, and custom models in a group of their own
+ * below that. Here the first connected built-in provider stands where MiMo's
+ * own models do.
  */
-const primaryGroup = computed(() => groups.value[0])
-const moreGroups = computed(() => groups.value.slice(1))
+const builtinGroups = computed(() => groups.value.filter((group) => !group.provider.custom))
+const primaryGroup = computed(() => builtinGroups.value[0])
+const moreGroups = computed(() => builtinGroups.value.slice(1))
+const primaryRows = computed(() => (primaryGroup.value ? rowsOf(primaryGroup.value) : []))
+const moreRows = computed(() => moreGroups.value.flatMap(rowsOf))
+const customRows = computed(() => groups.value.filter((group) => group.provider.custom).flatMap(rowsOf))
 
-watch(menu, () => {
+function closeModelSubs() {
   modelSub.value = undefined
   moreSub.value = undefined
-})
+  subKey.value = undefined
+  sub2Key.value = undefined
+}
+
+watch(menu, closeModelSubs)
 
 watch(modelSub, async (value) => {
-  moreSub.value = undefined
   if (value !== MORE_KEY) return
   await nextTick()
   const row = modelMenu.value?.querySelector(`[data-key="${MORE_KEY}"]`)?.getBoundingClientRect()
   if (row && moreMenu.value) morePlace.value = besideRow(row, moreMenu.value.offsetWidth, moreMenu.value.offsetHeight)
 })
 
-/* The levels a row offers: none where there is no conversation of this box's to set them on. */
-function effortsFor(model: ModelInfo): (Effort | undefined)[] {
-  return sessionID.value && !props.side && model.variants.length ? [undefined, ...model.variants] : []
+/* The levels a row offers - on the home screen too, as MiMo's level is global. The side chat asks for none. */
+function effortsFor(model: ModelInfo): Effort[] {
+  return props.side ? [] : model.variants
 }
 
 /* The pointer moves the keyboard's highlight with it, and opens that row's submenu if it has one. */
 function hoverRow(key: string) {
   activeKey.value = key
+  if (modelSub.value === key) return
+  closeModelSubs()
   modelSub.value = key
 }
 
-function modelKey(provider: string, model: string) {
-  return `${provider}:${model}`
+/* The pointer on a row inside "more models": its levels open, and the keyboard follows. */
+function hoverMore(key: string) {
+  moreSub.value = key
+  subKey.value = key
+  sub2Key.value = undefined
 }
+
+const EFFORT_PREFIX = "effort:"
+const effortKey = (level: Effort) => `${EFFORT_PREFIX}${level}`
+const levelOf = (key?: string): Effort | undefined =>
+  key?.startsWith(EFFORT_PREFIX) ? (key.slice(EFFORT_PREFIX.length) as Effort) : undefined
 
 const SMART_KEY = "action:smart"
 
@@ -1924,34 +2084,96 @@ const currentKey = computed(() => {
 
 /**
  * Every top-level row the arrow keys walk, in the order they are drawn:
- * Smart, the first provider's models, "more models", and configuring models.
+ * Smart, the first provider's models, "more models", custom models, and
+ * configuring models.
  */
-const modelKeys = computed(() => {
-  const primary = primaryGroup.value
-  return [
-    SMART_KEY,
-    ...(primary ? primary.models.map((model) => modelKey(primary.provider.id, model.id)) : []),
-    ...(moreGroups.value.length ? [MORE_KEY] : []),
-    CONFIG_KEY,
-  ]
-})
+const modelKeys = computed(() => [
+  SMART_KEY,
+  ...primaryRows.value.map((row) => row.key),
+  ...(moreRows.value.length ? [MORE_KEY] : []),
+  ...customRows.value.map((row) => row.key),
+  CONFIG_KEY,
+])
+
+const topRow = (key?: string) => [...primaryRows.value, ...customRows.value].find((row) => row.key === key)
+const moreRow = (key?: string) => moreRows.value.find((row) => row.key === key)
+
+/* The rows of the open submenu: "more models" lists models, a model lists its levels. */
+function subItems(): string[] {
+  if (modelSub.value === MORE_KEY) return moreRows.value.map((row) => row.key)
+  const row = topRow(modelSub.value)
+  return row ? effortsFor(row.model).map(effortKey) : []
+}
+
+/* The levels of the model open inside "more models". */
+function sub2Items(): string[] {
+  const row = moreRow(moreSub.value)
+  return row ? effortsFor(row.model).map(effortKey) : []
+}
 
 function scrollActiveIntoView() {
   void nextTick(() => {
-    modelMenu.value
-      ?.querySelector(`[data-key="${CSS.escape(activeKey.value)}"]`)
-      ?.scrollIntoView({ block: "nearest" })
+    for (const key of [activeKey.value, subKey.value]) {
+      if (!key || levelOf(key)) continue
+      modelMenu.value?.querySelector(`[data-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "nearest" })
+    }
   })
 }
 
-function moveActive(by: number) {
-  const keys = modelKeys.value
-  if (!keys.length) return
-  const index = keys.indexOf(activeKey.value)
-  const start = index === -1 ? 0 : index
-  activeKey.value = keys[(start + by + keys.length) % keys.length]
-  modelSub.value = undefined
+function moveIn(depth: 0 | 1 | 2, key: RovingKey) {
+  if (depth === 2) sub2Key.value = rovingStep(sub2Items(), sub2Key.value, key)
+  else if (depth === 1) {
+    subKey.value = rovingStep(subItems(), subKey.value, key)
+    moreSub.value = undefined
+    sub2Key.value = undefined
+  } else {
+    activeKey.value = rovingStep(modelKeys.value, activeKey.value, key) ?? activeKey.value
+    closeModelSubs()
+  }
   scrollActiveIntoView()
+}
+
+/*
+ * MiMo's submenu trigger from the keyboard: opens the row's submenu and puts
+ * the keyboard on its first row. False for a row with no submenu.
+ */
+function openSub(depth: 0 | 1): boolean {
+  if (depth === 0) {
+    const key = activeKey.value
+    const row = topRow(key)
+    if (!(key === MORE_KEY && moreRows.value.length) && !(row && effortsFor(row.model).length)) return false
+    closeModelSubs()
+    modelSub.value = key
+    subKey.value = subItems()[0]
+    return true
+  }
+  const row = modelSub.value === MORE_KEY ? moreRow(subKey.value) : undefined
+  if (!row || !effortsFor(row.model).length) return false
+  moreSub.value = row.key
+  sub2Key.value = sub2Items()[0]
+  return true
+}
+
+/* Enter or Space on a row with nothing behind it: that model, that level, or that action. */
+function selectAt(depth: 0 | 1 | 2) {
+  if (depth === 2) {
+    const row = moreRow(moreSub.value)
+    const level = levelOf(sub2Key.value)
+    if (row && level) void chooseModelEffort(row.provider, row.model.id, level)
+    return
+  }
+  if (depth === 1) {
+    const more = modelSub.value === MORE_KEY ? moreRow(subKey.value) : undefined
+    if (more) {
+      void chooseModel(more.provider, more.model.id)
+      return
+    }
+    const row = topRow(modelSub.value)
+    const level = levelOf(subKey.value)
+    if (row && level) void chooseModelEffort(row.provider, row.model.id, level)
+    return
+  }
+  selectActive()
 }
 
 /* MiMo's "configure custom models": the models page of settings, not a dialog of its own. */
@@ -1965,22 +2187,21 @@ function selectActive() {
     openConfig()
     return
   }
-  if (activeKey.value === MORE_KEY) {
-    modelSub.value = MORE_KEY
-    return
-  }
   if (activeKey.value === SMART_KEY) {
     void chooseSmart()
     return
   }
-  const primary = primaryGroup.value
-  const model = primary?.models.find((entry) => modelKey(primary.provider.id, entry.id) === activeKey.value)
-  if (primary && model) void chooseModel(primary.provider.id, model.id)
+  const row = topRow(activeKey.value)
+  if (row) void chooseModel(row.provider, row.model.id)
 }
 
 /*
  * The menu keeps these to itself. Escape has to stop here rather than reach the
  * window, where it would close the panel behind the menu as well.
+ *
+ * MiMo's list and submenu keys: Up, Down, Home and End walk the level the
+ * keyboard is on; Right, Enter or Space on a row with a submenu opens it on its
+ * first row, and Left goes back out; Enter or Space on any other row picks it.
  */
 function onModelKeys(event: KeyboardEvent) {
   if (event.key === "Tab") return
@@ -1991,22 +2212,27 @@ function onModelKeys(event: KeyboardEvent) {
     focus()
     return
   }
-  if (event.altKey || event.metaKey) return
-  if (event.key === "ArrowDown") {
+  if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) return
+  const depth = sub2Key.value !== undefined ? 2 : subKey.value !== undefined ? 1 : 0
+  if (isRovingKey(event.key)) {
     event.preventDefault()
-    moveActive(1)
-  } else if (event.key === "ArrowUp") {
-    event.preventDefault()
-    moveActive(-1)
+    moveIn(depth, event.key)
   } else if (event.key === "ArrowRight") {
     event.preventDefault()
-    modelSub.value = activeKey.value
+    if (depth < 2) openSub(depth === 0 ? 0 : 1)
   } else if (event.key === "ArrowLeft") {
     event.preventDefault()
-    modelSub.value = undefined
-  } else if (event.key === "Enter" && !event.isComposing) {
+    if (depth === 2) {
+      moreSub.value = undefined
+      sub2Key.value = undefined
+    } else if (depth === 1) {
+      modelSub.value = undefined
+      subKey.value = undefined
+    }
+  } else if (event.key === "Enter" || event.key === " ") {
     event.preventDefault()
-    selectActive()
+    if (depth < 2 && openSub(depth === 0 ? 0 : 1)) return
+    selectAt(depth)
   }
 }
 
@@ -2051,16 +2277,26 @@ async function chooseAgent(next: (typeof AGENTS)[number]) {
 
 async function chooseModel(provider: string, model: string) {
   menu.value = undefined
+  const variants = props.side ? [] : (findModel(app.providers, { provider, model })?.variants ?? [])
   /*
    * On the home screen there is no session to set it on, so the choice is the
    * app's default - which the next task created from here will start with, and
    * which every session already falls back to.
+   *
+   * MiMo snaps the level to one the new model takes (the same one, else medium,
+   * else its first), so the level is written whenever the one in force is not
+   * on offer.
    */
   if (!sessionID.value) {
-    await app.patchConfig({ model: { provider, model }, smart: false })
+    const effort = clampEffort(variants, app.config?.effort)
+    await app.patchConfig({ model: { provider, model }, smart: false, ...(effort && effort !== app.config?.effort ? { effort } : {}) })
     return
   }
   await app.setModel({ provider, model }, sessionID.value)
+  if (props.side) return
+  const inForce = session.value?.effort ?? app.config?.effort
+  const effort = clampEffort(variants, inForce)
+  if (effort && effort !== inForce) await app.setEffort(effort)
 }
 
 /* Smart: the model is picked from the conversation's first message. */
@@ -2161,12 +2397,27 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 </script>
 
 <template>
-  <div class="composer" :class="{ noted: sessionID && !side }" :data-compacting="compactingHere || undefined">
+  <div class="composer" :class="{ noted: sessionID && !side, side }" :data-compacting="compactingHere || undefined">
     <div class="shell">
+      <!-- MiMo's cue drawer: tucked behind the box's top edge, it slides up with the command a recording was heard as. -->
+      <div class="voice-cues" :class="{ on: cueOn }" data-voice-cues>
+        <div class="voice-drawer" role="status">
+          <svg :key="cueRun" class="voice-check" viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M8 12.4l2.7 2.7L16 9.4" />
+          </svg>
+          <span>{{ cueText }}</span>
+        </div>
+      </div>
       <div
         ref="boxEl"
         class="box"
-        :class="{ busy: busyHere, dropping: dragging, filled: attachments.length > 0, resized: manualHeight !== null }"
+        :class="{
+          busy: busyHere,
+          dropping: dragging,
+          filled: attachments.length > 0,
+          resized: manualHeight !== null && resizable !== false,
+        }"
       >
         <!-- MiMo's handle along the top edge: drag to resize, double-click to reset. -->
         <div
@@ -2191,7 +2442,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 class="att-thumb"
                 alt=""
                 v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
-                @click="onTileClick(item)"
+                @click="onTileClick(item, $event)"
               />
               <video
                 v-else
@@ -2202,7 +2453,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 playsinline
                 preload="metadata"
                 v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
-                @click="onTileClick(item)"
+                @click="onTileClick(item, $event)"
               />
               <button
                 class="att-x"
@@ -2222,7 +2473,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               class="att-file"
               :class="{ openable: Boolean(item.path) }"
               data-attachment-tile
-              @click="onTileClick(item)"
+              @click="onTileClick(item, $event)"
             >
               <span class="badge att-badge" :style="badgeStyle(fileBadge(fileName(item.path)))">
                 {{ fileBadge(fileName(item.path)).label }}
@@ -2322,8 +2573,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
         <div v-else-if="slashOpen" class="slash" :style="{ maxHeight: `${menuRoom}px` }">
           <div class="slash-head">{{ t("composer.commands") }}</div>
           <!-- Nothing matching is a line of its own, not an absent menu, so a name typed wrong says so. -->
-          <div v-if="!slashMatches.length" class="slash-empty">
-            {{ t("composer.slashEmpty") }}
+          <!-- MiMo's order: a failed load, then a load under way, then a list with nothing in it. -->
+          <div v-if="!slashMatches.length" class="slash-empty" :data-slash-state="app.commandsState">
+            {{
+              app.commandsState === "failed"
+                ? t("composer.slashFailed")
+                : app.commandsState === "loading"
+                  ? t("composer.slashLoading")
+                  : t("composer.slashEmpty")
+            }}
           </div>
           <!-- MiMo's row: the /name chip, what it does, and where it came from at the far end. -->
           <button
@@ -2360,15 +2618,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           @paste="onPaste"
         />
 
-        <!-- MiMo's cue while a spoken command acts: a ticked ring and the command. -->
-        <div v-if="voiceCue" class="voice-cue" role="status">
-          <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <circle cx="8" cy="8" r="6.2" />
-            <path d="M5.4 8.2 7.2 10l3.4-3.6" />
-          </svg>
-          <span>{{ voiceCue }}</span>
-        </div>
-
         <!--
           Attachments, agent, model and effort sit on one bar inside the box,
           which is where the new design puts them - the controls belong to the
@@ -2391,7 +2640,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             the terminal, compose mode, and the skills behind a submenu. The
             class stays "attach" so the side column's narrow rules still find it.
           -->
-          <div class="pill-wrap">
+          <div class="pill-wrap plus-wrap">
             <button
               class="attach"
               type="button"
@@ -2509,14 +2758,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               row. What each level does is on hover, beside the row, rather than
               under every name.
             -->
-            <div v-if="menu === 'access'" ref="accessMenu" class="menu access-menu" :class="{ up: menuUp }">
+            <div
+              v-if="menu === 'access'"
+              ref="accessMenu"
+              class="menu access-menu"
+              :class="{ up: menuUp }"
+              tabindex="-1"
+              @keydown="onAccessKeys"
+            >
               <button
                 v-for="entry in accessChoices"
                 :key="entry"
                 v-tip="{ label: t(`composer.access.${entry}Hint`), placement: 'right', trigger: 'hover' }"
                 class="item access-item"
-                :class="{ on: entry === access }"
+                :class="{ on: entry === access, hot: entry === accessHot }"
                 :data-access="entry"
+                @mouseenter="accessHot = entry"
                 @click="chooseAccess(entry)"
               >
                 <svg class="access-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -2583,12 +2840,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           <div class="pill-wrap">
             <button
               class="pill model-pill"
-              :class="{ open: menu === 'model' }"
+              :aria-expanded="menu === 'model'"
               v-tip="{ label: t('composer.modelTip'), disabled: menu === 'model' }"
               @click="toggle('model')"
             >
               <span class="model-label">{{ modelName }}</span>
-              <span v-if="!smartOn && !side && sessionID && variants.length && effortLevel" class="model-effort">{{ effortLevel }}</span>
+              <!-- MiMo's 「Claude Opus · 高」: on the home screen too, since the level is the next task's as well. -->
+              <span v-if="!smartOn && !side && effortLabel" class="model-effort" data-model-effort>{{ effortLabel }}</span>
               <svg class="caret" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                 <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" stroke-width="1" />
               </svg>
@@ -2629,71 +2887,97 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 </svg>
               </button>
 
-              <div class="rule" />
-              <div v-if="groups.length === 0" class="model-empty">
+              <!-- MiMo draws the rule under Smart only when models follow it; with none, one line says so. -->
+              <div v-if="groups.length" class="rule" />
+              <div v-else class="model-empty" data-model-empty>
                 {{ app.providers.some((p) => p.configured) ? t("model.none") : t("model.needProvider") }}
               </div>
 
-              <template v-for="group in primaryGroup ? [primaryGroup] : []" :key="group.provider.id">
-                <ModelMenuRow
-                  v-for="model in group.models"
-                  :key="model.id"
-                  :model="model"
-                  :provider="group.provider"
-                  :row-key="modelKey(group.provider.id, model.id)"
-                  :on="currentKey === modelKey(group.provider.id, model.id)"
-                  :hot="activeKey === modelKey(group.provider.id, model.id)"
-                  :efforts="effortsFor(model)"
-                  :effort="effortLevel"
-                  :sub-open="modelSub === modelKey(group.provider.id, model.id)"
-                  @enter="hoverRow(modelKey(group.provider.id, model.id))"
-                  @choose="chooseModel(group.provider.id, model.id)"
-                  @effort="chooseModelEffort(group.provider.id, model.id, $event)"
-                />
-              </template>
+              <ModelMenuRow
+                v-for="row in primaryRows"
+                :key="row.key"
+                :model="row.model"
+                :row-key="row.key"
+                :on="currentKey === row.key"
+                :hot="activeKey === row.key"
+                :efforts="effortsFor(row.model)"
+                :effort="effortLevel"
+                :sub-open="modelSub === row.key"
+                :effort-hot="modelSub === row.key ? levelOf(subKey) : undefined"
+                @enter="hoverRow(row.key)"
+                @choose="chooseModel(row.provider, row.model.id)"
+                @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                @effort-hover="subKey = effortKey($event)"
+              />
 
-              <div v-if="moreGroups.length" class="more-slot" @mouseenter="hoverRow(MORE_KEY)">
+              <div v-if="moreRows.length" class="more-slot" @mouseenter="hoverRow(MORE_KEY)">
                 <button
                   class="item model-item"
                   :class="{ hot: activeKey === MORE_KEY }"
                   :data-key="MORE_KEY"
                   aria-haspopup="menu"
                   :aria-expanded="modelSub === MORE_KEY"
-                  @click="modelSub = modelSub === MORE_KEY ? undefined : MORE_KEY"
+                  @click="modelSub === MORE_KEY ? closeModelSubs() : hoverRow(MORE_KEY)"
                 >
                   <span class="item-name">{{ t("model.moreModels") }}</span>
                   <svg class="model-chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                     <path d="M6.5 4.5 10 8l-3.5 3.5" />
                   </svg>
                 </button>
+                <!-- The glass is on the outer box and the scrolling on the inner, so a row's levels are not clipped. -->
                 <div
                   v-if="modelSub === MORE_KEY"
                   ref="moreMenu"
                   class="more-menu"
                   role="menu"
+                  data-more-menu
                   :style="{ left: `${morePlace.left}px`, top: `${morePlace.top}px` }"
-                  @scroll="moreSub = undefined"
                 >
-                  <div v-for="group in moreGroups" :key="group.provider.id" class="vendor">
-                    <div class="vendor-head">{{ group.provider.name }}</div>
-                    <ModelMenuRow
-                      v-for="model in group.models"
-                      :key="model.id"
-                      :model="model"
-                      :provider="group.provider"
-                      :row-key="modelKey(group.provider.id, model.id)"
-                      :on="currentKey === modelKey(group.provider.id, model.id)"
-                      :hot="false"
-                      :efforts="effortsFor(model)"
-                      :effort="effortLevel"
-                      :sub-open="moreSub === modelKey(group.provider.id, model.id)"
-                      @enter="moreSub = modelKey(group.provider.id, model.id)"
-                      @choose="chooseModel(group.provider.id, model.id)"
-                      @effort="chooseModelEffort(group.provider.id, model.id, $event)"
-                    />
+                  <div class="more-scroll" @scroll="moreSub = undefined">
+                    <div v-for="group in moreGroups" :key="group.provider.id" class="vendor">
+                      <div class="vendor-head">{{ group.provider.name }}</div>
+                      <ModelMenuRow
+                        v-for="row in rowsOf(group)"
+                        :key="row.key"
+                        :model="row.model"
+                        :row-key="row.key"
+                        :on="currentKey === row.key"
+                        :hot="subKey === row.key"
+                        :efforts="effortsFor(row.model)"
+                        :effort="effortLevel"
+                        :sub-open="moreSub === row.key"
+                        :effort-hot="moreSub === row.key ? levelOf(sub2Key) : undefined"
+                        @enter="hoverMore(row.key)"
+                        @choose="chooseModel(row.provider, row.model.id)"
+                        @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                        @effort-hover="sub2Key = effortKey($event)"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
+
+              <!-- MiMo's custom models: their own group at the top level, after a rule, with no heading. -->
+              <template v-if="customRows.length">
+                <div class="rule" />
+                <ModelMenuRow
+                  v-for="row in customRows"
+                  :key="row.key"
+                  data-custom-model
+                  :model="row.model"
+                  :row-key="row.key"
+                  :on="currentKey === row.key"
+                  :hot="activeKey === row.key"
+                  :efforts="effortsFor(row.model)"
+                  :effort="effortLevel"
+                  :sub-open="modelSub === row.key"
+                  :effort-hot="modelSub === row.key ? levelOf(subKey) : undefined"
+                  @enter="hoverRow(row.key)"
+                  @choose="chooseModel(row.provider, row.model.id)"
+                  @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                  @effort-hover="subKey = effortKey($event)"
+                />
+              </template>
 
               <div class="rule" />
               <button
@@ -3259,7 +3543,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 /* A dropped file has to look like it will land somewhere: MiMo's 2px ring of the accent at 35%. */
 .box.dropping {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 35%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }
 
 /* Annotations waiting to be sent, under the attachments and skill chips. */
@@ -3659,30 +3943,112 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   }
 }
 
-/* MiMo's cue under the text while a spoken command acts. */
-.voice-cue {
+/*
+ * MiMo's cue drawer: 48 tall behind the box's top edge with 16 of it under the
+ * box, so 32 show once it slides up; it slides back down 3s later. It comes
+ * before the box in the page, so the box paints over its foot.
+ */
+.shell {
+  position: relative;
+}
+
+.voice-cues {
+  position: absolute;
+  inset-inline: 0;
+  bottom: calc(100% - 16px);
+  height: 48px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.voice-drawer {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
-  padding: 0 6px 6px;
-  color: var(--text-weak);
+  box-sizing: border-box;
+  height: 100%;
+  padding: 6px 22px 20px;
+  color: #ff6a2b;
+  white-space: nowrap;
+  background: var(--surface-layer);
+  border-radius: 16px 16px 0 0;
   font-size: calc(12px * var(--ui-font-scale, 1));
   line-height: 16px;
-  animation: mic-live-in 0.2s both;
+  transform: translateY(105%);
+  transition: transform 0.34s;
 }
 
-.voice-cue svg {
+:root[data-theme="dark"] .voice-drawer {
+  color: #ff7a40;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .voice-drawer {
+    color: #ff7a40;
+  }
+}
+
+.voice-cues.on .voice-drawer {
+  transform: translateY(0);
+  transition: transform 0.26s cubic-bezier(0.32, 0.72, 0.33, 1);
+}
+
+/* A ring that draws itself, then the tick inside it. */
+.voice-check {
   flex: none;
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
-.voice-cue path,
-.voice-cue circle {
+.voice-check circle,
+.voice-check path {
+  fill: none;
   stroke: currentColor;
-  stroke-width: 1.3;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+/* Drawn by growing the dash from nothing to the whole length (57 round the ring, 15 along the tick). */
+.voice-check circle {
+  stroke-dasharray: 0 57;
+}
+
+.voice-check path {
+  stroke-dasharray: 0 15;
+}
+
+.voice-cues.on .voice-check circle {
+  animation: voice-ring 0.42s 0.13s ease-out forwards;
+}
+
+.voice-cues.on .voice-check path {
+  animation: voice-tick 0.28s 0.39s ease-out forwards;
+}
+
+@keyframes voice-ring {
+  to {
+    stroke-dasharray: 57 0;
+  }
+}
+
+@keyframes voice-tick {
+  to {
+    stroke-dasharray: 15 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-drawer,
+  .voice-cues.on .voice-drawer {
+    transition: none;
+  }
+
+  .voice-check circle,
+  .voice-check path {
+    stroke-dasharray: none;
+    animation: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3760,12 +4126,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   position: relative;
 }
 
-.pill.open {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-/* Menus open upward: the pills sit at the bottom of the window. */
+/*
+ * MiMo's menu surface for every composer menu: 16 round on a half-pixel line,
+ * 5 of padding, rows 1 apart. Menus open upward unless placed below.
+ */
 .menu {
   position: absolute;
   bottom: calc(100% + 6px);
@@ -3777,11 +4141,67 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
    */
   inset-inline-start: 0;
   z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   min-width: 160px;
-  padding: 2px;
-  background: var(--surface-menu);
-  border-radius: 6px;
+  padding: 5px;
+  border: 0.5px solid var(--border-weak);
+  border-radius: 16px;
   box-shadow: var(--shadow-lg);
+  transform-origin: top;
+  animation: menu-in 0.15s ease-out;
+}
+
+/*
+ * The glass: 92% of the menu colour over an 18px blur. It is drawn by a layer
+ * under the rows rather than by the menu itself, because a blur on the menu
+ * would hold the fixed submenus inside it to the menu instead of the window.
+ */
+.menu::before,
+.more-menu::before {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
+  backdrop-filter: blur(18px) saturate(150%);
+  content: "";
+}
+
+.menu.up {
+  transform-origin: bottom;
+  animation-name: menu-in-up;
+}
+
+/* MiMo's entrance: a fade, a 95% zoom and a 2px slide from the chip. No fill mode, so no transform outlasts it. */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.95);
+  }
+}
+
+@keyframes menu-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.95);
+  }
+}
+
+@keyframes sub-in {
+  from {
+    opacity: 0;
+    transform: translateX(-2px) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu,
+  .more-menu,
+  .skill-menu {
+    animation: none;
+  }
 }
 
 /*
@@ -3794,17 +4214,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   top: calc(100% + 4px);
   bottom: auto;
   min-width: 220px;
-  padding: 4px;
-  border-radius: 12px;
 }
 
 .menu.plus-menu.up {
   top: auto;
   bottom: calc(100% + 4px);
-}
-
-.menu.plus-menu .item {
-  border-radius: 8px;
 }
 
 .menu.plus-menu .rule {
@@ -3839,11 +4253,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   flex-direction: column;
   width: 240px;
   max-height: min(360px, calc(100vh - 16px));
-  padding: 4px;
-  background: var(--surface-menu);
+  padding: 5px;
+  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
-  border-radius: 12px;
+  border-radius: 16px;
   box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px) saturate(150%);
+  transform-origin: top left;
+  animation: sub-in 0.15s ease-out;
 }
 
 .skill-search {
@@ -3860,12 +4277,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .skill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   overflow-y: auto;
 }
 
 .skill-item {
+  flex: none;
   height: 30px;
-  border-radius: 8px;
 }
 
 .skill-empty {
@@ -3999,8 +4419,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   bottom: auto;
   min-width: 210px;
   max-width: 320px;
-  padding: 4px;
-  border-radius: 12px;
 }
 
 .menu.model-menu.up {
@@ -4022,7 +4440,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   height: auto;
   min-height: 32px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: 11px;
   font-weight: 400;
   line-height: 20px;
 }
@@ -4033,12 +4451,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--surface-selected);
 }
 
+/* MiMo's 8px after a row mark, on top of the 9px gap: names start 17 past it. */
 .smart-mark {
   display: grid;
   flex: none;
   place-items: center;
   width: 20px;
   height: 20px;
+  margin-inline-end: 8px;
   color: var(--text-strong);
   background: var(--surface-hover);
   border-radius: 6px;
@@ -4064,12 +4484,13 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   stroke-linejoin: round;
 }
 
+/* MiMo's check is drawn in its send colour. */
 .model-check {
   flex: none;
   width: 16px;
   height: 16px;
   margin-inline-start: auto;
-  color: var(--text-strong);
+  color: var(--button-primary);
   opacity: 0;
 }
 
@@ -4088,6 +4509,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   flex: none;
   width: 16px;
   height: 16px;
+  margin-inline-end: 8px;
   color: color-mix(in srgb, var(--text-base) 87%, transparent);
 }
 
@@ -4095,42 +4517,71 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   position: relative;
 }
 
-/* Placed fixed beside its row, so it is never cut off by the composer's edge. */
+/*
+ * Placed fixed beside its row, so it is never cut off by the composer's edge.
+ * The surface is the outer box and the list scrolls in the inner one, so a
+ * row's own levels, fixed beside it, are not clipped by the scroll.
+ */
 .more-menu {
   position: fixed;
   z-index: 60;
+  display: flex;
   min-width: 220px;
   max-height: min(420px, calc(100vh - 16px));
-  padding: 4px;
-  overflow-y: auto;
-  background: var(--surface-menu);
   border: 0.5px solid var(--border-weak);
-  border-radius: 12px;
+  border-radius: 16px;
   box-shadow: var(--shadow-lg);
+  transform-origin: top left;
+  animation: sub-in 0.15s ease-out;
 }
 
+.more-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 5px;
+  overflow-y: auto;
+}
+
+.vendor {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.vendor + .vendor {
+  margin-top: 4px;
+}
+
+/* MiMo's vendor heading: 11/500 at 0.02em, 8 12 4, muted and not selectable. */
 .vendor-head {
-  padding: 6px 10px 2px;
+  padding: 8px 12px 4px;
   color: var(--text-weak);
   font-size: calc(11px * var(--ui-font-scale, 1));
+  font-weight: 500;
   line-height: 16px;
+  letter-spacing: 0.02em;
+  user-select: none;
 }
 
+/* MiMo's level on the chip, 「· 高」: the level at 0.62, the dot at 0.7 of that and 5 before the level. */
 .model-effort {
-  color: var(--text-weak);
-  text-transform: capitalize;
+  flex: none;
+  white-space: nowrap;
+  opacity: 0.62;
 }
 
+.model-effort::before {
+  margin-inline-end: 5px;
+  opacity: 0.7;
+  content: "·";
+}
+
+/* MiMo's empty menu: one 13px muted line, 8 by 10. */
 .model-empty {
-  display: flex;
-  align-items: center;
-  height: 48px;
-  padding: 0 12px;
+  padding: 8px 10px;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 440;
   line-height: 20px;
-  letter-spacing: -0.04px;
 }
 
 /* Bleeds past the two pixels of padding on the band above and below it. */
@@ -4148,7 +4599,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 0 12px;
   color: var(--text-strong);
   text-align: start;
-  border-radius: 4px;
+  /* MiMo's 11px corner on every menu row. */
+  border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 440;
   line-height: 1;
@@ -4279,13 +4731,19 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .box.dropping {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive) 35%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }
 
+/*
+ * MiMo's 44px floor, and under it the ~6px its inline textarea leaves on the
+ * line box, which a flex box has no line box to give: 0.5 + 8 + 44 + 6 + 36 +
+ * 8 + 0.5 = 103, the card MiMo measures.
+ */
 .input {
   position: relative;
   z-index: 1;
-  min-height: 52px;
+  min-height: 44px;
+  margin-bottom: 6px;
   padding: 5px 5px 8px;
   background: transparent;
   font-size: calc(14px * var(--ui-font-scale, 1));
@@ -4343,9 +4801,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   background: var(--border-weak);
 }
 
-/* Measured in MiMo: the first and last buttons twelve in from the card's
-   edge, and the bar three clear of its padding at the foot. Its two groups
-   wrap onto a second line when the box is narrow. */
+/* MiMo's bar: 2 above and below its 32px controls and 4 in at each end, so 36
+   tall. Its two groups wrap onto a second line when the box is narrow. */
 .row {
   flex-wrap: wrap;
   justify-content: space-between;
@@ -4353,8 +4810,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   row-gap: 6px;
   height: auto;
   min-height: 32px;
-  margin-bottom: 3px;
-  padding: 0 4px;
+  margin-bottom: 0;
+  padding: 2px 4px;
 }
 
 .row-start,
@@ -4474,8 +4931,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   top: calc(100% + 4px);
   bottom: auto;
   min-width: 210px;
-  padding: 4px;
-  border-radius: 12px;
+}
+
+.access-menu:focus {
+  outline: none;
 }
 
 .access-menu.up {
@@ -4496,10 +4955,10 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .access-item {
+  flex: none;
   gap: 9px;
   height: 32px;
   padding: 6px 10px;
-  border-radius: 8px;
   font-weight: 400;
 }
 
@@ -4518,11 +4977,84 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 .access-check {
   flex: none;
   margin-inline-start: auto;
-  color: var(--text-strong);
+  color: var(--button-primary);
   opacity: 0;
 }
 
 .access-item.on .access-check {
   opacity: 1;
+}
+
+/*
+ * The side chat's box: the dock around it supplies MiMo's 28px sides and 6px
+ * foot, so the box adds no padding of its own, and a box that fits its text
+ * holds at MiMo's 70px floor at every window width.
+ */
+.composer.side {
+  padding: 0;
+}
+
+.composer.side .box:not(.resized) .input {
+  min-height: 70px;
+}
+
+/*
+ * MiMo's floating box over an expanded panel: one wrapping row - the plus, the
+ * text, the permission chip, then the model and send - with anything else
+ * (attachments, chips, annotations) on a full line above it.
+ */
+:global(#float-dock) .composer {
+  padding: 0;
+}
+
+:global(#float-dock) .shell {
+  max-width: 100%;
+}
+
+:global(#float-dock) .box {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 4px 2px;
+  padding: 6px 8px;
+}
+
+:global(#float-dock) .row,
+:global(#float-dock) .row-start,
+:global(#float-dock) .row-end {
+  display: contents;
+}
+
+:global(#float-dock) .box > * {
+  flex-basis: 100%;
+  order: -1;
+}
+
+:global(#float-dock) .plus-wrap {
+  order: 0;
+  margin-bottom: 4px;
+}
+
+:global(#float-dock) .input {
+  flex: 1 1 0;
+  order: 1;
+  min-width: 0;
+  min-height: 36px;
+  margin-bottom: 0;
+  padding: 8px 6px 8px 8px;
+}
+
+:global(#float-dock) .row-start > :not(.plus-wrap) {
+  order: 2;
+  margin-bottom: 4px;
+}
+
+:global(#float-dock) .row-end > * {
+  order: 3;
+  margin-bottom: 4px;
+}
+
+:global(#float-dock) .perm-label {
+  display: none;
 }
 </style>

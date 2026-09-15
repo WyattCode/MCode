@@ -206,6 +206,31 @@ export function splitSendWord(text: string): { text: string; send: boolean } {
   return { text: trimmed, send: false }
 }
 
+/*
+ * MiMo's spoken clear in quick input: a short utterance that is nothing but one
+ * of these words, punctuation and spaces aside, empties the box instead of
+ * being typed into it.
+ */
+const CLEAR_WORDS = /^(清空|清除|清空输入|删掉重来|重写)$/
+
+export function isClearCommand(text: string): boolean {
+  const bare = text.replace(/[。.!！?？,，、\s]/g, "")
+  return bare.length <= 12 && CLEAR_WORDS.test(bare)
+}
+
+/** The three results MiMo's composer names for a spoken command. */
+export type VoiceCue = "sent" | "cleared" | "rewritten"
+
+/*
+ * What a smart-edit answer did to the box: nothing to say if it left the text
+ * as it was, "cleared" if nothing is left, "rewritten" otherwise. A send is
+ * named by whoever sends, since it outranks either.
+ */
+export function editCue(before: string, after: string, edited: boolean): VoiceCue | undefined {
+  if (!edited || before === after) return undefined
+  return after.trim() ? "rewritten" : "cleared"
+}
+
 /** Latin letters and digits want a space between words; CJK text and punctuation do not. */
 const WORDISH_END = /[A-Za-z0-9,.;:!?)\]'"]$/
 const WORDISH_START = /^[A-Za-z0-9(["']/
