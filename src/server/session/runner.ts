@@ -654,6 +654,31 @@ export class SessionRunner {
     return updated
   }
 
+  /**
+   * MiMo's edit and retry: the messages from one on are deleted and nothing
+   * else moves. Files the later turns changed stay as they are - each turn's
+   * card still offers its own 撤销 - which is why no snapshot is consulted and
+   * the rollback's history floor does not apply.
+   *
+   * A rollback still standing from before is made permanent first, so the
+   * transcript has one boundary and not two. A summary whose mark was among
+   * the deleted messages summarised them, so it goes with them.
+   */
+  async truncate(sessionID: string, messageID: string): Promise<SessionInfo> {
+    if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
+    let session = await this.store.require(sessionID)
+    if (session.revert) session = await this.commitRevert(session)
+    const stored = await this.store.messages(sessionID)
+    const at = stored.findIndex((message) => message.id === messageID)
+    if (at < 0) throw new Error("That message is no longer in this conversation")
+    const kept = new Set(stored.slice(0, at).map((message) => message.id))
+    for (const message of stored.slice(at)) await this.store.deleteMessage(sessionID, message.id)
+    if (session.compacted && !kept.has(session.compacted.messageID)) {
+      session = await this.store.update(sessionID, { compacted: undefined })
+    }
+    return session
+  }
+
   /** Puts back what undo took away. */
   async redo(sessionID: string): Promise<number> {
     /*

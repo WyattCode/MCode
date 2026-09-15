@@ -20,6 +20,7 @@ import EditedFilesCard from "./EditedFilesCard.vue"
 import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
+import { useRestoreDraft } from "../lib/draft"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -605,7 +606,7 @@ onBeforeUnmount(() => sizer?.disconnect())
  */
 async function branchReply(turn: Turn) {
   if (!turn.last?.id) return
-  if (await app.forkFrom(turn.last.id)) notify(t("stream.branchedFromHere"))
+  await app.forkFrom(turn.last.id, { titleSuffix: true, here: true })
 }
 
 /* The fork marker's link: back to the conversation this one came from, if it is still there. */
@@ -618,14 +619,18 @@ async function backToSource(sourceID: string) {
   notify(t("stream.backToSource"))
 }
 
-/** True while a rollback is in flight, so a second press cannot race the first. */
-const reverting = ref(false)
+/** True while an edit or retry is deleting and resending, so a second press cannot race the first. */
+const resending = ref(false)
+
+/* Where a resend that was not accepted leaves its words: back in the composer. */
+const restoreDraft = useRestoreDraft()
 
 /*
  * MiMo's in-place edit of the last question. Only the last one offers it; the
- * bubble becomes a box holding the question, and sending takes the
- * conversation back to just before it - files too, as a rollback does - and
- * sends the new words. While a turn is running it says so rather than sending.
+ * bubble becomes a box holding the question, and sending deletes the question
+ * and everything after it - the files those turns changed stay as they are -
+ * and sends the new words. While a turn is running it says so rather than
+ * sending.
  */
 const editingAsked = ref<string>()
 const editDraft = ref("")
@@ -673,24 +678,22 @@ async function sendEdit(turn: Turn) {
   if (!text) return
   const sessionID = app.currentID
   const message = shownMessages.value.find((entry) => entry.id === turn.id)
-  if (!sessionID || shownBusy.value || reverting.value || message?.role !== "user") {
+  if (!sessionID || shownBusy.value || resending.value || message?.role !== "user") {
     notifyFailure(t("stream.editBusy"))
     return
   }
-  reverting.value = true
+  resending.value = true
   try {
-    await app.revert(sessionID, turn.id)
+    await app.truncate(sessionID, turn.id)
     editingAsked.value = undefined
-    await app.send(text, message.attachments ?? [], undefined, message.annotations ?? [])
+    // As MiMo: the messages are already gone, so a send that is refused keeps the words as a draft.
+    if (!(await app.send(text, message.attachments ?? [], undefined, message.annotations ?? []))) {
+      restoreDraft({ ...message, text })
+    }
   } catch (failure) {
-    /*
-     * The server refuses rather than moving the transcript on its own when the
-     * files cannot be made to follow; the sentence it refuses with is the only
-     * explanation there is, so it is shown.
-     */
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
-    reverting.value = false
+    resending.value = false
   }
 }
 
@@ -739,25 +742,26 @@ function emptyReply(turn: Turn): boolean {
 /*
  * MiMo's retry on a turn that failed, was stopped or came back empty: the
  * question that started it goes out again, as it was, in place of the turn.
- * The conversation is taken back to just before that question - the same
- * rollback editing it uses - and the question is sent once more. While a turn
- * is still running, or when there is no question to send, it says so instead.
+ * The question and everything after it are deleted - no file moves, as with
+ * editing - and the question is sent once more. While a turn is still
+ * running, or when there is no question to send, it says so instead.
  */
 async function retry(turn: Turn) {
   const sessionID = props.side ? app.sideID : app.currentID
   const message = shownMessages.value.find((entry) => entry.id === turn.id)
-  if (!sessionID || shownBusy.value || reverting.value || message?.role !== "user") {
+  if (!sessionID || shownBusy.value || resending.value || message?.role !== "user") {
     notifyFailure(t("stream.retryUnavailable"))
     return
   }
-  reverting.value = true
+  resending.value = true
   try {
-    await app.revert(sessionID, turn.id)
-    await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined, message.annotations ?? [])
+    await app.truncate(sessionID, turn.id)
+    const sent = await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined, message.annotations ?? [])
+    if (!sent && !props.side) restoreDraft(message)
   } catch (failure) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
-    reverting.value = false
+    resending.value = false
   }
 }
 
@@ -881,7 +885,7 @@ defineExpose({ stepMessage, scroller })
                 type="button"
                 class="asked-edit-send"
                 data-edit-send
-                :disabled="shownBusy || reverting || !editDraft.trim()"
+                :disabled="shownBusy || resending || !editDraft.trim()"
                 @click="sendEdit(turn)"
               >
                 {{ t("stream.editSend") }}
@@ -955,7 +959,7 @@ defineExpose({ stepMessage, scroller })
                 type="button"
                 class="msg-act"
                 data-msg-act="edit"
-                :disabled="reverting"
+                :disabled="resending"
                 :aria-label="t('stream.edit')"
                 v-tip="{ label: t('stream.edit'), placement: 'top' }"
                 @click="startEdit(turn, false)"

@@ -211,8 +211,8 @@ check(
 
 const stream = read(`${components}/MessageStream.vue`)
 check(
-  "reverting from the transcript puts the message back in the box",
-  /await app\.revert\(sessionID, turn\.id\)[\s\S]{0,200}restoreDraft\(message\)/.test(stream),
+  "a retry that is not accepted puts the question back in the box",
+  /await app\.truncate\(sessionID, turn\.id\)[\s\S]{0,300}restoreDraft\(message\)/.test(stream),
   true,
 )
 

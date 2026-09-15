@@ -356,7 +356,7 @@ export class SessionStore {
    * session record - so there is nothing for them to collide with, and minting
    * new ones would break the references a message's own parts hold to it.
    */
-  async fork(sessionID: string, messageID: string): Promise<SessionInfo> {
+  async fork(sessionID: string, messageID: string, titleSuffix = false): Promise<SessionInfo> {
     const origin = await this.require(sessionID)
     const messages = await this.messages(sessionID)
     const at = messages.findIndex((message) => message.id === messageID)
@@ -369,8 +369,9 @@ export class SessionStore {
       // A branch works the way its origin did, and in the same kind of folder.
       staged: origin.staged,
       scratch: origin.scratch,
-      // Named for what it came from, so the pair reads as a pair in the list.
-      title: origin.title,
+      // Named for what it came from, so the pair reads as a pair in the list:
+      // the same title, or MiMo's 「(分支)」 after it for a branch off a reply.
+      title: titleSuffix ? branchTitle(origin.title) : origin.title,
       // Remembered so the branch can say where it came from and lead back there.
       forkOf: origin.id,
     })
@@ -414,9 +415,10 @@ export class SessionStore {
   /**
    * Removes one message for good.
    *
-   * The only caller is the rollback being made permanent, which happens when a
-   * rolled back session is prompted again. Nothing else in the app deletes a
-   * message: a transcript that quietly loses turns is worse than a long one.
+   * Two callers: a rollback being made permanent when a rolled back session is
+   * prompted again, and an edit or retry, which deletes the messages from the
+   * one resent onward as MiMo does. Nothing else deletes a message: a
+   * transcript that quietly loses turns is worse than a long one.
    */
   async deleteMessage(sessionID: string, messageID: string): Promise<void> {
     await this.storage.remove(this.messageKey(sessionID, messageID))
@@ -430,4 +432,14 @@ export class SessionStore {
     }
     return undefined
   }
+}
+
+/**
+ * MiMo's title for a branch: 「{title} (分支)」, and branching a branch counts
+ * on - 「(分支 2)」, 「(分支 3)」. Chinese in every language, as MiMo writes it.
+ */
+export function branchTitle(title: string): string {
+  const found = /^(.*) \(分支(?: (\d+))?\)$/.exec(title)
+  if (!found) return `${title} (分支)`
+  return `${found[1]} (分支 ${found[2] ? Number(found[2]) + 1 : 2})`
 }
