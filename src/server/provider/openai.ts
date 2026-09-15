@@ -3,6 +3,7 @@ import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { ProviderError } from "./types"
+import { guarded, stallGuard } from "./stall"
 
 /**
  * Adapter for OpenAI-compatible chat completions.
@@ -129,6 +130,8 @@ export const OpenAICompatible: ProviderAdapter = {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
 
+    // MiMo's stall timeout: a stream that goes quiet for 480s is cut off and retried.
+    const guard = stallGuard(request.signal, false)
     const response = await fetch(`${root}/chat/completions`, {
       method: "POST",
       headers: {
@@ -150,7 +153,7 @@ export const OpenAICompatible: ProviderAdapter = {
         ...(request.apiKey ? { authorization: `Bearer ${request.apiKey}` } : {}),
         "content-type": "application/json",
       },
-      signal: request.signal,
+      signal: guard.signal,
       body: JSON.stringify({
         model: request.model.model,
         stream: true,
@@ -174,12 +177,17 @@ export const OpenAICompatible: ProviderAdapter = {
           : { reasoning_effort: request.effort }),
         ...(request.tools.length ? { tools: toolSchemas(request.tools), tool_choice: "auto" } : {}),
       }),
+    }).catch((err: unknown) => {
+      guard.dispose()
+      throw guard.failure(err)
     })
 
     if (!response.ok || !response.body) {
+      guard.dispose()
       const detail = await response.text().catch(() => "")
       throw new Error(describeHttp(response.status, detail))
     }
+    guard.alive()
 
     // Blocks are indexed for the UI; text always occupies slot 0, reasoning 1,
     // since this format has no notion of interleaved blocks.
@@ -203,7 +211,7 @@ export const OpenAICompatible: ProviderAdapter = {
     let finish: string | null = null
     let usage = { input: 0, output: 0 }
 
-    for await (const data of sse(response.body, request.signal)) {
+    for await (const data of guarded(sse(response.body, request.signal), guard)) {
       if (data === "[DONE]") break
       let chunk: Chunk
       try {

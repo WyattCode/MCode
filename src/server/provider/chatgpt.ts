@@ -4,6 +4,7 @@ import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { ProviderError } from "./types"
 import { USER_AGENT } from "../auth/oauth"
+import { stallGuard } from "./stall"
 
 /**
  * Adapter for a ChatGPT subscription, served by the Codex backend.
@@ -189,10 +190,12 @@ export const ChatGPTSubscription: ProviderAdapter = {
     }
     if (request.accountId) headers["chatgpt-account-id"] = request.accountId
 
+    // MiMo's timeouts for this API: 300s to the response headers, then 480s of quiet at most.
+    const guard = stallGuard(request.signal, true)
     const response = await fetch(`${base}/responses`, {
       method: "POST",
       headers,
-      signal: request.signal,
+      signal: guard.signal,
       body: JSON.stringify({
         model: request.model.model,
         instructions: request.system,
@@ -205,9 +208,13 @@ export const ChatGPTSubscription: ProviderAdapter = {
         stream: true,
         ...reasoningRequest(request.effort, request.variants, request.showReasoning),
       }),
+    }).catch((err: unknown) => {
+      guard.dispose()
+      throw guard.failure(err)
     })
 
     if (!response.ok || !response.body) {
+      guard.dispose()
       const detail = await response.text().catch(() => "")
       throw new Error(`ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`)
     }
@@ -235,9 +242,17 @@ export const ChatGPTSubscription: ProviderAdapter = {
     const decoder = new TextDecoder()
     let buffer = ""
 
+    guard.alive()
     while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+      const { done, value } = await reader.read().catch((err: unknown) => {
+        guard.dispose()
+        throw guard.failure(err)
+      })
+      if (done) {
+        guard.dispose()
+        break
+      }
+      guard.alive()
       buffer += decoder.decode(value, { stream: true })
 
       const lines = buffer.split("\n")

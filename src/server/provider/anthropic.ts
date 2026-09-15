@@ -4,6 +4,7 @@ import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
+import { guarded, stallGuard } from "./stall"
 
 export function createClient(apiKey: string, maxRetries = 2): Anthropic {
   return new Anthropic({ apiKey, maxRetries })
@@ -203,6 +204,8 @@ export const AnthropicAdapter: ProviderAdapter = {
      */
     const maxTokens = Math.min(MAX_TOKENS, request.maxOutput ?? MAX_TOKENS)
 
+    // MiMo's stall timeout: a stream that goes quiet for 480s is cut off and retried.
+    const guard = stallGuard(request.signal, false)
     const stream = client.messages.stream(
       {
         model: request.model.model,
@@ -218,10 +221,10 @@ export const AnthropicAdapter: ProviderAdapter = {
           maxTokens,
         ),
       },
-      { signal: request.signal },
+      { signal: guard.signal },
     )
 
-    for await (const event of stream) {
+    for await (const event of guarded(stream, guard)) {
       if (request.signal.aborted) break
 
       if (event.type === "content_block_start") {

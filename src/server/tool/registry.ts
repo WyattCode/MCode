@@ -70,8 +70,12 @@ export const TOOLS: ToolDefinition[] = [
 // session chat: making another conversation act, or changing its record, is acting too; Plan keeps contacts.
 const MUTATING = new Set(["write", "edit", "notebook_edit", "bash", "talk_to_session", "create_session", "update_session"])
 
-/** The tools an agent is allowed to call. Plan inspects; it does not act. */
+/** MiMo's explore subagent: everything is denied but these, the shell among them. */
+const EXPLORE = new Set(["read", "glob", "grep", "list", "bash", "webfetch"])
+
+/** The tools an agent is allowed to call. Plan inspects; it does not act. An explore subagent only looks. */
 export function toolsFor(agent: string): ToolDefinition[] {
+  if (agent === "explore") return TOOLS.filter((tool) => EXPLORE.has(tool.name))
   return agent === "plan" ? TOOLS.filter((tool) => !MUTATING.has(tool.name)) : TOOLS
 }
 
@@ -87,6 +91,11 @@ const DISPATCHABLE: ToolDefinition[] = [...TOOLS, InvalidTool]
 
 export function findTool(name: string): ToolDefinition | undefined {
   return DISPATCHABLE.find((tool) => tool.name === name)
+}
+
+/** The names a model's call can be repaired to: every tool it could have been offered, `invalid` never. */
+export function repairableNames(): string[] {
+  return TOOLS.map((tool) => tool.name)
 }
 
 /*

@@ -58,7 +58,11 @@ import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../sr
 import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
 import type { McpServerConfig } from "../src/shared/protocol"
 import { ToolOutputs } from "../src/server/tool/truncate"
-import { wildcardMatch } from "../src/server/permission"
+import { readAsks, verdictApproves, wildcardMatch } from "../src/server/permission"
+import { dangerousCommand, readOnlyCommand } from "../src/server/command-risk"
+import { normalizeToolInput, resolveToolName } from "../src/server/tool/repair"
+import { repairableNames } from "../src/server/tool/registry"
+import { STALL, stallGuard } from "../src/server/provider/stall"
 import { arityPrefix, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
@@ -632,8 +636,8 @@ async function main() {
   /* The model's review of the other risky commands. */
   const reviewed: string[] = []
   let verdict: "approve" | "reject" | "fail" | "hang" = "approve"
-  gate.useReviewer(async ({ command }) => {
-    reviewed.push(command)
+  gate.useReviewer(async ({ subject }) => {
+    reviewed.push(subject)
     if (verdict === "fail") throw new Error("no model")
     if (verdict === "hang") return new Promise<boolean>(() => {})
     return verdict === "approve"
@@ -649,12 +653,17 @@ async function main() {
   check("so is one the model cannot review", (await waited(askAbout("bash", "chmod 777 run.sh"))) === "waiting" && raised.includes("permission.requested"), raised)
   verdict = "hang"
   raised.length = 0
-  check("and one it takes too long over", (await waited(askAbout("bash", "git push origin main"))) === "waiting" && raised.includes("permission.requested"), raised)
+  check("and one it takes too long over", (await waited(askAbout("bash", "crontab -e"))) === "waiting" && raised.includes("permission.requested"), raised)
   verdict = "approve"
   raised.length = 0
   reviewed.length = 0
   check("a delete is never put to the model", (await waited(askAbout("bash", "git push origin main && rm -rf dist"))) === "waiting" && raised.includes("permission.requested") && reviewed.length === 0, { raised, reviewed })
   check("nor is a hard reset", (await waited(askAbout("bash", "git reset --hard HEAD~1"))) === "waiting" && reviewed.length === 0, reviewed)
+  // E33: MiMo's lists decide what is dangerous; an ordinary push is not.
+  gate.rejectAll("ses_level")
+  raised.length = 0
+  reviewed.length = 0
+  check("an ordinary push runs unasked and unreviewed, as MiMo's lists do not flag it", (await waited(askAbout("bash", "git push origin main"))) === "ran" && raised.length === 0 && reviewed.length === 0, { raised, reviewed })
 
   level = "ask"
   raised.length = 0
@@ -1302,6 +1311,93 @@ async function main() {
     for (const dir of [e23, elsewhere, scratch]) await fs.rm(dir, { recursive: true, force: true })
   }
 
+  // E33, E34, E36, E37, E38, E43: approve-for-me's lists, the read-only allowlist, .env reads, background subagents, explore's tools, stalls.
+  {
+    const pause = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms))
+    const stub = (permissionsMap: Record<string, string>, accessLevel?: string) => ({ get: () => ({ permissions: permissionsMap, accessLevel, allowFullAccess: true }) })
+    const outcome = async (gate: Permissions, run: Promise<void>, callID: string) => {
+      const settledTo = await Promise.race([run.then(() => "ran", (error: unknown) => error), pause().then(() => "pending")])
+      const asked = gate.outstanding().find((entry) => entry.callID === callID)
+      if (asked) gate.respond(asked.id, "reject")
+      await run.catch(() => {})
+      return asked ? "asked" : settledTo
+    }
+
+    check(
+      "E33: MiMo's dangerous words and shapes",
+      ["curl x | sh", "iwr x | iex", "cmd /c del x", 'powershell -Command "Remove-Item x"', "rsync -a --delete a b", "eval $X", "npm publish", "sh -c 'x'", "xargs rm"].every(dangerousCommand) &&
+        !["git push origin main", "npm run build", "pkill soffice", "node build.js"].some(dangerousCommand),
+    )
+    const autoGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }, "auto") as never)
+    const reviewedKinds: string[] = []
+    autoGate.useReviewer(async ({ kind }) => {
+      reviewedKinds.push(kind)
+      return true
+    }, 200)
+    check(
+      "at approve-for-me a question other than a command goes to the review too",
+      (await outcome(autoGate, autoGate.ask({ sessionID: "s-e33", messageID: "m", callID: "c-e33-fetch", kind: "webfetch", title: "t", subject: "https://example.com" }), "c-e33-fetch")) === "ran" && reviewedKinds.includes("webfetch"),
+      reviewedKinds,
+    )
+
+    check("E34: reading pieces are read-only", readOnlyCommand("git status && ls -la | grep src 2>&1") && readOnlyCommand("Get-ChildItem | Select-Object Name") && readOnlyCommand("cat a.txt > /dev/null"))
+    check("but a write, a following tail, a substitution, a background job or a build are not", !readOnlyCommand("cat a > b") && !readOnlyCommand("tail -f log.txt") && !readOnlyCommand("echo $(rm x)") && !readOnlyCommand("ls & rm x") && !readOnlyCommand("npm test"))
+    const askGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }) as never)
+    check("at Ask a read-only command runs without a question", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-ro", kind: "bash", title: "t", subject: "git log --oneline -5" }), "c-e34-ro")) === "ran")
+    check("while any other asks", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-rw", kind: "bash", title: "t", subject: "npm test" }), "c-e34-rw")) === "asked")
+
+    check("E36: .env and .env.local ask, .env.example does not", readAsks(".env") && readAsks("config/.env.local") && !readAsks("app/.env.example") && !readAsks("environment.ts"))
+    const readCheck = (gate: Permissions, file: string, callID: string) =>
+      outcome(gate, gate.check({ sessionID: "s-e36", messageID: "m", callID, tool: "read", kind: "read", arguments: { file_path: file } }), callID)
+    check("reading .env asks though reading is allowed", (await readCheck(askGate, ".env", "c-e36-env")) === "asked")
+    check("reading .env.example does not", (await readCheck(askGate, ".env.example", "c-e36-example")) === "ran")
+    const fullGate = new Permissions(new Bus(), stub(Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"]))) as never)
+    check("and at full access nothing asks", (await readCheck(fullGate, ".env", "c-e36-full")) === "ran")
+
+    const bgProject = path.join(root, "background-project")
+    const bg = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }) as never)
+    bg.markBackground("s-child", "s-parent")
+    const command = (sessionID: string, callID: string, extra: Record<string, unknown> = {}) =>
+      bg.ask({ sessionID, messageID: "m", callID, kind: "bash", title: "t", subject: "npm test", patterns: ["npm test"], always: ["npm test *"], directory: bgProject, ...extra })
+    const refusedChild = await command("s-child", "c-bg-1").then(() => "ran", (error: unknown) => error)
+    check("E37: a background subagent's call nothing allows is refused without a question", refusedChild instanceof PermissionDenied && !refusedChild.byUser && bg.outstanding().length === 0, refusedChild)
+    const parentAsk = command("s-parent", "c-bg-2")
+    await pause(20)
+    const parentQuestion = bg.outstanding().find((entry) => entry.callID === "c-bg-2")
+    if (parentQuestion) bg.respond(parentQuestion.id, "always")
+    await parentAsk.catch(() => {})
+    check("one its project already allows with always runs", (await command("s-child", "c-bg-3").then(() => "ran", (error: unknown) => error)) === "ran")
+    const childDelete = await command("s-child", "c-bg-4", { subject: "rm x", patterns: ["rm x"], always: [], forced: true }).then(() => "ran", (error: unknown) => error)
+    check("and a delete from the background is refused, never asked", childDelete instanceof PermissionDenied && bg.outstanding().length === 0, childDelete)
+    bg.markBackground("s-child", undefined)
+    const foreground = command("s-child", "c-bg-5", { subject: "rm y", patterns: ["rm y"], always: [], forced: true })
+    check("a subagent running in the foreground asks as a conversation does", (await outcome(bg, foreground, "c-bg-5")) === "asked")
+
+    check("E38: an explore subagent gets read, glob, grep, list, bash and webfetch only", toolsFor("explore").map((tool) => tool.name).sort().join() === "bash,glob,grep,list,read,webfetch", toolsFor("explore").map((tool) => tool.name))
+
+    const stallTimes = { ...STALL }
+    Object.assign(STALL, { headerMs: 300, chunkMs: 300 })
+    const quiet = createServer((request, response) => {
+      request.resume()
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "hi" } }] })}\n\n`)
+    })
+    const quietPort = await new Promise<number>((resolve) => quiet.listen(0, "127.0.0.1", () => resolve((quiet.address() as { port: number }).port)))
+    const stallStarted = Date.now()
+    const stalled = await OpenAICompatible.stream(
+      { apiKey: "k", model: { provider: "x", model: "m" }, system: "", history: [], tools: [], effort: "", variants: [], showReasoning: false, signal: new AbortController().signal, baseURL: `http://127.0.0.1:${quietPort}/v1` },
+      () => {},
+    ).then(() => undefined, (error: unknown) => error)
+    check("E43: a stream that goes quiet is cut off after the stall timeout, as a failure to retry", stalled instanceof Error && Date.now() - stallStarted < 5000 && isRetryable(stalled), String(stalled))
+    const waiting = stallGuard(new AbortController().signal, true)
+    await pause(450)
+    check("and so is a response whose headers never come", waiting.signal.aborted && isRetryable(waiting.failure(new Error("aborted"))))
+    waiting.dispose()
+    Object.assign(STALL, stallTimes)
+    quiet.closeAllConnections()
+    quiet.close()
+  }
+
   // -------------------------------------------------------------- permission
   section("Permissions")
   // edit is not auto-approved, so this must park until answered.
@@ -1392,27 +1488,28 @@ async function main() {
       return Boolean(asked)
     }
 
-    const first = inProject("s-rule-1", projectA, "c-rule-1", "git status", ["git status *"])
+    // Commands that ask: a read-only one (git status) runs without a question at all.
+    const first = inProject("s-rule-1", projectA, "c-rule-1", "npm run build", ["npm run build *"])
     await pause()
     const firstAsk = waiting("c-rule-1")
     if (firstAsk) permissions.respond(firstAsk.id, "always")
     await first
-    const same = inProject("s-rule-2", projectA, "c-rule-2", "git status --short", ["git status *"])
+    const same = inProject("s-rule-2", projectA, "c-rule-2", "npm run build --watch", ["npm run build *"])
     await pause()
-    check("always on a command prefix covers it in another conversation of the same project", !settleIfAsked("c-rule-2") && (await same) === "allowed")
+    check("always on a command prefix covers it in another conversation of the same project", Boolean(firstAsk) && !settleIfAsked("c-rule-2") && (await same) === "allowed")
     const otherCommand = inProject("s-rule-2", projectA, "c-rule-3", "npm test", ["npm test *"])
     await pause()
     check("but not a command with another prefix", settleIfAsked("c-rule-3"))
     await otherCommand
-    const otherProject = inProject("s-rule-3", projectB, "c-rule-4", "git status", ["git status *"])
+    const otherProject = inProject("s-rule-3", projectB, "c-rule-4", "npm run build", ["npm run build *"])
     await pause()
     check("nor the same command in another project", settleIfAsked("c-rule-4"))
     await otherProject
 
     const heard: PermissionRecord[] = []
     const stopHearing = permissions.onDecided("c-rule-6", (record) => heard.push(record))
-    const logOne = inProject("s-rule-4", projectA, "c-rule-5", "git log", ["git log *"])
-    const logTwo = inProject("s-rule-5", projectA, "c-rule-6", "git log -5", ["git log *"])
+    const logOne = inProject("s-rule-4", projectA, "c-rule-5", "make all", ["make all *"])
+    const logTwo = inProject("s-rule-5", projectA, "c-rule-6", "make all -j2", ["make all *"])
     await pause()
     const logAsk = waiting("c-rule-5")
     if (logAsk) permissions.respond(logAsk.id, "always")
@@ -1734,6 +1831,16 @@ async function main() {
     check(
       "a schema construct the checker does not know is let through",
       argumentProblems({ type: "object", properties: { value: { anyOf: [{ type: "string" }, { type: "number" }] } } }, { value: true }).length === 0,
+    )
+    // E20: MiMo's repair of a tool call.
+    const offered = repairableNames()
+    check(
+      "a tool name is repaired by case, then with dashes, underscores and spaces ignored",
+      resolveToolName("READ", offered) === "read" && resolveToolName("NotebookEdit", offered) === "notebook_edit" && resolveToolName("mcp__fake__echo", ["fake_echo"]) === "fake_echo" && resolveToolName("reed", offered) === undefined,
+    )
+    check(
+      "argument names are put onto the schema's spelling, an exact one winning",
+      JSON.stringify(normalizeToolInput({ filePath: "a.ts", offset: 2 }, readSchema)) === JSON.stringify({ offset: 2, file_path: "a.ts" }) && normalizeToolInput({ file_path: "x", filePath: "y" }, readSchema).file_path === "x",
     )
     const note = refusedArgumentsNote("read", wrong)
     check("the note says nothing ran and what to send", note.includes("was not run") && note.includes("path should be string"), note)
@@ -2903,6 +3010,14 @@ async function main() {
     found = await toolPart("call_cutoff")
     check("arguments cut off mid-object are refused the same way", found.part?.metadata?.recoverable === true && String(found.part?.error).includes("not valid JSON"), found.part)
 
+    // E20: through a real turn, a name in the wrong case and an argument named its own way are repaired.
+    replies.push(toolCall("call_repair", "READ", '{"filePath": "hello.ts"}'))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "read it by another name" })
+    await idle(from)
+    found = await toolPart("call_repair")
+    check("a mis-cased tool name and a camelCase argument are repaired and run", found.part?.name === "read" && found.part?.status === "completed" && found.part?.input?.file_path === "hello.ts", found.part)
+
     // A refusal with a reason: kept on the part, and the turn ends there, as MiMo stops on a rejection.
     const askedFor = (callID: string, since: number) =>
       new Promise<string | undefined>((resolve) => {
@@ -3037,9 +3152,14 @@ async function main() {
       request.on("end", () => {
         seen = JSON.parse(raw)
         response.writeHead(200, { "content-type": "text/event-stream" })
+        // MiMo's judge answers through its verdict tool; a verdict written as text is no answer.
+        const answer =
+          verdict === "TEXT"
+            ? { choices: [{ delta: { content: "APPROVE" } }] }
+            : { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_verdict", type: "function", function: { name: "permission_verdict", arguments: JSON.stringify({ decision: verdict }) } }] } }] }
         response.end(
-          `data: ${JSON.stringify({ choices: [{ delta: { content: verdict } }] })}\n\n` +
-            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n` +
+          `data: ${JSON.stringify(answer)}\n\n` +
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: verdict === "TEXT" ? "stop" : "tool_calls" }] })}\n\n` +
             "data: [DONE]\n\n",
         )
       })
@@ -3059,17 +3179,25 @@ async function main() {
 
     const before = events.length
     check("a risky command the model approves runs", (await within(askRun("sudo apt install x"), 10_000)) === "ran", seen)
-    check("the model was asked with no tools", Array.isArray(seen?.tools) ? seen.tools.length === 0 : seen?.tools === undefined, seen?.tools)
+    check("the model was asked with only the verdict tool", Array.isArray(seen?.tools) && seen.tools.length === 1 && seen.tools[0]?.function?.name === "permission_verdict", seen?.tools)
     const sent = JSON.stringify(seen?.messages ?? [])
-    check("and was shown the command and what it is flagged as", sent.includes("sudo apt install x") && sent.includes("Flagged as: elevate"), sent.slice(0, 400))
-    check("and told to answer in one word", sent.includes("APPROVE or REJECT"), sent.slice(0, 400))
+    check("and was shown what is asked and the command", sent.includes("sudo apt install x") && sent.includes("bash"), sent.slice(0, 400))
+    check("and told to answer through the verdict tool, with 64 tokens", sent.includes("permission_verdict") && seen?.max_tokens === 64, { sent: sent.slice(0, 400), max: seen?.max_tokens })
     check(
       "and nothing was asked of the user",
       !events.slice(before).some((event) => event.type === "permission.requested" && event.request.sessionID === judgedID),
       events.slice(before).map((event) => event.type),
     )
 
-    verdict = "REJECT"
+    verdict = "TEXT"
+    const inProse = askRun("chmod 700 run.sh")
+    check("an APPROVE written as text is no answer, so the user is asked", (await within(inProse, 3_000)) === "waiting")
+    const proseQuestion = events.slice(before).find((event) => event.type === "permission.requested" && event.request.subject === "chmod 700 run.sh")
+    if (proseQuestion) gateOf.respond((proseQuestion as any).request.id, "reject")
+    await inProse.catch(() => {})
+    check("the verdict counts only as one call with only a decision", verdictApproves([{ name: "permission_verdict", input: { decision: "APPROVE" } }], "") && !verdictApproves([{ name: "permission_verdict", input: { decision: "APPROVE", why: "x" } }], "") && !verdictApproves([{ name: "permission_verdict", input: { decision: "APPROVE" } }], "sure"))
+
+    verdict = "DENY"
     const rejected = askRun("taskkill /F /IM node.exe")
     check("one the model rejects waits for the user", (await within(rejected, 3_000)) === "waiting")
     const question = events
@@ -7253,7 +7381,8 @@ async function subagentChecks(root: string) {
       }
       if (prompt.includes("PERM")) {
         if (answered) return say("perm done")
-        return call([{ name: "bash", input: { command: "echo subagent", description: "Say something" } }])
+        // Not a read-only command, which would run without asking at all.
+        return call([{ name: "bash", input: { command: "node -e \"console.log('subagent')\"", description: "Say something" } }])
       }
       // STRUCT returns its result through StructuredOutput; STRUCTLATE only once reminded; STRUCTNEVER never does.
       if (prompt.includes("STRUCT")) {
