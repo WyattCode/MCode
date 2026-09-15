@@ -40,10 +40,16 @@
       card: the main process answers it only with a picture from a fixed list
       of platform image hosts (@shared/media-platform COVER_HOSTS), so this
       names one scheme, not the hosts behind it.
+
+      Scripts may also compile WebAssembly ('wasm-unsafe-eval'): a reply's ABC
+      score plays through FluidSynth's WebAssembly build, a file of the app's
+      own under vendor/. The keyword allows WebAssembly compilation only - JS
+      eval and new Function stay refused - and the soundfont it plays comes from
+      the main process over IPC, so no host is added for it anywhere.
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: mcode-media:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: mcode-media:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
   </head>

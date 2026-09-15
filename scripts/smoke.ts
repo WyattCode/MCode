@@ -73,6 +73,9 @@ import { addressToURL, pageMayNavigate, safeURL } from "../src/shared/web-addres
 import * as mediaPlatform from "../src/shared/media-platform"
 import { serveCover } from "../src/main/media-cover"
 import * as abcPlay from "../src/renderer/src/lib/abc-play"
+import { SOUNDFONT, soundfontProblem } from "../src/shared/soundfont"
+import { readSoundfont } from "../src/main/soundfont"
+import * as soundfontScript from "./soundfont.mjs"
 import {
   APP_CHORDS,
   barMode,
@@ -5590,6 +5593,163 @@ async function main() {
       notes,
     )
 
+    /* Round 5: MiMo's FluidSynth path - the ABC and MIDI fix-ups, the render length, and the soundfont's delivery. */
+    const duet = ["X:1", "T:Duet", "V:1 clef=treble", "%%MIDI program 40", "V:2 clef=bass", "% the bass", "%%MIDI program 42", "M:4/4", "K:C", "[V:1] CDEF|", "[V:2] C,D,E,F,|"].join("\n")
+    const duetMoved = A.withVoicePrograms(duet)
+    check(
+      "a header voice's %%MIDI program moves after K:, right under its voice",
+      duetMoved === ["X:1", "T:Duet", "% the bass", "M:4/4", "K:C", "V:1 clef=treble", "%%MIDI program 40", "V:2 clef=bass", "%%MIDI program 42", "[V:1] CDEF|", "[V:2] C,D,E,F,|"].join("\n"),
+      duetMoved,
+    )
+    const inlineWins = A.withVoicePrograms(["X:1", "V:A", "%%MIDI program 1", "K:G", "[V:A]", "%%MIDI program 73", "GABc|"].join("\n"))
+    check("a program under an inline [V:] wins over the header's and leaves the body", inlineWins === ["X:1", "K:G", "V:A", "%%MIDI program 73", "[V:A]", "GABc|"].join("\n"), inlineWins)
+    const afterNotes = ["X:1", "V:1", "K:C", "[V:1]", "CDE|", "%%MIDI program 5"].join("\n")
+    check(
+      "a program after notes belongs to no voice; no K:, no header voice or no program leaves the tune as it is",
+      A.withVoicePrograms(afterNotes) === afterNotes && A.withVoicePrograms("V:1\n%%MIDI program 3\nCDE") === "V:1\n%%MIDI program 3\nCDE" && A.withVoicePrograms("X:1\nK:C\n%%MIDI program 3\nCDE") === "X:1\nK:C\n%%MIDI program 3\nCDE",
+    )
+
+    const smf = (...tracks: number[][]) =>
+      new Uint8Array([
+        ...[0x4d, 0x54, 0x68, 0x64, 0, 0, 0, 6, 0, 1, 0, tracks.length, 0, 96],
+        ...tracks.flatMap((events) => [0x4d, 0x54, 0x72, 0x6b, 0, 0, (events.length >> 8) & 255, events.length & 255, ...events]),
+      ])
+    const END = [0x00, 0xff, 0x2f, 0x00]
+    const onTwo = [0x00, 0xff, 0x03, 0x02, 0x41, 0x42, 0x00, 0xc0, 40, 0x00, 0x92, 60, 90, 0x60, 62, 90, 0x60, 0x82, 60, 0, ...END]
+    const bothChannels = [0x00, 0xc0, 1, 0x00, 0x91, 60, 90, 0x00, 0x92, 64, 90, ...END]
+    const silentThree = [0x00, 0xc0, 5, 0x00, 0x93, 60, 0, 0x00, 0x92, 60, 80, ...END]
+    const programOne = [0x00, 0xc1, 7, 0x00, 0x92, 60, 80, ...END]
+    const same = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((value, index) => value === b[index])
+    const single = smf(onTwo)
+    const singleWant = single.slice()
+    singleWant[22 + onTwo.indexOf(0xc0)] = 0xc2
+    check("a track sounding only on channel 2 gets its channel-0 program change, and the input is not touched", same(A.patchTrackPrograms(single), singleWant) && single[22 + onTwo.indexOf(0xc0)] === 0xc0)
+    const mixed = smf(bothChannels, silentThree)
+    const mixedWant = mixed.slice()
+    mixedWant[22 + bothChannels.length + 8 + silentThree.indexOf(0xc0)] = 0xc2
+    check("two sounding channels are left alone, and a velocity-0 note-on does not count as sounding", same(A.patchTrackPrograms(mixed), mixedWant))
+    check(
+      "a program on another channel, a track on channel 0 and bytes that are not MIDI come back unchanged",
+      same(A.patchTrackPrograms(smf(programOne)), smf(programOne)) &&
+        same(A.patchTrackPrograms(smf([0x00, 0xc0, 3, 0x00, 0x90, 60, 90, ...END])), smf([0x00, 0xc0, 3, 0x00, 0x90, 60, 90, ...END])) &&
+        same(A.patchTrackPrograms(new Uint8Array([1, 2, 3])), new Uint8Array([1, 2, 3])),
+    )
+    check(
+      "the render is the tune and three seconds in 44.1 kHz frames, never past ten minutes, in MiMo's 4096-frame blocks with an 8 ms yield",
+      A.renderFrames(A.renderSeconds(4)) === 7 * 44_100 &&
+        A.renderFrames(A.renderSeconds(900)) === 600 * 44_100 &&
+        A.renderFrames(A.renderSeconds(undefined)) === 26_460_000 &&
+        A.renderFrames(1e9) === 26_460_000 &&
+        A.renderFrames(Number.NaN) === 26_460_000 &&
+        A.ABC_SAMPLE_RATE === 44_100 &&
+        A.ABC_RENDER_BLOCK === 4096 &&
+        A.ABC_RENDER_YIELD_MS === 8,
+    )
+
+    section("The score soundfont and FluidSynth delivery (round 5)")
+    {
+    check(
+      "the build script and the main process pin the same soundfont",
+      soundfontScript.SOUNDFONT_FILE === SOUNDFONT.file && soundfontScript.SOUNDFONT_SIZE === SOUNDFONT.size && soundfontScript.SOUNDFONT_SHA256 === SOUNDFONT.sha256 &&
+        SOUNDFONT.size === 39_900_972 && SOUNDFONT.sha256 === "5b85b6c2c61d10b2b91cddd41efcce7b25cd31c8271d511c73afafbef20b6fa3",
+    )
+    check(
+      "a file of the wrong size or hash is not the soundfont",
+      soundfontProblem({ size: SOUNDFONT.size - 1, sha256: SOUNDFONT.sha256 }) === "size" &&
+        soundfontProblem({ size: SOUNDFONT.size, sha256: "0".repeat(64) }) === "hash" &&
+        soundfontProblem({ size: SOUNDFONT.size }) === "hash" &&
+        soundfontProblem({ size: SOUNDFONT.size, sha256: SOUNDFONT.sha256.toUpperCase() }) === undefined,
+    )
+
+    const sfDir = path.join(root, "soundfont")
+    await fs.mkdir(sfDir, { recursive: true })
+    const good = Buffer.from("a stand-in soundfont, verified like the real one")
+    const expect = { size: good.length, sha256: createHash("sha256").update(good).digest("hex") }
+    const sfFile = path.join(sfDir, "font.sf3")
+    const missing = await readSoundfont(sfFile, expect)
+    await fs.writeFile(sfFile, Buffer.concat([good, Buffer.from("!")]))
+    const tooLong = await readSoundfont(sfFile, expect)
+    await fs.writeFile(sfFile, Buffer.from(good.toString().toUpperCase()))
+    const wrongHash = await readSoundfont(sfFile, expect)
+    await fs.writeFile(sfFile, good)
+    const fine = await readSoundfont(sfFile, expect)
+    check(
+      "the main process refuses a missing, resized or altered soundfont and hands over the exact bytes of the right one",
+      !missing.ok && missing.reason === "missing" && !tooLong.ok && tooLong.reason === "size" && !wrongHash.ok && wrongHash.reason === "hash" &&
+        fine.ok && Buffer.from(fine.bytes).equals(good),
+      { missing, tooLong, wrongHash, fine: fine.ok },
+    )
+    await fs.writeFile(sfFile, Buffer.from(good.toString().toUpperCase()))
+    await fs.utimes(sfFile, new Date(), new Date(Date.now() + 60_000))
+    const swapped = await readSoundfont(sfFile, expect)
+    check("a verified file changed on disk afterwards is checked again and refused", !swapped.ok && swapped.reason === "hash", swapped)
+
+    const target = path.join(sfDir, "resources", "font.sf3")
+    const cache = path.join(sfDir, "cache")
+    await fs.mkdir(cache, { recursive: true })
+    const quiet = { expected: expect, cacheDir: cache, download: false }
+    let noCache = ""
+    await soundfontScript.ensureSoundfont(target, quiet).catch((error: Error) => (noCache = error.message))
+    await fs.writeFile(path.join(cache, "font.sf3"), Buffer.from(good.toString().toUpperCase()))
+    let badCache = ""
+    await soundfontScript.ensureSoundfont(target, quiet).catch((error: Error) => (badCache = error.message))
+    const targetAfterBadCache = await fs.stat(target).then(() => true, () => false)
+    await fs.writeFile(path.join(cache, "font.sf3"), good)
+    const fromCache = await soundfontScript.ensureSoundfont(target, quiet)
+    const placed = await soundfontScript.soundfontFileProblem(target, expect)
+    await fs.writeFile(target, Buffer.concat([good, Buffer.from("!")]))
+    await fs.rm(path.join(cache, "font.sf3"))
+    let damaged = ""
+    await soundfontScript.ensureSoundfont(target, quiet).catch((error: Error) => (damaged = error.message))
+    const damagedKept = await fs.stat(target).then(() => true, () => false)
+    check(
+      "the build step places the soundfont only from a verified copy, refuses a bad cache and removes a damaged one, and fails without it",
+      noCache !== "" && badCache !== "" && !targetAfterBadCache && fromCache === "cache" && placed === undefined && damaged !== "" && !damagedKept,
+      { noCache, badCache, targetAfterBadCache, fromCache, placed, damaged, damagedKept },
+    )
+
+    const html = await fs.readFile(path.join(process.cwd(), "src/renderer/index.html"), "utf8")
+    const policy = /content="(default-src[^"]*)"/.exec(html)?.[1] ?? ""
+    const directive = (name: string) => (new RegExp(`(?:^|;)\\s*${name} ([^;]*)`).exec(policy)?.[1] ?? "").trim().split(/\s+/)
+    const scriptSrc = directive("script-src")
+    const connectSrc = directive("connect-src")
+    check(
+      "script-src allows WebAssembly and nothing like eval",
+      scriptSrc.includes("'self'") && scriptSrc.includes("'wasm-unsafe-eval'") && !scriptSrc.includes("'unsafe-eval'") && !scriptSrc.some((source) => /^https?:/.test(source)),
+      scriptSrc,
+    )
+    check(
+      "no host is allowed for the soundfont: connect-src reaches no web host, and nothing in the policy names a soundfont server",
+      connectSrc.length > 0 && !connectSrc.some((source) => /^https?:(?!\/\/\*\.localhost)/.test(source)) && !/osuosl|musescore|xiaomimimo|jsdelivr|unpkg|\.sf[23]/i.test(policy),
+      connectSrc,
+    )
+    const fluid = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/abc-fluidsynth.ts"), "utf8")
+    const viteConfig = await fs.readFile(path.join(process.cwd(), "electron.vite.config.ts"), "utf8")
+    const builder = await fs.readFile(path.join(process.cwd(), "electron-builder.yml"), "utf8")
+    const ignore = await fs.readFile(path.join(process.cwd(), ".gitignore"), "utf8")
+    const glue = /FLUIDSYNTH_GLUE = "\.\/vendor\/([^"]+)"/.exec(fluid)?.[1] ?? ""
+    const rendererFiles: string[] = []
+    const walkRenderer = async (directory: string) => {
+      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        const full = path.join(directory, entry.name)
+        if (entry.isDirectory()) await walkRenderer(full)
+        else if (/\.(ts|vue)$/.test(entry.name)) rendererFiles.push(await fs.readFile(full, "utf8"))
+      }
+    }
+    await walkRenderer(path.join(process.cwd(), "src/renderer/src"))
+    check(
+      "the window takes the soundfont over IPC and loads FluidSynth as its own file, never through an import or a web address",
+      fluid.includes("window.mcode.soundfont()") && !/(?<![A-Za-z.])fetch\(/.test(fluid) && glue === "libfluidsynth-2.4.6-with-libsndfile.js" &&
+        viteConfig.includes(`"${glue}"`) && !rendererFiles.some((text) => /import[^;\n]*libfluidsynth/.test(text) || /https?:\/\/[^"'`\s]*\.sf[23]\b/.test(text)),
+      glue,
+    )
+    check(
+      "the package keeps FluidSynth outside the asar and ships the soundfont beside it, which git never holds",
+      /asarUnpack:[\s\S]*"out\/renderer\/vendor\/\*\*"/.test(builder) && /from: resources\/soundfont\s+to: soundfont/.test(builder) && /^resources\/soundfont\/$/m.test(ignore),
+    )
+    }
+
+    section("Reply scores and video cards (continued)")
     let now = 0
     let endedCount = 0
     const sources: { offset: number; stopped: boolean; end: () => void }[] = []
