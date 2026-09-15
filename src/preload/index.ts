@@ -35,6 +35,12 @@ const api = {
   saveText: (suggested: string, text: string): Promise<string | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
 
+  /** MiMo's saved composer input: read once, synchronously, as the window starts. */
+  composerInputLoad: (): { ok: boolean; text?: string } => ipcRenderer.sendSync("mcode:composer-input-load"),
+  composerInputSave: (text: string): Promise<boolean> => ipcRenderer.invoke("mcode:composer-input-save", text),
+  /** The same write, finished before the page goes away. */
+  composerInputFlush: (text: string): boolean => ipcRenderer.sendSync("mcode:composer-input-flush", text),
+
   /** Menu bar labels; the translations live here, the menu is built there. */
   menuLabels: (labels: Record<string, string>): void => ipcRenderer.send("mcode:menu-labels", labels),
 

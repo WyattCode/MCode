@@ -6,7 +6,7 @@ import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, Model
 import { interruptedTurn } from "@shared/resume"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
-import { drafts, homeFilled, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
+import { drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
 import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
 import { expandTemplate, splitCommandLine } from "@shared/command"
@@ -1327,9 +1327,9 @@ function mention(path: string) {
 
 /*
  * MiMo's drafts: one per conversation (the side chat's apart), and the home
- * screen's own, which is also kept on disk. Switching conversations puts the
- * words, files, mentions and skill chips of the one being left aside and
- * brings back the other's.
+ * screen's own, all kept on disk (lib/composer-drafts). Switching
+ * conversations puts the words, files, mentions and skill chips of the one
+ * being left aside and brings back the other's.
  */
 const draftKey = computed(() =>
   props.fresh ? "home" : `${props.side ? "side" : "main"}:${sessionID.value ?? ""}`,
@@ -1352,7 +1352,7 @@ watch(
     historyIndex.value = null
     if (previous) saveDraft(previous)
     const kept = drafts.get(next)
-    text.value = kept?.text ?? (next === "home" ? loadHomeDraft() : "")
+    text.value = kept?.text ?? ""
     attachments.value = kept?.attachments ?? []
     mentioned.value = new Set(kept?.mentioned ?? [])
     skills.value = kept?.skills ?? []
@@ -1363,9 +1363,15 @@ watch(
   { immediate: true },
 )
 
-watch(text, (value) => {
-  if (props.fresh) keepHomeDraft(value)
-})
+/* Every change is kept with its box at once and written to disk shortly after, as MiMo's are. */
+watch(
+  [text, attachments, mentioned, skills],
+  () => {
+    saveDraft(draftKey.value)
+    scheduleDraftSave()
+  },
+  { deep: true },
+)
 
 watch(
   () => [text.value.trim(), attachments.value.length, skills.value.length] as const,

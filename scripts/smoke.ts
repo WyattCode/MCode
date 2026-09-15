@@ -28,6 +28,7 @@ import { linkInArgs, parseSessionLink, sessionLink } from "../src/shared/session
 import { readTask, smartRoute } from "../src/shared/smart"
 import { chimeOf, longTask, migrateChime } from "../src/shared/chime"
 import { audioVerdict, isAudioFile, limitMinutes } from "../src/renderer/src/lib/audio-check"
+import { draftFileOf, emptyDraftFile, isEmptyDraftFile, readDraftFile, withLegacyHome, type SavedDraft } from "../src/renderer/src/lib/draft-file"
 import { findInMessages, searchMessages, snippetAround } from "../src/server/search"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
@@ -78,7 +79,7 @@ import {
 import { ToolError } from "../src/server/tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
 import { RETRY_MAX_RETRIES, isRetryable, retryDelay } from "../src/server/session/retry"
-import type { PermissionRecord } from "../src/shared/protocol"
+import type { Annotation, PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
@@ -511,6 +512,40 @@ async function main() {
       audioVerdict(undefined) === "ok" &&
       limitMinutes() === 10,
   )
+
+  // R1: MiMo's saved composer input - every box's draft, its files and chips, and the annotations waiting.
+  {
+    const note = { id: "a1", kind: "answer", text: "why", quote: "x" } as Annotation
+    const kept = new Map<string, SavedDraft>([
+      ["home", { text: "hi", attachments: [], mentioned: [], skills: [] }],
+      ["main:s1", { text: "", attachments: [{ path: "C:/a.png", mime: "image/png", data: "AAAA" }], mentioned: [], skills: ["review"] }],
+      ["main:empty", { text: "", attachments: [], mentioned: ["x"], skills: [] }],
+    ])
+    const file = draftFileOf(kept, { s1: [note], s2: [] }, "main:s1")
+    check(
+      "drafts with words, files or chips are written and empty ones are not",
+      Object.keys(file.drafts).sort().join(",") === "home,main:s1" && Object.keys(file.annotations).join(",") === "s1" && file.current === "main:s1",
+    )
+    check("the saved input reads back as it was written", JSON.stringify(readDraftFile(JSON.stringify(file))) === JSON.stringify(file))
+    let threw = false
+    try {
+      readDraftFile("{broken")
+    } catch {
+      threw = true
+    }
+    check("a file of another version reads as nothing, and one that is not JSON throws", readDraftFile('{"v":2,"drafts":{}}') === undefined && threw)
+    check(
+      "malformed entries are left out",
+      Object.keys(readDraftFile(JSON.stringify({ v: 1, drafts: { a: { text: 5, attachments: [{ path: 1 }] }, b: { text: "ok" } }, annotations: { s: [{ id: 1 }] } }))?.drafts ?? {}).join(",") === "b",
+    )
+    check(
+      "the old home draft is folded in, never over home words already saved",
+      withLegacyHome(emptyDraftFile(), "old words").drafts.home?.text === "old words" &&
+        withLegacyHome(file, "old words").drafts.home?.text === "hi" &&
+        withLegacyHome(emptyDraftFile(), "").drafts.home === undefined,
+    )
+    check("an empty state is recognised, so a failed load is never written over with one", isEmptyDraftFile(draftFileOf(new Map(), {})) && !isEmptyDraftFile(file))
+  }
 
   /*
    * The composer's middle access level. The classifier lets everyday commands

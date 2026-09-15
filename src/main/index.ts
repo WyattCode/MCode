@@ -18,6 +18,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
 import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
+import { registerComposerInput } from "./composer-input"
 import { saveCopy } from "./save-copy"
 import {
   DISPLAY_SERVER_FILE,
@@ -857,6 +858,7 @@ app.whenReady().then(async () => {
 
   // MiMo's Office tab: document bytes, watching, versions, legacy conversion.
   registerOffice(ipcMain, app.getPath("userData"))
+  registerComposerInput(ipcMain, app.getPath("userData"))
 
   /* Which open-with apps are installed, for the settings row and the open-location menu. */
   ipcMain.handle("mcode:installed-apps", () => installedOpenApps(process.platform))

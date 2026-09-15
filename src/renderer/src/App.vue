@@ -64,14 +64,14 @@ import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/to
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
-import { homeFilled } from "./lib/composer-drafts"
+import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
-import { HOME_SCOPE } from "./stores/annotations"
+import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind, stepFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
@@ -106,6 +106,25 @@ function setSide(open: boolean) {
   } catch {}
 }
 const toggleSide = () => setSide(!leftPanel.value)
+
+/*
+ * MiMo's saved composer input: read before any composer mounts, so every box
+ * starts with its draft; the annotations waiting go back to their boxes; saved
+ * as they change and once more as the page goes.
+ */
+const restoredDrafts = loadDrafts()
+const annotationStore = useAnnotations()
+for (const [scope, list] of Object.entries(restoredDrafts.annotations)) {
+  if (!annotationStore.list(scope).length) annotationStore.put(scope, list)
+}
+bindDraftSources({
+  annotations: () => annotationStore.byScope,
+  current: () => (isHome.value ? "home" : app.currentID ? `main:${app.currentID}` : undefined),
+})
+watch(() => annotationStore.byScope, scheduleDraftSave)
+window.addEventListener("pagehide", flushDrafts)
+window.addEventListener("beforeunload", flushDrafts)
+let draftScreenRestored = false
 /* The project a task typed on the home screen will be created in. */
 const homeDirectory = ref<string>()
 /* The folder the home screen has picked, which its bottom panel's terminal opens in. */
@@ -4050,6 +4069,13 @@ async function boot() {
     await app.patchConfig({ onboarded: true })
   }
   if (app.currentID) view.value = "session"
+
+  // MiMo opens again on the conversation whose draft was on screen when the app closed.
+  const draftScreen = restoredDrafts.current?.startsWith("main:") ? restoredDrafts.current.slice("main:".length) : undefined
+  if (!draftScreenRestored && draftScreen && !app.currentID && drafts.has(`main:${draftScreen}`) && app.sessions.some((session) => session.id === draftScreen)) {
+    draftScreenRestored = true
+    await app.open(draftScreen).catch(() => undefined)
+  }
 
   linksReady = true
   const link = queuedLink ?? (await window.mcode.takeLink().catch(() => undefined))
