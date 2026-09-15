@@ -847,6 +847,68 @@ async function main() {
     await fs.rm(e24, { recursive: true, force: true })
   }
 
+  // E30: MiMo's notebook_edit.
+  {
+    const nb = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-notebook-"))
+    const file = path.join(nb, "work.ipynb")
+    const notebook = {
+      nbformat: 4,
+      nbformat_minor: 4,
+      metadata: {},
+      cells: [
+        { cell_type: "code", source: ["print(1)\n", "print(2)"], metadata: { tag: "keep" }, outputs: [{ output_type: "stream", text: ["1\n"] }], execution_count: 3 },
+        { cell_type: "markdown", source: ["# Title"], metadata: {} },
+      ],
+    }
+    await fs.writeFile(file, JSON.stringify(notebook, null, 1) + "\n")
+    const inNotebook = (callID: string) => ({ ...context(callID), directory: nb })
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+    const change = (input: Record<string, unknown>, callID: string) =>
+      findTool("notebook_edit")!
+        .execute(input, inNotebook(callID))
+        .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+    type Cell = { id: string; cell_type: string; source: string[]; outputs?: unknown[]; execution_count?: number | null; metadata?: Record<string, unknown> }
+    const load = async () => JSON.parse(await fs.readFile(file, "utf8")) as { nbformat_minor: number; cells: Cell[] }
+
+    const replaced = await change({ notebook_path: "work.ipynb", cell_id: "#0", new_source: "print(10)\nprint(20)" }, "nb-1")
+    let doc = await load()
+    check(
+      "replacing a code cell by #N keeps its outputs, count and metadata",
+      !replaced.startsWith("ERROR") &&
+        JSON.stringify(doc.cells[0].source) === JSON.stringify(["print(10)\n", "print(20)"]) &&
+        doc.cells[0].outputs?.length === 1 &&
+        doc.cells[0].execution_count === 3 &&
+        doc.cells[0].metadata?.tag === "keep",
+      { replaced, cell: doc.cells[0] },
+    )
+    check("cells without ids get eight-character ids and the notebook is marked 4.5", doc.cells.every((cell) => /^[0-9a-f-]{8}$/.test(cell.id)) && doc.nbformat_minor === 5, doc)
+    check("the file keeps its trailing newline", (await fs.readFile(file, "utf8")).endsWith("}\n"))
+    const firstID = doc.cells[0].id
+    await change({ notebook_path: "work.ipynb", cell_id: firstID, edit_mode: "insert", cell_type: "markdown", new_source: "Notes" }, "nb-2")
+    await change({ notebook_path: "work.ipynb", edit_mode: "insert", cell_type: "code", new_source: "" }, "nb-3")
+    doc = await load()
+    check(
+      "insert goes after the named cell, or first without one",
+      doc.cells.length === 4 && doc.cells[0].cell_type === "code" && doc.cells[0].source.length === 0 && doc.cells[1].id === firstID && JSON.stringify(doc.cells[2].source) === '["Notes"]',
+      doc.cells.map((cell) => [cell.cell_type, cell.source]),
+    )
+    await change({ notebook_path: "work.ipynb", cell_id: "#3", edit_mode: "delete" }, "nb-4")
+    doc = await load()
+    check("delete removes the cell", doc.cells.length === 3 && !doc.cells.some((cell) => JSON.stringify(cell.source) === '["# Title"]'), doc.cells.map((cell) => cell.source))
+    const unknownCell = await change({ notebook_path: "work.ipynb", cell_id: "nope", new_source: "x" }, "nb-5")
+    check("a cell that is not there is refused, naming the cells there are", unknownCell.startsWith("ERROR No cell nope") && unknownCell.includes(firstID), unknownCell)
+    check("only a .ipynb file is taken", (await change({ notebook_path: "notes.txt", cell_id: "#0", new_source: "x" }, "nb-6")).includes(".ipynb"))
+    check("an insert needs a cell type", (await change({ notebook_path: "work.ipynb", edit_mode: "insert", new_source: "x" }, "nb-7")).includes("cell_type is required"))
+    check(
+      "notebook_edit is withheld from plan and recorded as a file change",
+      !toolsFor("plan").some((tool) => tool.name === "notebook_edit") && toolsFor("build").some((tool) => tool.name === "notebook_edit") && reachOf("notebook_edit") === "reports",
+    )
+    clearInterval(approving)
+    await fs.rm(nb, { recursive: true, force: true })
+  }
+
   // E27: MiMo's desktop never hands a GPT model apply_patch; every model edits with edit and write.
   const surface = toolsFor("build").map((tool) => tool.name)
   check("every model is offered edit and write, and no apply_patch", surface.includes("edit") && surface.includes("write") && !surface.includes("apply_patch") && findTool("apply_patch") === undefined, surface)
@@ -6736,8 +6798,10 @@ async function sessionChatChecks(root: string, project: string) {
   check("the card lists a line per link; one whose peer exists jumps to it", cardLinks.length === 2 && jumped.join() === "ses_p" && typeof cardLinks[1] === "object" && !cardLinks[1].action)
   check(
     "the four tools are appended last, after every tool already there, keeping the cached prefix",
-    TOOLS.slice(-4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
-      TOOLS.findIndex((tool) => tool.name === "task") < TOOLS.length - 4,
+    // notebook_edit came after them, appended last in its turn.
+    TOOLS.slice(-5, -1).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
+      TOOLS.at(-1)?.name === "notebook_edit" &&
+      TOOLS.findIndex((tool) => tool.name === "task") < TOOLS.length - 5,
     TOOLS.map((tool) => tool.name),
   )
   check("Plan keeps contacts and loses the three that act", toolsFor("plan").some((tool) => tool.name === "contacts") && !toolsFor("plan").some((tool) => ["talk_to_session", "create_session", "update_session"].includes(tool.name)))

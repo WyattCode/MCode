@@ -10,6 +10,7 @@ import { TaskTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
+import { NotebookEditTool } from "./notebook"
 
 /**
  * The tool surface offered to the model.
@@ -50,6 +51,8 @@ export const TOOLS: ToolDefinition[] = [
   TalkToSessionTool,
   CreateSessionTool,
   UpdateSessionTool,
+  // MiMo's notebook_edit: appended last, for the same reason.
+  NotebookEditTool,
 ]
 
 /**
@@ -59,7 +62,7 @@ export const TOOLS: ToolDefinition[] = [
  * mode that promises to change nothing cannot hand one out.
  */
 // session chat: making another conversation act, or changing its record, is acting too; Plan keeps contacts.
-const MUTATING = new Set(["write", "edit", "bash", "talk_to_session", "create_session", "update_session"])
+const MUTATING = new Set(["write", "edit", "notebook_edit", "bash", "talk_to_session", "create_session", "update_session"])
 
 /** The tools an agent is allowed to call. Plan inspects; it does not act. */
 export function toolsFor(agent: string): ToolDefinition[] {
@@ -122,7 +125,8 @@ const READS = new Set([
 export type ToolReach = "reads" | "reports" | "opaque"
 
 export function reachOf(name: string): ToolReach {
-  if (name === "write" || name === "edit") return "reports"
+  // notebook_edit records its file before writing, as edit does.
+  if (name === "write" || name === "edit" || name === "notebook_edit") return "reports"
   if (READS.has(name)) return "reads"
   return "opaque"
 }
