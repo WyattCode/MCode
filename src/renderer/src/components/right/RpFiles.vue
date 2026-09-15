@@ -563,9 +563,16 @@ const stopWatching = window.mcode.onFileChanged((changed) => {
   if (watchedPath && changed === watchedPath && !editing.value) void refresh()
 })
 
-onMounted(() => window.addEventListener("keydown", onWindowKey, true))
+/* MiMo re-lists the tree and reads the open file again when the window comes back: files made outside the app appear. */
+const onWindowFocus = () => void refresh()
+
+onMounted(() => {
+  window.addEventListener("keydown", onWindowKey, true)
+  window.addEventListener("focus", onWindowFocus)
+})
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onWindowKey, true)
+  window.removeEventListener("focus", onWindowFocus)
   clearTimeout(searchTimer)
   findObserver?.disconnect()
   cancelAnimationFrame(findFrame)

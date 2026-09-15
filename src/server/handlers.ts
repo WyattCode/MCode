@@ -31,6 +31,7 @@ import { OpenAICompatible } from "./provider/openai"
 import { ChatGPTSubscription } from "./provider/chatgpt"
 import type { ProviderAdapter } from "./provider/types"
 import { listCommands } from "./command"
+import { discoverSkills } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
@@ -365,6 +366,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           directory: session.directory,
           agent: session.agent,
           globalAgentsFile: globalAgentsPath(runtime.storage.directory),
+          skills: (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory })).skills,
         }),
       } satisfies Handled<"session.systemPrompt">
     }
@@ -453,11 +455,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         session: await runtime.sessions.update(request.sessionID, { smart: true, smartRoute: undefined }),
       } satisfies Handled<"session.smart">
 
-    case "session.effort":
-      return { session: await runtime.sessions.update(request.sessionID, { effort: request.effort }) }
 
     case "session.agent":
       return { session: await runtime.sessions.update(request.sessionID, { agent: request.agent }) }
+
+    case "session.access":
+      return { session: await runtime.sessions.setAccess(request.sessionID, request.access) }
 
     case "session.staged":
       return { session: await runtime.sessions.update(request.sessionID, { staged: request.staged }) }
@@ -529,8 +532,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "config.get":
       return { config: runtime.config.get() } satisfies Handled<"config.get">
 
-    case "config.set":
-      return { config: await runtime.config.set(request.patch) } satisfies Handled<"config.set">
+    case "config.set": {
+      const config = await runtime.config.set(request.patch)
+      if (request.patch.allowFullAccess === false) await runtime.sessions.dropFullAccess()
+      return { config } satisfies Handled<"config.set">
+    }
 
     case "app.paths": {
       /*

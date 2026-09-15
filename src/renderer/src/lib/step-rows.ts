@@ -83,6 +83,8 @@ export function buildRows(parts: AssistantPart[], errors: InlineError[] = []): S
       out.push({ kind: "part", id: part.id, part })
       return
     }
+    // tasks: MiMo draws no step for the task tool; the info card's 任务清单 shows what it did.
+    if (part.name === "task") return
     if (part.name === "question") {
       group = undefined
       out.push({ kind: "question", id: part.id, part })

@@ -2,7 +2,8 @@ import { computed, ref, watch } from "vue"
 import { defineStore } from "pinia"
 import type { QuestionAnswer, QuestionRequest } from "@shared/protocol"
 import { useApp } from "./app"
-import { accessOf, composerAnswers, confirmQueue, freshGuide, guideShown, type GuideState } from "../lib/confirm-queue"
+import { composerAnswers, confirmQueue, freshGuide, guideShown, type GuideState } from "../lib/confirm-queue"
+import { sessionAccess } from "@shared/access"
 
 /* Waving the guide off holds for every conversation, and across restarts, as in MiMo. */
 const GUIDE_DISMISSED_KEY = "mcode.perm-guide-dismissed-v1"
@@ -164,7 +165,7 @@ export const useQuestions = defineStore("questions", () => {
     const first = queue.value[0]
     const sessionID = app.currentID
     if (!first || !sessionID || first.kind !== "permission") return false
-    return guideShown(guideFor(sessionID), accessOf(app.config), first.kind, first.request.forced === true)
+    return guideShown(guideFor(sessionID), sessionAccess(app.current?.access, app.config), first.kind, first.request.forced === true)
   })
 
   const guideCount = computed(() => (app.currentID ? guideFor(app.currentID).allowCount : 0))
@@ -184,9 +185,10 @@ export const useQuestions = defineStore("questions", () => {
     }
   }
 
-  /** 帮我审批: the composer's middle access level, which the server applies to what is already waiting. */
+  /** 帮我审批: the middle access level for this conversation, which the server applies to what is already waiting. */
   async function acceptEdits(): Promise<void> {
-    await app.patchConfig({ accessLevel: "auto" })
+    if (app.currentID) await app.setAccess(app.currentID, "auto")
+    else await app.patchConfig({ accessLevel: "auto" })
   }
 
   /*

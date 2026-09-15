@@ -58,20 +58,20 @@ import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
-import { SIDE_COLUMN_WIDTH, arbitratePanel, boundChord, sideFits, toolHints } from "./lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
-import { homeFilled } from "./lib/composer-drafts"
+import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
-import { HOME_SCOPE } from "./stores/annotations"
+import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
@@ -85,8 +85,46 @@ const confirmDock = useQuestions()
 
 /** "home" is the launcher; "session" is a project workspace. */
 const view = ref<"home" | "session" | "artifacts" | "plugins">("home")
-/** The 2.0 side column; up unless it has been put away. */
-const leftPanel = ref(true)
+/*
+ * The 2.0 side column; up unless it has been put away. MiMo saves the user's own
+ * fold and starts from it; a fold made for a narrow window is not saved.
+ */
+const SIDE_COLLAPSED_KEY = "mcode.sidebarCollapsed"
+const leftPanel = ref(
+  (() => {
+    try {
+      return localStorage.getItem(SIDE_COLLAPSED_KEY) !== "true"
+    } catch {
+      return true
+    }
+  })(),
+)
+function setSide(open: boolean) {
+  leftPanel.value = open
+  try {
+    localStorage.setItem(SIDE_COLLAPSED_KEY, String(!open))
+  } catch {}
+}
+const toggleSide = () => setSide(!leftPanel.value)
+
+/*
+ * MiMo's saved composer input: read before any composer mounts, so every box
+ * starts with its draft; the annotations waiting go back to their boxes; saved
+ * as they change and once more as the page goes.
+ */
+const restoredDrafts = loadDrafts()
+const annotationStore = useAnnotations()
+for (const [scope, list] of Object.entries(restoredDrafts.annotations)) {
+  if (!annotationStore.list(scope).length) annotationStore.put(scope, list)
+}
+bindDraftSources({
+  annotations: () => annotationStore.byScope,
+  current: () => (isHome.value ? "home" : app.currentID ? `main:${app.currentID}` : undefined),
+})
+watch(() => annotationStore.byScope, scheduleDraftSave)
+window.addEventListener("pagehide", flushDrafts)
+window.addEventListener("beforeunload", flushDrafts)
+let draftScreenRestored = false
 /* The project a task typed on the home screen will be created in. */
 const homeDirectory = ref<string>()
 /* The folder the home screen has picked, which its bottom panel's terminal opens in. */
@@ -1099,8 +1137,8 @@ const isPlugins = computed(() => view.value === "plugins")
 const isHome = computed(
   () => !isArtifacts.value && !isPlugins.value && (view.value === "home" || !app.current),
 )
-/** Empty transcript shows the hero instead of a blank scroller. */
-const empty = computed(() => app.messages.length === 0)
+/** Empty transcript shows the hero instead of a blank scroller; one still loading shows its loading line instead. */
+const empty = computed(() => app.messages.length === 0 && app.loadingID !== app.currentID)
 
 /*
  * The terminal docks along the foot of the main column. Not during onboarding
@@ -1181,8 +1219,34 @@ const onWindowResize = () => (windowWidth.value = window.innerWidth)
 onMounted(() => window.addEventListener("resize", onWindowResize))
 onBeforeUnmount(() => window.removeEventListener("resize", onWindowResize))
 
+/*
+ * MiMo's side column width, dragged at its edge: kept as last let go, and shown
+ * clamped to what the window leaves beside an open panel, so a narrower window
+ * narrows it without forgetting the choice.
+ */
+const SIDE_WIDTH_KEY = "mcode.sideWidth"
+const storedSideWidth = ref(
+  (() => {
+    try {
+      return parseInt(localStorage.getItem(SIDE_WIDTH_KEY) ?? "", 10)
+    } catch {
+      return NaN
+    }
+  })(),
+)
+const sideWidth = computed(() =>
+  clampSideWidth(storedSideWidth.value, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0),
+)
+function resizeSide(width: number, done: boolean) {
+  storedSideWidth.value = clampSideWidth(width, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0)
+  if (!done) return
+  try {
+    localStorage.setItem(SIDE_WIDTH_KEY, String(storedSideWidth.value))
+  } catch {}
+}
+
 /* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
-const revealSide = () => (leftPanel.value = true)
+const revealSide = () => setSide(true)
 onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
 onBeforeUnmount(() => window.removeEventListener("mcode:reveal-side", revealSide))
 let sideAutoFolded = false
@@ -1191,7 +1255,7 @@ watch(
   ([viewport, sideOpen], [, sideBefore]) => {
     if (onboarding.value) return
     if (sideOpen) sideAutoFolded = false
-    const room = { viewport, sideWidth: SIDE_COLUMN_WIDTH, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
+    const room = { viewport, sideWidth: sideWidth.value, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
     const outcome = arbitratePanel(room, sideOpen && !sideBefore)
     if (outcome === "close-panel") rp.setOpen(false)
     else if (outcome === "collapse-side") {
@@ -2679,7 +2743,7 @@ const bindableCommands = computed((): AppCommand[] => {
       title: leftPanel.value ? t("cmd.hideSessions") : t("cmd.showSessions"),
       hint: "Ctrl+B",
       // On every screen, as MiMo's is: the home screen has a side column to fold too.
-      run: () => (leftPanel.value = !leftPanel.value),
+      run: () => toggleSide(),
     },
     // MiMo's panel and browser chords.
     {
@@ -3502,7 +3566,7 @@ function onKeydown(event: KeyboardEvent) {
     k: toggleSearch,
     // MiMo's files tab.
     p: openFilesTab,
-    b: () => (leftPanel.value = !leftPanel.value),
+    b: () => toggleSide(),
     "`": () => (terminalOpen.value = !terminalOpen.value),
     ",": openSettings,
     n: () => void newSession(),
@@ -3546,7 +3610,7 @@ const menuCommands: Record<string, () => void> = {
   "open-project": () => void browse(),
   settings: openSettings,
   terminal: () => (terminalOpen.value = !terminalOpen.value),
-  sidebar: () => (leftPanel.value = !leftPanel.value),
+  sidebar: () => toggleSide(),
   abort: () => void app.abort(),
   model: () => composer.value?.openModelMenu(),
   "delete-session": () => {
@@ -3818,35 +3882,28 @@ async function cycleAgent(by: 1 | -1) {
 }
 
 /**
- * And the reasoning effort - for this session, and with a way back to unset.
- *
- * Walking off the end returns to no setting at all rather than wrapping to the
- * first step. Unset is not a sixth level: it is the session deferring to the
- * app-wide default, and there is no other way back to that once a session has
- * been given a setting of its own.
+ * And the reasoning effort: MiMo's one app-wide level, cycled through the
+ * steps the model in use has and wrapping at the end.
  */
 async function cycleEffort() {
-  if (!app.currentID) return
   /*
    * The steps this model has, not all five: the pill beside it now offers only
    * those, and a keyboard that could still reach a sixth would be the pointer
    * and the keyboard disagreeing about what the control is. A model with no
-   * steps at all draws no pill and this does nothing, which is the reference's
-   * `if (variants.length === 0) return void 0` (main-8t-QUXax.js @2829562).
+   * steps at all draws no pill and this does nothing.
    */
-  const variants = findModel(app.providers, app.current?.model)?.variants ?? []
-  if (!variants.length) return
-  await app.setEffort(cycleVariant(variants, app.current?.effort))
+  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
+  const next = cycleVariant(variants, app.config?.effort)
+  if (next) await app.setEffort(next)
 }
 
 /** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
 async function stepEffort(by: 1 | -1) {
-  if (!app.currentID) return
-  const variants = findModel(app.providers, app.current?.model)?.variants ?? []
+  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
   if (!variants.length) return
-  const current = app.current?.effort
+  const current = app.config?.effort
   const at = current ? variants.indexOf(current) : -1
-  const next = at === -1 ? (by > 0 ? variants[0] : undefined) : variants[Math.max(0, Math.min(variants.length - 1, at + by))]
+  const next = at === -1 ? variants[0] : variants[at + by]
   if (next && next !== current) await app.setEffort(next)
 }
 
@@ -3923,6 +3980,13 @@ async function boot() {
     await app.patchConfig({ onboarded: true })
   }
   if (app.currentID) view.value = "session"
+
+  // MiMo opens again on the conversation whose draft was on screen when the app closed.
+  const draftScreen = restoredDrafts.current?.startsWith("main:") ? restoredDrafts.current.slice("main:".length) : undefined
+  if (!draftScreenRestored && draftScreen && !app.currentID && drafts.has(`main:${draftScreen}`) && app.sessions.some((session) => session.id === draftScreen)) {
+    draftScreenRestored = true
+    await app.open(draftScreen).catch(() => undefined)
+  }
 
   linksReady = true
   const link = queuedLink ?? (await window.mcode.takeLink().catch(() => undefined))
@@ -4025,6 +4089,8 @@ onBeforeUnmount(() => {
         :priority="priorityFilter"
         :can-back="canGoBack"
         :can-forward="canGoForward"
+        :width="sideWidth"
+        @resize="resizeSide"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"
         @newTask="newTaskFromSide"
@@ -4043,7 +4109,7 @@ onBeforeUnmount(() => {
         @search="searchOpen = true"
         @back="back"
         @forward="forward"
-        @toggle="leftPanel = !leftPanel"
+        @toggle="toggleSide"
         @browse="browse"
         @dropFolders="addDroppedProjects"
         @open="openFromSide"
@@ -4118,6 +4184,8 @@ onBeforeUnmount(() => {
           <SessionHero v-if="empty && !app.error" />
           <MessageStream v-else ref="stream" />
           <SessionSpine v-if="!(empty && !app.error)" :scroller="stream?.scroller" />
+          <!-- MiMo's boundaries inside the page: the info panel, and the composer's dock zone, each apart from the transcript. -->
+          <ErrorBoundary :reset-key="app.currentID ?? ''">
           <InfoPanel
             :visible="infoShowing"
             :floating="infoFloating"
@@ -4125,6 +4193,7 @@ onBeforeUnmount(() => {
             :escape-blocked="modalOpen || searchOpen || connectOpen || Boolean(sessionMenu) || Boolean(projectMenu) || Boolean(app.permission)"
             @close="closeInfo"
           />
+          </ErrorBoundary>
 
           <!--
             The dock, which is the same region in every state a session can be
@@ -4134,6 +4203,7 @@ onBeforeUnmount(() => {
             the composer was torn down and rebuilt on that first message.
           -->
           <!-- MiMo's confirm dock: the first undecided permission or question, in arrival order. -->
+          <ErrorBoundary :reset-key="app.currentID ?? ''">
           <QuestionDock />
           <!--
             While the session is empty the box belongs inside the hero, between
@@ -4177,6 +4247,7 @@ onBeforeUnmount(() => {
               @terminal="openTerminalTab"
             />
           </Teleport>
+          </ErrorBoundary>
         </template>
 
         <!--
@@ -4242,7 +4313,7 @@ onBeforeUnmount(() => {
         :sessionID="isHome ? undefined : app.currentID"
         :directory="panelDirectory"
         :browserAllowed="browserAllowed"
-        :sidebarWidth="leftPanel ? SIDE_COLUMN_WIDTH : 0"
+        :sidebarWidth="leftPanel ? sideWidth : 0"
         :sideCollapsed="!leftPanel"
         :hints="panelHints"
         :modalOpen="modalOpen"
@@ -4315,8 +4386,9 @@ onBeforeUnmount(() => {
       @submit="applyServer"
     />
 
+    <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
+    <ErrorBoundary v-if="settingsOpen" :reset-key="settingsSection">
     <SettingsDialog
-      v-if="settingsOpen"
       :section="settingsSection"
       :commands="bindableCommands"
       :update-checking="updateChecking"
@@ -4324,6 +4396,7 @@ onBeforeUnmount(() => {
       @close="settingsOpen = false"
       @check-updates="checkForUpdates"
     />
+    </ErrorBoundary>
 
     <ProjectDialog
       v-if="editingProject"

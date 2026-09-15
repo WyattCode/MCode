@@ -1,4 +1,5 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
+import { migrateChime } from "@shared/chime"
 import { normalizeChord, retireKeybinds } from "@shared/chord"
 import fs from "node:fs/promises"
 import { watch as watchFiles, type FSWatcher } from "node:fs"
@@ -95,7 +96,7 @@ function defaults(): AppConfig {
     servers: [],
     defaultServer: "",
     updateFeed: "",
-    taskDoneSound: "settle",
+    taskDoneSound: "bloom",
     spineSound: true,
     projectRoot: "",
     soundPermission: false,
@@ -120,7 +121,8 @@ function defaults(): AppConfig {
     projectUsed: {},
     projectIcons: {},
     projectColors: {},
-    effort: "high",
+    // MiMo's 中: one app-wide level, medium until someone picks another.
+    effort: "medium",
     agent: "build",
     staged: false,
     openTabs: [],
@@ -392,6 +394,14 @@ export class Config {
       const binds: Record<string, string> = {}
       for (const [id, chord] of Object.entries(this.current.keybinds ?? {})) binds[id] = normalizeChord(chord)
       this.current.keybinds = binds
+    })
+
+    /*
+     * Round five takes MiMo's eight chimes. A figure chosen from the old five
+     * moves to its nearest new one; off stays off.
+     */
+    once("chime-r5", () => {
+      this.current.taskDoneSound = migrateChime(this.current.taskDoneSound)
     })
 
     // Round five dropped the chords MiMo lacks; see `retireKeybinds` for what a saved binding keeps.

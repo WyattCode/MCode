@@ -1,8 +1,8 @@
-import type { SubagentNotice, SubagentNoticeStatus } from "./protocol"
+import type { AssistantPart, Message, SubagentNotice, SubagentNoticeStatus } from "./protocol"
 
 /**
  * subagents: what the server and the window both need to know about a
- * subagent's answer, its avatar, and the actions of the task tool.
+ * subagent's answer, its avatar, and the actions of the actor tool.
  */
 
 /** How many avatar tones there are, as in MiMo. */
@@ -26,26 +26,42 @@ export function subagentTone(seed: string | undefined): number {
   return (hash >>> 0) % SUBAGENT_TONES
 }
 
-/** The task call's output: a line naming the subagent, then its final message inside these tags. */
-export function subagentOutput(subagentID: string, answer: string, status?: "timeout"): string {
-  const open = status ? `<subagent_result status="${status}">` : "<subagent_result>"
-  return `subagent_id: ${subagentID}\n\n${open}\n${answer}\n</subagent_result>`
+/** The actor call's output: a line naming the subagent, then its final message inside these tags. */
+export function subagentOutput(actorID: string, answer: string, status?: string): string {
+  const open = status ? `<actor_result status="${status}">` : "<actor_result>"
+  return `actor_id: ${actorID}\n\n${open}\n${answer}\n</actor_result>`
 }
 
-/** The subagent's final message inside a task call's output, or the output as it is. */
+/** The subagent's final message inside an actor call's output, or the output as it is. Calls saved before the rename used other tags. */
 export function subagentAnswer(output: string | undefined): string {
   const text = output ?? ""
-  const found = /<subagent_result[^>]*>\n?([\s\S]*?)\n?<\/subagent_result>/.exec(text)
-  return (found ? found[1] : text).trim()
+  const found = /<(actor_result|subagent_result)[^>]*>\n?([\s\S]*?)\n?<\/\1>/.exec(text)
+  return (found ? found[2]! : text).trim()
 }
 
-/** The task tool's actions, MiMo's seven. */
+/** MiMo's four words a general subagent opens its final message with. */
+export const RESULT_STATUSES = ["success", "partial", "failed", "blocked"] as const
+export type ResultStatus = (typeof RESULT_STATUSES)[number]
+
+/** The status and one-line summary a final message opens with, when it does. */
+export function statusHeader(answer: string): { status: ResultStatus; summary: string } | undefined {
+  const found = /^\s*\*\*Status\*\*:\s*(success|partial|failed|blocked)\b[^\n]*\n\s*\*\*Summary\*\*:\s*([^\n]+)/i.exec(answer)
+  if (!found) return undefined
+  return { status: found[1]!.toLowerCase() as ResultStatus, summary: found[2]!.trim() }
+}
+
+/** What a pill or a tab row shows of an answer: its summary line when it has one, else the answer. */
+export function answerSummary(answer: string): string {
+  return statusHeader(answer)?.summary ?? answer
+}
+
+/** The actor tool's actions, MiMo's seven. */
 export const SUBAGENT_ACTIONS = ["run", "spawn", "status", "wait", "cancel", "send", "models"] as const
 
 export type SubagentAction = (typeof SUBAGENT_ACTIONS)[number]
 
 /** A call's action; one that names none is a blocking run, which is all the tool used to do. */
-export function taskAction(input: Record<string, unknown> | undefined): SubagentAction {
+export function actorAction(input: Record<string, unknown> | undefined): SubagentAction {
   const raw = input?.action
   return SUBAGENT_ACTIONS.find((action) => action === raw) ?? "run"
 }
@@ -56,9 +72,49 @@ export function launches(action: SubagentAction): boolean {
 }
 
 /** The subagent a status, wait, cancel or send call names. */
-export function taskTarget(input: Record<string, unknown> | undefined): string {
-  const raw = input?.subagent_id
+export function actorTarget(input: Record<string, unknown> | undefined): string {
+  const raw = input?.actor_id ?? input?.to_actor_id
   return typeof raw === "string" ? raw.trim() : ""
+}
+
+/* ------------------------------------------------ calls saved before the rename */
+
+/** The task registry's verbs, which a subagent call never used. */
+const REGISTRY_ACTIONS = new Set(["create", "list", "get", "start", "block", "unblock", "done", "abandon", "rename"])
+
+/**
+ * Whether a saved `task` call is a subagent call from before the tool was named
+ * actor. The task tool that now has the name only ever takes registry verbs, and
+ * the old one never did, so the two can be told apart by what was passed.
+ */
+export function isLegacySubagentCall(part: { type: string; name?: string; input?: Record<string, unknown> }): boolean {
+  if (part.type !== "tool" || part.name !== "task") return false
+  const input = part.input ?? {}
+  const action = input.action
+  if (typeof action === "string") return !REGISTRY_ACTIONS.has(action)
+  return ["subagent_type", "prompt", "description", "subagent_id"].some((key) => key in input)
+}
+
+/**
+ * A saved part as it reads today: an old subagent call becomes an actor call,
+ * with its fields under MiMo's names. The copy on disk is never rewritten.
+ */
+export function readLegacyPart<T extends AssistantPart>(part: T): T {
+  if (part.type !== "tool" || !isLegacySubagentCall(part)) return part
+  const { subagent_id: id, message, ...rest } = part.input ?? {}
+  const send = rest.action === "send"
+  const input: Record<string, unknown> = {
+    ...rest,
+    ...(typeof id === "string" ? (send ? { to_actor_id: id } : { actor_id: id }) : {}),
+    ...(typeof message === "string" ? { content: message } : {}),
+  }
+  return { ...part, name: "actor", input }
+}
+
+/** A saved message as it reads today; the same object when nothing in it is old. */
+export function readLegacyMessage<T extends Message>(message: T): T {
+  if (message.role !== "assistant" || !message.parts.some((part) => part.type === "tool" && isLegacySubagentCall(part))) return message
+  return { ...message, parts: message.parts.map((part) => readLegacyPart(part)) }
 }
 
 /** How background work is timed. MiMo's figures; the checks shorten them. */
@@ -109,7 +165,7 @@ const SAID: Record<SubagentNoticeStatus, string> = {
  */
 export function noticeText(entries: { notice: SubagentNotice; result?: string }[]): string {
   const blocks = entries.map(({ notice, result }) => {
-    const head = `Background subagent "${notice.description}" (subagent_id: ${notice.subagentID}) ${SAID[notice.status]}.`
+    const head = `Background subagent "${notice.description}" (actor_id: ${notice.subagentID}) ${SAID[notice.status]}.`
     if (notice.status === "completed") return `${head}\nResult:\n${result ?? notice.summary ?? ""}`
     if (notice.status === "failed") return `${head}\nError: ${result ?? notice.summary ?? "unknown"}`
     if (notice.status === "stalled") {
@@ -118,5 +174,5 @@ export function noticeText(entries: { notice: SubagentNotice; result?: string }[
     }
     return head
   })
-  return `<subagent-notification>\n${blocks.join("\n\n")}\n</subagent-notification>`
+  return `<actor-notification>\n${blocks.join("\n\n")}\n</actor-notification>`
 }

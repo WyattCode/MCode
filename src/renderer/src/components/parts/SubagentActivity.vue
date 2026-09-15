@@ -4,13 +4,13 @@ import type { SubagentNotice, ToolPart } from "@shared/protocol"
 import SubagentAvatar from "./SubagentAvatar.vue"
 import { t } from "../../lib/i18n"
 import { actionOf, childFor, noticeStatus, pillStatus } from "../../lib/subagents"
-import { subagentAnswer } from "@shared/subagent"
+import { answerSummary, subagentAnswer } from "@shared/subagent"
 import { useApp } from "../../stores/app"
 import { useRightPanel } from "../../stores/right-panel"
 
 /**
  * subagents: MiMo's subagent activity row. One pill per subagent - its avatar
- * and name - and after them where they stand. For task calls that is 开始工作
+ * and name - and after them where they stand. For actor calls that is 开始工作
  * while any works, 已完成 once every one is a run that answered; for the notices
  * background subagents send back it is their outcome - 已完成, 失败, 已取消,
  * 可能停滞 - or 已结束 when a row's notices disagree. A pill opens the 子智能体
@@ -46,7 +46,7 @@ const pills = computed(() => {
       id: part.callID,
       seed: child?.subagent?.id ?? part.callID,
       name: described || child?.title || t("subagentActivity.fallbackName"),
-      summary: part.status === "completed" && actionOf(part) === "run" ? subagentAnswer(part.output) : undefined,
+      summary: part.status === "completed" && actionOf(part) === "run" ? answerSummary(subagentAnswer(part.output)) : undefined,
     }
   })
 })
