@@ -2060,15 +2060,14 @@ const rowsOf = (group: { provider: { id: string }; models: ModelInfo[] }): Model
 
 /*
  * MiMo's split: its own models at the top level, everyone else's behind "more
- * models" under a heading per vendor, and custom models in a group of their own
- * below that. Here the first connected built-in provider stands where MiMo's
- * own models do.
+ * models" in one flat list, and custom models in a group of their own below
+ * that. Here the first connected built-in provider stands where MiMo's own
+ * models do.
  */
 const builtinGroups = computed(() => groups.value.filter((group) => !group.provider.custom))
 const primaryGroup = computed(() => builtinGroups.value[0])
-const moreGroups = computed(() => builtinGroups.value.slice(1))
 const primaryRows = computed(() => (primaryGroup.value ? rowsOf(primaryGroup.value) : []))
-const moreRows = computed(() => moreGroups.value.flatMap(rowsOf))
+const moreRows = computed(() => builtinGroups.value.slice(1).flatMap(rowsOf))
 const customRows = computed(() => groups.value.filter((group) => group.provider.custom).flatMap(rowsOf))
 
 function closeModelSubs() {
@@ -2974,25 +2973,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   :style="{ left: `${morePlace.left}px`, top: `${morePlace.top}px` }"
                 >
                   <div class="more-scroll" @scroll="moreSub = undefined">
-                    <div v-for="group in moreGroups" :key="group.provider.id" class="vendor">
-                      <div class="vendor-head">{{ group.provider.name }}</div>
-                      <ModelMenuRow
-                        v-for="row in rowsOf(group)"
-                        :key="row.key"
-                        :model="row.model"
-                        :row-key="row.key"
-                        :on="currentKey === row.key"
-                        :hot="subKey === row.key"
-                        :efforts="effortsFor(row.model)"
-                        :effort="effortLevel"
-                        :sub-open="moreSub === row.key"
-                        :effort-hot="moreSub === row.key ? levelOf(sub2Key) : undefined"
-                        @enter="hoverMore(row.key)"
-                        @choose="chooseModel(row.provider, row.model.id)"
-                        @effort="chooseModelEffort(row.provider, row.model.id, $event)"
-                        @effort-hover="sub2Key = effortKey($event)"
-                      />
-                    </div>
+                    <ModelMenuRow
+                      v-for="row in moreRows"
+                      :key="row.key"
+                      :model="row.model"
+                      :row-key="row.key"
+                      :on="currentKey === row.key"
+                      :hot="subKey === row.key"
+                      :efforts="effortsFor(row.model)"
+                      :effort="effortLevel"
+                      :sub-open="moreSub === row.key"
+                      :effort-hot="moreSub === row.key ? levelOf(sub2Key) : undefined"
+                      @enter="hoverMore(row.key)"
+                      @choose="chooseModel(row.provider, row.model.id)"
+                      @effort="chooseModelEffort(row.provider, row.model.id, $event)"
+                      @effort-hover="sub2Key = effortKey($event)"
+                    />
                   </div>
                 </div>
               </div>
@@ -4569,32 +4565,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   animation: sub-in 0.15s ease-out;
 }
 
+/* One flat list, 1 apart, as MiMo's 更多模型 now draws it. */
 .more-scroll {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 1px;
   min-height: 0;
   padding: 5px;
   overflow-y: auto;
-}
-
-.vendor {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.vendor + .vendor {
-  margin-top: 4px;
-}
-
-/* MiMo's vendor heading: 11/500 at 0.02em, 8 12 4, muted and not selectable. */
-.vendor-head {
-  padding: 8px 12px 4px;
-  color: var(--text-weak);
-  font-size: calc(11px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 16px;
-  letter-spacing: 0.02em;
-  user-select: none;
 }
 
 /* MiMo's level on the chip, 「· 高」: the level at 0.62, the dot at 0.7 of that and 5 before the level. */
