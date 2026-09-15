@@ -1093,6 +1093,8 @@ export interface AppConfig {
   closedProjects: string[]
   /** Optional display name per project directory, keyed by absolute path. */
   projectNames: Record<string, string>
+  /** When each project was last picked on the home screen (ms), so the picker lists it first even before it has a task. */
+  projectUsed: Record<string, number>
   /** Per-project badge artwork, stored as a data URL so it survives a move. */
   projectIcons: Record<string, string>
   /** Per-project badge hue override; absent means derived from the path. */

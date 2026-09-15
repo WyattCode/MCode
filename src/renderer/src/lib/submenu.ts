@@ -12,6 +12,15 @@ export function besideRow(row: DOMRect, width: number, height: number, gap = 4, 
   const fits = (x: number) => x >= edge && x + width <= window.innerWidth - edge
   const left = fits(after) ? after : fits(before) ? before : Math.max(edge, Math.min(after, window.innerWidth - edge - width))
   // Level with the row's first line, nudged up by the submenu's own padding.
-  const top = Math.max(edge, Math.min(row.top - gap, window.innerHeight - edge - height))
+  const top = Math.max(topEdge(edge), Math.min(row.top - gap, window.innerHeight - edge - height))
   return { left: Math.round(left), top: Math.round(top) }
+}
+
+/*
+ * MiMo never lets a submenu rise into the title bar: on Windows and Linux the
+ * bar overlays the page, so the top edge is its 46px plus 8. macOS keeps the edge.
+ */
+function topEdge(edge: number): number {
+  const mac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent)
+  return mac ? edge : 46 + edge
 }

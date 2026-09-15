@@ -33,7 +33,10 @@ import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
-import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
+import { applyVoiceResult, editCue, isClearCommand, splitSendWord } from "../src/renderer/src/lib/voice"
+import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
+import { rovingStep } from "../src/renderer/src/lib/composer-menu"
+import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, parseVoiceEdit, voiceDraftOf, voiceEditMessages } from "../src/server/handlers"
 import { customModelOf } from "../src/server/config"
 import { closeHidesToTray } from "../src/shared/protocol"
@@ -2536,6 +2539,65 @@ async function main() {
       splitSendWord("send the patch to review").text === "send the patch to review",
     )
     check("nothing said is nothing sent", splitSendWord("   ").send === false)
+  }
+
+  section("Composer menus and home starters")
+  {
+    check("a level the new model takes is kept", clampEffort(["low", "medium", "high"], "high") === "high")
+    check("one it lacks snaps to medium", clampEffort(["low", "medium", "high"], "max") === "medium")
+    check("without medium, the first", clampEffort(["low", "high"], "xhigh") === "low")
+    check("unset snaps the same way", clampEffort(["minimal", "low"], undefined) === "minimal")
+    check("a model without levels has none", clampEffort([], "high") === undefined)
+    check(
+      "the family is read off the model, not the provider",
+      modelFamily("anthropic/claude-sonnet-4.5") === "claude" && modelFamily("gpt-5.4", "GPT-5.4") === "openai",
+    )
+    check("o-series ids are OpenAI's", modelFamily("o3-mini") === "openai" && modelFamily("foo3") === undefined)
+    check(
+      "the other families",
+      modelFamily("deepseek-chat") === "deepseek" &&
+        modelFamily("kimi-k2") === "kimi" &&
+        modelFamily("glm-4.6") === "glm" &&
+        modelFamily("MiniMax-M2") === "minimax" &&
+        modelFamily("qwen3-coder") === "qwen" &&
+        modelFamily("hunyuan-t1") === "hunyuan" &&
+        modelFamily("gemini-2.5-pro") === "gemini",
+    )
+    check("an unknown model has no family", modelFamily("llama-3.3-70b", "Llama 3.3") === undefined)
+    check(
+      "Claude's levels are named from Claude's set",
+      effortFamily("claude-opus-4-6") === "claude" && effortLabelKey("claude-opus-4-6", "Claude Opus", "xhigh") === "effort.claude.xhigh",
+    )
+    check(
+      "every other model's from the other set",
+      effortLabelKey("gpt-5.4", "GPT-5.4", "low") === "effort.gpt.low" && effortLabelKey("deepseek-v4", "", "max") === "effort.gpt.max",
+    )
+    check("a level Claude's set lacks falls back to the other", effortLabelKey("claude-x", "", "none") === "effort.gpt.none")
+    const rows = ["a", "b", "c"] as const
+    check(
+      "Down from nothing starts at the top, Up at the bottom",
+      rovingStep(rows, undefined, "ArrowDown") === "a" && rovingStep(rows, undefined, "ArrowUp") === "c",
+    )
+    check("the walk wraps at both ends", rovingStep(rows, "c", "ArrowDown") === "a" && rovingStep(rows, "a", "ArrowUp") === "c")
+    check("Home and End jump to the ends", rovingStep(rows, "b", "Home") === "a" && rovingStep(rows, "b", "End") === "c")
+    check("an empty list has nowhere to go", rovingStep([], undefined, "ArrowDown") === undefined)
+    const starters = builtinSuggestions((key) => `[${key}]`)
+    check(
+      "three built-in starters, each with its own words and mark",
+      starters.length === 3 &&
+        starters.every((row) => row.title.endsWith(".title]") && row.query.endsWith(".query]")) &&
+        new Set(starters.map((row) => row.icon)).size === 3,
+      starters,
+    )
+  }
+
+  section("Voice cues")
+  {
+    check("quick input's clear words empty the box", isClearCommand("清空") && isClearCommand("删掉重来。") && isClearCommand(" 清空输入！"))
+    check("a sentence about clearing is typed as words", !isClearCommand("清空这个文件夹里的日志") && !isClearCommand("hello"))
+    check("an edit that changed the box rewrote it", editCue("周五开会", "周四开会", true) === "rewritten")
+    check("an edit that left nothing cleared it", editCue("周五开会", "", true) === "cleared")
+    check("no change, or no edit, says nothing", editCue("a", "a", true) === undefined && editCue("a", "b", false) === undefined)
   }
 
   section("Voice smart edit")

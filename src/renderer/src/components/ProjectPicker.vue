@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { t } from "../lib/i18n"
+import { isRovingKey, rovingStep } from "../lib/composer-menu"
 
 /**
  * The home screen's project chip and its menu, laid out from MiMo's.
@@ -53,6 +54,9 @@ const expanded = ref(false)
 const sub = ref(false)
 const root = ref<HTMLElement>()
 const field = ref<HTMLInputElement>()
+const menuEl = ref<HTMLElement>()
+const trigger = ref<HTMLElement>()
+const submenuEl = ref<HTMLElement>()
 
 const current = computed(() => props.projects.find((project) => project.directory === props.chosen))
 
@@ -101,6 +105,56 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+/*
+ * MiMo's list keys: ArrowUp and ArrowDown walk the rows and wrap, Home and End
+ * go to the ends. The submenu's rows are walked on their own while it has focus.
+ */
+function rowsIn(container: HTMLElement | undefined, nested: boolean): HTMLElement[] {
+  const all = [...(container?.querySelectorAll<HTMLElement>("[data-picker-row]") ?? [])]
+  return nested ? all : all.filter((row) => !row.closest(".submenu"))
+}
+
+function walk(rows: HTMLElement[], key: "ArrowDown" | "ArrowUp" | "Home" | "End") {
+  const ids = rows.map((_, index) => String(index))
+  const at = rows.indexOf(document.activeElement as HTMLElement)
+  const next = rovingStep(ids, at < 0 ? undefined : String(at), key)
+  if (next !== undefined) rows[Number(next)]?.focus()
+}
+
+function onMenuKeys(event: KeyboardEvent) {
+  if (event.altKey || event.ctrlKey || event.metaKey || !isRovingKey(event.key)) return
+  const inSub = Boolean((event.target as HTMLElement).closest(".submenu"))
+  event.preventDefault()
+  walk(inSub ? rowsIn(submenuEl.value, true) : rowsIn(menuEl.value, false), event.key)
+}
+
+/* The search box keeps its keys to itself, as MiMo's does - except Down, which steps into the list. */
+function onSearchKeys(event: KeyboardEvent) {
+  if (event.key === "Escape") return
+  event.stopPropagation()
+  if (event.key === "ArrowDown" && !event.altKey && !event.ctrlKey && !event.metaKey) {
+    event.preventDefault()
+    rowsIn(menuEl.value, false)[0]?.focus()
+  }
+}
+
+/* ArrowRight, Enter or Space on "add a project" opens its submenu on the first row. */
+async function openSub(event: KeyboardEvent) {
+  if (event.target !== trigger.value) return
+  event.preventDefault()
+  sub.value = true
+  await nextTick()
+  rowsIn(submenuEl.value, true)[0]?.focus()
+}
+
+/* ArrowLeft inside the submenu closes it and gives focus back to its row. */
+function closeSub(event: KeyboardEvent) {
+  event.preventDefault()
+  event.stopPropagation()
+  sub.value = false
+  trigger.value?.focus()
+}
+
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
   window.addEventListener("keydown", onKeydown)
@@ -113,7 +167,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="picker">
-    <button class="chip" :class="{ open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+    <button class="chip" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
       <svg v-if="current" class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path v-for="d in ICON.folder" :key="d" :d="d" />
       </svg>
@@ -123,12 +177,18 @@ onBeforeUnmount(() => {
       </svg>
     </button>
 
-    <div v-if="open" class="menu" role="menu">
+    <div v-if="open" ref="menuEl" class="menu" role="menu" @keydown="onMenuKeys">
       <div class="search">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path v-for="d in ICON.search" :key="d" :d="d" />
         </svg>
-        <input ref="field" v-model="query" spellcheck="false" :placeholder="t('home.searchProjects')" />
+        <input
+          ref="field"
+          v-model="query"
+          spellcheck="false"
+          :placeholder="t('home.searchProjects')"
+          @keydown="onSearchKeys"
+        />
       </div>
 
       <div class="list-wrap" :class="{ scroll: shown.length > FIRST }">
@@ -141,6 +201,7 @@ onBeforeUnmount(() => {
             :key="project.directory"
             class="row project"
             role="menuitemradio"
+            data-picker-row
             :aria-checked="project.directory === chosen"
             :data-directory="project.directory"
             @click="choose(project.directory)"
@@ -158,24 +219,27 @@ onBeforeUnmount(() => {
           </button>
         </div>
       </div>
-      <button v-if="more" class="row show-more" @click="expanded = true">
+      <button v-if="more" class="row show-more" role="menuitem" data-picker-row @click="expanded = true">
         <span class="name">{{ t("home.showMore") }}</span>
       </button>
 
       <div v-if="projects.length" class="rule" role="separator" />
 
       <div
+        ref="trigger"
         class="row sub-trigger"
         :class="{ on: sub }"
         role="menuitem"
         aria-haspopup="menu"
         :aria-expanded="sub"
         tabindex="0"
+        data-picker-row
         @mouseenter="sub = true"
         @mouseleave="sub = false"
         @click="sub = !sub"
-        @keydown.right.prevent="sub = true"
-        @keydown.left.prevent="sub = false"
+        @keydown.right="openSub"
+        @keydown.enter="openSub"
+        @keydown.space="openSub"
       >
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path v-for="d in ICON.add" :key="d" :d="d" />
@@ -184,14 +248,14 @@ onBeforeUnmount(() => {
         <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path v-for="d in ICON.chev" :key="d" :d="d" />
         </svg>
-        <div v-if="sub" class="submenu" role="menu" @click.stop>
-          <button class="row" data-new-project="blank" @click="act('blank')">
+        <div v-if="sub" ref="submenuEl" class="submenu" role="menu" @click.stop @keydown.left="closeSub">
+          <button class="row" role="menuitem" data-picker-row data-new-project="blank" @click="act('blank')">
             <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path v-for="d in ICON.folderAdd" :key="d" :d="d" />
             </svg>
             <span class="name">{{ t("home.createBlank") }}</span>
           </button>
-          <button class="row" data-new-project="existing" @click="act('existing')">
+          <button class="row" role="menuitem" data-picker-row data-new-project="existing" @click="act('existing')">
             <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path v-for="d in ICON.folder" :key="d" :d="d" />
             </svg>
@@ -200,7 +264,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <button class="row no-project" @click="act('none')">
+      <button class="row no-project" role="menuitem" data-picker-row @click="act('none')">
         <svg class="i" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path v-for="d in ICON.none" :key="d" :d="d" />
         </svg>
@@ -241,8 +305,8 @@ svg path {
   line-height: 20px;
 }
 
-.chip:hover,
-.chip.open {
+/* Hover only: MiMo's chip goes back to rest once the pointer is in its menu. */
+.chip:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
 }
@@ -270,12 +334,15 @@ svg path {
   stroke-width: 1;
 }
 
-/* Below the chip, never flipped: 260 to 440 wide on the glass menu surface. */
+/* Below the chip, never flipped: 260 to 440 wide on the glass menu surface, its parts 1 apart. */
 .menu {
   position: absolute;
   top: calc(100% + 4px);
   inset-inline-start: 0;
   z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   min-width: 260px;
   max-width: min(440px, 100vw - 40px);
   padding: 5px;
@@ -328,6 +395,9 @@ svg path {
 }
 
 .list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   max-height: 132px;
   overflow-y: auto;
 }
@@ -342,8 +412,10 @@ svg path {
   content: "";
 }
 
+/* MiMo's menu row: 13px, 6 by 10, 9 apart, an 11px corner. */
 .row {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 9px;
   width: 100%;
@@ -351,7 +423,7 @@ svg path {
   padding: 6px 10px;
   color: var(--text-strong);
   background: transparent;
-  border-radius: 8px;
+  border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 20px;
@@ -420,6 +492,7 @@ svg path {
 }
 
 .rule {
+  flex: none;
   height: 1px;
   margin: 4px 6px;
   background: var(--border-weak);
@@ -437,13 +510,17 @@ svg path {
   opacity: 0.5;
 }
 
+/* MiMo's submenu surface, 5 of padding like every other, its rows 1 apart. */
 .submenu {
   position: absolute;
   top: -6px;
   inset-inline-start: calc(100% + 4px);
   z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   min-width: 184px;
-  padding: 4px;
+  padding: 5px;
   background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
   border-radius: 16px;
@@ -460,10 +537,10 @@ svg path {
   content: "";
 }
 
+/* MiMo's submenu rows keep their 5 by 12 and 6 apart, but take the 11px corner every row has. */
 .submenu .row {
   gap: 6px;
   padding: 5px 12px;
-  border-radius: 14px;
   white-space: nowrap;
 }
 </style>

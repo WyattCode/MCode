@@ -2,32 +2,35 @@
 import { nextTick, ref, watch } from "vue"
 import type { Effort, ModelInfo } from "@shared/protocol"
 import { t } from "../lib/i18n"
-import { isLatest, withoutLatest } from "../lib/model"
+import { effortFamily, effortLabelKey, isLatest, withoutLatest } from "../lib/model"
 import { besideRow } from "../lib/submenu"
-import ProviderIcon from "./ProviderIcon.vue"
+import ModelMark from "./ModelMark.vue"
 
 /**
- * One model in the composer's model menu, as MiMo draws it: the provider's
- * mark, the name, and a check at the far end when it is the one in use. A model
- * with reasoning levels carries a chevron and opens them in a submenu beside it.
+ * One model in the composer's model menu, as MiMo draws it: the model's
+ * family mark, the name, and a check at the far end when it is the one in use.
+ * A model with reasoning levels carries a chevron and opens them in a submenu
+ * beside it - only the levels the model takes, named in the reader's language.
  */
 const props = defineProps<{
   model: ModelInfo
-  provider: { id: string; name: string }
   rowKey: string
   on: boolean
   hot: boolean
-  /** The levels to offer, "follow the default" first; empty for no submenu. */
-  efforts: (Effort | undefined)[]
+  /** The levels to offer; empty for no submenu. */
+  efforts: Effort[]
   /** The level in use, when this is the model in use. */
   effort?: Effort
   subOpen: boolean
+  /** The level the keyboard stands on inside the submenu. */
+  effortHot?: Effort
 }>()
 
 const emit = defineEmits<{
   choose: []
-  effort: [level: Effort | undefined]
+  effort: [level: Effort]
   enter: []
+  "effort-hover": [level: Effort]
 }>()
 
 const slot = ref<HTMLElement>()
@@ -45,6 +48,11 @@ watch(
   },
   { immediate: true },
 )
+
+/* MiMo's Claude 「高」 says it is the default; no other level does. */
+function levelTitle(level: Effort): string | undefined {
+  return level === "high" && effortFamily(props.model.id, props.model.name) === "claude" ? t("effort.default") : undefined
+}
 </script>
 
 <template>
@@ -57,7 +65,7 @@ watch(
       :aria-expanded="efforts.length ? subOpen : undefined"
       @click="emit('choose')"
     >
-      <ProviderIcon :id="provider.id" :name="provider.name" class="model-mark" />
+      <ModelMark :id="model.id" :name="model.name" />
       <span class="item-name">{{ withoutLatest(model.name) }}</span>
       <span v-if="isLatest(model.name)" class="tag">{{ t("model.tag.latest") }}</span>
       <svg class="check" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -76,13 +84,15 @@ watch(
     >
       <button
         v-for="entry in efforts"
-        :key="entry ?? 'default'"
+        :key="entry"
         class="item model-item"
-        :class="{ on: on && entry === effort }"
-        :data-effort="entry ?? 'default'"
+        :class="{ on: on && entry === effort, hot: entry === effortHot }"
+        :data-effort="entry"
+        :title="levelTitle(entry)"
+        @mouseenter="emit('effort-hover', entry)"
         @click="emit('effort', entry)"
       >
-        <span class="item-name" :class="{ level: entry }">{{ entry ?? t("effort.default") }}</span>
+        <span class="item-name">{{ t(effortLabelKey(model.id, model.name, entry)) }}</span>
         <svg class="check" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M3.5 8.2 6.4 11.1 12.5 5" />
         </svg>
@@ -96,6 +106,7 @@ watch(
   position: relative;
 }
 
+/* MiMo's row: 13px, 6 by 10, 9 apart, an 11px corner. */
 .item {
   display: flex;
   align-items: center;
@@ -105,7 +116,7 @@ watch(
   padding: 6px 10px;
   color: var(--text-strong);
   text-align: start;
-  border-radius: 8px;
+  border-radius: 11px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 20px;
@@ -126,29 +137,12 @@ watch(
   outline-offset: -2px;
 }
 
-/* MiMo's 20px mark with a 6px corner, in place of the provider list's larger one. */
-.model-mark {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
-  font-size: calc(11px * var(--ui-font-scale, 1));
-}
-
-.model-mark :deep(.glyph) {
-  width: 14px;
-  height: 14px;
-}
-
 .item-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.level {
-  text-transform: capitalize;
 }
 
 .tag {
@@ -168,11 +162,12 @@ svg path {
   stroke-linejoin: round;
 }
 
+/* MiMo's check is drawn in its send colour. */
 .check {
   flex: none;
   width: 16px;
   height: 16px;
-  color: var(--text-strong);
+  color: var(--button-primary);
   opacity: 0;
 }
 
@@ -187,14 +182,34 @@ svg path {
   opacity: 0.5;
 }
 
+/* MiMo's submenu surface: 16 round, a half-pixel line, glass, 5 of padding, rows 1 apart. */
 .sub {
   position: fixed;
   z-index: 70;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   min-width: 160px;
-  padding: 4px;
-  background: var(--surface-menu);
+  padding: 5px;
+  background: color-mix(in srgb, var(--surface-menu) 92%, transparent);
   border: 0.5px solid var(--border-weak);
-  border-radius: 12px;
+  border-radius: 16px;
   box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px) saturate(150%);
+  transform-origin: top left;
+  animation: sub-in 0.15s ease-out;
+}
+
+@keyframes sub-in {
+  from {
+    opacity: 0;
+    transform: translateX(-2px) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sub {
+    animation: none;
+  }
 }
 </style>

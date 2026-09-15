@@ -21,7 +21,12 @@ const app = useApp()
  * tab from the launcher therefore did nothing at all - it looked selected and
  * would not open. App answers this by opening and setting the view.
  */
-const emit = defineEmits<{ close: [id: string]; select: [id: string] }>()
+const emit = defineEmits<{
+  close: [id: string]
+  select: [id: string]
+  /* A double-click on a tab opens the rename dialog, as a side column row's title does. */
+  rename: [id: string]
+}>()
 
 const strip = ref<HTMLElement>()
 
@@ -222,35 +227,6 @@ function endDrag() {
   over.value = undefined
 }
 
-// ---------------------------------------------------------------------------
-// Renaming in place
-// ---------------------------------------------------------------------------
-
-/** The tab whose title is being typed over, if any. */
-const editing = ref<string>()
-const field = ref<HTMLInputElement[] | HTMLInputElement>()
-
-function fieldEl(): HTMLInputElement | undefined {
-  const value = field.value
-  return Array.isArray(value) ? value[0] : value
-}
-
-async function beginRename(session: { id: string }) {
-  editing.value = session.id
-  await nextTick()
-  const input = fieldEl()
-  input?.focus()
-  input?.select()
-}
-
-async function commitRename(id: string) {
-  const value = fieldEl()?.value.trim()
-  editing.value = undefined
-  if (!value) return
-  const session = tabs.value.find((entry) => entry.id === id)
-  if (!session || value === sessionTitle(session.title)) return
-  await app.rename(id, value)
-}
 </script>
 
 <template>
@@ -284,17 +260,15 @@ async function commitRename(id: string) {
         <div
           class="tab"
           :class="{ active: session.id === app.currentID, ghost: dragging === session.id }"
-          :draggable="editing !== session.id"
-          @dblclick="app.togglePinned(session.id)"
+          draggable="true"
           @dragstart="onDragStart($event, session.id)"
           @mouseenter="enter($event, session.id)"
           @mouseleave="leave"
         >
           <button
-            v-if="editing !== session.id"
             class="link"
             @click="emit('select', session.id)"
-            @dblclick.stop="beginRename(session)"
+            @dblclick.stop="emit('rename', session.id)"
             @auxclick="onAuxiliary($event, session.id)"
           >
             <span class="avatar-slot">
@@ -331,20 +305,7 @@ async function commitRename(id: string) {
             <span class="title">{{ sessionTitle(session.title) }}</span>
           </button>
 
-          <!-- The same row with the title handed over to be typed in. -->
-          <input
-            v-else
-            ref="field"
-            class="rename"
-            :value="sessionTitle(session.title)"
-            spellcheck="false"
-            @keydown.enter.prevent="commitRename(session.id)"
-            @keydown.esc.prevent="editing = undefined"
-            @blur="commitRename(session.id)"
-          />
-
           <button
-            v-if="editing !== session.id"
             class="close"
             :aria-label="t('tabs.close')"
             @click.stop="emit('close', session.id)"
@@ -661,21 +622,6 @@ async function commitRename(id: string) {
   overflow: hidden;
   /* Clipped rather than elided, which is what leaves the row of titles even. */
   text-overflow: clip;
-  line-height: 16px;
-}
-
-/* Sits where the title was, so renaming does not move the row about. */
-.rename {
-  flex: 1;
-  min-width: 0;
-  height: 20px;
-  padding: 0;
-  color: var(--text-strong);
-  background: none;
-  border: none;
-  outline: none;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
   line-height: 16px;
 }
 

@@ -25,6 +25,23 @@ export function rememberedSuggestions(
   return pending
 }
 
+/*
+ * MCode's own starting points. MiMo's first render already has three cases, so
+ * the area is never empty or loading while a project is chosen; these show at
+ * once, and the model's rows for the project replace them when they come.
+ */
+export const STARTER_IDS = ["layout", "bugs", "tests"] as const
+
+const STARTER_ICONS: Record<(typeof STARTER_IDS)[number], SuggestionIcon> = { layout: "code", bugs: "bug", tests: "test" }
+
+export function builtinSuggestions(translate: (key: string) => string): HomeSuggestion[] {
+  return STARTER_IDS.map((id) => ({
+    title: translate(`home.starter.${id}.title`),
+    query: translate(`home.starter.${id}.query`),
+    icon: STARTER_ICONS[id],
+  }))
+}
+
 /* MCode's own 16-unit marks for the rows, stroked in the row's muted colour. */
 export const SUGGESTION_ICON_PATHS: Record<SuggestionIcon, string[]> = {
   code: ["M5.5 4.5 2 8l3.5 3.5", "M10.5 4.5 14 8l-3.5 3.5", "M9 3 7 13"],
