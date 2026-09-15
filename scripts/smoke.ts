@@ -96,6 +96,8 @@ import {
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
 import { arbitratePanel, boundChord, sideFits, toolHints } from "../src/renderer/src/lib/right-tools"
+import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
+import { capDiff, normalizeLayout, parseDiffFiles, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
 import { interruptedTurn } from "../src/shared/resume"
 import { detectCodeLanguage, insertFence } from "../src/renderer/src/lib/paste-code"
@@ -3181,6 +3183,65 @@ async function main() {
     stub.close()
   }
 
+  section("Files tab requests (MiMo's tree, name search and preview reads)")
+  {
+    const failureOf = (error: unknown) => String((error as { message?: string } | undefined)?.message ?? error)
+    const tree = path.join(root, "tree-project")
+    await fs.mkdir(path.join(tree, ".github"), { recursive: true })
+    await fs.mkdir(path.join(tree, "node_modules", "pkg"), { recursive: true })
+    await fs.mkdir(path.join(tree, "vendor"), { recursive: true })
+    await fs.mkdir(path.join(tree, "empty"), { recursive: true })
+    await fs.mkdir(path.join(tree, "src", "deep"), { recursive: true })
+    await fs.writeFile(path.join(tree, ".env"), "A=1\n")
+    await fs.writeFile(path.join(tree, "src", "app.ts"), "export {}\n")
+    await fs.writeFile(path.join(tree, "src", "deep", "apple.txt"), "fruit\n")
+    await fs.writeFile(path.join(tree, "node_modules", "pkg", "app.js"), "x\n")
+
+    const listed = await call({ type: "file.listDir", directory: tree, all: true })
+    const names = listed.entries.map((entry) => entry.name)
+    check("the tree shows dot entries and empty folders", names.includes(".github") && names.includes(".env") && names.includes("empty"), names)
+    check("the tree leaves out only MiMo's ignored folders", !names.includes("node_modules") && names.includes("vendor"), names)
+    const firstFile = listed.entries.findIndex((entry) => entry.type === "file")
+    check("folders come before files", firstFile > 0 && listed.entries.slice(firstFile).every((entry) => entry.type === "file"), listed.entries)
+    const atMenu = await call({ type: "file.listDir", directory: tree })
+    check("the @ menu's listing still hides dot entries", !atMenu.entries.some((entry) => entry.name.startsWith(".")), atMenu.entries)
+    check("an empty folder lists as nothing", (await call({ type: "file.listDir", directory: tree, sub: "empty", all: true })).entries.length === 0)
+
+    const byName = await call({ type: "file.search", directory: tree, query: "app", nameOnly: true })
+    const rels = byName.entries.map((hit) => hit.rel)
+    check("name search finds files by their names", rels.includes("src/app.ts") && rels.includes("src/deep/apple.txt") && !byName.truncated, byName)
+    check("and skips the ignored folders", !rels.some((rel) => rel.startsWith("node_modules")), rels)
+    check("a hit carries its folder", byName.entries.find((hit) => hit.rel === "src/deep/apple.txt")?.dir === "src/deep", byName.entries)
+    check("a folder's name alone is not a match", (await call({ type: "file.search", directory: tree, query: "deep", nameOnly: true })).entries.length === 0)
+    await fs.mkdir(path.join(tree, "many"))
+    for (let index = 0; index < 55; index++) await fs.writeFile(path.join(tree, "many", `note-${index}.md`), "")
+    const cappedSearch = await call({ type: "file.search", directory: tree, query: "note-", nameOnly: true })
+    check("name search stops at 50 and says so", cappedSearch.entries.length === 50 && cappedSearch.truncated, {
+      count: cappedSearch.entries.length,
+      truncated: cappedSearch.truncated,
+    })
+
+    await fs.writeFile(path.join(tree, "big.txt"), "x".repeat(512 * 1024 + 1))
+    const big = await call({ type: "file.read", path: path.join(tree, "big.txt"), preview: true })
+    check("a preview refuses text past 512 KiB and carries none of it", big.tooBig === true && big.content === "", { tooBig: big.tooBig, length: big.content.length })
+    await fs.writeFile(path.join(tree, "nul.txt"), Buffer.concat([Buffer.from("a".repeat(5000)), Buffer.from([0])]))
+    check("a NUL byte anywhere makes a preview binary", (await call({ type: "file.read", path: path.join(tree, "nul.txt"), preview: true })).kind === "binary")
+    await fs.writeFile(path.join(tree, "clip.mp4"), Buffer.from([0, 0, 0, 24]))
+    const clip = await call({ type: "file.read", path: path.join(tree, "clip.mp4"), preview: true })
+    check("a video preview is named as one and carries no bytes", clip.video === true && !clip.data, clip)
+    await fs.writeFile(path.join(tree, "pic.png"), Buffer.alloc(16))
+    const pic = await call({ type: "file.read", path: path.join(tree, "pic.png"), preview: true })
+    check("a preview picture carries its type but no bytes", pic.kind === "image" && pic.mime === "image/png" && !pic.data, pic)
+    check("a plain read still carries a picture's bytes", Boolean((await call({ type: "file.read", path: path.join(tree, "pic.png") })).data))
+
+    const tooBigSave = await call({ type: "file.write", path: path.join(tree, ".env"), content: "x".repeat(512 * 1024 + 1) }).then(() => "saved", failureOf)
+    check("a save past 512 KiB is refused as toobig", tooBigSave.includes("toobig"), tooBigSave)
+    const binarySave = await call({ type: "file.write", path: path.join(tree, "nul.txt"), content: "text" }).then(() => "saved", failureOf)
+    check("a save over a binary file is refused", binarySave.includes("binary"), binarySave)
+    const defaultDir = await call({ type: "file.defaultDir" })
+    check("with no project the files tab has the default project location", defaultDir.directory.length > 0, defaultDir)
+  }
+
   section("Persistence")
   socket.close()
   await backend.close()
@@ -3297,6 +3358,22 @@ async function main() {
     touched.entries,
   )
   check("the plain path list still agrees with it", touched.changed.includes("note.txt"), touched.changed)
+
+  /* A change that is only staged still diffs: the review compares against HEAD, as MiMo's gitDiff does. */
+  await inRepo(["add", "note.txt"])
+  const stagedPatch = await gitOps.diff(repoRoot, "note.txt")
+  check("a staged-only change still shows its diff", stagedPatch.includes("+hello again"), stagedPatch.slice(0, 200))
+  await inRepo(["reset", "-q", "--", "note.txt"])
+  check(
+    "git's rename and copy letters read as renamed",
+    gitOps.classify("R ") === "renamed" && gitOps.classify("C ") === "renamed" && gitOps.classify("??") === "added" && gitOps.classify(" M") === "modified",
+  )
+  const freshRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-fresh-"))
+  await gitOps.init(freshRepo)
+  await fs.writeFile(path.join(freshRepo, "first.txt"), "first line\n")
+  await runGit("git", ["add", "first.txt"], { cwd: freshRepo, windowsHide: true })
+  check("a file staged before any commit diffs as new", (await gitOps.diff(freshRepo, "first.txt")).includes("+first line"))
+  await fs.rm(freshRepo, { recursive: true, force: true })
 
   await fs.rm(path.join(repoRoot, "note.txt"))
   const removed = await gitOps.status(repoRoot)
@@ -4173,6 +4250,115 @@ async function main() {
     check("a closed shell is gone from the list", shells.list("ses_smoke_terminal").length === 0)
     await fs.rm(termDir, { recursive: true, force: true }).catch(() => undefined)
   }
+  // ------------------------------------------------------- files and diff tabs
+  section("Files tab and diff tab logic (MiMo's tables, MCode's renderer)")
+  check(
+    "extensions take MiMo's colour groups",
+    fileCategory("a.ts") === "code" && fileCategory("x.HTML") === "web" && fileCategory(".env") === "data" &&
+      fileCategory("a.tar.gz") === "archive" && fileCategory("Makefile") === "default" && fileCategory("a.constructor") === "default",
+  )
+  const treeListing = {
+    "": [
+      { name: "src", type: "dir" as const },
+      { name: "a.md", type: "file" as const },
+    ],
+    src: [{ name: "b.ts", type: "file" as const }],
+  }
+  const closedRows = treeRows(treeListing, new Set())
+  const openRows = treeRows(treeListing, new Set(["src"]))
+  check("a closed folder hides its children", closedRows.map((row) => row.path).join(",") === "src,a.md", closedRows)
+  check("an open folder lists them a level in", openRows.map((row) => `${row.path}@${row.depth}`).join(",") === "src@0,src/b.ts@1,a.md@0", openRows)
+  check("MiMo's indent: 10, 14 a level, a file 16 further", rowIndent({ depth: 0, directory: true }) === 10 && rowIndent({ depth: 1, directory: false }) === 40)
+  check(
+    "the crumb names the project and then the file's parts; no root reads /",
+    crumbsFor("D:/p", "Proj", "src/b.ts").join("|") === "Proj|src|b.ts" && crumbsFor(undefined, "").join("|") === "/",
+  )
+  check(
+    "a save's refusal becomes MiMo's words",
+    saveFailureKey("toobig") === "rp.files.errTooBig" && saveFailureKey("Error: binary") === "rp.files.errBinary" &&
+      saveFailureKey("ENOENT: no such file") === "rp.files.errNoEnt" && saveFailureKey("EACCES") === "rp.files.errCannotWrite",
+  )
+  check(
+    "a tool's path compares project-relative",
+    relativeTo("D:\\proj", "D:\\Proj\\src\\b.ts") === "src/b.ts" && relativeTo("/home/p", "/home/p/x.ts") === "x.ts" && relativeTo("/home/p", "./y.ts") === "y.ts",
+  )
+  const toolStep = (name: string, status: string, input: Record<string, unknown>, diff?: string) => ({
+    type: "tool",
+    id: `${name}-${status}`,
+    callID: name,
+    name,
+    status,
+    input,
+    metadata: diff ? { diff } : {},
+    time: { created: 0 },
+  })
+  const editTurns = [
+    { role: "user", id: "u", sessionID: "s", text: "", attachments: [], time: { created: 0 } },
+    {
+      role: "assistant",
+      id: "a",
+      sessionID: "s",
+      parts: [
+        toolStep("edit", "completed", { path: "src/b.ts" }),
+        toolStep("write", "running", { path: "src/b.ts" }),
+        toolStep("patch", "completed", {}, "--- a/a.md\n+++ b/a.md\n@@ -1 +1 @@\n-x\n+y\n"),
+        toolStep("read", "completed", { path: "src/b.ts" }),
+      ],
+    },
+    { role: "assistant", id: "b", sessionID: "s", reverted: true, parts: [] },
+  ] as unknown as Message[]
+  const tally = editCounts(editTurns, "D:/proj", "src/b.ts")
+  check("finished edits are counted, and those on the open file", tally.total === 2 && tally.onFile === 1 && tally.reverted === 1, tally)
+  check("a patch's recorded diff names its file", editCounts(editTurns, "D:/proj", "a.md").onFile === 1)
+
+  const longPatch = Array.from({ length: 1300 }, (_, index) => `+line ${index}`).join("\n")
+  const cappedPatch = capDiff(longPatch)
+  check(
+    "a patch past 1200 lines keeps its start and counts the rest",
+    cappedPatch.truncated && cappedPatch.text.split("\n").length === 1200 && cappedPatch.omitted === 100,
+    { omitted: cappedPatch.omitted },
+  )
+  check("a short patch is left whole", !capDiff("+a\n-b").truncated)
+  check("the layout remembers only split or unified", normalizeLayout("split") === "split" && normalizeLayout("nonsense") === "unified" && normalizeLayout(null) === "unified")
+  const twoFiles = parseDiffFiles(
+    [
+      "diff --git a/src/one.ts b/src/one.ts",
+      "index 1111111..2222222 100644",
+      "--- a/src/one.ts",
+      "+++ b/src/one.ts",
+      "@@ -1,3 +1,3 @@",
+      " keep",
+      "-old",
+      "--- looks like a header",
+      "+new",
+      "++ also added",
+      "diff --git a/added.txt b/added.txt",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/added.txt",
+      "@@ -0,0 +1,2 @@",
+      "+a",
+      "+b",
+      "",
+    ].join("\n"),
+  )
+  check(
+    "a patch splits per file, a removed '---' line kept inside its hunk",
+    twoFiles.length === 2 && twoFiles[0]?.name === "src/one.ts" && twoFiles[0]?.added === 2 && twoFiles[0]?.deleted === 2,
+    twoFiles.map((file) => [file.name, file.added, file.deleted]),
+  )
+  check("a new file is marked added with its own counts", twoFiles[1]?.status === "added" && twoFiles[1]?.name === "added.txt" && twoFiles[1]?.added === 2)
+  const firstHunk = twoFiles[0]?.hunks[0]?.lines ?? []
+  check("lines carry both numbers", firstHunk[0]?.old === 1 && firstHunk[0]?.new === 1 && firstHunk[3]?.new === 2, firstHunk)
+  check("a bare edit-tool patch is one file", parseDiffFiles("--- a/x.md\n+++ b/x.md\n@@ -1 +1 @@\n-a\n+b\n").length === 1)
+  const sidePairs = splitRows(firstHunk)
+  check(
+    "side by side pairs removals with the additions after them",
+    sidePairs.length === 3 && sidePairs[1]?.left?.text === "old" && sidePairs[1]?.right?.text === "new" &&
+      sidePairs[2]?.left?.text === "-- looks like a header" && sidePairs[2]?.right?.text === "+ also added",
+    sidePairs,
+  )
+  check("a path splits into its folder and its name", splitPath("a/b/c.ts").dir === "a/b/" && splitPath("c.ts").dir === "" && splitPath("c.ts").base === "c.ts")
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

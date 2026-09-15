@@ -19,7 +19,7 @@ import type { Runtime } from "./index"
 import { customModelOf } from "./config"
 import { IGNORED, resolveInside } from "./tool/fs-util"
 import { discoverModels } from "./provider/discover"
-import { blankProjectDirectory, scratchDirectory } from "./scratch"
+import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
@@ -1067,11 +1067,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     /* The @ menu's browsing: one level at a time, as MiMo's listDir answers. */
     case "file.listDir":
-      return { entries: await listDirectory(request.directory, request.sub) } satisfies Handled<"file.listDir">
+      return { entries: await listDirectory(request.directory, request.sub, request.all) } satisfies Handled<"file.listDir">
 
-    /* The @ menu's search, scoped to the folder being browsed. */
+    /* The @ menu's search, scoped to the folder being browsed; the files tab's by name. */
     case "file.search":
+      if (request.nameOnly) return (await searchTree(request.directory, request.query)) satisfies Handled<"file.search">
       return (await searchFolder(request.directory, request.query, request.sub, request.limit)) satisfies Handled<"file.search">
+
+    case "file.defaultDir":
+      return { directory: scratchRoot(runtime.config.get().projectRoot ?? "") } satisfies Handled<"file.defaultDir">
 
     /* 继续: the interrupted last turn runs on, with no new message. */
     case "session.resume":
@@ -1087,6 +1091,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * `readFile(path, "utf8")` on a PNG succeeds - it just returns a string
        * of replacement characters, which the panel then drew as the file.
        */
+      if (request.preview) return (await readPreview(resolved)) satisfies Handled<"file.read">
       const bytes = await fs.readFile(resolved)
       const kind = kindFor(resolved, bytes.subarray(0, 4096))
 
@@ -1131,6 +1136,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const resolved = path.resolve(request.path)
       const existing = await fs.stat(resolved)
       if (!existing.isFile()) throw new Error(`Not a file: ${resolved}`)
+      // MiMo's writeFileText refusals, by the words the tab turns them into.
+      if (Buffer.byteLength(request.content, "utf8") > PREVIEW_TEXT_LIMIT) throw new Error("toobig")
+      if ((await fs.readFile(resolved)).includes(0)) throw new Error("binary")
       await fs.writeFile(resolved, request.content, "utf8")
       return { path: resolved } satisfies Handled<"file.write">
     }
@@ -1261,13 +1269,42 @@ function insideProject(directory: string, sub?: string): { root: string; target:
   return { root, target }
 }
 
-/* One folder level for the @ menu: folders first, then files, each by name. An unreadable folder throws. */
-async function listDirectory(directory: string, sub?: string): Promise<Handled<"file.listDir">["entries"]> {
+/*
+ * The folders MiMo's files tab leaves out of its tree and its search. Dot
+ * entries are otherwise shown: `.github`, `.env` and `.vscode` are files a
+ * project is made of.
+ */
+export const TREE_IGNORED = new Set([
+  ".git", ".svn", ".hg", "node_modules", "build", "out", "dist", "target", "bin", ".gradle", ".idea", ".cxx",
+  ".cache", ".next", ".nuxt", ".turbo", "__pycache__", ".venv", "venv", "Pods", "DerivedData", ".dart_tool",
+])
+
+/* MiMo's readFileText ceiling: past it a file is refused rather than shown in part. */
+export const PREVIEW_TEXT_LIMIT = 512 * 1024
+
+const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".webm", ".mov", ".ogv"])
+
+/* One file for the files tab: MiMo's kinds, with media left to be played from disk. */
+async function readPreview(resolved: string): Promise<Handled<"file.read">> {
+  const empty = { path: resolved, content: "", truncated: false }
+  if (VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return { ...empty, kind: "binary", video: true }
+  const kind = kindFor(resolved, Buffer.alloc(0))
+  if (kind === "image" || kind === "audio" || kind === "pdf") return { ...empty, kind, mime: mimeFor(resolved) }
+  const stats = await fs.stat(resolved)
+  if (stats.isDirectory()) throw new Error(`Not a file: ${resolved}`)
+  if (stats.size > PREVIEW_TEXT_LIMIT) return { ...empty, kind: "text", tooBig: true }
+  const bytes = await fs.readFile(resolved)
+  if (bytes.includes(0)) return { ...empty, kind: "binary" }
+  return { ...empty, kind: "text", content: bytes.toString("utf8") }
+}
+
+/* One folder level: folders first, then files, each by name. An unreadable folder throws. */
+async function listDirectory(directory: string, sub?: string, all?: boolean): Promise<Handled<"file.listDir">["entries"]> {
   const { target } = insideProject(directory, sub)
   const listed = await fs.readdir(target, { withFileTypes: true })
   const out: Handled<"file.listDir">["entries"] = []
   for (const entry of listed) {
-    if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
+    if (all ? TREE_IGNORED.has(entry.name) : entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
     let folder = entry.isDirectory()
     // A link is shown as what it points at.
     if (entry.isSymbolicLink()) {
@@ -1279,7 +1316,45 @@ async function listDirectory(directory: string, sub?: string): Promise<Handled<"
     out.push({ name: entry.name, type: folder ? "dir" : "file" })
   }
   const byName = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" })
-  return out.sort((a, b) => (a.type === b.type ? byName.compare(a.name, b.name) : a.type === "dir" ? -1 : 1))
+  const compare = all ? (a: string, b: string) => a.localeCompare(b) : (a: string, b: string) => byName.compare(a, b)
+  return out.sort((a, b) => (a.type === b.type ? compare(a.name, b.name) : a.type === "dir" ? -1 : 1))
+}
+
+const TREE_SEARCH_RESULTS = 50
+const TREE_SEARCH_DEPTH = 16
+const TREE_SEARCH_NODES = 4000
+
+/*
+ * The files tab's search, MiMo's `searchFiles`: breadth first, each folder's
+ * entries folders first by name, a file matching when its own name holds the
+ * query. It stops at 50 results or 4000 entries seen, and says so.
+ */
+export async function searchTree(directory: string, query: string): Promise<Handled<"file.search">> {
+  const { target } = insideProject(directory)
+  const needle = query.toLowerCase()
+  const entries: Handled<"file.search">["entries"] = []
+  if (!needle) return { entries, truncated: false }
+  const queue = [{ absolute: target, rel: "", depth: 0 }]
+  let seen = 0
+  while (queue.length) {
+    const folder = queue.shift()!
+    const listed = await fs.readdir(folder.absolute, { withFileTypes: true }).catch(() => [])
+    listed.sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
+    for (const entry of listed) {
+      if (TREE_IGNORED.has(entry.name)) continue
+      if (++seen > TREE_SEARCH_NODES) return { entries, truncated: true }
+      const rel = folder.rel ? `${folder.rel}/${entry.name}` : entry.name
+      const isDirectory = entry.isDirectory()
+      if (!isDirectory && entry.name.toLowerCase().includes(needle)) {
+        entries.push({ name: entry.name, rel, dir: folder.rel })
+        if (entries.length >= TREE_SEARCH_RESULTS) return { entries, truncated: true }
+      }
+      if (isDirectory && folder.depth < TREE_SEARCH_DEPTH) {
+        queue.push({ absolute: path.join(folder.absolute, entry.name), rel, depth: folder.depth + 1 })
+      }
+    }
+  }
+  return { entries, truncated: false }
 }
 
 const SEARCH_LIMIT = 50

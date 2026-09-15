@@ -3,22 +3,25 @@ import { computed, onBeforeUnmount, ref, watch } from "vue"
 import type { GitChange, GitStatus } from "@shared/protocol"
 import RpDiff from "./RpDiff.vue"
 import { useApp } from "../../stores/app"
+import { editCounts } from "../../lib/files-tab"
 import { t } from "../../lib/i18n"
 
 /**
- * MiMo's review tab: the project's unstaged changes. A pill with their count
- * and a refresh at the head, the files beneath it with git's letter for each,
- * and the chosen file's diff filling the rest. The first file is chosen by
- * itself and stays chosen while it is still changed.
+ * MiMo's review tab: the project's changes against HEAD. A pill with their
+ * count and a refresh at the head, the files beneath it with git's letter for
+ * each, and the chosen file's diff filling the rest. The first file is chosen
+ * by itself and stays chosen while it is still changed.
  *
  * It reads again whenever the conversation moves on - a message, the end of a
- * turn, an undo - as well as on the refresh, which then rests for 400ms.
+ * turn, an undo, and every edit a running turn finishes - as well as on the
+ * refresh, which then rests for 400ms.
  */
 const props = defineProps<{ root?: string }>()
 const app = useApp()
 
 const status = ref<GitStatus>()
-const failed = ref(false)
+/* The error git gave, shown under MiMo's 读取 git 状态失败. */
+const failure = ref<string>()
 const loading = ref(false)
 const selected = ref<string>()
 const patch = ref<string>()
@@ -34,9 +37,9 @@ async function load() {
   loading.value = true
   try {
     status.value = await app.gitStatus(root, "worktree")
-    failed.value = false
-  } catch {
-    failed.value = true
+    failure.value = undefined
+  } catch (err) {
+    failure.value = err instanceof Error ? err.message : String(err)
   } finally {
     loading.value = false
   }
@@ -69,6 +72,9 @@ function refresh() {
   void load()
 }
 
+/* MiMo's run.files: a running turn's finished edits re-read the list as they land. */
+const edits = computed(() => editCounts(app.messages).total)
+
 watch(selected, (file) => void loadPatch(file))
 watch(() => props.root, () => {
   status.value = undefined
@@ -76,12 +82,12 @@ watch(() => props.root, () => {
   void load()
 }, { immediate: true })
 watch(
-  () => [app.messages.length, app.busy, app.history.undo, app.history.redo] as const,
+  () => [app.messages.length, app.busy, app.history.undo, app.history.redo, edits.value] as const,
   () => void load(),
 )
 onBeforeUnmount(() => clearTimeout(restTimer))
 
-const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", modified: "M" }
+const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", modified: "M", renamed: "R" }
 </script>
 
 <template>
@@ -93,8 +99,9 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
     <div v-else-if="!status && loading" class="rv-empty">
       <div class="rv-empty-desc">{{ t("rp.review.loading") }}</div>
     </div>
-    <div v-else-if="failed && !status" class="rv-empty">
+    <div v-else-if="failure !== undefined && !status" class="rv-empty" data-rv-failed>
       <div class="rv-empty-title">{{ t("rp.review.readStatusFailed") }}</div>
+      <div class="rv-empty-desc">{{ failure }}</div>
     </div>
     <div v-else-if="status && (!status.installed || !status.repo)" class="rv-empty">
       <div class="rv-empty-title">{{ t("rp.review.notRepoTitle") }}</div>
@@ -103,7 +110,19 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
     <div v-else-if="status && !entries.length" class="rv-empty" data-rv-clean>
       <div class="rv-empty-title">{{ t("rp.review.cleanTitle") }}</div>
       <div class="rv-empty-desc">{{ t("rp.review.cleanDesc") }}</div>
-      <button type="button" class="rv-empty-refresh" :disabled="resting" @click="refresh">{{ t("rp.review.refresh") }}</button>
+      <button
+        type="button"
+        class="rv-refresh"
+        data-review-refresh
+        :disabled="resting"
+        :aria-label="t('rp.review.refresh')"
+        :title="t('rp.review.refresh')"
+        @click="refresh"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
+        </svg>
+      </button>
     </div>
     <template v-else-if="status">
       <div class="rv-head">
@@ -111,13 +130,14 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
         <button
           type="button"
           class="rv-refresh"
+          data-review-refresh
           :disabled="resting"
           :aria-label="t('rp.review.refresh')"
           :title="t('rp.review.refresh')"
           @click="refresh"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M20 11a8 8 0 1 0-2.3 5.7M20 5v6h-6" />
+            <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
           </svg>
         </button>
       </div>
@@ -128,16 +148,17 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
           type="button"
           class="rv-row"
           :class="{ on: entry.path === selected }"
-          :title="entry.path"
+          :data-review-file="entry.path"
           @click="selected = entry.path"
         >
           <span class="rv-letter" :class="entry.kind">{{ LETTER[entry.kind] }}</span>
           <span class="rv-path">{{ entry.path }}</span>
         </button>
       </div>
+      <!-- MiMo hides these notes by a stylesheet accident; they stay, as its markup intends. -->
       <div v-if="patch === undefined && patchLoading" class="rv-diff-note">{{ t("rp.review.diffLoading") }}</div>
       <div v-else-if="patch !== undefined && !patch.trim()" class="rv-diff-note">{{ t("rp.review.noTextDiff") }}</div>
-      <RpDiff v-else-if="patch" :diff="patch" />
+      <RpDiff v-else-if="patch" :diff="patch" review />
     </template>
   </div>
 </template>
@@ -169,8 +190,10 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
   font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
+/* MiMo's icon-btn xs: 26 square, a 16px glyph, in the head and under the clean state alike. */
 .rv-refresh {
   display: grid;
+  flex: none;
   place-items: center;
   width: 26px;
   height: 26px;
@@ -190,20 +213,23 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
   opacity: 0.5;
 }
 
-/* The files: at most 30% of the tab or 280px, scrolling past that. */
+/* The files: at most 30% of the tab or 280px, 1px apart plus each row's 2, 8 above the diff. */
 .rv-list {
   display: flex;
   flex: none;
   flex-direction: column;
+  gap: 1px;
   max-height: min(30%, 280px);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   overflow: auto;
 }
 
 .rv-row {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 9px;
+  margin-bottom: 2px;
   padding: 5px 9px;
   color: var(--text-strong);
   text-align: start;
@@ -221,24 +247,30 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
   background: var(--surface-selected);
 }
 
+/* MiMo's letters keep one colour in both themes. */
 .rv-letter {
   flex: none;
   width: 16px;
+  color: #8c8c86;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--code-font-scale, 1));
   text-align: center;
 }
 
 .rv-letter.modified {
-  color: var(--text-warning);
+  color: #d29922;
 }
 
 .rv-letter.added {
-  color: var(--text-success);
+  color: #2da44e;
 }
 
 .rv-letter.deleted {
-  color: var(--text-error);
+  color: #cf222e;
+}
+
+.rv-letter.renamed {
+  color: #8250df;
 }
 
 .rv-path {
@@ -248,11 +280,11 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
   white-space: nowrap;
 }
 
+/* MiMo's rv-diff-empty: 13px muted, 18 in. */
 .rv-diff-note {
-  padding: 16px;
+  padding: 18px;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
-  text-align: center;
 }
 
 /* MiMo's empty states: centred, a 14px title over a 13px muted line. */
@@ -275,19 +307,6 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
 .rv-empty-desc {
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.rv-empty-refresh {
-  margin-top: 8px;
-  padding: 5px 13px;
-  color: var(--text-strong);
-  background: transparent;
-  border: 1px solid var(--border-weak);
-  border-radius: 8px;
-  font-size: calc(12px * var(--ui-font-scale, 1));
-}
-
-.rv-empty-refresh:hover:not(:disabled) {
-  background: var(--surface-hover);
+  overflow-wrap: anywhere;
 }
 </style>
