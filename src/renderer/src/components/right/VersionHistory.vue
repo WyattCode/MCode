@@ -63,7 +63,7 @@ function hover(event: MouseEvent, text: string) {
   const note = middle.querySelector<HTMLElement>("[data-note]")
   if (!note || note.scrollWidth <= note.clientWidth + 1) return
   const box = middle.getBoundingClientRect()
-  tip.value = { text, left: Math.max(8, Math.min(box.left, window.innerWidth - 320)), top: Math.min(box.bottom + 4, window.innerHeight - 60) }
+  tip.value = { text, left: Math.max(8, Math.min(box.left, window.innerWidth - 300 - 8)), top: Math.min(box.bottom + 4, window.innerHeight - 60) }
 }
 
 function onKey(event: KeyboardEvent) {
