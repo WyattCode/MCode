@@ -15,6 +15,7 @@ import type {
 import { sessionFiles } from "@shared/session-files"
 import type { Runtime } from "./index"
 import { IGNORED, resolveInside } from "./tool/fs-util"
+import { customModelOf } from "./config"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory } from "./scratch"
 import { searchMessages } from "./search"
@@ -640,7 +641,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (runtime.config.definition(id)) {
         throw new Error(`A provider with the id ${id} already exists`)
       }
-      const models = request.models.map((model) => ({ id: model.id.trim(), name: model.name.trim() }))
+      // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
+      const models = request.models.map((model) => customModelOf(model))
       if (!models.length) throw new Error("A custom provider needs at least one model")
       /*
        * `{env:MY_VAR}` in the key field names a variable rather than supplying
@@ -688,7 +690,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const config = runtime.config.get()
       const existing = config.customProviders.find((entry) => entry.id === request.id)
       if (!existing) throw new Error(`No custom provider with the id ${request.id}`)
-      const models = request.models.map((model) => ({ id: model.id.trim(), name: model.name.trim() }))
+      // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
+      const models = request.models.map((model) => customModelOf(model))
       if (!models.length) throw new Error("A custom provider needs at least one model")
       const typed = request.apiKey.trim()
       const environment = /^\{env:([^}]+)\}$/.exec(typed)?.[1]?.trim()

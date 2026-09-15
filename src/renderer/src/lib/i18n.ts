@@ -1868,6 +1868,12 @@ const zhCN: Table = {
   "set.appearance.themeDark": "深色",
   "set.paletteName": "主题配色",
   "set.fontSmoothingSubMac": "使用 macOS 原生字体抗锯齿",
+  "provider.custom.advanced": "高级配置",
+  "provider.custom.imageInput": "图片输入",
+  "provider.custom.contextLimit": "输入上限",
+  "provider.custom.outputLimit": "输出上限",
+  "provider.custom.limitDefault": "使用提供商默认值",
+  "provider.custom.limitInvalid": "请输入有效的正整数；填写输出上限时必须同时填写输入上限",
 }
 
 const zhTW: Table = {
@@ -3645,6 +3651,12 @@ const zhTW: Table = {
   "set.appearance.themeDark": "深色",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "使用 macOS 原生字型抗鋸齒效果",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const en: Table = {
@@ -5423,6 +5435,12 @@ const en: Table = {
   "set.appearance.themeDark": "Dark",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Use native macOS font anti-aliasing",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 // --- generated language tables ---
@@ -7163,6 +7181,12 @@ const ar: Table = {
   "set.appearance.themeDark": "داكن",
   "set.paletteName": "لوحة ألوان السمة",
   "set.fontSmoothingSubMac": "استخدام تنعيم الخطوط الأصلي في macOS",
+  "provider.custom.advanced": "إعدادات متقدمة",
+  "provider.custom.imageInput": "إدخال الصور",
+  "provider.custom.contextLimit": "حد الإدخال",
+  "provider.custom.outputLimit": "حد الإخراج",
+  "provider.custom.limitDefault": "استخدام الإعداد الافتراضي للمزوّد",
+  "provider.custom.limitInvalid": "أدخل عددًا صحيحًا موجبًا؛ ويلزم تحديد حد الإدخال عند تعيين حد الإخراج",
 }
 
 const bs: Table = {
@@ -8902,6 +8926,12 @@ const bs: Table = {
   "set.appearance.themeDark": "Tamna",
   "set.paletteName": "Paleta teme",
   "set.fontSmoothingSubMac": "Koristi izvorno macOS zaglađivanje fontova",
+  "provider.custom.advanced": "Napredno",
+  "provider.custom.imageInput": "Unos slika",
+  "provider.custom.contextLimit": "Ograničenje ulaza",
+  "provider.custom.outputLimit": "Ograničenje izlaza",
+  "provider.custom.limitDefault": "Koristi zadano od pružatelja",
+  "provider.custom.limitInvalid": "Unesite pozitivan cijeli broj; ograničenje ulaza je obavezno kad je postavljeno ograničenje izlaza",
 }
 
 const da: Table = {
@@ -10641,6 +10671,12 @@ const da: Table = {
   "set.appearance.themeDark": "Mørk",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Brug macOS' native skriftudjævning (anti-aliasing)",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const de: Table = {
@@ -12380,6 +12416,12 @@ const de: Table = {
   "set.appearance.themeDark": "Dunkel",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Native macOS-Schriftglättung (Antialiasing) verwenden",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const es: Table = {
@@ -14119,6 +14161,12 @@ const es: Table = {
   "set.appearance.themeDark": "Oscuro",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Usa el suavizado de fuente nativo de macOS",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const fr: Table = {
@@ -15858,6 +15906,12 @@ const fr: Table = {
   "set.appearance.themeDark": "Sombre",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Utiliser le lissage de police natif de macOS",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const ja: Table = {
@@ -17597,6 +17651,12 @@ const ja: Table = {
   "set.appearance.themeDark": "ダーク",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "macOSネイティブのフォントアンチエイリアスを使用します",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const ko: Table = {
@@ -19336,6 +19396,12 @@ const ko: Table = {
   "set.appearance.themeDark": "다크",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "네이티브 macOS 폰트 안티앨리어싱 사용",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const nb: Table = {
@@ -21075,6 +21141,12 @@ const nb: Table = {
   "set.appearance.themeDark": "Mørkt",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Bruk native macOS skriftutjevning (anti-aliasing)",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const pl: Table = {
@@ -22814,6 +22886,12 @@ const pl: Table = {
   "set.appearance.themeDark": "Ciemny",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Użyj natywnego wygładzania czcionek macOS",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const ptBR: Table = {
@@ -24553,6 +24631,12 @@ const ptBR: Table = {
   "set.appearance.themeDark": "Escuro",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Usar suavização nativa de fonte do macOS",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const ru: Table = {
@@ -26292,6 +26376,12 @@ const ru: Table = {
   "set.appearance.themeDark": "Тёмная",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Использовать нативное сглаживание шрифтов macOS",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const th: Table = {
@@ -28031,6 +28121,12 @@ const th: Table = {
   "set.appearance.themeDark": "มืด",
   "set.paletteName": "ชุดสีของธีม",
   "set.fontSmoothingSubMac": "ใช้การลบรอยหยักฟอนต์แบบเนทีฟของ macOS",
+  "provider.custom.advanced": "ขั้นสูง",
+  "provider.custom.imageInput": "อินพุตรูปภาพ",
+  "provider.custom.contextLimit": "ขีดจำกัดอินพุต",
+  "provider.custom.outputLimit": "ขีดจำกัดเอาต์พุต",
+  "provider.custom.limitDefault": "ใช้ค่าเริ่มต้นของผู้ให้บริการ",
+  "provider.custom.limitInvalid": "ป้อนจำนวนเต็มบวก และต้องกำหนดขีดจำกัดอินพุตเมื่อกำหนดขีดจำกัดเอาต์พุต",
 }
 
 const tr: Table = {
@@ -29770,6 +29866,12 @@ const tr: Table = {
   "set.appearance.themeDark": "Koyu",
   "set.paletteName": "Color theme",
   "set.fontSmoothingSubMac": "Yerel macOS yazı tipi kenar yumuşatmasını kullan",
+  "provider.custom.advanced": "Advanced",
+  "provider.custom.imageInput": "Image input",
+  "provider.custom.contextLimit": "Input limit",
+  "provider.custom.outputLimit": "Output limit",
+  "provider.custom.limitDefault": "Use provider default",
+  "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
 }
 
 const uk: Table = {
@@ -31509,6 +31611,12 @@ const uk: Table = {
   "set.appearance.themeDark": "Темна",
   "set.paletteName": "Палітра теми",
   "set.fontSmoothingSubMac": "Нативне згладжування шрифтів macOS",
+  "provider.custom.advanced": "Розширені",
+  "provider.custom.imageInput": "Введення зображень",
+  "provider.custom.contextLimit": "Ліміт вводу",
+  "provider.custom.outputLimit": "Ліміт виводу",
+  "provider.custom.limitDefault": "Типове значення постачальника",
+  "provider.custom.limitInvalid": "Введіть додатне ціле число; якщо задано ліміт виводу, потрібен і ліміт вводу",
 }
 // --- end generated language tables ---
 

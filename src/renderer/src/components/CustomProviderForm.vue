@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue"
-import type { CustomProvider } from "@shared/protocol"
+import type { CustomModel, CustomProvider } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 
@@ -22,6 +22,10 @@ import { t } from "../lib/i18n"
  * field. Errors are computed on submit and cleared on the next keystroke in
  * that field - never on blur - which is why every input writes through
  * `setField` rather than binding with v-model.
+ *
+ * Each model row also carries MiMo's 高级配置: a three-state 图片输入 and the
+ * input and output token limits, behind a disclosure because this form holds
+ * many models where MiMo's holds one.
  */
 
 const props = defineProps<{
@@ -40,10 +44,21 @@ const app = useApp()
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-_]*$/
 const HTTP_URL = /^https?:\/\//
 
+/* MiMo's preset suggestions, in tokens with K meaning 1024. */
+const CONTEXT_PRESETS = ["32K", "64K", "128K", "256K"]
+const OUTPUT_PRESETS = ["8K", "16K", "32K", "64K"]
+
 interface ModelRow {
   id: string
   name: string
-  err: { id?: string; name?: string }
+  /** MiMo's three-state 图片输入: undefined follows the provider or catalog default. */
+  attachment?: boolean
+  /** The two limits as typed: blank, a whole number, or a number with K. */
+  context: string
+  output: string
+  /** Whether this row's 高级配置 is open. */
+  advanced: boolean
+  err: { id?: string; name?: string; limit?: string }
 }
 
 interface HeaderRow {
@@ -52,8 +67,14 @@ interface HeaderRow {
   err: { key?: string; value?: string }
 }
 
-const modelRow = (): ModelRow => ({ id: "", name: "", err: {} })
+const modelRow = (): ModelRow => ({ id: "", name: "", context: "", output: "", advanced: false, err: {} })
 const headerRow = (): HeaderRow => ({ key: "", value: "", err: {} })
+
+/* A saved limit shows in the unit it was most likely typed in. */
+function limitText(value?: number): string {
+  if (!value) return ""
+  return value % 1024 === 0 ? `${value / 1024}K` : String(value)
+}
 
 /*
  * Both repeaters start with one row and refuse to drop below it. For models
@@ -68,7 +89,17 @@ const form = ref({
   name: editing?.name ?? "",
   baseURL: editing?.baseURL ?? "",
   apiKey: editing?.environment ? `{env:${editing.environment}}` : "",
-  models: editing?.models?.length ? editing.models.map((model) => ({ ...modelRow(), id: model.id, name: model.name })) : [modelRow()],
+  models: editing?.models?.length
+    ? editing.models.map((model) => ({
+        ...modelRow(),
+        id: model.id,
+        name: model.name,
+        attachment: model.attachment,
+        context: limitText(model.limit?.context),
+        output: limitText(model.limit?.output),
+        advanced: model.attachment !== undefined || Boolean(model.limit),
+      }))
+    : [modelRow()],
   headers: Object.keys(editing?.headers ?? {}).length
     ? Object.entries(editing?.headers ?? {}).map(([key, value]) => ({ ...headerRow(), key, value }))
     : [headerRow()],
@@ -106,13 +137,31 @@ function removeHeader(at: number) {
   form.value.headers.splice(at, 1)
 }
 
+/* MiMo's cycle for 图片输入: default, then on, then off, then default again. */
+function cycleImage(row: ModelRow) {
+  row.attachment = row.attachment === undefined ? true : row.attachment ? false : undefined
+}
+
+/**
+ * A limit as typed: blank is the provider default; otherwise a positive whole
+ * number of tokens, where a trailing K means 1024.
+ */
+function parseLimit(text: string): { ok: boolean; value?: number } {
+  const trimmed = text.trim()
+  if (!trimmed) return { ok: true }
+  const match = /^(\d+)\s*([kK])?$/.exec(trimmed)
+  if (!match) return { ok: false }
+  const value = Number(match[1]) * (match[2] ? 1024 : 1)
+  return Number.isSafeInteger(value) && value > 0 ? { ok: true, value } : { ok: false }
+}
+
 interface Resolved {
   id: string
   name: string
   baseURL: string
   apiKey: string
   headers: Record<string, string>
-  models: { id: string; name: string }[]
+  models: CustomModel[]
 }
 
 /**
@@ -152,11 +201,15 @@ function validate(): Resolved | undefined {
   form.value.err = err
   let ok = !err.providerID && !err.name && !err.baseURL
 
-  const models: { id: string; name: string }[] = []
+  const models: CustomModel[] = []
   const seenModels = new Set<string>()
   for (const row of form.value.models) {
     const id = row.id.trim()
     const label = row.name.trim()
+    const context = parseLimit(row.context)
+    const output = parseLimit(row.output)
+    // MiMo's rule: whole positive numbers, and an output limit only beside an input limit.
+    const limitBad = !context.ok || !output.ok || (output.value !== undefined && context.value === undefined)
     row.err = {
       id: !id
         ? t("provider.custom.error.required")
@@ -164,11 +217,19 @@ function validate(): Resolved | undefined {
           ? t("provider.custom.error.duplicate")
           : undefined,
       name: !label ? t("provider.custom.error.required") : undefined,
+      limit: limitBad ? t("provider.custom.limitInvalid") : undefined,
     }
-    if (row.err.id || row.err.name) ok = false
+    // A limit error inside a closed disclosure would be invisible, so it opens.
+    if (limitBad) row.advanced = true
+    if (row.err.id || row.err.name || row.err.limit) ok = false
     else {
       seenModels.add(id)
-      models.push({ id, name: label })
+      const model: CustomModel = { id, name: label }
+      if (row.attachment !== undefined) model.attachment = row.attachment
+      if (context.value !== undefined) {
+        model.limit = output.value !== undefined ? { context: context.value, output: output.value } : { context: context.value }
+      }
+      models.push(model)
     }
   }
 
@@ -306,49 +367,117 @@ async function submit() {
 
     <div class="cpgroup">
       <span class="cplabel">{{ t("provider.custom.models.label") }}</span>
-      <div v-for="(row, at) in form.models" :key="`model-${at}`" class="cprow">
-        <div class="cpcell">
-          <input
-            class="cpin"
-            :value="row.id"
-            :aria-label="t('provider.custom.models.id.label')"
-            :placeholder="t('provider.custom.models.id.placeholder')"
-            spellcheck="false"
-            autocomplete="off"
-            @input="(row.id = ($event.target as HTMLInputElement).value), (row.err.id = undefined)"
-          />
-          <div v-if="row.err.id" class="cperror">{{ row.err.id }}</div>
-        </div>
-        <div class="cpcell">
-          <input
-            class="cpin"
-            :value="row.name"
-            :aria-label="t('provider.custom.models.name.label')"
-            :placeholder="t('provider.custom.models.name.placeholder')"
-            spellcheck="false"
-            @input="(row.name = ($event.target as HTMLInputElement).value), (row.err.name = undefined)"
-          />
-          <div v-if="row.err.name" class="cperror">{{ row.err.name }}</div>
-        </div>
-        <button
-          type="button"
-          class="cpdrop"
-          :disabled="form.models.length <= 1"
-          :aria-label="t('provider.custom.models.remove')"
-          :title="t('provider.custom.models.remove')"
-          @click="removeModel(at)"
-        >
-          <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true">
-            <path
-              d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4"
-              stroke="currentColor"
-              stroke-width="1.1"
-              fill="none"
-              stroke-linecap="round"
-              stroke-linejoin="round"
+      <div v-for="(row, at) in form.models" :key="`model-${at}`" class="cpmodel" :data-custom-model="at">
+        <div class="cprow">
+          <div class="cpcell">
+            <input
+              class="cpin"
+              :value="row.id"
+              :aria-label="t('provider.custom.models.id.label')"
+              :placeholder="t('provider.custom.models.id.placeholder')"
+              spellcheck="false"
+              autocomplete="off"
+              @input="(row.id = ($event.target as HTMLInputElement).value), (row.err.id = undefined)"
             />
-          </svg>
-        </button>
+            <div v-if="row.err.id" class="cperror">{{ row.err.id }}</div>
+          </div>
+          <div class="cpcell">
+            <input
+              class="cpin"
+              :value="row.name"
+              :aria-label="t('provider.custom.models.name.label')"
+              :placeholder="t('provider.custom.models.name.placeholder')"
+              spellcheck="false"
+              @input="(row.name = ($event.target as HTMLInputElement).value), (row.err.name = undefined)"
+            />
+            <div v-if="row.err.name" class="cperror">{{ row.err.name }}</div>
+          </div>
+          <button
+            type="button"
+            class="cpdrop"
+            :disabled="form.models.length <= 1"
+            :aria-label="t('provider.custom.models.remove')"
+            :title="t('provider.custom.models.remove')"
+            @click="removeModel(at)"
+          >
+            <svg width="12" height="12" viewBox="0 0 14 14" aria-hidden="true">
+              <path
+                d="M3 3.6h8M5.6 3.6V2.4h2.8v1.2M4.2 3.6l.5 7.4h4.6l.5-7.4"
+                stroke="currentColor"
+                stroke-width="1.1"
+                fill="none"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <!-- MiMo's 高级配置, one per model here, behind its own legend. -->
+        <fieldset class="cpadvanced">
+          <legend class="cplegend">
+            <button
+              type="button"
+              class="cpdisclose"
+              :aria-expanded="row.advanced"
+              data-model-advanced
+              @click="row.advanced = !row.advanced"
+            >
+              <svg class="cpchevron" :class="{ open: row.advanced }" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                <path d="M4.5 3 7.5 6l-3 3" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+              {{ t("provider.custom.advanced") }}
+            </button>
+          </legend>
+          <div v-if="row.advanced" class="cpadvanced-body">
+            <label class="cpcheck">
+              <input
+                type="checkbox"
+                data-model-image
+                :checked="row.attachment === true"
+                :indeterminate.prop="row.attachment === undefined"
+                :aria-checked="row.attachment === undefined ? 'mixed' : row.attachment ? 'true' : 'false'"
+                @click.prevent="cycleImage(row)"
+              />
+              <span>{{ t("provider.custom.imageInput") }}</span>
+            </label>
+            <div class="cplimits">
+              <label class="cplimit">
+                <span class="cplimit-label">{{ t("provider.custom.contextLimit") }}</span>
+                <input
+                  class="cpin"
+                  data-model-context
+                  :list="`cp-context-presets-${at}`"
+                  :value="row.context"
+                  :placeholder="t('provider.custom.limitDefault')"
+                  spellcheck="false"
+                  autocomplete="off"
+                  @input="(row.context = ($event.target as HTMLInputElement).value), (row.err.limit = undefined)"
+                />
+                <datalist :id="`cp-context-presets-${at}`">
+                  <option v-for="preset in CONTEXT_PRESETS" :key="preset" :value="preset" />
+                </datalist>
+              </label>
+              <label class="cplimit">
+                <span class="cplimit-label">{{ t("provider.custom.outputLimit") }}</span>
+                <input
+                  class="cpin"
+                  data-model-output
+                  :list="`cp-output-presets-${at}`"
+                  :value="row.output"
+                  :placeholder="t('provider.custom.limitDefault')"
+                  spellcheck="false"
+                  autocomplete="off"
+                  @input="(row.output = ($event.target as HTMLInputElement).value), (row.err.limit = undefined)"
+                />
+                <datalist :id="`cp-output-presets-${at}`">
+                  <option v-for="preset in OUTPUT_PRESETS" :key="preset" :value="preset" />
+                </datalist>
+              </label>
+            </div>
+            <div v-if="row.err.limit" class="cperror cplimit-error" data-model-limit-error>{{ row.err.limit }}</div>
+          </div>
+        </fieldset>
       </div>
       <button type="button" class="cpadd" @click="addModel">+ {{ t("provider.custom.models.add") }}</button>
     </div>
@@ -502,6 +631,12 @@ async function submit() {
   gap: 8px;
 }
 
+.cpmodel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* The two cells share the width evenly and the trash button keeps its own
    column, so an error under one cell does not shift the other. */
 .cprow {
@@ -539,6 +674,87 @@ async function submit() {
 .cpdrop:disabled {
   color: var(--text-weaker);
   cursor: default;
+}
+
+/* MiMo's 高级配置: a borderless fieldset whose legend is 14px medium in the muted colour. */
+.cpadvanced {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cplegend {
+  padding: 0;
+}
+
+.cpdisclose {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  color: var(--text-weak);
+  background: none;
+  border: 0;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cpdisclose:hover {
+  color: var(--text-strong);
+}
+
+.cpchevron {
+  transition: transform 0.12s;
+}
+
+.cpchevron.open {
+  transform: rotate(90deg);
+}
+
+:root[dir="rtl"] .cpchevron:not(.open) {
+  transform: scaleX(-1);
+}
+
+.cpadvanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-block-start: 8px;
+}
+
+.cpcheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-base);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  cursor: pointer;
+}
+
+/* Two limits side by side, 16 apart, stacking once the form is narrow. */
+.cplimits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.cplimit {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cplimit-label {
+  color: var(--text-weak);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.cplimit-error {
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 .cpadd {

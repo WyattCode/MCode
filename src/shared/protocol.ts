@@ -1247,7 +1247,7 @@ export interface AppConfig {
   shell: string
 }
 
-/** One hand-typed model on a custom provider: an id to send, a name to show. */
+/** One hand-typed model on a custom provider: an id to send, a name to show, and MiMo's 高级配置. */
 export interface CustomModel {
   id: string
   name: string
@@ -1284,6 +1284,10 @@ export interface CustomProvider {
    */
   models?: CustomModel[]
   /**
+  /** Whether it reads images; absent means the provider or catalog default decides. */
+  attachment?: boolean
+  /** Token limits: the input (context) window and the output cap. An output limit needs an input limit. */
+  limit?: { context?: number; output?: number }
    * The environment variable holding this provider's key, when `{env:VAR}` was
    * typed into the key field instead of a key.
    *
