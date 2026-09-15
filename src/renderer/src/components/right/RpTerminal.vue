@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
+import { computed, ref, watch } from "vue"
 import TerminalPane from "../TerminalPane.vue"
+import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
+import { shouldRespawn, showMismatch } from "../../lib/terminal"
 
 /**
  * MiMo's terminal tab: one shell, in the conversation's project, with the
- * notice MiMo puts above it when the shell's folder is no longer the one the
- * conversation works in - leave it, or open a terminal that is.
+ * notice MiMo puts above it when a shell someone has typed into is no longer in
+ * the folder the conversation works in - leave it, or open a terminal that is.
+ * A shell nobody has touched is started again in the right folder instead.
  *
  * The shell outlives the tab being hidden or the conversation being left; it
  * ends when the tab is closed. Whether anything was typed into it is reported
- * so that closing it can ask first.
+ * so that closing it can ask first, and that stays true after the shell exits.
  */
 const props = defineProps<{
   active: boolean
@@ -20,25 +23,48 @@ const props = defineProps<{
   sessionID?: string
   directory?: string
 }>()
-const emit = defineEmits<{ opened: [shellID: string, cwd: string]; used: []; exited: []; openNew: [] }>()
+const emit = defineEmits<{ opened: [shellID: string, cwd: string]; used: []; openNew: [] }>()
+
+const app = useApp()
 
 const cwd = ref<string | undefined>(props.cwd)
+/* The shell the pane shows, which a restart replaces before the tab hears of it. */
+const shell = ref<string | undefined>(props.shellID)
+const used = ref(false)
+/* Bumped to remount the pane when an untouched shell starts again elsewhere. */
+const pane = ref(0)
 const dismissed = ref(false)
 
-function samePlace(a: string, b: string) {
-  const plain = (value: string) => {
-    const flat = value.replace(/\\/g, "/").replace(/\/+$/, "")
-    return /^[a-zA-Z]:/.test(flat) ? flat.toLowerCase() : flat
-  }
-  return plain(a) === plain(b)
-}
-
-const mismatch = computed(() => !dismissed.value && Boolean(cwd.value && props.directory && !samePlace(cwd.value, props.directory)))
+const mismatch = computed(() => !dismissed.value && showMismatch(cwd.value, props.directory, used.value))
 
 function opened(shellID: string, where: string) {
+  shell.value = shellID
   cwd.value = where
   emit("opened", shellID, where)
 }
+
+function markUsed() {
+  used.value = true
+  emit("used")
+}
+
+/* MiMo's JAe: an unused shell in another folder is ended and opened again here, without a word. */
+function respawn() {
+  if (!shouldRespawn(cwd.value, props.directory, used.value)) return
+  if (shell.value) void app.client?.request({ type: "shell.close", shellID: shell.value })
+  shell.value = undefined
+  cwd.value = undefined
+  pane.value += 1
+}
+
+/* A new workspace asks afresh: the notice's dismissal was for the old one. */
+watch(
+  () => props.directory,
+  () => {
+    dismissed.value = false
+    respawn()
+  },
+)
 </script>
 
 <template>
@@ -46,17 +72,18 @@ function opened(shellID: string, where: string) {
     <div v-if="mismatch" class="mismatch" role="status">
       <span class="mismatch-msg">{{ t("term.mismatch") }}</span>
       <button type="button" class="mismatch-btn" @click="dismissed = true">{{ t("ui.common.dismiss") }}</button>
-      <button type="button" class="mismatch-btn primary" @click="emit('openNew')">{{ t("term.new") }}</button>
+      <button type="button" class="mismatch-btn primary" @click="emit('openNew')">{{ t("term.mismatchOpenNew") }}</button>
     </div>
     <TerminalPane
+      :key="pane"
       :active="active"
       :height="0"
-      :shellID="shellID"
+      :shellID="shell"
       :sessionID="sessionID"
       :directory="sessionID ? undefined : directory"
       @opened="opened"
-      @used="emit('used')"
-      @exited="emit('exited')"
+      @used="markUsed"
+      @attached="respawn"
     />
   </div>
 </template>
