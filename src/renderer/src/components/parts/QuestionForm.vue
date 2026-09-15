@@ -40,9 +40,22 @@ const answeredHere = computed(() => isAnswered(current.value, chosen.value[page.
 const typed = computed(() => Boolean((custom.value[page.value] ?? "").trim()))
 
 const title = computed(() => {
+  if (props.request.loop) return t("loop.title")
   if (total.value > 1) return t(multiple.value ? "questionDock.qMulti" : "questionDock.qSingle", { n: page.value + 1 })
   return t(multiple.value ? "questionDock.multi" : "questionDock.single")
 })
+
+/*
+ * The runner's repeated-call question is drawn in the window's language; its
+ * answers stay the keys the runner reads, and the permission card's words name them.
+ */
+const LOOP_LABELS: Record<string, string> = { once: "perm.once", always: "perm.alwaysShort", reject: "perm.reject" }
+const questionText = computed(() => (props.request.loop ? t("loop.question", { tool: props.request.loop.tool }) : current.value.question))
+
+function optionLabel(label: string): string {
+  const key = props.request.loop ? LOOP_LABELS[label] : undefined
+  return key ? t(key) : label
+}
 
 function picked(label: string): boolean {
   return chosen.value[page.value]?.includes(label) ?? false
@@ -220,8 +233,8 @@ const Actions: FunctionalComponent = () => {
     </div>
 
     <div :key="page" class="confirm-q-body" data-confirm-qbody>
-      <div class="q-text" data-confirm-qtext>{{ current.question }}</div>
-      <div class="q-opts" data-confirm-opts :role="multiple ? 'group' : 'radiogroup'" :aria-label="current.question">
+      <div class="q-text" data-confirm-qtext>{{ questionText }}</div>
+      <div class="q-opts" data-confirm-opts :role="multiple ? 'group' : 'radiogroup'" :aria-label="questionText">
         <template v-for="(option, index) in current.options" :key="index">
           <div v-if="index > 0" class="q-sep" aria-hidden="true" />
           <button
@@ -243,7 +256,7 @@ const Actions: FunctionalComponent = () => {
             </span>
             <span v-else class="q-num" :class="{ on: picked(option.label) }" aria-hidden="true">{{ index + 1 }}</span>
             <span class="q-label-col">
-              <span class="q-label">{{ option.label }}</span>
+              <span class="q-label">{{ optionLabel(option.label) }}</span>
               <span v-if="option.description" class="q-desc" data-confirm-optdesc>{{ option.description }}</span>
             </span>
             <span class="q-end" aria-hidden="true">

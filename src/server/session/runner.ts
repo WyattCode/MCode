@@ -51,7 +51,7 @@ import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
-import { frameSteered } from "./reminders"
+import { LOOP_ANSWERS, frameSteered, repeatsCall, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -1440,8 +1440,9 @@ export class SessionRunner {
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only.
       const chatted = withChatHeaders(this.contextFor(session, stored))
-      // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task.
-      const history = step > 0 ? frameSteered(chatted) : chatted
+      // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
+      // and three identical steps in a row bring a note to change approach.
+      const history = withSameStepsNote(step > 0 ? frameSteered(chatted) : chatted)
 
       const effort = session.effort ?? config.effort
 
@@ -1918,6 +1919,7 @@ export class SessionRunner {
        * consulted. Inside the try, so a refusal is caught below and written onto
        * the part as an error; one a person gave then ends the turn once saved.
        */
+      await this.checkRepeated(part, assistant, input.session.id, input.signal)
       await this.permissions.check({
         sessionID: input.session.id,
         messageID: assistant.id,
@@ -1983,6 +1985,53 @@ export class SessionRunner {
      */
     // subagents: a refusal inside a subagent stops the turn it works for, and so every subagent in it.
     if (refusedByUser) this.abort(owner)
+  }
+
+  /** Tools a conversation said to always let repeat, by session: MiMo's `always` on its doom-loop ask. */
+  private readonly repeatsAllowed = new Map<string, Set<string>>()
+
+  /**
+   * MiMo's doom-loop check. The third call in a row with the same tool and the
+   * same input stops and asks: once lets it run, always lets that tool repeat
+   * for the rest of the conversation, and a refusal - or typed feedback, or
+   * dismissing the question - refuses the call, which stops the turn as a
+   * refused permission does.
+   */
+  private async checkRepeated(part: ToolPart, assistant: AssistantMessage, sessionID: string, signal: AbortSignal): Promise<void> {
+    if (!repeatsCall(assistant.parts, part) || this.repeatsAllowed.get(sessionID)?.has(part.name)) return
+    const [answer] = await this.questions.ask({
+      sessionID,
+      questions: [
+        {
+          question: `${part.name} has been called three times in a row with the same input. Let it run again?`,
+          header: part.name,
+          options: [
+            { label: LOOP_ANSWERS.once, description: "" },
+            { label: LOOP_ANSWERS.always, description: "" },
+            { label: LOOP_ANSWERS.reject, description: "" },
+          ],
+        },
+      ],
+      tool: { messageID: assistant.id, callID: part.callID },
+      signal,
+      loop: { tool: part.name },
+    })
+    const chosen = (answer ?? []).map((entry) => entry.trim()).filter(Boolean)
+    if (chosen.includes(LOOP_ANSWERS.once)) return
+    if (chosen.includes(LOOP_ANSWERS.always)) {
+      const allowed = this.repeatsAllowed.get(sessionID) ?? new Set<string>()
+      allowed.add(part.name)
+      this.repeatsAllowed.set(sessionID, allowed)
+      return
+    }
+    const feedback = chosen.find((entry) => entry !== LOOP_ANSWERS.reject)
+    throw new PermissionDenied(
+      part.name,
+      feedback
+        ? `The user stopped this repeated call and said: ${feedback}`
+        : "The user stopped this call: it repeated the previous two calls with the same input.",
+      true,
+    )
   }
 
   /** subagents: the task tool's actions, bound to the conversation and call they were asked from. */

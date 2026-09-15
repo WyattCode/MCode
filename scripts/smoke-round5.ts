@@ -14,6 +14,7 @@ import { RETRY_BUDGETS, retryDecision, retryHint, retryKind } from "../src/serve
 import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
 import { ABORTED_TOOL, INTERRUPTED_RESULT, requestHistory } from "../src/server/provider/history"
 import { toMessages } from "../src/server/provider/openai"
+import { repeatsCall } from "../src/server/session/reminders"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -328,6 +329,72 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("the first request had nothing to frame", !wireText(e.bodies[0]).includes("while you were working"))
       const stored = (await e.store.messages(session.id)).find((message) => message.role === "user" && message.text.startsWith("STEER"))
       check("the transcript keeps the words as typed", stored?.role === "user" && stored.text === "STEER: also check the tests", stored)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: loop detection asks the user (E13)")
+  {
+    const tool = (callID: string, status: "pending" | "running", input: Record<string, unknown>) =>
+      ({ type: "tool", id: callID, callID, name: "list", status, input, time: { created: 1 } }) as AssistantMessage["parts"][number] & { type: "tool" }
+    const same = [tool("a", "running", { path: ".", depth: 1 }), tool("b", "running", { path: ".", depth: 1 }), tool("c", "running", { path: ".", depth: 1 })]
+    check("the third identical call in a row is a repeat", repeatsCall(same, same[2]!))
+    check("two are not", !repeatsCall(same.slice(0, 2), same[1]!))
+    const differs = [same[0]!, tool("b2", "running", { path: "src", depth: 1 }), same[2]!]
+    check("a different input breaks the run", !repeatsCall(differs, same[2]!))
+    const broken = [same[0]!, { type: "text", id: "t", text: "hmm" } as AssistantMessage["parts"][number], same[1]!, same[2]!]
+    check("so does any part in between", !repeatsCall(broken, same[2]!))
+
+    const e = await engine()
+    try {
+      const asked = () => e.events.flatMap((event) => (event.type === "question.asked" && event.request.loop ? [event.request] : []))
+      const listThrice = calls([0, 1, 2].map(() => ({ name: "list", input: { path: "." } })))
+      const session = await e.store.create({ directory: e.project, model: e.model })
+
+      e.replies.push(listThrice)
+      await e.runner.prompt({ sessionID: session.id, text: "LOOP once" })
+      check("the third identical call puts a question to the user", await e.until(() => asked().length === 1), asked())
+      const first = asked()[0]
+      check("naming the tool, with the once / always / reject answers", first?.loop?.tool === "list" && first.questions[0]?.options.map((option) => option.label).join() === "once,always,reject", first)
+      if (first) e.runner.questions.reply(first.id, [["once"]])
+      await e.idle(session.id)
+      let parts = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool")
+      check("once lets the call run", parts.length === 3 && parts.every((part) => part.type === "tool" && part.status === "completed"), parts.map((part) => part.type === "tool" && part.status))
+
+      e.replies.push(listThrice)
+      await e.runner.prompt({ sessionID: session.id, text: "LOOP reject" })
+      await e.until(() => asked().length === 2)
+      const second = asked()[1]
+      if (second) e.runner.questions.reply(second.id, [["reject"]])
+      await e.idle(session.id)
+      const refused = (await e.assistants(session.id)).at(-1)
+      const refusedCall = refused?.parts.filter((part) => part.type === "tool").at(-1)
+      check("a refusal stops the call and the turn", refused?.finish === "aborted" && refusedCall?.type === "tool" && refusedCall.status === "error" && String(refusedCall.error).includes("repeated"), refused)
+
+      e.replies.push(listThrice)
+      await e.runner.prompt({ sessionID: session.id, text: "LOOP always" })
+      await e.until(() => asked().length === 3)
+      const third = asked()[2]
+      if (third) e.runner.questions.reply(third.id, [["always"]])
+      await e.idle(session.id)
+      e.replies.push(listThrice)
+      await e.runner.prompt({ sessionID: session.id, text: "LOOP again" })
+      await e.idle(session.id)
+      check("always lets that tool repeat for the rest of the conversation", asked().length === 3, asked().length)
+
+      // Three steps making the very same call bring a note, in the request only.
+      const one = calls([{ name: "list", input: { path: "src-none" } }])
+      e.replies.push(one, one, one)
+      const sent = e.bodies.length
+      const steps = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: steps.id, text: "STEPS" })
+      await e.idle(steps.id)
+      const fourth = wireText(e.bodies[sent + 3])
+      check("the fourth request carries the same-steps note", fourth.includes("last three steps made exactly the same tool calls"), fourth.slice(-400))
+      check("the third did not", !wireText(e.bodies[sent + 2]).includes("last three steps made exactly the same tool calls"))
+      const storedSteps = (await e.store.messages(steps.id)).find((message) => message.role === "user")
+      check("and the transcript is untouched", storedSteps?.role === "user" && storedSteps.text === "STEPS")
     } finally {
       await e.close()
     }

@@ -646,6 +646,13 @@ export interface QuestionRequest {
   tool?: { messageID: string; callID: string }
   /** When it was asked, so the dock can queue it with permission requests in arrival order. */
   time: number
+  /**
+   * Not the model's question but the runner's: MiMo's repeated-call check, put
+   * when a tool is called three times running with the same input. The window
+   * draws it in its own language; the answers are the keys `once`, `always` and
+   * `reject`, or typed feedback, which refuses.
+   */
+  loop?: { tool: string }
 }
 
 /**
