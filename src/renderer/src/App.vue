@@ -1886,10 +1886,6 @@ function runAppMenu(key: string) {
     window.mcode.view(key)
     return
   }
-  if (key === "new-window") {
-    window.mcode.newWindow()
-    return
-  }
   if (key === "zoom-in" || key === "zoom-out" || key === "zoom-reset") {
     window.mcode.zoom(key === "zoom-in" ? "in" : key === "zoom-out" ? "out" : "reset")
     return

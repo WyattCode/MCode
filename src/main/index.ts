@@ -48,7 +48,7 @@ import {
   type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
-import { cascade, restore, track } from "./window-state"
+import { restore, track } from "./window-state"
 import pkg from "../../package.json"
 
 /*
@@ -176,8 +176,8 @@ const savedFiles = new Set<string>()
 /*
  * The tray, if the reader has asked for one.
  *
- * Held at module scope because there is one of it and several windows: a tray
- * per window would put three copies of the same icon in the same corner. The
+ * Held at module scope because it outlives any one window: a window replaced
+ * after its renderer failed must not take the icon in the corner with it. The
  * colourway is remembered so the icon can be rebuilt when either the switch or
  * the chosen artwork changes.
  */
@@ -298,17 +298,12 @@ function saveFilter(suggested: string): Electron.FileFilter {
 
 function createWindow(): BrowserWindow {
   const saved = restore()
-  // Only the first window inherits the remembered geometry - and only it writes
-  // it back, so "where I left it" keeps meaning the main window rather than
-  // whichever extra window happened to close last.
-  const existing = [...windows].find((entry) => !entry.isDestroyed())
-  const spot = existing ? cascade(existing.getNormalBounds()) : saved
 
   const window = new BrowserWindow({
-    x: spot.x,
-    y: spot.y,
-    width: spot.width,
-    height: spot.height,
+    x: saved.x,
+    y: saved.y,
+    width: saved.width,
+    height: saved.height,
     minWidth: WINDOW_MIN.width,
     minHeight: WINDOW_MIN.height,
     show: false,
@@ -387,12 +382,10 @@ function createWindow(): BrowserWindow {
 
   // Maximise before the first paint, so the window does not appear at its
   // restored size and then jump.
-  if (!existing) {
-    if (saved.maximized) window.maximize()
-    if (saved.fullScreen) window.setFullScreen(true)
-    // getNormalBounds covers the first run, where the OS picked the position.
-    track(window, saved.x !== undefined && saved.y !== undefined ? (spot as Rectangle) : window.getNormalBounds())
-  }
+  if (saved.maximized) window.maximize()
+  if (saved.fullScreen) window.setFullScreen(true)
+  // getNormalBounds covers the first run, where the OS picked the position.
+  track(window, saved.x !== undefined && saved.y !== undefined ? (saved as Rectangle) : window.getNormalBounds())
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
   // the band has to follow that as well as the menu and keyboard paths.
@@ -582,7 +575,7 @@ app.whenReady().then(async () => {
   ipcMain.on("mcode:menu-labels", (_event, next: Record<string, string>) => {
     setLabels(next)
     // Rebuilt rather than patched: Electron has no way to relabel in place.
-    buildMenu(createWindow)
+    buildMenu()
     // The tray's menu has the same problem and the same answer.
     if (tray) refreshTray(true, createWindow)
   })
@@ -815,10 +808,6 @@ app.whenReady().then(async () => {
     app.quit()
     return true
   })
-
-  // The in-window menu's File > New Window. The native menu calls createWindow
-  // directly; the drawn menu has to ask for it.
-  ipcMain.on("mcode:new-window", () => createWindow())
 
   /*
    * Restarts the app. The renderer's error page is the caller: once the page
@@ -1116,7 +1105,7 @@ app.whenReady().then(async () => {
     else window.maximize()
   })
 
-  buildMenu(createWindow)
+  buildMenu()
   createWindow()
 
   app.on("activate", () => {

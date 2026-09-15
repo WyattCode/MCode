@@ -40,7 +40,6 @@ const groups = computed<Group[]>(() => [
       { key: "new-session", label: t("menu.newSession"), hint: "Ctrl+N" },
       { key: "open-project", label: t("menu.openProject"), hint: "Ctrl+O" },
       { key: "settings", label: t("menu.settings"), hint: "Ctrl+," },
-      { key: "new-window", label: t("menu.newWindow"), hint: "Ctrl+Shift+N" },
       { key: "close", label: t("menu.close"), divided: true },
       { key: "quit", label: t("menu.quit") },
     ],

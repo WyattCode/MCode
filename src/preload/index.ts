@@ -126,9 +126,6 @@ const api = {
    */
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke("mcode:install-update"),
 
-  /** A second window on the same backend. */
-  newWindow: (): void => ipcRenderer.send("mcode:new-window"),
-
   /**
    * Restarts the app.
    *
