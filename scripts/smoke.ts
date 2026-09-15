@@ -56,6 +56,7 @@ import {
 } from "../src/server/handlers"
 import { PROJECT_LIST_MIGRATION, customModelOf } from "../src/server/config"
 import { listedProjects, projectsByRecency, reconciledProjects } from "../src/shared/projects"
+import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
 import { addressToURL, safeURL } from "../src/shared/web-address"
@@ -4885,6 +4886,89 @@ async function main() {
  * removing one keeps its conversations.
  */
 async function projectListChecks() {
+  section("Pull-request row (MiMo's GitHub lookup, stubbed: no network)")
+  {
+    const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+    check("scp remote parses", same(githubRepository("git@github.com:octo/hello.git"), { owner: "octo", repo: "hello" }))
+    check("https remote parses, credentials ignored", same(githubRepository("https://user:secret@github.com/octo/hello.git"), { owner: "octo", repo: "hello" }))
+    check("ssh URL remote parses", same(githubRepository("ssh://git@github.com/octo/hello"), { owner: "octo", repo: "hello" }))
+    check("a trailing slash is fine", same(githubRepository("https://github.com/octo/hello/"), { owner: "octo", repo: "hello" }))
+    check("GitLab is not GitHub", githubRepository("git@gitlab.com:octo/hello.git") === null)
+    check("a look-alike host is not GitHub", githubRepository("https://github.com.evil.example/octo/hello") === null)
+    check("http (not https) is refused", githubRepository("http://github.com/octo/hello") === null)
+    check("three path parts are not a repository", githubRepository("https://github.com/octo/hello/tree") === null)
+    check("odd characters are refused", githubRepository("https://github.com/octo/hel%20lo") === null && githubRepository("git@github.com:octo/..") === null)
+    check("empty and junk are refused", githubRepository("") === null && githubRepository("not a url") === null)
+
+    const repo = { owner: "octo", repo: "hello" }
+    const item = (over: Record<string, unknown>) => ({ number: 7, title: "Fix it", html_url: "https://github.com/octo/hello/pull/7", state: "open", draft: false, merged_at: null, ...over })
+    check("an empty list is none", same(pullRequestFrom([], repo), { ok: true, kind: "none" }))
+    check("open maps to open", same(pullRequestFrom([item({})], repo), { ok: true, kind: "open", number: 7, title: "Fix it", url: "https://github.com/octo/hello/pull/7" }))
+    check("draft wins over open", (pullRequestFrom([item({ draft: true })], repo) as { kind: string }).kind === "draft")
+    check("closed with merged_at is merged", (pullRequestFrom([item({ state: "closed", merged_at: "2026-01-01T00:00:00Z" })], repo) as { kind: string }).kind === "merged")
+    check("closed without merged_at is closed", (pullRequestFrom([item({ state: "closed" })], repo) as { kind: string }).kind === "closed")
+    check("a page on another repository is refused", same(pullRequestFrom([item({ html_url: "https://github.com/evil/hello/pull/7" })], repo), { ok: false, code: "bad-response" }))
+    check("a page whose number differs is refused", same(pullRequestFrom([item({ html_url: "https://github.com/octo/hello/pull/8" })], repo), { ok: false, code: "bad-response" }))
+    check("a non-list body is refused", same(pullRequestFrom({ message: "x" }, repo), { ok: false, code: "bad-response" }))
+
+    const asked: { url: string; headers: Record<string, string> }[] = []
+    const answering = (status: number, body: unknown): FetchLike => async (url, init) => {
+      asked.push({ url, headers: init.headers })
+      return { ok: status >= 200 && status < 300, status, json: async () => body }
+    }
+    const open = await askGithub("git@github.com:octo/hello.git", "feature/x", answering(200, [item({})]))
+    check("askGithub maps the stubbed answer", (open as { kind?: string }).kind === "open", open)
+    const first = asked[0]
+    check(
+      "the request names the branch under the owner, with MiMo's query and no credentials",
+      !!first &&
+        first.url === "https://api.github.com/repos/octo/hello/pulls?state=all&head=octo%3Afeature%2Fx&per_page=10" &&
+        first.headers.Accept === "application/vnd.github+json" &&
+        !Object.keys(first.headers).some((name) => name.toLowerCase() === "authorization"),
+      first,
+    )
+    check("403 is rate-limited", same(await askGithub("git@github.com:octo/hello.git", "main", answering(403, {})), { ok: false, code: "rate-limited" }))
+    check("404 is unauthorized", same(await askGithub("git@github.com:octo/hello.git", "main", answering(404, {})), { ok: false, code: "unauthorized" }))
+    const throwing: FetchLike = async () => {
+      throw new Error("offline")
+    }
+    check("a thrown fetch is network", same(await askGithub("git@github.com:octo/hello.git", "main", throwing), { ok: false, code: "network" }))
+    let fetched = 0
+    const counting: FetchLike = async () => {
+      fetched++
+      return { ok: true, status: 200, json: async () => [] }
+    }
+    check("a GitLab remote is never fetched", same(await askGithub("git@gitlab.com:octo/hello.git", "main", counting), { ok: false, code: "unsupported-remote" }) && fetched === 0)
+
+    const gitWith = (answers: Record<string, string | Error>): GitRunner => async (_directory, args) => {
+      const answer = answers[args.join(" ")]
+      if (answer === undefined || answer instanceof Error) throw answer ?? new Error("unexpected")
+      return answer
+    }
+    const repoGit = (remotes: string, branch = "main") =>
+      gitWith({ "rev-parse --is-inside-work-tree": "true\n", "symbolic-ref --quiet --short HEAD": branch ? `${branch}\n` : new Error("detached"), "remote -v": remotes })
+    const originOnly = "origin\tgit@github.com:fork/hello.git (fetch)\norigin\tgit@github.com:fork/hello.git (push)\n"
+    check("hasGithubRemote sees a GitHub origin", hasGithubRemote(originOnly) && !hasGithubRemote("origin\thttps://gitlab.com/a/b.git (fetch)\n") && !hasGithubRemote(""))
+    fetched = 0
+    check("outside a repository nothing is fetched", same(await pullRequestState("x", { git: gitWith({}), fetch: counting }), { ok: false, code: "not-a-repo" }) && fetched === 0)
+    check("a detached HEAD is detached", same(await pullRequestState("x", { git: repoGit(originOnly, ""), fetch: counting }), { ok: false, code: "detached" }) && fetched === 0)
+    check("no origin is no-remote", same(await pullRequestState("x", { git: repoGit(""), fetch: counting }), { ok: false, code: "no-remote" }) && fetched === 0)
+    check(
+      "a non-GitHub origin is unsupported, unfetched",
+      same(await pullRequestState("x", { git: repoGit("origin\thttps://gitlab.com/a/b.git (fetch)\n"), fetch: counting }), { ok: false, code: "unsupported-remote" }) && fetched === 0,
+    )
+    asked.length = 0
+    const forked = `${originOnly}upstream\thttps://github.com/octo/hello.git (fetch)\n`
+    const upstreamHit: FetchLike = async (url, init) => {
+      asked.push({ url, headers: init.headers })
+      const body = url.includes("/repos/octo/hello/") ? [item({})] : []
+      return { ok: true, status: 200, json: async () => body }
+    }
+    const fork = await pullRequestState("x", { git: repoGit(forked, "topic"), fetch: upstreamHit })
+    check("a fork asks upstream first, with origin's owner as head", (fork as { kind?: string }).kind === "open" && asked.length === 1 && (asked[0]?.url.includes("head=fork%3Atopic") ?? false), asked)
+    check("none from every repository is none", same(await pullRequestState("x", { git: repoGit(originOnly), fetch: answering(200, []) }), { ok: true, kind: "none" }))
+  }
+
   section("Project list")
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-projects-"))
   const data = path.join(root, "data")

@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { promisify } from "node:util"
 import type { BranchState, CheckoutResult, CommitResult, CommitState, GitFileLines, GitSummary, PushResult } from "@shared/protocol"
+import { hasGithubRemote } from "./pull-request"
 
 const run = promisify(execFile)
 
@@ -559,7 +560,9 @@ export async function summary(directory: string): Promise<GitSummary> {
   if (inside !== "true") return none
   const head = (await git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim()
   const detached = !head || head === "HEAD"
-  const base: GitSummary = { ...none, repo: true, detached, ...(detached ? {} : { branch: head }) }
+  // Local only: reads the remotes' addresses, never contacts them.
+  const github = hasGithubRemote(await git(directory, ["remote", "-v"]).catch(() => ""))
+  const base: GitSummary = { ...none, repo: true, detached, github, ...(detached ? {} : { branch: head }) }
   try {
     const changed = await status(directory)
     const hasHead = await git(directory, ["rev-parse", "--verify", "--quiet", "HEAD"]).then(

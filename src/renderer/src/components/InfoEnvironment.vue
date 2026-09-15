@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from "vue"
-import type { GitSummary } from "@shared/protocol"
+import { computed, onBeforeUnmount, ref, watch } from "vue"
+import type { GitSummary, PullRequestState } from "@shared/protocol"
 import { t } from "../lib/i18n"
+import { useApp } from "../stores/app"
 import { requestReview } from "../lib/review-request"
 import { useBranchSwitch } from "../lib/branch-switch"
 import InfoBranchMenu from "./InfoBranchMenu.vue"
@@ -12,8 +13,83 @@ import InfoCommitCard from "./InfoCommitCard.vue"
  * runs, which branch it is on (with a menu to switch), and the commit or push
  * card. Only drawn for a project inside a repository.
  */
-const props = defineProps<{ directory: string; sessionId?: string; summary: GitSummary }>()
+const props = defineProps<{ directory: string; sessionId?: string; summary: GitSummary; reloadKey?: string }>()
 const emit = defineEmits<{ mutated: [] }>()
+const app = useApp()
+
+// ------------------------------------------------------------- pull request
+
+/*
+ * MiMo's last row: the branch's pull request. GitHub is asked at most once per
+ * project and branch every 30 seconds (its unauthenticated limit is 60 an
+ * hour), never twice at once, and a failure after a good answer keeps the good
+ * one. Unlike MiMo, a lookup that fails draws no row at all.
+ */
+const PR_INTERVAL = 30_000
+const PR_LABEL = {
+  open: "info.prStatus.open",
+  draft: "info.prStatus.draft",
+  closed: "info.prStatus.closed",
+  merged: "info.prStatus.merged",
+} as const
+const prAsked = new Map<string, number>()
+const prInFlight = new Set<string>()
+const prGood = new Map<string, PullRequestState>()
+const pr = ref<{ key: string; result: PullRequestState }>()
+let prGeneration = 0
+let prLastKey = ""
+let alive = true
+
+const prKey = () => `${props.directory}\0${props.summary.branch ?? ""}`
+
+function loadPullRequest() {
+  const key = prKey()
+  if (prLastKey !== key) {
+    prLastKey = key
+    prGeneration += 1
+    prInFlight.delete(key)
+  }
+  if (!props.summary.github) return
+  if (!props.summary.branch) {
+    pr.value = { key, result: { ok: false, code: "detached" } }
+    return
+  }
+  if (prInFlight.has(key)) return
+  if (pr.value?.key === key && Date.now() - (prAsked.get(key) ?? 0) < PR_INTERVAL) return
+  const asking = app.client?.request({ type: "git.pullRequest", directory: props.directory })
+  if (!asking) return
+  const generation = prGeneration
+  prAsked.set(key, Date.now())
+  prInFlight.add(key)
+  const settle = (result: PullRequestState) => {
+    prInFlight.delete(key)
+    if (!alive || prKey() !== key || generation !== prGeneration) return
+    if (!result.ok && prGood.has(key)) return
+    if (result.ok) prGood.set(key, result)
+    pr.value = { key, result }
+  }
+  asking.then(settle, () => settle({ ok: false, code: "network" }))
+}
+
+watch([() => props.directory, () => props.summary.branch, () => props.summary.github, () => props.reloadKey], loadPullRequest, {
+  immediate: true,
+})
+onBeforeUnmount(() => {
+  alive = false
+  prInFlight.clear()
+})
+
+/* undefined while asking; null when there is nothing to draw. */
+const prNow = computed(() => {
+  if (!props.summary.github) return null
+  if (pr.value?.key !== prKey()) return undefined
+  return pr.value.result.ok ? pr.value.result : null
+})
+const prFound = computed(() => (prNow.value && prNow.value.kind !== "none" ? prNow.value : null))
+
+function openPullRequest() {
+  if (prFound.value) window.mcode.openExternal(prFound.value.url)
+}
 
 const branchRow = ref<HTMLElement>()
 const commitRow = ref<HTMLElement>()
@@ -158,6 +234,41 @@ watch(
     @close="commitOpen = false"
     @mutated="emit('mutated')"
   />
+
+  <!-- Keyed by the address, so the tip is bound again when the pull request changes. -->
+  <button
+    v-if="prFound"
+    :key="prFound.url"
+    v-tip="{ label: prFound.title, placement: 'top' }"
+    type="button"
+    class="row actionable"
+    data-info-environment-pr
+    :data-info-environment-pr-state="prFound.kind"
+    @click="openPullRequest"
+  >
+    <svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="4" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.2" />
+      <circle cx="4" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.2" />
+      <circle cx="12" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.2" />
+      <path d="M4 5.1v5.8M12 10.9V6.8a2 2 0 0 0-2-2H7.6M9.1 3.3 7.6 4.8l1.5 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    <span class="label">#{{ prFound.number }} · {{ t(PR_LABEL[prFound.kind]) }}</span>
+  </button>
+  <div
+    v-else-if="prNow !== null"
+    class="row disabled"
+    data-info-environment-pr
+    :data-info-environment-pr-state="prNow ? 'none' : 'loading'"
+    aria-disabled="true"
+  >
+    <svg class="icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="4" cy="3.5" r="1.6" stroke="currentColor" stroke-width="1.2" />
+      <circle cx="4" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.2" />
+      <circle cx="12" cy="12.5" r="1.6" stroke="currentColor" stroke-width="1.2" />
+      <path d="M4 5.1v5.8M12 10.9V6.8a2 2 0 0 0-2-2H7.6M9.1 3.3 7.6 4.8l1.5 1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+    <span class="label">{{ prNow ? t("info.prNone") : t("info.prLoading") }}</span>
+  </div>
 </template>
 
 <style scoped>

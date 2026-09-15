@@ -192,7 +192,7 @@ async function createBlank(title: string, source?: string) {
 }
 
 async function existing() {
-  const [directory] = await window.mcode.pickDirectory(t("home.useExisting"), false)
+  const [directory] = await window.mcode.pickProjectFolder(t("dialog.pickProjectFolder"), false)
   if (!directory) return
   // Onto the project list, or back onto it if it was removed, with no conversation made.
   await app.addProject(directory, { switched: true })

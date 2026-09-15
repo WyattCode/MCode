@@ -6,6 +6,7 @@ import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
+import { scratchRoot } from "../server/scratch"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
@@ -469,15 +470,45 @@ app.whenReady().then(async () => {
     return found
   })
 
-  ipcMain.handle("mcode:pick-directory", async (event, title: string, multiple?: boolean) => {
-    const owner = BrowserWindow.fromWebContents(event.sender)
-    const result = await dialog.showOpenDialog(owner!, {
-      properties: multiple
-        ? ["openDirectory", "createDirectory", "multiSelections"]
-        : ["openDirectory", "createDirectory"],
-      title,
-    })
-    return result.canceled ? [] : result.filePaths
+  /*
+   * MiMo's default project location, made if need be: the folder chosen in
+   * settings, else the one under the home folder; nothing when neither can be made.
+   */
+  const projectLocation = async (): Promise<string | undefined> => {
+    const chosen = backend?.runtime.config.get().projectRoot ?? ""
+    for (const candidate of [scratchRoot(chosen), scratchRoot()]) {
+      try {
+        await fs.mkdir(candidate, { recursive: true })
+        return candidate
+      } catch {
+        // The chosen folder may be on a drive since unplugged; try the default.
+      }
+    }
+    return undefined
+  }
+
+  /* MiMo lets one folder dialog up at a time: a second ask while one is open gets nothing. */
+  let folderDialogOpen = false
+
+  /* `project` is MiMo's 选择或新建项目文件夹: it opens at the default project location. */
+  ipcMain.handle("mcode:pick-directory", async (event, title: string, multiple?: boolean, project?: boolean) => {
+    if (folderDialogOpen) return []
+    folderDialogOpen = true
+    try {
+      const owner = BrowserWindow.fromWebContents(event.sender)
+      const options: Electron.OpenDialogOptions = {
+        properties: multiple
+          ? ["openDirectory", "createDirectory", "multiSelections"]
+          : ["openDirectory", "createDirectory"],
+        title,
+      }
+      const location = project ? await projectLocation() : undefined
+      if (location) options.defaultPath = location
+      const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+      return result.canceled ? [] : result.filePaths
+    } finally {
+      folderDialogOpen = false
+    }
   })
 
   /**
