@@ -59,6 +59,8 @@ const props = defineProps<{
   sideId?: string
   /* round3-panel: MiMo's floating chat card - only the latest turn, with no actions, question or jump button. */
   latest?: boolean
+  /* subagents: a subagent's transcript in the 子智能体 tab - its first message is 初始任务, a live turn reads 处理中. */
+  subagent?: boolean
 }>()
 const sideKey = computed(() => props.sideId ?? app.sideID)
 const shownMessages = computed(() => (props.side ? app.sideMessagesOf(sideKey.value) : app.visible))
@@ -896,6 +898,8 @@ defineExpose({ stepMessage, scroller })
       <template v-for="(turn, at) in turns" :key="turn.id">
       <!-- round3-panel: the floating card draws the latest turn only, without its question. -->
       <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id">
+        <!-- subagents: what a subagent was handed, labelled as MiMo labels it. -->
+        <div v-if="subagent && at === 0 && turn.text !== undefined" class="subagent-initial" data-subagent-initial>{{ t("subagentDetail.initialTask") }}</div>
         <div
           v-if="!latest && (turn.text !== undefined || turn.attachments?.length)"
           class="msg user"
@@ -1096,7 +1100,7 @@ defineExpose({ stepMessage, scroller })
             </svg>
           </button>
           <div v-else-if="turn.started" class="run" data-turn-head :data-live="liveTurn(at) ? 'true' : undefined">
-            <span class="run-label"><TextShimmer :text="t('turn.processed')" :active="liveTurn(at)" /></span>
+            <span class="run-label"><TextShimmer :text="t(subagent && liveTurn(at) ? 'subagentDetail.liveHead' : 'turn.processed')" :active="liveTurn(at)" /></span>
             <span v-if="headTime(turn, at)" class="run-time" data-turn-time>{{ headTime(turn, at) }}</span>
           </div>
 
@@ -1808,6 +1812,14 @@ defineExpose({ stepMessage, scroller })
    line as the composer under it instead of half a scrollbar to one side. */
 .stream {
   scrollbar-gutter: stable both-edges;
+}
+
+/* subagents: 初始任务 over a subagent's first message, 12px dim, on the bubble's side. */
+.subagent-initial {
+  margin-block-end: 4px;
+  color: color-mix(in srgb, var(--text-strong) 40%, transparent);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  text-align: end;
 }
 
 /* What the user wrote, as MiMo sets it: a filled bubble with a 16px corner,

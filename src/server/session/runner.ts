@@ -1,4 +1,5 @@
 import type {
+  AgentName,
   AssistantMessage,
   AssistantPart,
   Attachment,
@@ -23,7 +24,7 @@ import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { findTool, reachOf, toolsFor } from "../tool/registry"
 import { Questions } from "../tool/question"
-import type { ToolDefinition } from "../tool/types"
+import type { SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { retryDelay, waitFor } from "./retry"
@@ -47,6 +48,7 @@ import {
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { interruptedTurn } from "@shared/resume"
+import { subagentOutput } from "@shared/subagent"
 
 /*
  * What a resumed turn is told at its first step, in MCode's own words. Sent in
@@ -54,6 +56,25 @@ import { interruptedTurn } from "@shared/resume"
  */
 const RESUME_PROMPT =
   "The previous turn stopped before it was finished. Carry on with the task from where it stopped: do not redo work that is already done, and do not start over."
+
+/*
+ * subagents: what a subagent is told about its place, in MCode's own words,
+ * added after the system prompt its agent would otherwise get.
+ */
+const SUBAGENT_NOTE = [
+  "## Working as a subagent",
+  "",
+  "Another agent handed you one task. The first message is everything it told you; you cannot ask it anything.",
+  "Do the task, then end with a final message that is a complete answer on its own: what you found or changed, with exact paths and names, and anything you could not do.",
+  "That final message is all the other agent will read.",
+].join("\n")
+
+/* subagents: what the conversation's model is told, in the request only, after a `subtask` command's subagent has answered. */
+const SUBTASK_PROMPT =
+  "A subagent has just carried out the command above. Tell the user what it found or did, briefly, and carry on from there if anything is left to do."
+
+/** subagents: a `subtask` command's subagent, run before the conversation's model is asked. */
+type Lead = SubagentSpec
 
 /** A message the user sent: its words, its files, and the places it points at. */
 type PromptInput = { sessionID: string; text: string; attachments?: Attachment[]; annotations?: UserMessage["annotations"] }
@@ -167,6 +188,15 @@ export class SessionRunner {
    * next one.
    */
   private readonly steering = new Map<string, Steering>()
+  /** subagents: the subagents running under each conversation, so Stop reaches them. */
+  private readonly children = new Map<string, Set<string>>()
+  /**
+   * subagents: the conversation whose turn a running subagent works for. Its
+   * file changes are recorded into that turn, and a refusal stops that turn.
+   */
+  private readonly owners = new Map<string, string>()
+  /** subagents: the highest number handed out per parent and kind, so parallel calls never share a name. */
+  private readonly numbering = new Map<string, number>()
   /*
    * Set after construction rather than injected: the MCP layer reads config,
    * which the runner also holds, and threading it through the constructor
@@ -330,6 +360,8 @@ export class SessionRunner {
   }
 
   abort(sessionID: string): void {
+    // subagents: Stop on a conversation stops the subagents working for it first.
+    for (const child of [...(this.children.get(sessionID) ?? [])]) this.abort(child)
     this.running.get(sessionID)?.abort()
     this.permissions.rejectAll(sessionID)
     /*
@@ -673,6 +705,10 @@ export class SessionRunner {
     if (at < 0) throw new Error("That message is no longer in this conversation")
     const kept = new Set(stored.slice(0, at).map((message) => message.id))
     for (const message of stored.slice(at)) await this.store.deleteMessage(sessionID, message.id)
+    // subagents: the subagents the deleted turns started go with them.
+    for (const child of await this.store.list()) {
+      if (child.parentID === sessionID && child.parentMessageID && !kept.has(child.parentMessageID)) await this.store.delete(child.id)
+    }
     if (session.compacted && !kept.has(session.compacted.messageID)) {
       session = await this.store.update(sessionID, { compacted: undefined })
     }
@@ -901,6 +937,29 @@ export class SessionRunner {
   }
 
   /**
+   * subagents: a slash command marked `subtask`. The line as typed becomes the
+   * user's message, a subagent works on the command's prompt as the turn's first
+   * step, and the conversation's own model then reads its answer and replies.
+   * Refused while a turn is running, since the subagent has to lead the turn.
+   */
+  async subtask(input: { sessionID: string; text: string; description: string; prompt: string; type: SubagentSpec["type"] }): Promise<string> {
+    if (this.running.has(input.sessionID)) throw new Error("This session is already working on something")
+    if (!input.prompt.trim()) throw new Error("The command has no prompt to hand to a subagent")
+    const controller = new AbortController()
+    this.running.set(input.sessionID, controller)
+    try {
+      return await this.begin({ sessionID: input.sessionID, text: input.text }, controller, {
+        description: input.description,
+        prompt: input.prompt,
+        type: input.type,
+      })
+    } catch (failure) {
+      this.running.delete(input.sessionID)
+      throw failure
+    }
+  }
+
+  /**
    * Adds a message to the turn that is already running.
    *
    * The id is taken and listed before anything is awaited. That is what makes
@@ -1045,6 +1104,7 @@ export class SessionRunner {
   private async begin(
     input: PromptInput,
     controller: AbortController,
+    lead?: Lead,
   ): Promise<string> {
     let session = await this.store.require(input.sessionID)
 
@@ -1102,7 +1162,7 @@ export class SessionRunner {
       await this.store.update(session.id, { title: titleFrom(input.text) })
     }
 
-    this.launch(session.id, apiKey, controller)
+    this.launch(session.id, apiKey, controller, false, lead)
     return user.id
   }
 
@@ -1166,12 +1226,12 @@ export class SessionRunner {
   }
 
   /** Runs a claimed session's turn and releases it afterwards. */
-  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed = false): void {
+  private launch(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): void {
     this.steering.set(sessionID, { waiting: [], written: Promise.resolve() })
 
     // Deliberately not awaited: the caller gets the message id immediately and
     // follows the turn through events.
-    void this.run(sessionID, apiKey, controller, resumed)
+    void this.run(sessionID, apiKey, controller, resumed, lead)
       .catch((err) => {
         // A failure recorded on the message is already in front of the user.
         if (err instanceof Shown) return
@@ -1218,7 +1278,7 @@ export class SessionRunner {
       })
   }
 
-  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false): Promise<void> {
+  private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
     let session = await this.store.require(sessionID)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
@@ -1231,13 +1291,48 @@ export class SessionRunner {
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const config = this.config.get()
-    const system = await systemPrompt({
+    const base = await systemPrompt({
       directory: session.directory,
       agent: session.agent,
       staged: session.staged,
       instructions: config.instructions,
       globalAgentsFile: this.globalAgents,
     })
+    // subagents: a subagent is told what it is, after what its agent would be told anyway.
+    const system = session.parentID ? `${base}\n\n${SUBAGENT_NOTE}` : base
+
+    /*
+     * subagents: a `subtask` command's subagent works first, as a task call on
+     * the turn's first reply. The model is asked only once it has answered.
+     */
+    if (lead) {
+      const assistant: AssistantMessage = {
+        id: Identifier.message(),
+        sessionID,
+        role: "assistant",
+        model: session.model,
+        agent: session.agent,
+        effort: session.effort ?? config.effort,
+        parts: [],
+        time: { created: Date.now() },
+      }
+      const part: ToolPart = {
+        type: "tool",
+        id: Identifier.part(),
+        callID: `subtask_${Identifier.part()}`,
+        name: "task",
+        status: "pending",
+        input: { description: lead.description, prompt: lead.prompt, subagent_type: lead.type },
+        time: { created: Date.now() },
+      }
+      assistant.parts.push(part)
+      await this.store.saveMessage(assistant)
+      await this.runTool({ part, assistant, session: { id: sessionID, directory: session.directory }, signal: controller.signal })
+      assistant.time.completed = Date.now()
+      if (controller.signal.aborted) assistant.finish = "aborted"
+      await this.store.saveMessage(assistant)
+      if (controller.signal.aborted) return
+    }
 
     /*
      * The step that was last rescued by a compaction. A request the provider
@@ -1324,8 +1419,22 @@ export class SessionRunner {
                   time: { created: Date.now() },
                 },
               ]
-            : history,
-        tools: lastStep ? [] : this.tools(session.agent, session.model.model),
+            : lead && step === 0
+              ? [
+                  ...history,
+                  // subagents: request only, like the resume line - the transcript keeps the command as typed.
+                  {
+                    id: `${assistant.id}:subtask`,
+                    sessionID,
+                    role: "user" as const,
+                    text: SUBTASK_PROMPT,
+                    attachments: [],
+                    time: { created: Date.now() },
+                  },
+                ]
+              : history,
+        // subagents: a subagent is never handed the task tool, so it cannot start subagents of its own.
+        tools: lastStep ? [] : this.tools(session.agent, session.model.model).filter((tool) => !session.parentID || tool.name !== "task"),
         effort,
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,
@@ -1688,9 +1797,11 @@ export class SessionRunner {
     part.time.started = Date.now()
     publish()
 
+    // subagents: a subagent's calls belong to the turn of the conversation it works for.
+    const owner = this.owners.get(input.session.id) ?? input.session.id
     const reach = reachOf(part.name)
     if (reach !== "reads") {
-      const turn = this.turn(input.session.id)
+      const turn = this.turn(owner)
       // A shell command and an MCP tool leave no account of themselves, so the
       // turn is only describable if the project can be compared afterwards.
       if (reach === "opaque") turn.opaque = true
@@ -1741,8 +1852,19 @@ export class SessionRunner {
         permissions: this.permissions,
         questions: this.questions,
         signal: input.signal,
-        snapshot: (target) => this.record(input.session.id, target),
+        snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
+        // subagents: offered to a conversation's own calls; a subagent's calls get none, so there is no nesting.
+        subagents: this.owners.has(input.session.id)
+          ? undefined
+          : (spec) =>
+              this.runSubagent({
+                parentID: input.session.id,
+                messageID: assistant.id,
+                callID: part.callID,
+                signal: input.signal,
+                spec,
+              }),
         progress: (text) => {
           part.output = text
           publish()
@@ -1782,7 +1904,100 @@ export class SessionRunner {
      * it, so calls still running or asking are cancelled with it. The refusal
      * and its reason are already saved on the part for the next message.
      */
-    if (refusedByUser) this.abort(input.session.id)
+    // subagents: a refusal inside a subagent stops the turn it works for, and so every subagent in it.
+    if (refusedByUser) this.abort(owner)
+  }
+
+  /**
+   * subagents: runs one subagent to its end and hands back its final message.
+   *
+   * The subagent is a conversation of its own, linked to the call that started
+   * it, and runs through the same loop, store and permission queue as any other:
+   * its questions reach the dock under its own id, which the window files under
+   * the parent. It is listed as running while it works, it is stopped with the
+   * turn that started it, and what it does to files is recorded into that turn.
+   */
+  private async runSubagent(input: {
+    parentID: string
+    messageID: string
+    callID: string
+    signal: AbortSignal
+    spec: SubagentSpec
+  }): Promise<ToolResult> {
+    const parent = await this.store.require(input.parentID)
+    const type = input.spec.type
+    const counted = `${parent.id}:${type}`
+    const earlier = (await this.store.list()).filter((session) => session.parentID === parent.id && session.subagent?.type === type)
+    // Read and reserved with nothing awaited between, so calls started together never share a number.
+    const number =
+      Math.max(this.numbering.get(counted) ?? 0, ...earlier.map((session) => Number(/-(\d+)$/.exec(session.subagent?.id ?? "")?.[1] ?? 0))) + 1
+    this.numbering.set(counted, number)
+    const name = `${type}-${number}`
+
+    // An explore subagent only reads, and nothing started from Plan may change anything either.
+    const agent: AgentName = type === "explore" || parent.agent === "plan" ? "plan" : "build"
+    const child = await this.store.create({
+      directory: parent.directory,
+      model: parent.model,
+      agent,
+      effort: parent.effort,
+      title: input.spec.description || name,
+      parentID: parent.id,
+      parentMessageID: input.messageID,
+      parentCallID: input.callID,
+      subagent: { type, id: name },
+    })
+    await this.store.saveMessage({
+      id: Identifier.message(),
+      sessionID: child.id,
+      role: "user",
+      text: input.spec.prompt,
+      attachments: [],
+      time: { created: Date.now() },
+    })
+
+    const controller = new AbortController()
+    this.running.set(child.id, controller)
+    this.owners.set(child.id, this.owners.get(parent.id) ?? parent.id)
+    const siblings = this.children.get(parent.id) ?? new Set<string>()
+    siblings.add(child.id)
+    this.children.set(parent.id, siblings)
+    const stop = () => this.abort(child.id)
+    input.signal.addEventListener("abort", stop, { once: true })
+    if (input.signal.aborted) stop()
+
+    let failure: unknown
+    try {
+      await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
+    } catch (err) {
+      failure = err
+      if (!(err instanceof Shown)) this.bus.publish({ type: "session.error", sessionID: child.id, error: describe(err) })
+    } finally {
+      input.signal.removeEventListener("abort", stop)
+      this.running.delete(child.id)
+      this.owners.delete(child.id)
+      siblings.delete(child.id)
+      if (!siblings.size && this.children.get(parent.id) === siblings) this.children.delete(parent.id)
+      this.bus.publish({ type: "session.idle", sessionID: child.id })
+    }
+
+    const messages = await this.store.messages(child.id)
+    const last = [...messages].reverse().find((message): message is AssistantMessage => message.role === "assistant")
+    if (controller.signal.aborted) throw new ToolError("The subagent was stopped before it finished.")
+    if (failure !== undefined || last?.finish === "error" || last?.finish === "refusal") {
+      const reason = last?.error ?? describe(failure instanceof Shown ? failure.reason : failure)
+      throw new ToolError(`The subagent failed: ${reason}`)
+    }
+    const answer = (last?.parts ?? [])
+      .filter((part): part is TextPart => part.type === "text")
+      .map((part) => part.text)
+      .join("\n")
+      .trim()
+    return {
+      output: subagentOutput(child.id, answer || "(The subagent ended without a final message.)"),
+      title: child.title,
+      metadata: { sessionID: child.id, subagent: child.subagent },
+    }
   }
 }
 

@@ -2,7 +2,9 @@
 import { computed, nextTick, ref, watch } from "vue"
 import PermissionDialog from "./PermissionDialog.vue"
 import QuestionForm from "./parts/QuestionForm.vue"
+import SubagentAvatar from "./parts/SubagentAvatar.vue"
 import { useQuestions } from "../stores/questions"
+import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 
 /**
@@ -19,6 +21,16 @@ import { t } from "../lib/i18n"
 const questions = useQuestions()
 const first = computed(() => questions.queue[0])
 const total = computed(() => questions.queue.length)
+
+/* subagents: a request a subagent raised names that subagent over the card. */
+const app = useApp()
+const asker = computed(() => {
+  const request = first.value?.request
+  if (!request || request.sessionID === app.currentID) return undefined
+  const session = app.subagentSessions.find((entry) => entry.id === request.sessionID)
+  if (!session) return undefined
+  return { seed: session.subagent?.id ?? session.id, name: session.title || t("subagentActivity.fallbackName") }
+})
 
 const root = ref<HTMLElement>()
 let engaged = false
@@ -112,6 +124,11 @@ watch(
       @keydown="onDockKey"
       @pointerdown="engage"
     >
+      <!-- subagents: which subagent is asking, when it is not the conversation itself. -->
+      <div v-if="asker && !questions.guide" class="dock-subagent" data-dock-subagent>
+        <SubagentAvatar :seed="asker.seed" compact />
+        <span class="dock-subagent-name">{{ asker.name }}</span>
+      </div>
       <!-- MiMo's guide, over a permission card after enough approvals by hand. No primary: Enter answers nothing here. -->
       <div v-if="questions.guide" :key="`guide-${first.id}`" class="perm-guide" data-perm-guide>
         <div class="guide-head">
@@ -148,6 +165,24 @@ watch(
 /* The composer's column: 776px centred inside the same 24px inset Composer draws. */
 .confirm-wrap {
   padding-inline: 24px;
+}
+
+/* subagents: the asking subagent's avatar and name, 12px muted, over the card. */
+.dock-subagent {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 14px 0;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+.dock-subagent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /*

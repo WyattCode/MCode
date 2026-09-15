@@ -38,7 +38,7 @@ export const SINGLE_TITLE_MAX = 120
 export const OUTPUT_CAP = 3000
 
 /** The tools the tables name in every state. `apply_patch` speaks as an edit. */
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid"])
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
@@ -148,6 +148,9 @@ export function stepTitle(part: ToolPart): string {
       return text(input.tool)
     case "list":
       return text(input.path) || part.title || ""
+    // subagents: a task call is named by its description, as MiMo names an actor step.
+    case "task":
+      return text(input.description) || part.title || ""
   }
   if (BUILT_IN.has(part.name)) return part.title || ""
   // Anything else - an MCP tool - is described by what it was given.

@@ -125,6 +125,12 @@ export class SessionStore {
     sideOf?: string
     forkOf?: string
     title?: string
+    /* subagents: the parent and the call that started it. */
+    parentID?: string
+    parentMessageID?: string
+    parentCallID?: string
+    subagent?: SessionInfo["subagent"]
+    effort?: SessionInfo["effort"]
   }): Promise<SessionInfo> {
     const now = Date.now()
     const session: SessionInfo = {
@@ -138,6 +144,11 @@ export class SessionStore {
       ...(input.scratch ? { scratch: true } : {}),
       ...(input.sideOf ? { sideOf: input.sideOf } : {}),
       ...(input.forkOf ? { forkOf: input.forkOf } : {}),
+      ...(input.parentID ? { parentID: input.parentID } : {}),
+      ...(input.parentMessageID ? { parentMessageID: input.parentMessageID } : {}),
+      ...(input.parentCallID ? { parentCallID: input.parentCallID } : {}),
+      ...(input.subagent ? { subagent: input.subagent } : {}),
+      ...(input.effort ? { effort: input.effort } : {}),
       created: now,
       updated: now,
       usage: emptyUsage(),

@@ -223,6 +223,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const sessions = await runtime.sessions.list()
       const artifacts: SessionArtifacts[] = []
       for (const session of sessions) {
+        // subagents: a subagent is part of its parent's work, not a conversation of its own to list.
+        if (session.parentID) continue
         const messages = await runtime.sessions.messages(session.id)
         const produced = sessionFiles(messages, session.directory).written
         if (!produced.length) continue
@@ -320,6 +322,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.delete":
       runtime.runner.abort(request.sessionID)
+      // subagents: a conversation's subagents go with it; nothing else could reach them.
+      for (const child of await runtime.sessions.list()) {
+        if (child.parentID === request.sessionID) await runtime.sessions.delete(child.id)
+      }
       await runtime.sessions.delete(request.sessionID)
       return {} satisfies Handled<"session.delete">
 
@@ -396,6 +402,18 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       })
       return { messageID } satisfies Handled<"session.prompt">
     }
+
+    /* subagents: a `subtask` slash command, run as a subagent in this conversation's turn. */
+    case "session.subtask":
+      return {
+        messageID: await runtime.runner.subtask({
+          sessionID: request.sessionID,
+          text: request.text,
+          description: request.description,
+          prompt: request.prompt,
+          type: request.subagentType === "explore" ? "explore" : "general",
+        }),
+      } satisfies Handled<"session.subtask">
 
     case "session.abort":
       runtime.runner.abort(request.sessionID)

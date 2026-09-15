@@ -61,7 +61,7 @@ export async function searchMessages(
 ): Promise<MessageHit[]> {
   const hits: MessageHit[] = []
   if (!query.trim()) return hits
-  const candidates = sessions.filter((session) => !session.archived && !session.sideOf).sort((a, b) => b.updated - a.updated)
+  const candidates = sessions.filter((session) => !session.archived && !session.sideOf && !session.parentID).sort((a, b) => b.updated - a.updated)
   for (const session of candidates) {
     if (hits.length >= limit) break
     const found = findInMessages(await load(session.id), query)

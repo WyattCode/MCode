@@ -46,7 +46,8 @@ export const useQuestions = defineStore("questions", () => {
   const queue = computed(() => {
     const sessionID = app.currentID
     const permissions = sessionID ? (app.pendingPermissions.get(sessionID) ?? []) : []
-    return confirmQueue(sessionID, permissions, pending.value.values())
+    // subagents: a subagent's questions wait in the dock of the conversation it works for.
+    return confirmQueue(sessionID, permissions, pending.value.values(), (id) => app.rootOf(id) === sessionID)
   })
 
   function drop(requestID: string): void {
@@ -85,7 +86,7 @@ export const useQuestions = defineStore("questions", () => {
    */
   function answerFromComposer(sessionID: string, text: string): boolean {
     const waiting = [...pending.value.values()]
-      .filter((request) => request.sessionID === sessionID)
+      .filter((request) => app.rootOf(request.sessionID) === sessionID)
       .sort((a, b) => a.time - b.time)[0]
     if (!waiting || sending.value.has(waiting.id)) return false
     const answers = composerAnswers(text, waiting.questions.length)

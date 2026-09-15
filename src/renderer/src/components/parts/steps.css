@@ -123,6 +123,11 @@
   user-select: text;
 }
 
+/* subagents: a task step's icon slot widens from 14 to 20 to hold its avatar, as MiMo's does. */
+.hs-ic.hs-ic-avatar {
+  width: 20px;
+}
+
 .hs-struck {
   text-decoration: line-through;
 }

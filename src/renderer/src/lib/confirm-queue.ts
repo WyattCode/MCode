@@ -17,14 +17,16 @@ export function confirmQueue(
   sessionID: string | undefined,
   permissions: readonly PermissionRequest[],
   questions: Iterable<QuestionRequest>,
+  /* subagents: which sessions' requests this conversation's dock takes - its own and its subagents'. */
+  belongs: (requestSession: string) => boolean = (requestSession) => requestSession === sessionID,
 ): ConfirmItem[] {
   if (!sessionID) return []
   const items: ConfirmItem[] = []
   for (const request of permissions) {
-    if (request.sessionID === sessionID) items.push({ kind: "permission", id: request.id, time: request.time, request })
+    if (belongs(request.sessionID)) items.push({ kind: "permission", id: request.id, time: request.time, request })
   }
   for (const request of questions) {
-    if (request.sessionID === sessionID) items.push({ kind: "question", id: request.id, time: request.time ?? 0, request })
+    if (belongs(request.sessionID)) items.push({ kind: "question", id: request.id, time: request.time ?? 0, request })
   }
   // A stable sort, so two requests stamped in the same millisecond keep their arrival order.
   return items.sort((a, b) => a.time - b.time)

@@ -7,6 +7,7 @@ import { TodoWriteTool, WebFetchTool } from "./task"
 import { QuestionTool } from "./question"
 import { ApplyPatchTool } from "./patch"
 import { InvalidTool } from "./invalid"
+import { TaskTool } from "./subagent"
 
 /**
  * The tool surface offered to the model.
@@ -35,6 +36,8 @@ export const TOOLS: ToolDefinition[] = [
   BashTool,
   TodoWriteTool,
   WebFetchTool,
+  // subagents: last, so the prefix every earlier request cached stays as it was.
+  TaskTool,
 ]
 
 /**
@@ -96,8 +99,11 @@ export function findTool(name: string): ToolDefinition | undefined {
   return DISPATCHABLE.find((tool) => tool.name === name)
 }
 
-/** Tools that only ever read. */
-const READS = new Set(["read", "list", "glob", "grep", "todowrite", "webfetch", "question", "invalid"])
+/*
+ * Tools that only ever read. `task` is here because it does nothing to files
+ * itself: its subagent's own calls are recorded into the parent's turn.
+ */
+const READS = new Set(["read", "list", "glob", "grep", "todowrite", "webfetch", "question", "invalid", "task"])
 
 /**
  * How much of what a tool does to the project can be seen from the runner.

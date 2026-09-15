@@ -62,6 +62,16 @@ export interface SessionInfo {
   sideOf?: string
   /** The conversation this one was branched from, for the marker at its top. */
   forkOf?: string
+  /*
+   * subagents: a subagent's own conversation, and where in its parent it was
+   * started - the parent conversation, the assistant message and the task call.
+   * No list shows one; it is reached from the parent's 子智能体 tab.
+   */
+  parentID?: string
+  parentMessageID?: string
+  parentCallID?: string
+  /** subagents: its kind and its numbered name within the parent (`general-1`), which picks its avatar. */
+  subagent?: { type: SubagentType; id: string }
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */
@@ -655,6 +665,14 @@ export interface CommandDefinition {
 export const AGENT_NAMES = ["build", "plan"] as const
 
 export type AgentName = (typeof AGENT_NAMES)[number]
+
+/**
+ * subagents: the kinds of subagent the task tool starts. A general one works
+ * with the parent's tools; an explore one only reads, the way Plan does.
+ */
+export const SUBAGENT_TYPES = ["general", "explore"] as const
+
+export type SubagentType = (typeof SUBAGENT_TYPES)[number]
 
 /**
  * The reasoning steps, in the order the cycle walks them.
@@ -1479,6 +1497,19 @@ export type Request =
   | { type: "session.effort"; sessionID: string; effort?: Effort }
   | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[] }
   | { type: "session.abort"; sessionID: string }
+  /*
+   * subagents: a slash command marked `subtask`. `text` is the line as typed,
+   * kept as the user's message; `prompt` is its filled-in template, which a
+   * subagent works on before the conversation's own model reads the result.
+   */
+  | {
+      type: "session.subtask"
+      sessionID: string
+      text: string
+      description: string
+      prompt: string
+      subagentType?: SubagentType
+    }
   | {
       type: "permission.respond"
       requestID: string
@@ -1741,6 +1772,7 @@ export interface ResponseMap {
   "session.effort": { session: SessionInfo }
   "session.prompt": { messageID: string }
   "session.abort": Record<string, never>
+  "session.subtask": { messageID: string }
   "permission.respond": Record<string, never>
   "question.list": { questions: QuestionRequest[] }
   "question.reply": Record<string, never>
