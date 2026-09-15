@@ -38,17 +38,30 @@ export interface ToolContext {
    */
   shell?: string
   /**
-   * subagents: starts a subagent for this call and settles with its answer.
-   * Absent inside a subagent, which cannot start subagents of its own.
+   * subagents: the task tool's actions, bound to this call's conversation.
+   * Absent inside a subagent, which cannot start or manage subagents of its own.
    */
-  subagents?: (spec: SubagentSpec) => Promise<ToolResult>
+  subagents?: SubagentControl
 }
 
-/** subagents: what the task tool asks for. */
+/** subagents: what run and spawn ask for. */
 export interface SubagentSpec {
   description: string
   prompt: string
   type: "general" | "explore"
+  /** `provider/model`, or a model id only one configured provider has; absent takes the parent's. */
+  model?: string
+}
+
+/** subagents: MiMo's actor actions, as the runner carries them out for one conversation. */
+export interface SubagentControl {
+  run(spec: SubagentSpec, timeoutMs?: number): Promise<ToolResult>
+  spawn(spec: SubagentSpec): Promise<ToolResult>
+  status(subagentID: string): Promise<ToolResult>
+  wait(subagentID: string, timeoutMs?: number): Promise<ToolResult>
+  cancel(subagentID: string): Promise<ToolResult>
+  send(subagentID: string, message: string): Promise<ToolResult>
+  models(options: { vision: boolean; limit?: number }): Promise<ToolResult>
 }
 
 export interface ToolResult {

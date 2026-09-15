@@ -341,7 +341,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.delete":
       runtime.runner.abort(request.sessionID)
-      // subagents: a conversation's subagents go with it; nothing else could reach them.
+      // subagents: a conversation's subagents go with it, background ones stopped first; nothing else could reach them.
+      await runtime.runner.dropSubagents(request.sessionID)
       for (const child of await runtime.sessions.list()) {
         if (child.parentID === request.sessionID) await runtime.sessions.delete(child.id)
       }

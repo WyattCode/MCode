@@ -154,8 +154,10 @@ import { Config as SubagentConfig } from "../src/server/config"
 import { SessionStore as SubagentStore } from "../src/server/session/store"
 import { SessionRunner as SubagentRunner } from "../src/server/session/runner"
 import { reachOf } from "../src/server/tool/registry"
-import { subagentAnswer, subagentOutput, subagentTone } from "../src/shared/subagent"
-import { COMPLETED_CAP, isPill, pillStatus, subagentItems, subagentTime } from "../src/renderer/src/lib/subagents"
+import { SUBAGENT_TIMERS, isStalled, noticeText, subagentAnswer, subagentOutput, subagentTone, taskAction } from "../src/shared/subagent"
+import { COMPLETED_CAP, isPill, noticeStatus, pillStatus, subagentItems, subagentTime } from "../src/renderer/src/lib/subagents"
+import { stepTitle as subagentStepTitle, stepVerb as subagentStepVerb } from "../src/renderer/src/lib/tool-meta"
+import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStatus } from "../src/shared/protocol"
 import {
   WINDOW_MIN,
   badgeCount,
@@ -5018,8 +5020,52 @@ async function subagentChecks(root: string, project: string) {
     ).length === 1,
   )
 
+  // MiMo's actor actions: the pure pieces.
+  check("a call that names no action is a run, as the tool always was", taskAction({ description: "x" }) === "run" && taskAction({ action: "spawn" }) === "spawn" && taskAction({ action: "later" }) === "run")
+  const spawned = partOf("completed", { input: { action: "spawn", description: "Look around", prompt: "x", subagent_type: "explore" }, output: "subagent_id: explore-1" })
+  const statusRow = partOf("completed", { input: { action: "status", subagent_id: "explore-1" }, output: JSON.stringify({ status: "running" }), title: "Look around" })
+  check("a spawn is a pill and a status call is a row", isPill(spawned) && !isPill(statusRow))
+  check("a spawn reads 开始工作 once it has gone through; only a run that answered reads 已完成", pillStatus([spawned]) === "started" && pillStatus([partOf("completed")]) === "completed")
+  const notice = (status: SubagentNoticeStatus, summary?: string): SubagentNotice => ({ subagentID: "explore-1", sessionID: "c1", description: "Look around", status, ...(summary ? { summary } : {}) })
+  check("notices drawn together share their word, and read 已结束 when they disagree", noticeStatus([notice("stalled"), notice("stalled")]) === "stalled" && noticeStatus([notice("completed"), notice("failed")]) === "ended")
+  check(
+    "a status row takes MiMo's own verb and names the subagent; a spawn row keeps the task tool's",
+    subagentStepVerb(statusRow, "completed") !== "toolLabel.subagentAction.status.completed" &&
+      subagentStepVerb(statusRow, "completed") !== subagentStepVerb(spawned, "completed") &&
+      subagentStepTitle(statusRow) === "Look around" &&
+      subagentStepTitle({ ...statusRow, title: undefined }) === "explore-1",
+  )
+  check("MiMo's timings: a stall after six quiet minutes, abandoned after ten, a scan every 45s, ten minutes of waiting", SUBAGENT_TIMERS.stallMs === 360_000 && SUBAGENT_TIMERS.abandonMs === 600_000 && SUBAGENT_TIMERS.scanMs === 45_000 && SUBAGENT_TIMERS.waitMs === 600_000)
+  check("quiet past the stall mark is a stall; past the abandon mark it is not reported", !isStalled(360_000, SUBAGENT_TIMERS) && isStalled(360_001, SUBAGENT_TIMERS) && !isStalled(600_001, SUBAGENT_TIMERS))
+  const told = noticeText([{ notice: notice("completed", "first line"), result: "first line\nand the rest" }])
+  check("the model is told which subagent finished and the whole of its answer", told.includes("subagent_id: explore-1") && told.includes("and the rest") && told.startsWith("<subagent-notification>"))
+  const record = (subagent: SubagentSession["subagent"]): SubagentSession => ({
+    id: "c1",
+    title: "Look around",
+    directory: "x",
+    model: { provider: "p", model: "m" },
+    agent: "plan",
+    parentID: "s",
+    parentCallID: spawned.callID,
+    subagent,
+    created: 1,
+    updated: 1,
+    usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 },
+  })
+  const spawnReply = { id: "a2", sessionID: "s", role: "assistant" as const, model: { provider: "p", model: "m" }, agent: "build" as const, parts: [spawned], time: { created: 2 } }
+  const working = record({ type: "explore", id: "explore-1", background: true, status: "running" })
+  check("a spawned subagent is at work in the tab while its record says so", subagentItems([spawnReply], [working])[0]?.status === "running")
+  const noticed = subagentItems([spawnReply, { id: "u3", sessionID: "s", role: "user", text: "", attachments: [], notices: [notice("completed", "found it")], time: { created: 9000 } }], [working])
+  check("its notice settles it in the tab, with the notice's summary", noticed[0]?.status === "completed" && noticed[0].summary === "found it" && noticed[0].endedAt === 9000, noticed)
+  const stalledItem = subagentItems([spawnReply, { id: "u4", sessionID: "s", role: "user", text: "", attachments: [], notices: [notice("stalled")], time: { created: 9000 } }], [working])
+  check("a stall leaves it among those at work, as MiMo's tab does", stalledItem[0]?.status === "running")
+  const cancelledRecord = record({ type: "explore", id: "explore-1", background: true, status: "idle", outcome: "cancelled", ended: 7000 })
+  check("with no notice, its own record says how it ended", subagentItems([spawnReply], [cancelledRecord])[0]?.status === "rejected")
+
   // The runner over a fake provider.
   let parentCalls: Record<string, unknown>[] = []
+  // A scripted conversation: each request of the parent takes the next step, whatever came back.
+  let parentSteps: Record<string, unknown>[][] = []
   const childTools: string[][] = []
   const childSpans: { prompt: string; start: number; end: number }[] = []
   const parentBodies: string[] = []
@@ -5053,6 +5099,8 @@ async function subagentChecks(root: string, project: string) {
 
       if (!system.includes("Working as a subagent")) {
         parentBodies.push(body)
+        const step = parentSteps.shift()
+        if (step) return call(step.map((input) => ({ name: "task", input })))
         if (answered || !parentCalls.length) return say("parent done")
         return call(parentCalls.map((input) => ({ name: "task", input })))
       }
@@ -5071,11 +5119,21 @@ async function subagentChecks(root: string, project: string) {
         if (answered) return say("perm done")
         return call([{ name: "bash", input: { command: "echo subagent", description: "Say something" } }])
       }
-      const found = /ANSWER:([a-z-]+)/.exec(prompt)
+      // QUIET writes nothing for a while, which the watchdog reads as a stall.
+      if (prompt.includes("QUIET")) {
+        await new Promise((resolve) => setTimeout(resolve, 1500))
+        if (!closed) await say("quiet done")
+        return
+      }
+      // The latest message holds the orders, so a follow-up sent to a subagent is answered on its own terms.
+      const latest = JSON.stringify((asked.messages ?? []).filter((message) => message.role === "user").at(-1) ?? {})
+      const found = /ANSWER:([a-z-]+)/.exec(latest)
       const span = { prompt: found?.[1] ?? "", start: Date.now(), end: 0 }
       childSpans.push(span)
-      await new Promise((resolve) => setTimeout(resolve, prompt.includes("DELAY") ? 400 : 5))
+      const pause = Number(/PAUSE(\d+)/.exec(latest)?.[1] ?? (latest.includes("DELAY") ? 400 : 5))
+      await new Promise((resolve) => setTimeout(resolve, pause))
       span.end = Date.now()
+      if (closed) return
       return say(found?.[1] ?? "no orders")
     })
   })
@@ -5087,7 +5145,7 @@ async function subagentChecks(root: string, project: string) {
   const bus = new Bus()
   const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
   await config.load()
-  await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
+  await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1`, models: [{ id: "m", name: "M" }] }], directory: project })
   await config.setApiKey("fake", "k")
   const permissions = new Permissions(bus, config)
   const store = new SubagentStore(storage, bus)
@@ -5198,6 +5256,160 @@ async function subagentChecks(root: string, project: string) {
     parentBodies.some((body) => body.includes("A subagent has just carried out the command")) &&
       fiveMessages.some((message) => message.role === "assistant" && message.parts.some((part) => part.type === "text" && part.text === "parent done")),
   )
+
+  section("Subagents (background actions)")
+  const noticesIn = async (sessionID: string) => (await store.messages(sessionID)).flatMap((message) => (message.role === "user" ? (message.notices ?? []) : []))
+  const actionPart = async (sessionID: string, action: string) => (await taskParts(sessionID)).find((part) => part.input?.action === action)
+  const firstChild = async (sessionID: string) => (await childrenOf(sessionID))[0]
+  const reportOf = (part?: ToolPart): Record<string, unknown> => {
+    try {
+      return JSON.parse(part?.output ?? "{}") as Record<string, unknown>
+    } catch {
+      return {}
+    }
+  }
+  const saidDone = (messages: Awaited<ReturnType<typeof store.messages>>) =>
+    messages.some((message) => message.role === "assistant" && message.parts.some((part) => part.type === "text" && part.text === "parent done"))
+  parentCalls = []
+
+  // spawn, status, wait.
+  parentBodies.length = 0
+  parentSteps = [
+    [{ action: "spawn", description: "Look in the background", prompt: "ANSWER:background PAUSE600", subagent_type: "explore" }],
+    [{ action: "status", subagent_id: "explore-1" }],
+    [{ action: "wait", subagent_id: "explore-1" }],
+  ]
+  const six = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: six.id, text: "spawn, look, wait" })
+  await settled(six.id)
+  await until(async () => (await noticesIn(six.id)).length > 0, 5000)
+  const sixSpawn = await actionPart(six.id, "spawn")
+  const sixStatus = await actionPart(six.id, "status")
+  const sixWait = await actionPart(six.id, "wait")
+  const sixChild = await firstChild(six.id)
+  check(
+    "spawn answers at once with the subagent's id, before the subagent is done",
+    sixSpawn?.status === "completed" && /subagent_id: explore-1/.test(sixSpawn.output ?? "") && (sixSpawn.time.completed ?? Infinity) < (sixChild?.subagent?.ended ?? 0),
+    { spawn: sixSpawn?.output, record: sixChild?.subagent },
+  )
+  check("status sees it still at work, by its description", reportOf(sixStatus).status === "running" && reportOf(sixStatus).description === "Look in the background", sixStatus?.output)
+  check("wait holds until it is idle and hands back its result", reportOf(sixWait).status === "idle" && reportOf(sixWait).outcome === "success" && reportOf(sixWait).result === "background", sixWait?.output)
+  check("its record says it ran in the background and succeeded", sixChild?.subagent?.background === true && sixChild.subagent.status === "idle" && sixChild.subagent.outcome === "success", sixChild?.subagent)
+  const sixNotices = await noticesIn(six.id)
+  check("the conversation is told it completed, its answer as the summary", sixNotices.some((entry) => entry.status === "completed" && entry.subagentID === "explore-1" && entry.summary === "background"), sixNotices)
+  check("the conversation's model reads the notice", parentBodies.some((body) => body.includes("<subagent-notification>") && body.includes("subagent_id: explore-1")))
+
+  // A background subagent that finishes after the conversation's turn has ended.
+  parentBodies.length = 0
+  parentSteps = [[{ action: "spawn", description: "Finish later", prompt: "ANSWER:later PAUSE800", subagent_type: "general" }]]
+  const seven = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: seven.id, text: "start something and stop" })
+  const parentFirst = await until(async () => {
+    const child = await firstChild(seven.id)
+    return Boolean(child) && !runner.busySessions().includes(seven.id) && runner.busySessions().includes(child!.id)
+  })
+  check("the conversation's turn ends while its background subagent works on", parentFirst)
+  await until(async () => (await noticesIn(seven.id)).length > 0)
+  await settled(seven.id)
+  const sevenMessages = await store.messages(seven.id)
+  const noticeAt = sevenMessages.findIndex((message) => message.role === "user" && Boolean(message.notices?.length))
+  const noticeMessage = sevenMessages[noticeAt]
+  check("its outcome arrives as a message of its own after the turn", noticeAt > 0 && noticeMessage?.role === "user" && !noticeMessage.steered && noticeMessage.notices?.[0]?.status === "completed", noticeMessage)
+  check("and wakes the conversation for a turn that reads it", saidDone(sevenMessages.slice(noticeAt + 1)) && parentBodies.some((body) => body.includes("later")))
+
+  // Stop leaves a background subagent working; deleting the conversation stops it.
+  parentSteps = [
+    [{ action: "spawn", description: "Keep going", prompt: "SLOW", subagent_type: "explore" }],
+    [{ action: "wait", subagent_id: "explore-1", timeout_ms: 10_000 }],
+  ]
+  const eight = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: eight.id, text: "spawn and wait" })
+  await until(() => parentSteps.length === 0)
+  await new Promise((resolve) => setTimeout(resolve, 300))
+  runner.abort(eight.id)
+  await settled(eight.id)
+  const eightChild = await firstChild(eight.id)
+  const eightWait = await actionPart(eight.id, "wait")
+  check("Stop ends the wait but leaves the background subagent working, as MiMo does", eightWait?.status === "error" && Boolean(eightChild) && runner.busySessions().includes(eightChild!.id), eightWait?.error)
+  const beforeDrop = (await noticesIn(eight.id)).length
+  await runner.dropSubagents(eight.id)
+  check("deleting the conversation stops it, and nobody is told", Boolean(eightChild) && !runner.busySessions().includes(eightChild!.id) && (await noticesIn(eight.id)).length === beforeDrop)
+
+  // cancel.
+  parentSteps = [
+    [{ action: "spawn", description: "Cancel me", prompt: "SLOW", subagent_type: "explore" }],
+    [{ action: "cancel", subagent_id: "explore-1" }],
+    [{ action: "cancel", subagent_id: "explore-1" }],
+  ]
+  const nine = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: nine.id, text: "spawn and cancel" })
+  await settled(nine.id)
+  await until(async () => (await noticesIn(nine.id)).some((entry) => entry.status === "cancelled"), 5000)
+  const cancels = (await taskParts(nine.id)).filter((part) => part.input?.action === "cancel")
+  const nineChild = await firstChild(nine.id)
+  check("cancel stops a running subagent", reportOf(cancels[0]).status === "cancelled" && Boolean(nineChild) && !runner.busySessions().includes(nineChild!.id) && nineChild!.subagent?.outcome === "cancelled", { output: cancels[0]?.output, record: nineChild?.subagent })
+  check("cancelling one that is idle changes nothing", reportOf(cancels[1]).status === "idle", cancels[1]?.output)
+  check("the conversation is told it was cancelled", (await noticesIn(nine.id)).some((entry) => entry.status === "cancelled"))
+
+  // send, to a subagent that has finished.
+  parentSteps = [
+    [{ action: "run", description: "Answer twice", prompt: "ANSWER:first", subagent_type: "general" }],
+    [{ action: "send", subagent_id: "general-1", message: "ANSWER:second" }],
+  ]
+  const ten = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: ten.id, text: "run, then send" })
+  await settled(ten.id)
+  await until(async () => (await noticesIn(ten.id)).some((entry) => entry.summary === "second"), 5000)
+  await settled(ten.id)
+  const tenRun = await actionPart(ten.id, "run")
+  const tenSend = await actionPart(ten.id, "send")
+  const tenChild = await firstChild(ten.id)
+  const tenChildMessages = tenChild ? await store.messages(tenChild.id) : []
+  const tenAnswers = tenChildMessages.flatMap((message) => (message.role === "assistant" ? message.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])) : []))
+  check("run hands back the subagent's answer", subagentAnswer(tenRun?.output) === "first", tenRun?.output)
+  check("send queues a follow-up for a finished subagent", reportOf(tenSend).queued === true && reportOf(tenSend).subagent_id === "general-1", tenSend?.output)
+  check("the follow-up joins the subagent's own history, marked as its parent's", tenChildMessages.some((message) => message.role === "user" && message.inbox?.from === "main" && message.text === "ANSWER:second"))
+  check("the subagent answers it in another turn, keeping the one before", tenAnswers.join(",") === "first,second" && tenChild?.subagent?.turns === 2 && tenChild.subagent.outcome === "success", { tenAnswers, record: tenChild?.subagent })
+  check("the conversation hears when that turn ends", (await noticesIn(ten.id)).some((entry) => entry.status === "completed" && entry.summary === "second"))
+
+  // The stall watchdog, on shortened timings.
+  const timings = { ...runner.subagentTimers }
+  Object.assign(runner.subagentTimers, { stallMs: 300, abandonMs: 5000, scanMs: 50 })
+  parentSteps = [[{ action: "spawn", description: "Go quiet", prompt: "QUIET", subagent_type: "explore" }]]
+  const eleven = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: eleven.id, text: "spawn a quiet one" })
+  const stalled = await until(async () => (await noticesIn(eleven.id)).some((entry) => entry.status === "stalled"), 5000)
+  const elevenChild = await firstChild(eleven.id)
+  const stillWorking = Boolean(elevenChild) && runner.busySessions().includes(elevenChild!.id)
+  await until(async () => (await noticesIn(eleven.id)).some((entry) => entry.status === "completed"), 8000)
+  await settled(eleven.id)
+  const elevenNotices = await noticesIn(eleven.id)
+  check(
+    "the watchdog reports a subagent that has gone quiet, once, and leaves it working",
+    stalled && stillWorking && elevenNotices.filter((entry) => entry.status === "stalled").length === 1 && typeof elevenNotices.find((entry) => entry.status === "stalled")?.quietSeconds === "number",
+    elevenNotices,
+  )
+  check("its outcome still arrives when it finishes", elevenNotices.some((entry) => entry.status === "completed" && entry.summary === "quiet done"))
+  Object.assign(runner.subagentTimers, timings)
+
+  // models, and a model named for a subagent.
+  parentSteps = [
+    [{ action: "models" }],
+    [{ action: "models", vision: true }],
+    [{ action: "spawn", description: "Unknown model", prompt: "ANSWER:x", subagent_type: "explore", model: "nowhere/none" }],
+    [{ action: "run", description: "Chosen model", prompt: "ANSWER:chosen", subagent_type: "explore", model: "fake/m" }],
+  ]
+  const twelve = await store.create({ directory: project, model })
+  await runner.prompt({ sessionID: twelve.id, text: "models" })
+  await settled(twelve.id)
+  const twelveParts = await taskParts(twelve.id)
+  const [modelList, visionListed] = twelveParts.filter((part) => part.input?.action === "models")
+  check("models lists what a subagent can be given", Boolean(modelList?.output?.includes("fake/m")), modelList?.output)
+  check("with vision, only models that read images", visionListed?.output === "No connected model reads images.", visionListed?.output)
+  const unknownModel = twelveParts.find((part) => part.input?.model === "nowhere/none")
+  check("a model nobody has connected is refused", unknownModel?.status === "error" && /models action/.test(unknownModel.error ?? ""), unknownModel?.error)
+  const chosen = (await childrenOf(twelve.id)).find((session) => session.title === "Chosen model")
+  check("a subagent runs on the model it was given", chosen?.model.provider === "fake" && chosen.model.model === "m", chosen?.model)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }

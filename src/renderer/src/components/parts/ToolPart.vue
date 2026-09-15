@@ -22,10 +22,11 @@ import {
   reducedTitle,
   stepState,
   stepTitle,
+  stepVerb,
   titleIsLossy,
   toolIcon,
-  toolVerb,
 } from "../../lib/tool-meta"
+import { launches, taskAction, taskTarget } from "@shared/subagent"
 
 /**
  * One tool call as MiMo's step list draws it.
@@ -65,7 +66,7 @@ const open = ref(preferOpen)
 const animate = ref(false)
 
 const state = computed(() => stepState(props.part))
-const verb = computed(() => toolVerb(props.part.name, state.value))
+const verb = computed(() => stepVerb(props.part, state.value))
 const icon = computed(() => toolIcon(props.part.name))
 const bash = computed(() => bashOf(props.part))
 const title = computed(() => stepTitle(props.part))
@@ -140,11 +141,17 @@ function toggle() {
   open.value = !open.value
 }
 
-/* subagents: a task call working or done is MiMo's pill; in any other state it is a row wearing the avatar. */
+/*
+ * subagents: a run or spawn working or done is MiMo's pill; in any other state it is a row wearing the avatar.
+ * A status, wait, cancel or send row wears the avatar of the subagent it names; models wears none.
+ */
 const pill = computed(() => isPill(props.part))
-const avatarSeed = computed(() =>
-  props.part.name === "task" ? (childFor(props.part.callID, app.subagentSessions)?.subagent?.id ?? props.part.callID) : undefined,
-)
+const avatarSeed = computed(() => {
+  if (props.part.name !== "task") return undefined
+  const action = taskAction(props.part.input)
+  if (launches(action)) return childFor(props.part.callID, app.subagentSessions)?.subagent?.id ?? props.part.callID
+  return taskTarget(props.part.input) || undefined
+})
 </script>
 
 <template>

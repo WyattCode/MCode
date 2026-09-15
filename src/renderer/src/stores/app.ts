@@ -102,6 +102,8 @@ export const useApp = defineStore("app", () => {
    * tab draws one with the side chat's stream.
    */
   const subagentSessions = ref<SessionInfo[]>([])
+  /** subagents: conversations sent a notice while idle, whose next reply is a turn the server started. */
+  const noticeWoken = new Set<string>()
   const isSubagent = (sessionID: string) => subagentSessions.value.some((session) => session.id === sessionID)
   /** subagents: the conversation a subagent works for, or the session itself; its questions queue there. */
   function rootOf(sessionID: string): string {
@@ -451,10 +453,17 @@ export const useApp = defineStore("app", () => {
         // subagents: kept apart from every list; one that has just been made is already working.
         if (event.session.parentID) {
           const at = subagentSessions.value.findIndex((session) => session.id === event.session.id)
-          if (at === -1) {
-            subagentSessions.value.push(event.session)
-            if (Date.now() - event.session.created < 60_000) running.value = new Set(running.value).add(event.session.id)
-          } else subagentSessions.value[at] = event.session
+          if (at === -1) subagentSessions.value.push(event.session)
+          else subagentSessions.value[at] = event.session
+          // Its record says whether a turn of it is under way; one stored before the record had that is judged by its age.
+          const state = event.session.subagent?.status
+          const working = state ? state === "running" : at === -1 && Date.now() - event.session.created < 60_000
+          if (working !== running.value.has(event.session.id)) {
+            const next = new Set(running.value)
+            if (working) next.add(event.session.id)
+            else next.delete(event.session.id)
+            running.value = next
+          }
           break
         }
         if (event.session.sideOf) {
@@ -512,6 +521,18 @@ export const useApp = defineStore("app", () => {
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
       case "message.updated": {
+        /*
+         * subagents: news of background subagents can wake an idle conversation,
+         * a turn the window did not send. It is marked busy when that turn's
+         * first reply arrives, so the working marks and Stop show as for any turn.
+         */
+        {
+          const message = event.message
+          if (message.role === "user" && message.notices?.length && !message.steered) noticeWoken.add(message.sessionID)
+          else if (message.role === "assistant" && !message.finish && !message.time.completed && noticeWoken.delete(message.sessionID) && !running.value.has(message.sessionID)) {
+            running.value = new Set(running.value).add(message.sessionID)
+          }
+        }
         noteToolWrites(
           event.message,
           (sessions.value.find((session) => session.id === event.message.sessionID) ?? sideSessions.value.find((session) => session.id === event.message.sessionID))?.directory,
