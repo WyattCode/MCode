@@ -67,7 +67,7 @@ const VOICE_CLOSE = "⟧"
 /** The longest box taken either way; a message box holding more is not being dictated into. */
 export const VOICE_EDIT_MAX = 50_000
 
-/** How long one transcription request may take; MiMo's own limit was not read, so this is MCode's. */
+/** How long one transcription request may take: 30 s, the same limit MiMo's main process sets after classifying voice errors. */
 export const VOICE_TRANSCRIBE_TIMEOUT_MS = 30_000
 
 /* Socket-level codes Node's fetch carries on its cause when the endpoint cannot be reached. */
@@ -469,6 +469,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         text: request.text,
         attachments: request.attachments,
         annotations: request.annotations,
+        fileNotices: request.fileNotices,
       })
       return { messageID } satisfies Handled<"session.prompt">
     }
@@ -1050,22 +1051,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { session } satisfies Handled<"session.archive">
     }
 
-    case "app.reset": {
-      // Stop everything before erasing anything. Aborting only signals a turn:
-      // it still writes its partial transcript afterwards, which would recreate
-      // a session directory that had already been deleted.
-      runtime.auth.cancel()
-      for (const session of await runtime.sessions.list()) runtime.runner.abort(session.id)
-      runtime.permissions.forget()
-      await waitForIdle(runtime)
-      await runtime.sessions.clear()
-      await runtime.config.reset()
-      return {
-        config: runtime.config.get(),
-        providers: runtime.config.providers(),
-      } satisfies Handled<"app.reset">
-    }
-
     case "git.status":
       return (await git.status(request.directory, request.scope)) satisfies Handled<"git.status">
 
@@ -1382,14 +1367,6 @@ const MAX_FILES = 500
  * Filtering happens here rather than in the renderer so a large project does
  * not push thousands of paths across the socket on every keystroke.
  */
-/** Waits briefly for aborted turns to finish their final write. */
-async function waitForIdle(runtime: Runtime, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs
-  while (!runtime.runner.idle && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 50))
-  }
-}
-
 /* Where a request's `sub` lands, refused when it climbs out of the project. */
 function insideProject(directory: string, sub?: string): { root: string; target: string } {
   const root = path.resolve(directory)

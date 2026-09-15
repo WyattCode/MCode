@@ -111,23 +111,6 @@ export function restore(): {
   return { ...visible(saved.bounds), ...flags }
 }
 
-/**
- * Where an additional window should open.
- *
- * Restoring the remembered bounds for every window put each new one exactly on
- * top of the last, which looks like nothing happened. Stepping down and across
- * is the long-standing convention, and it wraps back to the corner rather than
- * marching off the screen.
- */
-export function cascade(from: Rectangle): Rectangle {
-  const STEP = 28
-  const area = screen.getDisplayMatching(from).workArea
-  const next = { ...from, x: from.x + STEP, y: from.y + STEP }
-  const past = next.x + from.width > area.x + area.width || next.y + from.height > area.y + area.height
-  if (!past) return next
-  return { ...from, x: area.x + STEP, y: area.y + STEP }
-}
-
 /** Starts saving position, size and maximised state for this window. */
 export function track(window: BrowserWindow, requested: Rectangle): void {
   let timer: ReturnType<typeof setTimeout> | undefined

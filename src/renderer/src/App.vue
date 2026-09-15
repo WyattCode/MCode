@@ -32,7 +32,7 @@ import VideoPreview from "./components/VideoPreview.vue"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
-import { markUpdateReady } from "./components/UpdatePill.vue"
+import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
 import TerminalDrawer from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
@@ -73,7 +73,7 @@ import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
 import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
-import { createFind, openFind, stepFind } from "./lib/find"
+import { createFind, openFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
 import { chimeOf, longTask } from "@shared/chime"
 import { themeTokens } from "./lib/theme-engine"
@@ -223,45 +223,57 @@ onMounted(() => {
 onBeforeUnmount(() => mainObserver?.disconnect())
 
 /*
- * A version that has been fetched and is waiting to be run.
+ * A version the main process's updater has downloaded and is waiting to run.
  *
- * The download starts as soon as the check finds one, without asking - which
- * is what the reference does, and why the only thing it ever says out loud is
- * that a new version "is now available to install". Asking first would put a
- * question between the reader and an update they already asked for by running
- * the check.
+ * MiMo checks on its own, 5 s after launch and every 3 h, and downloads a newer
+ * installer without asking; the capsule, its bubble and the settings row take a
+ * ready update from here, and nothing interrupts.
  */
 const downloadedUpdate = ref<string>()
 /** A check in flight, so the update page can say 检查中… and not start another. */
 const updateChecking = ref(false)
 
-/* Fetched: MiMo's footer capsule and its bubble take it from here, and no modal interrupts. */
-async function fetchUpdate(url: string, version: string, sha256: string, notes: string) {
-  try {
-    await window.mcode.downloadUpdate(url, version, sha256)
-    downloadedUpdate.value = version
-    markUpdateReady(version, notes)
-    notify(t("update.readyToast"))
-  } catch (err) {
-    notifyFailure(t("update.failed"), reasonOf(err))
-  }
+type UpdateStatus = Awaited<ReturnType<typeof window.mcode.updateStatus>>
+
+function takeUpdateState(state: UpdateStatus) {
+  if (!state.ready) return
+  downloadedUpdate.value = state.ready.version
+  // A capsule already installing, or failed, for this same version keeps its phase.
+  if (updateState.phase === "idle" || updateState.version !== state.ready.version) markUpdateReady(state.ready.version, state.ready.notes)
 }
+
+let offUpdateState: (() => void) | undefined
+onMounted(() => {
+  // The ready event may have gone out before this window was listening.
+  void window.mcode
+    .updateStatus()
+    .then(takeUpdateState)
+    .catch(() => {})
+  offUpdateState = window.mcode.onUpdateState((state) => {
+    takeUpdateState(state)
+    /* A check asked for by hand says when it has moved on to downloading, as MiMo's toasts do. */
+    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: "update-check", duration: 0 })
+  })
+})
+onBeforeUnmount(() => offUpdateState?.())
 
 const terminalOpen = ref(false)
 /** How tall the docked terminal is, so the info card can end above it. */
 const drawerHeight = ref(0)
 
 /*
- * MiMo's drop overlay: while files are dragged over the window, the main column
- * says they will be added. Only files and links count, as in MiMo - dragged
- * text is not a file - and not while a dialog or overlay has the window.
+ * MiMo's drop overlay: while files are dragged over the main column, it says
+ * they will be added. Only files and links count, as in MiMo - dragged text is
+ * not a file - and not while a dialog or overlay has the window. Over the side
+ * column or the side panel nothing lights, because nothing would be added.
  */
 const fileDrag = ref(false)
 
 function trackDrag(event: DragEvent) {
   const types = [...(event.dataTransfer?.types ?? [])].map((type) => type.toLowerCase())
   if (!types.includes("files") && !types.includes("text/uri-list")) return
-  fileDrag.value = !document.querySelector(".scrim, .overlay")
+  const overMain = event.target instanceof Element && Boolean(event.target.closest(".main"))
+  fileDrag.value = overMain && !document.querySelector(".scrim, .overlay")
 }
 
 function leaveDrag(event: DragEvent) {
@@ -670,48 +682,34 @@ async function applyServer(answer: string) {
 }
 
 /**
- * Asks the configured feed whether there is a newer release.
+ * MiMo's updateCheckNow, from the settings row, the menu or the palette.
  *
  * There is no update service behind this app, so the feed is whatever the user
- * points it at - a JSON document with a `version`. With none configured the
- * command says so rather than pretending to have checked.
+ * points it at - a JSON document with a `version`. The main process reads it
+ * and downloads a newer installer (the window's content policy reaches nothing
+ * but the local backend); this only says how it went. With no feed configured
+ * the command says so rather than pretending to have checked.
  */
 async function checkForUpdates() {
   if (updateChecking.value) return
-  const feed = app.config?.updateFeed?.trim()
-  if (!feed) {
+  if (!app.config?.updateFeed?.trim()) {
     notifyFailure(t("update.noFeed"))
     return
   }
   updateChecking.value = true
-  /* MiMo's sticky 正在检查更新…, up for as long as the check runs. */
+  /* MiMo's sticky 正在检查更新…, up for as long as the check (and a download) runs. */
   const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
   try {
-    /*
-     * Asked of the main process rather than fetched here. This window is served
-     * under a content policy that lets it open a socket to the local backend and
-     * reach nothing else, so its own fetch of the feed never left the process -
-     * the check reported "Failed to fetch" whatever the feed said.
-     */
-    const { version, url, sha256, notes } = await window.mcode.checkUpdates(feed)
-    if (!version) throw new Error("the feed named no version")
-    if (version === app.version) {
-      notify(t("update.current"))
-      return
-    }
-    /* A feed that names a version but no installer can only say where to get it. */
-    if (!url) {
-      notify(t("update.found", { version }))
-      return
-    }
-    notify(t("update.downloading"))
-    void fetchUpdate(url, version, sha256, notes)
+    const result = await window.mcode.updateCheckNow()
+    dismiss(checking)
+    takeUpdateState(result)
+    if (result.outcome === "current") notify(t("update.current"))
+    else if (result.outcome === "no-installer" && result.version) notify(t("update.found", { version: result.version }))
+    else if (result.outcome === "ready") notify(t("update.readyToast"))
+    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
+    else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
   } catch (err) {
-    /*
-     * Electron wraps anything thrown in a handler as "Error invoking remote
-     * method 'mcode:check-updates': ...", which tells the reader about our IPC
-     * rather than about their feed. Only the reason is worth showing.
-     */
+    // Electron prefixes the IPC plumbing; only the reason is worth showing.
     notifyFailure(t("update.checkFailed"), reasonOf(err))
   } finally {
     dismiss(checking)
@@ -965,6 +963,30 @@ watch(
   },
   { immediate: true },
 )
+
+/*
+ * MiMo's native theme: main sets the OS-drawn surfaces (context menus, the
+ * tray menu, message boxes, the pre-paint background) to the chosen scheme and
+ * keeps it for the next launch's first paint.
+ */
+watch(theme, (value) => window.mcode.nativeTheme(value), { immediate: true })
+
+/*
+ * MiMo's exit-full-screen button. On Windows the caption buttons are the OS's
+ * overlay, and full screen takes them away with nothing left to click; the
+ * button stands in until the window leaves full screen.
+ */
+const fullScreen = ref(false)
+let offFullscreen: (() => void) | undefined
+onMounted(() => {
+  void window.mcode
+    .isFullscreen()
+    .then((value) => (fullScreen.value = value))
+    .catch(() => {})
+  offFullscreen = window.mcode.onFullscreen((value) => (fullScreen.value = value))
+})
+onBeforeUnmount(() => offFullscreen?.())
+const exitFullScreen = () => window.mcode.exitFullscreen()
 
 /*
  * The icon the window wears. Main cannot read the config document, so it is
@@ -1302,10 +1324,9 @@ function reloadBrowser(force = false) {
   void rightPanel.value?.reloadTarget()?.reload(force)
 }
 
-/* Ctrl+period is MiMo's annotate while a browser tab shows a page; on a blank tab or elsewhere it steps the agent. */
-function annotateOrCycleAgent() {
-  const pane = browserShowing.value ? rightPanel.value?.activeBrowser() : undefined
-  if (!pane?.toggleAnnotate()) void cycleAgent(1)
+/* Ctrl+period is MiMo's annotate while a browser tab shows a page, and nothing anywhere else. */
+function annotateBrowser() {
+  if (browserShowing.value) rightPanel.value?.activeBrowser()?.toggleAnnotate()
 }
 
 /*
@@ -1950,10 +1971,6 @@ function runAppMenu(key: string) {
     window.mcode.view(key)
     return
   }
-  if (key === "new-window") {
-    window.mcode.newWindow()
-    return
-  }
   if (key === "zoom-in" || key === "zoom-out" || key === "zoom-reset") {
     window.mcode.zoom(key === "zoom-in" ? "in" : key === "zoom-out" ? "out" : "reset")
     return
@@ -2594,7 +2611,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "view.model",
       group: "key.groupModels",
       title: t("cmd.switchModel"),
-      // MiMo's chord for its model picker; Ctrl+' still opens the same menu.
       hint: "Ctrl+Shift+M",
       // The picker hangs off the composer's model pill, and the composer is
       // only mounted inside a project - so on the home screen this command had
@@ -2687,11 +2703,12 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       // The title swaps with the state, so the row always names what pressing
-      // it will do rather than what is currently true.
+      // it will do rather than what is currently true. Turning it on is full
+      // access, so it waits for the settings switch as the composer's chip does.
       id: "permissions.autoaccept",
       group: "key.groupSession",
       title: autoAcceptAll() ? t("cmd.autoAcceptOff") : t("cmd.autoAcceptOn"),
-      hint: "Ctrl+Shift+A",
+      enabled: autoAcceptAll() || Boolean(app.config?.allowFullAccess),
       run: () => void toggleAutoAccept(),
     },
     {
@@ -2862,7 +2879,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "workspace.new",
       group: "key.groupGeneral",
       title: t("workspace.new"),
-      hint: "Ctrl+Shift+W",
       enabled: hasSession,
       run: () => void newWorkspace(),
     },
@@ -2877,7 +2893,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "composer.promptMode",
       group: "key.groupPrompt",
       title: t("cmd.promptMode"),
-      hint: "Ctrl+Shift+E",
       enabled: hasSession,
       run: () => composer.value?.setMode("normal"),
     },
@@ -2885,7 +2900,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "composer.shellMode",
       group: "key.groupPrompt",
       title: t("cmd.shellMode"),
-      hint: "Ctrl+Shift+X",
       enabled: hasSession,
       run: () => composer.value?.setMode("shell"),
     },
@@ -2910,7 +2924,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "app.attachFile",
       group: "key.groupNavigation",
       title: t("cmd.attachFile"),
-      hint: "Ctrl+U",
       enabled: hasSession,
       run: () => composer.value?.pick(),
     },
@@ -2944,21 +2957,18 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "app.searchProjects",
       group: "key.groupGeneral",
       title: t("cmd.searchProjects"),
-      hint: "Ctrl+Shift+O",
       run: () => openPalette("projects"),
     },
     {
       id: "session.prevUnread",
       group: "key.groupSession",
       title: t("cmd.prevUnread"),
-      hint: "Alt+Shift+↑",
       run: () => void stepUnread(-1),
     },
     {
       id: "session.nextUnread",
       group: "key.groupSession",
       title: t("cmd.nextUnread"),
-      hint: "Alt+Shift+↓",
       run: () => void stepUnread(1),
     },
     {
@@ -2978,35 +2988,30 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "session.prevMessage",
       group: "key.groupSession",
       title: t("cmd.prevMessage"),
-      hint: "Ctrl+Alt+[",
       run: () => stream.value?.stepMessage(-1),
     },
     {
       id: "session.nextMessage",
       group: "key.groupSession",
       title: t("cmd.nextMessage"),
-      hint: "Ctrl+Alt+]",
       run: () => stream.value?.stepMessage(1),
     },
     {
       id: "session.reopenTab",
       group: "key.groupGeneral",
       title: t("cmd.reopenTab"),
-      hint: "Ctrl+Shift+T",
       run: () => void app.reopenTab(),
     },
     {
       id: "app.mcp",
       group: "key.groupModels",
       title: t("cmd.mcp"),
-      hint: "Ctrl+;",
       run: () => openSettings("mcp"),
     },
     {
       id: "session.previous",
       group: "key.groupSession",
       title: t("key.prevSession"),
-      // MiMo's chord; Alt+Up still steps as well.
       hint: "Ctrl+Shift+[",
       run: () => void stepSession(-1),
     },
@@ -3014,7 +3019,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "session.next",
       group: "key.groupSession",
       title: t("key.nextSession"),
-      // MiMo's chord; Alt+Down still steps as well.
       hint: "Ctrl+Shift+]",
       run: () => void stepSession(1),
     },
@@ -3022,7 +3026,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "agent.cycle",
       group: "key.groupModels",
       title: t("key.cycleAgent"),
-      hint: "Ctrl+.",
       enabled: hasSession,
       run: () => void cycleAgent(1),
     },
@@ -3030,7 +3033,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "agent.cycle.reverse",
       group: "key.groupModels",
       title: t("key.cycleAgentBack"),
-      hint: "Ctrl+Shift+.",
       enabled: hasSession,
       run: () => void cycleAgent(-1),
     },
@@ -3071,14 +3073,12 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "project.previous",
       group: "key.groupGeneral",
       title: t("key.prevProject"),
-      hint: "Ctrl+Alt+↑",
       run: () => void stepProject(-1),
     },
     {
       id: "project.next",
       group: "key.groupGeneral",
       title: t("key.nextProject"),
-      hint: "Ctrl+Alt+↓",
       run: () => void stepProject(1),
     },
     {
@@ -3092,7 +3092,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "theme.scheme.cycle",
       group: "key.groupGeneral",
       title: t("cmd.cycleScheme"),
-      hint: "Ctrl+Shift+S",
       run: () => void cycleScheme(),
     },
     {
@@ -3250,19 +3249,6 @@ const bindableCommands = computed((): AppCommand[] => {
       hint: "Ctrl+0",
       run: () => window.mcode.zoom("reset"),
     },
-    /*
-     * One per slot rather than one row covering the range: each carries its own
-     * chord, so each has to be separately bindable. Hidden, because nine near
-     * identical rows would crowd out everything else in the palette.
-     */
-    ...openProjects.value.slice(0, 9).map((directory, at) => ({
-      id: `project.${at + 1}`,
-      group: "key.groupGeneral",
-      title: t("key.openProjectNumbered", { name: projectName(directory, app.config?.projectNames) }),
-      hint: `Ctrl+Alt+${at + 1}`,
-      hidden: true,
-      run: () => startIn(directory),
-    })),
     {
       // MiMo's branchConvo: the whole conversation at once, titled 「… (分支)」; the store toasts either way.
       id: "session.fork",
@@ -3393,6 +3379,7 @@ function onKeydown(event: KeyboardEvent) {
     if (bound) {
       const command = commands.value.find((entry) => entry.id === bound)
       if (command && command.enabled !== false) {
+        if (TYPING_OFF.has(command.id) && typingIn(event.target)) return
         event.preventDefault()
         void command.run()
         return
@@ -3413,60 +3400,6 @@ function onKeydown(event: KeyboardEvent) {
     if (modalOpen.value) return
     event.preventDefault()
     void stepRecent(event.shiftKey ? -1 : 1)
-    return
-  }
-
-  /*
-   * Alt+arrow walks the visit history. The bar used to carry a pair of arrow
-   * buttons for this; the new one is a row of tabs, and the shortcut is what
-   * keeps the history reachable now that they are gone.
-   */
-  if (event.altKey && !mod && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-    if (modalOpen.value) return
-    event.preventDefault()
-    void (event.key === "ArrowLeft" ? back() : forward())
-    return
-  }
-
-  /*
-   * Alt+up and down step through the open conversations; adding Ctrl steps
-   * through the projects instead. Same axis, one level out - which is why they
-   * share a key and differ by a modifier.
-   */
-  if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-    if (modalOpen.value) return
-    event.preventDefault()
-    const by = event.key === "ArrowUp" ? -1 : 1
-    // Adding shift narrows the walk to the conversations asking for attention.
-    if (event.shiftKey) void stepUnread(by)
-    else void (mod ? stepProject(by) : stepSession(by))
-    return
-  }
-
-  /*
-   * Ctrl+Alt+bracket moves through the conversation itself, where the bare
-   * bracket moves through the history of what was visited.
-   */
-  if (mod && event.altKey && (event.key === "[" || event.key === "]")) {
-    if (modalOpen.value) return
-    event.preventDefault()
-    stream.value?.stepMessage(event.key === "[" ? -1 : 1)
-    return
-  }
-
-  /*
-   * Ctrl+Alt and a digit opens the slot the strip shows in that position.
-   *
-   * The reference puts this on Ctrl and a digit; here that already opens the
-   * project in that position, and moving a shortcut a reader already uses is a
-   * worse trade than putting the new one a modifier away.
-   */
-  if (mod && event.altKey && /^[1-9]$/.test(event.key)) {
-    if (modalOpen.value) return
-    const directory = openProjects.value[Number(event.key) - 1]
-    if (!directory) return
-    event.preventDefault()
-    startIn(directory)
     return
   }
 
@@ -3561,15 +3494,9 @@ function onKeydown(event: KeyboardEvent) {
    * Find first, and only if a host will have it.
    *
    * `openFind` answers false when the chord was typed into a text field or when
-   * no host wants it, and then Ctrl+F does nothing, as MiMo's does. Ctrl+G
-   * steps, Ctrl+Shift+G steps back, and neither does anything at all unless a
-   * bar is open.
+   * no host wants it, and then Ctrl+F does nothing, as MiMo's does.
    */
   if (!event.shiftKey && event.key === "f" && openFind(event)) {
-    event.preventDefault()
-    return
-  }
-  if (event.key === "g" && stepFind(event.shiftKey ? -1 : 1, event)) {
     event.preventDefault()
     return
   }
@@ -3593,28 +3520,9 @@ function onKeydown(event: KeyboardEvent) {
       // MiMo's model picker and working directory.
       m: () => composer.value?.openModelMenu(),
       c: copyWorkingDirectory,
-      // Stepping back through a search while one is open; otherwise the review tab.
-      g: () => {
-        if (!stepFind(-1, event)) openReviewTab()
-      },
-      // Approve everything, or stop. Symmetric, and it always says so.
-      a: () => void toggleAutoAccept(),
-      // Searching the projects rather than the sessions inside one.
-      o: () => openPalette("projects"),
-      // A second checkout of the project, on its own branch.
-      w: () => void newWorkspace(),
-      // The two composer modes, on the reference's keys.
-      x: () => composer.value?.setMode("shell"),
-      e: () => composer.value?.setMode("normal"),
+      g: openReviewTab,
       // The box, on MiMo's chord; Ctrl+L is the browser's address bar.
       l: () => composer.value?.focus(),
-      // Agents, backwards; forwards is Ctrl+period.
-      ".": () => void cycleAgent(-1),
-      // Reopening a closed tab. The theme steps from its own command, which has no chord.
-      t: () => void app.reopenTab(),
-      // The scheme, then the palette. Stepping rather than opening a dialog is
-      // what makes them worth a key: the answer is on screen immediately.
-      s: () => void cycleScheme(),
       // MiMo's browser toggle.
       b: toggleBrowserTab,
       // And the list of all of these, which is a settings page here.
@@ -3656,14 +3564,11 @@ function onKeydown(event: KeyboardEvent) {
 
   const handlers: Record<string, () => void> = {
     k: toggleSearch,
-    // MiMo's files tab, and the reference's attach on its key.
+    // MiMo's files tab.
     p: openFilesTab,
-    u: () => composer.value?.pick(),
     b: () => toggleSide(),
     "`": () => (terminalOpen.value = !terminalOpen.value),
-    m: () => composer.value?.openModelMenu(),
     ",": openSettings,
-    ";": () => openSettings("mcp"),
     n: () => void newSession(),
     // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
     t: () => void openBrowserTab(),
@@ -3674,17 +3579,15 @@ function onKeydown(event: KeyboardEvent) {
     w: () => window.mcode.window("close"),
     // The browser's address bar while it is open, else the box.
     l: focusBrowserAddress,
-    // The model picker, on the key opencode uses for it. There is one picker
-    // and it hangs off the pill, so both keys open the same menu.
-    "'": () => composer.value?.openModelMenu(),
-    // Annotate while a browser tab is showing, else agents forwards. Reverse is Ctrl+Shift+period.
-    ".": annotateOrCycleAgent,
-    // The reference walks the visit history on these as well as on Alt+arrow.
+    // MiMo's annotate, while a browser tab is showing.
+    ".": annotateBrowser,
     "[": back,
     "]": forward,
   }
   const handler = handlers[event.key]
   if (!handler) return
+  // MiMo's back and forward alone stay out of text fields: the bracket is left to what is being typed.
+  if ((event.key === "[" || event.key === "]") && typingIn(event.target)) return
   /*
    * Claimed before the availability test, not after: Ctrl+P belongs to the
    * browser's print dialog otherwise, so letting an unavailable chord fall
@@ -3801,9 +3704,17 @@ const KEY_COMMAND_IDS: Record<string, string> = {
   b: "view.left",
   "`": "view.terminal",
   j: "view.bottom",
-  m: "view.model",
   "[": "app.back",
   "]": "app.forward",
+}
+
+/* MiMo's only two commands marked off in form fields (`formTags: false`). */
+const TYPING_OFF = new Set(["app.back", "app.forward"])
+
+/** A form field or editable text, where MiMo leaves those two chords to the typing. */
+function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
 }
 
 /**
@@ -4606,6 +4517,20 @@ onBeforeUnmount(() => {
 
   <!-- Last in the document on purpose: see .rail-no-drag. -->
   <div v-if="!leftPanel && !onboarding" class="rail-no-drag" aria-hidden="true" />
+  <!-- MiMo's exit-full-screen button: Windows only, where full screen hides the overlay caption buttons. -->
+  <button
+    v-if="app.platform === 'win32' && fullScreen"
+    type="button"
+    class="exit-fs"
+    data-exit-fullscreen
+    :title="t('side.exitFullscreen')"
+    :aria-label="t('side.exitFullscreen')"
+    @click="exitFullScreen"
+  >
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
+    </svg>
+  </button>
   <div v-if="!onboarding" class="toggles-no-drag" aria-hidden="true" />
 </template>
 
@@ -4768,6 +4693,34 @@ onBeforeUnmount(() => {
  * them. This patch is the last thing in the document, so its no-drag wins; it
  * takes no pointer events, so the clicks still land on the buttons beneath.
  */
+/*
+ * MiMo's exit-full-screen button: 26 square and 7 round, 20 in from the start
+ * edge and centred on the 44px controls row, over the side column's own row.
+ * Its 16px glyph is the four inward corners.
+ */
+.exit-fs {
+  position: fixed;
+  top: 9px;
+  inset-inline-start: 20px;
+  z-index: 205;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.exit-fs:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
+}
+
 .rail-no-drag {
   position: fixed;
   top: 13px;

@@ -15,7 +15,7 @@ import ContextMenu from "../ContextMenu.vue"
 import AbcBlock from "./AbcBlock.vue"
 import DiagramBlock from "./DiagramBlock.vue"
 import LocalMedia from "./LocalMedia.vue"
-import MediaStrip from "./MediaStrip.vue"
+import { projectPath } from "../../lib/delivered"
 
 const props = defineProps<{ part: TextPart }>()
 const app = useApp()
@@ -196,9 +196,12 @@ function mountMedia() {
     const kind = holder.dataset.media
     const path = holder.dataset.mediaPath
     if ((kind !== "image" && kind !== "video" && kind !== "audio") || !path) continue
+    // Only a file in the project is read to show it; any other path stays its chip.
+    const inside = projectPath(path, app.current?.directory)
+    if (!inside) continue
     holder.dataset.mounted = "true"
     holder.textContent = ""
-    const vnode = h(LocalMedia, { kind, path, directory: app.current?.directory })
+    const vnode = h(LocalMedia, { kind, path: inside, directory: app.current?.directory })
     vnode.appContext = instance?.appContext ?? null
     render(vnode, holder)
     mounted.add(holder)
@@ -403,8 +406,6 @@ function onError(event: Event) {
       <div v-else class="md-block" v-html="block.html" />
     </template>
   </div>
-  <!-- MiMo's video cards for the platform links in a finished reply. -->
-  <MediaStrip v-if="!live" :text="part.text" />
   <Teleport to="body">
     <div v-if="previewing" class="md-table-preview-overlay" data-table-preview-overlay @mousedown.self="closePreview">
       <div class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">

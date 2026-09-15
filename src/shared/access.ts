@@ -23,12 +23,22 @@ export function isAccess(value: unknown): value is Access {
   return typeof value === "string" && (ACCESS_LEVELS as readonly string[]).includes(value)
 }
 
-/** The default level, read the way the chip reads it: the middle one when set, full once nothing asks. */
+/* Whether the settings' map stands at full access: nothing in it asks, and the middle level is not set. */
+function mapAtFull(config: AccessConfig | undefined): boolean {
+  const map = config?.permissions
+  if (!map || config?.accessLevel === "auto") return false
+  return !PERMISSION_KINDS.some((kind) => map[kind] === "ask")
+}
+
+/**
+ * The default level, read the way the chip reads it: the middle one when set,
+ * full once nothing asks. Full access written as the level while its settings
+ * switch is off is not full access, whatever wrote the config.
+ */
 export function defaultAccess(config: AccessConfig | undefined): Access {
   if (config?.accessLevel === "auto") return "auto"
-  const map = config?.permissions
-  if (!map) return "ask"
-  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
+  if (!mapAtFull(config)) return "ask"
+  return config?.accessLevel === "full" && config.allowFullAccess === false ? "ask" : "full"
 }
 
 /**
@@ -52,7 +62,7 @@ function actionOf(value: unknown, fallback: PermissionAction): PermissionAction 
  */
 export function belowFullMap(config: AccessConfig | undefined): Record<PermissionKind, PermissionAction> {
   const map = config?.permissions ?? {}
-  const kept = defaultAccess(config) === "full" ? (config?.accessBefore ?? {}) : map
+  const kept = mapAtFull(config) ? (config?.accessBefore ?? {}) : map
   const out = {} as Record<PermissionKind, PermissionAction>
   for (const kind of PERMISSION_KINDS) {
     out[kind] = actionOf(map[kind], DEFAULT_PERMISSIONS[kind]) === "deny" ? "deny" : actionOf(kept[kind], DEFAULT_PERMISSIONS[kind])

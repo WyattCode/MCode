@@ -4,14 +4,28 @@ import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { PowerHold } from "./power"
+import { DailyLog, LOG_DIR } from "./log-file"
+import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
 import { scratchRoot } from "../server/scratch"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
-import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
+import {
+  activate,
+  beginIntentionalQuit,
+  captureConsole,
+  currentWindow,
+  markClosing,
+  recordProcessError,
+  relaunch,
+  setRecoveryHost,
+  wireProcessRecovery,
+  wireRecovery,
+} from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
 import { installedOpenAppIcons, installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
@@ -47,7 +61,11 @@ import {
   type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
-import { cascade, restore, track } from "./window-state"
+import { restore, track } from "./window-state"
+import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
+import { boundsOnShow, closeBounds } from "./work-area"
+import { createUpdater, parseFeed, type FeedEntry, type UpdateState } from "./updater"
+import { deliveryOf, waitForDelivery } from "./install-notice"
 import pkg from "../../package.json"
 
 /*
@@ -93,13 +111,42 @@ if (process.platform === "linux") {
   }
 }
 
-let backend: Backend | undefined
+/*
+ * MiMo's log files, opened as the module loads so that whatever is said on the
+ * way up - Chromium switches, the backend starting, a failure to start - is on
+ * disk. Old days are pruned here and on each day change.
+ */
+const logs = new DailyLog({ dir: path.join(app.getPath("userData"), LOG_DIR) })
+captureConsole(logs)
+app.on("will-quit", () => void logs.close())
+process.on("uncaughtException", (error) => recordProcessError("uncaught exception", error))
+process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))
 
 /*
- * Where the last downloaded installer went. Held here rather than passed back
- * and forth, so installing can only ever run the file this process fetched.
+ * MiMo's native theme at boot: the saved app theme is applied before any
+ * window exists, so the first paint, the text context menu, the tray menu and
+ * message boxes already match a dark app on a light system (and the reverse).
  */
-let installerPath: string | undefined
+const bootPrefsFile = path.join(app.getPath("userData"), BOOT_PREFS_FILE)
+let bootPrefs: BootPrefs = { ...BOOT_DEFAULTS }
+try {
+  bootPrefs = readBootPrefs(readFileSync(bootPrefsFile, "utf8"))
+} catch {
+  // No file yet: follow the system.
+}
+nativeTheme.themeSource = bootPrefs.theme
+
+/* MiMo's 硬件加速: Chromium only takes this before ready, so a change waits for the next launch. */
+if (!bootPrefs.hardwareAcceleration) app.disableHardwareAcceleration()
+
+/* Written for the next launch; a failed write only means the next boot uses the old choice. */
+function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
+  bootPrefs = { ...bootPrefs, ...patch }
+  return fs.writeFile(bootPrefsFile, writeBootPrefs(bootPrefs), "utf8").catch((error) => console.warn("[boot-prefs] not saved", error))
+}
+
+let backend: Backend | undefined
+
 const windows = new Set<BrowserWindow>()
 
 /*
@@ -148,8 +195,17 @@ function deliverLink(raw: string) {
 app.on("second-instance", (_event, argv) => {
   const raw = linkInArgs(argv)
   if (raw) return deliverLink(raw)
-  const window = [...windows].find((entry) => !entry.isDestroyed())
-  if (window) raise(window)
+  activate(raise)
+})
+
+/*
+ * How recovery makes a replacement window: MiMo's createRendererWindow, shown
+ * or kept hidden as the one it replaces was. A hidden one is only wanted for a
+ * turn still running, whose notification has to come from somewhere.
+ */
+setRecoveryHost({
+  create: (show) => createWindow(show),
+  hasPendingWork: () => (backend?.runtime.runner.busySessions().length ?? 0) > 0,
 })
 
 // macOS delivers links as an event rather than as arguments.
@@ -164,8 +220,8 @@ const savedFiles = new Set<string>()
 /*
  * The tray, if the reader has asked for one.
  *
- * Held at module scope because there is one of it and several windows: a tray
- * per window would put three copies of the same icon in the same corner. The
+ * Held at module scope because it outlives any one window: a window replaced
+ * after its renderer failed must not take the icon in the corner with it. The
  * colourway is remembered so the icon can be rebuilt when either the switch or
  * the chosen artwork changes.
  */
@@ -198,7 +254,7 @@ let trayProfiles: TrayProfile[] = []
  * Electron cannot relabel a tray menu in place any more than it can a menu bar,
  * so a language change rebuilds this the same way it rebuilds that one.
  */
-function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
+function refreshTray(enabled: boolean): void {
   if (!enabled) {
     tray?.destroy()
     tray = undefined
@@ -210,7 +266,7 @@ function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
   // scales it. The source is 512, so this is a reduction rather than a stretch.
   const image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
   /* MiMo's tray opens the window on a click and on a double-click alike; it never hides it. */
-  const open = () => raise(BrowserWindow.getAllWindows()[0] ?? make())
+  const open = () => activate(raise)
   if (!tray) {
     tray = new Tray(image)
     tray.on("click", open)
@@ -234,7 +290,7 @@ function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
           type: "radio" as const,
           checked: entry.checked,
           click: () => {
-            const window = BrowserWindow.getAllWindows()[0] ?? make()
+            const window = currentWindow() ?? createWindow()
             window.webContents.send("mcode:tray-profile", entry.key)
           },
         })),
@@ -284,19 +340,15 @@ function saveFilter(suggested: string): Electron.FileFilter {
   return { name: known[extension] ?? extension.toUpperCase(), extensions: [extension] }
 }
 
-function createWindow(): BrowserWindow {
+/* `show` is false only for a replacement of a hidden window (renderer recovery). */
+function createWindow(show = true): BrowserWindow {
   const saved = restore()
-  // Only the first window inherits the remembered geometry - and only it writes
-  // it back, so "where I left it" keeps meaning the main window rather than
-  // whichever extra window happened to close last.
-  const existing = [...windows].find((entry) => !entry.isDestroyed())
-  const spot = existing ? cascade(existing.getNormalBounds()) : saved
 
   const window = new BrowserWindow({
-    x: spot.x,
-    y: spot.y,
-    width: spot.width,
-    height: spot.height,
+    x: saved.x,
+    y: saved.y,
+    width: saved.width,
+    height: saved.height,
     minWidth: WINDOW_MIN.width,
     minHeight: WINDOW_MIN.height,
     show: false,
@@ -316,8 +368,8 @@ function createWindow(): BrowserWindow {
     ...(process.platform === "win32"
       ? { frame: false, titleBarOverlay: captionOverlay() }
       : {}),
-    // MiMo's main plane before the first paint.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff",
+    // MiMo's main plane before the first paint; the native theme already follows the saved app theme.
+    backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
     // Only used before packaging - a packaged build takes its icon from the
     // bundle (.icns) or the executable resource (.ico). macOS ignores this.
     icon: windowIcon(),
@@ -334,14 +386,16 @@ function createWindow(): BrowserWindow {
    * that can fail is the load itself: a missing renderer bundle, or a dev server
    * that is not up yet, both fail before this function has finished running.
    */
-  wireRecovery(window, String(window.id))
+  wireRecovery(window)
+  // A hidden replacement still has a turn to report on; it must not be throttled into silence.
+  if (!show) window.webContents.setBackgroundThrottling(false)
 
   // The renderer paints over this, but it is what shows during a resize or
-  // before the first frame - so it has to track the OS theme, not just sample
-  // it once at creation.
+  // before the first frame - so it has to track the native theme, which the
+  // app theme sets (mcode:native-theme), not just sample it once at creation.
   const paintBackground = () => {
     if (window.isDestroyed()) return
-    window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff")
+    window.setBackgroundColor(windowBackground(nativeTheme.shouldUseDarkColors))
     // The overlay is painted by the OS and does not follow the page's colours.
     refreshTitlebar(window)
   }
@@ -350,6 +404,10 @@ function createWindow(): BrowserWindow {
 
   // A notification that could not be shown flashes the taskbar instead; coming back ends it.
   window.on("focus", () => window.flashFrame(false))
+
+  // MiMo's winFullscreen event: the renderer offers a way out while the caption buttons are gone.
+  window.on("enter-full-screen", () => window.webContents.send("mcode:fullscreen", true))
+  window.on("leave-full-screen", () => window.webContents.send("mcode:fullscreen", false))
 
   /*
    * MiMo's right-click on text and pictures: the OS menu, with only the rows
@@ -375,20 +433,31 @@ function createWindow(): BrowserWindow {
 
   // Maximise before the first paint, so the window does not appear at its
   // restored size and then jump.
-  if (!existing) {
-    if (saved.maximized) window.maximize()
-    if (saved.fullScreen) window.setFullScreen(true)
-    // getNormalBounds covers the first run, where the OS picked the position.
-    track(window, saved.x !== undefined && saved.y !== undefined ? (spot as Rectangle) : window.getNormalBounds())
-  }
+  if (saved.maximized) window.maximize()
+  if (saved.fullScreen) window.setFullScreen(true)
+  // getNormalBounds covers the first run, where the OS picked the position.
+  track(window, saved.x !== undefined && saved.y !== undefined ? (saved as Rectangle) : window.getNormalBounds())
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
   // the band has to follow that as well as the menu and keyboard paths.
   window.webContents.on("zoom-changed", () => refreshTitlebar(window))
   window.webContents.on("did-finish-load", () => refreshTitlebar(window))
 
-  window.once("ready-to-show", () => window.show())
+  window.once("ready-to-show", () => {
+    if (show) window.show()
+  })
   window.on("closed", () => windows.delete(window))
+
+  /*
+   * MiMo's session-end: Windows is shutting down or logging off. That is a
+   * quit, so the close rule below lets the window go instead of hiding it to
+   * the tray, which would otherwise hold up the shutdown.
+   */
+  window.on("session-end", () => {
+    console.info("[quit] session-end (OS shutdown or logoff)")
+    quitting = true
+    beginIntentionalQuit()
+  })
 
   /*
    * MiMo's close rule: the last window hides to the tray (always, on macOS)
@@ -396,6 +465,30 @@ function createWindow(): BrowserWindow {
    * other window still open, closes as usual. window-state's own close listener
    * has already saved the bounds, and a hidden window keeps them for its next show.
    */
+  /*
+   * MiMo's hidden bounds: a window hidden to the tray records exactly where it
+   * was and gets that back when it is shown again - pulled onto a screen if
+   * that one has gone, and applied once more after 150 ms if the show moved it.
+   */
+  let hiddenBounds: Rectangle | undefined
+  let confirmBounds: ReturnType<typeof setTimeout> | undefined
+  window.on("show", () => {
+    const recorded = hiddenBounds
+    hiddenBounds = undefined
+    if (confirmBounds) clearTimeout(confirmBounds)
+    confirmBounds = undefined
+    const target = boundsOnShow(recorded, window.isFullScreen(), screen.getAllDisplays().map((display) => display.workArea))
+    // Where the OS kept it, give or take scaling noise, is left alone rather than nudged a pixel larger.
+    if (!target || closeBounds(window.getBounds(), target)) return
+    window.setBounds(target)
+    confirmBounds = setTimeout(() => {
+      confirmBounds = undefined
+      if (window.isDestroyed() || window.isFullScreen() || closeBounds(window.getBounds(), target)) return
+      console.info("[hidden-bounds] the window drifted after show; bounds applied again")
+      window.setBounds(target)
+    }, 150)
+  })
+
   window.on("close", (event) => {
     const others = [...windows].filter((entry) => entry !== window && !entry.isDestroyed()).length
     const hide = closeHidesToTray({
@@ -404,8 +497,13 @@ function createWindow(): BrowserWindow {
       platform: process.platform,
       trayEnabled: Boolean(tray),
     })
-    if (!hide) return
+    if (!hide) {
+      // The close goes ahead, so the contents going away next is not a failure to recover from.
+      markClosing(window)
+      return
+    }
     event.preventDefault()
+    hiddenBounds = window.isFullScreen() ? undefined : window.getBounds()
     if (process.platform === "darwin" && window.isFullScreen()) {
       window.once("leave-full-screen", () => window.hide())
       window.setFullScreen(false)
@@ -459,17 +557,23 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   /*
-   * Both before the backend starts, so that whatever it says on the way up -
-   * and a failure to come up at all - is already being kept by the time it
-   * happens. That record is the only thing a packaged build has to offer when
-   * someone asks what went wrong.
+   * Before the backend starts, so that a process failing on the way up is
+   * already being recorded by the time it happens.
    */
-  captureConsole()
   wireProcessRecovery()
   // Packaged only: a development build would register the bare Electron binary.
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
 
   backend = await startBackend(app.getPath("userData"))
+
+  /*
+   * MiMo keeps the machine from suspending while a turn runs. The runner's busy
+   * set is the truth; every backend event is a moment it may have changed, and
+   * re-reading a handful of ids costs nothing next to the event itself.
+   */
+  const powerHold = new PowerHold(powerSaveBlocker, (line) => console.info(line))
+  const runtime = backend.runtime
+  runtime.bus.subscribe(() => powerHold.sync(runtime.runner.busySessions()))
 
   // The renderer has no Node access; this is how it learns where to connect.
   ipcMain.handle("mcode:bootstrap", () => ({
@@ -564,9 +668,9 @@ app.whenReady().then(async () => {
   ipcMain.on("mcode:menu-labels", (_event, next: Record<string, string>) => {
     setLabels(next)
     // Rebuilt rather than patched: Electron has no way to relabel in place.
-    buildMenu(createWindow)
+    buildMenu()
     // The tray's menu has the same problem and the same answer.
-    if (tray) refreshTray(true, createWindow)
+    if (tray) refreshTray(true)
   })
 
   /*
@@ -693,114 +797,119 @@ app.whenReady().then(async () => {
    * three the items simply would not exist.
    */
   /*
-   * The update feed, fetched out here.
+   * MiMo's automatic updates, on MCode's own JSON feed: the first check 5 s
+   * after launch, then every 3 h, silent on failure, with a newer installer
+   * downloaded in the background (see updater.ts). Every phase change goes to
+   * the windows; the capsule and the settings row react to a ready update.
    *
-   * The window is served under a content policy that allows it to open a socket
-   * to the local backend and reach nothing else, which is the right policy for
-   * a page that renders model output - but it also meant the renderer's fetch
-   * of the update feed could never leave the process. Relaxing the policy to
-   * let one command reach the network would open every other path with it, so
-   * the request runs here instead and the window is handed the answer.
+   * The feed and the installer are fetched out here. The window is served under
+   * a content policy that reaches the local backend and nothing else, which is
+   * right for a page that renders model output; relaxing it for one command
+   * would open every other path with it.
    */
-  ipcMain.handle("mcode:check-updates", async (_event, feed: string) => {
-    const address = String(feed ?? "").trim()
-    if (!/^https?:\/\//.test(address)) throw new Error("the feed must be an http address")
-    const response = await fetch(address, { cache: "no-store" })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const payload = (await response.json()) as { version?: string; url?: string; sha256?: string; notes?: unknown }
-    return {
-      version: payload.version?.trim() ?? "",
-      url: payload.url?.trim() ?? "",
-      // Optional, and checked only when the feed offers one.
-      sha256: payload.sha256?.trim() ?? "",
-      // Optional release notes for the update bubble; older feeds simply have none.
-      notes: typeof payload.notes === "string" ? payload.notes.slice(0, 20_000) : "",
-    }
+  const MAX_INSTALLER = 400_000_000
+  const updater = createUpdater({
+    currentVersion: pkg.version,
+    feedURL: () => backend?.runtime.config.get().updateFeed ?? "",
+    fetchFeed: async (address) => {
+      if (!/^https?:\/\//.test(address)) throw new Error("the feed must be an http address")
+      const response = await fetch(address, { cache: "no-store" })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return parseFeed(await response.json())
+    },
+    /*
+     * The OS temporary directory, under a name taken from the version rather
+     * than the URL: a name that came over the network does not decide where a
+     * file is written.
+     */
+    installerFile: (entry: FeedEntry) => {
+      const safe = entry.version.replace(/[^0-9A-Za-z._-]/g, "") || "update"
+      const suffix = process.platform === "win32" ? ".exe" : process.platform === "darwin" ? ".dmg" : ".AppImage"
+      return path.join(app.getPath("temp"), `mcode-${safe}${suffix}`)
+    },
+    readFile: (file) => fs.readFile(file).catch(() => undefined),
+    sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
+    download: async (entry, file) => {
+      /*
+       * https, not http. The feed may be plain http - it is only read. This
+       * file is run, and fetching an executable over a connection anyone on the
+       * path can rewrite is remote code execution with extra steps.
+       */
+      if (!/^https:\/\//.test(entry.url)) throw new Error("the installer must be at an https address")
+      const response = await fetch(entry.url, { cache: "no-store" })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+      // A ceiling, checked before the body is in memory, and again as chunks arrive for a server that declares no length.
+      const declared = Number(response.headers.get("content-length") ?? "")
+      if (Number.isFinite(declared) && declared > MAX_INSTALLER) throw new Error("the installer is too large")
+      const chunks: Buffer[] = []
+      let seen = 0
+      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+        seen += chunk.byteLength
+        if (seen > MAX_INSTALLER) throw new Error("the installer is too large")
+        chunks.push(Buffer.from(chunk))
+      }
+      const body = Buffer.concat(chunks)
+
+      /*
+       * If the feed said what it should hash to, it has to: https alone says the
+       * bytes arrived unaltered from whoever answered, not that they are the
+       * right bytes.
+       */
+      if (entry.sha256 && createHash("sha256").update(body).digest("hex") !== entry.sha256) {
+        throw new Error("the installer does not match the checksum the feed gave")
+      }
+      await fs.writeFile(file, body)
+    },
+    emit: (state: UpdateState) => {
+      for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("mcode:update-state", state)
+    },
+    log: (line) => console.info(line),
   })
+  ipcMain.handle("mcode:update-status", () => updater.state())
+  ipcMain.handle("mcode:update-check", () => updater.checkNow())
+  updater.start()
+  app.on("before-quit", () => updater.stop())
 
   /*
-   * The rest of an update: fetch the installer the feed named, then hand it to
-   * the shell and quit so it can replace the app that is running.
-   *
-   * The download lands in the OS temporary directory under a name taken from
-   * the version rather than from the URL, because a name that came over the
-   * network should not decide where a file is written. What it will and will
-   * not fetch is argued at the checks themselves.
-   */
-  ipcMain.handle("mcode:download-update", async (_event, url: string, version: string, digest?: unknown) => {
-    const address = String(url ?? "").trim()
-    /*
-     * https, not http.
-     *
-     * The feed itself may be plain http - it is read, and a wrong answer there
-     * makes the app say the wrong version. This file is *run*. Fetching an
-     * executable over a connection anyone on the path can rewrite, and then
-     * launching it, is remote code execution with extra steps, so the one
-     * place that ends in `openPath` insists on a connection that cannot be
-     * rewritten.
-     */
-    if (!/^https:\/\//.test(address)) throw new Error("the installer must be at an https address")
-
-    const response = await fetch(address, { cache: "no-store" })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-    /*
-     * A ceiling, checked before the body is in memory. `arrayBuffer()` on a
-     * feed that names a multi-gigabyte file would otherwise buy whatever it
-     * asked for. A server that declines to say how long the body is gets the
-     * same ceiling applied as the chunks arrive.
-     */
-    const MAX_INSTALLER = 400_000_000
-    const declared = Number(response.headers.get("content-length") ?? "")
-    if (Number.isFinite(declared) && declared > MAX_INSTALLER) throw new Error("the installer is too large")
-
-    const chunks: Buffer[] = []
-    let seen = 0
-    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-      seen += chunk.byteLength
-      if (seen > MAX_INSTALLER) throw new Error("the installer is too large")
-      chunks.push(Buffer.from(chunk))
-    }
-    const body = Buffer.concat(chunks)
-
-    /*
-     * And if the feed said what it should hash to, it has to. This is the only
-     * check that survives a feed being served correctly but pointing somewhere
-     * it should not; https alone says the bytes arrived unaltered from whoever
-     * answered, not that they are the right bytes.
-     */
-    const expected = typeof digest === "string" ? digest.trim().toLowerCase() : ""
-    if (expected) {
-      const actual = createHash("sha256").update(body).digest("hex")
-      if (actual !== expected) throw new Error("the installer does not match the checksum the feed gave")
-    }
-
-    const safe = String(version ?? "").replace(/[^0-9A-Za-z._-]/g, "") || "update"
-    const suffix = process.platform === "win32" ? ".exe" : process.platform === "darwin" ? ".dmg" : ".AppImage"
-    const target = path.join(app.getPath("temp"), `mcode-${safe}${suffix}`)
-    await fs.writeFile(target, body)
-    installerPath = target
-    return target
-  })
-
-  /*
-   * Only what this process downloaded. The renderer names no path here - it
-   * asks to install "the one that was fetched" - so a window cannot talk the
-   * app into launching an arbitrary executable, which is the same rule the
-   * open-with table enforces for editors.
+   * Only what the updater downloaded or verified. The renderer names no path
+   * here - it asks to install "the one that is ready" - so a window cannot talk
+   * the app into launching an arbitrary executable.
    */
   ipcMain.handle("mcode:install-update", async () => {
-    if (!installerPath) throw new Error("no update has been downloaded")
-    const failure = await shell.openPath(installerPath)
-    if (failure) throw new Error(failure)
+    const file = updater.readyFile()
+    if (!file) throw new Error("no update has been downloaded")
+    /*
+     * MiMo's installing notice: shown before the app goes, and given up to 1.5 s
+     * to be delivered so it is on screen as the window disappears. Worded in the
+     * window's language through the published labels.
+     */
+    let notice: Notification | undefined
+    try {
+      if (Notification.isSupported()) {
+        notice = new Notification({
+          title: label("update.installingTitle", "Installing the MCode update"),
+          body: label(
+            "update.installingBody",
+            "MCode closes so the installer can put the new version in place. When it finishes, the installer can open MCode again.",
+          ),
+        })
+        const delivered = deliveryOf(notice)
+        notice.show()
+        await waitForDelivery(delivered)
+      }
+    } catch {
+      // No notice is no reason not to install.
+    }
+    const failure = await shell.openPath(file)
+    if (failure) {
+      notice?.close()
+      throw new Error(failure)
+    }
     beginIntentionalQuit()
     app.quit()
     return true
   })
-
-  // The in-window menu's File > New Window. The native menu calls createWindow
-  // directly; the drawn menu has to ask for it.
-  ipcMain.on("mcode:new-window", () => createWindow())
 
   /*
    * Restarts the app. The renderer's error page is the caller: once the page
@@ -808,6 +917,11 @@ app.whenReady().then(async () => {
    * time, and a page that cannot draw cannot ask a person to quit and reopen.
    */
   ipcMain.on("mcode:relaunch", () => relaunch())
+
+  /* A renderer diagnostics line (MiMo's diagLog): capped, and redacted on its way into the file. */
+  ipcMain.on("mcode:diag-log", (_event, line: unknown) => {
+    if (typeof line === "string" && line) logs.write("renderer", line.slice(0, 4000))
+  })
 
   /*
    * Quits from the footer menu. Said to be intended first, like the tray's Quit,
@@ -1027,7 +1141,7 @@ app.whenReady().then(async () => {
   registerMediaEmbeds()
 
   ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
-    refreshTray(Boolean(enabled), createWindow)
+    refreshTray(Boolean(enabled))
   })
 
   /* The 配置切换 list, checked here because it arrives from a window. */
@@ -1043,25 +1157,32 @@ app.whenReady().then(async () => {
       )
       .slice(0, 40)
       .map((entry) => ({ key: entry.key, label: entry.label.slice(0, 120), checked: entry.checked }))
-    if (tray) refreshTray(true, createWindow)
+    if (tray) refreshTray(true)
   })
 
   /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */
   ipcMain.handle("mcode:app-icon", (event, id: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || typeof id !== "string" || !/^[a-z][a-z0-9-]{0,30}$/.test(id)) return { ok: false }
-    // macOS takes its icon from the bundle; there is nothing to swap at run time.
-    if (process.platform === "darwin") return { ok: true }
     const file = app.isPackaged
       ? path.join(process.resourcesPath, "app-icons", id + ".png")
       : path.join(here, "../../resources/app-icons", id + ".png")
     if (!existsSync(file)) return { ok: false }
     const image = nativeImage.createFromPath(file)
     if (image.isEmpty()) return { ok: false }
+    /*
+     * MiMo's Dock icon follows the chosen icon (app.dock.setIcon). The window
+     * asks at load as well as on a change, so this covers startup too. A macOS
+     * window has no icon of its own, and its menu bar tray is left as it was.
+     */
+    if (process.platform === "darwin") {
+      app.dock?.setIcon(image)
+      return { ok: true }
+    }
     window.setIcon(image)
     /* The corner and the taskbar are the same app; they wear the same icon. */
     trayIcon = id
-    if (tray) refreshTray(true, createWindow)
+    if (tray) refreshTray(true)
     return { ok: true }
   })
 
@@ -1072,6 +1193,16 @@ app.whenReady().then(async () => {
       : { supported: false, pref: "auto", effective: null },
   )
 
+  /* MiMo's 硬件加速 row: the saved choice. */
+  ipcMain.handle("mcode:hardware-acceleration", () => ({ enabled: bootPrefs.hardwareAcceleration }))
+
+  /* Written for the next launch; Chromium has already started with the old one. */
+  ipcMain.handle("mcode:set-hardware-acceleration", async (_event, raw: unknown) => {
+    const enabled = raw !== false
+    await saveBootPrefs({ hardwareAcceleration: enabled })
+    return { ok: true, enabled }
+  })
+
   /* Written for the next launch; the running one keeps the switches it started with. */
   ipcMain.handle("mcode:set-display-server", async (_event, raw: unknown) => {
     if (process.platform !== "linux") return { ok: false }
@@ -1081,9 +1212,24 @@ app.whenReady().then(async () => {
     return { ok: true, pref }
   })
 
+  /*
+   * MiMo's setNativeTheme. Setting the source raises nativeTheme's "updated",
+   * which repaints every window's background and caption band; the choice is
+   * kept so the next launch paints right before any page has loaded.
+   */
+  ipcMain.on("mcode:native-theme", (_event, raw: unknown) => {
+    const theme = themePref(raw)
+    if (nativeTheme.themeSource !== theme) nativeTheme.themeSource = theme
+    if (bootPrefs.theme !== theme) void saveBootPrefs({ theme })
+  })
+
   ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {
     setTitlebarMode(BrowserWindow.fromWebContents(event.sender), mode)
   })
+
+  /* MiMo's winIsFullscreen / winExitFullscreen, answered for the window that asks. */
+  ipcMain.handle("mcode:is-fullscreen", (event) => BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false)
+  ipcMain.on("mcode:exit-fullscreen", (event) => BrowserWindow.fromWebContents(event.sender)?.setFullScreen(false))
 
   ipcMain.on("mcode:window", (event, action: "minimize" | "maximize" | "close") => {
     const window = BrowserWindow.fromWebContents(event.sender)
@@ -1094,14 +1240,14 @@ app.whenReady().then(async () => {
     else window.maximize()
   })
 
-  buildMenu(createWindow)
+  buildMenu()
   createWindow()
+  keepWindowsOnScreen()
+  repaintAfterWake(() => quitting)
 
   app.on("activate", () => {
-    // A window hidden to the tray or menu bar comes back rather than being joined by a new one.
-    const hidden = BrowserWindow.getAllWindows()[0]
-    if (hidden) raise(hidden)
-    else createWindow()
+    // A window hidden to the tray or menu bar comes back; one whose renderer is gone is replaced.
+    activate(raise)
   })
 })
 

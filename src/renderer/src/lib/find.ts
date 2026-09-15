@@ -113,20 +113,6 @@ export function openFind(event?: Event): boolean {
 }
 
 /**
- * Its `key === "g"` arm: only an open bar steps, and only the current one.
- *
- * The editable test is the same one Ctrl+F gets, because the reference makes
- * it once for both arms - inside the find input itself the chord belongs to
- * the field, and Enter and Shift+Enter step instead.
- */
-export function stepFind(direction: number, event?: Event): boolean {
-  if (isEditable(event?.target ?? null) || isEditable(document.activeElement)) return false
-  if (!current?.isOpen()) return false
-  current.next(direction)
-  return true
-}
-
-/**
  * Which text node an absolute offset falls in, and where inside it.
  *
  * `ends[i]` is the running total THROUGH node i, so node i covers the half-open
@@ -440,7 +426,8 @@ export function createFind(options: FindOptions): Find {
         close()
         return
       }
-      if (event.key !== "Enter") return
+      // Enter that confirms an input method's candidate is not a step, as in MiMo.
+      if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return
       event.preventDefault()
       next(event.shiftKey ? -1 : 1)
     },
