@@ -1,3 +1,4 @@
+import path from "node:path"
 import type {
   AgentName,
   AssistantMessage,
@@ -24,6 +25,7 @@ import type { CommandRisk } from "../command-risk"
 import { PermissionDenied, REVIEW_TIMEOUT_MS } from "../permission"
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
+import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
 import { findTool, reachOf, toolsFor } from "../tool/registry"
 import { Questions } from "../tool/question"
 import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
@@ -1041,7 +1043,12 @@ export class SessionRunner {
      */
     this.turn(input.sessionID).messages.push(user.id)
 
-    const written = steering.written.then(() => this.store.saveMessage(user))
+    const written = steering.written.then(async () => {
+      // skills: what it names is loaded into it on the way to the transcript, in the order it was typed.
+      const reminders = await this.remindersFor(input)
+      if (reminders.length) user.reminders = reminders
+      return this.store.saveMessage(user)
+    })
     /*
      * A message that could not be written is taken off both lists again. Left
      * on the waiting one, the loop would keep asking for another step to
@@ -1057,6 +1064,18 @@ export class SessionRunner {
       if (answering && also >= 0) answering.splice(also, 1)
     })
     return written.then(() => user.id)
+  }
+
+  /** skills: every skill a conversation in this directory can reach, with the user's global ones from the app's data folder. */
+  private async skillsFor(directory: string): Promise<SkillInfo[]> {
+    return (await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents) })).skills
+  }
+
+  /** skills: what a user message carries for the model beyond its words. */
+  private async remindersFor(input: PromptInput, directory?: string): Promise<string[]> {
+    if (!input.text.includes("/")) return []
+    const where = directory ?? (await this.store.get(input.sessionID))?.directory
+    return where ? skillReminders(input.text, await this.skillsFor(where)) : []
   }
 
   /** True while something the user typed is waiting to reach the model. */
@@ -1190,6 +1209,7 @@ export class SessionRunner {
       throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
     }
 
+    const reminders = await this.remindersFor(input, session.directory)
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
@@ -1199,6 +1219,8 @@ export class SessionRunner {
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
       // session chat
       ...(input.inbox ? { inbox: input.inbox } : {}),
+      // skills
+      ...(reminders.length ? { reminders } : {}),
       time: { created: Date.now() },
     }
     await this.store.saveMessage(user)
@@ -1344,6 +1366,7 @@ export class SessionRunner {
       staged: session.staged,
       instructions: config.instructions,
       globalAgentsFile: this.globalAgents,
+      skills: await this.skillsFor(session.directory),
     })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const system = session.parentID ? `${base}\n\n${SUBAGENT_NOTE}` : base
@@ -1409,8 +1432,8 @@ export class SessionRunner {
       await this.steering.get(sessionID)?.written
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
-      // session chat: a message from another conversation says so, in the request only.
-      const history = withChatHeaders(this.contextFor(session, stored))
+      // session chat: a message from another conversation says so, in the request only; skills: what a message loaded follows it.
+      const history = withSkillReminders(withChatHeaders(this.contextFor(session, stored)))
 
       const effort = session.effort ?? config.effort
 
@@ -1913,6 +1936,7 @@ export class SessionRunner {
           part.output = text
           publish()
         },
+        skills: () => this.skillsFor(input.session.directory),
       })
       part.status = "completed"
       part.output = result.output

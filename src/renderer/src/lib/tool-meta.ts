@@ -40,7 +40,7 @@ export const OUTPUT_CAP = 3000
 
 /** The tools the tables name in every state. `apply_patch` speaks as an edit. */
 // session chat: `contacts` is the one of its four tools MiMo's step tables name.
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task", "pdf_locate", "present_files", "contacts"])
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task", "pdf_locate", "present_files", "contacts", "skill", "skill_search"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
@@ -62,6 +62,8 @@ const BUILT_IN = new Set([
   "present_files",
   "get_desktop_settings",
   "set_desktop_setting",
+  "skill",
+  "skill_search",
 ])
 
 /** MiMo's title for a locate step: the start of the quoted passage. */
@@ -210,6 +212,11 @@ export function stepTitle(part: ToolPart): string {
       return text(input.key) ? `${text(input.key)} → ${text(input.value)}` : ""
     case "get_desktop_settings":
       return ""
+    // skills: MiMo names a load by the skill and a search by its query.
+    case "skill":
+      return text(input.name).trim() || part.title || ""
+    case "skill_search":
+      return text(input.query).trim() || part.title || ""
   }
   if (BUILT_IN.has(part.name)) return part.title || ""
   // Anything else - an MCP tool - is described by what it was given.

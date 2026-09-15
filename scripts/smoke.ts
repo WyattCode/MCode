@@ -197,6 +197,13 @@ import { CHAT_HOPS, replyIn, withChatHeaders } from "../src/server/session/chat"
 import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/lib/convo-card"
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
+// skills: discovery, frontmatter and the slash list.
+import { parseFrontmatter } from "../src/server/frontmatter"
+import { discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
+import { listCommands } from "../src/server/command"
+import { SEARCH, SKILL_FILE_SAMPLE, SkillSearchTool, SkillTool, searchSkills, searchTokens } from "../src/server/tool/skill"
+import { stepTitle as skillStepTitle, toolVerb as skillToolVerb } from "../src/renderer/src/lib/tool-meta"
+
 let passed = 0
 let failed = 0
 
@@ -5089,9 +5096,138 @@ async function main() {
   await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
+  await skillChecks(root)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/** skills: where they are found, what their frontmatter may say, and how they reach the slash list. */
+async function skillChecks(root: string) {
+  section("Skills (discovery and frontmatter)")
+  const read = parseFrontmatter(
+    [
+      "---",
+      "name: demo",
+      'description: "Makes: things"',
+      "aliases: [one, 'two', \"three\"]",
+      "tags:",
+      "  - a",
+      "  - b",
+      "disable-model-invocation: true",
+      "long: first part",
+      "  second part",
+      "folded: >-",
+      "  line one",
+      "  line two",
+      "literal: |",
+      "  keep",
+      "  lines",
+      "metadata:",
+      "  author: me",
+      "  version: 1.0.0",
+      "---",
+      "Body here",
+    ].join("\n"),
+  )
+  check("frontmatter reads quoted, listed, flagged and multi-line values", !read.error && read.data.description === "Makes: things" && JSON.stringify(read.data.aliases) === '["one","two","three"]' && JSON.stringify(read.data.tags) === '["a","b"]' && read.data["disable-model-invocation"] === true, read)
+  check("a plain value carried over lines folds, `>-` folds and `|` keeps its lines", read.data.long === "first part second part" && read.data.folded === "line one line two" && read.data.literal === "keep\nlines\n", read.data)
+  check("a one-level map is read and the body follows the block", (read.data.metadata as Record<string, unknown>)?.author === "me" && read.body === "Body here", read)
+  check("frontmatter that is not key: value is an error, not a half-read", Boolean(parseFrontmatter("---\nname: x\nthis is not yaml\n---\nbody").error))
+  check("a file with no frontmatter is all body", parseFrontmatter("# Title\n").body === "# Title\n")
+
+  const base = path.join(root, "skills-case")
+  const builtin = path.join(base, "builtin")
+  const storage = path.join(base, "storage")
+  const outer = path.join(base, "outer")
+  const repo = path.join(outer, "repo")
+  const nested = path.join(repo, "packages", "app")
+  const write = async (file: string, text: string) => {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, text)
+  }
+  const skill = (name: string, description: string | undefined, extra = "", body = `Body of ${name}.`) =>
+    `---\nname: ${name}\n${description === undefined ? "" : `description: ${description}\n`}${extra}---\n${body}\n`
+  await write(path.join(builtin, "alpha", "SKILL.md"), skill("alpha", "shipped alpha"))
+  await write(path.join(builtin, "shipped", "SKILL.md"), skill("shipped", "only shipped"))
+  await write(path.join(storage, "skills", "alpha", "SKILL.md"), skill("alpha", "user alpha"))
+  await write(path.join(storage, "skill", "beta", "SKILL.md"), skill("beta", "global beta", "aliases:\n  - bee\n"))
+  await fs.mkdir(path.join(repo, ".git"), { recursive: true })
+  await write(path.join(repo, ".mcode", "skills", "gamma", "SKILL.md"), skill("gamma", "repo gamma"))
+  await write(path.join(nested, ".mcode", "skill", "gamma", "SKILL.md"), skill("gamma", "nested gamma"))
+  await write(path.join(nested, ".mcode", "skills", "hidden", "SKILL.md"), skill("hidden", "user only", "disable-model-invocation: true\n"))
+  await write(path.join(nested, ".mcode", "skills", "folder-x", "SKILL.md"), skill("renamed", "mismatched"))
+  await write(path.join(nested, ".mcode", "skills", "nodesc", "SKILL.md"), skill("nodesc", undefined))
+  await write(path.join(nested, ".claude", "skills", "claude-one", "SKILL.md"), skill("claude-one", "from claude"))
+  await write(path.join(nested, ".agents", "skills", "agents-one", "SKILL.md"), skill("agents-one", "from agents"))
+  await write(path.join(outer, ".mcode", "skills", "above", "SKILL.md"), skill("above", "above the repository"))
+
+  const found = await discoverSkills({ directory: nested, storageDirectory: storage, builtinRoot: builtin })
+  const named = (name: string) => found.skills.find((entry) => entry.name === name)
+  check("shipped, global and project skills are all found", Boolean(named("shipped") && named("beta") && named("gamma")), found.skills.map((entry) => entry.name))
+  check("a user skill replaces a shipped one of the same name", named("alpha")?.description === "user alpha" && named("alpha")?.builtin === false, named("alpha"))
+  check("a shipped skill is marked built-in", named("shipped")?.builtin === true)
+  check("the nearer project folder wins a name", named("gamma")?.description === "nested gamma", named("gamma"))
+  check("aliases are read as a list", JSON.stringify(named("beta")?.aliases) === '["bee"]', named("beta"))
+  check("disable-model-invocation is read", named("hidden")?.disableModelInvocation === true)
+  check(".claude and .agents folders are not read, as MiMo's desktop turns them off", !named("claude-one") && !named("agents-one"))
+  check("the walk stops at the repository root", !named("above"))
+  check("a skill with no description is skipped and reported", !named("nodesc") && found.problems.some((problem) => problem.path.includes("nodesc") && /description/.test(problem.message)), found.problems)
+  check("a name that does not match its folder is reported but still loads", Boolean(named("renamed")) && found.problems.some((problem) => problem.path.includes("folder-x")), found.problems)
+  check("the body is the content, frontmatter removed", named("gamma")?.content.trim() === "Body of gamma.", named("gamma")?.content)
+  check("a found skill's folder is not outside the project", isSkillPath(path.join(named("gamma")!.directory, "scripts", "x.py")) && !isSkillPath(path.join(base, "elsewhere")))
+
+  process.env.MCODE_BUILTIN_SKILLS = builtin
+  try {
+    const commands = await listCommands(
+      { config: { get: () => ({}) }, mcp: { prompts: async () => ({}), getPrompt: async () => "" }, storage: { directory: storage } },
+      nested,
+    )
+    const slash = (name: string) => commands.find((entry) => entry.name === name)
+    check("a skill's command template is its body only", slash("gamma")?.template.trim() === "Body of gamma." && !slash("gamma")?.template.includes("Base directory"), slash("gamma"))
+    check("a shipped skill's command is marked built-in and a user one is not", slash("shipped")?.builtin === true && !slash("gamma")?.builtin, [slash("shipped"), slash("gamma")])
+    check("a user-only skill is still in the slash list", slash("hidden")?.source === "skill")
+  } finally {
+    delete process.env.MCODE_BUILTIN_SKILLS
+  }
+
+  section("Skills (tools, prompt and /name)")
+  const skills = found.skills
+  const toolContext = { skills: async () => skills } as never
+  for (let at = 0; at < 12; at++) await write(path.join(named("gamma")!.directory, "scripts", `s${String(at).padStart(2, "0")}.py`), "print(1)\n")
+  const loaded = await SkillTool.execute({ name: "gamma" }, toolContext)
+  check("skill loads a skill's instructions with its folder", loaded.output.includes("Body of gamma.") && loaded.output.includes("loaded_skill") && loaded.output.includes("file:"), loaded.output)
+  check("skill lists at most ten of its files, never SKILL.md itself", (loaded.output.match(/<file>/g) ?? []).length === SKILL_FILE_SAMPLE && !/<file>[^<]*SKILL\.md</.test(loaded.output))
+  check("a load is titled by the skill", loaded.title === "gamma")
+  const refusal = await SkillTool.execute({ name: "hidden" }, toolContext).then(() => "", (err: Error) => err.message)
+  check("skill refuses a user-only skill and says to type /name", refusal.includes("/hidden"), refusal)
+  const unknown = await SkillTool.execute({ name: "nope" }, toolContext).then(() => "", (err: Error) => err.message)
+  check("an unknown name lists the skills that can be loaded, without the user-only ones", unknown.includes("gamma") && !unknown.includes("hidden"), unknown)
+  check("MiMo's search figures: three results, 0.85 loads, BM25 1.5 / 0.75 / 0.5, weights 0.55 and 0.35", SEARCH.maxResults === 3 && SEARCH.autoLoad === 0.85 && SEARCH.k1 === 1.5 && SEARCH.lengthWeight === 0.75 && SEARCH.smoothing === 0.5 && SEARCH.scoreWeight === 0.55 && SEARCH.coverageWeight === 0.35)
+  check("search words drop a plural s and read Chinese in pairs", searchTokens("documents 表格处理").join() === "document,表格,格处,处理", searchTokens("documents 表格处理"))
+  const byAlias = await SkillSearchTool.execute({ query: "I need the bee skill" }, toolContext)
+  check("a query naming an alias loads that skill outright", byAlias.metadata?.loaded === "beta" && byAlias.output.includes("Body of beta."), byAlias.metadata)
+  const none = await SkillSearchTool.execute({ query: "zzzz qqqq" }, toolContext)
+  check("a query matching nothing says no_match", JSON.parse(none.output).status === "no_match")
+  check("search never returns a user-only skill", !searchSkills("user only hidden", skills.filter((entry) => !entry.disableModelInvocation)).some((entry) => entry.name === "hidden") && (await SkillSearchTool.execute({ query: "hidden user only" }, toolContext)).metadata?.loaded !== "hidden")
+  check("search keeps at most three results", searchSkills("skill", skills.map((entry) => ({ ...entry, description: "skill skill" }))).length <= 3)
+
+  const once = skillReminders("/gamma please, and `/beta` in code\n```\n/alpha\n```", skills)
+  check("/name in a message loads that skill, but not a name inside code", once.length === 1 && once[0]!.includes("Body of gamma."), once)
+  check("a user-only skill loads when the user types its name", skillReminders("run /hidden now", skills).some((entry) => entry.includes("Body of hidden.")))
+  const many = skillReminders("/alpha /beta /gamma /shipped go", skills)
+  check("up to three load, and naming several adds a note that names the one left out", many.length === 4 && many.filter((entry) => entry.includes("loaded_skill")).length === 3 && many[3]!.includes("shipped"), many.length)
+  check("a path is not a skill", skillReminders("see src/gamma and C:/gamma", skills).length === 0)
+  const sent = withSkillReminders([{ role: "user", text: "hi", reminders: ["R1"] }, { role: "assistant" }])
+  check("the model reads a message's reminders after its words; the transcript keeps the words", sent[0]!.text === "hi\n\nR1" && sent[1]!.role === "assistant")
+
+  const prompt = await systemPrompt({ directory: nested, agent: "build", skills })
+  check("the prompt lists the skills the model may load, with where each lives", prompt.includes("<name>gamma</name>") && prompt.includes("nested gamma") && prompt.includes("<location>file:") && !prompt.includes("<name>hidden</name>"))
+  check("with none to list, the prompt says so", (await systemPrompt({ directory: nested, agent: "build", skills: [] })).includes("No skills are available"))
+  check("skill and skill_search are offered, appended, and change nothing", TOOLS.at(-2)?.name === "skill_search" && TOOLS.at(-1)?.name === "skill" && reachOf("skill") === "reads" && reachOf("skill_search") === "reads")
+  check("plan keeps both skill tools", toolsFor("plan").some((tool) => tool.name === "skill") && toolsFor("plan").some((tool) => tool.name === "skill_search"))
+  const skillPart = (name: string, input: Record<string, unknown>): ToolPart => ({ type: "tool", id: name, callID: name, name, status: "completed", input, time: { created: 1 } })
+  check("MiMo's step words and titles for a load and a search", skillToolVerb("skill", "completed") === translate("toolLabel.done.skill") && skillToolVerb("skill_search", "running") === translate("toolLabel.running.skill_search") && skillStepTitle(skillPart("skill", { name: "gamma" })) === "gamma" && skillStepTitle(skillPart("skill_search", { query: "make a deck" })) === "make a deck")
 }
 
 /**
@@ -6007,9 +6143,16 @@ async function sessionChatChecks(root: string, project: string) {
   if (typeof first === "object") first.action?.()
   check("the card lists a line per link; one whose peer exists jumps to it", cardLinks.length === 2 && jumped.join() === "ses_p" && typeof cardLinks[1] === "object" && !cardLinks[1].action)
   check(
-    "the four tools are appended last, after every tool already there, keeping the cached prefix",
-    TOOLS.slice(-4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
-      TOOLS.findIndex((tool) => tool.name === "task") < TOOLS.length - 4,
+    "the four tools are appended after every tool that came before them, keeping the cached prefix",
+    (() => {
+      const at = TOOLS.findIndex((tool) => tool.name === "contacts")
+      return (
+        TOOLS.slice(at, at + 4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
+        TOOLS[at - 1]?.name === "set_desktop_setting" &&
+        // Only tools added since (the skill tools) come after them.
+        TOOLS.slice(at + 4).every((tool) => tool.name === "skill_search" || tool.name === "skill")
+      )
+    })(),
     TOOLS.map((tool) => tool.name),
   )
   check("Plan keeps contacts and loses the three that act", toolsFor("plan").some((tool) => tool.name === "contacts") && !toolsFor("plan").some((tool) => ["talk_to_session", "create_session", "update_session"].includes(tool.name)))

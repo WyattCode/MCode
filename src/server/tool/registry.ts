@@ -11,6 +11,7 @@ import { TaskTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
+import { SkillSearchTool, SkillTool } from "./skill"
 
 /**
  * The tool surface offered to the model.
@@ -51,6 +52,9 @@ export const TOOLS: ToolDefinition[] = [
   TalkToSessionTool,
   CreateSessionTool,
   UpdateSessionTool,
+  // skills: appended, in MiMo's order (search, then load), for the same reason.
+  SkillSearchTool,
+  SkillTool,
 ]
 
 /**
@@ -137,6 +141,9 @@ const READS = new Set([
   "talk_to_session",
   "create_session",
   "update_session",
+  // skills: loading instructions reads files, and changes none.
+  "skill",
+  "skill_search",
 ])
 
 /**

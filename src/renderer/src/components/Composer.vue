@@ -845,14 +845,10 @@ function removeSkill(name: string) {
   }, 200)
 }
 
-/* The chips' skills spelled out ahead of the message, the way a skill command is expanded when typed. */
+/* MiMo's chips: each chosen skill is named as `/name` ahead of the message, and the server loads what a message names. */
 function withSkills(message: string, chosen: string[]): string {
-  const expanded = chosen
-    .map((name) => serverCommand(name))
-    .filter((command): command is CommandInfo => Boolean(command?.template))
-    .map((command) => expandTemplate(command.template, "").trim())
-    .filter(Boolean)
-  return [...expanded, message].filter((part) => part.trim()).join("\n\n")
+  if (!chosen.length) return message
+  return [chosen.map((name) => `/${name}`).join(" "), message].filter((part) => part.trim()).join(" ")
 }
 
 /* The plus menu's skills submenu: MiMo's search box over the project's skills, beside its row. */
@@ -1057,7 +1053,8 @@ function subtaskOf(value: string): { description: string; prompt: string } | und
 function outgoing(value: string): string {
   const line = splitCommandLine(value)
   const command = line && serverCommand(line.name)
-  if (!command) return value
+  // skills: a `/name` line goes as typed; the server loads the skill it names into the message.
+  if (!command || command.source === "skill") return value
   const expanded = expandTemplate(command.template, line!.args)
   // An MCP prompt whose fetch failed has no template. Sending nothing would be
   // refused by the store and the draft would bounce back with no explanation,

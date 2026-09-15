@@ -215,6 +215,12 @@ export interface UserMessage {
   /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
   annotations?: Annotation[]
   /**
+   * skills: written by the runner, never drawn - the skills this message named
+   * with `/name`, and the hint an attached office document brings. The model
+   * reads them after the text.
+   */
+  reminders?: string[]
+  /**
    * subagents: written by the runner, not the user - what became of background
    * subagents. `text` is what the model reads; the transcript draws pills.
    */
@@ -703,6 +709,8 @@ export interface CommandInfo {
   /** Which model to run it on, when it names one. */
   model?: ModelRef
   source: CommandSource
+  /** A skill shipped with the app (MiMo's `bundled`). */
+  builtin?: boolean
   /**
    * The prompt text, with its placeholders still in it.
    *
