@@ -16,8 +16,11 @@ import { t } from "../lib/i18n"
 withDefaults(defineProps<{ title: string; body: string; confirmLabel: string; danger?: boolean }>(), { danger: true })
 const emit = defineEmits<{ close: []; confirm: [] }>()
 
-/** Focus starts on Cancel, so a stray Enter or Space does not confirm. */
-const cancel = ref<HTMLButtonElement>()
+/*
+ * Focus starts on the confirm button, as MiMo's does, so Enter confirms.
+ * This deliberately reverses MCode's earlier cancel-first choice at the user's request.
+ */
+const confirmButton = ref<HTMLButtonElement>()
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === "Escape") emit("close")
@@ -25,7 +28,7 @@ function onKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   window.addEventListener("keydown", onKeydown)
-  cancel.value?.focus()
+  confirmButton.value?.focus()
 })
 onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </script>
@@ -36,8 +39,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
       <h2 id="confirm-title">{{ title }}</h2>
       <p class="body">{{ body }}</p>
       <footer>
-        <button ref="cancel" class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
+        <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button ref="confirmButton" class="confirm" :class="{ danger }" data-confirm @click="emit('confirm')">{{ confirmLabel }}</button>
       </footer>
     </div>
   </div>
