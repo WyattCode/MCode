@@ -27,6 +27,8 @@ const props = defineProps<{
   end?: boolean
   /** MiMo's side column menus: 13px rows on a 14px corner inside 4px of padding. */
   side?: boolean
+  /** MiMo's tool dropdown (the right panel's plus and tab menus): 14px rows on an 11px corner, key caps for shortcuts. */
+  tool?: boolean
   /** The narrowest the panel may be, as each of MiMo's menus sets its own. */
   minWidth?: number
 }>()
@@ -234,7 +236,7 @@ onBeforeUnmount(() => {
   <div
     ref="box"
     class="menu"
-    :class="{ side }"
+    :class="{ side, tool }"
     role="menu"
     :style="{ left: `${at.x}px`, top: `${at.y}px`, minWidth: minWidth ? `${minWidth}px` : undefined }"
     @mouseleave="leaveMain"
@@ -633,5 +635,56 @@ onBeforeUnmount(() => {
 .menu.side .rule {
   width: auto;
   margin: 3px 4px;
+}
+
+/*
+ * MiMo's tool dropdown, used by the right panel's plus and tab menus: 5px of
+ * padding on a 16px corner, 14px rows 6 by 10 on an 11px corner with 9 between
+ * glyph and label, 17px glyphs, disabled rows at .4, and each shortcut an 11px
+ * key cap in muted ink.
+ */
+.menu.tool {
+  --pad: 5px;
+  border-radius: 16px;
+}
+
+.menu.tool .item {
+  gap: 9px;
+  height: auto;
+  min-height: 0;
+  padding: 6px 10px;
+  border-radius: 11px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: 20px;
+  letter-spacing: 0;
+}
+
+.menu.tool .glyph {
+  width: 17px;
+  height: 17px;
+}
+
+.menu.tool .item:disabled {
+  opacity: 0.4;
+}
+
+.menu.tool .hint {
+  padding: 1px 5px;
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
+  border: 1px solid var(--border-weak);
+  border-radius: 5px;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: normal;
+}
+
+:root[data-theme="dark"] .menu.tool .hint {
+  color: #b8b8b8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .menu.tool .hint {
+    color: #b8b8b8;
+  }
 }
 </style>

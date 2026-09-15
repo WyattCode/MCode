@@ -13,8 +13,9 @@ import RpDiff from "./right/RpDiff.vue"
 import OfficeTab from "./right/OfficeTab.vue"
 import HtmlTab from "./right/HtmlTab.vue"
 import FloatingChat from "./right/FloatingChat.vue"
+import PaneBoundary from "./right/PaneBoundary.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
-import { ADD_MENU_ORDER, LAUNCH_KEYS, LAUNCH_ORDER, MENU_KEYS, TOOL_INFO, iconOf } from "../lib/right-tools"
+import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf } from "../lib/right-tools"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 
@@ -24,12 +25,14 @@ import { t } from "../lib/i18n"
  * A head of tabs, the plus that adds one, and the button that expands the panel
  * over the conversation; under it the launcher while there are no tabs, or the
  * tab on show. Every tab's pane stays mounted - a terminal keeps its screen, a
- * page keeps its place - except a side chat, which reads the store's one side
- * conversation and so is mounted only while it is the one on show.
+ * page keeps its place, a side chat its transcript - and each is drawn inside
+ * an error boundary, so a pane that throws shows MiMo's inline error instead of
+ * going blank.
  *
  * Its width is dragged on its start edge, kept between 300 and what leaves the
- * conversation 480, and remembered. Closing a terminal something was typed
- * into asks first, as MiMo's does.
+ * conversation 480, and remembered. Opening and closing slide over content
+ * that keeps its final layout. Closing a terminal something was typed into
+ * asks first, as MiMo's does.
  */
 const props = defineProps<{
   /** The conversation on show, for the side chat, the terminal and the review; absent on the home screen. */
@@ -37,8 +40,16 @@ const props = defineProps<{
   /** The project the tools work in. */
   directory?: string
   browserAllowed: boolean
-  /** How much of the window the side column takes, for the widest the panel may be. */
+  /** How much the open side column takes past its rail, for the widest the panel may be. */
   sidebarWidth: number
+  /** The side column is folded to its rail, whose buttons then stand over an expanded panel's head. */
+  sideCollapsed: boolean
+  /** Each tool's shortcut as currently bound; a tool without one shows none. */
+  hints: Partial<Record<RightTool, string>>
+  /** A modal is up: the floating chat goes inert under it. */
+  modalOpen: boolean
+  /** The search overlay is open: the floating chat's box dims. */
+  searchOpen: boolean
 }>()
 const emit = defineEmits<{
   "open-settings": [section?: "models"]
@@ -62,7 +73,7 @@ function title(tab: RightTab): string {
 
 /* Width: between MiMo's 300 and what leaves the conversation its 480. */
 const viewport = ref(window.innerWidth)
-const maxWidth = computed(() => Math.max(PANEL_MIN_WIDTH, viewport.value - 62 - props.sidebarWidth - 480))
+const maxWidth = computed(() => Math.max(PANEL_MIN_WIDTH, viewport.value - RAIL_WIDTH - props.sidebarWidth - MAIN_MIN_WIDTH))
 const shownWidth = computed(() => Math.min(maxWidth.value, Math.max(PANEL_MIN_WIDTH, rp.width)))
 const resizing = ref(false)
 
@@ -90,7 +101,23 @@ function beginResize(event: MouseEvent) {
   window.addEventListener("mouseup", done)
 }
 
+/*
+ * MiMo's rp-motion: for the 200ms of an open or close slide the panel clips,
+ * and its body keeps the final width, so nothing inside re-lays out per frame.
+ */
+const motion = ref(false)
+let motionTimer: ReturnType<typeof setTimeout> | undefined
+watch(
+  () => rp.open,
+  () => {
+    clearTimeout(motionTimer)
+    motion.value = true
+    motionTimer = setTimeout(() => (motion.value = false), 200)
+  },
+)
+
 /* Tabs: 160 each, 120 once they would not all fit, then the strip scrolls. */
+const panel = ref<HTMLElement>()
 const head = ref<HTMLElement>()
 const strip = ref<HTMLElement>()
 const compact = ref(false)
@@ -100,10 +127,14 @@ function measure() {
   cancelAnimationFrame(measureFrame)
   measureFrame = requestAnimationFrame(() => {
     const box = head.value
-    if (!box || !rp.open) return
+    const aside = panel.value
+    if (!box || !aside || !rp.open) return
+    // MiMo skips mid-slide: below its width less one the pills would turn compact and snap back.
+    const width = aside.getBoundingClientRect().width
+    if (rp.fullscreen ? width <= 0 : width < shownWidth.value - 1) return
     const style = getComputedStyle(box)
-    // MiMo's sum: the head's inner width less the plus, the spacer's floor and two gaps.
-    const room = box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 26 - 8 - 8
+    // MiMo's sum: the head's inner width less the plus, the spacer's floor of 0, and two gaps.
+    const room = box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 26 - 8
     const count = rp.tabs.length
     compact.value = count > 0 && count * 160 + (count - 1) * 4 > room
   })
@@ -128,7 +159,7 @@ watch(() => [rp.active, rp.tabs.length] as const, async () => {
 
 onMounted(() => {
   window.addEventListener("resize", onResize)
-  if (head.value) observer.observe(head.value)
+  for (const element of [head.value, strip.value, panel.value]) if (element) observer.observe(element)
   measure()
 })
 
@@ -136,6 +167,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", onResize)
   observer.disconnect()
   cancelAnimationFrame(measureFrame)
+  clearTimeout(motionTimer)
 })
 
 /* Closing: a terminal something was typed into is held for a question; the rest go at once. */
@@ -196,7 +228,7 @@ const addItems = computed<MenuItem[]>(() =>
     key: tool,
     label: t(TOOL_INFO[tool].label),
     icon: TOOL_INFO[tool].icon.join(" "),
-    hint: MENU_KEYS[tool],
+    hint: props.hints[tool],
   })),
 )
 
@@ -236,13 +268,19 @@ defineExpose({
 
 <template>
   <aside
+    ref="panel"
     class="right-panel"
-    :class="{ hidden: !rp.open, fullscreen: rp.open && rp.fullscreen, resizing }"
+    :class="{
+      hidden: !rp.open,
+      fullscreen: rp.open && rp.fullscreen,
+      resizing,
+      motion: motion && !rp.fullscreen,
+      'side-collapsed': sideCollapsed,
+    }"
     :style="{ '--rw': `${shownWidth}px` }"
     :aria-label="t('key.sidePanel')"
     data-right-panel
   >
-    <div v-if="!rp.fullscreen" class="resizer" :title="t('rp.panel.resizeTitle')" @mousedown.prevent="beginResize" />
     <div ref="head" class="rp-head">
       <div ref="strip" class="rp-tabs" :class="{ compact }" role="tablist" @wheel="onWheel">
         <div
@@ -289,6 +327,8 @@ defineExpose({
       <span class="rp-head-spacer" />
       <PanelExpand v-if="rp.open" :full="rp.fullscreen" @toggle="rp.toggleFullscreen()" />
     </div>
+    <!-- After the head in the document: Electron's later regions win, so its no-drag beats the head's drag. -->
+    <div v-if="!rp.fullscreen" class="resizer" :title="t('rp.panel.resizeTitle')" @mousedown.prevent="beginResize" />
 
     <div v-if="!rp.tabs.length" class="rp-launch" data-rp-launch>
       <button v-for="tool in tools" :key="tool" type="button" class="launch-card" :data-tool="tool" @click="rp.openTool(tool)">
@@ -296,62 +336,64 @@ defineExpose({
           <path v-for="d in TOOL_INFO[tool].icon" :key="d" :d="d" />
         </svg>
         <span class="lc-name">{{ t(TOOL_INFO[tool].label) }}</span>
-        <kbd v-if="LAUNCH_KEYS[tool]" class="lc-kbd">{{ LAUNCH_KEYS[tool] }}</kbd>
+        <kbd v-if="LAUNCH_HINTED.includes(tool) && hints[tool]" class="lc-kbd">{{ hints[tool] }}</kbd>
       </button>
     </div>
 
     <div v-else class="rp-body">
       <div v-for="tab in rp.tabs" :key="tab.id" class="rp-pane" :data-rp-pane="tab.id" v-show="tab.id === rp.active">
-        <RpReview v-if="tab.type === 'review'" :root="directory" />
-        <RpFiles
-          v-else-if="tab.type === 'files'"
-          :root="directory"
-          :viewFile="tab.viewFile"
-          @view="(file: string) => rp.update(tab.id, { viewFile: file, name: file.split('/').pop() })"
-        />
-        <RpChat
-          v-else-if="tab.type === 'chat' && tab.id === rp.active && rp.open"
-          :key="`${tab.id}:${sessionID ?? ''}`"
-          :convoId="tab.convoId"
-          :parentID="sessionID"
-          @created="(id: string) => rp.update(tab.id, { convoId: id })"
-          @open-settings="emit('open-settings', $event)"
-          @connect="emit('connect')"
-          @shell="emit('shell', $event)"
-          @terminal="emit('terminal')"
-        />
-        <RpBrowser
-          v-else-if="tab.type === 'browser'"
-          :ref="(instance) => setBrowserPane(tab.id, instance)"
-          :active="tab.id === rp.active && rp.open"
-          :pageId="tab.pageId"
-          @page="(id: string) => rp.update(tab.id, { pageId: id })"
-        />
-        <RpTerminal
-          v-else-if="tab.type === 'terminal'"
-          :active="tab.id === rp.active && rp.open"
-          :shellID="tab.shellID"
-          :cwd="tab.cwd"
-          :sessionID="sessionID"
-          :directory="directory"
-          @opened="(shellID: string, cwd: string) => rp.update(tab.id, { shellID, cwd })"
-          @used="rp.update(tab.id, { used: true })"
-          @exited="rp.update(tab.id, { used: false })"
-          @openNew="rp.openTool('terminal')"
-        />
-        <OfficeTab v-else-if="tab.type === 'office'" :tab="tab" :active="tab.id === rp.active && rp.open" />
-        <HtmlTab v-else-if="tab.type === 'html'" :tab="tab" :active="tab.id === rp.active && rp.open" />
-        <div v-else-if="tab.type === 'diff'" class="rp-diff-pane">
-          <RpDiff :diff="tab.diff ?? ''" />
-        </div>
+        <PaneBoundary :reset-key="tab.id">
+          <RpReview v-if="tab.type === 'review'" :root="directory" />
+          <RpFiles
+            v-else-if="tab.type === 'files'"
+            :root="directory"
+            :viewFile="tab.viewFile"
+            @view="(file: string) => rp.update(tab.id, { viewFile: file, name: file.split('/').pop() })"
+          />
+          <RpChat
+            v-else-if="tab.type === 'chat'"
+            :convoId="tab.convoId"
+            :parentID="sessionID"
+            :active="tab.id === rp.active && rp.open"
+            @created="(id: string) => rp.update(tab.id, { convoId: id })"
+            @open-settings="emit('open-settings', $event)"
+            @connect="emit('connect')"
+            @shell="emit('shell', $event)"
+            @terminal="emit('terminal')"
+          />
+          <RpBrowser
+            v-else-if="tab.type === 'browser'"
+            :ref="(instance) => setBrowserPane(tab.id, instance)"
+            :active="tab.id === rp.active && rp.open"
+            :pageId="tab.pageId"
+            @page="(id: string) => rp.update(tab.id, { pageId: id })"
+          />
+          <RpTerminal
+            v-else-if="tab.type === 'terminal'"
+            :active="tab.id === rp.active && rp.open"
+            :shellID="tab.shellID"
+            :cwd="tab.cwd"
+            :sessionID="sessionID"
+            :directory="directory"
+            @opened="(shellID: string, cwd: string) => rp.update(tab.id, { shellID, cwd })"
+            @used="rp.update(tab.id, { used: true })"
+            @exited="rp.update(tab.id, { used: false })"
+            @openNew="rp.openTool('terminal')"
+          />
+          <OfficeTab v-else-if="tab.type === 'office'" :tab="tab" :active="tab.id === rp.active && rp.open" />
+          <HtmlTab v-else-if="tab.type === 'html'" :tab="tab" :active="tab.id === rp.active && rp.open" />
+          <div v-else-if="tab.type === 'diff'" class="rp-diff-pane">
+            <RpDiff :diff="tab.diff ?? ''" />
+          </div>
+        </PaneBoundary>
       </div>
     </div>
 
     <!-- MiMo's floating chat: over the foot of the expanded panel, in a conversation. Always in the page, for the composer's dock. -->
-    <FloatingChat :shown="rp.open && rp.fullscreen && Boolean(sessionID)" />
+    <FloatingChat :shown="rp.open && rp.fullscreen && Boolean(sessionID)" :covered="modalOpen" :searching="searchOpen" />
 
-    <ContextMenu v-if="tabMenu" :x="tabMenu.x" :y="tabMenu.y" :items="tabMenuItems" @pick="pickTabMenu" @close="tabMenu = undefined" />
-    <ContextMenu v-if="addMenu" :x="addMenu.x" :y="addMenu.y" :items="addItems" @pick="pickAdd" @close="addMenu = undefined" />
+    <ContextMenu v-if="tabMenu" tool :minWidth="180" :x="tabMenu.x" :y="tabMenu.y" :items="tabMenuItems" @pick="pickTabMenu" @close="tabMenu = undefined" />
+    <ContextMenu v-if="addMenu" tool :x="addMenu.x" :y="addMenu.y" :items="addItems" @pick="pickAdd" @close="addMenu = undefined" />
     <ConfirmDialog
       v-if="pendingClose.length"
       :title="t(pendingClose.length > 1 ? 'rp.termClose.batchTitle' : 'rp.termClose.title')"
@@ -362,6 +404,19 @@ defineExpose({
     />
   </aside>
 </template>
+
+<style>
+/* MiMo's body.resizing: the drag keeps its cursor off the strip, selects nothing, and no frame takes the pointer. */
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.resizing iframe,
+body.resizing webview {
+  pointer-events: none;
+}
+</style>
 
 <style scoped>
 /* MiMo's right panel: --rw wide on its own surface, a line down its start. */
@@ -391,7 +446,18 @@ defineExpose({
   transition: none;
 }
 
-/* Expanded over the conversation: rounded where it meets the side column, and lifted. */
+/* Sliding open or shut: clipped, with the body at its final width so nothing reflows per frame. */
+.right-panel.motion {
+  overflow: hidden;
+}
+
+.right-panel.motion > .rp-body,
+.right-panel.motion > .rp-launch {
+  box-sizing: border-box;
+  width: calc(var(--rw) - 1px);
+}
+
+/* Expanded over the conversation: rounded where it meets the side column, with no shadow (MiMo's --shadow-panel is none). */
 .right-panel.fullscreen {
   flex: 1 1 auto;
   width: auto;
@@ -400,10 +466,14 @@ defineExpose({
   border-inline-start-width: 0;
   border-start-start-radius: 16px;
   border-end-start-radius: 20px;
-  box-shadow: 0 4px 24px rgb(0 0 0 / 0.12);
 }
 
-/* MiMo's drag edge: 7px across the start line. */
+/* With the side column folded, the rail's toggle, back and forward stand over the head: the tabs start clear of them. */
+.right-panel.fullscreen.side-collapsed .rp-head {
+  padding-inline-start: 131px;
+}
+
+/* MiMo's drag edge: 7px across the start line, never a window drag region. */
 .resizer {
   position: absolute;
   inset-block: 0;
@@ -411,6 +481,7 @@ defineExpose({
   z-index: 30;
   width: 7px;
   cursor: col-resize;
+  -webkit-app-region: no-drag;
 }
 
 /*
@@ -446,7 +517,7 @@ defineExpose({
   display: none;
 }
 
-/* MiMo's tab: a 160px pill, 4 / 5 / 4 / 7 inside, 12px muted text on a tint. */
+/* MiMo's tab: a 160px pill, 4 / 5 / 4 / 7 inside, 12px muted text on --color-side-active. */
 .rp-tab {
   display: inline-flex;
   flex: 0 0 160px;
@@ -458,7 +529,7 @@ defineExpose({
   max-width: min(160px, 100%);
   padding: 4px 5px 4px 7px;
   color: var(--text-weak);
-  background: var(--surface-hover);
+  background: color-mix(in srgb, var(--text-strong) 6%, transparent);
   border: 1px solid transparent;
   border-radius: 999px;
   font-size: calc(12px * var(--ui-font-scale, 1));
@@ -502,6 +573,7 @@ defineExpose({
   text-overflow: ellipsis;
 }
 
+/* MiMo's rpt-close glyph in --color-txt: 80% ink on light. */
 .rpt-close {
   display: grid;
   flex: none;
@@ -509,7 +581,7 @@ defineExpose({
   width: 18px;
   height: 18px;
   padding: 0;
-  color: var(--text-base);
+  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
   background: transparent;
   border: 0;
   border-radius: 5px;
@@ -519,7 +591,7 @@ defineExpose({
   background: var(--surface-hover);
 }
 
-/* The plus follows the tabs: 26px, a 16px glyph. */
+/* The plus follows the tabs: 26px, a 16px glyph in --color-mut, --color-txt under the pointer. */
 .rp-add {
   display: grid;
   flex: none;
@@ -527,7 +599,7 @@ defineExpose({
   width: 26px;
   height: 26px;
   padding: 0;
-  color: var(--text-weak);
+  color: color-mix(in srgb, var(--text-strong) 60%, transparent);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -535,7 +607,7 @@ defineExpose({
 }
 
 .rp-add:hover {
-  color: var(--text-strong);
+  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
   background: var(--surface-hover);
 }
 
@@ -555,7 +627,7 @@ defineExpose({
   overflow: auto;
 }
 
-/* MiMo's launch-card: 14 by 16 on a 12px corner, 12 between icon, name and key. */
+/* MiMo's launch-card: 14 by 16 on a 12px corner, 12 between icon, name and key, its hover fading in. */
 .launch-card {
   display: flex;
   align-items: center;
@@ -569,6 +641,7 @@ defineExpose({
   font-family: inherit;
   line-height: normal;
   cursor: default;
+  transition: background-color 0.12s;
 }
 
 .launch-card:hover {
@@ -583,23 +656,74 @@ defineExpose({
   color: var(--text-strong);
 }
 
+/* The name in --color-txt: 80% ink on light. */
 .lc-name {
+  color: color-mix(in srgb, var(--text-strong) 80%, transparent);
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 400;
   white-space: nowrap;
 }
 
-/* MiMo's key cap: 11px dim, 1 by 5 inside a 1px line on a 5px corner. */
+/* MiMo's key cap: 11px in --color-dim on the page's own white, 1 by 5 inside a 1px line on a 5px corner. */
 .lc-kbd {
   margin-inline-start: auto;
   padding: 1px 5px;
-  color: var(--text-weak);
-  background: var(--surface-layer);
+  color: color-mix(in srgb, var(--text-strong) 40%, transparent);
+  background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 5px;
   font-family: inherit;
   font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: normal;
+}
+
+/* Dark: MiMo's side-active tint and near-white glyphs, #b8b8b8 plus, and #2a2a2a key caps in #777. */
+:root[data-theme="dark"] .rp-tab {
+  background: var(--surface-selected);
+}
+
+:root[data-theme="dark"] .rp-tab.active {
+  background: var(--surface-raised);
+}
+
+:root[data-theme="dark"] .rpt-close,
+:root[data-theme="dark"] .rp-add:hover,
+:root[data-theme="dark"] .lc-name {
+  color: var(--text-strong);
+}
+
+:root[data-theme="dark"] .rp-add {
+  color: #b8b8b8;
+}
+
+:root[data-theme="dark"] .lc-kbd {
+  color: #777;
+  background: #2a2a2a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .rp-tab {
+    background: var(--surface-selected);
+  }
+
+  :root:not([data-theme="light"]) .rp-tab.active {
+    background: var(--surface-raised);
+  }
+
+  :root:not([data-theme="light"]) .rpt-close,
+  :root:not([data-theme="light"]) .rp-add:hover,
+  :root:not([data-theme="light"]) .lc-name {
+    color: var(--text-strong);
+  }
+
+  :root:not([data-theme="light"]) .rp-add {
+    color: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) .lc-kbd {
+    color: #777;
+    background: #2a2a2a;
+  }
 }
 
 .rp-body {
@@ -615,11 +739,6 @@ defineExpose({
   flex: 1;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;
-}
-
-.rp-pane > * {
-  flex: 1;
   min-height: 0;
 }
 
