@@ -131,6 +131,9 @@ try {
 }
 nativeTheme.themeSource = bootPrefs.theme
 
+/* MiMo's 硬件加速: Chromium only takes this before ready, so a change waits for the next launch. */
+if (!bootPrefs.hardwareAcceleration) app.disableHardwareAcceleration()
+
 /* Written for the next launch; a failed write only means the next boot uses the old choice. */
 function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
   bootPrefs = { ...bootPrefs, ...patch }
@@ -1132,6 +1135,16 @@ app.whenReady().then(async () => {
       ? { supported: true, pref: displayServer, effective: ozonePlatform(displayServer, process.env) ?? null }
       : { supported: false, pref: "auto", effective: null },
   )
+
+  /* MiMo's 硬件加速 row: the saved choice. */
+  ipcMain.handle("mcode:hardware-acceleration", () => ({ enabled: bootPrefs.hardwareAcceleration }))
+
+  /* Written for the next launch; Chromium has already started with the old one. */
+  ipcMain.handle("mcode:set-hardware-acceleration", async (_event, raw: unknown) => {
+    const enabled = raw !== false
+    await saveBootPrefs({ hardwareAcceleration: enabled })
+    return { ok: true, enabled }
+  })
 
   /* Written for the next launch; the running one keeps the switches it started with. */
   ipcMain.handle("mcode:set-display-server", async (_event, raw: unknown) => {

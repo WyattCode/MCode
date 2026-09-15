@@ -780,6 +780,28 @@ async function chooseDisplayServer(value: string) {
 }
 
 /*
+ * MiMo's 硬件加速: saved for the main process to read before the next launch is
+ * ready (Chromium takes it only then), so a change says a restart applies it -
+ * the same line 显示服务器 uses.
+ */
+const hardwareAcceleration = ref(true)
+void window.mcode
+  .hardwareAcceleration()
+  .then((state) => (hardwareAcceleration.value = state.enabled))
+  .catch(() => {})
+
+async function toggleHardwareAcceleration() {
+  const enabled = !hardwareAcceleration.value
+  hardwareAcceleration.value = enabled
+  try {
+    await window.mcode.setHardwareAcceleration(enabled)
+  } catch {
+    // MiMo says it either way; the next launch reads whatever was written.
+  }
+  notify(t("set.displayServerSaved"))
+}
+
+/*
  * The gallery's tiles. The drawn ones come from the same string their PNGs are
  * rasterised from; the original comes from its own file, because it is a
  * painted mark rather than these paths and a redrawing of it would be a
@@ -2167,6 +2189,26 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 class="switch"
                 :class="{ on: app.config?.soundError }"
                 @click="app.patchConfig({ soundError: !app.config?.soundError })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+
+          <!-- MiMo's 性能 section, right after 声音: one switch, applied at the next launch. -->
+          <h3 data-section="performance">{{ t("set.performance") }}</h3>
+          <div class="card">
+            <div class="line" data-hw-accel-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.hwAccel") }}</div>
+                <div class="line-sub">{{ t("set.hwAccelSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: hardwareAcceleration }"
+                :aria-pressed="hardwareAcceleration"
+                data-hw-accel-switch
+                @click="toggleHardwareAcceleration"
               >
                 <span class="knob" />
               </button>

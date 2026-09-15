@@ -185,6 +185,11 @@ const api = {
   /** MiMo's 显示服务器 (Linux): the saved choice and the backend it resolves to. */
   displayServer: (): Promise<{ supported: boolean; pref: "auto" | "wayland" | "x11"; effective: "wayland" | "x11" | null }> =>
     ipcRenderer.invoke("mcode:display-server"),
+  /** MiMo's 硬件加速: the saved choice, which the running app started with unless changed since. */
+  hardwareAcceleration: (): Promise<{ enabled: boolean }> => ipcRenderer.invoke("mcode:hardware-acceleration"),
+  /** Takes effect at the next launch. */
+  setHardwareAcceleration: (enabled: boolean): Promise<{ ok: boolean; enabled: boolean }> =>
+    ipcRenderer.invoke("mcode:set-hardware-acceleration", enabled),
   /** Takes effect at the next launch. */
   setDisplayServer: (pref: "auto" | "wayland" | "x11"): Promise<{ ok: boolean; pref?: "auto" | "wayland" | "x11" }> =>
     ipcRenderer.invoke("mcode:set-display-server", pref),
