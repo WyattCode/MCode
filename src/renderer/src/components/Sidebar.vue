@@ -423,21 +423,26 @@ async function folderDrop(event: DragEvent) {
   emit("dropFolders", await window.mcode.directoriesOf([...new Set(paths)]))
 }
 
-const pinnedOpen = ref(
-  (() => {
-    try {
-      return localStorage.getItem(PINNED_OPEN_KEY) !== "false"
-    } catch {
-      return true
-    }
-  })(),
-)
+/* MiMo saves each section's fold - 置顶, Projects, Recent - and starts every one open. */
+function storedOpen(key: string): boolean {
+  try {
+    return localStorage.getItem(key) !== "false"
+  } catch {
+    return true
+  }
+}
+
+function keepOpen(key: string, open: boolean) {
+  try {
+    localStorage.setItem(key, String(open))
+  } catch {}
+}
+
+const pinnedOpen = ref(storedOpen(PINNED_OPEN_KEY))
 
 function togglePinnedOpen() {
   pinnedOpen.value = !pinnedOpen.value
-  try {
-    localStorage.setItem(PINNED_OPEN_KEY, String(pinnedOpen.value))
-  } catch {}
+  keepOpen(PINNED_OPEN_KEY, pinnedOpen.value)
 }
 
 const pinnedMore = ref(false)
@@ -498,26 +503,21 @@ const columnBlocks = computed<ColumnBlock[]>(() => {
  * whose project has been closed still belongs here: it is the only place left
  * that can reach it.
  */
-/* How Recent is ordered, chosen from its heading's menu and remembered, as MiMo does. */
-const SORT_KEY = "mcode.recentSort"
-const recentSort = ref<"recent" | "name">(
-  (() => {
-    try {
-      return localStorage.getItem(SORT_KEY) === "name" ? "name" : "recent"
-    } catch {
-      return "recent"
-    }
-  })(),
-)
+/*
+ * How Recent is ordered, chosen from its heading's menu. MiMo starts every
+ * launch at 最近 and never saves the choice; the key earlier builds wrote is
+ * taken away so it cannot linger.
+ */
+try {
+  localStorage.removeItem("mcode.recentSort")
+} catch {}
+const recentSort = ref<"recent" | "name">("recent")
 
 /* MiMo's setSort: only a real change is said. */
 function setRecentSort(mode: "recent" | "name") {
   if (mode === recentSort.value) return
   recentSort.value = mode
   notify(t(mode === "name" ? "toast.sortByName" : "toast.sortByRecent"))
-  try {
-    localStorage.setItem(SORT_KEY, mode)
-  } catch {}
 }
 
 const recentAll = computed(() => {
@@ -801,8 +801,18 @@ function cycleTheme() {
   app.patchConfig({ theme: next })
 }
 
-const projectsOpen = ref(true)
-const recentOpen = ref(true)
+const PROJECTS_OPEN_KEY = "mcode.projectsOpen"
+const RECENT_OPEN_KEY = "mcode.recentOpen"
+const projectsOpen = ref(storedOpen(PROJECTS_OPEN_KEY))
+const recentOpen = ref(storedOpen(RECENT_OPEN_KEY))
+function toggleProjectsOpen() {
+  projectsOpen.value = !projectsOpen.value
+  keepOpen(PROJECTS_OPEN_KEY, projectsOpen.value)
+}
+function toggleRecentOpen() {
+  recentOpen.value = !recentOpen.value
+  keepOpen(RECENT_OPEN_KEY, recentOpen.value)
+}
 /** Which projects show their tasks. The one holding the open task always does. */
 const expanded = ref(new Set<string>())
 const isExpanded = (directory: string) =>
@@ -1076,7 +1086,7 @@ function pickNewProject(key: string) {
           :class="{ held: Boolean(newProjectMenu) }"
           data-project-zone
         >
-        <button class="section-head" :aria-expanded="projectsOpen" @click="projectsOpen = !projectsOpen">
+        <button class="section-head" :aria-expanded="projectsOpen" @click="toggleProjectsOpen">
           <span>{{ t("side.projects") }}</span>
           <svg class="chev" :class="{ shut: !projectsOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
@@ -1299,7 +1309,7 @@ function pickNewProject(key: string) {
       </template>
 
       <div v-if="!priority" class="section recent-head" :class="{ held: Boolean(recentMenu) }">
-        <button class="section-head" :aria-expanded="recentOpen" @click="recentOpen = !recentOpen">
+        <button class="section-head" :aria-expanded="recentOpen" @click="toggleRecentOpen">
           <span>{{ t("side.recent") }}</span>
           <svg class="chev" :class="{ shut: !recentOpen }" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5 6.5L8 9.5L11 6.5" stroke="currentColor" />
