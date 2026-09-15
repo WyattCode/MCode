@@ -7,6 +7,7 @@ import { convoCard } from "../lib/convo-card"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
+import { RAIL_WIDTH } from "../lib/right-tools"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
 import UpdatePill from "./UpdatePill.vue"
@@ -43,6 +44,8 @@ const props = defineProps<{
   /** Whether back and forward have anywhere to go; MiMo dims them when not. */
   canBack?: boolean
   canForward?: boolean
+  /** How wide the open column is past its rail, as dragged; the app clamps and keeps it. */
+  width: number
 }>()
 
 const emit = defineEmits<{
@@ -70,6 +73,8 @@ const emit = defineEmits<{
   rename: [sessionID: string]
   createIn: [directory: string]
   settings: []
+  /* The width asked for while dragging the edge; `done` once the button is let go. */
+  resize: [width: number, done: boolean]
 }>()
 
 const app = useApp()
@@ -901,10 +906,35 @@ function pickNewProject(key: string) {
   if (key === "blank") emit("newBlank")
   else if (key === "existing") emit("browse")
 }
+
+/* MiMo's side resizer: a 7px strip over the column's end edge, dragged to set the width. */
+const dragging = ref(false)
+function beginResize(event: MouseEvent) {
+  const startX = event.clientX
+  const start = props.width
+  const sign = getComputedStyle(event.currentTarget as HTMLElement).direction === "rtl" ? -1 : 1
+  let last = start
+  dragging.value = true
+  document.body.classList.add("resizing")
+  const move = (moved: MouseEvent) => {
+    last = start + sign * (moved.clientX - startX)
+    emit("resize", last, false)
+  }
+  const done = () => {
+    dragging.value = false
+    document.body.classList.remove("resizing")
+    window.removeEventListener("mousemove", move)
+    window.removeEventListener("mouseup", done)
+    emit("resize", last, true)
+  }
+  window.addEventListener("mousemove", move)
+  window.addEventListener("mouseup", done)
+}
 </script>
 
 <template>
-  <aside class="side" :class="{ rail: collapsed }">
+  <aside class="side" :class="{ rail: collapsed, dragging }" :style="collapsed ? undefined : { width: `${RAIL_WIDTH + width}px` }">
+    <div v-if="!collapsed" class="resizer" data-side-resizer @mousedown.prevent="beginResize" />
     <!--
       Folded, MiMo keeps the column's controls just past the rail: the toggle
       three in from its edge, then back, forward and search.
@@ -1581,6 +1611,7 @@ function pickNewProject(key: string) {
 <style scoped>
 /* Numbers from Xiaomi MiMo's side column, measured in CSS pixels. */
 .side {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -1590,6 +1621,17 @@ function pickNewProject(key: string) {
   color: var(--text-strong);
   font-size: calc(14px * var(--ui-font-scale, 1));
   user-select: none;
+}
+
+/* MiMo's .resizer.r-side: 7 wide, 3 of it past the column's end, drawing nothing. */
+.resizer {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: -3px;
+  z-index: 30;
+  width: 7px;
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
 }
 
 /* The window-control row: 44 tall, buttons 24x24 at 32px pitch. It drags the

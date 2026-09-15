@@ -58,7 +58,7 @@ import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
-import { SIDE_COLUMN_WIDTH, arbitratePanel, boundChord, sideFits, toolHints } from "./lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
@@ -1178,6 +1178,32 @@ const onWindowResize = () => (windowWidth.value = window.innerWidth)
 onMounted(() => window.addEventListener("resize", onWindowResize))
 onBeforeUnmount(() => window.removeEventListener("resize", onWindowResize))
 
+/*
+ * MiMo's side column width, dragged at its edge: kept as last let go, and shown
+ * clamped to what the window leaves beside an open panel, so a narrower window
+ * narrows it without forgetting the choice.
+ */
+const SIDE_WIDTH_KEY = "mcode.sideWidth"
+const storedSideWidth = ref(
+  (() => {
+    try {
+      return parseInt(localStorage.getItem(SIDE_WIDTH_KEY) ?? "", 10)
+    } catch {
+      return NaN
+    }
+  })(),
+)
+const sideWidth = computed(() =>
+  clampSideWidth(storedSideWidth.value, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0),
+)
+function resizeSide(width: number, done: boolean) {
+  storedSideWidth.value = clampSideWidth(width, windowWidth.value, rp.open ? Math.max(PANEL_MIN_WIDTH, rp.width) : 0)
+  if (!done) return
+  try {
+    localStorage.setItem(SIDE_WIDTH_KEY, String(storedSideWidth.value))
+  } catch {}
+}
+
 /* P6-3: a project picked, brought in or made on the home screen opens the side column, as MiMo's does. */
 const revealSide = () => setSide(true)
 onMounted(() => window.addEventListener("mcode:reveal-side", revealSide))
@@ -1188,7 +1214,7 @@ watch(
   ([viewport, sideOpen], [, sideBefore]) => {
     if (onboarding.value) return
     if (sideOpen) sideAutoFolded = false
-    const room = { viewport, sideWidth: SIDE_COLUMN_WIDTH, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
+    const room = { viewport, sideWidth: sideWidth.value, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
     const outcome = arbitratePanel(room, sideOpen && !sideBefore)
     if (outcome === "close-panel") rp.setOpen(false)
     else if (outcome === "collapse-side") {
@@ -4133,6 +4159,8 @@ onBeforeUnmount(() => {
         :priority="priorityFilter"
         :can-back="canGoBack"
         :can-forward="canGoForward"
+        :width="sideWidth"
+        @resize="resizeSide"
         @toggle-priority="priorityFilter = !priorityFilter"
         @archive-all="archiveAll"
         @newTask="newTaskFromSide"
@@ -4350,7 +4378,7 @@ onBeforeUnmount(() => {
         :sessionID="isHome ? undefined : app.currentID"
         :directory="panelDirectory"
         :browserAllowed="browserAllowed"
-        :sidebarWidth="leftPanel ? SIDE_COLUMN_WIDTH : 0"
+        :sidebarWidth="leftPanel ? sideWidth : 0"
         :sideCollapsed="!leftPanel"
         :hints="panelHints"
         :modalOpen="modalOpen"

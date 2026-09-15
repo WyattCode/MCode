@@ -125,7 +125,7 @@ import {
   type OAuthProvider,
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
-import { arbitratePanel, boundChord, sideFits, toolHints } from "../src/renderer/src/lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, sideFits, sideWidthMax, toolHints } from "../src/renderer/src/lib/right-tools"
 import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
 import { capDiff, normalizeLayout, parseDiffFiles, reviewRows, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
@@ -444,6 +444,12 @@ async function main() {
   check("480 left for the conversation keeps both open", arbitratePanel({ ...crampedRoom, viewport: 1236 }, false) === "none")
   check("an expanded panel is left out of the narrow-window rule", arbitratePanel({ ...crampedRoom, fullscreen: true }, false) === "none")
   check("a folded side column fits again only once there is room", sideFits({ ...crampedRoom, viewport: 1300 }) && !sideFits(crampedRoom))
+  // R5: MiMo's side column drag - 160 to 420 past the rail, less where the conversation's 480 and the panel need it.
+  check("the side column is dragged no wider than 420 on a wide window", sideWidthMax(2400, 380) === 420 && clampSideWidth(900, 2400, 380) === 420)
+  check("the side column is dragged no narrower than 160", clampSideWidth(40, 2400, 0) === 160)
+  check("a window beside an open panel narrows the side column's limit", sideWidthMax(1200, 380) === 1200 - 62 - 380 - 480 && clampSideWidth(400, 1200, 380) === 278)
+  check("a very narrow window still allows 160", sideWidthMax(700, 380) === 160 && clampSideWidth(300, 700, 380) === 160)
+  check("an unreadable stored width is the default 194", clampSideWidth(NaN, 1600, 0) === 194 && clampSideWidth(250.4, 1600, 0) === 250)
 
   const noticeOnce = notify("Copied")
   const noticeTwice = notify("Copied")
