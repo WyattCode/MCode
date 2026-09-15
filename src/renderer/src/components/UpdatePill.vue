@@ -1,5 +1,8 @@
 <script lang="ts">
 import { reactive } from "vue"
+// Aliased: the setup block below imports `t` itself.
+import { t as translate } from "../lib/i18n"
+import { notifyFailure } from "../lib/toast"
 
 /** Where a downloaded update stands; the capsule shows only for the last three. */
 export type UpdatePhase = "idle" | "ready" | "installing" | "failed"
@@ -18,18 +21,36 @@ export function markUpdateReady(version: string, notes: string): void {
   updateState.phase = "ready"
 }
 
+/* MiMo's start watchdog: an installer that has not taken over by then never will. */
+export const INSTALL_WATCHDOG = 8000
+let watchdog: ReturnType<typeof setTimeout> | undefined
+
+/* The capsule turns to 重试 with the reason, and MiMo's danger notice says it too. */
+function failInstall(error: string, reason?: string): void {
+  if (watchdog) clearTimeout(watchdog)
+  watchdog = undefined
+  updateState.error = error
+  updateState.phase = "failed"
+  notifyFailure(reason ? translate("update.failReason", { reason }) : translate("update.failGeneric"))
+}
+
 /** Runs the installer the main process fetched; a failure stays on the capsule as 重试. */
 export async function installUpdate(): Promise<void> {
   if (updateState.phase === "installing") return
   updateState.phase = "installing"
   updateState.error = ""
+  if (watchdog) clearTimeout(watchdog)
+  watchdog = setTimeout(() => {
+    watchdog = undefined
+    if (updateState.phase === "installing") failInstall(translate("update.watchdogTimeout"))
+  }, INSTALL_WATCHDOG)
   try {
     await window.mcode.installUpdate()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     // Electron prefixes the IPC plumbing; only the reason is worth showing.
-    updateState.error = message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "")
-    updateState.phase = "failed"
+    const reason = message.replace(/^Error invoking remote method '[^']+': (Error: )?/, "").trim() || translate("update.restartFailed")
+    failInstall(reason, reason)
   }
 }
 </script>
