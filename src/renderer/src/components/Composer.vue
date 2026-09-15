@@ -309,6 +309,8 @@ function followDockHeight() {
 }
 
 watch(manualHeight, () => void nextTick(resize))
+/* A18: carried into the floating dock (or back), the box refits there rather than keeping the main dock's height. */
+watch(() => props.resizable, () => void nextTick(resize))
 onMounted(() => window.addEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
 onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
 
