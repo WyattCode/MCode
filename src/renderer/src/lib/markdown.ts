@@ -53,6 +53,12 @@ export interface MarkdownOptions {
   diagrams?: { streaming: boolean }
   /** A line number on every line of a code block. */
   lineNumbers?: boolean
+  /**
+   * A reply still arriving, drawn as MiMo draws its live block: the unfinished
+   * last line stays plain text, a half-typed table or underline waits, and
+   * footnotes wait for the end.
+   */
+  live?: boolean
 }
 
 /** One top-level piece of a reply: markup, or a diagram a component draws. */
@@ -764,6 +770,59 @@ function footnotesHtml(ctx: Context): string {
   return `<section class="md-footnotes" data-footnotes><ol>${items.join("")}</ol></section>`
 }
 
+/* ------------------------------------------------------------ live replies */
+
+/* Where the last top-level block starts (after a blank line, heading, rule or closing fence), and whether the text ends inside a fence. */
+function lastBlockStart(lines: string[]): { start: number; inFence: boolean } {
+  let fenced = false
+  let start = 0
+  lines.forEach((line, at) => {
+    if (fenced) {
+      if (FENCE_CLOSE.test(line)) {
+        fenced = false
+        start = at + 1
+      }
+      return
+    }
+    if (FENCE_OPEN.test(line)) {
+      fenced = true
+      start = at
+      return
+    }
+    if (!line.trim() || HEADING.test(line) || RULE.test(line)) start = at + 1
+  })
+  return { start, inFence: fenced }
+}
+
+/**
+ * MiMo's live block, for a reply still arriving: code and tables keep their
+ * last line; a pipe block that is not a table yet is held back whole; a
+ * trailing line of only - or = waits, so it cannot turn the paragraph above
+ * into a heading mid-stream; and the unfinished last line of prose is handed
+ * back as `open`, to be shown as plain text until its newline arrives.
+ */
+export function splitLive(text: string): { settled: string; open: string } {
+  const lines = text.split("\n")
+  const { start, inFence } = lastBlockStart(lines)
+  if (inFence) return { settled: text, open: "" }
+  const block = lines.slice(start)
+  const first = block.findIndex((line) => line.trim())
+  if (first >= 0 && /^[ \t]{0,3}\|/.test(block[first])) {
+    const next = block[first + 1]
+    const alignment = next !== undefined ? tableAlignment(next) : undefined
+    if (alignment && tableCells(block[first]).length === alignment.length) return { settled: text, open: "" }
+    return { settled: lines.slice(0, start + first).join("\n"), open: "" }
+  }
+  let held = text
+  const trimmed = text.replace(/\s+$/, "")
+  if (trimmed) {
+    const cut = trimmed.lastIndexOf("\n")
+    if (/^[ \t]*[-=]+[ \t]*$/.test(cut < 0 ? trimmed : trimmed.slice(cut + 1))) held = cut < 0 ? "" : trimmed.slice(0, cut)
+  }
+  const cut = held.lastIndexOf("\n")
+  return cut < 0 ? { settled: "", open: held } : { settled: held.slice(0, cut + 1), open: held.slice(cut + 1) }
+}
+
 /**
  * A reply as top-level blocks, so a caller can keep the unchanged ones on
  * screen while the last streams in, and mount a component for a diagram.
@@ -774,10 +833,23 @@ export function renderReply(source: string, options: MarkdownOptions = {}): Repl
   let text = source.replace(/\r\n?/g, "\n").replace(/[ -]/g, "")
   if (options.math && needsMathRewrite(text)) text = normaliseMath(text)
   if (options.diagrams) text = wrapRawSvg(text, options.diagrams.streaming)
+  let open = ""
+  if (options.live) ({ settled: text, open } = splitLive(text))
   let lines = text.split("\n").map((line) => line.replace(/^\t+/, (tabs) => "    ".repeat(tabs.length)))
-  if (options.links) lines = takeFootnotes(lines, ctx.notes)
+  if (options.links) {
+    lines = takeFootnotes(lines, ctx.notes)
+    // MiMo gives every reference a stand-in note while live, so it is a reference from the start rather than flipping when its note arrives.
+    if (options.live) {
+      for (const match of text.matchAll(/\[\^([^\]\s]+)\](?!:)/g)) {
+        const key = match[1].toLowerCase()
+        if (!ctx.notes.has(key)) ctx.notes.set(key, "-")
+      }
+    }
+  }
   const blocks = parseBlocks(lines, ctx, true)
-  if (ctx.order.length) blocks.push({ kind: "html", html: footnotesHtml(ctx) })
+  // The notes wait for the end of the reply.
+  if (ctx.order.length && !options.live) blocks.push({ kind: "html", html: footnotesHtml(ctx) })
+  if (open) blocks.push({ kind: "html", html: '<div class="stream-open-line">' + escapeHtml(open) + "</div>" })
   return blocks
 }
 

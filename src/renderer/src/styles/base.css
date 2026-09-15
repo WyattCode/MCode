@@ -706,9 +706,11 @@ html[data-motion="on"] *::after {
  * `anywhere` rather than `break-word` because the long line in code is usually
  * one unbroken run - a path, a hash, a base64 blob - with nowhere a word
  * breaker would agree to split.
+ *
+ * Not in a reply: MiMo's reply code scrolls sideways and has no setting for it.
  */
-html[data-wrap="on"] .md-code,
-html[data-wrap="on"] .md-code code {
+html[data-wrap="on"] .md-code:not([data-annotate="answer"] .md-code),
+html[data-wrap="on"] .md-code:not([data-annotate="answer"] .md-code) code {
   overflow-x: visible;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

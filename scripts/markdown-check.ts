@@ -19,7 +19,21 @@
  * what the attributes that can navigate or load say, so that is what is inspected.
  */
 import { detectPath, renderMarkdown, renderReply, type MarkdownOptions } from "../src/renderer/src/lib/markdown"
-import { stripSvgHazards } from "../src/renderer/src/lib/svg-safe"
+import { isSvgFile, stripSvgHazards, svgSize } from "../src/renderer/src/lib/svg-safe"
+import { fadeTail, type FadeAnchor } from "../src/renderer/src/lib/stream-reveal"
+
+/* A reply while it is still arriving, with everything a finished reply gets. */
+const LIVE: MarkdownOptions = {
+  codeActions: { copy: "Copy", copied: "Copied", label: "Copy code" },
+  tableActions: { label: "Table", preview: "Preview", copy: "Copy table" },
+  videoCards: { tip: "Preview", fallback: "Video" },
+  math: true,
+  links: { imageTip: "Preview" },
+  paths: { tip: "Open" },
+  diagrams: { streaming: true },
+  lineNumbers: true,
+  live: true,
+}
 
 /** Everything the renderer is allowed to produce, KaTeX's generated markup included. Anything else came from the source. */
 const TAGS = new Set([
@@ -285,6 +299,73 @@ for (const [value, kind] of PATHS) {
   if (hit?.kind !== kind) problems.push(`the path ${value} was ${hit?.kind ?? "not a path"}, not ${kind ?? "not a path"}`)
 }
 
+/* A reply still arriving: MiMo's live block. */
+const liveHtml = (source: string) => htmlOf(source, LIVE)
+const liveCases: [string, string, (html: string) => boolean][] = [
+  ["the unfinished line stays plain", "one\n**bo", (html) => /<p class="md-p">one<\/p>/.test(html) && /<div class="stream-open-line">\*\*bo<\/div>$/.test(html) && !/<strong>/.test(html)],
+  ["a finished line is markdown again", "one **bold**\n", (html) => /<strong>bold<\/strong>/.test(html) && !/stream-open-line/.test(html)],
+  ["an underline waits instead of making a heading", "Title\n---", (html) => !/<h\d|<hr/.test(html) && /<div class="stream-open-line">Title<\/div>/.test(html)],
+  ["a pipe block that is not a table yet shows nothing", "Intro\n\n| a | b", (html) => /Intro/.test(html) && !/\| a/.test(html) && !/<table/.test(html)],
+  ["a table with its delimiter row is drawn", "| a | b |\n| --- | --- |\n| 1", (html) => /<table/.test(html) && !/stream-open-line/.test(html)],
+  ["a line inside an open fence stays in the code", "```js\nconst a = 1\nconst b", (html) => /<pre/.test(html) && /const b/.test(html) && !/stream-open-line/.test(html)],
+  ["footnotes wait for the end", "said[^1]\n\n[^1]: the note\n", (html) => /data-footnote-ref="1"/.test(html) && !/data-footnotes/.test(html)],
+  ["a reference is one before its note arrives", "said[^2] more\n", (html) => /data-footnote-ref="1"/.test(html)],
+]
+for (const [name, source, test] of liveCases) {
+  const html = liveHtml(source)
+  if (!test(html)) problems.push(`live: ${name}: ${html.slice(0, 220)}`)
+}
+if (!/data-footnotes/.test(htmlOf("said[^1]\n\n[^1]: the note\n", REPLY))) problems.push("footnotes no longer show once the reply has ended")
+
+/* The fade tail: which characters it wraps, at what opacity, and that it only ever adds a span with an opacity. */
+const fadeCases: [string, string, number[], string][] = [
+  ["the newest characters fade, oldest first", '<p class="md-p">hello</p>', [0.5, 0.2], '<p class="md-p">hel<span class="sm-fade" style="opacity:0.500">l</span><span class="sm-fade" style="opacity:0.200">o</span></p>'],
+  ["code is left alone", '<p class="md-p">ab <code>xyz</code></p>', [0.1, 0.2, 0.3], '<p class="md-p"><span class="sm-fade" style="opacity:0.100">a</span><span class="sm-fade" style="opacity:0.200">b</span><span class="sm-fade" style="opacity:0.300"> </span><code>xyz</code></p>'],
+  ["an entity is one character", '<p class="md-p">a&amp;</p>', [0.25], '<p class="md-p">a<span class="sm-fade" style="opacity:0.250">&amp;</span></p>'],
+  ["a fully bright character stays plain", '<p class="md-p">ab</p>', [1, 0.5], '<p class="md-p">a<span class="sm-fade" style="opacity:0.500">b</span></p>'],
+  ["the code block's own words are not typed text", '<div class="md-codeblock"><span class="md-code-lang">js</span></div><p class="md-p">q</p>', [0.4], '<div class="md-codeblock"><span class="md-code-lang">js</span></div><p class="md-p"><span class="sm-fade" style="opacity:0.400">q</span></p>'],
+  ["fewer characters than stamps take the newest", '<p class="md-p">ab</p>', [0.1, 0.2, 0.3], '<p class="md-p"><span class="sm-fade" style="opacity:0.200">a</span><span class="sm-fade" style="opacity:0.300">b</span></p>'],
+]
+for (const [name, html, opacities, want] of fadeCases) {
+  const got = fadeTail(html, opacities)
+  if (got !== want) problems.push(`fade: ${name}: ${got}`)
+  inspect(`fade: ${name}`, got)
+}
+const fadeAnchor: FadeAnchor = { start: 0, floors: [] }
+fadeTail('<p class="md-p">ab</p>', [0.6, 0.7], fadeAnchor)
+const brightened = fadeTail('<p class="md-p">ab</p>', [0.1, 0.2], fadeAnchor)
+if (brightened !== '<p class="md-p"><span class="sm-fade" style="opacity:0.600">a</span><span class="sm-fade" style="opacity:0.700">b</span></p>') {
+  problems.push(`fade: a character dimmed again after brightening: ${brightened}`)
+}
+for (const item of HOSTILE) inspect(`${item.name} (live, faded)`, fadeTail(liveHtml(item.source), [0.1, 0.2, 0.3, 0.4]))
+
+/* MiMo's SVG file card: which paths get it, where it mounts, and the file's markup before it is ever made a picture. */
+const SVG_FILES: [string, boolean][] = [
+  ["/Users/me/diagram.svg", true],
+  ["C:\\work\\Logo.SVG", true],
+  ["./a.svg?v=2#x", true],
+  ["/tmp/a.svgz", false],
+  ["/tmp/a.png", false],
+  ["/tmp/svg", false],
+]
+for (const [file, want] of SVG_FILES) if (isSvgFile(file) !== want) problems.push(`svg card: ${file} ${want ? "should" : "should not"} get the card`)
+if (!/<span class="md-media" data-media="image" data-media-path="\/Users\/me\/diagram\.svg">/.test(htmlOf("`/Users/me/diagram.svg`", REPLY))) {
+  problems.push("svg card: an .svg path no longer mounts a media card")
+}
+if (!/data-media="image" data-media-path="\.\/art\/logo\.svg"/.test(htmlOf("![logo](./art/logo.svg)", REPLY))) {
+  problems.push("svg card: a local .svg picture no longer mounts a media card")
+}
+inspect("svg card: a path breaking out", htmlOf('`/tmp/"><svg onload=alert(1)>.svg`', REPLY))
+const FILE_SVG =
+  '<?xml version="1.0"?>\n<!DOCTYPE svg>\n<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" onload="alert(1)">' +
+  '<script>alert(1)</script><foreignObject><div>x</div></foreignObject><a xlink:href="javascript:alert(1)"><rect width="10" height="10"/></a></svg>'
+const cleanFile = stripSvgHazards(FILE_SVG)
+if (/<script|foreignObject|\son[a-z]+\s*=|javascript:/i.test(cleanFile)) problems.push(`svg card: the pre-pass let a file's hazard through: ${cleanFile}`)
+if (JSON.stringify(svgSize(cleanFile)) !== '{"w":120,"h":80}') problems.push(`svg card: a file's own size was read as ${JSON.stringify(svgSize(cleanFile))}`)
+if (JSON.stringify(svgSize('<svg viewBox="0 0 30 20"></svg>')) !== '{"w":30,"h":20}') problems.push("svg card: a viewBox no longer gives the picture's size")
+if (JSON.stringify(svgSize("<svg></svg>")) !== '{"w":800,"h":600}') problems.push("svg card: a picture with no size no longer falls back to 800 by 600")
+
+console.log(`live cases: ${liveCases.length + 1}, fade cases: ${fadeCases.length + 1 + HOSTILE.length}, svg card cases: ${SVG_FILES.length + 6}`)
 console.log(`hostile inputs: ${HOSTILE.length} x ${OPTIONS.length + 1} option sets, svg pre-pass cases: ${SVG_CASES.length}, formatting cases: ${shape.length + blockCases.length + PATHS.length}`)
 
 if (problems.length) {

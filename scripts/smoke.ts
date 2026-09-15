@@ -96,6 +96,9 @@ import {
 import type { Message } from "../src/shared/protocol"
 import { DELAY as TIP_DELAY, EDGE as TIP_EDGE, GAP as TIP_GAP, WARM as TIP_WARM, fit as fitTip, openDelay, tipText } from "../src/renderer/src/lib/tip"
 import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
+import { fadeOpacity, pruneStamps, revealStep } from "../src/renderer/src/lib/stream-reveal"
+import { audioBubbleWidth, audioClock } from "../src/renderer/src/lib/media-card"
+import { originTransform } from "../src/renderer/src/lib/image-preview"
 
 let passed = 0
 let failed = 0
@@ -3845,6 +3848,43 @@ async function main() {
   check("with room on neither side, the side overflowing less wins", cramped.side === "top", cramped)
   const limited = fitTip(tipBox(-50, 400, 20, 20), tipSelf, "top", tipView)
   check("the shift never detaches the tip from its control", limited.left === -30, limited)
+
+  // ---------------------------------------------------------------- reply reveal and media
+  section("Reply reveal, voice bubble and preview zoom (MiMo's numbers)")
+  check("a small backlog shows at least two a frame", revealStep(1) === 1 && revealStep(10) === 2 && revealStep(44) === 2, [
+    revealStep(1),
+    revealStep(10),
+    revealStep(44),
+  ])
+  check("a normal backlog drains in about 22 frames", revealStep(66) === 3 && revealStep(200) === 10, [revealStep(66), revealStep(200)])
+  check("past a 200-character lag the reveal catches up", revealStep(260) === 20 && revealStep(500) === 100, [revealStep(260), revealStep(500)])
+  check("nothing to show shows nothing", revealStep(0) === 0 && revealStep(-3) === 0)
+  check("a character fades in over 220ms on a cubic ease-out", fadeOpacity(0) === 0 && fadeOpacity(110) === 0.875 && fadeOpacity(220) === 1 && fadeOpacity(400) === 1, [
+    fadeOpacity(0),
+    fadeOpacity(110),
+    fadeOpacity(220),
+  ])
+  check("finished fades are dropped, oldest first", JSON.stringify(pruneStamps([0, 100, 300], 310)) === "[100,300]", pruneStamps([0, 100, 300], 310))
+  check("the voice bubble is 198 wide until its length is known", audioBubbleWidth(0) === 198 && audioBubbleWidth(Number.NaN) === 198)
+  check("the voice bubble grows 3.2px a second between 178 and 590", audioBubbleWidth(1) === 181 && audioBubbleWidth(10) === 210 && audioBubbleWidth(1000) === 590, [
+    audioBubbleWidth(1),
+    audioBubbleWidth(10),
+    audioBubbleWidth(1000),
+  ])
+  check("a clip's length reads m:ss, then h:mm:ss", audioClock(0) === "0:00" && audioClock(65.9) === "1:05" && audioClock(3725) === "1:02:05", [
+    audioClock(65.9),
+    audioClock(3725),
+  ])
+  const previewTo = { left: 200, top: 100, width: 400, height: 200 }
+  check(
+    "the preview zooms out of the thumbnail's centre at its width ratio",
+    originTransform({ left: 0, top: 0, width: 100, height: 50 }, previewTo) === "translate(-350.0px, -175.0px) scale(0.2500)",
+    originTransform({ left: 0, top: 0, width: 100, height: 50 }, previewTo),
+  )
+  check(
+    "without a thumbnail the preview scales from 94%",
+    originTransform(undefined, previewTo) === "scale(0.94)" && originTransform({ left: 5, top: 5, width: 0, height: 0 }, previewTo) === "scale(0.94)",
+  )
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
