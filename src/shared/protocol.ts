@@ -68,6 +68,8 @@ export interface SessionInfo {
   parentCallID?: string
   /** subagents: its kind and its numbered name within the parent (`general-1`), which picks its avatar, and where it stands. */
   subagent?: SubagentState
+  /** tasks: the task tool's registry for this conversation, shared with its subagents; the info card's 任务清单. */
+  tasks?: TaskItem[]
   created: number
   updated: number
   /** Rolling totals across every assistant turn in the session. */
@@ -215,6 +217,12 @@ export interface UserMessage {
   /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
   fileNotices?: FileNotice[]
   /**
+   * skills: written by the runner, never drawn - the skills this message named
+   * with `/name`, and the hint an attached office document brings. The model
+   * reads them after the text.
+   */
+  reminders?: string[]
+  /**
    * subagents: written by the runner, not the user - what became of background
    * subagents. `text` is what the model reads; the transcript draws pills.
    */
@@ -288,6 +296,33 @@ export interface SubagentState {
   turns?: number
   /** When its last turn ended. */
   ended?: number
+  /** The task registry's task it was started for, when the id named one. */
+  taskID?: string
+  /** The slash command that started it. */
+  command?: string
+  /** The JSON Schema its result has to match (MiMo's output_schema). */
+  outputSchema?: Record<string, unknown>
+}
+
+/** tasks: MiMo's five task statuses. */
+export const TASK_STATUSES = ["open", "in_progress", "blocked", "done", "abandoned"] as const
+export type TaskStatus = (typeof TASK_STATUSES)[number]
+
+/** tasks: one entry of a conversation's task registry. */
+export interface TaskItem {
+  /** T1, T2 at the top; T1.1 under T1. */
+  id: string
+  summary: string
+  status: TaskStatus
+  parentID?: string
+  /** Who last took it on: `main`, or a subagent's name. */
+  owner?: string
+  created: number
+  updated: number
+  /** When it was done or abandoned. */
+  ended?: number
+  /** The latest note given with a change. */
+  note?: string
 }
 
 /** One place the user pointed at: a passage of a reply, code in the files tab, or a whole file. */
@@ -703,6 +738,8 @@ export interface CommandInfo {
   /** Which model to run it on, when it names one. */
   model?: ModelRef
   source: CommandSource
+  /** A skill shipped with the app (MiMo's `bundled`). */
+  builtin?: boolean
   /**
    * The prompt text, with its placeholders still in it.
    *
@@ -801,8 +838,8 @@ export type Effort = (typeof EFFORTS)[number]
  * changing one, and it has no notion of an MCP server at all.
  *
  * A name absent from here cannot be configured and cannot be refused, which is
- * how `read`, `list`, `glob`, `grep` and `todowrite` came to be beyond reach:
- * their tools each declare a bucket, and nothing had a list to match it to.
+ * how `read`, `list`, `glob` and `grep` came to be beyond reach: their tools
+ * each declare a bucket, and nothing had a list to match it to.
  */
 export const PERMISSION_KINDS = [
   "read",
@@ -812,7 +849,6 @@ export const PERMISSION_KINDS = [
   "grep",
   "list",
   "bash",
-  "todowrite",
   "webfetch",
   "outside",
   "mcp",
@@ -829,9 +865,8 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
  * What each bucket does when the user has never said.
  *
  * These are the behaviours this app already had, written down: looking at the
- * project - and keeping a todo list, which is the model talking to itself -
- * happened without asking, and everything that changed a file, ran a command or
- * reached the network asked first. Naming them here rather than leaving them
+ * project happened without asking, and everything that changed a file, ran a
+ * command or reached the network asked first. Naming them here rather than leaving them
  * implicit is what lets a stored setting be told apart from an untouched one.
  */
 export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
@@ -842,7 +877,6 @@ export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   grep: "allow",
   list: "allow",
   bash: "ask",
-  todowrite: "allow",
   webfetch: "ask",
   outside: "ask",
   mcp: "ask",

@@ -31,6 +31,7 @@ import { OpenAICompatible } from "./provider/openai"
 import { ChatGPTSubscription } from "./provider/chatgpt"
 import type { ProviderAdapter } from "./provider/types"
 import { listCommands } from "./command"
+import { discoverSkills } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
@@ -365,6 +366,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           directory: session.directory,
           agent: session.agent,
           globalAgentsFile: globalAgentsPath(runtime.storage.directory),
+          skills: (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory })).skills,
         }),
       } satisfies Handled<"session.systemPrompt">
     }
