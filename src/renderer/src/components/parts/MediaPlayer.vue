@@ -95,7 +95,6 @@ function openInBrowser() {
         :title="meta.title || t(`mediaCard.platform.${meta.platform}`)"
         sandbox="allow-scripts allow-same-origin allow-presentation allow-popups allow-popups-to-escape-sandbox"
         allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-        allowfullscreen
         referrerpolicy="strict-origin-when-cross-origin"
         data-media-frame
         @load="readSpeed"
