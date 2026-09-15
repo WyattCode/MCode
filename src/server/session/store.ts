@@ -101,11 +101,29 @@ export interface History {
   floor?: string
 }
 
+/** history: what changed in the store, for an index kept beside it. */
+export type StoreChange =
+  | { type: "message"; message: Message }
+  | { type: "message.removed"; sessionID: string; messageID: string }
+  | { type: "session.removed"; sessionID: string }
+
 export class SessionStore {
   constructor(
     private readonly storage: Storage,
     private readonly bus: Bus,
   ) {}
+
+  /* history: told of every write, including the silent ones the bus never hears. */
+  private readonly watchers = new Set<(change: StoreChange) => void>()
+
+  watch(watcher: (change: StoreChange) => void): () => void {
+    this.watchers.add(watcher)
+    return () => this.watchers.delete(watcher)
+  }
+
+  private changed(change: StoreChange): void {
+    for (const watcher of this.watchers) watcher(change)
+  }
 
   private infoKey(sessionID: string) {
     return `session/${sessionID}/info`
@@ -356,6 +374,7 @@ export class SessionStore {
 
   async delete(sessionID: string): Promise<void> {
     await this.storage.removeDirectory(`session/${sessionID}`)
+    this.changed({ type: "session.removed", sessionID })
     this.bus.publish({ type: "session.deleted", sessionID })
   }
 
@@ -427,6 +446,7 @@ export class SessionStore {
    */
   async saveMessage(message: Message, silent = false): Promise<void> {
     await this.storage.write(this.messageKey(message.sessionID, message.id), message)
+    this.changed({ type: "message", message })
     if (!silent) this.bus.publish({ type: "message.updated", message })
   }
 
@@ -440,6 +460,7 @@ export class SessionStore {
    */
   async deleteMessage(sessionID: string, messageID: string): Promise<void> {
     await this.storage.remove(this.messageKey(sessionID, messageID))
+    this.changed({ type: "message.removed", sessionID, messageID })
   }
 
   async lastAssistant(sessionID: string): Promise<AssistantMessage | undefined> {

@@ -219,6 +219,26 @@ import {
 
 // session chat: conversations messaging each other, through the real runner over a fake provider, and the pieces the side column draws.
 import { CHAT_HOPS, replyIn, withChatHeaders } from "../src/server/session/chat"
+import { IndexDatabase } from "../src/server/history/database"
+import { HistoryIndex } from "../src/server/history/index"
+import { bindHistory, type HistoryService } from "../src/server/history/service"
+import { parsePartID, partID } from "../src/server/history/extract"
+import { ftsQuery, pageOf, summaryOf, withoutInlineMedia } from "../src/server/history/text"
+import { MemoryIndex } from "../src/server/memory/index"
+import { memoryFiles, memoryLocation, memoryType, projectMemoryID } from "../src/server/memory/paths"
+import { HISTORY_BUDGET, HistoryTool } from "../src/server/tool/history"
+import { MemoryTool } from "../src/server/tool/memory"
+import { CronTool, cronOperation } from "../src/server/tool/cron"
+import { clampLoopDelay, nextCronRun, oneShotFireAt, parseCron, recurringFireAt } from "../src/server/cron/expr"
+import { cronFile, readCronTasks, writeCronTasks } from "../src/server/cron/tasks"
+import { CronScheduler, KEEPALIVE_DELAY_SECONDS, bindScheduler } from "../src/server/cron/scheduler"
+import { resolvePath as resolveToolPath } from "../src/server/tool/fs-util"
+import type { Message as HistoryMessage, SessionInfo as HistorySession } from "../src/shared/protocol"
+import type { ToolContext as HistoryToolContext } from "../src/server/tool/types"
+import { nextOccurrence, parseRRule, scheduleLabel } from "../src/server/automation/rrule"
+import { AutomationService, notifies } from "../src/server/automation/service"
+import { AUTOMATION_RUN_NOTE, withAutomationNotes } from "../src/server/automation/framing"
+import { isScheduledPrompt } from "../src/shared/scheduled"
 import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/lib/convo-card"
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
@@ -5961,6 +5981,8 @@ async function main() {
   await skillChecks(root)
   taskChecks()
   await commandTemplateChecks(root)
+  await historyMemoryCronChecks(root, project)
+  await automationChecks(root, project)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -6232,7 +6254,17 @@ async function skillChecks(root: string) {
   const prompt = await systemPrompt({ directory: nested, agent: "build", skills })
   check("the prompt lists the skills the model may load, with where each lives", prompt.includes("<name>gamma</name>") && prompt.includes("nested gamma") && prompt.includes("<location>file:") && !prompt.includes("<name>hidden</name>"))
   check("with none to list, the prompt says so", (await systemPrompt({ directory: nested, agent: "build", skills: [] })).includes("No skills are available"))
-  check("skill and skill_search are offered, appended, and change nothing", TOOLS.at(-2)?.name === "skill_search" && TOOLS.at(-1)?.name === "skill" && reachOf("skill") === "reads" && reachOf("skill_search") === "reads")
+  const skillAt = TOOLS.findIndex((tool) => tool.name === "skill_search")
+  check(
+    "skill and skill_search are offered, appended, and change nothing",
+    TOOLS[skillAt - 1]?.name === "update_session" &&
+      TOOLS[skillAt + 1]?.name === "skill" &&
+      // Only tools added since (history, memory, cron and scheduled tasks) come after them.
+      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update"].includes(tool.name)) &&
+      reachOf("skill") === "reads" &&
+      reachOf("skill_search") === "reads",
+    TOOLS.map((tool) => tool.name),
+  )
   check("plan keeps both skill tools", toolsFor("plan").some((tool) => tool.name === "skill") && toolsFor("plan").some((tool) => tool.name === "skill_search"))
   const skillPart = (name: string, input: Record<string, unknown>): ToolPart => ({ type: "tool", id: name, callID: name, name, status: "completed", input, time: { created: 1 } })
   check("MiMo's step words and titles for a load and a search", skillToolVerb("skill", "completed") === translate("toolLabel.done.skill") && skillToolVerb("skill_search", "running") === translate("toolLabel.running.skill_search") && skillStepTitle(skillPart("skill", { name: "gamma" })) === "gamma" && skillStepTitle(skillPart("skill_search", { query: "make a deck" })) === "make a deck")
@@ -7387,8 +7419,8 @@ async function sessionChatChecks(root: string, project: string) {
       return (
         TOOLS.slice(at, at + 4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
         TOOLS[at - 1]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools) come after them.
-        TOOLS.slice(at + 4).every((tool) => tool.name === "skill_search" || tool.name === "skill")
+        // Only tools added since (the skill tools, then history, memory, cron and scheduled tasks) come after them.
+        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update"].includes(tool.name))
       )
     })(),
     TOOLS.map((tool) => tool.name),
@@ -7610,6 +7642,674 @@ async function sessionChatChecks(root: string, project: string) {
   check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("no longer exists"), gone)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
+}
+
+/* history, memory, cron: MiMo's three tools, the index behind the first two and the scheduler behind the third. */
+async function historyMemoryCronChecks(root: string, project: string) {
+  section("History, memory and scheduled prompts (MiMo's history, memory and cron tools)")
+
+  // Pure pieces: queries, media, pages.
+  check("a history query needs every word, each quoted", ftsQuery("foo.bar baz", "AND") === '"foo" AND "bar" AND "baz"', ftsQuery("foo.bar baz", "AND"))
+  check("a memory query takes any word, punctuation dropped", ftsQuery("T5.3 closure", "OR") === '"T5" OR "3" OR "closure"')
+  check("a query of punctuation alone searches nothing", ftsQuery("--- ::", "AND") === undefined)
+  const inline = `see data:image/png;base64,${"A".repeat(400)} here`
+  check("inline media is indexed as a marker, not its letters", withoutInlineMedia(inline) === "see [media image/png] here", withoutInlineMedia(inline))
+  const pair = "a".repeat(3999) + "😀" + "b".repeat(5000)
+  const firstPage = pageOf(pair)
+  check("a page defaults to 4000 and stops short of splitting a surrogate pair", firstPage.text.length === 3999 && firstPage.next_offset === 3999 && firstPage.has_more && firstPage.total_length === 9001, firstPage.next_offset)
+  check("a one-unit page on a pair takes the whole character", pageOf(pair, 3999, 1).text === "😀")
+  const refuses = (work: () => unknown, pattern: RegExp) => {
+    try {
+      work()
+      return false
+    } catch (failure) {
+      return pattern.test(String(failure))
+    }
+  }
+  check("an offset inside a pair is refused", refuses(() => pageOf(pair, 4000), /surrogate/))
+  check("a page longer than 8000 is refused", refuses(() => pageOf(pair, 0, 8001), /8000/))
+  check("a page is cut to 16000 bytes", Buffer.byteLength(pageOf("你".repeat(8000), 0, 8000).text) <= 16000)
+  check("a summary stops at 1000 characters and says so", summaryOf("x".repeat(1500)).startsWith(`${"x".repeat(1000)}\n[cut short`))
+  check(
+    "a part id carries its conversation and message, and nothing else passes for one",
+    JSON.stringify(parsePartID("ses_0a/msg_0b/prt_0c")) === JSON.stringify({ sessionID: "ses_0a", messageID: "msg_0b", key: "prt_0c" }) && parsePartID("../x/y") === undefined,
+  )
+
+  // Cron expressions, in UTC. 2026-01-01 is a Thursday.
+  const t0 = Date.UTC(2026, 0, 1, 0, 0, 30)
+  check("a daily time is its next match", nextCronRun("30 14 * * *", t0) === Date.UTC(2026, 0, 1, 14, 30))
+  check("a step from a start runs to the end of the field", JSON.stringify(parseCron("5/20 * * * *")?.minute) === "[5,25,45]")
+  check("with day of month and day of week both set, either matches", nextCronRun("0 9 15 * 1", t0) === Date.UTC(2026, 0, 5, 9, 0), new Date(nextCronRun("0 9 15 * 1", t0) ?? 0).toISOString())
+  check("an impossible date never matches", nextCronRun("0 0 30 2 *", t0) === undefined)
+  check("malformed expressions are refused", ["* * * *", "60 * * * *", "*/0 * * * *", "a * * * *", "5-1 * * * *"].every((expression) => parseCron(expression) === undefined))
+  const late = recurringFireAt("0 * * * *", t0, "abcd1234") ?? 0
+  check("a recurring job is at most half its period late, and never over 30 minutes", late >= Date.UTC(2026, 0, 1, 1, 0) && late <= Date.UTC(2026, 0, 1, 1, 30), new Date(late).toISOString())
+  const early = oneShotFireAt("30 14 1 1 *", t0, "abcd1234") ?? 0
+  check("a one-shot on the half hour is up to 90 seconds early", early <= Date.UTC(2026, 0, 1, 14, 30) && early >= Date.UTC(2026, 0, 1, 14, 30) - 90_000)
+  check("a loop's delay is clamped to 60-3600 seconds", clampLoopDelay(10) === 60 && clampLoopDelay(5000) === 3600 && clampLoopDelay(300) === 300)
+  check("a flat cron call and a JSON-string operation are both understood", cronOperation({ cron: "* * * * *", prompt: "p" })?.action === "schedule" && cronOperation({ operation: '{"action":"list"}' })?.action === "list")
+
+  // Memory layout.
+  const data = path.join(root, "hmc-data")
+  const memoryRoot = path.join(data, "memory")
+  const files = memoryFiles(memoryRoot, project, "ses_0abc")
+  check("project memory is filed by a stable hash of the folder", files.project === path.join(memoryRoot, "projects", projectMemoryID(project), "MEMORY.md") && projectMemoryID(project) === projectMemoryID(path.join(project, ".")))
+  check(
+    "a memory file reads as its scope, id and type",
+    JSON.stringify(memoryLocation(memoryRoot, files.notes)) === JSON.stringify({ scope: "sessions", scope_id: "ses_0abc", type: "free", key: "notes" }) &&
+      memoryLocation(memoryRoot, files.global)?.scope === "global" &&
+      memoryType("MEMORY-api") === "memory" &&
+      memoryType("tasks/T1/progress") === "progress" &&
+      memoryLocation(memoryRoot, path.join(root, "x.md")) === undefined,
+  )
+
+  // The history index over a real store.
+  const storage = new SubagentStorage(path.join(data, "storage"))
+  const bus = new Bus()
+  const store = new SubagentStore(storage, bus)
+  const model = { provider: "fake", model: "m" }
+  const otherProject = path.join(root, "hmc-other")
+  await fs.mkdir(otherProject, { recursive: true })
+  const alpha = await store.create({ directory: project, model, title: "History alpha" })
+  const beta = await store.create({ directory: otherProject, model, title: "History beta" })
+  const asked = (session: HistorySession, id: string, text: string, created: number): HistoryMessage => ({ id, sessionID: session.id, role: "user", text, attachments: [], time: { created } })
+  const answered = (session: HistorySession, id: string, parts: unknown[], created: number) =>
+    ({ id, sessionID: session.id, role: "assistant", model, agent: "build", parts, time: { created } }) as HistoryMessage
+  await store.saveMessage(asked(alpha, "msg_0001a", "please find the quokkafile in the repo", 1000), true)
+  await store.saveMessage(
+    answered(
+      alpha,
+      "msg_0001b",
+      [
+        { type: "text", id: "prt_0001", text: "The quokkafile lives under src." },
+        { type: "tool", id: "prt_0002", callID: "c1", name: "grep", status: "completed", input: { pattern: "wombatsearch" }, output: "src/zoo.ts:1 wombatsearch", time: { created: 1100 } },
+        { type: "tool", id: "prt_0003", callID: "c2", name: "bash", status: "running", input: { command: "echo platypusrun" }, time: { created: 1200 } },
+      ],
+      1001,
+    ),
+    true,
+  )
+  await store.saveMessage(asked(beta, "msg_0002a", "the quokkafile elsewhere", 2000), true)
+
+  const indexPath = path.join(data, "index", "search.db")
+  let database = IndexDatabase.open(indexPath)
+  check("a missing index file is created", database.openedAs === "created")
+  let index = new HistoryIndex(database, store, storage, bus)
+  await index.start()
+  const hits = (query: string, extra: Record<string, unknown> = {}) => index.search({ query, ...extra })
+  check("the first start indexes what is already stored", hits("quokkafile").length === 3, hits("quokkafile"))
+  check("scope project keeps to the project", hits("quokkafile", { directory: project }).length === 2 && hits("quokkafile", { directory: project }).every((hit) => hit.session_id === alpha.id))
+  check("a finished tool call is found by its input and output, and filtered by tool name", hits("wombatsearch", { toolName: "grep" }).length === 1 && hits("wombatsearch", { toolName: "bash" }).length === 0)
+  check("a running tool call is not indexed until it settles", hits("platypusrun").length === 0)
+  check("every word must appear", hits("quokkafile elsewhere").length === 1)
+  check("a hit marks its words in the snippet and scores above zero", Boolean(hits("wombatsearch")[0]?.snippet.includes("<<wombatsearch>>")) && (hits("wombatsearch")[0]?.score ?? 0) > 0, hits("wombatsearch")[0])
+
+  await store.saveMessage(asked(alpha, "msg_0001c", "now about the echidnaplan", 3000), true)
+  check("a silent save is searchable straight away", hits("echidnaplan").length === 1)
+  await store.deleteMessage(alpha.id, "msg_0001c")
+  check("a deleted message leaves the index", hits("echidnaplan").length === 0)
+  await store.update(beta.id, { directory: project })
+  check("a conversation moved to another project is searched there", hits("quokkafile", { directory: project }).length === 3)
+  await store.update(beta.id, { directory: otherProject })
+  const many = await store.create({ directory: project, model, title: "History many" })
+  for (let at = 0; at < 60; at++) await store.saveMessage(asked(many, `msg_01${String(at).padStart(3, "0")}`, `needlework ${"filler ".repeat(200)} #${at}`, 4000 + at), true)
+  check("search gives 10 by default and never more than 50", hits("needlework").length === 10 && hits("needlework", { limit: 500 }).length === 50)
+
+  // The tools, bound the way the backend binds them.
+  let memory = new MemoryIndex(database, memoryRoot)
+  bindHistory({ database, index, memory, store, storage, memoryRoot } as HistoryService)
+  const context = (sessionID: string, extra: Record<string, unknown> = {}) =>
+    ({ sessionID, messageID: "m", callID: "c", directory: project, signal: new AbortController().signal, progress: () => {}, snapshot: async () => {}, ...extra }) as unknown as HistoryToolContext
+  const searched = await HistoryTool.execute({ operation: "search", query: "needlework", limit: 50 }, context(alpha.id))
+  check("fifty hits come back within 19.5 KB, each with its part id", Buffer.byteLength(searched.output) <= HISTORY_BUDGET && searched.metadata?.count === 50 && searched.output.split("part_id=").length > 40, Buffer.byteLength(searched.output))
+  const crowded = await HistoryTool.execute({ operation: "around", message_id: "msg_01059", before: 50, after: 0 }, context(alpha.id))
+  check(
+    "around over fifty long messages stays within 19.5 KB, keeps the anchor and says it was cut",
+    Buffer.byteLength(crowded.output) <= HISTORY_BUDGET && crowded.metadata?.truncated === true && crowded.output.includes(">>> message_id=msg_01059") && crowded.metadata?.count === 51,
+    [Buffer.byteLength(crowded.output), crowded.metadata],
+  )
+  const wide = await HistoryTool.execute({ operation: "search", query: "quokkafile", scope: "global" }, context(alpha.id))
+  check("scope global reaches other projects", wide.metadata?.count === 3, wide.output)
+  const near = await HistoryTool.execute({ operation: "around", message_id: "msg_0001b", before: 1, after: 0 }, context(alpha.id))
+  check("around centres on the message with the neighbours asked for", near.output.includes(">>> message_id=msg_0001b") && near.output.includes("--- message_id=msg_0001a") && near.metadata?.count === 2, near.output)
+  await store.saveMessage(answered(alpha, "msg_0001d", [{ type: "text", id: "prt_0009", text: pair }], 5000), true)
+  const long = partID(alpha.id, "msg_0001d", "prt_0009")
+  const got = await HistoryTool.execute({ operation: "get", part_id: long }, context(alpha.id))
+  check("get pages a part out of the store, 4000 at a time", got.output.startsWith("offset=0 next_offset=3999 total_length=9001 has_more=true"), got.output.slice(0, 90))
+  const rest = await HistoryTool.execute({ operation: "get", part_id: long, offset: 3999, length: 8000 }, context(alpha.id))
+  check("and goes on from next_offset to the end", rest.output.startsWith("offset=3999 next_offset=9001 total_length=9001 has_more=false"), rest.output.slice(0, 90))
+  const split = await HistoryTool.execute({ operation: "get", part_id: long, offset: 4000 }, context(alpha.id))
+  check("an offset inside a character is refused in words", split.output.includes("surrogate"))
+  check("a limit over 50 is refused", await HistoryTool.execute({ operation: "search", query: "x", limit: 51 }, context(alpha.id)).then(() => false, (failure) => failure instanceof ToolError))
+  const explorer = await store.create({ directory: project, model, title: "explore-1", parentID: alpha.id, subagent: { type: "explore", id: "explore-1" } })
+  check("an explore subagent is refused history and memory", (await HistoryTool.execute({ operation: "search", query: "x" }, context(explorer.id)).then(() => false, () => true)) && (await MemoryTool.execute({ query: "x" }, context(explorer.id)).then(() => false, () => true)))
+
+  // Rebuilt from the store: a change the index never saw, a deleted file, a damaged one, another schema.
+  const treeHash = async (directory: string) => {
+    const hash = createHash("sha1")
+    const walk = async (at: string) => {
+      for (const entry of (await fs.readdir(at, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+        const full = path.join(at, entry.name)
+        if (entry.isDirectory()) await walk(full)
+        else hash.update(full).update(await fs.readFile(full))
+      }
+    }
+    await walk(directory)
+    return hash.digest("hex")
+  }
+  index.close()
+  database.close()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await storage.write(`session/${alpha.id}/message/msg_0001a`, asked(alpha, "msg_0001a", "please find the lyrebirdnote in the repo", 1000))
+  database = IndexDatabase.open(indexPath)
+  index = new HistoryIndex(database, store, storage, bus)
+  await index.start()
+  check("a message changed while the app was closed is indexed again at start", hits("lyrebirdnote").length === 1 && hits("quokkafile").length === 2, hits("quokkafile").length)
+  index.close()
+  database.close()
+  await fs.rm(indexPath, { force: true })
+  await fs.rm(`${indexPath}-wal`, { force: true })
+  await fs.rm(`${indexPath}-shm`, { force: true })
+  const storeBefore = await treeHash(path.join(data, "storage"))
+  database = IndexDatabase.open(indexPath)
+  index = new HistoryIndex(database, store, storage, bus)
+  await index.start()
+  check("a deleted index is rebuilt from the store", database.openedAs === "created" && hits("lyrebirdnote").length === 1 && hits("needlework", { limit: 50 }).length === 50 && hits("wombatsearch").length === 1)
+  check("rebuilding never writes to the store", (await treeHash(path.join(data, "storage"))) === storeBefore)
+  index.close()
+  database.close()
+  for (const suffix of ["-wal", "-shm"]) await fs.rm(indexPath + suffix, { force: true })
+  await fs.writeFile(indexPath, "this is not a database, only words")
+  database = IndexDatabase.open(indexPath)
+  index = new HistoryIndex(database, store, storage, bus)
+  await index.start()
+  check("a damaged index file is replaced and rebuilt", database.openedAs === "recreated" && hits("lyrebirdnote").length === 1)
+  database.db.exec("PRAGMA user_version = 99")
+  index.close()
+  database.close()
+  database = IndexDatabase.open(indexPath)
+  check("an index from another schema is started over", database.openedAs === "recreated")
+  index = new HistoryIndex(database, store, storage, bus)
+  await index.start()
+
+  // Memory: BM25 with MiMo's floor, kept level with the files.
+  memory = new MemoryIndex(database, memoryRoot)
+  bindHistory({ database, index, memory, store, storage, memoryRoot } as HistoryService)
+  await fs.mkdir(path.dirname(files.project), { recursive: true })
+  await fs.writeFile(files.project, "# Project memory\n## Rules\n- the zebracorn configuration stays pinned; zebracorn is the codename\n")
+  for (let at = 0; at < 6; at++) {
+    const notes = path.join(memoryRoot, "sessions", `ses_0mem${at}`, "notes.md")
+    await fs.mkdir(path.dirname(notes), { recursive: true })
+    await fs.writeFile(notes, `## [turn ${at}]\nconfiguration note ${at} ${"ordinary words ".repeat(20)}\n`)
+  }
+  await fs.mkdir(path.dirname(files.global), { recursive: true })
+  await fs.writeFile(files.global, "# Global memory\nPrefers tabs.\n")
+  const pinned = await memory.search({ query: "zebracorn configuration" })
+  check("any word matches, and results under 15% of the best are dropped", pinned.length === 1 && pinned[0]?.path === files.project, pinned.map((hit) => [path.basename(path.dirname(hit.path)), hit.score]))
+  const common = await memory.search({ query: "configuration" })
+  check("the best result is always kept, with those close to it", common.length === 7, common.map((hit) => hit.score))
+  check("limit, scope, scope id and type narrow the search", (await memory.search({ query: "configuration", limit: 2 })).length === 2 && (await memory.search({ query: "tabs", scope: "global" })).length === 1 && (await memory.search({ query: "configuration", scope: "sessions", scope_id: "ses_0mem3" })).length === 1 && (await memory.search({ query: "configuration", type: "memory" }))[0]?.path === files.project)
+  await fs.rm(path.join(memoryRoot, "sessions", "ses_0mem0"), { recursive: true, force: true })
+  await fs.writeFile(files.global, "# Global memory\nPrefers kookaburra spacing.\n")
+  check("a deleted file leaves and a changed one is read again before searching", (await memory.search({ query: "configuration" })).length === 6 && (await memory.search({ query: "kookaburra" })).length === 1)
+  const recalled = await MemoryTool.execute({ query: "zebracorn" }, context(alpha.id))
+  check("the memory tool names the file, its scope and score", recalled.output.includes(`### ${files.project}`) && recalled.output.includes("Scope: projects/") && recalled.metadata?.count === 1, recalled.output)
+  check("and says what to try when nothing matches", (await MemoryTool.execute({ query: "nonexistentword" }, context(alpha.id))).metadata?.count === 0)
+  const told = await systemPrompt({ directory: project, agent: "build", memory: files })
+  check("a conversation is told its three memory files", told.includes("## Memory") && told.includes(files.project) && told.includes(files.global) && told.includes(files.notes))
+  check("and a prompt without them says nothing of memory", !(await systemPrompt({ directory: project, agent: "build" })).includes("## Memory"))
+  const asking = { allowsOutside: () => false, ask: async () => { throw new Error("asked") } }
+  check("memory files are reached without asking; other outside files still ask", (await resolveToolPath(context(alpha.id, { permissions: asking }), files.notes)) === files.notes && (await resolveToolPath(context(alpha.id, { permissions: asking }), path.join(root, "elsewhere.txt")).then(() => false, () => true)))
+
+  // The durable task file.
+  const cronDir = path.join(root, "hmc-cron")
+  await writeCronTasks(cronDir, [{ id: "a1", cron: "* * * * *", prompt: "p", createdAt: 1, durable: true }, { id: "bad", cron: "nope", prompt: "p", createdAt: 1 }])
+  const written = JSON.parse(await fs.readFile(cronFile(cronDir), "utf8")) as { tasks: Record<string, unknown>[] }
+  check("durable tasks go to .mcode/scheduled_tasks.json without the malformed one or the runtime flag", cronFile(cronDir) === path.join(cronDir, ".mcode", "scheduled_tasks.json") && written.tasks.length === 1 && written.tasks[0]?.durable === undefined, written)
+  await fs.writeFile(cronFile(cronDir), `﻿${JSON.stringify(written)}`)
+  check("and read back, byte-order mark and all", (await readCronTasks(cronDir)).length === 1)
+  await fs.writeFile(cronFile(cronDir), "{ not json")
+  check("an unreadable file reads as no tasks", (await readCronTasks(cronDir)).length === 0)
+
+  // The scheduler on a fake clock.
+  let clock = Date.UTC(2026, 0, 1, 0, 0, 10)
+  const fired: { sessionID: string; text: string }[] = []
+  const busy = new Set<string>()
+  const schedDir = path.join(root, "hmc-sched")
+  await fs.mkdir(schedDir, { recursive: true })
+  const host = {
+    now: () => clock,
+    fire: async (sessionID: string, text: string) => {
+      fired.push({ sessionID, text })
+    },
+    busy: (sessionID: string) => busy.has(sessionID),
+    session: (sessionID: string) => store.get(sessionID),
+    directories: async () => [schedDir],
+  }
+  const scheduler = new CronScheduler(host)
+  await scheduler.start({ interval: false })
+  const every = await scheduler.add({ ownerID: alpha.id, directory: schedDir, cron: "*/5 * * * *", prompt: "every five", recurring: true, durable: false })
+  await scheduler.tick()
+  check("nothing fires before its time", fired.length === 0)
+  const due = scheduler.dueAt(every.id) ?? 0
+  check("a */5 job's run is at the next five-minute mark, up to 15 seconds early", due <= Date.UTC(2026, 0, 1, 0, 5) && due >= Date.UTC(2026, 0, 1, 0, 5) - 15_000, new Date(due).toISOString())
+  clock = Date.UTC(2026, 0, 1, 0, 5, 1)
+  busy.add(alpha.id)
+  await scheduler.tick()
+  check("a due job waits while its conversation is busy", fired.length === 0)
+  busy.delete(alpha.id)
+  await scheduler.tick()
+  check("and fires into that conversation once it is idle, marked as scheduled", fired.length === 1 && fired[0]?.sessionID === alpha.id && fired[0]?.text === `[Scheduled cron ${every.id} · 2026-01-01T00:05:01Z] every five`, fired)
+  check("the window can tell a fired prompt from one someone typed", isScheduledPrompt(fired[0]?.text ?? "") && !isScheduledPrompt("[Scheduled cron abc] typed by hand") && !isScheduledPrompt("every five"))
+  await scheduler.tick()
+  check("one match fires once, and the next run is the following match", fired.length === 1 && (scheduler.dueAt(every.id) ?? 0) >= Date.UTC(2026, 0, 1, 0, 10) - 15_000)
+  await scheduler.remove(every.id)
+  const once = await scheduler.add({ ownerID: alpha.id, directory: schedDir, cron: "7 0 * * *", prompt: "once durable", recurring: false, durable: true })
+  check("a durable job is written to the project's file", (await readCronTasks(schedDir)).some((task) => task.id === once.id && task.createdBySessionId === alpha.id))
+  const lockFile = path.join(schedDir, ".mcode", ".cron-lock")
+  check("and the scheduler holds that project's lock", (JSON.parse(await fs.readFile(lockFile, "utf8")) as { pid: number }).pid === process.pid)
+  clock = Date.UTC(2026, 0, 1, 0, 7, 0)
+  await scheduler.tick()
+  check("a one-shot fires once and leaves the file", Boolean(fired.at(-1)?.text.includes("once durable")) && !(await readCronTasks(schedDir)).some((task) => task.id === once.id))
+  const aging = await scheduler.add({ ownerID: alpha.id, directory: schedDir, cron: "0 * * * *", prompt: "aging", recurring: true, durable: false })
+  clock += 8 * 24 * 60 * 60 * 1000
+  await scheduler.tick()
+  check("a recurring job older than a week runs once more and ends", Boolean(fired.at(-1)?.text.includes("aging")) && !(await scheduler.list({})).some((task) => task.id === aging.id))
+  const gone = await store.create({ directory: project, model, title: "gone soon" })
+  const orphan = await scheduler.add({ ownerID: gone.id, directory: schedDir, cron: "* * * * *", prompt: "orphan", recurring: true, durable: false })
+  await store.delete(gone.id)
+  clock += 2 * 60 * 1000
+  const beforeOrphan = fired.length
+  await scheduler.tick()
+  check("a job whose conversation was deleted is dropped without firing", fired.length === beforeOrphan && !(await scheduler.list({})).some((task) => task.id === orphan.id))
+
+  const missedDir = path.join(root, "hmc-missed")
+  await writeCronTasks(missedDir, [{ id: "miss0001", cron: "0 12 * * *", prompt: "missed while closed", createdAt: Date.UTC(2025, 11, 30), createdBySessionId: alpha.id }])
+  const restarted = new CronScheduler({ ...host, directories: async () => [missedDir] })
+  const beforeMissed = fired.length
+  await restarted.start({ interval: false })
+  check("a one-shot missed while the app was closed fires at start and is removed", fired.length === beforeMissed + 1 && Boolean(fired.at(-1)?.text.includes("missed while closed")) && (await readCronTasks(missedDir)).length === 0)
+  await restarted.stop()
+
+  const lockedDir = path.join(root, "hmc-locked")
+  await writeCronTasks(lockedDir, [{ id: "lock0001", cron: "* * * * *", prompt: "not mine", createdAt: clock - 60 * 60 * 1000, createdBySessionId: alpha.id, recurring: true }])
+  await fs.writeFile(path.join(lockedDir, ".mcode", ".cron-lock"), JSON.stringify({ pid: process.ppid, startedAt: 1 }))
+  const other = new CronScheduler({ ...host, directories: async () => [lockedDir] })
+  await other.start({ interval: false })
+  const beforeLocked = fired.length
+  await other.tick()
+  check("a project locked by another running copy of the app is left to it", fired.length === beforeLocked)
+  await other.stop()
+
+  const armed = scheduler.armLoop({ ownerID: alpha.id, directory: schedDir, prompt: "watch deploy", delaySeconds: 10 })
+  check("a loop's delay is clamped and its run lands on a whole minute", armed?.clampedSeconds === 60 && armed.wasClamped && armed.scheduledFor % 60_000 === 0 && armed.scheduledFor > clock, armed)
+  const rearmed = scheduler.armLoop({ ownerID: alpha.id, directory: schedDir, prompt: "watch deploy", delaySeconds: 300 })
+  check("arming the same loop again replaces its run", rearmed?.superseded === 1 && (await scheduler.list({ kind: "loop" })).length === 1)
+  scheduler.turnEnded(alpha.id)
+  check("a loop re-armed in the turn keeps its count at zero", scheduler.loopsOf(alpha.id)[0]?.strikes === 0)
+  clock = (rearmed?.scheduledFor ?? 0) + 1000
+  await scheduler.tick()
+  check("the loop's run fires", Boolean(fired.at(-1)?.text.startsWith("[Scheduled loop")) && Boolean(fired.at(-1)?.text.endsWith("watch deploy")))
+  scheduler.turnEnded(alpha.id)
+  const kept = scheduler.loopsOf(alpha.id)[0]
+  check("a turn that does not re-arm gets one more run, 20 minutes on", kept?.strikes === 1 && kept.lastScheduledFor >= clock + (KEEPALIVE_DELAY_SECONDS - 60) * 1000, kept)
+  clock = (kept?.lastScheduledFor ?? 0) + 1000
+  await scheduler.tick()
+  scheduler.turnEnded(alpha.id)
+  check("and the loop ends when that run is not re-armed either", scheduler.loopsOf(alpha.id).length === 0 && (await scheduler.list({ kind: "loop" })).length === 0)
+  await scheduler.stop()
+  check("stopping releases the lock", !(await exists(lockFile)))
+
+  // The runner over a fake provider: what subagents are offered, a scheduled prompt's turn, and history from the model.
+  const seenTools: Record<string, string[]> = {}
+  let sawRunNote = false
+  let callCount = 0
+  const provider = createServer((request, response) => {
+    let body = ""
+    request.on("data", (chunk) => (body += chunk))
+    request.on("end", () => {
+      const sent = JSON.parse(body || "{}") as { messages?: { role: string; content?: unknown }[]; tools?: { function?: { name?: string } }[] }
+      const messages = sent.messages ?? []
+      const lastUserAt = messages.map((message) => message.role).lastIndexOf("user")
+      const lastUser = JSON.stringify(messages[lastUserAt]?.content ?? "")
+      const replied = messages.slice(lastUserAt + 1).some((message) => message.role === "tool")
+      for (const marker of ["EXPLORE-CHILD", "GENERAL-CHILD", "TOP-LEVEL"]) if (lastUser.includes(marker)) seenTools[marker] = (sent.tools ?? []).map((tool) => tool.function?.name ?? "")
+      if (lastUser.includes("[Scheduled task run]") && lastUser.includes("AUTOMATION-SAYS-HI")) sawRunNote = true
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      const frame = (payload: unknown) => response.write(`data: ${JSON.stringify(payload)}\n\n`)
+      const end = (reason: string) => {
+        frame({ choices: [{ delta: {}, finish_reason: reason }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+        response.write("data: [DONE]\n\n")
+        response.end()
+      }
+      const say = (text: string) => {
+        frame({ choices: [{ delta: { content: text } }] })
+        end("stop")
+      }
+      const call = (name: string, input: Record<string, unknown>) => {
+        frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: `call_hmc_${++callCount}`, type: "function", function: { name, arguments: JSON.stringify(input) } }] } }] })
+        end("tool_calls")
+      }
+      if (replied) return say("done")
+      if (lastUser.includes("SPAWN-EXPLORE")) return call("actor", { action: "run", description: "look around", prompt: "EXPLORE-CHILD", subagent_type: "explore" })
+      if (lastUser.includes("SPAWN-GENERAL")) return call("actor", { action: "run", description: "do work", prompt: "GENERAL-CHILD", subagent_type: "general" })
+      if (lastUser.includes("SCHEDULE-IT")) return call("cron", { operation: { action: "schedule", cron: "*/5 * * * *", prompt: "CRON-WRITES" } })
+      if (lastUser.includes("CRON-WRITES")) return call("write", { path: "from-cron.txt", content: "x" })
+      if (lastUser.includes("HISTORY-IT")) return call("history", { operation: "search", query: "quokkafile", scope: "global" })
+      return say("nothing to do")
+    })
+  })
+  await new Promise<void>((resolve) => provider.listen(0, "127.0.0.1", () => resolve()))
+  const port = (provider.address() as { port: number }).port
+  const runnerData = path.join(root, "hmc-runner")
+  const runnerStorage = new SubagentStorage(path.join(runnerData, "storage"))
+  const runnerBus = new Bus()
+  const config = new SubagentConfig(runnerStorage, runnerBus, path.join(runnerData, "credentials.json"))
+  await config.load()
+  await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
+  await config.setApiKey("fake", "k")
+  // The ask level, not the first-install approve-for-me one: the check below is that a scheduled turn still asks.
+  await config.set({ accessLevel: "ask" })
+  const permissions = new Permissions(runnerBus, config)
+  const runnerStore = new SubagentStore(runnerStorage, runnerBus)
+  const runner = new SubagentRunner(runnerStore, runnerBus, config, permissions, { accessToken: async () => undefined } as never, runnerStorage)
+  const runnerIndex = new HistoryIndex(database, runnerStore, runnerStorage, runnerBus)
+  bindHistory({ database, index: runnerIndex, memory, store: runnerStore, storage: runnerStorage, memoryRoot } as HistoryService)
+  let runnerClock = Date.UTC(2026, 3, 1, 8, 1, 0)
+  const live = new CronScheduler({
+    now: () => runnerClock,
+    fire: async (sessionID, text) => {
+      await runner.prompt({ sessionID, text })
+    },
+    busy: (sessionID) => runner.isRunning(sessionID),
+    session: (sessionID) => runnerStore.get(sessionID),
+    directories: async () => [project],
+  })
+  await live.start({ interval: false })
+  bindScheduler(live)
+  const asks: string[] = []
+  runnerBus.subscribe((event) => {
+    if (event.type === "permission.requested") asks.push(event.request.sessionID)
+    if (event.type === "session.idle") live.turnEnded(event.sessionID)
+  })
+  const until = async (test: () => boolean | Promise<boolean>, ms = 15_000) => {
+    const deadline = Date.now() + ms
+    while (Date.now() < deadline) {
+      if (await test()) return true
+      await new Promise((resolve) => setTimeout(resolve, 25))
+    }
+    return false
+  }
+  const quiet = () => until(async () => runner.busySessions().length === 0, 20_000)
+  const parent = await runnerStore.create({ directory: project, model, title: "Runner parent" })
+
+  await runner.prompt({ sessionID: parent.id, text: "TOP-LEVEL" })
+  await quiet()
+  check("a conversation is offered history, memory and cron", ["history", "memory", "cron"].every((name) => seenTools["TOP-LEVEL"]?.includes(name)), seenTools["TOP-LEVEL"])
+  await runner.prompt({ sessionID: parent.id, text: "SPAWN-EXPLORE" })
+  await quiet()
+  await runner.prompt({ sessionID: parent.id, text: "SPAWN-GENERAL" })
+  await quiet()
+  check("an explore subagent is offered none of the three", Boolean(seenTools["EXPLORE-CHILD"]) && !["history", "memory", "cron"].some((name) => seenTools["EXPLORE-CHILD"]?.includes(name)), seenTools["EXPLORE-CHILD"])
+  check("a general subagent keeps them, as MiMo's general agent does", ["history", "memory", "cron"].every((name) => seenTools["GENERAL-CHILD"]?.includes(name)), seenTools["GENERAL-CHILD"])
+  check(
+    "automation_update is offered to a conversation and to no subagent",
+    Boolean(seenTools["TOP-LEVEL"]?.includes("automation_update")) && !seenTools["GENERAL-CHILD"]?.includes("automation_update") && !seenTools["EXPLORE-CHILD"]?.includes("automation_update"),
+  )
+  const child = (await runnerStore.list()).find((session) => session.parentID === parent.id && session.subagent?.type === "general")
+  if (child) {
+    const scheduledByChild = await CronTool.execute({ operation: { action: "schedule", cron: "0 0 1 1 *", prompt: "child job" } }, context(child.id))
+    check("a general subagent's job belongs to the conversation it works for", (await live.list({ ownerID: parent.id })).some((task) => task.id === scheduledByChild.metadata?.id))
+    await live.remove(String(scheduledByChild.metadata?.id))
+  }
+
+  await runner.prompt({ sessionID: parent.id, text: "HISTORY-IT" })
+  await quiet()
+  const historyPart = (await runnerStore.messages(parent.id)).flatMap((message) => (message.role === "assistant" ? message.parts : [])).find((part): part is ToolPart => part.type === "tool" && part.name === "history")
+  check("the model's history call runs and returns summaries", historyPart?.status === "completed" && (historyPart.output ?? "").includes("part_id="), historyPart?.output)
+
+  await runner.prompt({ sessionID: parent.id, text: "SCHEDULE-IT" })
+  await quiet()
+  const jobs = await live.list({ ownerID: parent.id })
+  check("the model's schedule call adds a job for this conversation", jobs.length === 1 && jobs[0]?.prompt === "CRON-WRITES", jobs)
+  runnerClock = (live.dueAt(jobs[0]?.id ?? "") ?? Date.UTC(2026, 3, 1, 8, 5)) + 1000
+  await live.tick()
+  const firedTurn = await until(async () => (await runnerStore.messages(parent.id)).some((message) => message.role === "user" && message.text.startsWith(`[Scheduled cron ${jobs[0]?.id}`)))
+  check("when it comes due it starts a turn in that conversation", firedTurn)
+  check("and that turn's write still asks for permission", await until(() => asks.includes(parent.id)), asks)
+  runner.abort(parent.id)
+  await quiet()
+
+  // automation: a scheduled task's run through the real runner.
+  const automationEvents: { type: string; phase?: string; notify?: boolean }[] = []
+  let automationClock = Date.UTC(2026, 3, 1, 8, 0)
+  const automations = new AutomationService({
+    file: path.join(runnerData, "automations.json"),
+    now: () => automationClock,
+    sessions: runnerStore,
+    prompt: (input) => runner.prompt(input),
+    busy: (sessionID) => runner.isRunning(sessionID),
+    models: () => [{ provider: "fake", id: "m", name: "Fake M" }],
+    agent: () => "build",
+    effort: () => undefined,
+    scratch: async () => project,
+    publish: (event) => runnerBus.publish(event),
+  })
+  await automations.start({ interval: false })
+  runnerBus.subscribe((event) => {
+    if (event.type === "automation.run") automationEvents.push(event)
+    if (event.type === "session.idle") void automations.turnEnded(event.sessionID)
+  })
+  // A folder of its own: earlier sections move the shared project, and a run whose project is gone is skipped.
+  const automationProject = path.join(root, "hmc-automation-project")
+  await fs.mkdir(automationProject, { recursive: true })
+  const automationHome = await runnerStore.create({ directory: automationProject, model, title: "Automation home" })
+  const made = JSON.parse(await automations.handle({ mode: "create", title: "Morning note", prompt: "AUTOMATION-SAYS-HI", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" }, { sessionID: automationHome.id })) as { automation: { id: string } }
+  const automationDue = automations.dueAt(made.automation.id)
+  automationClock = (automationDue ?? 0) + 1000
+  const tickFailure = await automations.tick().then(
+    () => undefined,
+    (failure) => String(failure),
+  )
+  await until(async () => (await runnerStore.list()).some((session) => session.title === "Morning note"))
+  await quiet()
+  const runConversation = (await runnerStore.list()).find((session) => session.title === "Morning note")
+  const runAsk = runConversation ? (await runnerStore.messages(runConversation.id)).find((message) => message.role === "user") : undefined
+  check(
+    "a due task opens a conversation named for it and runs its prompt there, marked as the task's",
+    runAsk?.role === "user" && runAsk.text === "AUTOMATION-SAYS-HI" && runAsk.inbox?.automationID === made.automation.id && runConversation?.directory === automationProject,
+    { runAsk, made, automationDue, automationClock, tickFailure, titles: (await runnerStore.list()).map((session) => session.title), automationEvents },
+  )
+  check("the model reads the run note, which the transcript does not keep", sawRunNote && !runAsk?.text.includes("[Scheduled task run]"))
+  check("the run's end is announced under MiMo's rule for all-runs", await until(() => automationEvents.some((event) => event.phase === "finished" && event.notify === true)), automationEvents)
+  await automations.stop()
+
+  await live.stop()
+  bindScheduler(undefined)
+  runnerIndex.close()
+  index.close()
+  database.close()
+  bindHistory(undefined)
+  await new Promise<void>((resolve) => provider.close(() => resolve()))
+}
+
+/* automation: MiMo desktop's scheduled tasks - the recurrence rules, the tool's modes and the runs, on a fake clock. */
+async function automationChecks(root: string, project: string) {
+  section("Scheduled tasks (MiMo's automation_update)")
+
+  // Recurrence rules, on this machine's wall clock.
+  const valid = [
+    "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+    "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0",
+    "RRULE:FREQ=MONTHLY;BYMONTHDAY=1,15",
+    "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29",
+    "RRULE:FREQ=HOURLY;BYMINUTE=30",
+    "DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2",
+  ]
+  check("MiMo's subset of rules is accepted", valid.every((rule) => parseRRule(rule) !== undefined), valid.filter((rule) => !parseRRule(rule)))
+  const refused = [
+    "FREQ=DAILY;BYHOUR=9",
+    "RRULE:FREQ=MINUTELY",
+    "RRULE:FREQ=WEEKLY;BYHOUR=9",
+    "RRULE:FREQ=MONTHLY",
+    "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30",
+    "RRULE:FREQ=DAILY;COUNT=3",
+    "DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=3;UNTIL=20260301",
+    "RRULE:FREQ=DAILY;BYSECOND=5",
+    "RRULE:FREQ=DAILY;FREQ=DAILY",
+    "RRULE:FREQ=WEEKLY;BYDAY=XX",
+    "RRULE:FREQ=DAILY\nRRULE:FREQ=HOURLY",
+  ]
+  check("and everything outside it is refused", refused.every((rule) => parseRRule(rule) === undefined), refused.filter((rule) => parseRRule(rule)))
+  const friday = new Date(2026, 0, 2, 10, 0).getTime()
+  const next = (rule: string, after = friday, anchor = friday) => nextOccurrence(parseRRule(rule)!, after, anchor)
+  check("every day at 09:00, after 10:00, is tomorrow at 09:00", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 3, 9, 0).getTime())
+  check("weekdays after a Friday morning is Monday", next("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
+  check("an interval counts from the anchor", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
+  check("hourly at half past is the next half hour", next("RRULE:FREQ=HOURLY;BYMINUTE=30") === new Date(2026, 0, 2, 10, 30).getTime())
+  check("COUNT stops after that many runs", next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2") === undefined && next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=3") === new Date(2026, 0, 3, 8, 0).getTime())
+  check("UNTIL stops at its date", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102") === undefined)
+  check(
+    "schedules read the way MiMo names them",
+    scheduleLabel("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=5") === "Every day 09:05" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === "Weekdays 09:00" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0") === "Monday (time: 09:00)" &&
+      scheduleLabel("RRULE:FREQ=HOURLY;BYMINUTE=0") === "Hourly" &&
+      scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2") === "Every 2 days" &&
+      scheduleLabel("RRULE:FREQ=MONTHLY;BYMONTHDAY=1", "First of the month") === "First of the month",
+  )
+  check(
+    "MiMo's notification rule: all runs; failed or skipped only; replies in an existing conversation only",
+    notifies("all-runs", "new-task", "succeeded", false) &&
+      !notifies("failed-runs", "new-task", "succeeded", true) &&
+      notifies("failed-runs", "existing-task", "skipped", false) &&
+      !notifies("important-updates", "new-task", "succeeded", true) &&
+      notifies("important-updates", "existing-task", "succeeded", true) &&
+      !notifies("important-updates", "existing-task", "succeeded", false),
+  )
+  const noted = withAutomationNotes([
+    { id: "u1", sessionID: "s", role: "user", text: "remind me", attachments: [], inbox: { from: "Morning", automationID: "auto-1" }, time: { created: 1 } },
+    { id: "u2", sessionID: "s", role: "user", text: "plain", attachments: [], time: { created: 2 } },
+  ])
+  check("a run's message carries the run note in the request, other messages do not", noted[0]?.role === "user" && noted[0].text === `${AUTOMATION_RUN_NOTE}\n\nremind me` && noted[1]?.role === "user" && noted[1].text === "plain")
+
+  // The service on a fake clock.
+  const data = path.join(root, "automation-data")
+  const storage = new SubagentStorage(path.join(data, "storage"))
+  const bus = new Bus()
+  const store = new SubagentStore(storage, bus)
+  const model = { provider: "fake", model: "m" }
+  const home = await store.create({ directory: project, model, title: "Automation home" })
+  const child = await store.create({ directory: project, model, title: "general-1", parentID: home.id, subagent: { type: "general", id: "general-1" } })
+  let clock = new Date(2026, 0, 2, 10, 0).getTime()
+  const prompts: { sessionID: string; text: string; inbox: unknown }[] = []
+  const events: { type: string; sessionID?: string; phase?: string; notify?: boolean }[] = []
+  const busy = new Set<string>()
+  const file = path.join(data, "automations.json")
+  const deps = {
+    file,
+    now: () => clock,
+    sessions: store,
+    prompt: async (input: { sessionID: string; text: string; inbox: unknown }) => {
+      prompts.push(input)
+    },
+    busy: (sessionID: string) => busy.has(sessionID),
+    models: () => [
+      { provider: "fake", id: "m", name: "Fake M" },
+      { provider: "fake", id: "big", name: "Fake Big" },
+    ],
+    agent: () => "build" as const,
+    effort: () => "high" as const,
+    scratch: async () => path.join(root, "automation-scratch"),
+    publish: (event: { type: string }) => {
+      events.push(event)
+    },
+  }
+  const service = new AutomationService(deps)
+  await service.start({ interval: false })
+  const call = async (input: Record<string, unknown>, sessionID = home.id) => JSON.parse(await service.handle(input, { sessionID })) as Record<string, any>
+  const fails = (input: Record<string, unknown>, pattern: RegExp, sessionID = home.id) =>
+    service.handle(input, { sessionID }).then(
+      () => false,
+      (failure) => failure instanceof ToolError && pattern.test(failure.message),
+    )
+  check("a subagent cannot manage scheduled tasks", await fails({ mode: "list" }, /subagent/, child.id))
+  check("create names what it is missing", await fails({ mode: "create", title: "x" }, /prompt, rrule/))
+  check("a rule outside the subset is refused with the format", await fails({ mode: "create", title: "x", prompt: "p", rrule: "FREQ=DAILY" }, /RRULE:FREQ=DAILY;BYHOUR=9/))
+  const created = await call({ mode: "create", title: "Daily digest", prompt: "Summarise the day", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", operationId: "op-1" })
+  check(
+    "create keeps the task with MiMo's defaults: active, a new conversation per run, every run notified, this conversation's model and project, the app's reasoning",
+    created.ok === true &&
+      created.automation.id === "auto-1" &&
+      created.automation.status === "active" &&
+      created.automation.runMode === "new-task" &&
+      created.automation.notification === "all-runs" &&
+      created.automation.model.id === "fake/m" &&
+      created.automation.model.name === "Fake M" &&
+      created.automation.reasoning === "high" &&
+      created.automation.project === path.basename(project) &&
+      created.automation.schedule === "Every day 09:00",
+    created,
+  )
+  check("its first run is the next 09:00", service.dueAt("auto-1") === new Date(2026, 0, 3, 9, 0).getTime())
+  check("the same operationId answers a retry exactly as before", (await service.handle({ mode: "create", title: "Daily digest", prompt: "Summarise the day", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", operationId: "op-1" }, { sessionID: home.id })) === JSON.stringify(created))
+  check("and refuses a different change", await fails({ mode: "create", title: "Other", prompt: "p", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", operationId: "op-1" }, /operationId/))
+  const again = await call({ mode: "create", title: "Daily digest", prompt: "Summarise the day", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" })
+  check("the same task asked for again is kept once", again.deduplicated === true && again.created === false && (await call({ mode: "list" })).automations.length === 1)
+  check("a model nobody connected is refused", await fails({ mode: "create", title: "x", prompt: "p", rrule: "RRULE:FREQ=DAILY", model: "nope" }, /No connected model/))
+  const moved = await call({ mode: "update", id: "auto-1", runMode: "existing-task", model: "big" })
+  check(
+    "moving a task into an existing conversation targets this one and notifies only important updates",
+    moved.automation.runMode === "existing-task" && moved.automation.targetThreadId === home.id && moved.automation.notification === "important-updates" && moved.automation.model.id === "fake/big",
+    moved,
+  )
+  const paused = await call({ mode: "pause", id: "auto-1" })
+  check("pause stops its runs", paused.automation.status === "paused" && service.dueAt("auto-1") === undefined)
+  await call({ mode: "resume", id: "auto-1" })
+  check("resume plans the next one", service.dueAt("auto-1") === new Date(2026, 0, 3, 9, 0).getTime())
+  check("view shows one task and an unknown id is refused", (await call({ mode: "view", id: "auto-1" })).automation.title === "Daily digest" && (await fails({ mode: "view", id: "auto-9" }, /no scheduled task/i)))
+
+  // Runs: in the existing conversation, waiting while it is busy; a new conversation; a missing target skipped.
+  clock = new Date(2026, 0, 3, 9, 0, 1).getTime()
+  busy.add(home.id)
+  await service.tick()
+  check("a run waits while its conversation is busy", prompts.length === 0 && (service.dueAt("auto-1") ?? Infinity) <= clock)
+  busy.delete(home.id)
+  await service.tick()
+  check(
+    "then runs its prompt there, marked as the task's, and plans the next day",
+    prompts.length === 1 && prompts[0]?.sessionID === home.id && prompts[0]?.text === "Summarise the day" && JSON.stringify(prompts[0]?.inbox) === JSON.stringify({ from: "Daily digest", automationID: "auto-1" }) && service.dueAt("auto-1") === new Date(2026, 0, 4, 9, 0).getTime(),
+    prompts,
+  )
+  check("its start is announced", events.some((event) => event.type === "automation.run" && event.phase === "started" && event.sessionID === home.id))
+  await store.saveMessage({ id: "msg_0a01", sessionID: home.id, role: "assistant", model, agent: "build", parts: [{ type: "text", id: "prt_0a01", text: "Here is the digest." }], finish: "end_turn", time: { created: clock } })
+  await service.turnEnded(home.id)
+  check("a reply in an existing conversation is an important update", events.at(-1)?.phase === "finished" && events.at(-1)?.notify === true, events.at(-1))
+  await call({ mode: "update", id: "auto-1", runMode: "new-task", project: "none" })
+  clock = new Date(2026, 0, 4, 9, 0, 1).getTime()
+  await service.tick()
+  const opened = (await store.list()).find((session) => session.title === "Daily digest")
+  check(
+    "a new-task run opens a conversation named for the task with its model, in a folder of its own when it has no project",
+    Boolean(opened) && opened?.model.model === "big" && opened?.scratch === true && opened?.directory === path.join(root, "automation-scratch") && prompts.at(-1)?.sessionID === opened?.id,
+    opened,
+  )
+  await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: "ses_gone" })
+  const before = prompts.length
+  clock = new Date(2026, 0, 5, 9, 0, 1).getTime()
+  await service.tick()
+  check("a run whose conversation is gone is skipped and the schedule moves on", prompts.length === before && service.dueAt("auto-1") === new Date(2026, 0, 6, 9, 0).getTime())
+
+  // Kept in the data folder; a run missed while closed happens once at start.
+  await service.stop()
+  const saved = JSON.parse(await fs.readFile(file, "utf8")) as { automations: { id: string; lastFiredAt?: number }[] }
+  check("tasks are kept in automations.json with their last run", saved.automations.length === 1 && saved.automations[0]?.lastFiredAt === new Date(2026, 0, 5, 9, 0, 1).getTime())
+  clock = new Date(2026, 0, 9, 12, 0).getTime()
+  const reopened = new AutomationService(deps)
+  await reopened.start({ interval: false })
+  check("after a restart the next run is counted from the last one, so a missed run is due at once", (reopened.dueAt("auto-1") ?? Infinity) <= clock && reopened.list()[0]?.targetThreadId === "ses_gone")
+  check("delete removes the task", (await JSON.parse(await reopened.handle({ mode: "delete", id: "auto-1" }, { sessionID: home.id }))).ok === true && reopened.list().length === 0)
+  await reopened.stop()
 }
 
 async function exists(file: string) {

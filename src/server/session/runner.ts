@@ -51,6 +51,8 @@ import {
 } from "./overflow"
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
+import { memoryFilesFor } from "../history/service"
+import { withAutomationNotes } from "../automation/framing"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -202,7 +204,9 @@ const MAX_STEPS_PROMPT = [
  * turn while it is still running, and so an abort can land mid-tool.
  */
 /** Tools a subagent never gets: starting subagents, and talking to other conversations. */
-const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session"])
+const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update"])
+/* history, memory, cron: MiMo's explore agent is denied everything but reading and searching the project. */
+const EXPLORE_WITHHELD = new Set(["history", "memory", "cron"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -1403,6 +1407,8 @@ export class SessionRunner {
       instructions: config.instructions,
       globalAgentsFile: this.globalAgents,
       skills: await this.skillsFor(session.directory),
+      // memory: told to a conversation's own turns, not to a subagent's, as MiMo does.
+      memory: session.parentID ? undefined : memoryFilesFor(session.directory, session.id),
     })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const outputSchema = session.subagent?.outputSchema
@@ -1472,7 +1478,8 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only; skills: what a message loaded follows it.
-      const history = withSkillReminders(withChatHeaders(this.contextFor(session, stored)))
+      // automation: a scheduled task's run says so too, in the request only.
+      const history = withAutomationNotes(withSkillReminders(withChatHeaders(this.contextFor(session, stored))))
 
       // MiMo's effort is one app-wide value, not a conversation's own.
       const effort = config.effort
@@ -1550,7 +1557,9 @@ export class SessionRunner {
         tools: lastStep
           ? []
           : [
-              ...this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+              ...this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter(
+                (tool) => !session.parentID || (!SUBAGENT_WITHHELD.has(tool.name) && !(session.subagent?.type === "explore" && EXPLORE_WITHHELD.has(tool.name))),
+              ),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort,
