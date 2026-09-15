@@ -8,6 +8,8 @@ import { QuestionTool } from "./question"
 import { ApplyPatchTool } from "./patch"
 import { InvalidTool } from "./invalid"
 import { TaskTool } from "./subagent"
+import { PdfLocateTool, PresentFilesTool } from "./present"
+import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 
 /**
  * The tool surface offered to the model.
@@ -38,6 +40,11 @@ export const TOOLS: ToolDefinition[] = [
   WebFetchTool,
   // subagents: last, so the prefix every earlier request cached stays as it was.
   TaskTool,
+  // MiMo's built-in desktop tools: appended, for the same reason.
+  PdfLocateTool,
+  PresentFilesTool,
+  GetDesktopSettingsTool,
+  SetDesktopSettingTool,
 ]
 
 /**
@@ -103,7 +110,22 @@ export function findTool(name: string): ToolDefinition | undefined {
  * Tools that only ever read. `task` is here because it does nothing to files
  * itself: its subagent's own calls are recorded into the parent's turn.
  */
-const READS = new Set(["read", "list", "glob", "grep", "todowrite", "webfetch", "question", "invalid", "task"])
+const READS = new Set([
+  "read",
+  "list",
+  "glob",
+  "grep",
+  "todowrite",
+  "webfetch",
+  "question",
+  "invalid",
+  "task",
+  // They act on the window or the app's settings, never on the project's files.
+  "pdf_locate",
+  "present_files",
+  "get_desktop_settings",
+  "set_desktop_setting",
+])
 
 /**
  * How much of what a tool does to the project can be seen from the runner.
