@@ -64,6 +64,18 @@ export const useApp = defineStore("app", () => {
     for (const id of [...turnStarted.keys()]) if (!live.has(id)) turnStarted.delete(id)
   }
   const busy = computed(() => (currentID.value ? running.value.has(currentID.value) : false))
+  /**
+   * Conversations whose earlier message is being edited or retried: truncated,
+   * then sent again. As in MiMo, the composer refuses a send into one until the
+   * replacement has gone out, so a new message cannot land in between.
+   */
+  const replacing = ref(new Set<string>())
+  function markReplacing(sessionID: string, on: boolean) {
+    const next = new Set(replacing.value)
+    if (on) next.add(sessionID)
+    else next.delete(sessionID)
+    replacing.value = next
+  }
   /** Sessions whose transcript is being summarised right now. */
   const summarising = ref(new Set<string>())
   /**
@@ -1788,6 +1800,8 @@ export const useApp = defineStore("app", () => {
     moveTab,
     messages,
     busy,
+    replacing,
+    markReplacing,
     compacting,
     error,
     config,

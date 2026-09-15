@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, type VoiceCue, type VoiceState } from "../lib/voice"
+import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, micFailure, transcribeFailure, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
@@ -745,7 +745,7 @@ async function toggleVoice() {
       }
       if (edited) showCue(edited)
     } catch (err) {
-      if (run === voiceRun) notifyFailure(t("voice.failed"), reasonForVoice(err))
+      if (run === voiceRun) showVoiceFailure(transcribeFailure(err))
     } finally {
       if (run === voiceRun) voice.value = "idle"
     }
@@ -753,18 +753,20 @@ async function toggleVoice() {
   }
 
   if (!voiceConfigured.value) {
-    notifyFailure(t("voice.failed"), t("voice.notConfigured"))
+    notifyFailure(t("voice.notConfigured"))
     return
   }
   // MiMo's starting capsule, between the press and the microphone answering.
   voice.value = "starting"
   try {
+    // MiMo's micAccess before capture: a refusal from the OS is a denial like getUserMedia's.
+    if (!(await window.mcode.micAccess())) throw new DOMException("", "NotAllowedError")
     await recorder.start()
     voice.value = "recording"
     followLevel()
   } catch (err) {
     voice.value = "idle"
-    notifyFailure(t("voice.failed"), reasonForVoice(err))
+    showVoiceFailure(micFailure(err))
   }
 }
 
@@ -776,15 +778,10 @@ function cancelVoice() {
   cueOn.value = false
 }
 
-/** The app's own phrasing for the failures it can recognise. */
-function reasonForVoice(err: unknown): string {
-  const message = err instanceof Error ? err.message : String(err)
-  if (message.includes("voice.notConfigured")) return t("voice.notConfigured")
-  if (message.includes("voice.noEndpoint")) return t("voice.noEndpoint")
-  if (message.includes("voice.noRecorder")) return t("voice.noRecorder")
-  if (message.includes("NotAllowedError") || message.includes("Permission")) return t("voice.noPermission")
-  if (message.includes("NotFoundError")) return t("voice.noDevice")
-  return message
+/* MiMo's single danger toast; a denied microphone also opens the OS privacy page for it. */
+function showVoiceFailure(failure: VoiceFailure) {
+  notifyFailure(t(failure.key, failure.params), failure.detail)
+  if (failure.guide) window.mcode.openMicSettings()
 }
 
 /*
@@ -892,6 +889,11 @@ async function submit() {
     text.value = ""
     await nextTick(resize)
     emit("shell", value)
+    return
+  }
+  // MiMo: while an edit or retry is replacing this conversation's turn, a send is refused and the draft kept.
+  if (sessionID.value && !busyHere.value && app.replacing.has(sessionID.value)) {
+    notifyFailure(t("composer.replacePending"))
     return
   }
   // A waiting question takes plain text as the answer to its first question, as MiMo's composer does.

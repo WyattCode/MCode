@@ -714,6 +714,7 @@ async function sendEdit(turn: Turn) {
     return
   }
   resending.value = true
+  app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
     editingAsked.value = undefined
@@ -725,6 +726,7 @@ async function sendEdit(turn: Turn) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
     resending.value = false
+    app.markReplacing(sessionID, false)
   }
 }
 
@@ -807,6 +809,7 @@ async function retry(turn: Turn) {
     return
   }
   resending.value = true
+  app.markReplacing(sessionID, true)
   try {
     await app.truncate(sessionID, turn.id)
     const sent = await app.send(message.text ?? "", message.attachments ?? [], props.side ? sessionID : undefined, message.annotations ?? [])
@@ -815,6 +818,7 @@ async function retry(turn: Turn) {
     notifyFailure(t("common.requestFailed"), failure instanceof Error ? failure.message : String(failure))
   } finally {
     resending.value = false
+    app.markReplacing(sessionID, false)
   }
 }
 

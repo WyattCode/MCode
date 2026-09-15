@@ -178,6 +178,57 @@ export class VoiceRecorder {
   }
 }
 
+/**
+ * A voice failure as the composer shows it: one danger toast worded by `key`,
+ * optionally with the failure's own words under it, and whether MiMo's guide
+ * to the OS microphone settings follows.
+ */
+export interface VoiceFailure {
+  key: string
+  params?: Record<string, string>
+  detail?: string
+  guide?: boolean
+}
+
+function nameOf(err: unknown): string {
+  return err && typeof err === "object" && "name" in err ? String((err as { name: unknown }).name) : ""
+}
+
+function messageOf(err: unknown): string {
+  if (err && typeof err === "object" && "message" in err) return String((err as { message: unknown }).message)
+  return String(err)
+}
+
+/** A microphone that would not open, sorted as MiMo sorts getUserMedia's errors. */
+export function micFailure(err: unknown): VoiceFailure {
+  const name = nameOf(err)
+  const message = messageOf(err)
+  if (message === "voice.noRecorder") return { key: "voice.noRecorder" }
+  if (name === "NotAllowedError" || name === "SecurityError" || name === "PermissionDeniedError") return { key: "voice.micDenied", guide: true }
+  if (name === "NotFoundError" || name === "OverconstrainedError" || name === "DevicesNotFoundError") return { key: "voice.micNotFound" }
+  // The device exists but would not start: another program holds it.
+  if (name === "NotReadableError" || name === "TrackStartError" || name === "AbortError") return { key: "voice.micInUse" }
+  return { key: "voice.micAccessFailed", params: { msg: message || name } }
+}
+
+/** A transcription that failed, from the code the server threw, as MiMo names it. */
+export function transcribeFailure(err: unknown): VoiceFailure {
+  const message = messageOf(err)
+  const http = /voice\.http:(\d{3})/.exec(message)
+  if (http) return { key: "voice.serviceHttp", params: { status: http[1] } }
+  const named: [string, string][] = [
+    ["voice.notConfigured", "voice.notConfigured"],
+    ["voice.noEndpoint", "voice.noEndpoint"],
+    ["voice.timeout", "voice.timeout"],
+    ["voice.network", "voice.networkUnreachable"],
+    ["voice.modelUnavailable", "voice.modelUnavailable"],
+    ["voice.emptyResult", "voice.emptyResult"],
+  ]
+  for (const [code, key] of named) if (message.includes(code)) return { key }
+  // MiMo's default is its plain voice failure; the words that came with it are kept underneath.
+  return { key: "voice.failed", detail: message }
+}
+
 async function base64Of(blob: Blob): Promise<string> {
   const buffer = new Uint8Array(await blob.arrayBuffer())
   let binary = ""

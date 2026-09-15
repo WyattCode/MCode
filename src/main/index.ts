@@ -4,7 +4,7 @@ import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
@@ -578,6 +578,29 @@ app.whenReady().then(async () => {
     if (typeof url !== "string") return
     if (!url.startsWith("https://") && !url.startsWith("http://")) return
     void shell.openExternal(url)
+  })
+
+  /*
+   * MiMo opens the OS microphone privacy page after a refusal. The page is
+   * chosen here, never named by the renderer, so this cannot open anything else.
+   */
+  ipcMain.on("mcode:open-mic-settings", () => {
+    const page =
+      process.platform === "win32"
+        ? "ms-settings:privacy-microphone"
+        : process.platform === "darwin"
+          ? "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"
+          : undefined
+    if (page) void shell.openExternal(page).catch(() => {})
+  })
+
+  /* MiMo's micAccess before capture: macOS asks for the microphone; other systems answer in getUserMedia. */
+  ipcMain.handle("mcode:mic-access", async () => {
+    if (process.platform !== "darwin") return true
+    const status = systemPreferences.getMediaAccessStatus("microphone")
+    if (status === "granted") return true
+    if (status === "not-determined") return systemPreferences.askForMediaAccess("microphone")
+    return false
   })
 
   ipcMain.on(

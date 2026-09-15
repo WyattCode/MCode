@@ -90,6 +90,11 @@ const api = {
   /** Hands a link to the real browser. Only http and https survive the main process. */
   openExternal: (url: string): void => ipcRenderer.send("mcode:open-external", url),
 
+  /** MiMo's guide after a refused microphone: the OS privacy page for it, where the OS has one. */
+  openMicSettings: (): void => ipcRenderer.send("mcode:open-mic-settings"),
+  /** Whether the OS lets the app use the microphone; macOS asks the first time. */
+  micAccess: (): Promise<boolean> => ipcRenderer.invoke("mcode:mic-access"),
+
   /** Editing commands, which act on whatever the renderer has focused. */
   edit: (action: "undo" | "redo" | "cut" | "copy" | "paste" | "delete" | "selectAll"): void =>
     ipcRenderer.send("mcode:edit", action),
