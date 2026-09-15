@@ -76,6 +76,9 @@ interface Running {
   used: boolean
 }
 
+/** Time between two kills in a row; see queueKill. */
+const KILL_SPACING_MS = 400
+
 export class Shells {
   private readonly shells = new Map<string, Running>()
   /** Finished shells in the order they finished, so the oldest can be let go. */
@@ -199,10 +202,30 @@ export class Shells {
     const queued = this.exited.indexOf(shellID)
     if (queued >= 0) this.exited.splice(queued, 1)
     if (!found.alive) return
-    // kill() with a signal throws on Windows, so it is always called bare.
-    try {
-      found.proc.kill()
-    } catch {}
+    this.queueKill(found.proc)
+  }
+
+  /*
+   * Kills one at a time, a little apart. Several conpty shells killed in the
+   * same tick - closing three used terminals back to back - crashed Electron
+   * in the probe; the same closes spaced out never did. kill() with a signal
+   * throws on Windows, so it is always called bare.
+   */
+  private killQueue: Promise<void> = Promise.resolve()
+  private queued = 0
+
+  private queueKill(proc: { kill(): void }): void {
+    this.queued += 1
+    this.killQueue = this.killQueue
+      .then(() => {
+        try {
+          proc.kill()
+        } catch {}
+      })
+      .then(() => new Promise<void>((resolve) => setTimeout(resolve, KILL_SPACING_MS)))
+      .finally(() => {
+        this.queued -= 1
+      })
   }
 
   /**
@@ -223,10 +246,11 @@ export class Shells {
     for (const shellID of [...this.shells.keys()]) this.close(shellID)
     if (!ending.length) return
     let timer: ReturnType<typeof setTimeout> | undefined
+    // The kills go out one spacing apart, so the bound waits for the queue too.
     await Promise.race([
       Promise.all(ending),
       new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeout)
+        timer = setTimeout(resolve, timeout + this.queued * KILL_SPACING_MS)
       }),
     ])
     clearTimeout(timer)
