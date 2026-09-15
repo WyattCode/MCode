@@ -440,7 +440,8 @@ export function createFind(options: FindOptions): Find {
         close()
         return
       }
-      if (event.key !== "Enter") return
+      // Enter that confirms an input method's candidate is not a step, as in MiMo.
+      if (event.key !== "Enter" || event.isComposing || event.keyCode === 229) return
       event.preventDefault()
       next(event.shiftKey ? -1 : 1)
     },
