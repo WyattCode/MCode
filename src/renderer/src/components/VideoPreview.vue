@@ -221,21 +221,30 @@ function onDuration() {
   duration.value = Number.isFinite(value) ? value : 0
 }
 
+/* MiMo scrubs live: every step of the thumb moves the frame, not only the release. */
 function onSlide(event: Event) {
-  seeking.value = true
-  time.value = Number((event.target as HTMLInputElement).value)
-}
-
-function onSeek(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
   if (video.value) video.value.currentTime = value
   time.value = value
+}
+
+/* A held thumb mutes timeupdate, which would otherwise pull it back mid-drag; the release may land off the slider. */
+function endSeek() {
   seeking.value = false
+  window.removeEventListener("pointerup", endSeek, true)
+  window.removeEventListener("pointercancel", endSeek, true)
+}
+
+function startSeek() {
+  seeking.value = true
+  window.addEventListener("pointerup", endSeek, true)
+  window.addEventListener("pointercancel", endSeek, true)
 }
 
 onMounted(() => window.addEventListener("keydown", onKey, true))
 onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKey, true)
+  endSeek()
   clearTimeout(swallowTimer)
   dropRequest()
 })
@@ -278,7 +287,7 @@ onBeforeUnmount(() => {
                 <rect x="6" y="5" width="4" height="14" rx="1" />
                 <rect x="14" y="5" width="4" height="14" rx="1" />
               </svg>
-              <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z" /></svg>
+              <svg v-else viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M7 5l12 7-12 7z" /></svg>
             </button>
             <span class="vp-time" data-video-time>{{ clock(time) }} / {{ clock(duration) }}</span>
             <input
@@ -290,8 +299,9 @@ onBeforeUnmount(() => {
               :value="time"
               :disabled="!duration"
               :aria-label="t('videoPreview.progress')"
+              data-video-range
+              @pointerdown="startSeek"
               @input="onSlide"
-              @change="onSeek"
             />
           </div>
           <div class="vp-hint" data-video-hint>{{ playing ? t("videoPreview.hintPlaying") : t("videoPreview.hintPaused") }}</div>
@@ -463,26 +473,9 @@ onBeforeUnmount(() => {
   opacity: 0.4;
 }
 
+/* The shadows stay the light ones in dark too: MiMo's utilities compile with fixed colours. */
 .vp-hint {
   color: var(--text-weak);
   font-size: 12px;
-}
-
-:root[data-theme="dark"] .vp-video {
-  box-shadow: 0 12px 40px #00000080;
-}
-
-:root[data-theme="dark"] .vp-bar {
-  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .vp-video {
-    box-shadow: 0 12px 40px #00000080;
-  }
-
-  :root:not([data-theme="light"]) .vp-bar {
-    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
-  }
 }
 </style>
