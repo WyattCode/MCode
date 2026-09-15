@@ -240,6 +240,9 @@ async function main() {
   section("WebSocket protocol")
   // Tasks started with no project get folders of their own; keep them in here.
   process.env.MCODE_SCRATCH_ROOT = path.join(root, "scratch")
+  // A stored config, so these checks run at the default level rather than a first install's 帮我审批 (R12).
+  await fs.mkdir(path.join(dataDirectory, "storage"), { recursive: true })
+  await fs.writeFile(path.join(dataDirectory, "storage", "config.json"), "{}")
   const backend = await startBackend(dataDirectory)
   check("backend picked a port", backend.port > 0, backend.port)
 
@@ -1025,6 +1028,30 @@ async function main() {
       const askConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
       await askConfig.load()
       check("a config below full access leaves the switch off", askConfig.get().allowFullAccess === false)
+
+      /* R12, the user's 2026-09-15 decision: MiMo's first-install defaults, and only where nothing is stored. */
+      const freshData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-firstinstall-"))
+      const freshStorage = new SubagentStorage(path.join(freshData, "storage"))
+      const freshConfig = new SubagentConfig(freshStorage, new Bus(), path.join(freshData, "credentials.json"))
+      await freshConfig.load()
+      check(
+        "a first install starts on 帮我审批 with full access allowed",
+        freshConfig.get().accessLevel === "auto" && freshConfig.get().allowFullAccess === true,
+        { accessLevel: freshConfig.get().accessLevel, allowFullAccess: freshConfig.get().allowFullAccess },
+      )
+      check("and its permission map is the ordinary default", JSON.stringify(freshConfig.get().permissions) === JSON.stringify(PERMISSION_DEFAULTS))
+      const storedAsk = { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: false, theme: "dark" }
+      await freshStorage.write("config", storedAsk)
+      const keptConfig = new SubagentConfig(freshStorage, new Bus(), path.join(freshData, "credentials.json"))
+      await keptConfig.load()
+      check(
+        "a stored config without an access level keeps the default level and the switch off",
+        keptConfig.get().accessLevel === undefined && keptConfig.get().allowFullAccess === false,
+        { accessLevel: keptConfig.get().accessLevel, allowFullAccess: keptConfig.get().allowFullAccess },
+      )
+      const onDisk = JSON.parse(await fs.readFile(path.join(freshData, "storage", "config.json"), "utf8")) as Record<string, unknown>
+      check("and nothing rewrites those stored fields", onDisk.accessLevel === undefined && onDisk.allowFullAccess === false, { accessLevel: onDisk.accessLevel, allowFullAccess: onDisk.allowFullAccess })
+      await fs.rm(freshData, { recursive: true, force: true })
       await fs.rm(fullData, { recursive: true, force: true })
     }
 
@@ -6157,6 +6184,8 @@ async function subagentChecks(root: string) {
   const storage = new SubagentStorage(path.join(data, "storage"))
   const bus = new Bus()
   const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  // A stored config, so a subagent's request asks at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1`, models: [{ id: "m", name: "M" }] }], directory: project })
   await config.setApiKey("fake", "k")
@@ -6562,6 +6591,8 @@ async function sessionChatChecks(root: string, project: string) {
   const storage = new SubagentStorage(path.join(data, "storage"))
   const bus = new Bus()
   const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  // A stored config, so these checks run at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
   await config.setApiKey("fake", "k")
