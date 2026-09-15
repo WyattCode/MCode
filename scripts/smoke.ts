@@ -33,7 +33,7 @@ import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
-import { applyVoiceResult, editCue, isClearCommand, splitSendWord } from "../src/renderer/src/lib/voice"
+import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, transcribeFailure } from "../src/renderer/src/lib/voice"
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
@@ -43,7 +43,16 @@ import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
 import { ago, t } from "../src/renderer/src/lib/i18n"
-import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, handle, parseVoiceEdit, voiceDraftOf, voiceEditMessages } from "../src/server/handlers"
+import {
+  VOICE_EDIT_MAX,
+  VOICE_EDIT_PROMPT,
+  handle,
+  parseVoiceEdit,
+  voiceDraftOf,
+  voiceEditMessages,
+  voiceFetchFailure,
+  voiceHttpFailure,
+} from "../src/server/handlers"
 import { PROJECT_LIST_MIGRATION, customModelOf } from "../src/server/config"
 import { listedProjects, projectsByRecency, reconciledProjects } from "../src/shared/projects"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
@@ -2614,6 +2623,46 @@ async function main() {
     check("an edit that changed the box rewrote it", editCue("周五开会", "周四开会", true) === "rewritten")
     check("an edit that left nothing cleared it", editCue("周五开会", "", true) === "cleared")
     check("no change, or no edit, says nothing", editCue("a", "a", true) === undefined && editCue("a", "b", false) === undefined)
+  }
+
+  section("Voice failures (MiMo's messages)")
+  {
+    const dom = (name: string, message = "") => Object.assign(new Error(message), { name })
+    check("a refused microphone is micDenied and opens the OS page", JSON.stringify(micFailure(dom("NotAllowedError"))) === JSON.stringify({ key: "voice.micDenied", guide: true }))
+    check("a security refusal is the same denial", micFailure(dom("SecurityError")).key === "voice.micDenied")
+    check("no device, or none that fits, is micNotFound", micFailure(dom("NotFoundError")).key === "voice.micNotFound" && micFailure(dom("OverconstrainedError")).key === "voice.micNotFound")
+    check(
+      "a device another program holds is micInUse",
+      ["NotReadableError", "TrackStartError", "AbortError"].every((name) => micFailure(dom(name)).key === "voice.micInUse" && !micFailure(dom(name)).guide),
+    )
+    const other = micFailure(dom("TypeError", "boom"))
+    check("anything else is micAccessFailed with its words", other.key === "voice.micAccessFailed" && other.params?.msg === "boom" && !other.guide, other)
+    check("no recorder keeps its own message", micFailure(new Error("voice.noRecorder")).key === "voice.noRecorder")
+
+    const abort = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" })
+    check("a timed-out request is voice.timeout", voiceFetchFailure(abort) === "voice.timeout")
+    const refused = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } })
+    check("a refused or unresolvable endpoint is voice.network", voiceFetchFailure(refused) === "voice.network" && voiceFetchFailure(Object.assign(new Error("x"), { code: "ENOTFOUND" })) === "voice.network")
+    check("a bare fetch TypeError is voice.network", voiceFetchFailure(new TypeError("fetch failed")) === "voice.network")
+    check("an unknown rejection keeps its own words", voiceFetchFailure(new Error("odd")) === "odd")
+    check("404 is the model being unavailable", voiceHttpFailure(404, "") === "voice.modelUnavailable")
+    check(
+      "a body naming an unknown model is too",
+      voiceHttpFailure(400, '{"error":{"message":"The model `whisper-9` does not exist"}}') === "voice.modelUnavailable" &&
+        voiceHttpFailure(400, "Invalid model: foo") === "voice.modelUnavailable",
+    )
+    check("other statuses carry their number", voiceHttpFailure(503, "Service Unavailable") === "voice.http:503" && voiceHttpFailure(400, "Invalid file format") === "voice.http:400")
+
+    const shown = (code: string) => transcribeFailure(new Error(code))
+    check("the window names each code with MiMo's key", shown("voice.timeout").key === "voice.timeout" && shown("voice.network").key === "voice.networkUnreachable" && shown("voice.modelUnavailable").key === "voice.modelUnavailable" && shown("voice.emptyResult").key === "voice.emptyResult")
+    check("an HTTP status is passed to its message", JSON.stringify(shown("voice.http:502")) === JSON.stringify({ key: "voice.serviceHttp", params: { status: "502" } }))
+    check("the configuration codes keep their own messages", shown("voice.notConfigured").key === "voice.notConfigured" && shown("voice.noEndpoint").key === "voice.noEndpoint")
+    const raw = shown("Lost connection to the backend")
+    check("anything else is MiMo's plain failure with the words under it", raw.key === "voice.failed" && raw.detail === "Lost connection to the backend", raw)
+    check("every key the failures name exists in zh-CN", [
+      "voice.micDenied", "voice.micNotFound", "voice.micInUse", "voice.micAccessFailed", "voice.timeout", "voice.networkUnreachable",
+      "voice.modelUnavailable", "voice.serviceHttp", "voice.emptyResult", "voice.failed", "composer.replacePending",
+    ].every((key) => t(key) !== key))
   }
 
   section("Voice smart edit")

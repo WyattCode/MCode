@@ -66,6 +66,51 @@ const VOICE_CLOSE = "⟧"
 /** The longest box taken either way; a message box holding more is not being dictated into. */
 export const VOICE_EDIT_MAX = 50_000
 
+/** How long one transcription request may take; MiMo's own limit was not read, so this is MCode's. */
+export const VOICE_TRANSCRIBE_TIMEOUT_MS = 30_000
+
+/* Socket-level codes Node's fetch carries on its cause when the endpoint cannot be reached. */
+const VOICE_NETWORK_CODES = new Set([
+  "ENOTFOUND",
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ETIMEDOUT",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+])
+
+function errorCodeOf(value: unknown): string {
+  if (!value || typeof value !== "object" || !("code" in value)) return ""
+  return String((value as { code: unknown }).code)
+}
+
+/**
+ * A transcription request that never got an answer, as the code the window
+ * names it by: `voice.timeout`, `voice.network`, or the error's own words.
+ */
+export function voiceFetchFailure(err: unknown): string {
+  const name = err instanceof Error || err instanceof DOMException ? err.name : ""
+  if (name === "TimeoutError" || name === "AbortError") return "voice.timeout"
+  const cause = err && typeof err === "object" && "cause" in err ? (err as { cause: unknown }).cause : undefined
+  if (VOICE_NETWORK_CODES.has(errorCodeOf(err)) || VOICE_NETWORK_CODES.has(errorCodeOf(cause))) return "voice.network"
+  // Node's fetch rejects with a bare TypeError for anything it could not send.
+  if (err instanceof TypeError) return "voice.network"
+  return err instanceof Error ? err.message : String(err)
+}
+
+/* A body that says the model is the problem, not the request. */
+const VOICE_UNKNOWN_MODEL =
+  /model[^.\n]{0,60}(not[ _]?found|does not exist|do not have access|not supported|unsupported|no such)|(unknown|invalid|unsupported) model|模型[^。\n]{0,20}(不存在|不可用|不支持)/i
+
+/** A non-2xx transcription answer as a code: `voice.modelUnavailable` or `voice.http:<status>`. */
+export function voiceHttpFailure(status: number, body: string): string {
+  if (status === 404 || VOICE_UNKNOWN_MODEL.test(body)) return "voice.modelUnavailable"
+  return `voice.http:${status}`
+}
+
 /** A draft the window sent, checked, or nothing when it is not one. */
 export function voiceDraftOf(value: unknown): VoiceDraft | undefined {
   if (!value || typeof value !== "object") return undefined
@@ -591,26 +636,36 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * is JSON and a recording is not text.
        */
       const bytes = Buffer.from(request.audio, "base64")
-      if (!bytes.length) throw new Error("voice.empty")
+      if (!bytes.length) throw new Error("voice.emptyResult")
       const form = new FormData()
       form.append("file", new Blob([bytes], { type: request.mime }), "speech.webm")
       form.append("model", chosen.model)
       if (request.language) form.append("language", request.language.split("-")[0])
 
+      /* Failures leave here as codes the window turns into MiMo's messages, never as raw fetch errors. */
       const response = await fetch(`${baseURL.replace(/\/$/, "")}/audio/transcriptions`, {
         method: "POST",
         headers,
         body: form,
+        signal: AbortSignal.timeout(VOICE_TRANSCRIBE_TIMEOUT_MS),
+      }).catch((err: unknown) => {
+        throw new Error(voiceFetchFailure(err))
       })
       if (!response.ok) {
         const detail = await response.text().catch(() => "")
-        throw new Error(`voice.failed: ${response.status} ${detail.slice(0, 200)}`)
+        throw new Error(voiceHttpFailure(response.status, detail))
       }
-      const body = (await response.json().catch(() => ({}))) as { text?: string }
+      // The timeout still runs while the body arrives; a body that is not JSON is an empty answer.
+      const body = (await response.json().catch((err: unknown) => {
+        if (voiceFetchFailure(err) === "voice.timeout") throw new Error("voice.timeout")
+        return {}
+      })) as { text?: string }
       const heard = (body.text ?? "").trim()
+      // As MiMo: nothing heard is said so, rather than the capsule closing on nothing.
+      if (!heard) throw new Error("voice.emptyResult")
 
       const mode = request.mode ?? runtime.config.get().voiceMode ?? "smart"
-      if (mode !== "smart" || !heard) return { text: heard, heard } satisfies Handled<"voice.transcribe">
+      if (mode !== "smart") return { text: heard, heard } satisfies Handled<"voice.transcribe">
 
       /*
        * 智能编辑: with the composer's text in hand, one call decides whether the
