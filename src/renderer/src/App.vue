@@ -66,6 +66,7 @@ import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
+import { normalizeChord } from "@shared/chord"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
@@ -664,11 +665,17 @@ async function checkForUpdates() {
   }
 }
 
-/** Chord to command id, for whatever the user has re-bound. */
+/**
+ * Chord to command id, for whatever the user has re-bound.
+ *
+ * Read in the physical-key spelling `chordOf` produces, so a binding written
+ * the old printed way (Ctrl+Shift+{) that reached the config some other way
+ * than the load-time migration still fires.
+ */
 const rebound = computed(() => {
   const out = new Map<string, string>()
   for (const [id, chord] of Object.entries(app.config?.keybinds ?? {})) {
-    if (chord) out.set(chord, id)
+    if (chord) out.set(normalizeChord(chord), id)
   }
   return out
 })
@@ -957,7 +964,7 @@ watch(
  */
 /* MiMo's terminal stack, the same as tokens.css's --font-terminal, for a chosen face to stand in front of. */
 const TERMINAL_FONT_STACK =
-  '"SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", monospace'
+  '"SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", monospace'
 watch(
   () => [app.config?.uiFont, app.config?.codeFont, app.config?.terminalFont] as const,
   ([ui, code, terminal]) => {

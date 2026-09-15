@@ -166,11 +166,15 @@
   --font-sans: var(--font-sans-stack);
   --font-mono: var(--font-mono-stack);
   /*
-   * MiMo's terminal stack, verbatim: system monospace faces first, then the
-   * Nerd Font symbol faces a prompt's glyphs need. A reader who names a font in
-   * settings is prepended to this rather than replacing it (App.vue repeats it).
+   * MiMo's terminal stack: system monospace faces first, then the Nerd Font
+   * symbol faces a prompt's glyphs need, the way MiMo names them. MiMo relies
+   * on one of those being installed; MCode also bundles the face declared at
+   * the top of this file, so its family closes the Nerd Font run before
+   * `monospace` and powerline glyphs render with no font installed. Text stays
+   * on the system face, as in MiMo. A reader who names a font in settings is
+   * prepended to this rather than replacing it (App.vue repeats it).
    */
-  --font-terminal: "SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", monospace;
+  --font-terminal: "SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", monospace;
 
   /*
    * Thirteen on twenty-four, measured off opencode's own body rule. This app

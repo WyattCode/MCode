@@ -39,6 +39,7 @@ import { rovingStep } from "../src/renderer/src/lib/composer-menu"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
+import { normalizeChord } from "../src/shared/chord"
 import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
@@ -4408,6 +4409,50 @@ async function main() {
   check("Windows writes Tab as its glyph", formatChord("Ctrl+Shift+Tab", "win32") === "Ctrl+Shift+⇥")
   check("Linux writes Meta as Super", formatChord("Meta+Alt+K", "linux") === "Alt+Super+K")
   check("macOS writes glyphs with Ctrl as the command key", formatChord("Ctrl+Shift+[", "darwin") === "⇧⌘[")
+
+  section("round 4 leftovers: stored chords in the old printed form (KS6)")
+  check("an old shifted bracket goes back to its physical key", normalizeChord("Ctrl+Shift+{") === "Ctrl+Shift+[")
+  check(
+    "a shifted slash and a shifted digit follow",
+    normalizeChord("Ctrl+Shift+?") === "Ctrl+Shift+/" && normalizeChord("Alt+Shift+!") === "Alt+Shift+1",
+  )
+  check("the plus key itself is the equals key", normalizeChord("Ctrl+Shift++") === "Ctrl+Shift+=")
+  check(
+    "a chord already in the physical spelling is left alone",
+    normalizeChord("Ctrl+Shift+[") === "Ctrl+Shift+[" && normalizeChord("Ctrl+Alt+↑") === "Ctrl+Alt+↑" && normalizeChord("Ctrl+=") === "Ctrl+=",
+  )
+  check("a deleted binding stays empty", normalizeChord("") === "")
+  check(
+    "an old chord now equals what the recorder writes for the same keys",
+    normalizeChord("Ctrl+Shift+{") === chordOf(keyEvent({ ctrlKey: true, shiftKey: true, key: "{", code: "BracketLeft" })),
+  )
+  {
+    const chordData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-chords-"))
+    const chordStorage = new SubagentStorage(path.join(chordData, "storage"))
+    await chordStorage.write("config", {
+      keybinds: { "view.server": "Ctrl+Shift+{", "tab.close": "", "app.search": "Ctrl+Shift+?", "session.new": "Ctrl+K" },
+      migrations: ["theme-mcode-2", "keybind-ids-r3"],
+    })
+    const chordConfig = new SubagentConfig(chordStorage, new Bus(), path.join(chordData, "credentials.json"))
+    await chordConfig.load()
+    const binds = chordConfig.get().keybinds
+    check(
+      "loading the config rewrites old printed chords",
+      binds["view.server"] === "Ctrl+Shift+[" && binds["app.search"] === "Ctrl+Shift+/" && binds["session.new"] === "Ctrl+K" && binds["tab.close"] === "",
+      binds,
+    )
+    const stored = await chordStorage.read<{ keybinds: Record<string, string>; migrations: string[] }>("config")
+    check(
+      "the rewrite is saved and recorded, so it runs once",
+      stored?.keybinds["view.server"] === "Ctrl+Shift+[" && (stored?.migrations ?? []).includes("keybind-chords-r4"),
+      stored,
+    )
+    await chordConfig.set({ keybinds: { "view.server": "Ctrl+Shift+{" } })
+    const again = new SubagentConfig(chordStorage, new Bus(), path.join(chordData, "credentials.json"))
+    await again.load()
+    check("a chord saved after the migration is not rewritten again on the next load", again.get().keybinds["view.server"] === "Ctrl+Shift+{")
+    await fs.rm(chordData, { recursive: true, force: true })
+  }
   const pageCommands = [
     { id: "session.archive", title: "Archive this session", hint: "Ctrl+Alt+A" },
     { id: "tab.close", title: "Close tab", hint: "Ctrl+W" },
