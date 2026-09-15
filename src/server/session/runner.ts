@@ -50,6 +50,7 @@ import {
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { costOf } from "./usage"
+import { ABORTED_TOOL } from "../provider/history"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -1165,6 +1166,8 @@ export class SessionRunner {
      */
     if (session.revert) session = await this.commitRevert(session)
 
+    await this.settleInterrupted(session.id)
+
     // Smart picks its model from the first message, before anything is checked against it.
     if (session.smart && !session.smartRoute && input.text.trim()) session = await this.routeSmart(session, input.text)
 
@@ -1216,6 +1219,28 @@ export class SessionRunner {
   }
 
   /**
+   * MiMo's settling of calls a stopped or closed turn left unfinished: at the
+   * next prompt, while nothing is running, each is stored as an error saying it
+   * was aborted, marked interrupted and aborted so the transcript draws it
+   * quietly and the model reads it as a call that did not complete.
+   */
+  private async settleInterrupted(sessionID: string): Promise<void> {
+    for (const message of await this.store.messages(sessionID)) {
+      if (message.role !== "assistant") continue
+      let changed = false
+      for (const part of message.parts) {
+        if (part.type !== "tool" || (part.status !== "pending" && part.status !== "running")) continue
+        part.status = "error"
+        part.error = ABORTED_TOOL
+        part.metadata = { ...(part.metadata ?? {}), aborted: true, interrupted: true }
+        part.time.completed ??= Date.now()
+        changed = true
+      }
+      if (changed) await this.store.saveMessage(message)
+    }
+  }
+
+  /**
    * Starts a turn for messages that arrived as the last one was ending.
    *
    * They are in the transcript already - what they missed is a model call. This
@@ -1259,6 +1284,7 @@ export class SessionRunner {
       if (session.revert) throw new Error("Resume is unavailable while part of the conversation is rolled back")
       const messageID = interruptedTurn(await this.store.messages(sessionID))
       if (!messageID) throw new Error("There is no interrupted turn to resume")
+      await this.settleInterrupted(sessionID)
       if (!this.config.usable(session.model.provider)) {
         throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
       }

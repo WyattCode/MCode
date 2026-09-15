@@ -5,6 +5,7 @@ import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
 import { costOf } from "../session/usage"
+import { requestHistory } from "./history"
 
 export function createClient(apiKey: string, maxRetries = 2): Anthropic {
   return new Anthropic({ apiKey, maxRetries })
@@ -31,7 +32,7 @@ export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
 export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = []
 
-  for (const message of messages) {
+  for (const message of requestHistory(messages)) {
     if (message.role === "user") {
       const content: Anthropic.ContentBlockParam[] = []
       for (const attachment of message.attachments ?? []) {
@@ -57,9 +58,7 @@ export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[
       if (part.type === "text") {
         if (part.text.trim()) assistant.push({ type: "text", text: part.text })
       } else if (part.type === "tool") {
-        // A tool the model asked for but that never ran (aborted turn) would
-        // leave an unanswered tool_use, so skip the pair entirely.
-        if (part.status === "pending" || part.status === "running") continue
+        // A call that never finished arrives here already answered as interrupted (see history.ts).
         assistant.push({ type: "tool_use", id: part.callID, name: part.name, input: part.input })
         results.push({
           type: "tool_result",

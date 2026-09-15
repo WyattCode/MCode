@@ -1229,7 +1229,12 @@ async function main() {
     useIDs,
     resultIDs,
   })
-  check("unfinished tool is dropped entirely", !useIDs.includes("toolu_never"), useIDs)
+  // MiMo answers a call that never finished as interrupted rather than dropping it.
+  check(
+    "an unfinished tool is answered as interrupted",
+    useIDs.includes("toolu_never") && results.find((b) => b.tool_use_id === "toolu_never")?.content === "[Tool execution was interrupted]",
+    results,
+  )
   check("failed tool is marked is_error", results.find((b) => b.tool_use_id === "toolu_bad")?.is_error === true)
   check("failed tool sends its error as content", results.find((b) => b.tool_use_id === "toolu_bad")?.content === "no match")
   check("reasoning is not replayed", !blocks.some((b) => b.type === "thinking"), blocks.map((b) => b.type))
@@ -4127,11 +4132,16 @@ async function main() {
     () => {},
   )
 
-  const items = sentBody.input as { type: string; call_id?: string }[]
+  const items = sentBody.input as { type: string; call_id?: string; output?: string }[]
   const calls = items.filter((item) => item.type === "function_call").map((item) => item.call_id)
   const outputs = items.filter((item) => item.type === "function_call_output").map((item) => item.call_id)
   check("a finished tool is replayed as a pair", calls.includes("call_done") && outputs.includes("call_done"))
-  check("an unfinished tool is dropped entirely", !calls.includes("call_stuck") && !outputs.includes("call_stuck"), calls)
+  // MiMo answers a call that never finished as interrupted rather than dropping it.
+  check(
+    "an unfinished tool is replayed with an interrupted result",
+    calls.includes("call_stuck") && items.some((item) => item.type === "function_call_output" && item.call_id === "call_stuck" && item.output === "[Tool execution was interrupted]"),
+    items,
+  )
   check("every replayed call has its output", calls.every((id) => outputs.includes(id!)), { calls, outputs })
 
   codex.close()

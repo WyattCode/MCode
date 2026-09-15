@@ -3,6 +3,7 @@ import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { ProviderError, ProviderHttpError, headersOf, wireOfBody } from "./types"
+import { requestHistory } from "./history"
 
 /**
  * Adapter for OpenAI-compatible chat completions.
@@ -71,7 +72,7 @@ function toolSchemas(tools: ToolDefinition[]) {
 export function toMessages(system: string, history: Message[]) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
-  for (const message of history) {
+  for (const message of requestHistory(history)) {
     if (message.role === "user") {
       const attachments = message.attachments ?? []
       const images = attachments.filter((attachment) => attachment.mime.startsWith("image/"))

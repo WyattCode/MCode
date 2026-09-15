@@ -12,6 +12,8 @@ import { costOf } from "../src/server/session/usage"
 import { usageOf } from "../src/server/provider/openai"
 import { RETRY_BUDGETS, retryDecision, retryHint, retryKind } from "../src/server/session/retry"
 import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
+import { ABORTED_TOOL, INTERRUPTED_RESULT, requestHistory } from "../src/server/provider/history"
+import { toMessages } from "../src/server/provider/openai"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -242,6 +244,60 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.idle(session.id)
       const broken = (await e.assistants(session.id)).at(-1)
       check("a step whose tool call had begun is not retried", e.bodies.length === sent + 1 && broken?.finish === "error", { requests: e.bodies.length - sent, finish: broken?.finish })
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: interrupted tool calls stay in history (E17)")
+  {
+    const user = (id: string, text: string): Message => ({ id, sessionID: "s", role: "user", text, attachments: [], time: { created: 1 } })
+    const reply = (id: string, parts: AssistantMessage["parts"]): Message => ({
+      id,
+      sessionID: "s",
+      role: "assistant",
+      model: { provider: "p", model: "m" },
+      agent: "build",
+      parts,
+      time: { created: 2 },
+    })
+    const tool = (callID: string, status: "pending" | "running" | "error" | "completed", extra: Record<string, unknown> = {}) =>
+      ({ type: "tool", id: callID, callID, name: "bash", status, input: { command: "x" }, time: { created: 1 }, ...extra }) as AssistantMessage["parts"][number]
+
+    const wire = toMessages("sys", [user("u1", "run it"), reply("a1", [tool("call_run", "running")])]) as Record<string, any>[]
+    check(
+      "a call left running is sent with its call and an interrupted result",
+      wire.some((m) => m.role === "assistant" && m.tool_calls?.[0]?.id === "call_run") && wire.some((m) => m.role === "tool" && m.tool_call_id === "call_run" && m.content === INTERRUPTED_RESULT),
+      wire,
+    )
+    const kept = requestHistory([user("u1", "go"), reply("a1", [tool("call_kept", "error", { error: ABORTED_TOOL, output: "half the log", metadata: { interrupted: true } })])])
+    const keptPart = kept[1]?.role === "assistant" ? kept[1].parts[0] : undefined
+    check("an interrupted call that had output hands the model that output", keptPart?.type === "tool" && keptPart.status === "completed" && keptPart.output === "half the log", keptPart)
+    const trailing = requestHistory([user("u1", "hi"), reply("a1", [{ type: "text", id: "t", text: "Hello." }])])
+    check("a conversation ending on the model's words gets a trailing Continue.", trailing.length === 3 && trailing[2]?.role === "user" && trailing[2].text === "Continue.", trailing)
+    const blank = requestHistory([user("u1", "hi"), reply("a1", [{ type: "text", id: "t", text: "  " }])])
+    check("a trailing reply with nothing in it is dropped instead", blank.length === 1 && blank[0]?.role === "user", blank)
+    const empty = requestHistory([user("u1", "")])
+    check("a user message with nothing to send says Continue.", empty[0]?.role === "user" && empty[0].text === "Continue.", empty)
+    const afterTools = requestHistory([user("u1", "hi"), reply("a1", [tool("call_done", "completed", { output: "ok" })])])
+    check("a reply that ends on a call is answered by its result, not by Continue.", afterTools.length === 2, afterTools)
+
+    // Settled in storage at the next prompt, and sent as aborted.
+    const e = await engine()
+    try {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.store.saveMessage({ id: "msg_r5_u", sessionID: session.id, role: "user", text: "start", attachments: [], time: { created: 1 } })
+      await e.store.saveMessage({ ...(reply("msg_r5_a", [tool("call_stuck", "running")]) as AssistantMessage), sessionID: session.id, finish: "aborted" })
+      await e.runner.prompt({ sessionID: session.id, text: "carry on" })
+      await e.idle(session.id)
+      const stored = (await e.assistants(session.id)).find((message) => message.id === "msg_r5_a")?.parts[0]
+      check(
+        "the next prompt stores the unfinished call as aborted and interrupted",
+        stored?.type === "tool" && stored.status === "error" && stored.error === ABORTED_TOOL && stored.metadata?.interrupted === true && stored.metadata?.aborted === true,
+        stored,
+      )
+      const sentTools = (e.bodies[0]?.messages ?? []).filter((m: Record<string, unknown>) => m.role === "tool")
+      check("and the model reads it as a call that did not complete", sentTools.length === 1 && sentTools[0].content === ABORTED_TOOL, sentTools)
     } finally {
       await e.close()
     }

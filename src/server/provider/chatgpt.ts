@@ -3,6 +3,7 @@ import { withAnnotations } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { ProviderError, ProviderHttpError, headersOf, wireOfBody } from "./types"
+import { requestHistory } from "./history"
 import { USER_AGENT } from "../auth/oauth"
 
 /**
@@ -64,7 +65,7 @@ function toolSchemas(tools: ToolDefinition[]) {
 function toInput(history: Message[]): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
 
-  for (const message of history) {
+  for (const message of requestHistory(history)) {
     if (message.role === "user") {
       const attachments = message.attachments ?? []
       const images = attachments.filter((attachment) => attachment.mime.startsWith("image/"))
@@ -98,10 +99,7 @@ function toInput(history: Message[]): Record<string, unknown>[] {
 
     for (const part of message.parts) {
       if (part.type !== "tool") continue
-      // A call with no result is worse than no call at all: the backend rejects
-      // an unpaired function_call, so an interrupted turn would poison every
-      // later request in the session. Drop the pair, not just the output.
-      if (part.status === "pending" || part.status === "running") continue
+      // A call that never finished arrives here already answered as interrupted (see history.ts).
       out.push({
         type: "function_call",
         call_id: part.callID,
