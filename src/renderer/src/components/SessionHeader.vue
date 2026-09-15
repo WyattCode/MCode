@@ -304,6 +304,16 @@ function openMenu(event: MouseEvent) {
   color: var(--text-strong);
 }
 
+/* MiMo on Windows: the panel toggles' glyphs 12px, in one solid colour on light and dark alike. */
+.app[data-platform="win32"] .ico:not(.options) {
+  color: var(--text-strong);
+}
+
+.app[data-platform="win32"] .ico:not(.options) svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* Against the title, and never squeezed by a long one: MiMo's 26px menu in the muted colour. */
 .ico.options {
   flex-shrink: 0;

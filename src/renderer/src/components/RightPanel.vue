@@ -65,6 +65,8 @@ const app = useApp()
 const tools = computed(() => LAUNCH_ORDER.filter((tool) => tool !== "browser" || props.browserAllowed))
 
 function title(tab: RightTab): string {
+  // MiMo names a browser tab by its page once the page has a title.
+  if (tab.type === "browser" && tab.pageTitle) return tab.pageTitle
   if (tab.name) return tab.name
   // subagents: the one 子智能体 tab, named as MiMo names it.
   if (tab.type === "subagents") return t("launch.subagents")
@@ -73,6 +75,29 @@ function title(tab: RightTab): string {
   const name = t(TOOL_INFO[tab.type].label)
   return tab.ord > 1 ? `${name} ${tab.ord}` : name
 }
+
+/*
+ * A favicon that will not load gives the tab its globe back until the page
+ * names another - or names the same one again after a navigation cleared it.
+ */
+const brokenFavicons = ref<Record<string, string>>({})
+
+function faviconOf(tab: RightTab): string | undefined {
+  if (tab.type !== "browser" || !tab.faviconUrl) return undefined
+  return brokenFavicons.value[tab.id] === tab.faviconUrl ? undefined : tab.faviconUrl
+}
+
+function faviconFailed(tab: RightTab) {
+  if (tab.faviconUrl) brokenFavicons.value[tab.id] = tab.faviconUrl
+}
+
+watch(
+  () => rp.tabs.map((tab) => [tab.id, tab.faviconUrl ?? ""] as const),
+  (faces) => {
+    const now = new Map(faces)
+    for (const [id, url] of Object.entries(brokenFavicons.value)) if (now.get(id) !== url) delete brokenFavicons.value[id]
+  },
+)
 
 /* Width: between MiMo's 300 and what leaves the conversation its 480. */
 const viewport = ref(window.innerWidth)
@@ -303,7 +328,16 @@ defineExpose({
           @mousedown="onTabMouseDown($event, tab.id)"
           @contextmenu.prevent="openTabMenu($event, tab.id)"
         >
-          <svg class="rpt-ic" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <img
+            v-if="faviconOf(tab)"
+            class="rpt-ic rpt-favicon"
+            :src="faviconOf(tab)"
+            alt=""
+            referrerpolicy="no-referrer"
+            :data-rp-favicon="tab.id"
+            @error="faviconFailed(tab)"
+          />
+          <svg v-else class="rpt-ic" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path v-for="d in iconOf(tab.type)" :key="d" :d="d" />
           </svg>
           <span class="rpt-name" v-tip="{ label: title(tab), placement: 'bottom' }">{{ title(tab) }}</span>
@@ -374,7 +408,9 @@ defineExpose({
             :ref="(instance) => setBrowserPane(tab.id, instance)"
             :active="tab.id === rp.active && rp.open"
             :pageId="tab.pageId"
+            :url="tab.url"
             @page="(id: string) => rp.update(tab.id, { pageId: id })"
+            @address="(url: string) => rp.update(tab.id, { url })"
           />
           <RpTerminal
             v-else-if="tab.type === 'terminal'"
@@ -563,6 +599,12 @@ body.resizing .right-panel {
   width: 14px;
   height: 14px;
   color: var(--text-strong);
+}
+
+/* MiMo's favicon in the glyph's place: the whole image in the 14px box, 2 round. */
+.rpt-favicon {
+  object-fit: contain;
+  border-radius: 2px;
 }
 
 .rpt-ic path,

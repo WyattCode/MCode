@@ -4067,7 +4067,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app">
+  <div class="app" :data-platform="app.platform || undefined">
     <!-- MiMo's one title-bar button on the right, on every screen: the side panel. -->
     <button
       v-if="!onboarding"
@@ -4873,6 +4873,18 @@ onBeforeUnmount(() => {
 :root[data-theme="dark"] .side-panel-toggle,
 :root[data-theme="dark"] .home-bottom {
   color: var(--text-strong);
+}
+
+/* MiMo on Windows: every title-bar glyph 12px, in one solid colour on light and dark alike. */
+.app[data-platform="win32"] .side-panel-toggle,
+.app[data-platform="win32"] .home-bottom:not(:disabled) {
+  color: var(--text-strong);
+}
+
+.app[data-platform="win32"] .side-panel-toggle svg,
+.app[data-platform="win32"] .home-bottom svg {
+  width: 12px;
+  height: 12px;
 }
 
 .side-panel-toggle:hover,

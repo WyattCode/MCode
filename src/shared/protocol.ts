@@ -1677,6 +1677,12 @@ export type Request =
    * being one worktree.
    */
   | { type: "command.list"; directory: string }
+  /*
+   * A project or global command filled in for sending, as MiMo's session.command
+   * fills one: arguments substituted, its shell placeholders run in `directory`,
+   * and the files it names with `@` returned for the window to attach.
+   */
+  | { type: "command.expand"; directory: string; name: string; arguments: string }
   | { type: "config.get" }
   | { type: "config.set"; patch: Partial<AppConfig> }
   | { type: "provider.list" }
@@ -1916,6 +1922,8 @@ export interface ResponseMap {
   "question.list": { questions: QuestionRequest[] }
   "question.reply": Record<string, never>
   "command.list": { commands: CommandInfo[] }
+  /* `files` are the existing files the prompt names with `@`: `name` as written, `path` absolute. */
+  "command.expand": { prompt: string; files: { name: string; path: string }[] }
   "config.get": { config: AppConfig }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }

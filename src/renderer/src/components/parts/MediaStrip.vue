@@ -4,22 +4,23 @@ import { PLATFORM_COLOURS, platformLinksIn, type MediaMeta } from "@shared/media
 import { enrichMedia } from "../../lib/media-embed"
 import { audioClock } from "../../lib/media-card"
 import { t } from "../../lib/i18n"
+import { useRightPanel } from "../../stores/right-panel"
 import MediaCoverflow from "./MediaCoverflow.vue"
-import MediaPlayer from "./MediaPlayer.vue"
 
 /**
  * MiMo's video cards under a finished reply: its links to the fourteen video
  * platforms, looked up by the main process. One link is a card beside its
- * cover; several are a coverflow. A bilibili or YouTube card opens the
- * platform's own player in place; the other twelve open in the browser.
+ * cover; several are a coverflow. A card opens its video page in a browser tab
+ * of the right panel - for all fourteen, as MiMo's shipped build does, taking
+ * up a browser tab already on that address.
  */
 const props = defineProps<{ text: string }>()
+const rp = useRightPanel()
 
 /* MiMo shows at most thirty. */
 const MAX_CARDS = 30
 
 const metas = ref<MediaMeta[]>([])
-const playing = ref<string>()
 const active = ref(0)
 const coverFailed = ref(false)
 let generation = 0
@@ -44,36 +45,27 @@ onBeforeUnmount(() => {
 })
 
 const single = computed(() => (metas.value.length === 1 ? metas.value[0] : undefined))
-const playingMeta = computed(() => metas.value.find((meta) => meta.url === playing.value))
 
 watch(single, () => (coverFailed.value = false))
 
 const platformName = (meta: MediaMeta) => t(`mediaCard.platform.${meta.platform}`)
 const badge = (meta: MediaMeta) => ({ color: PLATFORM_COLOURS[meta.platform].fg, background: PLATFORM_COLOURS[meta.platform].bg })
 
+/* MiMo's browser switch in settings does not stop a card: its press always opens the tab. */
 function play(url: string) {
-  const meta = metas.value.find((entry) => entry.url === url)
-  if (!meta) return
-  if (meta.play === "inline" && meta.embedUrl) playing.value = url
-  else window.mcode.openExternal(meta.url)
-}
-
-function collapse() {
-  playing.value = undefined
+  if (metas.value.some((entry) => entry.url === url)) rp.openBrowser(url, { reuse: true })
 }
 </script>
 
 <template>
   <div v-if="metas.length" class="media-strip" :class="{ 'media-strip-multi': metas.length > 1 }" data-media-strip>
-    <MediaPlayer v-if="playingMeta" :key="playingMeta.url" :meta="playingMeta" @collapse="collapse" />
     <button
-      v-else-if="single"
+      v-if="single"
       type="button"
       class="media-card"
       :title="single.title || t('mediaCard.openInBrowser')"
       data-media-card
       :data-media-url="single.url"
-      :data-media-play="single.play"
       @click="play(single.url)"
     >
       <span class="media-card-thumb">

@@ -69,14 +69,17 @@ import { listedProjects, projectsByRecency, reconciledProjects } from "../src/sh
 import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
-import { addressToURL, safeURL } from "../src/shared/web-address"
+import { addressToURL, pageMayNavigate, safeURL } from "../src/shared/web-address"
 import * as mediaPlatform from "../src/shared/media-platform"
+import { serveCover } from "../src/main/media-cover"
 import * as abcPlay from "../src/renderer/src/lib/abc-play"
 import {
   APP_CHORDS,
   barMode,
+  browserTabFace,
   loadErrorKind,
   localServerOf,
+  pageFavicon,
   pageKeyAction,
   pageMenuGroups,
   routeWindowOpen,
@@ -121,7 +124,8 @@ import { sessionArtifacts, sessionReferences } from "../src/shared/session-files
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
 import type { TaskItem } from "../src/shared/protocol"
 import { TASK_ARCHIVE_MS, applyTask, listedTasks, nextTaskID } from "../src/server/tool/task"
-import { buildRows } from "../src/renderer/src/lib/step-rows"
+import { buildRows, retryReason } from "../src/renderer/src/lib/step-rows"
+import { wordMatch } from "../src/renderer/src/lib/word-match"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
 import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -238,7 +242,8 @@ import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage }
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
-import { listCommands } from "../src/server/command"
+import { expandCommand, listCommands } from "../src/server/command"
+import { expandTemplate, fileReferences, shellPlaceholders, substituteShell } from "../src/shared/command"
 import { SEARCH, SKILL_FILE_SAMPLE, SkillSearchTool, SkillTool, searchSkills, searchTokens } from "../src/server/tool/skill"
 import { stepTitle as skillStepTitle, toolVerb as skillToolVerb } from "../src/renderer/src/lib/tool-meta"
 
@@ -273,6 +278,9 @@ async function main() {
   section("WebSocket protocol")
   // Tasks started with no project get folders of their own; keep them in here.
   process.env.MCODE_SCRATCH_ROOT = path.join(root, "scratch")
+  // A stored config, so these checks run at the default level rather than a first install's 帮我审批 (R12).
+  await fs.mkdir(path.join(dataDirectory, "storage"), { recursive: true })
+  await fs.writeFile(path.join(dataDirectory, "storage", "config.json"), "{}")
   const backend = await startBackend(dataDirectory)
   check("backend picked a port", backend.port > 0, backend.port)
 
@@ -470,6 +478,23 @@ async function main() {
   const none = filterMenu(moveRows, "zzz")
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
+
+  // MiMo's settings search: every typed word begins a word, camelCase split, CJK anywhere.
+  check("a settings query matches the start of a word, not its middle", wordMatch("Keyboard shortcuts", "short") && !wordMatch("Keyboard shortcuts", "cuts"))
+  check("every typed word has to begin some word", wordMatch("Keyboard shortcuts", "key sho") && !wordMatch("Keyboard shortcuts", "key zoom"))
+  check("a camelCase word matches by its parts", wordMatch("hardwareAcceleration", "accel") && wordMatch("MCPServers", "servers") && wordMatch("MCPServers", "mcp"))
+  check("a Chinese query matches anywhere", wordMatch("硬件加速 GPU", "加速") && !wordMatch("硬件加速", "减速"))
+  check("a settings query ignores case and an empty one matches all", wordMatch("GPU rendering", "gpu") && wordMatch("anything", "  "))
+
+  // The reconnecting row's reason: one line, or nothing at all.
+  check("a retry's reason is drawn on one line", retryReason("  overloaded\n  try later ") === "overloaded try later")
+  check("a retry without a reason draws none", retryReason("") === undefined && retryReason(undefined) === undefined && retryReason(" \n ") === undefined)
+
+  // A browser tab's face: the page's favicon when the window may load it, and its title.
+  check("a favicon is the first http(s) or inline image address", pageFavicon(["file:///c:/x.ico", "javascript:1", "https://a.test/f.ico", "http://b.test/g.png"]) === "https://a.test/f.ico" && pageFavicon(["data:image/png;base64,AA"]) === "data:image/png;base64,AA")
+  check("a page naming no loadable favicon has none", pageFavicon(["data:text/html,x", 3, ""]) === undefined && pageFavicon([]) === undefined)
+  check("a browser tab is named by its page's title", browserTabFace({ url: "http://127.0.0.1:1/", title: " Probe \n page ", favicon: "http://127.0.0.1:1/f.png" }).pageTitle === "Probe page")
+  check("a blank browser tab keeps the globe and the tool's name", JSON.stringify(browserTabFace({ url: "about:blank", title: "about:blank", favicon: "https://a.test/f.ico" })) === "{}")
 
   // The right panel's tool hints follow the shortcuts page, and MiMo's narrow-window rule.
   const panelCommands = [
@@ -1124,6 +1149,30 @@ async function main() {
       const askConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
       await askConfig.load()
       check("a config below full access leaves the switch off", askConfig.get().allowFullAccess === false)
+
+      /* R12, the user's 2026-09-15 decision: MiMo's first-install defaults, and only where nothing is stored. */
+      const freshData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-firstinstall-"))
+      const freshStorage = new SubagentStorage(path.join(freshData, "storage"))
+      const freshConfig = new SubagentConfig(freshStorage, new Bus(), path.join(freshData, "credentials.json"))
+      await freshConfig.load()
+      check(
+        "a first install starts on 帮我审批 with full access allowed",
+        freshConfig.get().accessLevel === "auto" && freshConfig.get().allowFullAccess === true,
+        { accessLevel: freshConfig.get().accessLevel, allowFullAccess: freshConfig.get().allowFullAccess },
+      )
+      check("and its permission map is the ordinary default", JSON.stringify(freshConfig.get().permissions) === JSON.stringify(PERMISSION_DEFAULTS))
+      const storedAsk = { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: false, theme: "dark" }
+      await freshStorage.write("config", storedAsk)
+      const keptConfig = new SubagentConfig(freshStorage, new Bus(), path.join(freshData, "credentials.json"))
+      await keptConfig.load()
+      check(
+        "a stored config without an access level keeps the default level and the switch off",
+        keptConfig.get().accessLevel === undefined && keptConfig.get().allowFullAccess === false,
+        { accessLevel: keptConfig.get().accessLevel, allowFullAccess: keptConfig.get().allowFullAccess },
+      )
+      const onDisk = JSON.parse(await fs.readFile(path.join(freshData, "storage", "config.json"), "utf8")) as Record<string, unknown>
+      check("and nothing rewrites those stored fields", onDisk.accessLevel === undefined && onDisk.allowFullAccess === false, { accessLevel: onDisk.accessLevel, allowFullAccess: onDisk.allowFullAccess })
+      await fs.rm(freshData, { recursive: true, force: true })
       await fs.rm(fullData, { recursive: true, force: true })
     }
 
@@ -3348,13 +3397,38 @@ async function main() {
 
   section("The address bar")
   {
-    /*
-     * The two refusals the panel rests on. A file:// in the address bar would
-     * turn a browser panel into a reader for every file the user owns.
-     */
-    check("a file path is refused", safeURL("file:///C:/Windows/win.ini") === undefined)
+    /* What a page may navigate to: the web, and nothing with another scheme. */
+    check("a page may not be sent to a file", safeURL("file:///C:/Windows/win.ini") === undefined)
     check("and so is anything else with a scheme", safeURL("mcode://settings") === undefined)
     check("http survives", safeURL("http://example.com/") === "http://example.com/")
+
+    /* The user's 2026-09-15 decision: MiMo's address bar opens local files, encoded as MiMo encodes them. */
+    check("a Windows path opens as a file", addressToURL("C:\\Users\\a b\\x#1?.html") === "file:///C:/Users/a%20b/x%231%3F.html", addressToURL("C:\\Users\\a b\\x#1?.html"))
+    check("a drive path with forward slashes too", addressToURL("d:/notes/index.html") === "file:///d:/notes/index.html", addressToURL("d:/notes/index.html"))
+    check("a path from the root too", addressToURL("/tmp/page.html") === "file:///tmp/page.html", addressToURL("/tmp/page.html"))
+    check("a typed file address opens", addressToURL("file:///C:/notes/") === "file:///C:/notes/")
+    check("file://localhost is this machine", addressToURL("file://localhost/C:/notes/a.txt") === "file:///C:/notes/a.txt", addressToURL("file://localhost/C:/notes/a.txt"))
+    check("a network share is refused as a path", addressToURL("\\\\server\\share\\a.html") === undefined)
+    check("and as //server", addressToURL("//server/share/a.html") === undefined)
+    check("and as a file address with a host", addressToURL("file://server/share/a.html") === undefined)
+    check("and as file://// with an empty host", addressToURL("file:////server/share/a.html") === undefined)
+    // Never opened as what they are: at most they are words to search for, as before.
+    const searchOnly = (typed: string) => {
+      const url = addressToURL(typed)
+      return url === undefined || url.startsWith("https://www.google.com/search?q=")
+    }
+    check("javascript stays refused", searchOnly("javascript:alert(1)"), addressToURL("javascript:alert(1)"))
+    check("data stays refused", searchOnly("data:text/html,<b>x</b>"), addressToURL("data:text/html,<b>x</b>"))
+    check("the app's own scheme stays refused", addressToURL("mcode://settings") === undefined)
+    check("so does devtools", addressToURL("devtools://devtools/bundled/inspector.html") === undefined)
+
+    /* Links: the web from anywhere, a file only from a local page. */
+    check("a local page may link to its neighbour", pageMayNavigate("file:///C:/notes/a.html", "file:///C:/notes/b.html"))
+    check("a local page may link to the web", pageMayNavigate("file:///C:/notes/a.html", "https://example.com/"))
+    check("a web page may not link to a file", !pageMayNavigate("https://example.com/", "file:///C:/Windows/win.ini"))
+    check("a blank page may not be sent to a file", !pageMayNavigate("", "file:///C:/Windows/win.ini"))
+    check("a local page may not reach a network share", !pageMayNavigate("file:///C:/notes/a.html", "file://server/share/x.html"))
+    check("a local page may not run javascript: as a navigation", !pageMayNavigate("file:///C:/notes/a.html", "javascript:alert(1)"))
 
     /*
      * A port means a development server, and a development server means http.
@@ -4508,6 +4582,37 @@ async function main() {
       drawn.map((task) => `${task.id}:${task.status}:${task.depth}`).join() === "T1:done:0,T2:stalled:0,T2.1:blocked:1",
       drawn,
     )
+
+    // MiMo's list leaves abandoned work out, counts only what it lists, and indents by dotted id or parent.
+    const planned = [
+      turn("a2", [
+        tool("t2", "todowrite", {}, { todos: [
+          { id: "1", content: "plan", status: "completed" },
+          { id: "1.1", content: "sketch", status: "pending" },
+          { id: "2", content: "dropped", status: "cancelled" },
+          { id: "3", content: "given up", status: "abandoned" },
+          { id: "4", content: "orphan", status: "pending", parentId: "3" },
+          { id: "1.2.1", content: "deep", status: "pending", parentId: "1" },
+        ] }, 30),
+      ], 29),
+    ]
+    const plan = infoTasks(undefined, planned, false)
+    const depthOfTask = (id: string) => plan.find((task) => task.id === id)?.depth
+    check("cancelled and abandoned tasks are not listed", plan.map((task) => task.id).join() === "1,1.2.1,1.1,4", plan)
+    check("the task count is done over what is listed", `${plan.filter((task) => task.status === "done").length}/${plan.length}` === "1/4", plan)
+    check("a task indents by the deeper of its dotted id and its parent", depthOfTask("1.2.1") === 2 && depthOfTask("1.1") === 1 && depthOfTask("1") === 0, plan)
+    check("a task whose parent was abandoned stands at the top", depthOfTask("4") === 0, plan)
+    const dropped: TaskItem[] = [
+      { id: "T1", summary: "plan", status: "done", created: 1, updated: now - 10, ended: now - 10 },
+      { id: "T2", summary: "dropped", status: "abandoned", created: 1, updated: now - 10, ended: now - 10 },
+      { id: "T2.1", summary: "left over", status: "blocked", parentID: "T2", created: 1, updated: 5 },
+    ]
+    const kept = infoTasks(dropped, said, false, now)
+    check(
+      "a registry task abandoned this week is not listed or counted, and its child keeps its dotted depth",
+      kept.map((task) => `${task.id}:${task.depth}`).join() === "T1:0,T2.1:1" && `${kept.filter((task) => task.status === "done").length}/${kept.length}` === "1/2",
+      kept,
+    )
   }
 
   // ------------------------------------------------- chatgpt adapter ------
@@ -5546,8 +5651,8 @@ async function main() {
     const P = mediaPlatform
     const bili = P.parsePlatformLink("https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1。")
     check(
-      "a bilibili BV link plays inline, the sentence's full stop trimmed",
-      bili?.platform === "bilibili" && bili.play === "inline" && bili.videoId === "BV1GJ411x7h7" && bili.url === "https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1",
+      "a bilibili BV link is a card, the sentence's full stop trimmed",
+      bili?.platform === "bilibili" && bili.videoId === "BV1GJ411x7h7" && bili.url === "https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1" && !("play" in bili) && !("embedUrl" in bili),
       bili,
     )
     check(
@@ -5557,11 +5662,7 @@ async function main() {
         P.parseBilibili("https://b23.tv/") === undefined,
     )
     const yt = P.parsePlatformLink("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=x")
-    check(
-      "YouTube's player address is the no-cookie embed",
-      yt?.platform === "youtube" && yt.embedUrl === "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0" && P.isEmbedAddress(yt.embedUrl),
-      yt,
-    )
+    check("a YouTube Music link is a YouTube card for its video", yt?.platform === "youtube" && yt.videoId === "dQw4w9WgXcQ", yt)
     check(
       "youtu.be and shorts give the same id",
       P.parsePlatformLink("https://youtu.be/dQw4w9WgXcQ")?.videoId === "dQw4w9WgXcQ" && P.parsePlatformLink("https://www.youtube.com/shorts/dQw4w9WgXcQ")?.videoId === "dQw4w9WgXcQ",
@@ -5581,8 +5682,8 @@ async function main() {
       "https://www.netflix.com/watch/80100172",
     ].map((url) => P.parsePlatformLink(url))
     check(
-      "the twelve other platforms open in the browser",
-      externals.map((link) => link?.platform).join(",") === "douyin,kuaishou,iqiyi,tencent,youku,mangotv,xigua,yangshipin,migu,weibo,tiktok,netflix" && externals.every((link) => link?.play === "external" && link.embedUrl === ""),
+      "the twelve other platforms are recognised",
+      externals.map((link) => link?.platform).join(",") === "douyin,kuaishou,iqiyi,tencent,youku,mangotv,xigua,yangshipin,migu,weibo,tiktok,netflix",
       externals,
     )
     check("fourteen platforms, each with MiMo's badge colours", P.MEDIA_PLATFORMS.length === 14 && P.MEDIA_PLATFORMS.every((name) => /^#/.test(P.PLATFORM_COLOURS[name].bg)) && P.PLATFORM_COLOURS.bilibili.bg === "#fb7299")
@@ -5607,18 +5708,13 @@ async function main() {
     const view = { code: 0, data: { bvid: "BV1GJ411x7h7", cid: 123, title: "T", pic: "http://i0.hdslb.com/c.jpg", duration: 212, owner: { name: "Up" }, dimension: { width: 1080, height: 1920 } } }
     const bilibiliCard = P.bilibiliMeta(view, "https://b23.tv/x")
     check(
-      "bilibili's view answer gives the player address with its cid",
-      bilibiliCard?.embedUrl === "https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&cid=123&autoplay=1&danmaku=0&high_quality=1" &&
-        bilibiliCard.aspect === "9:16" && bilibiliCard.coverUrl === "https://i0.hdslb.com/c.jpg" && bilibiliCard.durationSec === 212 && bilibiliCard.author === "Up",
+      "bilibili's view answer gives the card: title, author, cover, length, orientation",
+      bilibiliCard?.title === "T" && bilibiliCard.aspect === "9:16" && bilibiliCard.coverUrl === "mcode-media://proxy/?u=https%3A%2F%2Fi0.hdslb.com%2Fc.jpg" && bilibiliCard.durationSec === 212 && bilibiliCard.author === "Up",
       bilibiliCard,
     )
     check("no bilibili card without a cid, or on an error code", P.bilibiliMeta({ ...view, data: { ...view.data, cid: 0 } }, "u") === undefined && P.bilibiliMeta({ ...view, code: -404 }, "u") === undefined)
     const oembed = P.oembedMeta({ title: "Song", author_name: "Band", thumbnail_url: "https://i.ytimg.com/vi/x/hqdefault.jpg", width: 200, height: 113 })
     check("YouTube's oEmbed gives title, author and cover", oembed.title === "Song" && oembed.author === "Band" && oembed.image === "https://i.ytimg.com/vi/x/hqdefault.jpg" && oembed.vertical === false, oembed)
-    check(
-      "the speed menu is MiMo's six, labelled 1.0x and 1.25x, and a strange rate is 1x",
-      P.MEDIA_SPEEDS.map((value) => P.speedLabel(value)).join(" ") === "0.5x 0.75x 1.0x 1.25x 1.5x 2.0x" && P.speedValue(9) === 1 && P.speedValue("1.5") === 1.5,
-    )
     const front = P.coverflowSlot(0)
     const side = P.coverflowSlot(-2)
     const hidden = P.coverflowSlot(5)
@@ -5638,14 +5734,72 @@ async function main() {
       ["c", { lastUsedAt: 2 }],
     ])
     check("the least recently used cards go first", P.evictions(used, 1).join(",") === "b,c")
-    check("a vertical player is 9:16 up to 480 high", P.playerBox("9:16").height === "min(60vh, 480px)" && P.playerBox("16:9").aspectRatio === "16 / 9")
+
+    /* MiMo's cover proxy, against a stand-in network: what it sends, where a redirect may lead, what it will not pass on. */
+    const fetched: { url: string; referer?: string; agent?: string; redirect?: string }[] = []
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
+    const picture = () => new Response(png, { headers: { "content-type": "image/png" } })
+    const hopTo = (location: string) => () => new Response(null, { status: 302, headers: { location } })
+    const network: Record<string, () => Response> = {
+      "https://i0.hdslb.com/ok.png": picture,
+      "https://i0.hdslb.com/hop.png": hopTo("https://i1.hdslb.com/ok.png"),
+      "https://i1.hdslb.com/ok.png": picture,
+      "https://i0.hdslb.com/away.png": hopTo("https://evil.example/x.png"),
+      "https://i0.hdslb.com/loop.png": hopTo("https://i0.hdslb.com/loop.png"),
+      "https://i0.hdslb.com/page.html": () => new Response("<html></html>", { headers: { "content-type": "text/html" } }),
+      "https://i0.hdslb.com/vector.svg": () => new Response("<svg/>", { headers: { "content-type": "image/svg+xml" } }),
+      "https://i0.hdslb.com/declared.png": () => new Response(png, { headers: { "content-type": "image/png", "content-length": String(P.COVER_LIMIT + 1) } }),
+      "https://i0.hdslb.com/endless.png": () =>
+        new Response(new ReadableStream({ pull: (controller) => controller.enqueue(new Uint8Array(1024 * 1024)) }), { headers: { "content-type": "image/png" } }),
+    }
+    const stand = async (url: string, init: RequestInit): Promise<Response> => {
+      const headers = (init.headers ?? {}) as Record<string, string>
+      fetched.push({ url, referer: headers.referer, agent: headers["user-agent"], redirect: init.redirect })
+      if (url === "https://i0.hdslb.com/slow.png") {
+        return new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted"))))
+      }
+      const answer = network[url]
+      if (!answer) throw new Error(`no network for ${url}`)
+      return answer()
+    }
+    // The proxy address is built by hand: coverProxyAddress would turn an http cover into https before the proxy saw it.
+    const cover = (address: string, method = "GET", timeout?: number) => serveCover(`mcode-media://proxy/?u=${encodeURIComponent(address)}`, method, stand, timeout)
+    const statusOf = async (address: string, method?: string, timeout?: number) => (await cover(address, method, timeout)).status
+
+    fetched.length = 0
+    const good = await cover("https://i0.hdslb.com/ok.png")
+    const goodBytes = new Uint8Array(await good.arrayBuffer())
     check(
-      "a player frame stays on a player page, and bilibili's player opens no bilibili window",
-      P.embedFrameMayNotGo("https://player.bilibili.com/player.html", "https://www.bilibili.com/") &&
-        !P.embedFrameMayNotGo("https://player.bilibili.com/player.html", "about:blank") &&
-        P.embedPopupRefused("https://player.bilibili.com/player.html", "https://b23.tv/x") &&
-        !P.embedPopupRefused("https://www.youtube-nocookie.com/embed/x", "https://www.youtube.com/watch?v=x"),
+      "a cover is fetched with its platform's referer and MiMo's agent, redirects held back, and passed on as a sandboxed picture",
+      good.status === 200 && good.headers.get("content-type") === "image/png" && goodBytes.length === png.length && good.headers.get("cache-control") === "public, max-age=86400" &&
+        good.headers.get("content-security-policy") === "sandbox" && fetched.length === 1 && fetched[0].referer === "https://www.bilibili.com/" && /Chrome\/126\.0/.test(fetched[0].agent ?? "") && fetched[0].redirect === "manual",
+      { status: good.status, fetched },
     )
+    fetched.length = 0
+    const hopped = await statusOf("https://i0.hdslb.com/hop.png")
+    check("a redirect to another cover host is followed", hopped === 200 && fetched.map((entry) => entry.url).join(" ") === "https://i0.hdslb.com/hop.png https://i1.hdslb.com/ok.png", { hopped, fetched })
+    fetched.length = 0
+    const away = await statusOf("https://i0.hdslb.com/away.png")
+    check("a redirect off the host list is refused and never fetched", away === 502 && !fetched.some((entry) => entry.url.includes("evil.example")), { away, fetched })
+    fetched.length = 0
+    const looped = await statusOf("https://i0.hdslb.com/loop.png")
+    check("a cover that keeps redirecting is refused after three", looped === 502 && fetched.length === 4, { looped, count: fetched.length })
+    check(
+      "a page, an SVG, a picture declared past the cap and one that never ends are all refused",
+      (await statusOf("https://i0.hdslb.com/page.html")) === 502 && (await statusOf("https://i0.hdslb.com/vector.svg")) === 502 &&
+        (await statusOf("https://i0.hdslb.com/declared.png")) === 502 && (await statusOf("https://i0.hdslb.com/endless.png")) === 502,
+    )
+    fetched.length = 0
+    const refusals = [
+      await statusOf("http://i0.hdslb.com/ok.png"),
+      await statusOf("https://i0.hdslb.com.evil.example/ok.png"),
+      await statusOf("https://evil.example/ok.png"),
+      await statusOf("https://i0.hdslb.com/ok.png", "POST"),
+      (await serveCover("mcode-media://proxy/", "GET", stand)).status,
+    ]
+    check("http, lookalike and off-list hosts, other methods and a bare proxy address are refused without a fetch", refusals.join(",") === "403,403,403,405,400" && fetched.length === 0, { refusals, fetched })
+    const slow = await cover("https://i0.hdslb.com/slow.png", "GET", 50)
+    check("a cover that does not answer in time is refused", slow.status === 502 && (await slow.arrayBuffer()).byteLength === 0)
   }
 
   section("Notices and scrollbars (MiMo)")
@@ -5666,11 +5820,109 @@ async function main() {
   await deliveredToolChecks(root)
   await skillChecks(root)
   taskChecks()
+  await commandTemplateChecks(root)
   await historyMemoryCronChecks(root, project)
   await automationChecks(root, project)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/** commands: MiMo's template rules - shell placeholders, `@file`, folders and model tiers. */
+async function commandTemplateChecks(root: string) {
+  section("Command templates (shell, @file, folders, models)")
+  check("shell placeholders are found in order, repeats kept", shellPlaceholders("a !`one` b !`two` c !`one`").join("|") === "one|two|one")
+  check("outputs replace placeholders in order, and a $ in an output is text", substituteShell("x !`a` y !`b`", ["$&", "$1"]) === "x $& y $1")
+  check(
+    "@file: an email is not a file, a closing full stop is not part of one, a repeat counts once",
+    fileReferences("see @notes.md. and @src/a.ts, mail me@example.com, again @notes.md and `@code`").join("|") === "notes.md|src/a.ts",
+    fileReferences("see @notes.md. and @src/a.ts, mail me@example.com, again @notes.md and `@code`"),
+  )
+
+  const base = path.join(root, "commands-case")
+  const home = path.join(base, "home")
+  const storage = path.join(base, "storage")
+  const outer = path.join(base, "outer")
+  const repo = path.join(outer, "repo")
+  const nested = path.join(repo, "packages", "app")
+  const write = async (file: string, text: string) => {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    await fs.writeFile(file, text)
+  }
+  const doc = (body: string, front = "") => `---\ndescription: probe\n${front}---\n${body}\n`
+  await fs.mkdir(path.join(repo, ".git"), { recursive: true })
+  await fs.mkdir(nested, { recursive: true })
+  await write(path.join(storage, "commands", "global-only.md"), doc("from the global folder"))
+  await write(path.join(storage, "commands", "shared.md"), doc("global shared"))
+  await write(path.join(repo, ".mcode", "commands", "shared.md"), doc("repo shared"))
+  await write(path.join(nested, ".mcode", "command", "shared.md"), doc("nested shared"))
+  await write(path.join(nested, ".mcode", "commands", "deploy", "web.md"), doc("deploy web"))
+  await write(path.join(nested, ".claude", "commands", "from-claude.md"), doc("claude command"))
+  await write(path.join(nested, ".claude", "commands", "global-only.md"), doc("claude loses to the global folder"))
+  await write(path.join(outer, ".mcode", "commands", "above.md"), doc("above the repository"))
+  await write(path.join(home, ".mcode", "commands", "shared.md"), doc("home shared"))
+  await write(path.join(repo, ".mcode", "commands", "pair.md"), doc("repo pair"))
+  await write(path.join(nested, ".mcode", "commands", "pair.md"), doc("nested pair"))
+  await write(path.join(nested, ".mcode", "commands", "tier.md"), doc("tier", "model: ultra\n"))
+  await write(path.join(nested, ".mcode", "commands", "literal.md"), doc("literal", "model: probe/stub/v2\n"))
+  await write(path.join(nested, ".mcode", "commands", "group.md"), doc("group", "model: my-group\n"))
+  await write(path.join(nested, ".mcode", "commands", "writes.md"), doc('made !`node -e "require(\'fs\').writeFileSync(\'ran.txt\',\'1\');console.log(\'written\')"`'))
+  // node prints the words the shell handed it, the same in any shell.
+  const words = `node -e "console.log(process.argv.slice(1).join('|'))"`
+  await write(path.join(nested, ".mcode", "commands", "echo.md"), doc(`A !\`${words} $1 $2\` B !\`${words} $ARGUMENTS\``))
+  await write(path.join(nested, ".mcode", "commands", "slow.md"), doc('slow !`node -e "setTimeout(function(){console.log(42)},2000)"`'))
+  await write(path.join(nested, ".mcode", "commands", "big.md"), doc('big !`node -e "process.stdout.write(String.fromCharCode(120).repeat(300000))"`'))
+  await write(path.join(nested, ".mcode", "commands", "noisy.md"), doc('noisy [!`node -e "process.stdout.write(String.fromCharCode(111));process.stderr.write(String.fromCharCode(101));process.exit(3)"`]'))
+  await write(path.join(nested, ".mcode", "commands", "missing.md"), doc("before [!`echo never`] after"))
+  await write(path.join(nested, ".mcode", "commands", "files.md"), doc(`Read @notes.md and @src/a.ts. Skip @missing.txt, @src and me@example.com. !\`node -e "console.log('@later.md')"\``))
+  await write(path.join(repo, "notes.md"), "notes\n")
+  await write(path.join(repo, "src", "a.ts"), "export {}\n")
+  await write(path.join(repo, "later.md"), "later\n")
+
+  const defaultModel = { provider: "probe", model: "stub" }
+  const deps = (shell = "") => ({
+    config: { get: () => ({ model: defaultModel, shell, commands: { configured: { template: "from the config document" } } }) },
+    mcp: { prompts: async () => ({ remote: { client: "srv", name: "remote", description: "mcp" } }), getPrompt: async () => "!`echo from-mcp`" },
+    storage: { directory: storage },
+    home,
+  })
+  const listed = await listCommands(deps() as never, nested)
+  const named = (name: string) => listed.find((entry) => entry.name === name)
+  check("listing never runs a placeholder", !(await fs.stat(path.join(nested, "ran.txt")).catch(() => undefined)) && Boolean(named("writes")))
+  check("the global folder, the walk up to the repository root and .claude folders are all read", Boolean(named("global-only") && named("from-claude") && named("deploy/web") && named("configured")), listed.map((entry) => entry.name))
+  check("the walk stops at the repository root", !named("above"))
+  check("of two project folders the outer one wins a name, as MiMo merges them nearest first", named("pair")?.template === "repo pair", named("pair")?.template)
+  check("the home .mcode wins over the project and global folders", named("shared")?.template === "home shared", named("shared")?.template)
+  check("a .claude command loses a name to the global folder", named("global-only")?.template === "from the global folder", named("global-only")?.template)
+  check("model: a tier name is the default model, provider/model splits on the first slash, another group maps to nothing", JSON.stringify(named("tier")?.model) === JSON.stringify(defaultModel) && named("literal")?.model?.model === "stub/v2" && named("group")?.model === undefined, [named("tier")?.model, named("literal")?.model, named("group")?.model])
+
+  const expand = (name: string, args = "", shell = "") => expandCommand(deps(shell) as never, { directory: nested, name, arguments: args })
+  const writes = await expand("writes")
+  check("sending runs the placeholder, in the conversation's folder, and its output replaces it", writes.prompt === "made written" && Boolean(await fs.stat(path.join(nested, "ran.txt")).catch(() => undefined)), writes.prompt)
+  const echoed = await expand("echo", 'one "x y"')
+  check(
+    "arguments are substituted before the shell runs, unescaped: $2 loses its quotes and splits, $ARGUMENTS keeps them",
+    /^A one\|x\|y\r?\n B one\|x y$/.test(echoed.prompt),
+    echoed.prompt,
+  )
+  const started = Date.now()
+  const slow = await expand("slow")
+  check("no timeout: a command that takes two seconds is still waited for", slow.prompt === "slow 42" && Date.now() - started >= 1900, { prompt: slow.prompt, ms: Date.now() - started })
+  const big = await expand("big")
+  check("no output cap: 300000 characters of output all go in", big.prompt.length === "big ".length + 300000, big.prompt.length)
+  const noisy = await expand("noisy")
+  check("stdout only: stderr is dropped and a failing exit code is ignored", noisy.prompt === "noisy [o]", noisy.prompt)
+  const missing = await expand("missing", "", path.join(base, "no-such-shell", "bash.exe"))
+  check("a shell that cannot start leaves the empty string", missing.prompt === "before [] after", missing.prompt)
+  const files = await expand("files")
+  check(
+    "@file: existing files from the repository root, including one a placeholder printed; no folders, no missing files, no emails",
+    files.files.map((file) => file.name).join("|") === "notes.md|src/a.ts|later.md" && files.files[0]!.path === path.join(repo, "notes.md"),
+    files.files,
+  )
+  const refused = await expand("remote").then(() => "", (err: Error) => err.message)
+  check("an MCP prompt is not a command whose placeholders run", refused.includes("/remote"), refused)
+  check("the window's own fill-in of a template never runs anything", expandTemplate("a !`echo no` $1", "b") === "a !`echo no` b")
 }
 
 /** tasks: MiMo's task registry, as pure changes to a list. */
@@ -6541,6 +6793,8 @@ async function subagentChecks(root: string) {
   const storage = new SubagentStorage(path.join(data, "storage"))
   const bus = new Bus()
   const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  // A stored config, so a subagent's request asks at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1`, models: [{ id: "m", name: "M" }] }], directory: project })
   await config.setApiKey("fake", "k")
@@ -7084,6 +7338,8 @@ async function sessionChatChecks(root: string, project: string) {
   const storage = new SubagentStorage(path.join(data, "storage"))
   const bus = new Bus()
   const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  // A stored config, so these checks run at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
   await config.setApiKey("fake", "k")
@@ -7592,6 +7848,8 @@ async function historyMemoryCronChecks(root: string, project: string) {
   await config.load()
   await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
   await config.setApiKey("fake", "k")
+  // The ask level, not the first-install approve-for-me one: the check below is that a scheduled turn still asks.
+  await config.set({ accessLevel: "ask" })
   const permissions = new Permissions(runnerBus, config)
   const runnerStore = new SubagentStore(runnerStorage, runnerBus)
   const runner = new SubagentRunner(runnerStore, runnerBus, config, permissions, { accessToken: async () => undefined } as never, runnerStorage)

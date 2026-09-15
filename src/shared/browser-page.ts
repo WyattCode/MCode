@@ -243,6 +243,34 @@ export function loadErrorKind(code: number, description = ""): LoadErrorKind {
   return "generic"
 }
 
+/* ---------------------------------------------------------- the tab face */
+
+/**
+ * The icon a browser tab draws for its page: the first address the page names
+ * that is http(s) or an inline image, as MiMo keeps. Anything else is not the
+ * window's to load.
+ */
+export function pageFavicon(favicons: readonly unknown[]): string | undefined {
+  for (const entry of favicons) {
+    if (typeof entry !== "string") continue
+    const url = entry.trim()
+    if (/^https?:\/\//i.test(url) || /^data:image\//i.test(url)) return url
+  }
+  return undefined
+}
+
+/**
+ * A browser tab's face from what the main process reports of its page: the
+ * favicon, and the title that MiMo names the tab by. A tab that has been
+ * nowhere has neither, and keeps the globe and the tool's name.
+ */
+export function browserTabFace(page: { url?: string; title?: string; favicon?: string }): { faviconUrl?: string; pageTitle?: string } {
+  const url = String(page.url ?? "").trim()
+  if (!url || url === "about:blank") return { faviconUrl: undefined, pageTitle: undefined }
+  const title = String(page.title ?? "").replace(/\s+/g, " ").trim()
+  return { faviconUrl: pageFavicon([page.favicon]), pageTitle: title || undefined }
+}
+
 /* --------------------------------------------------------------- the bar */
 
 /** MiMo's three bar widths: under 300 mini, under 380 compact, else full. */
