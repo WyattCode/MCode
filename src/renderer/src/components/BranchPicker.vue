@@ -236,10 +236,18 @@ onBeforeUnmount(() => {
 
     <Teleport to="body">
       <div v-if="pending" class="scrim" @mousedown.self="pending = undefined">
-        <div v-modal class="dialog" data-branch-switch-dialog role="dialog" aria-labelledby="branch-switch-title">
+        <!-- MiMo focuses nothing when this opens, so Enter cannot switch over uncommitted work by accident. -->
+        <div v-modal class="dialog" data-branch-switch-dialog data-modal-keep-focus role="dialog" aria-labelledby="branch-switch-title">
           <div class="dialog-head">
             <h2 id="branch-switch-title" class="dialog-title">{{ t("home.branchSwitchTitle", { branch: pending }) }}</h2>
-            <button type="button" class="dialog-close" data-branch-switch-close :aria-label="t('common.close')" @click="pending = undefined">
+            <button
+              type="button"
+              class="dialog-close"
+              data-branch-switch-close
+              :aria-label="t('common.close')"
+              v-tip="t('common.close')"
+              @click="pending = undefined"
+            >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M18 6 6 18M6 6l12 12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
               </svg>
@@ -504,12 +512,14 @@ svg circle {
 }
 
 .dialog-close:hover {
+  color: var(--text-strong);
   background: var(--surface-hover);
 }
 
+/* MiMo's permc-desc: 14px in --color-txt (#151c13cc light, #f4f4f5 dark). */
 .dialog-desc {
   margin: 0 0 20px;
-  color: var(--text-base);
+  color: #151c13cc;
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 1.65;
 }
@@ -520,28 +530,81 @@ svg circle {
   gap: 10px;
 }
 
+/* MiMo's np-btn: the page ground (#fffefd, #1a1a1a dark) with the menu hover. */
 .dialog-btn {
   padding: 8px 18px;
   color: var(--text-base);
   font: inherit;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  background: var(--surface-base);
+  background: #fffefd;
   border: 1px solid var(--border-weak);
   border-radius: 8px;
   cursor: pointer;
 }
 
 .dialog-btn:hover {
-  background: var(--surface-hover);
+  color: var(--text-strong);
+  background: #f1f0ec;
 }
 
+/* 仍然切换 is MiMo's light red pair, not a solid fill. */
 .dialog-btn.danger {
-  color: #ffffff;
-  background: var(--error);
-  border-color: var(--error);
+  color: #d93025;
+  background: #fdecea;
+  border-color: #fdecea;
 }
 
 .dialog-btn.danger:hover {
-  opacity: 0.9;
+  color: #d93025;
+  background: #fadbd8;
+  border-color: #fadbd8;
+}
+
+:root[data-theme="dark"] .dialog-desc {
+  color: #f4f4f5;
+}
+
+:root[data-theme="dark"] .dialog-btn {
+  background: #1a1a1a;
+}
+
+:root[data-theme="dark"] .dialog-btn:hover {
+  background: #ffffff0f;
+}
+
+:root[data-theme="dark"] .dialog-btn.danger {
+  color: #ff9b7f;
+  background: #3a2320;
+  border-color: #3a2320;
+}
+
+:root[data-theme="dark"] .dialog-btn.danger:hover {
+  background: #4a2c27;
+  border-color: #4a2c27;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .dialog-desc {
+    color: #f4f4f5;
+  }
+
+  :root:not([data-theme="light"]) .dialog-btn {
+    background: #1a1a1a;
+  }
+
+  :root:not([data-theme="light"]) .dialog-btn:hover {
+    background: #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .dialog-btn.danger {
+    color: #ff9b7f;
+    background: #3a2320;
+    border-color: #3a2320;
+  }
+
+  :root:not([data-theme="light"]) .dialog-btn.danger:hover {
+    background: #4a2c27;
+    border-color: #4a2c27;
+  }
 }
 </style>
