@@ -61,6 +61,7 @@ import {
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { restore, track } from "./window-state"
+import { keepWindowsOnScreen } from "./displays"
 import pkg from "../../package.json"
 
 /*
@@ -1200,6 +1201,7 @@ app.whenReady().then(async () => {
 
   buildMenu()
   createWindow()
+  keepWindowsOnScreen()
 
   app.on("activate", () => {
     // A window hidden to the tray or menu bar comes back; one whose renderer is gone is replaced.
