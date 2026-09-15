@@ -2036,8 +2036,12 @@ function pickNewProject(key: string) {
   margin-inline-start: auto;
 }
 
-/* The priority filter's bell: sixth in the left-aligned controls row, lit while on. */
-.ico.bell.on {
+/*
+ * The priority filter's bell: sixth in the left-aligned controls row, lit while on.
+ * MiMo's lit colour overrides the row's in every theme, so this outranks the dark rows above.
+ */
+.ico.bell.on,
+:root .top .ico.bell.on {
   color: var(--text-accent);
 }
 
