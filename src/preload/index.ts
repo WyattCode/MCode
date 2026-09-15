@@ -214,6 +214,17 @@ const api = {
   /** Whether to keep an icon in the system tray. */
   tray: (enabled: boolean): void => ipcRenderer.send("mcode:tray", enabled),
 
+  /** The tray's 配置切换 list: the models the picker offers, the one in use checked. */
+  trayProfiles: (profiles: { key: string; label: string; checked: boolean }[]): void =>
+    ipcRenderer.send("mcode:tray-profiles", profiles),
+
+  /** A model chosen from the tray's 配置切换, as its "provider/model" key. */
+  onTrayProfile: (handler: (key: string) => void): (() => void) => {
+    const listener = (_event: unknown, key: string) => handler(key)
+    ipcRenderer.on("mcode:tray-profile", listener)
+    return () => ipcRenderer.off("mcode:tray-profile", listener)
+  },
+
 
 
   /** Menu accelerators the renderer turns into in-app commands. */

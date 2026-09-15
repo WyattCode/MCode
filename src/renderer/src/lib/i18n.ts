@@ -1243,8 +1243,7 @@ const zhCN: Table = {
   "voice.said.agent": "好了",
   "voice.said.error": "出错了",
   "set.tray": "在系统托盘显示",
-  "set.traySub": "在系统托盘保留一个图标；关闭窗口的行为不变",
-  "tray.show": "显示 MCode",
+  "set.traySub": "在 Windows 系统托盘显示 MCode 图标；开启后关闭窗口会最小化到托盘、应用继续在后台运行",
   "set.fontSmoothing": "字体平滑",
   "set.fontSmoothingSub": "对界面文字启用抗锯齿平滑",
   "set.appIcon": "应用图标",
@@ -1874,6 +1873,12 @@ const zhCN: Table = {
   "provider.custom.outputLimit": "输出上限",
   "provider.custom.limitDefault": "使用提供商默认值",
   "provider.custom.limitInvalid": "请输入有效的正整数；填写输出上限时必须同时填写输入上限",
+  "set.trayMac": "在菜单栏中显示",
+  "set.traySubMac": "在 macOS 菜单栏显示 MCode 图标",
+  "set.traySubLinux": "在系统托盘显示 MCode 图标；开启后关闭窗口会最小化到托盘、应用继续在后台运行",
+  "tray.open": "打开 MCode",
+  "tray.profiles": "配置切换",
+  "tray.profilesEmpty": "(暂无)",
 }
 
 const zhTW: Table = {
@@ -3026,9 +3031,8 @@ const zhTW: Table = {
   "voice.noDevice": "找不到麥克風",
   "voice.said.agent": "好了",
   "voice.said.error": "出錯了",
-  "set.tray": "在系統匣顯示",
-  "set.traySub": "在系統匣保留一個圖示；關閉視窗的行為不變",
-  "tray.show": "顯示 MCode",
+  "set.tray": "顯示於系統匣",
+  "set.traySub": "在 Windows 系統匣顯示 MCode 圖示;開啟時,關閉視窗會將其縮小至系統匣,MCode 會繼續在背景執行",
   "set.fontSmoothing": "字型平滑",
   "set.fontSmoothingSub": "對介面文字套用抗鋸齒平滑效果",
   "set.appIcon": "應用程式圖示",
@@ -3657,6 +3661,12 @@ const zhTW: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "顯示於選單列",
+  "set.traySubMac": "在 macOS 選單列顯示 MCode 圖示",
+  "set.traySubLinux": "在系統匣顯示 MCode 圖示;開啟時,關閉視窗會將其縮小至系統匣,MCode 會繼續在背景執行",
+  "tray.open": "開啟 MCode",
+  "tray.profiles": "設定檔切換",
+  "tray.profilesEmpty": "(無)",
 }
 
 const en: Table = {
@@ -4809,9 +4819,8 @@ const en: Table = {
   "voice.noDevice": "No microphone was found",
   "voice.said.agent": "Done",
   "voice.said.error": "Something went wrong",
-  "set.tray": "Show in the system tray",
-  "set.traySub": "Keep an icon in the tray; the close button still closes the window",
-  "tray.show": "Show MCode",
+  "set.tray": "Show in system tray",
+  "set.traySub": "Show the MCode icon in the Windows system tray; while on, closing the window minimizes to the tray and MCode keeps running in the background",
   "set.fontSmoothing": "Font smoothing",
   "set.fontSmoothingSub": "Apply anti-aliased smoothing to UI text",
   "set.appIcon": "App Icon",
@@ -5441,6 +5450,12 @@ const en: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Show in menu bar",
+  "set.traySubMac": "Show the MCode icon in the macOS menu bar",
+  "set.traySubLinux": "Show the MCode icon in the system tray; while on, closing the window minimizes to the tray and MCode keeps running in the background",
+  "tray.open": "Open MCode",
+  "tray.profiles": "Switch Profile",
+  "tray.profilesEmpty": "(None)",
 }
 
 // --- generated language tables ---
@@ -6561,9 +6576,8 @@ const ar: Table = {
   "voice.noDevice": "لم يُعثر على ميكروفون",
   "voice.said.agent": "تم",
   "voice.said.error": "حدث خطأ",
-  "set.tray": "إظهار في شريط النظام",
-  "set.traySub": "أبقِ أيقونة في شريط النظام؛ زر الإغلاق يظل يغلق النافذة",
-  "tray.show": "إظهار MCode",
+  "set.tray": "إظهار في علبة النظام",
+  "set.traySub": "إظهار أيقونة MCode في علبة نظام Windows؛ عند تشغيله، يؤدي إغلاق النافذة إلى تصغيرها إلى العلبة ويواصل MCode العمل في الخلفية",
   "set.fontSmoothing": "تنعيم الخط",
   "set.fontSmoothingSub": "تطبيق تنعيم الحواف على نص الواجهة",
   "set.appIcon": "أيقونة التطبيق",
@@ -7187,6 +7201,12 @@ const ar: Table = {
   "provider.custom.outputLimit": "حد الإخراج",
   "provider.custom.limitDefault": "استخدام الإعداد الافتراضي للمزوّد",
   "provider.custom.limitInvalid": "أدخل عددًا صحيحًا موجبًا؛ ويلزم تحديد حد الإدخال عند تعيين حد الإخراج",
+  "set.trayMac": "إظهار في شريط القوائم",
+  "set.traySubMac": "إظهار أيقونة MCode في شريط قوائم macOS",
+  "set.traySubLinux": "إظهار أيقونة MCode في علبة النظام؛ عند تشغيله، يؤدي إغلاق النافذة إلى تصغيرها إلى العلبة ويواصل MCode العمل في الخلفية",
+  "tray.open": "فتح MCode",
+  "tray.profiles": "تبديل الملف الشخصي",
+  "tray.profilesEmpty": "(لا شيء)",
 }
 
 const bs: Table = {
@@ -8306,9 +8326,8 @@ const bs: Table = {
   "voice.noDevice": "Mikrofon nije pronađen",
   "voice.said.agent": "Gotovo",
   "voice.said.error": "Nešto je pošlo po zlu",
-  "set.tray": "Prikaži u traci sustava",
-  "set.traySub": "Zadrži ikonu u traci; gumb za zatvaranje i dalje zatvara prozor",
-  "tray.show": "Prikaži MCode",
+  "set.tray": "Prikaži u sistemskoj traci",
+  "set.traySub": "Prikaži ikonu MCode u sistemskoj traci Windowsa; dok je uključeno, zatvaranje prozora ga spušta u traku, a MCode nastavlja raditi u pozadini",
   "set.fontSmoothing": "Zaglađivanje fonta",
   "set.fontSmoothingSub": "Primijeni zaglađivanje rubova na tekst sučelja",
   "set.appIcon": "Ikona aplikacije",
@@ -8932,6 +8951,12 @@ const bs: Table = {
   "provider.custom.outputLimit": "Ograničenje izlaza",
   "provider.custom.limitDefault": "Koristi zadano od pružatelja",
   "provider.custom.limitInvalid": "Unesite pozitivan cijeli broj; ograničenje ulaza je obavezno kad je postavljeno ograničenje izlaza",
+  "set.trayMac": "Prikaži u traci menija",
+  "set.traySubMac": "Prikaži ikonu MCode u traci menija macOS-a",
+  "set.traySubLinux": "Prikaži ikonu MCode u sistemskoj traci; dok je uključeno, zatvaranje prozora ga spušta u traku, a MCode nastavlja raditi u pozadini",
+  "tray.open": "Otvori MCode",
+  "tray.profiles": "Promijeni profil",
+  "tray.profilesEmpty": "(Nema)",
 }
 
 const da: Table = {
@@ -10051,9 +10076,8 @@ const da: Table = {
   "voice.noDevice": "Ingen mikrofon fundet",
   "voice.said.agent": "Færdig",
   "voice.said.error": "Noget gik galt",
-  "set.tray": "Vis i proceslinjen",
-  "set.traySub": "Behold et ikon i bakken; lukkeknappen lukker stadig vinduet",
-  "tray.show": "Vis MCode",
+  "set.tray": "Vis i systembakken",
+  "set.traySub": "Vis MCode-ikonet i Windows-systembakken; når aktiveret, minimerer lukning af vinduet til bakken, og MCode fortsætter med at køre i baggrunden",
   "set.fontSmoothing": "Skriftudjævning",
   "set.fontSmoothingSub": "Anvend udjævnet skriftudjævning på UI-tekst",
   "set.appIcon": "App-ikon",
@@ -10677,6 +10701,12 @@ const da: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Vis i menubjælken",
+  "set.traySubMac": "Vis MCode-ikonet i macOS-menubjælken",
+  "set.traySubLinux": "Vis MCode-ikonet i systembakken; når aktiveret, minimerer lukning af vinduet til bakken, og MCode fortsætter med at køre i baggrunden",
+  "tray.open": "Åbn MCode",
+  "tray.profiles": "Skift profil",
+  "tray.profilesEmpty": "(Ingen)",
 }
 
 const de: Table = {
@@ -11797,8 +11827,7 @@ const de: Table = {
   "voice.said.agent": "Fertig",
   "voice.said.error": "Etwas ist schiefgegangen",
   "set.tray": "Im Infobereich anzeigen",
-  "set.traySub": "Ein Symbol im Infobereich behalten; der Schließen-Knopf schließt weiterhin das Fenster",
-  "tray.show": "MCode anzeigen",
+  "set.traySub": "Das MCode-Symbol im Windows-Infobereich anzeigen; solange aktiviert, wird das Schließen des Fensters in den Infobereich minimiert und MCode läuft im Hintergrund weiter",
   "set.fontSmoothing": "Schriftglättung",
   "set.fontSmoothingSub": "Geglättetes Antialiasing auf UI-Text anwenden",
   "set.appIcon": "App-Symbol",
@@ -12422,6 +12451,12 @@ const de: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "In der Menüleiste anzeigen",
+  "set.traySubMac": "Das MCode-Symbol in der macOS-Menüleiste anzeigen",
+  "set.traySubLinux": "Das MCode-Symbol im Infobereich anzeigen; solange aktiviert, wird das Schließen des Fensters in den Infobereich minimiert und MCode läuft im Hintergrund weiter",
+  "tray.open": "MCode öffnen",
+  "tray.profiles": "Profil wechseln",
+  "tray.profilesEmpty": "(Keine)",
 }
 
 const es: Table = {
@@ -13541,9 +13576,8 @@ const es: Table = {
   "voice.noDevice": "No se encontró micrófono",
   "voice.said.agent": "Listo",
   "voice.said.error": "Algo salió mal",
-  "set.tray": "Mostrar en la bandeja",
-  "set.traySub": "Mantén un icono en la bandeja; el botón de cerrar sigue cerrando la ventana",
-  "tray.show": "Mostrar MCode",
+  "set.tray": "Mostrar en la bandeja del sistema",
+  "set.traySub": "Muestra el icono de MCode en la bandeja del sistema de Windows; mientras esté activado, cerrar la ventana la minimiza a la bandeja y MCode sigue ejecutándose en segundo plano",
   "set.fontSmoothing": "Suavizado de fuente",
   "set.fontSmoothingSub": "Aplica un suavizado antialiasing al texto de la interfaz",
   "set.appIcon": "Icono de la aplicación",
@@ -14167,6 +14201,12 @@ const es: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Mostrar en la barra de menús",
+  "set.traySubMac": "Muestra el icono de MCode en la barra de menús de macOS",
+  "set.traySubLinux": "Muestra el icono de MCode en la bandeja del sistema; mientras esté activado, cerrar la ventana la minimiza a la bandeja y MCode sigue ejecutándose en segundo plano",
+  "tray.open": "Abrir MCode",
+  "tray.profiles": "Cambiar de perfil",
+  "tray.profilesEmpty": "(Ninguno)",
 }
 
 const fr: Table = {
@@ -15287,8 +15327,7 @@ const fr: Table = {
   "voice.said.agent": "Terminé",
   "voice.said.error": "Quelque chose a échoué",
   "set.tray": "Afficher dans la zone de notification",
-  "set.traySub": "Garder une icône dans la zone ; le bouton fermer ferme toujours la fenêtre",
-  "tray.show": "Afficher MCode",
+  "set.traySub": "Afficher l'icône MCode dans la zone de notification Windows ; si activé, fermer la fenêtre la réduit dans la zone de notification et MCode continue de fonctionner en arrière-plan",
   "set.fontSmoothing": "Lissage de police",
   "set.fontSmoothingSub": "Appliquer un lissage anticrénelé au texte de l'interface",
   "set.appIcon": "Icône de l'application",
@@ -15912,6 +15951,12 @@ const fr: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Afficher dans la barre de menu",
+  "set.traySubMac": "Afficher l'icône MCode dans la barre de menu macOS",
+  "set.traySubLinux": "Afficher l'icône MCode dans la zone de notification ; si activé, fermer la fenêtre la réduit dans la zone de notification et MCode continue de fonctionner en arrière-plan",
+  "tray.open": "Ouvrir MCode",
+  "tray.profiles": "Changer de profil",
+  "tray.profilesEmpty": "(Aucune)",
 }
 
 const ja: Table = {
@@ -17032,8 +17077,7 @@ const ja: Table = {
   "voice.said.agent": "できました",
   "voice.said.error": "うまくいきませんでした",
   "set.tray": "システムトレイに表示",
-  "set.traySub": "トレイにアイコンを残します。閉じるボタンの動作は変わりません",
-  "tray.show": "MCode を表示",
+  "set.traySub": "WindowsのシステムトレイにMCodeアイコンを表示します。オンの間はウィンドウを閉じるとトレイに最小化され、MCodeはバックグラウンドで動作し続けます",
   "set.fontSmoothing": "フォントスムージング",
   "set.fontSmoothingSub": "UIテキストにアンチエイリアス処理を適用します",
   "set.appIcon": "アプリアイコン",
@@ -17657,6 +17701,12 @@ const ja: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "メニューバーに表示",
+  "set.traySubMac": "macOSのメニューバーにMCodeアイコンを表示します",
+  "set.traySubLinux": "システムトレイにMCodeアイコンを表示します。オンの間はウィンドウを閉じるとトレイに最小化され、MCodeはバックグラウンドで動作し続けます",
+  "tray.open": "MCode を開く",
+  "tray.profiles": "プロファイル切り替え",
+  "tray.profilesEmpty": "(なし)",
 }
 
 const ko: Table = {
@@ -18777,8 +18827,7 @@ const ko: Table = {
   "voice.said.agent": "됐습니다",
   "voice.said.error": "문제가 생겼습니다",
   "set.tray": "시스템 트레이에 표시",
-  "set.traySub": "트레이에 아이콘을 남깁니다. 닫기 버튼의 동작은 그대로입니다",
-  "tray.show": "MCode 표시",
+  "set.traySub": "Windows 시스템 트레이에 MCode 아이콘 표시; 켜져 있으면 창을 닫을 때 트레이로 최소화되고 MCode는 백그라운드에서 계속 실행됩니다",
   "set.fontSmoothing": "폰트 스무딩",
   "set.fontSmoothingSub": "UI 텍스트에 안티앨리어싱 스무딩 적용",
   "set.appIcon": "앱 아이콘",
@@ -19402,6 +19451,12 @@ const ko: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "메뉴 바에 표시",
+  "set.traySubMac": "macOS 메뉴 바에 MCode 아이콘 표시",
+  "set.traySubLinux": "시스템 트레이에 MCode 아이콘 표시; 켜져 있으면 창을 닫을 때 트레이로 최소화되고 MCode는 백그라운드에서 계속 실행됩니다",
+  "tray.open": "MCode 열기",
+  "tray.profiles": "프로필 전환",
+  "tray.profilesEmpty": "(없음)",
 }
 
 const nb: Table = {
@@ -20521,9 +20576,8 @@ const nb: Table = {
   "voice.noDevice": "Fant ingen mikrofon",
   "voice.said.agent": "Ferdig",
   "voice.said.error": "Noe gikk galt",
-  "set.tray": "Vis i systemkurven",
-  "set.traySub": "Behold et ikon i kurven; lukkeknappen lukker fortsatt vinduet",
-  "tray.show": "Vis MCode",
+  "set.tray": "Vis i systemstatusfeltet",
+  "set.traySub": "Vis MCode-ikonet i Windows-systemstatusfeltet; når på, minimeres vinduet til statusfeltet ved lukking, og MCode fortsetter å kjøre i bakgrunnen",
   "set.fontSmoothing": "Skriftutjevning",
   "set.fontSmoothingSub": "Bruk kantutjevning på UI-tekst",
   "set.appIcon": "Appikon",
@@ -21147,6 +21201,12 @@ const nb: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Vis i menylinjen",
+  "set.traySubMac": "Vis MCode-ikonet i macOS-menylinjen",
+  "set.traySubLinux": "Vis MCode-ikonet i systemstatusfeltet; når på, minimeres vinduet til statusfeltet ved lukking, og MCode fortsetter å kjøre i bakgrunnen",
+  "tray.open": "Åpne MCode",
+  "tray.profiles": "Bytt profil",
+  "tray.profilesEmpty": "(Ingen)",
 }
 
 const pl: Table = {
@@ -22267,8 +22327,7 @@ const pl: Table = {
   "voice.said.agent": "Gotowe",
   "voice.said.error": "Coś poszło nie tak",
   "set.tray": "Pokaż w zasobniku systemowym",
-  "set.traySub": "Zachowaj ikonę w zasobniku; przycisk zamknięcia nadal zamyka okno",
-  "tray.show": "Pokaż MCode",
+  "set.traySub": "Pokaż ikonę MCode w zasobniku systemowym Windows; po włączeniu zamknięcie okna minimalizuje je do zasobnika, a MCode działa dalej w tle",
   "set.fontSmoothing": "Wygładzanie czcionek",
   "set.fontSmoothingSub": "Zastosuj wygładzone antyaliasowanie do tekstu interfejsu",
   "set.appIcon": "Ikona aplikacji",
@@ -22892,6 +22951,12 @@ const pl: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Pokaż w pasku menu",
+  "set.traySubMac": "Pokaż ikonę MCode w pasku menu macOS",
+  "set.traySubLinux": "Pokaż ikonę MCode w zasobniku systemowym; po włączeniu zamknięcie okna minimalizuje je do zasobnika, a MCode działa dalej w tle",
+  "tray.open": "Otwórz MCode",
+  "tray.profiles": "Przełącz profil",
+  "tray.profilesEmpty": "(Brak)",
 }
 
 const ptBR: Table = {
@@ -24012,8 +24077,7 @@ const ptBR: Table = {
   "voice.said.agent": "Pronto",
   "voice.said.error": "Algo deu errado",
   "set.tray": "Mostrar na bandeja do sistema",
-  "set.traySub": "Mantenha um ícone na bandeja; o botão fechar continua fechando a janela",
-  "tray.show": "Mostrar o MCode",
+  "set.traySub": "Mostrar o ícone do MCode na bandeja do sistema do Windows; enquanto ativo, fechar a janela a minimiza para a bandeja e o MCode continua em execução em segundo plano",
   "set.fontSmoothing": "Suavização de fonte",
   "set.fontSmoothingSub": "Aplicar suavização antialiasing ao texto da interface",
   "set.appIcon": "Ícone do App",
@@ -24637,6 +24701,12 @@ const ptBR: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Mostrar na barra de menus",
+  "set.traySubMac": "Mostrar o ícone do MCode na barra de menus do macOS",
+  "set.traySubLinux": "Mostrar o ícone do MCode na bandeja do sistema; enquanto ativo, fechar a janela a minimiza para a bandeja e o MCode continua em execução em segundo plano",
+  "tray.open": "Abrir MCode",
+  "tray.profiles": "Alternar perfil",
+  "tray.profilesEmpty": "(Nenhum)",
 }
 
 const ru: Table = {
@@ -25756,9 +25826,8 @@ const ru: Table = {
   "voice.noDevice": "Микрофон не найден",
   "voice.said.agent": "Готово",
   "voice.said.error": "Что-то пошло не так",
-  "set.tray": "Показывать в системном лотке",
-  "set.traySub": "Оставлять значок в лотке; кнопка закрытия по-прежнему закрывает окно",
-  "tray.show": "Показать MCode",
+  "set.tray": "Показывать в системном трее",
+  "set.traySub": "Показывать значок MCode в системном трее Windows; при включении закрытие окна сворачивает его в трей, а MCode продолжает работать в фоновом режиме",
   "set.fontSmoothing": "Сглаживание шрифта",
   "set.fontSmoothingSub": "Применить сглаживание к тексту интерфейса",
   "set.appIcon": "Значок приложения",
@@ -26382,6 +26451,12 @@ const ru: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Показывать в строке меню",
+  "set.traySubMac": "Показывать значок MCode в строке меню macOS",
+  "set.traySubLinux": "Показывать значок MCode в системном трее; при включении закрытие окна сворачивает его в трей, а MCode продолжает работать в фоновом режиме",
+  "tray.open": "Открыть MCode",
+  "tray.profiles": "Переключить профиль",
+  "tray.profilesEmpty": "(Нет)",
 }
 
 const th: Table = {
@@ -27501,9 +27576,8 @@ const th: Table = {
   "voice.noDevice": "ไม่พบไมโครโฟน",
   "voice.said.agent": "เสร็จแล้ว",
   "voice.said.error": "มีบางอย่างผิดพลาด",
-  "set.tray": "แสดงในซิสเต็มเทรย์",
-  "set.traySub": "เก็บไอคอนไว้ในเทรย์ ปุ่มปิดยังคงปิดหน้าต่างเหมือนเดิม",
-  "tray.show": "แสดง MCode",
+  "set.tray": "แสดงในถาดระบบ",
+  "set.traySub": "แสดงไอคอน MCode ในถาดระบบของ Windows เมื่อเปิดไว้ การปิดหน้าต่างจะย่อไปที่ถาดและ MCode จะทำงานต่อเบื้องหลัง",
   "set.fontSmoothing": "การทำให้ฟอนต์เรียบ",
   "set.fontSmoothingSub": "ใช้การลบรอยหยักกับข้อความในอินเทอร์เฟซ",
   "set.appIcon": "ไอคอนแอป",
@@ -28127,6 +28201,12 @@ const th: Table = {
   "provider.custom.outputLimit": "ขีดจำกัดเอาต์พุต",
   "provider.custom.limitDefault": "ใช้ค่าเริ่มต้นของผู้ให้บริการ",
   "provider.custom.limitInvalid": "ป้อนจำนวนเต็มบวก และต้องกำหนดขีดจำกัดอินพุตเมื่อกำหนดขีดจำกัดเอาต์พุต",
+  "set.trayMac": "แสดงในแถบเมนู",
+  "set.traySubMac": "แสดงไอคอน MCode ในแถบเมนูของ macOS",
+  "set.traySubLinux": "แสดงไอคอน MCode ในถาดระบบ เมื่อเปิดไว้ การปิดหน้าต่างจะย่อไปที่ถาดและ MCode จะทำงานต่อเบื้องหลัง",
+  "tray.open": "เปิด MCode",
+  "tray.profiles": "สลับโปรไฟล์",
+  "tray.profilesEmpty": "(ไม่มี)",
 }
 
 const tr: Table = {
@@ -29247,8 +29327,7 @@ const tr: Table = {
   "voice.said.agent": "Tamam",
   "voice.said.error": "Bir şeyler ters gitti",
   "set.tray": "Sistem tepsisinde göster",
-  "set.traySub": "Tepside bir simge tut; kapat düğmesi yine pencereyi kapatır",
-  "tray.show": "MCode'u göster",
+  "set.traySub": "MCode simgesini Windows sistem tepsisinde göster; açıkken pencereyi kapatmak tepsiye küçültür ve MCode arka planda çalışmaya devam eder",
   "set.fontSmoothing": "Yazı yumuşatma",
   "set.fontSmoothingSub": "Arayüz metnine kenar yumuşatmalı düzeltme uygula",
   "set.appIcon": "Uygulama Simgesi",
@@ -29872,6 +29951,12 @@ const tr: Table = {
   "provider.custom.outputLimit": "Output limit",
   "provider.custom.limitDefault": "Use provider default",
   "provider.custom.limitInvalid": "Enter a positive integer; an input limit is required when an output limit is set",
+  "set.trayMac": "Menü çubuğunda göster",
+  "set.traySubMac": "MCode simgesini macOS menü çubuğunda göster",
+  "set.traySubLinux": "MCode simgesini sistem tepsisinde göster; açıkken pencereyi kapatmak tepsiye küçültür ve MCode arka planda çalışmaya devam eder",
+  "tray.open": "MCode'yu Aç",
+  "tray.profiles": "Profil Değiştir",
+  "tray.profilesEmpty": "(Yok)",
 }
 
 const uk: Table = {
@@ -30991,9 +31076,8 @@ const uk: Table = {
   "voice.noDevice": "Мікрофон не знайдено",
   "voice.said.agent": "Готово",
   "voice.said.error": "Щось пішло не так",
-  "set.tray": "Показувати в системному лотку",
-  "set.traySub": "Лишати значок у лотку; кнопка закриття так само закриває вікно",
-  "tray.show": "Показати MCode",
+  "set.tray": "Показувати в системному треї",
+  "set.traySub": "Показувати значок MCode в системному треї Windows; поки ввімкнено, закриття вікна згортає його в трей, а MCode працює у фоні",
   "set.fontSmoothing": "Згладжування шрифту",
   "set.fontSmoothingSub": "Згладжування тексту інтерфейсу",
   "set.appIcon": "Значок застосунку",
@@ -31617,6 +31701,12 @@ const uk: Table = {
   "provider.custom.outputLimit": "Ліміт виводу",
   "provider.custom.limitDefault": "Типове значення постачальника",
   "provider.custom.limitInvalid": "Введіть додатне ціле число; якщо задано ліміт виводу, потрібен і ліміт вводу",
+  "set.trayMac": "Показувати в рядку меню",
+  "set.traySubMac": "Показувати значок MCode в рядку меню macOS",
+  "set.traySubLinux": "Показувати значок MCode в системному треї; поки ввімкнено, закриття вікна згортає його в трей, а MCode працює у фоні",
+  "tray.open": "Відкрити MCode",
+  "tray.profiles": "Змінити профіль",
+  "tray.profilesEmpty": "(Немає)",
 }
 // --- end generated language tables ---
 
@@ -31671,7 +31761,7 @@ const MENU_KEYS = [
   "menu.newTask", "menu.openFolder", "menu.fileClose", "menu.unhide", "menu.quitApp",
   "menu.forceReload", "menu.developerTools", "menu.enterFullscreen", "menu.zoomWindow",
   // The tray's menu is built out here too, and rebuilt when these change.
-  "tray.show",
+  "tray.open", "tray.profiles", "tray.profilesEmpty",
   // The recovery dialogs in src/main/recovery.ts read the same published
   // table the menu does, so their strings have to be sent with it.
   "desktop.recovery.action.relaunch", "desktop.recovery.action.exportLogs",

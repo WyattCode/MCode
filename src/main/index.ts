@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, Tray, Menu, session, type Rectangle } from "electron"
 import { startBackend, type Backend } from "../server/index"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
+import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
 import { beginIntentionalQuit, captureConsole, relaunch, wireProcessRecovery, wireRecovery } from "./recovery"
@@ -139,6 +140,17 @@ function appIconFile(id: string): string | undefined {
   return existsSync(file) ? file : undefined
 }
 
+/*
+ * What the tray's 配置切换 offers: the models the window's picker offers, with
+ * the one in use checked. The window holds the config, so it sends the list.
+ */
+interface TrayProfile {
+  key: string
+  label: string
+  checked: boolean
+}
+let trayProfiles: TrayProfile[] = []
+
 /**
  * Builds or rebuilds the tray.
  *
@@ -156,33 +168,35 @@ function refreshTray(enabled: boolean, make: () => BrowserWindow): void {
   // 16 logical pixels is what Windows and Linux draw; macOS takes the same and
   // scales it. The source is 512, so this is a reduction rather than a stretch.
   const image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
+  /* MiMo's tray opens the window on a click and on a double-click alike; it never hides it. */
+  const open = () => raise(BrowserWindow.getAllWindows()[0] ?? make())
   if (!tray) {
     tray = new Tray(image)
-    tray.on("click", () => {
-      const window = BrowserWindow.getAllWindows()[0] ?? make()
-      if (window.isVisible() && !window.isMinimized()) window.hide()
-      else {
-        window.show()
-        window.focus()
-      }
-    })
+    tray.on("click", open)
+    tray.on("double-click", open)
   } else tray.setImage(image)
+
+  const profiles: Electron.MenuItemConstructorOptions[] = trayProfiles.length
+    ? trayProfiles.map((entry) => ({
+        label: entry.label,
+        type: "radio",
+        checked: entry.checked,
+        click: () => {
+          const window = BrowserWindow.getAllWindows()[0] ?? make()
+          window.webContents.send("mcode:tray-profile", entry.key)
+        },
+      }))
+    : [{ label: label("tray.profilesEmpty", "(None)"), enabled: false }]
 
   tray.setToolTip(app.getName())
   tray.setContextMenu(
     Menu.buildFromTemplate([
-      {
-        label: label("tray.show", "Show MCode"),
-        click: () => {
-          const window = BrowserWindow.getAllWindows()[0] ?? make()
-          window.show()
-          window.focus()
-        },
-      },
-      { label: label("menu.newWindow", "New Window"), click: () => make() },
+      { label: label("tray.open", "Open MCode"), click: open },
+      { label: label("tray.profiles", "Switch Profile"), submenu: profiles },
       { type: "separator" },
       {
-        label: label("menu.quit", "Quit"),
+        // A real quit, past the close-to-tray rule below.
+        label: label("menu.quitApp", "Quit MCode"),
         click: () => {
           beginIntentionalQuit()
           app.quit()
@@ -292,6 +306,28 @@ function createWindow(): BrowserWindow {
 
   window.once("ready-to-show", () => window.show())
   window.on("closed", () => windows.delete(window))
+
+  /*
+   * MiMo's close rule: the last window hides to the tray (always, on macOS)
+   * instead of closing, and the app keeps running. A quit in progress, or any
+   * other window still open, closes as usual. window-state's own close listener
+   * has already saved the bounds, and a hidden window keeps them for its next show.
+   */
+  window.on("close", (event) => {
+    const others = [...windows].filter((entry) => entry !== window && !entry.isDestroyed()).length
+    const hide = closeHidesToTray({
+      quitting,
+      otherWindows: others,
+      platform: process.platform,
+      trayEnabled: Boolean(tray),
+    })
+    if (!hide) return
+    event.preventDefault()
+    if (process.platform === "darwin" && window.isFullScreen()) {
+      window.once("leave-full-screen", () => window.hide())
+      window.setFullScreen(false)
+    } else window.hide()
+  })
 
   // Anything the page tries to open externally goes to the real browser, never
   // into an Electron window with preload access.
@@ -805,6 +841,22 @@ app.whenReady().then(async () => {
     refreshTray(Boolean(enabled), createWindow)
   })
 
+  /* The 配置切换 list, checked here because it arrives from a window. */
+  ipcMain.on("mcode:tray-profiles", (_event, list: unknown) => {
+    if (!Array.isArray(list)) return
+    trayProfiles = list
+      .filter(
+        (entry): entry is TrayProfile =>
+          Boolean(entry) &&
+          typeof entry.key === "string" &&
+          typeof entry.label === "string" &&
+          typeof entry.checked === "boolean",
+      )
+      .slice(0, 40)
+      .map((entry) => ({ key: entry.key, label: entry.label.slice(0, 120), checked: entry.checked }))
+    if (tray) refreshTray(true, createWindow)
+  })
+
   ipcMain.on("mcode:app-icon", (event, id: string) => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || process.platform === "darwin") return
@@ -837,7 +889,10 @@ app.whenReady().then(async () => {
   createWindow()
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    // A window hidden to the tray or menu bar comes back rather than being joined by a new one.
+    const hidden = BrowserWindow.getAllWindows()[0]
+    if (hidden) raise(hidden)
+    else createWindow()
   })
 })
 

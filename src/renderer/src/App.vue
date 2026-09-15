@@ -882,6 +882,37 @@ watch(
 )
 
 /*
+ * The tray's 配置切换: the models the picker offers, the one in use checked.
+ * Main draws the menu; a model chosen there comes back here to be applied.
+ */
+watch(
+  () => {
+    const chosen = app.config?.enabledModels ?? []
+    const current = app.config?.model
+    return app.providers
+      .filter((provider) => provider.configured)
+      .flatMap((provider) =>
+        provider.models
+          .filter((model) => !chosen.length || chosen.includes(`${provider.id}/${model.id}`))
+          .map((model) => ({
+            key: `${provider.id}/${model.id}`,
+            label: `${provider.name} · ${model.name || model.id}`,
+            checked: current?.provider === provider.id && current.model === model.id,
+          })),
+      )
+      .slice(0, 40)
+  },
+  (profiles) => window.mcode.trayProfiles(profiles),
+  { immediate: true },
+)
+onBeforeUnmount(
+  window.mcode.onTrayProfile((key) => {
+    const cut = key.indexOf("/")
+    if (cut > 0) void app.patchConfig({ model: { provider: key.slice(0, cut), model: key.slice(cut + 1) } })
+  }),
+)
+
+/*
  * Four choices that are answered by the stylesheet rather than by a component:
  * the cursor over what can be pressed, whether anything animates, how a diff
  * marks its changed lines, and whether a long line folds.
@@ -1790,8 +1821,13 @@ function runAppMenu(key: string) {
     window.mcode.zoom(key === "zoom-in" ? "in" : key === "zoom-out" ? "out" : "reset")
     return
   }
-  if (key === "minimize" || key === "maximize" || key === "close" || key === "quit") {
-    window.mcode.window(key === "quit" ? "close" : key)
+  /* 退出 quits for real; only closing a window may hide it to the tray. */
+  if (key === "quit") {
+    window.mcode.quitApp()
+    return
+  }
+  if (key === "minimize" || key === "maximize" || key === "close") {
+    window.mcode.window(key)
   }
 }
 

@@ -843,6 +843,22 @@ export interface VoiceDraft {
 /** What 智能编辑 made of one utterance: the whole new text and where the caret or selection lands. */
 export type VoiceEdit = VoiceDraft
 
+/**
+ * MiMo's close decision for a window.
+ *
+ * A quit in progress, or any other window still open, closes normally. The last
+ * window is hidden instead of closed on macOS, or wherever the tray switch is on,
+ * so the app keeps running behind its tray or menu bar icon; otherwise it closes.
+ */
+export function closeHidesToTray(state: {
+  quitting: boolean
+  otherWindows: number
+  platform: string
+  trayEnabled: boolean
+}): boolean {
+  if (state.quitting || state.otherWindows > 0) return false
+  return state.platform === "darwin" || state.trayEnabled
+}
 
 /** Usage gathered under one heading - a day, a model, or everything. */
 export interface UsageBucket {
@@ -1178,11 +1194,12 @@ export interface AppConfig {
    */
   voiceModel?: ModelRef
   /**
-   * Whether the app keeps an icon in the system tray.
+   * Whether the app keeps an icon in the system tray (the menu bar on macOS).
    *
-   * On by default, which is what the reference does. Closing the window still
-   * closes it - a tray icon is a way back to a running app, not a trapdoor
-   * that makes the close button mean something else.
+   * On by default, as in MiMo. While it is on, closing the last window hides it
+   * to the tray and the app keeps running, which is MiMo's rule and the reason
+   * the switch's description says so; see closeHidesToTray. Quitting from the
+   * tray, the app menu or the footer menu still quits.
    */
   tray: boolean
   /** Whether text is drawn with the lighter antialiasing or the system's own. */
