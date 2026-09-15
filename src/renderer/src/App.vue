@@ -32,7 +32,7 @@ import VideoPreview from "./components/VideoPreview.vue"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
-import { markUpdateReady } from "./components/UpdatePill.vue"
+import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
 import TerminalDrawer from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
@@ -185,29 +185,39 @@ onMounted(() => {
 onBeforeUnmount(() => mainObserver?.disconnect())
 
 /*
- * A version that has been fetched and is waiting to be run.
+ * A version the main process's updater has downloaded and is waiting to run.
  *
- * The download starts as soon as the check finds one, without asking - which
- * is what the reference does, and why the only thing it ever says out loud is
- * that a new version "is now available to install". Asking first would put a
- * question between the reader and an update they already asked for by running
- * the check.
+ * MiMo checks on its own, 5 s after launch and every 3 h, and downloads a newer
+ * installer without asking; the capsule, its bubble and the settings row take a
+ * ready update from here, and nothing interrupts.
  */
 const downloadedUpdate = ref<string>()
 /** A check in flight, so the update page can say 检查中… and not start another. */
 const updateChecking = ref(false)
 
-/* Fetched: MiMo's footer capsule and its bubble take it from here, and no modal interrupts. */
-async function fetchUpdate(url: string, version: string, sha256: string, notes: string) {
-  try {
-    await window.mcode.downloadUpdate(url, version, sha256)
-    downloadedUpdate.value = version
-    markUpdateReady(version, notes)
-    notify(t("update.readyToast"))
-  } catch (err) {
-    notifyFailure(t("update.failed"), reasonOf(err))
-  }
+type UpdateStatus = Awaited<ReturnType<typeof window.mcode.updateStatus>>
+
+function takeUpdateState(state: UpdateStatus) {
+  if (!state.ready) return
+  downloadedUpdate.value = state.ready.version
+  // A capsule already installing, or failed, for this same version keeps its phase.
+  if (updateState.phase === "idle" || updateState.version !== state.ready.version) markUpdateReady(state.ready.version, state.ready.notes)
 }
+
+let offUpdateState: (() => void) | undefined
+onMounted(() => {
+  // The ready event may have gone out before this window was listening.
+  void window.mcode
+    .updateStatus()
+    .then(takeUpdateState)
+    .catch(() => {})
+  offUpdateState = window.mcode.onUpdateState((state) => {
+    takeUpdateState(state)
+    /* A check asked for by hand says when it has moved on to downloading, as MiMo's toasts do. */
+    if (updateChecking.value && state.phase === "downloading") notify(t("update.downloading"), { id: "update-check", duration: 0 })
+  })
+})
+onBeforeUnmount(() => offUpdateState?.())
 
 const terminalOpen = ref(false)
 /** How tall the docked terminal is, so the info card can end above it. */
@@ -632,48 +642,34 @@ async function applyServer(answer: string) {
 }
 
 /**
- * Asks the configured feed whether there is a newer release.
+ * MiMo's updateCheckNow, from the settings row, the menu or the palette.
  *
  * There is no update service behind this app, so the feed is whatever the user
- * points it at - a JSON document with a `version`. With none configured the
- * command says so rather than pretending to have checked.
+ * points it at - a JSON document with a `version`. The main process reads it
+ * and downloads a newer installer (the window's content policy reaches nothing
+ * but the local backend); this only says how it went. With no feed configured
+ * the command says so rather than pretending to have checked.
  */
 async function checkForUpdates() {
   if (updateChecking.value) return
-  const feed = app.config?.updateFeed?.trim()
-  if (!feed) {
+  if (!app.config?.updateFeed?.trim()) {
     notifyFailure(t("update.noFeed"))
     return
   }
   updateChecking.value = true
-  /* MiMo's sticky 正在检查更新…, up for as long as the check runs. */
+  /* MiMo's sticky 正在检查更新…, up for as long as the check (and a download) runs. */
   const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
   try {
-    /*
-     * Asked of the main process rather than fetched here. This window is served
-     * under a content policy that lets it open a socket to the local backend and
-     * reach nothing else, so its own fetch of the feed never left the process -
-     * the check reported "Failed to fetch" whatever the feed said.
-     */
-    const { version, url, sha256, notes } = await window.mcode.checkUpdates(feed)
-    if (!version) throw new Error("the feed named no version")
-    if (version === app.version) {
-      notify(t("update.current"))
-      return
-    }
-    /* A feed that names a version but no installer can only say where to get it. */
-    if (!url) {
-      notify(t("update.found", { version }))
-      return
-    }
-    notify(t("update.downloading"))
-    void fetchUpdate(url, version, sha256, notes)
+    const result = await window.mcode.updateCheckNow()
+    dismiss(checking)
+    takeUpdateState(result)
+    if (result.outcome === "current") notify(t("update.current"))
+    else if (result.outcome === "no-installer" && result.version) notify(t("update.found", { version: result.version }))
+    else if (result.outcome === "ready") notify(t("update.readyToast"))
+    else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
+    else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
   } catch (err) {
-    /*
-     * Electron wraps anything thrown in a handler as "Error invoking remote
-     * method 'mcode:check-updates': ...", which tells the reader about our IPC
-     * rather than about their feed. Only the reason is worth showing.
-     */
+    // Electron prefixes the IPC plumbing; only the reason is worth showing.
     notifyFailure(t("update.checkFailed"), reasonOf(err))
   } finally {
     dismiss(checking)

@@ -40,6 +40,7 @@ import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFil
 import { PowerHold } from "../src/main/power"
 import { RecoverySchedule, RendererHealth, recoveryVisibility } from "../src/main/renderer-health"
 import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boot-prefs"
+import { createUpdater, parseFeed, type FeedEntry } from "../src/main/updater"
 import { boundsOnShow, clampToWorkAreas, sameBounds } from "../src/main/work-area"
 import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
@@ -2644,6 +2645,108 @@ async function main() {
     failing.sync(["x"])
     failing.sync([])
     check("a blocker that fails to start holds nothing and stops nothing", failing.state.held.length === 0 && !calls.includes("stop:unexpected"))
+  }
+
+  section("Automatic updates (MiMo's schedule and phases, MCode's feed)")
+  {
+    check("the feed reads version, installer, hash and notes", JSON.stringify(parseFeed({ version: " 1.2.0 ", url: "https://x/y.exe", sha256: "ABC", notes: 7 })) === JSON.stringify({ version: "1.2.0", url: "https://x/y.exe", sha256: "abc", notes: "" }))
+    check("a feed that is not an object reads as empty", parseFeed(null).version === "" && parseFeed("x").url === "")
+
+    const timers: { kind: "timeout" | "interval"; ms: number; run: () => void; id: number }[] = []
+    let timerId = 0
+    const scheduler = {
+      setTimeout: (run: () => void, ms: number) => (timers.push({ kind: "timeout", ms, run, id: ++timerId }), timerId),
+      setInterval: (run: () => void, ms: number) => (timers.push({ kind: "interval", ms, run, id: ++timerId }), timerId),
+      clearTimeout: (id: unknown) => void timers.splice(timers.findIndex((entry) => entry.id === id), 1),
+      clearInterval: (id: unknown) => void timers.splice(timers.findIndex((entry) => entry.id === id), 1),
+    }
+    let feed: FeedEntry = { version: "0.2.4", url: "", sha256: "", notes: "" }
+    let feedFails = false
+    let downloadFails = false
+    const files = new Map<string, Uint8Array>()
+    const downloads: string[] = []
+    const phases: string[] = []
+    let feedAddress = "https://feed.example/update.json"
+    const updater = createUpdater({
+      currentVersion: "0.2.4",
+      feedURL: () => feedAddress,
+      fetchFeed: async () => {
+        if (feedFails) throw new Error("HTTP 503")
+        return feed
+      },
+      installerFile: (entry) => `mcode-${entry.version}.exe`,
+      readFile: async (file) => files.get(file),
+      sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      download: async (entry, file) => {
+        downloads.push(entry.version)
+        if (downloadFails) throw new Error("the installer does not match the checksum the feed gave")
+        files.set(file, new TextEncoder().encode(`installer ${entry.version}`))
+      },
+      emit: (state) => phases.push(state.phase),
+      log: () => {},
+      scheduler,
+    })
+    updater.start()
+    updater.start()
+    check("starting schedules the first check at 5 s and then every 3 h, once", timers.length === 2 && timers[0]?.kind === "timeout" && timers[0]?.ms === 5000 && timers[1]?.kind === "interval" && timers[1]?.ms === 3 * 60 * 60 * 1000, timers.map((entry) => [entry.kind, entry.ms]))
+
+    const current = await updater.checkNow()
+    check("the running version is current and the phase returns to idle", current.outcome === "current" && current.phase === "idle" && phases.join(",") === "checking,idle", { current, phases })
+
+    feedAddress = ""
+    check("with no feed nothing is fetched", (await updater.checkNow()).outcome === "no-feed" && phases.length === 2)
+    feedAddress = "https://feed.example/update.json"
+
+    feed = { version: "0.3.0", url: "", sha256: "", notes: "" }
+    const nameOnly = await updater.checkNow()
+    check("a newer version without an installer is only named", nameOnly.outcome === "no-installer" && nameOnly.version === "0.3.0" && downloads.length === 0)
+
+    feedFails = true
+    const silent = await updater.checkNow()
+    check("a failed check is silent and falls back to idle", silent.outcome === "failed" && silent.during === "check" && silent.phase === "idle" && silent.error === "HTTP 503")
+    feedFails = false
+
+    const body = new TextEncoder().encode("installer 0.3.0")
+    feed = { version: "0.3.0", url: "https://x/mcode.exe", sha256: createHash("sha256").update(body).digest("hex"), notes: "- faster" }
+    downloadFails = true
+    const badDownload = await updater.checkNow()
+    check("a download that fails verification leaves nothing ready", badDownload.outcome === "failed" && badDownload.during === "download" && badDownload.ready === null && updater.readyFile() === undefined)
+    downloadFails = false
+
+    phases.length = 0
+    const pending = updater.checkNow()
+    check("a second check while one runs is skipped", (await updater.checkNow()).outcome === "busy")
+    const readyResult = await pending
+    check("a newer installer downloads and the update becomes ready", readyResult.outcome === "ready" && readyResult.ready?.version === "0.3.0" && readyResult.ready.notes === "- faster" && updater.readyFile() === "mcode-0.3.0.exe" && phases.join(",") === "checking,downloading,ready", { readyResult, phases })
+
+    const again = downloads.length
+    const same = await updater.checkNow()
+    check("the same version found again is not downloaded twice", same.outcome === "ready" && downloads.length === again && same.phase === "ready")
+    feedFails = true
+    check("a failure after that keeps the ready update", (await updater.checkNow()).phase === "ready" && updater.readyFile() === "mcode-0.3.0.exe")
+    feedFails = false
+
+    const fresh = createUpdater({
+      currentVersion: "0.2.4",
+      feedURL: () => "https://feed.example/update.json",
+      fetchFeed: async () => feed,
+      installerFile: (entry) => `mcode-${entry.version}.exe`,
+      readFile: async (file) => files.get(file),
+      sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      download: async (entry) => void downloads.push(`fresh ${entry.version}`),
+      emit: () => {},
+      log: () => {},
+      scheduler,
+    })
+    const before = downloads.length
+    const reused = await fresh.checkNow()
+    check("a cached installer whose sha256 matches is reused without downloading", reused.outcome === "ready" && downloads.length === before)
+    files.set("mcode-0.3.0.exe", new TextEncoder().encode("tampered"))
+    const refetch = createUpdater({ ...{ currentVersion: "0.2.4", feedURL: () => "f", fetchFeed: async () => feed, installerFile: (entry: FeedEntry) => `mcode-${entry.version}.exe`, readFile: async (file: string) => files.get(file), sha256: (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex"), download: async (entry: FeedEntry) => void downloads.push(`refetch ${entry.version}`), emit: () => {}, log: () => {}, scheduler } })
+    await refetch.checkNow()
+    check("a cached file that does not match is downloaded again", downloads.at(-1) === "refetch 0.3.0")
+    updater.stop()
+    check("stopping clears the schedule", timers.length === 0)
   }
 
   section("Pre-ready choices (theme and hardware acceleration)")

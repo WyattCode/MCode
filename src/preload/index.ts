@@ -6,6 +6,11 @@ export interface OfficeVersionState {
   cursor: number
 }
 export type OfficeVersionResult = { ok: true; state: OfficeVersionState } | { ok: false; reason: string }
+/** The automatic updater's phase, and the downloaded version once one is ready. */
+export interface UpdateStatus {
+  phase: "idle" | "checking" | "downloading" | "ready"
+  ready: { version: string; notes: string } | null
+}
 
 /**
  * The only surface the renderer gets. Everything else - sessions, files, the
@@ -106,17 +111,22 @@ const api = {
   view: (action: "reload" | "devtools" | "fullscreen"): void => ipcRenderer.send("mcode:view", action),
 
   /**
-   * Asks the main process to read the update feed.
-   *
-   * The window cannot fetch it: its content policy allows a socket to the local
-   * backend and nothing else.
+   * MiMo's updateStatus: where the main process's automatic updater stands.
+   * The window never fetches the feed itself; its content policy allows a
+   * socket to the local backend and nothing else.
    */
-  checkUpdates: (feed: string): Promise<{ version: string; url: string; sha256: string; notes: string }> =>
-    ipcRenderer.invoke("mcode:check-updates", feed),
+  updateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke("mcode:update-status"),
 
-  /** Fetches the installer the feed named, and answers where it was put. */
-  downloadUpdate: (url: string, version: string, sha256?: string): Promise<string> =>
-    ipcRenderer.invoke("mcode:download-update", url, version, sha256),
+  /** MiMo's updateCheckNow: checks now, downloading a newer installer, and answers how it went. */
+  updateCheckNow: (): Promise<UpdateStatus & { outcome: "no-feed" | "current" | "no-installer" | "ready" | "failed" | "busy"; version?: string; error?: string; during?: "check" | "download" }> =>
+    ipcRenderer.invoke("mcode:update-check"),
+
+  /** Every phase change of the updater; `ready` names the downloaded version (MiMo's updateReady). */
+  onUpdateState: (handler: (state: UpdateStatus) => void): (() => void) => {
+    const listener = (_event: unknown, state: UpdateStatus) => handler(state)
+    ipcRenderer.on("mcode:update-state", listener)
+    return () => ipcRenderer.off("mcode:update-state", listener)
+  },
 
   /**
    * Runs the installer that was fetched, and quits.

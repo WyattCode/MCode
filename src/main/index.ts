@@ -62,6 +62,7 @@ import {
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { restore, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
+import { createUpdater, parseFeed, type FeedEntry, type UpdateState } from "./updater"
 import pkg from "../../package.json"
 
 /*
@@ -143,11 +144,6 @@ function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
 
 let backend: Backend | undefined
 
-/*
- * Where the last downloaded installer went. Held here rather than passed back
- * and forth, so installing can only ever run the file this process fetched.
- */
-let installerPath: string | undefined
 const windows = new Set<BrowserWindow>()
 
 /*
@@ -773,105 +769,89 @@ app.whenReady().then(async () => {
    * three the items simply would not exist.
    */
   /*
-   * The update feed, fetched out here.
+   * MiMo's automatic updates, on MCode's own JSON feed: the first check 5 s
+   * after launch, then every 3 h, silent on failure, with a newer installer
+   * downloaded in the background (see updater.ts). Every phase change goes to
+   * the windows; the capsule and the settings row react to a ready update.
    *
-   * The window is served under a content policy that allows it to open a socket
-   * to the local backend and reach nothing else, which is the right policy for
-   * a page that renders model output - but it also meant the renderer's fetch
-   * of the update feed could never leave the process. Relaxing the policy to
-   * let one command reach the network would open every other path with it, so
-   * the request runs here instead and the window is handed the answer.
+   * The feed and the installer are fetched out here. The window is served under
+   * a content policy that reaches the local backend and nothing else, which is
+   * right for a page that renders model output; relaxing it for one command
+   * would open every other path with it.
    */
-  ipcMain.handle("mcode:check-updates", async (_event, feed: string) => {
-    const address = String(feed ?? "").trim()
-    if (!/^https?:\/\//.test(address)) throw new Error("the feed must be an http address")
-    const response = await fetch(address, { cache: "no-store" })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const payload = (await response.json()) as { version?: string; url?: string; sha256?: string; notes?: unknown }
-    return {
-      version: payload.version?.trim() ?? "",
-      url: payload.url?.trim() ?? "",
-      // Optional, and checked only when the feed offers one.
-      sha256: payload.sha256?.trim() ?? "",
-      // Optional release notes for the update bubble; older feeds simply have none.
-      notes: typeof payload.notes === "string" ? payload.notes.slice(0, 20_000) : "",
-    }
+  const MAX_INSTALLER = 400_000_000
+  const updater = createUpdater({
+    currentVersion: pkg.version,
+    feedURL: () => backend?.runtime.config.get().updateFeed ?? "",
+    fetchFeed: async (address) => {
+      if (!/^https?:\/\//.test(address)) throw new Error("the feed must be an http address")
+      const response = await fetch(address, { cache: "no-store" })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return parseFeed(await response.json())
+    },
+    /*
+     * The OS temporary directory, under a name taken from the version rather
+     * than the URL: a name that came over the network does not decide where a
+     * file is written.
+     */
+    installerFile: (entry: FeedEntry) => {
+      const safe = entry.version.replace(/[^0-9A-Za-z._-]/g, "") || "update"
+      const suffix = process.platform === "win32" ? ".exe" : process.platform === "darwin" ? ".dmg" : ".AppImage"
+      return path.join(app.getPath("temp"), `mcode-${safe}${suffix}`)
+    },
+    readFile: (file) => fs.readFile(file).catch(() => undefined),
+    sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
+    download: async (entry, file) => {
+      /*
+       * https, not http. The feed may be plain http - it is only read. This
+       * file is run, and fetching an executable over a connection anyone on the
+       * path can rewrite is remote code execution with extra steps.
+       */
+      if (!/^https:\/\//.test(entry.url)) throw new Error("the installer must be at an https address")
+      const response = await fetch(entry.url, { cache: "no-store" })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+
+      // A ceiling, checked before the body is in memory, and again as chunks arrive for a server that declares no length.
+      const declared = Number(response.headers.get("content-length") ?? "")
+      if (Number.isFinite(declared) && declared > MAX_INSTALLER) throw new Error("the installer is too large")
+      const chunks: Buffer[] = []
+      let seen = 0
+      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+        seen += chunk.byteLength
+        if (seen > MAX_INSTALLER) throw new Error("the installer is too large")
+        chunks.push(Buffer.from(chunk))
+      }
+      const body = Buffer.concat(chunks)
+
+      /*
+       * If the feed said what it should hash to, it has to: https alone says the
+       * bytes arrived unaltered from whoever answered, not that they are the
+       * right bytes.
+       */
+      if (entry.sha256 && createHash("sha256").update(body).digest("hex") !== entry.sha256) {
+        throw new Error("the installer does not match the checksum the feed gave")
+      }
+      await fs.writeFile(file, body)
+    },
+    emit: (state: UpdateState) => {
+      for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("mcode:update-state", state)
+    },
+    log: (line) => console.info(line),
   })
+  ipcMain.handle("mcode:update-status", () => updater.state())
+  ipcMain.handle("mcode:update-check", () => updater.checkNow())
+  updater.start()
+  app.on("before-quit", () => updater.stop())
 
   /*
-   * The rest of an update: fetch the installer the feed named, then hand it to
-   * the shell and quit so it can replace the app that is running.
-   *
-   * The download lands in the OS temporary directory under a name taken from
-   * the version rather than from the URL, because a name that came over the
-   * network should not decide where a file is written. What it will and will
-   * not fetch is argued at the checks themselves.
-   */
-  ipcMain.handle("mcode:download-update", async (_event, url: string, version: string, digest?: unknown) => {
-    const address = String(url ?? "").trim()
-    /*
-     * https, not http.
-     *
-     * The feed itself may be plain http - it is read, and a wrong answer there
-     * makes the app say the wrong version. This file is *run*. Fetching an
-     * executable over a connection anyone on the path can rewrite, and then
-     * launching it, is remote code execution with extra steps, so the one
-     * place that ends in `openPath` insists on a connection that cannot be
-     * rewritten.
-     */
-    if (!/^https:\/\//.test(address)) throw new Error("the installer must be at an https address")
-
-    const response = await fetch(address, { cache: "no-store" })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-    /*
-     * A ceiling, checked before the body is in memory. `arrayBuffer()` on a
-     * feed that names a multi-gigabyte file would otherwise buy whatever it
-     * asked for. A server that declines to say how long the body is gets the
-     * same ceiling applied as the chunks arrive.
-     */
-    const MAX_INSTALLER = 400_000_000
-    const declared = Number(response.headers.get("content-length") ?? "")
-    if (Number.isFinite(declared) && declared > MAX_INSTALLER) throw new Error("the installer is too large")
-
-    const chunks: Buffer[] = []
-    let seen = 0
-    for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-      seen += chunk.byteLength
-      if (seen > MAX_INSTALLER) throw new Error("the installer is too large")
-      chunks.push(Buffer.from(chunk))
-    }
-    const body = Buffer.concat(chunks)
-
-    /*
-     * And if the feed said what it should hash to, it has to. This is the only
-     * check that survives a feed being served correctly but pointing somewhere
-     * it should not; https alone says the bytes arrived unaltered from whoever
-     * answered, not that they are the right bytes.
-     */
-    const expected = typeof digest === "string" ? digest.trim().toLowerCase() : ""
-    if (expected) {
-      const actual = createHash("sha256").update(body).digest("hex")
-      if (actual !== expected) throw new Error("the installer does not match the checksum the feed gave")
-    }
-
-    const safe = String(version ?? "").replace(/[^0-9A-Za-z._-]/g, "") || "update"
-    const suffix = process.platform === "win32" ? ".exe" : process.platform === "darwin" ? ".dmg" : ".AppImage"
-    const target = path.join(app.getPath("temp"), `mcode-${safe}${suffix}`)
-    await fs.writeFile(target, body)
-    installerPath = target
-    return target
-  })
-
-  /*
-   * Only what this process downloaded. The renderer names no path here - it
-   * asks to install "the one that was fetched" - so a window cannot talk the
-   * app into launching an arbitrary executable, which is the same rule the
-   * open-with table enforces for editors.
+   * Only what the updater downloaded or verified. The renderer names no path
+   * here - it asks to install "the one that is ready" - so a window cannot talk
+   * the app into launching an arbitrary executable.
    */
   ipcMain.handle("mcode:install-update", async () => {
-    if (!installerPath) throw new Error("no update has been downloaded")
-    const failure = await shell.openPath(installerPath)
+    const file = updater.readyFile()
+    if (!file) throw new Error("no update has been downloaded")
+    const failure = await shell.openPath(file)
     if (failure) throw new Error(failure)
     beginIntentionalQuit()
     app.quit()
