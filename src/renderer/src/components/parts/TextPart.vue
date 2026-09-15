@@ -12,8 +12,10 @@ import { notifyFailure } from "../../lib/toast"
 import type { MenuItem } from "../../lib/menu"
 import { localPathOf, openPathLink, pathMenuItems, resolvePathTarget, runPathMenu, type PathTarget } from "../../lib/path-open"
 import ContextMenu from "../ContextMenu.vue"
+import AbcBlock from "./AbcBlock.vue"
 import DiagramBlock from "./DiagramBlock.vue"
 import LocalMedia from "./LocalMedia.vue"
+import MediaStrip from "./MediaStrip.vue"
 
 const props = defineProps<{ part: TextPart }>()
 const app = useApp()
@@ -120,7 +122,7 @@ const blocks = computed<ReplyBlock[]>(() => {
 })
 
 /* A block keeps its element while it is unchanged, so only the one being written is redrawn. */
-const blockKey = (block: ReplyBlock, index: number) => `${block.kind === "diagram" ? "d" : block.kind === "html" ? "h" : "s"}${index}`
+const blockKey = (block: ReplyBlock, index: number) => `${block.kind === "diagram" ? "d" : block.kind === "abc" ? "a" : block.kind === "html" ? "h" : "s"}${index}`
 
 /*
  * MiMo's video card: a web, data or blob address plays as it is; a file on
@@ -396,10 +398,13 @@ function onError(event: Event) {
   <div ref="root" class="text" data-annotate="answer" @click="onClick" @keydown="onKeydown" @contextmenu="onContextMenu" @error.capture="onError">
     <template v-for="(block, index) in blocks" :key="blockKey(block, index)">
       <DiagramBlock v-if="block.kind === 'diagram'" class="md-block" :mode="block.mode" :code="block.code" />
+      <AbcBlock v-else-if="block.kind === 'abc'" class="md-block" :code="block.code" />
       <div v-else-if="block.kind === 'svg-loading'" class="md-block md-svg-loading" data-svg-loading>{{ t("svgLoading.generating") }}</div>
       <div v-else class="md-block" v-html="block.html" />
     </template>
   </div>
+  <!-- MiMo's video cards for the platform links in a finished reply. -->
+  <MediaStrip v-if="!live" :text="part.text" />
   <Teleport to="body">
     <div v-if="previewing" class="md-table-preview-overlay" data-table-preview-overlay @mousedown.self="closePreview">
       <div class="md-table-preview-dialog" role="dialog" aria-modal="true" :aria-label="t('table.previewTitle')">

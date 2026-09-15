@@ -87,6 +87,15 @@ export function sanitizeSvgFence(code: string): string {
   return root.outerHTML
 }
 
+/*
+ * abcjs's score: its sizing wrapper and SVG, through the same pre-pass and
+ * DOMPurify's svg profiles (the html profile only for that wrapper div), so no
+ * script, handler, foreignObject or javascript: address can reach the page.
+ */
+export function sanitizeAbcSvg(markup: string): string {
+  return DOMPurify.sanitize(stripSvgHazards(markup), { USE_PROFILES: { svg: true, svgFilters: true, html: true }, FORBID_TAGS: ["foreignObject", "script", "style"] })
+}
+
 /** The sanitised SVG with a size and the theme's ground, as a standalone document. */
 export function exportableSvg(svg: string, background: string): { xml: string; w: number; h: number } | undefined {
   const holder = document.createElement("div")

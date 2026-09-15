@@ -49,6 +49,8 @@ import { listedProjects, projectsByRecency, reconciledProjects } from "../src/sh
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
 import { addressToURL, safeURL } from "../src/shared/web-address"
+import * as mediaPlatform from "../src/shared/media-platform"
+import * as abcPlay from "../src/renderer/src/lib/abc-play"
 import {
   APP_CHORDS,
   barMode,
@@ -4754,6 +4756,189 @@ async function main() {
   const late = quitPress(1000, 3500)
   check("a later press arms again", !late.quit && late.armedAt === 3500, late)
   check("the badge count is a whole non-negative number", badgeCount(-1) === 0 && badgeCount(2.7) === 2 && badgeCount("3") === 3)
+
+  section("Reply scores and video cards (MiMo's ABC block and media cards)")
+  {
+    const A = abcPlay
+    check("a tune's time is its whole notes at a quarter-note tempo", A.tuneSeconds({ tempo: 120, totalDuration: 2 }) === 4 && A.tuneSeconds({ tempo: 0, totalDuration: 2 }) === undefined)
+    check("MiMo renders the tune and three seconds, at most ten minutes", A.renderSeconds(4) === 7 && A.renderSeconds(599) === 600 && A.renderSeconds(undefined) === 600)
+    check(
+      "a press on the bar is its share of the width, held between 0 and 1",
+      A.progressAt(150, 100, 200) === 0.25 && A.progressAt(50, 100, 200) === 0 && A.progressAt(400, 100, 200) === 1 && A.progressAt(1, 0, 0) === undefined,
+    )
+    const tune = { lines: [{ staff: [{ voices: [[{ el_type: "note" }, { el_type: "note", rest: { type: "rest" } }, { el_type: "bar" }, { el_type: "note" }]] }] }] }
+    check("only sounding notes count", A.countNotes(tune) === 2, A.countNotes(tune))
+    check(
+      "MiMo's refusals: no music, no notes, prose that parsed with warnings",
+      A.scoreProblem({ lines: [] }, "x") === "no-music" &&
+        A.scoreProblem({ lines: [{ staff: [] }] }, "K:C") === "no-notes" &&
+        A.scoreProblem({ ...tune, warnings: ["w"] }, "hello there") === "prose" &&
+        A.scoreProblem({ ...tune, warnings: ["w"] }, "X:1\nK:C") === undefined &&
+        A.scoreProblem(tune, "CDE") === undefined,
+    )
+    check(".abc files are scores", A.isAbcFile("tunes/reel.ABC") && A.isAbcFile("a.abc?v=1") && !A.isAbcFile("a.abcd") && !A.isAbcFile(undefined))
+    const notes = A.scoreNotes(
+      {
+        tempo: 120,
+        tracks: [
+          [
+            { cmd: "program", channel: 0, instrument: 0 },
+            { cmd: "note", pitch: 69, start: 0.25, duration: 0.25, gap: 0.05, volume: 127, instrument: 0 },
+            { cmd: "note", pitch: 38, start: 0, duration: 0.25, volume: 100, instrument: 128 },
+            { cmd: "note", pitch: 60, start: 10, duration: 1, volume: 80, instrument: 0 },
+          ],
+        ],
+      },
+      7,
+    )
+    check(
+      "abcjs's notes in seconds and hertz, with percussion and notes past the end left out",
+      notes.length === 1 && notes[0].time === 0.5 && Math.abs(notes[0].length - 0.4) < 1e-9 && notes[0].frequency === 440 && notes[0].gain === 1,
+      notes,
+    )
+
+    let now = 0
+    let endedCount = 0
+    const sources: { offset: number; stopped: boolean; end: () => void }[] = []
+    const player = A.playbackController(
+      {
+        duration: 10,
+        now: () => now,
+        createSource: (offset, onEnd) => {
+          const entry = { offset, stopped: false, end: onEnd }
+          sources.push(entry)
+          return { stop: () => (entry.stopped = true), detach: () => (entry.end = () => undefined) }
+        },
+      },
+      () => (endedCount += 1),
+    )
+    player.start()
+    now = 3
+    player.pause()
+    const paused = player.position()
+    player.resume()
+    now = 5
+    const running = player.position()
+    player.seekTo(8)
+    const seeked = sources[sources.length - 1].offset
+    sources[sources.length - 1].end()
+    check(
+      "pause keeps the place, resume starts there, a seek restarts at the new place, the end resets",
+      paused === 3 && sources[1]?.offset === 3 && running === 5 && seeked === 8 && sources[1].stopped && player.position() === 0 && endedCount === 1 && !player.isRunning(),
+      { paused, running, seeked, endedCount },
+    )
+    let firstStopped = false
+    const first = () => (firstStopped = true)
+    const second = () => undefined
+    A.claimScoreAudio(first)
+    A.claimScoreAudio(second)
+    A.releaseScoreAudio(second)
+    check("starting a second score stops the first", firstStopped)
+
+    const P = mediaPlatform
+    const bili = P.parsePlatformLink("https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1。")
+    check(
+      "a bilibili BV link plays inline, the sentence's full stop trimmed",
+      bili?.platform === "bilibili" && bili.play === "inline" && bili.videoId === "BV1GJ411x7h7" && bili.url === "https://www.bilibili.com/video/BV1GJ411x7h7/?spm=1",
+      bili,
+    )
+    check(
+      "an av link and a b23.tv short link are bilibili too",
+      JSON.stringify(P.parseBilibili("https://m.bilibili.com/video/av170001")?.id) === '{"aid":170001}' &&
+        JSON.stringify(P.parseBilibili("https://b23.tv/xyz")?.id) === '{"short":"https://b23.tv/xyz"}' &&
+        P.parseBilibili("https://b23.tv/") === undefined,
+    )
+    const yt = P.parsePlatformLink("https://music.youtube.com/watch?v=dQw4w9WgXcQ&list=x")
+    check(
+      "YouTube's player address is the no-cookie embed",
+      yt?.platform === "youtube" && yt.embedUrl === "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0" && P.isEmbedAddress(yt.embedUrl),
+      yt,
+    )
+    check(
+      "youtu.be and shorts give the same id",
+      P.parsePlatformLink("https://youtu.be/dQw4w9WgXcQ")?.videoId === "dQw4w9WgXcQ" && P.parsePlatformLink("https://www.youtube.com/shorts/dQw4w9WgXcQ")?.videoId === "dQw4w9WgXcQ",
+    )
+    const externals = [
+      "https://v.douyin.com/abc/",
+      "https://www.kuaishou.com/short-video/3x",
+      "https://www.iqiyi.com/v_19rr.html",
+      "https://v.qq.com/x/page/a.html",
+      "https://v.youku.com/v_show/id_X.html",
+      "https://www.mgtv.com/b/1/2.html",
+      "https://www.ixigua.com/7012345",
+      "https://www.yangshipin.cn/program/12345678",
+      "https://www.miguvideo.com/p/detail/123456",
+      "https://weibo.com/tv/show/1034:4",
+      "https://www.tiktok.com/@a/video/7123",
+      "https://www.netflix.com/watch/80100172",
+    ].map((url) => P.parsePlatformLink(url))
+    check(
+      "the twelve other platforms open in the browser",
+      externals.map((link) => link?.platform).join(",") === "douyin,kuaishou,iqiyi,tencent,youku,mangotv,xigua,yangshipin,migu,weibo,tiktok,netflix" && externals.every((link) => link?.play === "external" && link.embedUrl === ""),
+      externals,
+    )
+    check("fourteen platforms, each with MiMo's badge colours", P.MEDIA_PLATFORMS.length === 14 && P.MEDIA_PLATFORMS.every((name) => /^#/.test(P.PLATFORM_COLOURS[name].bg)) && P.PLATFORM_COLOURS.bilibili.bg === "#fb7299")
+    check(
+      "a lookalike host is no platform",
+      ["https://bilibili.com.example.net/video/BV1GJ411x7h7", "https://youtube.com@example.net/watch?v=dQw4w9WgXcQ", "https://myyoutube.com/watch?v=dQw4w9WgXcQ"].every((url) => P.parsePlatformLink(url) === undefined),
+    )
+    check(
+      "links in code are left out, and a link written twice is one card",
+      P.platformLinksIn("`https://youtu.be/dQw4w9WgXcQ` https://youtu.be/aaaaaaaaaaa https://youtu.be/aaaaaaaaaaa, https://b23.tv/x").join(" ") === "https://youtu.be/aaaaaaaaaaa https://b23.tv/x",
+    )
+
+    const page = P.pageMeta(
+      '<html><head><title>Plain &amp; title</title><meta property="og:title" content="A &quot;clip&quot;"><meta property="og:image" content="http://img.example/a.jpg"><meta name="author" content="Someone"><meta property="og:video:duration" content="61.4"><meta property="og:video:width" content="720"><meta property="og:video:height" content="1280"></head></html>',
+    )
+    check("a page's Open Graph tags make its card", page.title === 'A "clip"' && page.titleFromOg && page.image === "http://img.example/a.jpg" && page.author === "Someone" && page.durationSec === 61 && page.vertical === true, page)
+    check("a page without og:title falls back to its title element", P.pageMeta("<title>Only &lt;this&gt;</title>").title === "Only <this>" && !P.pageMeta("<title>x</title>").titleFromOg)
+    check(
+      "covers are https only",
+      P.coverAddress("http://img.example/a.jpg") === "https://img.example/a.jpg" && P.coverAddress("//i0.hdslb.com/x.jpg") === "https://i0.hdslb.com/x.jpg" && P.coverAddress("javascript:alert(1)") === "" && P.coverAddress(3) === "",
+    )
+    const view = { code: 0, data: { bvid: "BV1GJ411x7h7", cid: 123, title: "T", pic: "http://i0.hdslb.com/c.jpg", duration: 212, owner: { name: "Up" }, dimension: { width: 1080, height: 1920 } } }
+    const bilibiliCard = P.bilibiliMeta(view, "https://b23.tv/x")
+    check(
+      "bilibili's view answer gives the player address with its cid",
+      bilibiliCard?.embedUrl === "https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&cid=123&autoplay=1&danmaku=0&high_quality=1" &&
+        bilibiliCard.aspect === "9:16" && bilibiliCard.coverUrl === "https://i0.hdslb.com/c.jpg" && bilibiliCard.durationSec === 212 && bilibiliCard.author === "Up",
+      bilibiliCard,
+    )
+    check("no bilibili card without a cid, or on an error code", P.bilibiliMeta({ ...view, data: { ...view.data, cid: 0 } }, "u") === undefined && P.bilibiliMeta({ ...view, code: -404 }, "u") === undefined)
+    const oembed = P.oembedMeta({ title: "Song", author_name: "Band", thumbnail_url: "https://i.ytimg.com/vi/x/hqdefault.jpg", width: 200, height: 113 })
+    check("YouTube's oEmbed gives title, author and cover", oembed.title === "Song" && oembed.author === "Band" && oembed.image === "https://i.ytimg.com/vi/x/hqdefault.jpg" && oembed.vertical === false, oembed)
+    check(
+      "the speed menu is MiMo's six, labelled 1.0x and 1.25x, and a strange rate is 1x",
+      P.MEDIA_SPEEDS.map((value) => P.speedLabel(value)).join(" ") === "0.5x 0.75x 1.0x 1.25x 1.5x 2.0x" && P.speedValue(9) === 1 && P.speedValue("1.5") === 1.5,
+    )
+    const front = P.coverflowSlot(0)
+    const side = P.coverflowSlot(-2)
+    const hidden = P.coverflowSlot(5)
+    check(
+      "the coverflow: the front cover flat, the second to the left 206px out and turned 58deg, past four hidden",
+      front.zIndex === 100 && side.transform === "translateX(-206px) translateZ(-180px) rotateY(58deg) scale(0.92)" && side.zIndex === 98 && hidden.opacity === 0 && hidden.pointerEvents === "none",
+      { front, side, hidden },
+    )
+    check("stepping stops at the ends", P.stepIndex(0, -1, 3) === 0 && P.stepIndex(2, 1, 3) === 2 && P.stepIndex(1, 1, 3) === 2)
+    check(
+      "a card is kept a day, a miss ten minutes",
+      P.cacheState({ value: {}, storedAt: 0 }, 86_400_000) === "hit" && P.cacheState({ value: null, storedAt: 0 }, 600_001) === "stale" && P.cacheState(undefined, 0) === "miss",
+    )
+    const used = new Map([
+      ["a", { lastUsedAt: 3 }],
+      ["b", { lastUsedAt: 1 }],
+      ["c", { lastUsedAt: 2 }],
+    ])
+    check("the least recently used cards go first", P.evictions(used, 1).join(",") === "b,c")
+    check("a vertical player is 9:16 up to 480 high", P.playerBox("9:16").height === "min(60vh, 480px)" && P.playerBox("16:9").aspectRatio === "16 / 9")
+    check(
+      "a player frame stays on a player page, and bilibili's player opens no bilibili window",
+      P.embedFrameMayNotGo("https://player.bilibili.com/player.html", "https://www.bilibili.com/") &&
+        !P.embedFrameMayNotGo("https://player.bilibili.com/player.html", "about:blank") &&
+        P.embedPopupRefused("https://player.bilibili.com/player.html", "https://b23.tv/x") &&
+        !P.embedPopupRefused("https://www.youtube-nocookie.com/embed/x", "https://www.youtube.com/watch?v=x"),
+    )
+  }
 
   section("Notices and scrollbars (MiMo)")
   check("a notice's detail folds into its one line", toastTitle("Saved", "C:/x.txt") === "Saved · C:/x.txt" && toastTitle("Saved") === "Saved")

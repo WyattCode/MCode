@@ -193,6 +193,16 @@ const api = {
     ipcRenderer.invoke("mcode:browser-tab", what, id),
   /** Clears the browser panel's site data and cache; resolves to "" or the reason it failed. */
   browserClearData: (): Promise<string> => ipcRenderer.invoke("mcode:browser-clear-data"),
+  /** MiMo's video cards: what each platform says about a reply's links, asked for by the main process; null where there is no card. */
+  mediaEnrich: (urls: string[]): Promise<unknown[]> => ipcRenderer.invoke("mcode:media-enrich", urls),
+  /** An inline player's speed: read without a rate, set with one; null while the player has no video. */
+  mediaSpeed: (embedUrl: string, rate?: number): Promise<number | null> => ipcRenderer.invoke("mcode:media-speed", embedUrl, rate ?? null),
+  /** A player frame that failed to load, with Chromium's error code. */
+  onMediaFailed: (handler: (failure: { url: string; code: number; description: string }) => void): (() => void) => {
+    const listener = (_event: unknown, failure: { url: string; code: number; description: string }) => handler(failure)
+    ipcRenderer.on("mcode:media-failed", listener)
+    return () => ipcRenderer.off("mcode:media-failed", listener)
+  },
   /** A document's bytes, or that they have not changed since `ifUnchanged`. */
   readFileBytes: (
     root: string,

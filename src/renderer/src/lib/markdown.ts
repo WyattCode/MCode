@@ -1,4 +1,5 @@
 import katex from "katex"
+import { ABC_SOURCE_LIMIT } from "./abc-play"
 
 /**
  * Small markdown renderer for assistant output.
@@ -65,6 +66,7 @@ export interface MarkdownOptions {
 export type ReplyBlock =
   | { kind: "html"; html: string }
   | { kind: "diagram"; mode: "mermaid" | "svg"; code: string }
+  | { kind: "abc"; code: string }
   | { kind: "svg-loading" }
 
 interface Context {
@@ -483,6 +485,7 @@ function joinHtml(blocks: ReplyBlock[], options: MarkdownOptions): string {
 function blockHtml(block: ReplyBlock, options: MarkdownOptions): string {
   if (block.kind === "html") return block.html
   if (block.kind === "diagram") return codeBlock(block.mode, block.code, options)
+  if (block.kind === "abc") return codeBlock("abc", block.code, options)
   return ""
 }
 
@@ -494,9 +497,13 @@ function fenceBlock(language: string, body: string[], closed: boolean, ctx: Cont
   if ((lang === "mermaid" || lang === "svg") && options.diagrams && !options.diagrams.streaming && closed && top && code.trim()) {
     return { kind: "diagram", mode: lang, code }
   }
+  // MiMo's score block, under the same rule as a diagram and its cap on the source's length.
+  if (lang === "abc" && options.diagrams && !options.diagrams.streaming && closed && top && code.trim() && code.length <= ABC_SOURCE_LIMIT) {
+    return { kind: "abc", code }
+  }
   // A fence holding nothing but one path is that path, as MiMo reads it.
   const filled = body.filter((line) => line.trim())
-  if (options.paths && filled.length === 1 && lang !== "mermaid" && lang !== "svg") {
+  if (options.paths && filled.length === 1 && lang !== "mermaid" && lang !== "svg" && lang !== "abc") {
     const hit = detectPath(filled[0])
     if (hit) return { kind: "html", html: `<p class="md-p">${pathHtml(hit, options.paths)}</p>` }
   }
