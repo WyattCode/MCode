@@ -13,7 +13,7 @@ import CustomProviderForm from "./CustomProviderForm.vue"
  * while saving) at its end.
  */
 const props = defineProps<{ editing?: CustomProvider }>()
-const emit = defineEmits<{ close: []; saved: [providerID: string] }>()
+const emit = defineEmits<{ close: [] }>()
 
 const form = ref<InstanceType<typeof CustomProviderForm>>()
 const busy = computed(() => Boolean(form.value?.busy))
@@ -42,7 +42,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
         <h2 id="custom-model-title">{{ t(props.editing ? "model.editTitle" : "model.addTitle") }}</h2>
       </header>
       <div class="body">
-        <CustomProviderForm ref="form" framed :editing="props.editing" :autofocus="!props.editing" @connected="emit('saved', $event)" />
+        <CustomProviderForm ref="form" framed :editing="props.editing" :autofocus="!props.editing" />
       </div>
       <footer class="foot">
         <button type="button" class="ghost" data-custom-model-cancel @click="emit('close')">{{ t("common.cancel") }}</button>
