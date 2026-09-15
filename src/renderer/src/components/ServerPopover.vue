@@ -200,15 +200,18 @@ onBeforeUnmount(() => {
      pinned to a fixed side it would open a window's width from the button. */
   inset-inline-end: 10px;
   z-index: 60;
+  box-sizing: border-box;
   width: 320px;
   /*
-   * The same shell every floating panel in the app uses: a half-strength edge
-   * over a raised fill, clipped to the padding box so the fill cannot bleed
-   * through the border's own transparency.
+   * MiMo's list popover (X1): a 12px corner on a 1px line with the menu
+   * shadow, the frame the servers dialog's row menu already wears. Clipped to
+   * the padding box so the fill cannot bleed through the line.
    */
   background: var(--surface-menu);
-  border-radius: 6px;
-  box-shadow: var(--shadow-md);
+  background-clip: padding-box;
+  border: 1px solid var(--border-weak);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
   animation: pop-open 0.15s ease-out;
 }

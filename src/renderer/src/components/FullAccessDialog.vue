@@ -9,7 +9,7 @@ import { t } from "../lib/i18n"
  * 30px close; the description at 14px in the text colour, 1.65 line height;
  * then 取消 and a light red confirm led by a warning triangle. Nothing is
  * focused when it opens, so Enter cannot turn full access on by accident.
- * The body keeps MCode's own sentence, as HANDOFF I23 chose.
+ * The body is MiMo's sentence with MCode's name in it, which is true of MCode.
  */
 const emit = defineEmits<{ close: []; confirm: [] }>()
 

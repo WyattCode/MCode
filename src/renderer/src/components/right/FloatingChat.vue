@@ -246,3 +246,15 @@ onBeforeUnmount(() => {
   pointer-events: none;
 }
 </style>
+
+<style>
+/*
+ * Unscoped, because it reads a node outside this component. MiMo's
+ * `body:has(.overlay.full) .fc-overlay { z-index: 90 }`: its full overlay is the
+ * settings scrim, which in MCode is [data-settings-overlay] at 120. Stepped
+ * under it so the floating box can never draw over settings.
+ */
+body:has([data-settings-overlay]) .fc-overlay {
+  z-index: 90;
+}
+</style>

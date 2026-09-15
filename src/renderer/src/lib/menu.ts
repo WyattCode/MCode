@@ -30,6 +30,8 @@ export interface MenuItem {
    * import the icons it names.
    */
   icon?: string
+  /** The glyph's own colour, such as a file type's hue in the files tab; the row's ink otherwise. */
+  iconColor?: string
   /** Drawn in the error colour: the row that destroys something. */
   danger?: boolean
   /** The shortcut that does the same, shown at the far end of the row. */

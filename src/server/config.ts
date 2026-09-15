@@ -1,4 +1,5 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
+import { normalizeChord } from "@shared/chord"
 import fs from "node:fs/promises"
 import { watch as watchFiles, type FSWatcher } from "node:fs"
 import path from "node:path"
@@ -378,6 +379,18 @@ export class Config {
         if (to && !(to in binds)) binds[to] = binds[from]
         delete binds[from]
       }
+      this.current.keybinds = binds
+    })
+
+    /*
+     * Recording now reads the physical key, so a chord saved in the old printed
+     * form (Ctrl+Shift+{) is rewritten to the one a keystroke produces
+     * (Ctrl+Shift+[), or it would never fire again. A deleted binding ("")
+     * stays deleted.
+     */
+    once("keybind-chords-r4", () => {
+      const binds: Record<string, string> = {}
+      for (const [id, chord] of Object.entries(this.current.keybinds ?? {})) binds[id] = normalizeChord(chord)
       this.current.keybinds = binds
     })
 
