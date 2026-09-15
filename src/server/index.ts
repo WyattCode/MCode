@@ -7,6 +7,7 @@ import { Config } from "./config"
 import { AuthManager } from "./auth/manager"
 import { Permissions } from "./permission"
 import { SessionStore } from "./session/store"
+import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
 import { McpServers } from "./mcp"
@@ -49,6 +50,8 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
 
   const permissions = new Permissions(bus, config)
   const sessions = new SessionStore(storage, bus)
+  // Before the socket opens, so the first window already reads a filled project list.
+  await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
   const shells = new Shells(bus)
   const mcp = new McpServers(bus, config, storage)

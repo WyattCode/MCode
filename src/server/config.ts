@@ -18,6 +18,7 @@ import {
   PERMISSION_KINDS,
   type PermissionKind,
 } from "@shared/protocol"
+import { adoptedProjects, reconciledProjects } from "@shared/projects"
 import type { Storage } from "./storage"
 import { writeAtomic } from "./storage"
 import type { Bus } from "./bus"
@@ -34,6 +35,9 @@ import { modelVariants } from "./provider/variants"
 import type { OAuthTokens } from "./auth/oauth"
 
 export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-opus-5" }
+
+/** Recorded in `migrations` once the project list has been filled from conversations. */
+export const PROJECT_LIST_MIGRATION = "projects-list"
 
 export type { ModelEntry }
 
@@ -109,6 +113,7 @@ function defaults(): AppConfig {
     autoApprove: allowed(DEFAULT_PERMISSIONS),
     allowFullAccess: false,
     directory: process.cwd(),
+    projects: [],
     closedProjects: [],
     projectNames: {},
     projectUsed: {},
@@ -477,9 +482,14 @@ export class Config {
   async set(patch: Partial<AppConfig>): Promise<AppConfig> {
     const before = this.current.permissions
     const providersBefore = this.current.customProviders
+    const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
     if (patch.customProviders) {
       this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
+    }
+    // A folder taken out of the removed set is a project again, and one put in it leaves the list.
+    if (patch.projects || patch.closedProjects) {
+      this.current.projects = reconciledProjects(projectsBefore, this.current)
     }
     /*
      * A patch may speak either vocabulary. The map wins when both are present:
@@ -497,6 +507,24 @@ export class Config {
     await this.storage.write("config", this.current)
     this.bus.publish({ type: "config.updated", config: this.current })
     return this.current
+  }
+
+  /** Conversation folders neither listed nor removed join the project list, as MiMo derives them. */
+  async adoptProjects(directories: readonly string[]): Promise<void> {
+    const patch = adoptedProjects(this.current, directories)
+    if (patch) await this.set(patch)
+  }
+
+  /**
+   * Once, when the list first exists: every folder the side column listed from
+   * its conversations becomes an entry, newest conversation first. Names, pins,
+   * the removed set and the dragged order are separate fields and stay as they
+   * were.
+   */
+  async migrateProjects(directories: readonly string[]): Promise<void> {
+    const done = this.current.migrations ?? []
+    if (done.includes(PROJECT_LIST_MIGRATION)) return
+    await this.set({ ...adoptedProjects(this.current, directories), migrations: [...done, PROJECT_LIST_MIGRATION] })
   }
 
   /**

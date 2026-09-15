@@ -13,6 +13,7 @@ import type {
   UsageBucket,
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
+import { addedProject, removedProjects } from "@shared/projects"
 import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
@@ -253,8 +254,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.create": {
       const config = runtime.config.get()
+      const directory = request.scratch ? await scratchDirectory(new Date(), config.projectRoot) : (request.directory ?? config.directory)
+      /*
+       * A conversation in a folder the list does not know makes it a project,
+       * as MiMo derives one. Listed before the session exists, so the window
+       * never sees the conversation without its project.
+       */
+      if (!request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory])
       const session = await runtime.sessions.create({
-        directory: request.scratch ? await scratchDirectory(new Date(), config.projectRoot) : (request.directory ?? config.directory),
+        directory,
         ...(request.scratch ? { scratch: true } : {}),
         ...(request.sideOf ? { sideOf: request.sideOf } : {}),
         model: config.model,
@@ -272,6 +280,17 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const directory = await blankProjectDirectory(request.name, runtime.config.get().projectRoot)
       return { directory } satisfies Handled<"project.createBlank">
     }
+
+    /* MiMo's project add and remove: the list changes, no conversation is made or deleted. */
+    case "project.add": {
+      const { patch, existed } = addedProject(runtime.config.get(), request.directory, request.used ? Date.now() : undefined)
+      return { config: await runtime.config.set(patch), existed } satisfies Handled<"project.add">
+    }
+
+    case "project.remove":
+      return {
+        config: await runtime.config.set(removedProjects(runtime.config.get(), request.directories)),
+      } satisfies Handled<"project.remove">
 
     case "search.messages": {
       const sessions = await runtime.sessions.list()
@@ -342,6 +361,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      * having none: it is listed under that project from now on.
      */
     case "session.move":
+      await runtime.config.adoptProjects([request.directory])
       return {
         session: await runtime.sessions.update(request.sessionID, { directory: request.directory, scratch: undefined }),
       } satisfies Handled<"session.move">

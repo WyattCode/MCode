@@ -1107,6 +1107,12 @@ export interface AppConfig {
   /** Working directory for new sessions. */
   directory: string
   /**
+   * MiMo's project list: every project folder, newest added first, whether or
+   * not it has a conversation. The side column, the home picker and the 环境
+   * page all read it. Never shares a folder with `closedProjects`.
+   */
+  projects: string[]
+  /**
    * Project directories hidden from the rail. Closing a project only hides it -
    * its sessions are kept, so reopening the directory brings them all back.
    */
@@ -1452,6 +1458,10 @@ export type Request =
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
   /* An empty folder for a new project, named by the user, under the default project location. */
   | { type: "project.createBlank"; name: string }
+  /* A folder onto the project list, with no conversation; `used` also makes it the latest pick. */
+  | { type: "project.add"; directory: string; used?: boolean }
+  /* Folders off the project list; their conversations stay. */
+  | { type: "project.remove"; directories: string[] }
   /* The conversations whose messages hold the query, one hit each, for the search overlay. */
   | { type: "search.messages"; query: string; limit?: number }
   | { type: "session.get"; sessionID: string }
@@ -1745,6 +1755,9 @@ export interface ResponseMap {
   "artifact.list": { artifacts: SessionArtifacts[] }
   "session.create": { session: SessionInfo }
   "project.createBlank": { directory: string }
+  /* `existed` is true when the folder was already listed. */
+  "project.add": { config: AppConfig; existed: boolean }
+  "project.remove": { config: AppConfig }
   "search.messages": { hits: MessageHit[] }
   "session.get": { session: SessionInfo; messages: Message[] }
   "session.systemPrompt": { prompt: string }
