@@ -75,7 +75,6 @@ type Table = Record<string, string>
 const zhCN: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任务",
-  "side.railNewTask": "新建任务：开始一个无项目任务 · {shortcut}",
   "side.railArtifacts": "产物中心：查看任务生成的文件",
   "side.awaitingPill": "待确认",
   "side.awaitingConfirm": "等待你确认后任务才能继续",
@@ -2264,7 +2263,6 @@ const zhCN: Table = {
 const zhTW: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新建任務",
-  "side.railNewTask": "新任務:不使用專案開始 · {shortcut}",
   "side.railArtifacts": "產出:檢視任務建立的檔案",
   "side.awaitingPill": "待確認",
   "side.awaitingConfirm": "正在等待你確認以繼續",
@@ -4432,7 +4430,6 @@ const zhTW: Table = {
 const en: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "New task",
-  "side.railNewTask": "New task: Start without a project · {shortcut}",
   "side.railArtifacts": "Artifacts: View files created by your tasks",
   "side.awaitingPill": "Confirm",
   "side.awaitingConfirm": "Waiting for your confirmation to continue",
@@ -6602,7 +6599,6 @@ const en: Table = {
 const ar: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "مهمة جديدة",
-  "side.railNewTask": "مهمة جديدة: ابدأ بدون مشروع · {shortcut}",
   "side.railArtifacts": "المخرجات: عرض الملفات التي أنشأتها مهامك",
   "side.awaitingPill": "بانتظار التأكيد",
   "side.awaitingConfirm": "بانتظار تأكيدك للمتابعة",
@@ -8732,7 +8728,6 @@ const ar: Table = {
 const bs: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Novi zadatak",
-  "side.railNewTask": "Novi zadatak: Počni bez projekta · {shortcut}",
   "side.railArtifacts": "Artefakti: Pregledaj datoteke koje su kreirali vaši zadaci",
   "side.awaitingPill": "Potvrdi",
   "side.awaitingConfirm": "Čeka se vaša potvrda za nastavak",
@@ -10862,7 +10857,6 @@ const bs: Table = {
 const da: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny opgave",
-  "side.railNewTask": "Ny opgave: Start uden et projekt · {shortcut}",
   "side.railArtifacts": "Artefakter: Se filer, dine opgaver har oprettet",
   "side.awaitingPill": "Bekræft",
   "side.awaitingConfirm": "Venter på din bekræftelse for at fortsætte",
@@ -12992,7 +12986,6 @@ const da: Table = {
 const de: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Neue Aufgabe",
-  "side.railNewTask": "Neue Aufgabe: Ohne Projekt starten · {shortcut}",
   "side.railArtifacts": "Artefakte: Von Ihren Aufgaben erstellte Dateien anzeigen",
   "side.awaitingPill": "Bestätigen",
   "side.awaitingConfirm": "Wartet auf Ihre Bestätigung, um fortzufahren",
@@ -15122,7 +15115,6 @@ const de: Table = {
 const es: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nueva tarea",
-  "side.railNewTask": "Nueva tarea: iniciar sin proyecto · {shortcut}",
   "side.railArtifacts": "Artefactos: ver archivos creados por tus tareas",
   "side.awaitingPill": "Confirmar",
   "side.awaitingConfirm": "Esperando tu confirmación para continuar",
@@ -17252,7 +17244,6 @@ const es: Table = {
 const fr: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nouvelle tâche",
-  "side.railNewTask": "Nouvelle tâche : démarrer sans projet · {shortcut}",
   "side.railArtifacts": "Artefacts : consulter les fichiers créés par vos tâches",
   "side.awaitingPill": "À confirmer",
   "side.awaitingConfirm": "En attente de votre confirmation pour continuer",
@@ -19382,7 +19373,6 @@ const fr: Table = {
 const ja: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "新しいタスク",
-  "side.railNewTask": "新しいタスク: プロジェクトなしで開始・{shortcut}",
   "side.railArtifacts": "アーティファクト: タスクで作成されたファイルを表示",
   "side.awaitingPill": "確認待ち",
   "side.awaitingConfirm": "続行するにはあなたの確認が必要です",
@@ -21512,7 +21502,6 @@ const ja: Table = {
 const ko: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "새 작업",
-  "side.railNewTask": "새 작업: 프로젝트 없이 시작 · {shortcut}",
   "side.railArtifacts": "아티팩트: 작업에서 생성된 파일 보기",
   "side.awaitingPill": "확인 필요",
   "side.awaitingConfirm": "계속 진행하려면 확인이 필요합니다",
@@ -23642,7 +23631,6 @@ const ko: Table = {
 const nb: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Ny oppgave",
-  "side.railNewTask": "Ny oppgave: Start uten et prosjekt · {shortcut}",
   "side.railArtifacts": "Artefakter: Vis filer opprettet av dine oppgaver",
   "side.awaitingPill": "Bekreft",
   "side.awaitingConfirm": "Venter på din bekreftelse for å fortsette",
@@ -25772,7 +25760,6 @@ const nb: Table = {
 const pl: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nowe zadanie",
-  "side.railNewTask": "Nowe zadanie: Zacznij bez projektu · {shortcut}",
   "side.railArtifacts": "Artefakty: Zobacz pliki utworzone przez Twoje zadania",
   "side.awaitingPill": "Potwierdź",
   "side.awaitingConfirm": "Czeka na Twoje potwierdzenie, aby kontynuować",
@@ -27902,7 +27889,6 @@ const pl: Table = {
 const ptBR: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Nova tarefa",
-  "side.railNewTask": "Nova tarefa: Começar sem projeto · {shortcut}",
   "side.railArtifacts": "Artefatos: Veja os arquivos criados pelas suas tarefas",
   "side.awaitingPill": "Confirmar",
   "side.awaitingConfirm": "Aguardando sua confirmação para continuar",
@@ -30032,7 +30018,6 @@ const ptBR: Table = {
 const ru: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Новая задача",
-  "side.railNewTask": "Новая задача: начать без проекта · {shortcut}",
   "side.railArtifacts": "Артефакты: просмотр файлов, созданных вашими задачами",
   "side.awaitingPill": "Подтвердить",
   "side.awaitingConfirm": "Ожидает вашего подтверждения для продолжения",
@@ -32162,7 +32147,6 @@ const ru: Table = {
 const th: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "งานใหม่",
-  "side.railNewTask": "งานใหม่: เริ่มโดยไม่มีโปรเจกต์ · {shortcut}",
   "side.railArtifacts": "อาร์ติแฟกต์: ดูไฟล์ที่งานของคุณสร้างขึ้น",
   "side.awaitingPill": "รอยืนยัน",
   "side.awaitingConfirm": "รอการยืนยันจากคุณเพื่อดำเนินการต่อ",
@@ -34292,7 +34276,6 @@ const th: Table = {
 const tr: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Yeni görev",
-  "side.railNewTask": "Yeni görev: Proje olmadan başlat · {shortcut}",
   "side.railArtifacts": "Ürünler: Görevleriniz tarafından oluşturulan dosyaları görüntüleyin",
   "side.awaitingPill": "Onayla",
   "side.awaitingConfirm": "Devam etmek için onayınız bekleniyor",
@@ -36422,7 +36405,6 @@ const tr: Table = {
 const uk: Table = {
   // 2.0 shell - the sidebar and the home screen
   "side.newTask": "Нове завдання",
-  "side.railNewTask": "Нове завдання: почати без проєкту · {shortcut}",
   "side.railArtifacts": "Артефакти: переглянути файли, створені вашими завданнями",
   "side.awaitingPill": "Підтвердити",
   "side.awaitingConfirm": "Очікує вашого підтвердження, щоб продовжити",

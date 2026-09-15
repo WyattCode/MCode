@@ -930,6 +930,55 @@ function beginResize(event: MouseEvent) {
   window.addEventListener("mousemove", move)
   window.addEventListener("mouseup", done)
 }
+
+/*
+ * MiMo's rail card: on the folded column, resting on 新建任务 opens a card after
+ * 200ms - a new task row, then the recent conversations - which closes 150ms
+ * after the pointer has left both. It stands where the rail's tooltip would.
+ */
+const QUICK_OPEN = 200
+const QUICK_CLOSE = 150
+const QUICK_WIDTH = 260
+const quick = ref<{ left: number; top: number; maxHeight: number }>()
+let quickTimer: ReturnType<typeof setTimeout> | undefined
+
+function quickEnter(event: PointerEvent) {
+  clearTimeout(quickTimer)
+  if (!props.collapsed || quick.value) return
+  const anchor = event.currentTarget as HTMLElement
+  quickTimer = setTimeout(() => {
+    const rect = anchor.getBoundingClientRect()
+    const rtl = getComputedStyle(anchor).direction === "rtl"
+    // Beside the rail 8px out, top edges lined up, kept 8px inside the window.
+    const top = Math.max(8, Math.round(rect.top))
+    const left = rtl ? Math.round(rect.left - 8 - QUICK_WIDTH) : Math.round(rect.right + 8)
+    quick.value = { left, top, maxHeight: Math.max(0, Math.min(320, window.innerHeight - top - 8)) }
+  }, QUICK_OPEN)
+}
+
+function quickLeave() {
+  clearTimeout(quickTimer)
+  if (quick.value) quickTimer = setTimeout(() => (quick.value = undefined), QUICK_CLOSE)
+}
+
+const quickStay = () => clearTimeout(quickTimer)
+
+function quickPick(sessionID?: string) {
+  clearTimeout(quickTimer)
+  quick.value = undefined
+  if (sessionID) emit("open", sessionID)
+  else emit("newTask")
+}
+
+watch(
+  () => props.collapsed,
+  (folded) => {
+    if (folded) return
+    clearTimeout(quickTimer)
+    quick.value = undefined
+  },
+)
+onBeforeUnmount(() => clearTimeout(quickTimer))
 </script>
 
 <template>
@@ -1011,7 +1060,14 @@ function beginResize(event: MouseEvent) {
     </div>
 
     <nav class="nav">
-      <button class="row" v-tip="collapsed ? { label: t('side.railNewTask', { shortcut: 'Ctrl+N' }), placement: 'right' } : ''" @click="emit('newTask')">
+      <button
+        class="row"
+        data-new-task
+        :aria-label="collapsed ? t('side.newTask') : undefined"
+        @click="emit('newTask')"
+        @pointerenter="quickEnter"
+        @pointerleave="quickLeave"
+      >
         <svg class="row-ico" width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <circle cx="10" cy="10" r="7" stroke="currentColor" />
           <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
@@ -1036,6 +1092,43 @@ function beginResize(event: MouseEvent) {
         <span class="row-label">{{ t("side.artifacts") }}</span>
       </button>
     </nav>
+
+    <Teleport to="body">
+      <div
+        v-if="quick"
+        class="rail-quick"
+        data-rail-quick-popup
+        :style="{ left: `${quick.left}px`, top: `${quick.top}px`, maxHeight: `${quick.maxHeight}px` }"
+        @pointerenter="quickStay"
+        @pointerleave="quickLeave"
+      >
+        <button type="button" class="quick-new" data-quick-new-task @click="quickPick()">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <circle cx="10" cy="10" r="7" stroke="currentColor" />
+            <path d="M10 6.5V13.5M6.5 10H13.5" stroke="currentColor" stroke-linecap="square" />
+          </svg>
+          <span class="quick-label">{{ t("side.newTask") }}</span>
+        </button>
+        <div class="quick-rule" />
+        <div class="quick-scroll" data-quick-recent-scroll>
+          <template v-if="recentAll.length">
+            <button
+              v-for="session in recentAll"
+              :key="session.id"
+              type="button"
+              class="quick-convo"
+              :class="{ on: session.id === app.currentID }"
+              :data-quick-convo="session.id"
+              :aria-current="session.id === app.currentID ? 'page' : undefined"
+              @click="quickPick(session.id)"
+            >
+              <span class="quick-label">{{ title(session.title) }}</span>
+            </button>
+          </template>
+          <div v-else class="quick-empty" data-quick-empty>{{ t("side.noTasks") }}</div>
+        </div>
+      </div>
+    </Teleport>
 
     <div ref="listsEl" class="lists" @dragover="folderOver" @dragleave="folderLeave" @drop="folderDrop">
       <div
@@ -1632,6 +1725,108 @@ function beginResize(event: MouseEvent) {
   width: 7px;
   cursor: col-resize;
   -webkit-app-region: no-drag;
+}
+
+/* MiMo's rail card: 260 wide, 20 round on a hairline, 8 of padding, easing in from the rail. */
+.rail-quick {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 260px;
+  padding: 8px;
+  overflow: hidden;
+  color: var(--text-strong);
+  background: var(--surface-raised);
+  border: 0.5px solid var(--border-weak);
+  border-radius: 20px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
+  transform-origin: left top;
+  animation: rail-quick-in 0.15s ease-out;
+}
+
+@keyframes rail-quick-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px) scale(0.95);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-quick {
+    animation: none;
+  }
+}
+
+.quick-new,
+.quick-convo {
+  display: flex;
+  flex: none;
+  align-items: center;
+  width: 100%;
+  border-radius: 7px;
+  text-align: start;
+}
+
+.quick-new {
+  gap: 9px;
+  padding: 8px 9px;
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.quick-rule {
+  flex: none;
+  height: 1px;
+  margin: 4px 5px;
+  background: var(--border-weaker);
+}
+
+.quick-scroll {
+  min-height: 0;
+  padding-block: 1px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.quick-convo {
+  margin-block: 1px;
+  padding: 7px 9px;
+  color: var(--text-base);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.quick-convo.on {
+  color: var(--text-strong);
+  background: var(--surface-selected);
+  font-weight: 500;
+}
+
+.quick-new:hover,
+.quick-new:focus-visible,
+.quick-convo:not(.on):hover,
+.quick-convo:not(.on):focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.quick-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quick-new svg {
+  flex: none;
+}
+
+.quick-empty {
+  padding: 10px 9px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
 }
 
 /* The window-control row: 44 tall, buttons 24x24 at 32px pitch. It drags the
