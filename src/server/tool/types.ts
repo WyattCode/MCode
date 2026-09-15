@@ -86,6 +86,8 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>
   /** Permission bucket; approvals are remembered per bucket. */
   permission?: string
+  /** The MCP server an outside tool comes from; absent for this app's own tools. */
+  server?: string
   execute(input: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
 }
 

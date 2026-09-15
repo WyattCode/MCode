@@ -3,6 +3,8 @@ import { ref } from "vue"
 import type { OfficeVersionSource, OfficeVersionState } from "../../../preload/index"
 import { notifyFailure } from "../lib/toast"
 import { t } from "../lib/i18n"
+import { noteFileChange } from "../lib/file-notices"
+import { useApp } from "./app"
 
 /**
  * MiMo's version history for documents, per file: the main process keeps the
@@ -24,13 +26,20 @@ export const useOfficeVersions = defineStore("officeVersions", () => {
   }
 
   async function record(path: string, base64: string, source: OfficeVersionSource, note: string) {
+    const before = byPath.value[path]?.versions.length ?? 0
     const result = await window.mcode.officeVersionRecord(path, base64, source, note)
-    if (result.ok) keep(path, result.state)
+    if (!result.ok) return
+    keep(path, result.state)
+    // MiMo tells the model on the next send when a person, not the model, made a new version.
+    if ((source === "user" || source === "external") && result.state.versions.length > before) {
+      noteFileChange(useApp().currentID, { path, source, note })
+    }
   }
 
   async function restore(path: string, id: string) {
     const result = await window.mcode.officeVersionRestore(path, id)
     if (result.ok) {
+      noteFileChange(useApp().currentID, { path, source: "restore" })
       keep(path, result.state)
       reloadTick.value = { ...reloadTick.value, [path]: (reloadTick.value[path] ?? 0) + 1 }
       return

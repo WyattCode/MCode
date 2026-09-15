@@ -21,6 +21,7 @@ import { highlightWithin } from "../lib/highlight"
 import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
 import DeliveredFilesCard from "./DeliveredFilesCard.vue"
+import MediaStrip from "./parts/MediaStrip.vue"
 import { followDeliveries } from "../lib/delivered"
 import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
@@ -1212,6 +1213,9 @@ defineExpose({ stepMessage, scroller })
             :parts="turn.parts"
             :directory="shownDirectory"
           />
+
+          <!-- MiMo's video cards: one group for the whole finished reply, after its delivered files. -->
+          <MediaStrip v-if="!(at === turns.length - 1 && shownBusy) && !playingOut(turn)" :text="replyText(turn)" />
 
           <!--
             A failure as MiMo shows one: a card with the reason and a retry at its

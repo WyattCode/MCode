@@ -1098,6 +1098,7 @@ export class McpServers {
           // One bucket for all of them: approving a server's tools once is the
           // decision a user is actually making.
           permission: "mcp",
+          server: name,
           execute: async (input, context) => {
             connection.activeSession = context.sessionID
             /*

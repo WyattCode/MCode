@@ -87,6 +87,8 @@ type PromptInput = {
   text: string
   attachments?: Attachment[]
   annotations?: UserMessage["annotations"]
+  /* Documents the user changed since the last message, told to the model ahead of the text. */
+  fileNotices?: UserMessage["fileNotices"]
   /* session chat: sent by another conversation, marked the way a subagent's follow-up is. */
   inbox?: UserMessage["inbox"]
 }
@@ -224,6 +226,14 @@ export class SessionRunner {
    * would make the two impossible to build in either order.
    */
   private mcp?: { tools: () => ToolDefinition[] }
+  /*
+   * MiMo's MCP page says a saved change applies from the next conversation.
+   * Each conversation keeps the servers that were configured and on at its
+   * first turn in this run; one added or switched on later is offered to new
+   * conversations only. A server removed or switched off is gone at once, since
+   * there is nothing left to call.
+   */
+  private readonly mcpServersAt = new Map<string, ReadonlySet<string>>()
 
   /** Where the per-project shadow repositories that back undo are kept. */
   private readonly snapshots: Snapshots
@@ -368,10 +378,17 @@ export class SessionRunner {
    * not knowable from here, so a mode that promises to change nothing cannot
    * pass one along.
    */
-  private tools(agent: string): ToolDefinition[] {
+  private tools(agent: string, conversation: string): ToolDefinition[] {
     const own = toolsFor(agent)
     if (agent === "plan") return own
-    return [...own, ...(this.mcp?.tools() ?? [])]
+    let servers = this.mcpServersAt.get(conversation)
+    if (!servers) {
+      const configured = Object.entries(this.config.get().mcpServers ?? {})
+      servers = new Set(configured.filter(([, entry]) => entry.enabled !== false).map(([name]) => name))
+      this.mcpServersAt.set(conversation, servers)
+    }
+    const kept = servers
+    return [...own, ...(this.mcp?.tools() ?? []).filter((tool) => !tool.server || kept.has(tool.server))]
   }
 
   isRunning(sessionID: string): boolean {
@@ -393,11 +410,6 @@ export class SessionRunner {
 
   busySessions(): string[] {
     return [...this.running.keys()]
-  }
-
-  /** True once nothing is mid-turn, so storage can be cleared safely. */
-  get idle(): boolean {
-    return this.running.size === 0
   }
 
   abort(sessionID: string): void {
@@ -1029,6 +1041,7 @@ export class SessionRunner {
       text: input.text,
       attachments: input.attachments ?? [],
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
+      ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       ...extra,
       time: { created: Date.now() },
       // Marked, so the transcript can show it inside the turn it joined.
@@ -1199,6 +1212,7 @@ export class SessionRunner {
       text: input.text,
       attachments: input.attachments ?? [],
       ...(input.annotations?.length ? { annotations: input.annotations } : {}),
+      ...(input.fileNotices?.length ? { fileNotices: input.fileNotices } : {}),
       // session chat
       ...(input.inbox ? { inbox: input.inbox } : {}),
       time: { created: Date.now() },
@@ -1485,7 +1499,7 @@ export class SessionRunner {
               : history,
         // subagents: a subagent is never handed the task tool, so it cannot start subagents of its own,
         // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call.
-        tools: lastStep ? [] : this.tools(session.agent).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+        tools: lastStep ? [] : this.tools(session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
         effort,
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,

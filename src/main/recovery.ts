@@ -1,34 +1,53 @@
-import fs from "node:fs/promises"
-import path from "node:path"
-import { app, dialog, shell, type BrowserWindow, type WebContents } from "electron"
-import { label as L } from "./labels"
-import pkg from "../../package.json"
+import { app, type BrowserWindow, type WebContents } from "electron"
+import { formatArgs, type DailyLog } from "./log-file"
+import { RecoverySchedule, RendererHealth, STARTUP_TIMEOUT, recoveryVisibility } from "./renderer-health"
 
 /**
- * What the app does when the window it is showing stops working.
+ * What the app does when the window it is showing stops working: MiMo's silent
+ * renderer recovery.
  *
- * A renderer can fail in three ways that leave the main process running and
- * perfectly healthy, and in every one of them the app looks broken with no way
- * out of it. The page can hang, so the window takes clicks and answers none of
- * them. The renderer process can be killed - out of memory, a GPU fault, a
- * crash in Chromium - leaving a window that is now an empty frame. Or the page
- * can fail to load at all, leaving a blank one. None of the three close the
- * window, and none of them raise anything the page could catch and report,
- * because the page is the part that has stopped.
+ * A renderer can fail while the main process stays healthy: its process can be
+ * killed (out of memory, a GPU fault, a crash in Chromium), its page can fail to
+ * load, or it can never finish starting. None of the three close the window,
+ * and none raise anything the page could catch, because the page is the part
+ * that stopped. MiMo asks nothing: it records what happened and puts a fresh
+ * window in place of the broken one. MCode's backend lives in this process, so
+ * a new window loses nothing but the page state. The rules and the retry
+ * schedule are in renderer-health.ts; this wires them to Electron.
  *
- * Nothing in this app listened for any of them, so the only way out of all
- * three was the task manager. This module is the way out: it notices, says what
- * happened, and offers to restart.
+ * A hang is only recorded. A page that stops answering may start again, and
+ * replacing it would throw away whatever it was in the middle of.
  */
+
+/* The day's log file (MiMo's userData/logs), once main has opened it. */
+let log: DailyLog | undefined
+
+/*
+ * Set while this module is the one writing to the console, so the capture below
+ * does not record its own output and then record recording it.
+ */
+let reporting = false
+
+function record(window: string, what: string, detail: Record<string, unknown> = {}): void {
+  log?.write("error", formatArgs([`[recovery] ${what}`, { window, ...detail }]))
+  // Goes to the terminal in development; the log file has it either way.
+  reporting = true
+  try {
+    console.error(`[recovery] ${what}`, { window, ...detail })
+  } catch {
+    // A closed stdout must not turn a record into a crash.
+  } finally {
+    reporting = false
+  }
+}
 
 /** Stands in for a URL that cannot be read because the window has gone. */
 const DESTROYED = "<destroyed>"
 
 /*
- * Reading a URL off a window is the first thing every one of these handlers
- * wants to do and the most likely to throw, because they run at exactly the
- * moments the window is being torn down underneath them. A report that fails
- * to be written because it could not name the page is no report at all.
+ * Reading a URL off contents is the first thing these handlers want and the
+ * most likely to throw, because they run exactly while the window is being
+ * torn down underneath them.
  */
 function contentsURL(contents: WebContents): string {
   try {
@@ -38,139 +57,47 @@ function contentsURL(contents: WebContents): string {
   }
 }
 
-function windowURL(window: BrowserWindow): string {
+/**
+ * An exception or rejection nothing in the main process caught (MiMo's
+ * uncaughtException / unhandledRejection handlers): recorded, and the app runs
+ * on. With a handler attached Electron no longer raises its modal "A JavaScript
+ * error occurred in the main process" box, which for a backend that lives in
+ * this process turned one stray throw into a frozen-looking app.
+ */
+export function recordProcessError(what: "uncaught exception" | "unhandled rejection", error: unknown): void {
   try {
-    return window.isDestroyed() ? DESTROYED : contentsURL(window.webContents)
+    record("main", what, { error: formatArgs([error]) })
   } catch {
-    return DESTROYED
-  }
-}
-
-interface Entry {
-  at: string
-  window: string
-  what: string
-  detail: Record<string, unknown>
-}
-
-/*
- * Kept in memory, capped, and only ever read by the export below. The cap is
- * what stops a window that fails to load in a loop - a dev server that is down,
- * say, retrying every few seconds - from growing this without limit over the
- * hours an app can be left open.
- */
-const entries: Entry[] = []
-const MAX_ENTRIES = 100
-
-/*
- * Set while this module is the one writing to the console, so the capture below
- * does not record its own output and then record recording it.
- */
-let reporting = false
-
-function record(window: string, what: string, detail: Record<string, unknown> = {}): void {
-  entries.push({ at: new Date().toISOString(), window, what, detail })
-  if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES)
-  // Goes to the terminal in development. In a packaged build nothing is
-  // listening, which is why the export below exists at all.
-  reporting = true
-  try {
-    console.error(`[recovery] ${what}`, { window, ...detail })
-  } finally {
-    reporting = false
+    // Recording is the last resort; a failure inside it has nowhere else to go.
   }
 }
 
 /**
- * Keeps what the main process says, so the report can carry it.
+ * Sends what the main process says to the day's log file.
  *
  * The backend runs in this process, and everything it warns or complains about
  * goes to a console that exists only while the app is started from a terminal.
- * Packaged, that output has nowhere to go at all - so the one button offered on
- * a crash screen could hand over what had happened to the window and nothing
- * about what the backend had been saying in the minutes before it.
- *
- * Only warnings and errors. The ordinary chatter of a running app would fill
- * the hundred lines this keeps long before anything went wrong, which would
- * leave the report holding the least interesting hundred lines available.
+ * Packaged, that output had nowhere to go at all.
  */
-export function captureConsole(): void {
-  for (const level of ["warn", "error"] as const) {
+export function captureConsole(file: DailyLog): void {
+  log = file
+  for (const level of ["info", "warn", "error"] as const) {
     const original = console[level].bind(console)
     console[level] = (...args: unknown[]) => {
-      original(...args)
-      if (reporting) return
-      reporting = true
       try {
-        const text = args
-          .map((value) => {
-            if (typeof value === "string") return value
-            if (value instanceof Error) return value.stack ?? value.message
-            try {
-              return JSON.stringify(value)
-            } catch {
-              // A value that cannot be serialised is still worth naming.
-              return String(value)
-            }
-          })
-          .join(" ")
-        entries.push({ at: new Date().toISOString(), window: "main", what: `console.${level}`, detail: { text } })
-        if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES)
-      } finally {
-        reporting = false
+        original(...args)
+      } catch {
+        // A closed stdout (EPIPE) must not turn a log line into a crash.
       }
+      if (reporting) return
+      file.write(level, formatArgs(args))
     }
   }
 }
 
-/**
- * Writes what went wrong to a file the user can find and send on.
- *
- * The reference zips its log directory at this point. MCode writes no log
- * files, so there is nothing to zip; what it does have is the record this
- * module has been keeping since launch, and the versions and paths that a bug
- * report always ends up having to ask for anyway. The crash dump directory is
- * named rather than copied, because dumps only exist there if the crash
- * reporter was started and this should not imply that it was.
- *
- * It lands in Downloads and the file manager opens on it, which is the same
- * gesture the reference performs.
- */
-async function exportReport(window: BrowserWindow): Promise<void> {
-  try {
-    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "")
-    const file = path.join(app.getPath("downloads"), `mcode-diagnostics-${stamp}.txt`)
-    const lines = [
-      `MCode ${pkg.version}`,
-      `Electron ${process.versions.electron}, Chromium ${process.versions.chrome}, Node ${process.versions.node}`,
-      `${process.platform} ${process.arch}, packaged: ${app.isPackaged}`,
-      `Locale: ${app.getLocale()}`,
-      `Window URL: ${windowURL(window)}`,
-      `User data: ${app.getPath("userData")}`,
-      `Crash dumps: ${app.getPath("crashDumps")}`,
-      "",
-      `Recorded: ${entries.length} of the last ${MAX_ENTRIES} events and main-process warnings`,
-      "",
-      ...(entries.length === 0
-        ? ["(nothing recorded)"]
-        : entries.map((entry) => `${entry.at}  [${entry.window}] ${entry.what} ${JSON.stringify(entry.detail)}`)),
-    ]
-    await fs.writeFile(file, `${lines.join("\n")}\n`, "utf8")
-    shell.showItemInFolder(file)
-  } catch (error) {
-    // Nowhere left to report this to but the record itself - the window that
-    // would have shown it is the one that is broken.
-    record("app", "failed to write the diagnostics report", { error: String(error) })
-  }
-}
-
 /*
- * Whether the app is on its way out.
- *
- * A renderer process disappearing during shutdown is exactly what shutdown
- * looks like from here, so without this the last thing a user would see on
- * their way out is a dialog telling them the window they just closed has
- * terminated unexpectedly.
+ * Whether the app is on its way out. A renderer disappearing during shutdown is
+ * exactly what shutdown looks like from here, and must not bring a window back.
  */
 let quitting = false
 
@@ -178,14 +105,11 @@ let quitting = false
  * Restarts the app.
  *
  * app.relaunch only queues a second start for whenever this process exits, so
- * a quit has to follow it or nothing happens at all. It goes through app.quit
- * rather than app.exit so that the before-quit handler still gets its chance to
- * close the backend; exiting outright would leave the shells it spawned running
- * with nothing left to reap them.
+ * a quit has to follow it. It goes through app.quit rather than app.exit so
+ * that before-quit still closes the backend and the shells it spawned.
  *
- * Exported because two quite different things ask for it: the dialogs below,
- * and the renderer's own error page over the bridge, which has no other way out
- * of a page that has failed to render.
+ * The renderer's own error page asks for this over the bridge: a page that has
+ * failed to render has no other way out.
  */
 export function relaunch(): void {
   quitting = true
@@ -193,210 +117,183 @@ export function relaunch(): void {
   app.quit()
 }
 
-/**
- * Says the quit about to happen was asked for.
- *
- * The recovery dialogs exist to notice a window that went away on its own, and
- * they cannot tell that from one closed on purpose. Installing an update quits
- * deliberately - and would otherwise be met, on the way out, by an offer to
- * reopen the app that is being replaced.
- */
+/** Says the quit about to happen was asked for, so closing windows are not taken for failures. */
 export function beginIntentionalQuit(): void {
   quitting = true
 }
 
-/** What a recovery dialog offers. The order is the order they are shown in. */
-interface Action {
-  id: "relaunch" | "export" | "wait" | "quit"
-  label: string
+/** How recovery makes a window, and whether there is work that wants one while hidden. */
+export interface RecoveryHost {
+  create(show: boolean): BrowserWindow
+  hasPendingWork(): boolean
+}
+
+let host: RecoveryHost | undefined
+const health = new RendererHealth<WebContents>()
+const schedule = new RecoverySchedule<ReturnType<typeof setTimeout>>({
+  schedule: (run, ms) => setTimeout(run, ms),
+  cancel: (handle) => clearTimeout(handle),
+})
+/* MiMo tracks one current renderer: the window made last. Events from a retired one are ignored. */
+let current: BrowserWindow | undefined
+/* Windows whose close went ahead, so their contents being destroyed is a close and not a failure. */
+const closing = new WeakSet<BrowserWindow>()
+
+export function setRecoveryHost(next: RecoveryHost): void {
+  host = next
+}
+
+/** Called when a window's close goes ahead rather than hiding it. */
+export function markClosing(window: BrowserWindow): void {
+  closing.add(window)
+}
+
+/* A replacement is up: the broken window goes, without a close event, so nothing hides it to the tray. */
+function retire(old: BrowserWindow | undefined, next: BrowserWindow): void {
+  if (!old || old === next) return
+  try {
+    if (!old.isDestroyed()) old.destroy()
+  } catch (error) {
+    record(String(old.id), "old window cleanup failed", { error: String(error) })
+  }
+}
+
+function requestReplacement(old: BrowserWindow | undefined, show: boolean): void {
+  const outcome = schedule.request(() => {
+    if (quitting) return true
+    if (!host) return false
+    try {
+      const next = host.create(show)
+      record(String(next.id), "renderer replaced", { replaced: old && !old.isDestroyed() ? old.id : null, shown: show })
+      retire(old, next)
+      return true
+    } catch (error) {
+      record("app", "renderer recovery failed", { error: formatArgs([error]) })
+      return false
+    }
+  })
+  if (outcome === "exhausted") record("app", "renderer recovery gave up", schedule.snapshot)
+}
+
+function recover(window: BrowserWindow, becameUnavailable: boolean, wasVisible: boolean): void {
+  if (window !== current) return
+  const visibility = recoveryVisibility({ becameUnavailable, windowClosing: closing.has(window), quitting, platform: process.platform })
+  if (visibility === "none") return
+  // macOS keeps a closed window's app alive; a hidden one is only rebuilt for a turn still running.
+  if (visibility === "hidden" && !host?.hasPendingWork()) return
+  requestReplacement(window, visibility === "preserve-visibility" ? wasVisible : false)
 }
 
 /**
- * Attaches the recovery handlers to one window.
- *
- * `name` is how the window is identified in the dialogs and the report; with
- * more than one window open it is the only way to tell which of them failed.
+ * MiMo's activate, for the tray, the Dock and a second launch: the current
+ * window when its renderer is alive, otherwise a fresh visible one in place of
+ * it (or, while a replacement is already queued, that one made visible).
  */
-export function wireRecovery(window: BrowserWindow, name: string): void {
-  /*
-   * One dialog at a time per window. These failures arrive in clusters - a
-   * renderer that dies fires the process event and then usually a load failure
-   * behind it - and without this the user would be answering the same question
-   * several times over before the app would let them go.
-   */
-  let asking = false
+export function activate(show: (window: BrowserWindow) => void): void {
+  const window = current && !current.isDestroyed() ? current : undefined
+  const state = health.state(window?.webContents)
+  if (schedule.snapshot.retryScheduled && (!window || state === "missing")) {
+    requestReplacement(window, true)
+    return
+  }
+  if (window && state !== "missing") {
+    show(window)
+    return
+  }
+  if (!host) return
+  const next = host.create(true)
+  retire(window, next)
+}
 
-  const ask = async (message: string, detail: string, hung: boolean): Promise<void> => {
-    if (asking || quitting || window.isDestroyed()) return
-    asking = true
+/** The window recovery considers current, if it is still there. */
+export function currentWindow(): BrowserWindow | undefined {
+  return current && !current.isDestroyed() ? current : undefined
+}
+
+/**
+ * Attaches recovery to a new window, before anything is loaded into it: the
+ * first thing that can fail is the load itself.
+ */
+export function wireRecovery(window: BrowserWindow): void {
+  const contents = window.webContents
+  const name = String(window.id)
+  current = window
+  health.track(contents)
+
+  const visible = (starting: boolean): boolean => {
+    if (starting) return true
     try {
-      /*
-       * Exporting the report has to leave the user where they were rather than
-       * dismissing the only thing offering to fix their app, so the dialog is
-       * raised again after it. Every other answer ends the conversation.
-       */
-      while (!window.isDestroyed() && !quitting) {
-        /*
-         * A hung window may yet come back, so waiting is worth offering and
-         * quitting is not the third choice. A dead or blank one will not, so
-         * there the third choice is to give up on it.
-         */
-        const actions: Action[] = hung
-          ? [
-              { id: "relaunch", label: L("desktop.recovery.action.relaunch", "Relaunch") },
-              { id: "export", label: L("desktop.recovery.action.exportLogs", "Export Logs") },
-              { id: "wait", label: L("desktop.recovery.action.keepWaiting", "Keep Waiting") },
-            ]
-          : [
-              { id: "relaunch", label: L("desktop.recovery.action.relaunch", "Relaunch") },
-              { id: "export", label: L("desktop.recovery.action.exportLogs", "Export Logs") },
-              { id: "quit", label: L("desktop.recovery.action.quit", "Quit") },
-            ]
-
-        const answer = await dialog.showMessageBox(window, {
-          type: "warning",
-          buttons: actions.map((action) => action.label),
-          defaultId: 0,
-          /*
-           * Dismissing the dialog - Escape, or the close button on platforms
-           * that draw one - counts as the third button. For a hung window that
-           * is "keep waiting", which is the harmless reading of walking away.
-           * For a dead one it is "quit", which is deliberate: there is nothing
-           * left behind the dialog to go back to, so leaving it there would
-           * only trap the user in front of a window that will never draw again.
-           */
-          cancelId: 2,
-          message,
-          detail,
-        })
-
-        const chosen = actions[answer.response]?.id
-        if (chosen === "export") {
-          await exportReport(window)
-          continue
-        }
-        if (chosen === "relaunch") relaunch()
-        else if (chosen === "quit") {
-          quitting = true
-          app.quit()
-        }
-        return
-      }
-    } finally {
-      asking = false
+      return window.isVisible()
+    } catch {
+      return false
     }
   }
 
-  const loadFailed = (
-    event: string,
-    code: number,
-    description: string,
-    url: string,
-    mainFrame: boolean,
-  ): void => {
-    record(name, event, { code, description, url, mainFrame, currentURL: windowURL(window) })
-    /*
-     * A subframe that will not load leaves the app itself perfectly usable, and
-     * -3 is the code Chromium reports for a load the app itself cancelled -
-     * navigating away, or reloading before the first load had finished. Neither
-     * is a failure anyone needs to be told about, and raising a modal dialog on
-     * an ordinary reload would be worse than the gap this module fills.
-     */
-    if (!mainFrame || code === -3) return
-    void ask(
-      L("desktop.recovery.loadFailed", "MCode failed to load"),
-      L(
-        "desktop.recovery.loadFailed.detail",
-        "Window: {{window}}\nURL: {{url}}\nError: {{code}} {{description}}",
-        { window: name, url, code, description },
-      ),
-      false,
-    )
+  let watchdog: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
+    watchdog = undefined
+    const unavailable = health.startupTimedOut(contents)
+    if (!unavailable) return
+    record(name, "renderer did not finish starting", { after: STARTUP_TIMEOUT })
+    recover(window, unavailable, true)
+  }, STARTUP_TIMEOUT)
+  const clearWatchdog = () => {
+    if (watchdog) clearTimeout(watchdog)
+    watchdog = undefined
   }
 
-  window.webContents.on("did-fail-load", (_event, code, description, url, mainFrame) => {
-    loadFailed("did-fail-load", code, description, url, mainFrame)
+  contents.on("did-finish-load", () => {
+    if (!health.didFinishLoad(contents)) return
+    clearWatchdog()
+    if (window === current) schedule.rendererReady()
   })
+
+  contents.on("did-fail-load", (_event, errorCode, description, url, isMainFrame) => {
+    const starting = health.state(contents) === "starting"
+    const wasVisible = visible(starting)
+    const unavailable = health.didFailLoad(contents, { errorCode, isMainFrame })
+    if (!unavailable) return
+    clearWatchdog()
+    record(name, "main frame failed to load", { code: errorCode, description, url })
+    recover(window, unavailable, wasVisible)
+  })
+
+  contents.on("render-process-gone", (_event, details) => {
+    const starting = health.state(contents) === "starting"
+    const wasVisible = visible(starting)
+    const unavailable = health.renderProcessGone(contents)
+    clearWatchdog()
+    record(name, "render process gone", { reason: details.reason, exitCode: details.exitCode, url: contentsURL(contents) })
+    if (unavailable) recover(window, unavailable, wasVisible)
+  })
+
+  contents.on("destroyed", () => {
+    const starting = health.state(contents) === "starting"
+    const wasVisible = visible(starting)
+    const unavailable = health.destroyed(contents)
+    clearWatchdog()
+    if (unavailable && !closing.has(window)) record(name, "web contents destroyed")
+    if (unavailable) recover(window, unavailable, wasVisible)
+  })
+
+  // A hang is recorded and left alone; MiMo shows nothing for it either.
+  window.on("unresponsive", () => record(name, "renderer unresponsive", { url: contentsURL(contents) }))
+  window.on("responsive", () => record(name, "renderer responsive", { url: contentsURL(contents) }))
 
   /*
-   * The provisional event is the one that fires when the load never got as far
-   * as a response - the file is missing, or in development the dev server is
-   * not up. Listening only for did-fail-load would miss exactly the case where
-   * the window has nothing in it at all.
+   * A preload that throws is the quietest failure: the page renders and
+   * window.mcode is simply not there. The page may still be usable, so it is
+   * only recorded.
    */
-  window.webContents.on("did-fail-provisional-load", (_event, code, description, url, mainFrame) => {
-    loadFailed("did-fail-provisional-load", code, description, url, mainFrame)
-  })
-
-  window.webContents.on("render-process-gone", (_event, details) => {
-    record(name, "render process gone", {
-      reason: details.reason,
-      exitCode: details.exitCode,
-      currentURL: windowURL(window),
-    })
-    void ask(
-      L("desktop.recovery.terminated", "MCode window terminated unexpectedly"),
-      L(
-        "desktop.recovery.terminated.detail",
-        "Window: {{window}}\nReason: {{reason}}\nCode: {{code}}",
-        {
-          window: name,
-          reason: details.reason,
-          // Some reasons carry no exit code at all, and the details object is
-          // built by Chromium rather than by us, so the field is not always
-          // there to read despite what its type says.
-          code: typeof details.exitCode === "number" ? details.exitCode : L("desktop.recovery.unknown", "<unknown>"),
-        },
-      ),
-      false,
-    )
-  })
-
-  /*
-   * Chromium raises this once the window has failed to answer for a few
-   * seconds, and raises it again only after a matching "responsive". So
-   * choosing to keep waiting genuinely means waiting: the dialog does not come
-   * straight back while the page is still stuck.
-   */
-  window.on("unresponsive", () => {
-    record(name, "renderer unresponsive", { currentURL: windowURL(window) })
-    void ask(
-      L("desktop.recovery.unresponsive", "MCode is not responding"),
-      L("desktop.recovery.unresponsive.detail", "You can relaunch the app, open the logs, or keep waiting."),
-      true,
-    )
-  })
-
-  // Worth recording even though there is nothing to do about it: a hang that
-  // ended on its own tells you how long it lasted, which is the first thing
-  // anyone reading the report will want to know.
-  window.on("responsive", () => {
-    record(name, "renderer responsive", { currentURL: windowURL(window) })
-  })
-
-  /*
-   * A preload that throws is the quietest failure of the lot. The page loads,
-   * it renders, and window.mcode is simply not there - so every menu command,
-   * the clipboard, the file dialogs and the backend port are all missing at
-   * once and the app just sits there looking normal. No dialog, because the
-   * page may still be usable, but it must be in the report.
-   */
-  window.webContents.on("preload-error", (_event, preloadPath, error) => {
+  contents.on("preload-error", (_event, preloadPath, error) => {
     record(name, "preload failed", { preloadPath, error: String(error) })
   })
 }
 
-/**
- * The failures that belong to no particular window.
- *
- * A utility or GPU process going away does not necessarily break anything the
- * user can see, so none of this interrupts them; it is here so that when they
- * do export a report after something else goes wrong, the thing that actually
- * started it is in the file.
- */
+/** The failures that belong to no particular window: recorded, never acted on. */
 export function wireProcessRecovery(): void {
   app.on("before-quit", () => {
     quitting = true
+    schedule.cancel()
   })
   app.on("will-quit", () => {
     quitting = true
@@ -412,14 +309,9 @@ export function wireProcessRecovery(): void {
     })
   })
 
-  // The window-level handler above covers the windows this app opened. This
-  // one also catches contents with no window behind them, which is where a
-  // failure in something the page opened for itself would surface.
+  // Contents with no window of this app's behind them: a page the panel opened, say.
   app.on("render-process-gone", (_event, contents, details) => {
-    record("app", "render process gone", {
-      url: contentsURL(contents),
-      reason: details.reason,
-      exitCode: details.exitCode,
-    })
+    if (currentWindow()?.webContents === contents) return
+    record("app", "render process gone", { url: contentsURL(contents), reason: details.reason, exitCode: details.exitCode })
   })
 }

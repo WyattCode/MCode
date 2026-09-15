@@ -74,7 +74,7 @@ function toggleMaximize(): void {
   else window.maximize()
 }
 
-export function buildMenu(createWindow: () => BrowserWindow): void {
+export function buildMenu(): void {
   /** The translated label, or the English written here as the fallback. */
   const L = label
 
@@ -127,12 +127,6 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
       label: L("menu.file", "File"),
       submenu: [
         { label: L("menu.newTask", "New Task"), ...shown("CmdOrCtrl+N"), click: send("menu:new-session") },
-        /*
-         * Not in MiMo's menu. Kept until the user decides: it is the only way to
-         * a second window from the keyboard, since a window is not the
-         * renderer's to open.
-         */
-        { label: L("menu.newWindow", "New Window"), accelerator: "CmdOrCtrl+Shift+N", click: () => createWindow() },
         separator,
         { label: L("menu.openFolder", "Open Folder"), ...shown("CmdOrCtrl+O"), click: send("menu:open-project") },
         separator,
