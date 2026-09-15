@@ -75,8 +75,10 @@ import * as abcPlay from "../src/renderer/src/lib/abc-play"
 import {
   APP_CHORDS,
   barMode,
+  browserTabFace,
   loadErrorKind,
   localServerOf,
+  pageFavicon,
   pageKeyAction,
   pageMenuGroups,
   routeWindowOpen,
@@ -121,7 +123,8 @@ import { sessionArtifacts, sessionReferences } from "../src/shared/session-files
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
 import type { TaskItem } from "../src/shared/protocol"
 import { TASK_ARCHIVE_MS, applyTask, listedTasks, nextTaskID } from "../src/server/tool/task"
-import { buildRows } from "../src/renderer/src/lib/step-rows"
+import { buildRows, retryReason } from "../src/renderer/src/lib/step-rows"
+import { wordMatch } from "../src/renderer/src/lib/word-match"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
 import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -453,6 +456,23 @@ async function main() {
   const none = filterMenu(moveRows, "zzz")
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
+
+  // MiMo's settings search: every typed word begins a word, camelCase split, CJK anywhere.
+  check("a settings query matches the start of a word, not its middle", wordMatch("Keyboard shortcuts", "short") && !wordMatch("Keyboard shortcuts", "cuts"))
+  check("every typed word has to begin some word", wordMatch("Keyboard shortcuts", "key sho") && !wordMatch("Keyboard shortcuts", "key zoom"))
+  check("a camelCase word matches by its parts", wordMatch("hardwareAcceleration", "accel") && wordMatch("MCPServers", "servers") && wordMatch("MCPServers", "mcp"))
+  check("a Chinese query matches anywhere", wordMatch("硬件加速 GPU", "加速") && !wordMatch("硬件加速", "减速"))
+  check("a settings query ignores case and an empty one matches all", wordMatch("GPU rendering", "gpu") && wordMatch("anything", "  "))
+
+  // The reconnecting row's reason: one line, or nothing at all.
+  check("a retry's reason is drawn on one line", retryReason("  overloaded\n  try later ") === "overloaded try later")
+  check("a retry without a reason draws none", retryReason("") === undefined && retryReason(undefined) === undefined && retryReason(" \n ") === undefined)
+
+  // A browser tab's face: the page's favicon when the window may load it, and its title.
+  check("a favicon is the first http(s) or inline image address", pageFavicon(["file:///c:/x.ico", "javascript:1", "https://a.test/f.ico", "http://b.test/g.png"]) === "https://a.test/f.ico" && pageFavicon(["data:image/png;base64,AA"]) === "data:image/png;base64,AA")
+  check("a page naming no loadable favicon has none", pageFavicon(["data:text/html,x", 3, ""]) === undefined && pageFavicon([]) === undefined)
+  check("a browser tab is named by its page's title", browserTabFace({ url: "http://127.0.0.1:1/", title: " Probe \n page ", favicon: "http://127.0.0.1:1/f.png" }).pageTitle === "Probe page")
+  check("a blank browser tab keeps the globe and the tool's name", JSON.stringify(browserTabFace({ url: "about:blank", title: "about:blank", favicon: "https://a.test/f.ico" })) === "{}")
 
   // The right panel's tool hints follow the shortcuts page, and MiMo's narrow-window rule.
   const panelCommands = [
@@ -4539,6 +4559,37 @@ async function main() {
       "the card draws the conversation's task registry over any saved plan, nested, with finished tasks gone after a week",
       drawn.map((task) => `${task.id}:${task.status}:${task.depth}`).join() === "T1:done:0,T2:stalled:0,T2.1:blocked:1",
       drawn,
+    )
+
+    // MiMo's list leaves abandoned work out, counts only what it lists, and indents by dotted id or parent.
+    const planned = [
+      turn("a2", [
+        tool("t2", "todowrite", {}, { todos: [
+          { id: "1", content: "plan", status: "completed" },
+          { id: "1.1", content: "sketch", status: "pending" },
+          { id: "2", content: "dropped", status: "cancelled" },
+          { id: "3", content: "given up", status: "abandoned" },
+          { id: "4", content: "orphan", status: "pending", parentId: "3" },
+          { id: "1.2.1", content: "deep", status: "pending", parentId: "1" },
+        ] }, 30),
+      ], 29),
+    ]
+    const plan = infoTasks(undefined, planned, false)
+    const depthOfTask = (id: string) => plan.find((task) => task.id === id)?.depth
+    check("cancelled and abandoned tasks are not listed", plan.map((task) => task.id).join() === "1,1.2.1,1.1,4", plan)
+    check("the task count is done over what is listed", `${plan.filter((task) => task.status === "done").length}/${plan.length}` === "1/4", plan)
+    check("a task indents by the deeper of its dotted id and its parent", depthOfTask("1.2.1") === 2 && depthOfTask("1.1") === 1 && depthOfTask("1") === 0, plan)
+    check("a task whose parent was abandoned stands at the top", depthOfTask("4") === 0, plan)
+    const dropped: TaskItem[] = [
+      { id: "T1", summary: "plan", status: "done", created: 1, updated: now - 10, ended: now - 10 },
+      { id: "T2", summary: "dropped", status: "abandoned", created: 1, updated: now - 10, ended: now - 10 },
+      { id: "T2.1", summary: "left over", status: "blocked", parentID: "T2", created: 1, updated: 5 },
+    ]
+    const kept = infoTasks(dropped, said, false, now)
+    check(
+      "a registry task abandoned this week is not listed or counted, and its child keeps its dotted depth",
+      kept.map((task) => `${task.id}:${task.depth}`).join() === "T1:0,T2.1:1" && `${kept.filter((task) => task.status === "done").length}/${kept.length}` === "1/2",
+      kept,
     )
   }
 
