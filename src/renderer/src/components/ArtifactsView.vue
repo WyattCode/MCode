@@ -4,53 +4,8 @@ import type { SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
-import ArtifactPreview from "./ArtifactPreview.vue"
-
-/* MiMo's three buckets: documents, pages that run as apps, and everything else. */
-type Category = "doc" | "app" | "other"
-
-const extension = (path: string) => {
-  const name = path.slice(path.lastIndexOf("/") + 1)
-  const dot = name.lastIndexOf(".")
-  return dot > 0 ? name.slice(dot + 1).toLowerCase() : ""
-}
-
-const DOCS = new Set(["md", "markdown", "txt", "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx", "rtf", "csv"])
-const APPS = new Set(["html", "htm"])
-
-function category(path: string): Category {
-  const ext = extension(path)
-  return DOCS.has(ext) ? "doc" : APPS.has(ext) ? "app" : "other"
-}
-
-/* The tile's badge names the kind of file, as MiMo's do, rather than its bucket. */
-const BADGES: Record<string, string> = {
-  doc: "art.badge.word",
-  docx: "art.badge.word",
-  ppt: "art.badge.ppt",
-  pptx: "art.badge.ppt",
-  xls: "art.badge.excel",
-  xlsx: "art.badge.excel",
-  csv: "art.badge.excel",
-  pdf: "art.badge.pdf",
-  md: "art.badge.text",
-  markdown: "art.badge.text",
-  txt: "art.badge.text",
-  rtf: "art.badge.text",
-  html: "art.badge.web",
-  htm: "art.badge.web",
-  png: "art.badge.image",
-  jpg: "art.badge.image",
-  jpeg: "art.badge.image",
-  gif: "art.badge.image",
-  webp: "art.badge.image",
-  svg: "art.badge.image",
-  bmp: "art.badge.image",
-  avif: "art.badge.image",
-  ico: "art.badge.image",
-}
-
-const badgeOf = (path: string) => BADGES[extension(path)] ?? "art.badge.file"
+import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf, type ArtifactCategory, type BadgeStyle } from "../lib/artifact-kind"
+import { previewArtifact } from "../lib/artifact-open"
 
 /**
  * Everything the sessions have produced, in one page - MiMo's 产物中心, built
@@ -64,9 +19,10 @@ const app = useApp()
 const emit = defineEmits<{ open: [sessionID: string] }>()
 
 const loaded = ref(false)
+const failed = ref(false)
 const groups = ref<SessionArtifacts[]>([])
 const query = ref("")
-const kind = ref<Category | "all">("all")
+const kind = ref<ArtifactCategory | "all">("all")
 
 /* MiMo waits 150ms after the last key before searching; switching a tab applies at once. */
 const needle = ref("")
@@ -83,11 +39,9 @@ interface Row {
   key: string
   path: string
   name: string
-  folder: string
   at: number
-  size?: number
-  kind: Category
-  badge: string
+  kind: ArtifactCategory
+  badge: BadgeStyle
   session: SessionArtifacts
 }
 
@@ -97,15 +51,13 @@ const rows = computed<Row[]>(() => {
   for (const group of groups.value) {
     for (const file of group.files) {
       if (!file.exists) continue
-      const cut = file.path.lastIndexOf("/")
+      const cut = Math.max(file.path.lastIndexOf("/"), file.path.lastIndexOf("\\"))
       out.push({
         key: `${group.sessionID}:${file.path}`,
         path: file.path,
         name: cut === -1 ? file.path : file.path.slice(cut + 1),
-        folder: cut === -1 ? "" : file.path.slice(0, cut),
         at: file.at,
-        size: file.size,
-        kind: category(file.path),
+        kind: artifactCategory(file.path),
         badge: badgeOf(file.path),
         session: group,
       })
@@ -124,6 +76,11 @@ const found = computed(() => {
 })
 
 const shown = computed(() => (kind.value === "all" ? found.value : found.value.filter((row) => row.kind === kind.value)))
+
+/* MiMo's 加载更多: fifty at a time, back to fifty when the tab or the search changes. */
+const limit = ref(ARTIFACT_PAGE)
+watch([kind, needle], () => (limit.value = ARTIFACT_PAGE))
+const visible = computed(() => shown.value.slice(0, limit.value))
 
 const counts = computed(() => ({
   all: found.value.length,
@@ -161,49 +118,69 @@ const FILTERS = [
   { id: "other", label: "art.other" },
 ] as const
 
-onMounted(async () => {
-  const result = await app.client?.request({ type: "artifact.list" }).catch(() => undefined)
-  groups.value = result?.artifacts ?? []
-  loaded.value = true
-})
-
-/** Sizes the way a file manager says them, not to three decimal places. */
-function size(bytes?: number): string {
-  if (bytes === undefined) return ""
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+/* A load that fails says so and offers 重试, rather than claiming there is nothing. */
+async function load() {
+  failed.value = false
+  try {
+    const result = await app.client?.request({ type: "artifact.list" })
+    if (!result) throw new Error("not connected")
+    groups.value = result.artifacts
+    loaded.value = true
+  } catch {
+    failed.value = true
+  }
 }
+
+onMounted(load)
+
+/* The time is read against a clock that moves, so "just now" does not stay just now. */
+const now = ref(Date.now())
+const clock = setInterval(() => (now.value = Date.now()), 30000)
+onBeforeUnmount(() => clearInterval(clock))
 
 function when(at: number): string {
-  return new Date(at).toLocaleString()
-}
-
-/** Handed to the desktop's own choice of app, the way the file tree's Open is. */
-async function open(row: Row) {
-  const refused = await window.mcode.openFile(row.session.directory, row.path)
-  if (refused) notifyFailure(t("info.openFailed"), refused)
+  const age = artifactAge(at, now.value)
+  if (age.unit === "just") return t("art.timeJust")
+  if (age.unit === "date") return `${age.y}/${age.mo}/${age.day}`
+  return t(age.unit === "m" ? "art.timeM" : age.unit === "h" ? "art.timeH" : "art.timeD", { n: age.n })
 }
 
 /*
- * MiMo's three actions on every file: preview it here, download it, or go to
- * the conversation that wrote it. Pressing the file itself previews it.
+ * MiMo's three actions on every file: preview it in the right panel, download
+ * it, or go to the conversation that wrote it. Pressing the file previews it.
  */
-const previewing = ref<Row>()
-
 function preview(row: Row) {
-  previewing.value = row
+  void previewArtifact(
+    { sessionID: row.session.sessionID, directory: row.session.directory, path: row.path, name: row.name },
+    (sessionID) => emit("open", sessionID),
+  )
 }
 
 /** MiMo's download hands the file over where it lies: its folder opens with it selected. */
 async function download(row: Row) {
-  await window.mcode.revealFile(row.session.directory, row.path)
+  const absolute = /^([A-Za-z]:)?[\\/]/.test(row.path)
+  if (absolute) {
+    const result = await window.mcode.revealPath(artifactAbsolute(row.session.directory, row.path)).catch(() => ({ ok: false }))
+    if (!result.ok) notifyFailure(t("art.revealMissing"))
+    return
+  }
+  const result = await window.mcode
+    .revealFile(row.session.directory, row.path)
+    .catch((failure: unknown) => ({ ok: false, missing: false, error: String(failure) }))
+  if (result.ok) return
+  if (result.missing) notifyFailure(t("art.revealMissing"))
+  else notifyFailure(t("art.revealFailed", { error: result.error ?? "" }))
 }
 
 function enter(row: Row) {
-  previewing.value = undefined
+  if (!app.sessions.some((session) => session.id === row.session.sessionID)) {
+    notifyFailure(t("art.convoNotFound"))
+    return
+  }
   emit("open", row.session.sessionID)
 }
+
+const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color-mix(in srgb, ${badge.fg} 12%, transparent)` })
 </script>
 
 <template>
@@ -237,7 +214,8 @@ function enter(row: Row) {
             @click="kind = filter.id"
           >
             <span class="chip-label">{{ t(filter.label) }}</span>
-            <span class="chip-count">{{ counts[filter.id] }}</span>
+            <!-- MiMo leaves the counts blank until they are known. -->
+            <span class="chip-count">{{ loaded ? counts[filter.id] : "" }}</span>
           </button>
         </div>
         <!-- MiMo's two layouts, at the end of the filter row. -->
@@ -275,27 +253,33 @@ function enter(row: Row) {
         </div>
       </div>
 
+      <div v-if="failed" class="notice failed" data-empty="error">
+        <span>{{ t("art.loadError") }}</span>
+        <button type="button" class="page-btn" data-act="retry" @click="load">{{ t("art.retry") }}</button>
+      </div>
+
       <!--
         The grid: one tile per file, a well with the file's mark and its kind
-        above the name, and the way back to its conversation on hover.
+        above the name, and the three actions on hover.
       -->
-      <div v-if="shown.length && layout === 'grid'" class="grid">
+      <div v-else-if="visible.length && layout === 'grid'" class="grid">
         <div
-          v-for="row in shown"
+          v-for="row in visible"
           :key="row.key"
           class="tile"
-          :title="row.path"
+          :title="row.name"
           role="button"
           tabindex="0"
           @click="preview(row)"
           @keydown.enter="preview(row)"
         >
           <div class="well">
-            <svg class="well-mark" width="38" height="38" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M4 1.8h5.2L12.5 5v9.2H4z" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round" />
-              <path d="M9 1.8V5.2h3.4" stroke="currentColor" stroke-width="0.6" stroke-linejoin="round" />
+            <svg class="well-mark" width="38" height="38" viewBox="0 0 24 24" fill="none" :stroke="row.badge.fg" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path v-for="d in row.badge.glyph" :key="d" :d="d" />
             </svg>
-            <span class="badge" :data-badge="row.badge">{{ t(row.badge) }}</span>
+            <span class="badge" :data-badge="row.badge.kind" :style="badgeStyle(row.badge)">
+              <span class="badge-dot" :style="{ background: row.badge.fg }" />{{ t(row.badge.key) }}
+            </span>
             <div class="acts">
               <button class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
                 <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -316,39 +300,34 @@ function enter(row: Row) {
           </div>
           <div class="tile-body">
             <span class="file-name">{{ row.name }}</span>
-            <span class="file-meta">
-              <span v-if="row.size !== undefined" class="file-size">{{ size(row.size) }}</span>
-              <span class="file-when">{{ when(row.at) }}</span>
-            </span>
+            <span class="file-when">{{ when(row.at) }}</span>
           </div>
         </div>
       </div>
 
-      <div v-else-if="shown.length" class="list">
+      <!-- The list: the kind's box, its badge in a column of its own, the name, the time, the actions. -->
+      <div v-else-if="visible.length" class="list">
         <div
-          v-for="row in shown"
+          v-for="row in visible"
           :key="row.key"
           class="row"
+          :title="row.name"
           role="button"
           tabindex="0"
           @click="preview(row)"
           @keydown.enter="preview(row)"
         >
-          <span class="file" :title="row.path">
-            <span class="file-box">
-              <svg class="file-mark" width="18" height="18" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path d="M4 1.8h5.2L12.5 5v9.2H4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-              <path d="M9 1.8V5.2h3.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
-              </svg>
-            </span>
-            <span class="file-text">
-              <span class="file-name">{{ row.name }}</span>
-              <span class="file-meta">
-                <span v-if="row.folder" class="file-dir">{{ row.folder }}</span>
-                <span v-if="row.size !== undefined" class="file-size">{{ size(row.size) }}</span>
-              </span>
+          <span class="file-box">
+            <svg class="file-mark" width="18" height="18" viewBox="0 0 24 24" fill="none" :stroke="row.badge.fg" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path v-for="d in row.badge.glyph" :key="d" :d="d" />
+            </svg>
+          </span>
+          <span class="badge-cell">
+            <span class="badge" :data-badge="row.badge.kind" :style="badgeStyle(row.badge)">
+              <span class="badge-dot" :style="{ background: row.badge.fg }" />{{ t(row.badge.key) }}
             </span>
           </span>
+          <span class="file-name">{{ row.name }}</span>
           <span class="when">{{ when(row.at) }}</span>
           <div class="acts">
             <button class="act" data-act="preview" :aria-label="t('art.preview')" :title="t('art.preview')" @click.stop="preview(row)">
@@ -371,30 +350,32 @@ function enter(row: Row) {
       </div>
 
       <!-- A search that found nothing says so, rather than claiming there is nothing at all. -->
-      <p v-else-if="loaded" class="empty" :data-empty="needle.trim() ? 'no-match' : 'none'">
-        {{ needle.trim() ? t("art.noMatch") : t("art.empty") }}
-      </p>
+      <p v-else-if="loaded && needle.trim()" class="notice" data-empty="no-match">{{ t("art.noMatch") }}</p>
+
+      <div v-else-if="loaded" class="none" data-empty="none">
+        <!-- MCode's own drawing: two sheets, the front one with a folded corner and a spark. -->
+        <svg class="illo" width="168" height="120" viewBox="0 0 168 120" fill="none" aria-hidden="true">
+          <rect class="illo-back" x="46" y="18" width="62" height="80" rx="8" transform="rotate(-8 77 58)" />
+          <path class="illo-front" d="M68 22h34l18 18v58a8 8 0 0 1-8 8H68a8 8 0 0 1-8-8V30a8 8 0 0 1 8-8z" />
+          <path class="illo-fold" d="M102 22v12a6 6 0 0 0 6 6h12" />
+          <path class="illo-line" d="M73 56h32M73 68h32M73 80h20" />
+          <path class="illo-spark" d="M132 20v14M125 27h14M36 84v8M32 88h8" />
+        </svg>
+        <span>{{ t("art.empty") }}</span>
+      </div>
+
+      <div v-if="!failed && shown.length > visible.length" class="more">
+        <button type="button" class="page-btn" data-act="load-more" @click="limit += ARTIFACT_PAGE">{{ t("art.loadMore") }}</button>
+      </div>
     </div>
-    <ArtifactPreview
-      v-if="previewing"
-      :directory="previewing.session.directory"
-      :path="previewing.path"
-      :name="previewing.name"
-      @close="previewing = undefined"
-      @download="download(previewing)"
-      @enter="enter(previewing)"
-      @open-default="open(previewing)"
-    />
   </div>
 </template>
 
 <style scoped>
 /*
- * MiMo's artifacts page, measured: a 900 column inset 54 from the top of the
- * pane, a 24/500 title with a 13/400 line under it, a 38px search box, and a
- * row of 26px filter chips on a 10px corner where the chosen one carries a
- * six-percent wash. The list below is this app's own: MiMo shows previews of
- * things it generated; what a session here produces is files in a project.
+ * MiMo's artifacts page: a 900 column inset 54 from the top of the pane, a
+ * 24/500 title 6 above a 13/400 line, 18 to a 36px search box, 16 to a row of
+ * filter tabs, and 18 to the files.
  */
 .artifacts {
   position: relative;
@@ -419,7 +400,7 @@ function enter(row: Row) {
 }
 
 .title {
-  margin: 0;
+  margin: 0 0 2px;
   color: var(--text-strong);
   font-size: calc(24px * var(--ui-font-scale, 1));
   font-weight: 500;
@@ -434,17 +415,28 @@ function enter(row: Row) {
   line-height: 20px;
 }
 
+/* MiMo's CSS gives 36px; an older measurement here said 38, so recheck on a live window. */
 .search {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 38px;
-  margin-top: 22px;
+  height: 36px;
+  margin-top: 18px;
   padding: 0 12px;
-  color: var(--text-weak);
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-raised));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-raised));
-  border-radius: 10px;
+  color: var(--text-weaker);
+  background: #fff;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+}
+
+:root[data-theme="dark"] .search {
+  background: #181818;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .search {
+    background: #181818;
+  }
 }
 
 .search input {
@@ -458,16 +450,20 @@ function enter(row: Row) {
   line-height: 22.4px;
 }
 
-.search input::placeholder {
-  color: var(--text-weak);
+.search input:not(:placeholder-shown) {
+  font-weight: 500;
 }
 
-/* The filter chips take the row; the layout toggle sits at its end, as MiMo's does. */
+.search input::placeholder {
+  color: var(--text-weaker);
+}
+
+/* The filter tabs take the row; the layout toggle sits at its end, as MiMo's does. */
 .bar {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 11px;
+  margin-top: 16px;
 }
 
 .filters {
@@ -510,6 +506,49 @@ function enter(row: Row) {
   background: var(--surface-hover);
 }
 
+/* MiMo's tabs: muted, hover only darkens the word, the chosen one on the menu's hover colour. */
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  color: var(--text-weak);
+  border-radius: 10px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+}
+
+.chip:hover {
+  color: var(--text-strong);
+}
+
+.chip.on {
+  color: var(--text-strong);
+  background: #f1f0ec;
+}
+
+:root[data-theme="dark"] .chip.on {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chip.on {
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+
+.chip-count {
+  color: var(--text-weaker);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 500;
+}
+
+.chip.on .chip-count {
+  color: var(--text-weak);
+}
+
 /* Three across with 14 between, as MiMo lays its grid. */
 .grid {
   display: grid;
@@ -540,21 +579,34 @@ function enter(row: Row) {
   align-items: center;
   justify-content: center;
   height: 96px;
-  color: var(--text-weak);
   background: var(--surface-base);
 }
 
-.badge {
+.well > .badge {
   position: absolute;
   top: 10px;
-  left: 10px;
+  inset-inline-start: 10px;
+}
+
+/* MiMo's badge: the kind's colour on its 12% tint, led by a 6px dot. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
   padding: 2px 8px;
-  color: var(--text-base);
-  background: var(--surface-hover);
   border-radius: 9999px;
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-weight: 600;
   line-height: 16px;
+  white-space: nowrap;
+}
+
+.badge-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
 }
 
 /*
@@ -572,7 +624,7 @@ function enter(row: Row) {
 .well .acts {
   position: absolute;
   top: 10px;
-  right: 10px;
+  inset-inline-end: 10px;
 }
 
 .tile:hover .acts,
@@ -602,48 +654,25 @@ function enter(row: Row) {
   flex-direction: column;
   gap: 4px;
   min-width: 0;
-  padding: 10px 12px 12px;
+  padding: 11px;
 }
 
-.tile .file-name {
+.file-name {
+  overflow: hidden;
+  color: var(--text-strong);
   font-size: calc(13px * var(--ui-font-scale, 1));
   font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.file-when {
+.file-when,
+.when {
   flex-shrink: 0;
-}
-
-.chip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 10px;
-  color: var(--text-base);
-  border-radius: 10px;
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  transition: background 0.12s, color 0.12s;
-}
-
-.chip:hover {
-  background: color-mix(in srgb, var(--text-strong) 4%, transparent);
-}
-
-.chip.on {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 6%, transparent);
-}
-
-.chip-count {
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  font-weight: 500;
-}
-
-.chip.on .chip-count {
-  color: var(--text-base);
+  color: var(--text-weaker);
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  line-height: 16px;
 }
 
 /* The list: one framed row per file, 10 apart on a 10px corner, as MiMo's list is. */
@@ -658,7 +687,7 @@ function enter(row: Row) {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
+  padding: 10px 12px;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
@@ -668,6 +697,11 @@ function enter(row: Row) {
 
 .row:hover {
   box-shadow: var(--shadow-xs-border);
+}
+
+.row .file-name {
+  flex: 1;
+  min-width: 0;
 }
 
 /* MiMo's 32px box the file's mark sits in at the start of a row. */
@@ -682,69 +716,91 @@ function enter(row: Row) {
   border-radius: 8px;
 }
 
-.file {
-  display: flex;
-  flex: 1;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  height: 56px;
-  color: var(--text-strong);
-  text-align: start;
-}
-
 .file-mark {
   flex-shrink: 0;
-  color: var(--text-weak);
 }
 
-.file-text {
+.badge-cell {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.file-name {
-  overflow: hidden;
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 500;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-meta {
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-  color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
-}
-
-.file-dir {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-size {
   flex-shrink: 0;
+  align-items: center;
+  min-width: 72px;
 }
 
-.when {
-  flex-shrink: 0;
+/* No match, and a load that failed: MiMo's centred muted line. */
+.notice {
+  margin: 0;
+  padding: 40px 0;
   color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  line-height: 18px;
-}
-
-.empty {
-  margin: 96px 0 0;
-  color: var(--text-base);
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 22.4px;
   text-align: center;
+}
+
+.failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.none {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  min-height: 60vh;
+  color: var(--text-weak);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 22.4px;
+  text-align: center;
+}
+
+.illo-back {
+  fill: var(--surface-base);
+  stroke: var(--border-weak);
+  stroke-width: 1.5;
+}
+
+.illo-front {
+  fill: var(--surface-raised);
+  stroke: var(--text-weaker);
+  stroke-width: 1.5;
+}
+
+.illo-fold,
+.illo-line,
+.illo-spark {
+  stroke: var(--text-weaker);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.illo-line {
+  stroke-width: 3;
+  opacity: 0.5;
+}
+
+/* MiMo's page buttons: 重试 and 加载更多. */
+.more {
+  display: flex;
+  justify-content: center;
+  padding: 20px 0;
+}
+
+.page-btn {
+  height: 34px;
+  padding: 0 18px;
+  color: var(--text-strong);
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  transition: background 0.12s;
+}
+
+.page-btn:hover {
+  background: var(--surface-hover);
 }
 </style>
