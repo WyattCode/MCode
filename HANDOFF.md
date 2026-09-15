@@ -11,7 +11,7 @@
 
 对照 MiMo 26.912.121036：第一轮（原清单 69 项 + 截图对照 13 项 + 清单外审计）**合计 134 项，全部完成**。
 
-**第二轮全面对照（2026-09-14 起）：四个只读审计代理分别对照输入框与首页、对话视图、侧栏与面板、设置与弹窗，去重后合计 74 项，已完成 33 项（含核实后不适用的 C18）。** 每项做之前再核实一次，做完用探针验证并在 HEAD 上确认失败。
+**第二轮全面对照（2026-09-14 起）：四个只读审计代理分别对照输入框与首页、对话视图、侧栏与面板、设置与弹窗，去重后合计 74 项，已完成 34 项（含核实后不适用的 C18）。** 每项做之前再核实一次，做完用探针验证并在 HEAD 上确认失败。
 
 对话视图（C）：
 - C1 回复 Markdown：语法高亮（github-light/dark）、KaTeX 公式、mermaid 图（放大 / 复制图片 / 查看代码）、可点链接、文件路径链接（点击用默认程序打开 + 右键菜单）、图片（大）
@@ -20,9 +20,9 @@
 - C4 [已完成] bash 展开上格「# 描述 + 命令」下格输出，MCP 工具上格 JSON 入参，标题提示「⌘/Ctrl+点击打开」
 - C5 [已完成] 编辑 / 写入行标题带 +N −M：照 MiMo `hs-diffstat`——标题后 12px，等宽 14px，「+N」用 `--diff-add`、「-M」用 `--diff-delete`，为 0 的一侧不显示、两者之间一个空格；数字按 `metadata.diff` 各 hunk 的增删行数计（MiMo 的 `Tce` 同样只数 hunk 内的行）。（C2 重做步骤行后，箭头照 MiMo 紧跟文字后，不再留在行尾）——探针 mcode-step-diffstat.cjs 6 项全过，HEAD 上 5 项失败（「读取行无统计」本就成立）
 - C6 [已完成] 回合头：照 MiMo harness-head——运行中是「已处理」加扫光（TextShimmer）和每秒递增的计时；完成后用过工具的回合整行是一个按钮（文字 + 时间 + 12px 半透明 chevron，展开时转 90°，aria-expanded），没用工具的只是文字；时间格式照 MiMo `SMe`：「12s」「1m 5s」，不随语言变。探针 mcode-turn-head.cjs 4 项全过（完成回合是按钮、点整行折叠展开、无工具不是按钮、运行中计时递增），HEAD 上 4 项全败
-- C7 提问表单：改为输入框上方停靠卡（第 N 题、‹ N/M ›、放弃、数字键选项、跳过 / 下一题 / 提交、计划模式专用文案）（大）
+- C7 [已完成] 提问表单停靠在输入框上方（QuestionDock.vue + lib/confirm-queue.ts）：与权限请求同一队列按到达顺序，「1/N」合计；第 N 题（单选/多选）、‹ N / M ›、放弃（发空答案，记录里显示已取消，错误码 `question.dismissed`）、数字键选项、单选自动下一题、跳过 / 下一题 / 橙色提交、自定义输入禁用单选、无 Esc、每页上浮淡入 0.18s；有提问时输入框发送的纯文本回答第 1 题。与输入框同列 712、同底色 `--surface-menu`、信息卡打开时同样让位。另加审批引导卡「想减少审批提示吗？」（手动确认 3 次后出现：本任务放行 / 帮我审批 / 保留手动审批）。计划模式文案跳过（MCode 没有计划工具）。探针 mcode-round2-dock.cjs 18 项全过
 - C8 [已完成] 已回答提问显示答案、已取消提问卡「需要你确认 · 已取消」（parts/QuestionCard.vue），不进工具分组
-- C9 [已完成] 已决定的权限留一行（parts/PermissionRow.vue：已允许(本次) / 已拒绝并反馈 …，`part.metadata.permissions`）；「拒绝即停止回合」由第二波提问停靠栏一并做
+- C9 [已完成] 已决定的权限留一行（parts/PermissionRow.vue：已允许(本次) / 已拒绝并反馈 …，`part.metadata.permissions`）；拒绝（含「拒绝并说明」，按用户决定）即停止回合，理由留在权限行和工具结果里，随下一条消息给模型；MiMo 本身只有直接拒绝才停
 - C10 [已完成] 回复下方操作行：原悬停页脚（智能体 · 模型 · 强度 · 耗时 · 时间）换成 MiMo 的 `msg-actions`——常显，先「复制」后「分支」（侧聊无分支），26px 圆角 7、12px 图标、间距 2、上边距 -2（紧跟改动文件卡时 10），按下缩到 .96；完成时间在竖线后，仅悬停/聚焦时显示；复制改为吐司「已复制」；时间格式同 MiMo（中文「M月D日 HH:MM」，跨年加「YYYY年」）。新键 `stream.replyCopy/replyBranch/replyCopied`，删去 `stream.fork`、`effortName`、`modelName`——探针 mcode-reply-actions.cjs 6 项全过，HEAD 上 6 项全失败
 - C11 [已完成] 回到底部按钮：34px 圆形描边带阴影、距底 14、居中于阅读列，文案「回到底部」（新键 `stream.jumpToBottom`，`stream.jump` 是参照镜像键不能改值）——探针 mcode-jump-bottom.cjs 5 项全过，HEAD 上 4 项失败
 - C12 [已完成] 分支出来的对话顶部「从对话中派生」标记：照 MiMo ForkRow——两侧 1px 细线、中间 13px 链接色按钮带分支图标、距第一问 26；点击回到源对话并提示「已回到源对话」，源对话已删则提示「源对话不存在」并留在原处；分支时提示「已从此处创建分支」。`SessionInfo.forkOf` 由 `SessionStore.fork` 写入；新键 `stream.forkedFrom/backToSource/sourceNotFound/branchedFromHere`——探针 mcode-fork-row.cjs 5 项全过，HEAD 上 4 项失败（第 5 项「原对话无标记」本就成立）
