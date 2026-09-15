@@ -1848,6 +1848,10 @@ const zhCN: Table = {
   "menu.developerTools": "开发者工具",
   "menu.enterFullscreen": "进入全屏幕",
   "menu.zoomWindow": "缩放",
+  "rename.convoTitle": "重命名对话",
+  "rename.projectTitle": "重命名项目",
+  "rename.subtitle": "保持简短且易于识别",
+  "menu.projectAppearance": "项目图标与颜色",
 }
 
 const zhTW: Table = {
@@ -3605,6 +3609,10 @@ const zhTW: Table = {
   "menu.developerTools": "開發者工具",
   "menu.enterFullscreen": "進入全螢幕",
   "menu.zoomWindow": "縮放",
+  "rename.convoTitle": "重新命名對話",
+  "rename.projectTitle": "重新命名專案",
+  "rename.subtitle": "簡短易辨即可",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const en: Table = {
@@ -5363,6 +5371,10 @@ const en: Table = {
   "menu.developerTools": "Developer Tools",
   "menu.enterFullscreen": "Enter Full Screen",
   "menu.zoomWindow": "Zoom",
+  "rename.convoTitle": "Rename chat",
+  "rename.projectTitle": "Rename project",
+  "rename.subtitle": "Keep it short and recognizable",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 // --- generated language tables ---
@@ -7083,6 +7095,10 @@ const ar: Table = {
   "menu.developerTools": "أدوات المطوّر",
   "menu.enterFullscreen": "الدخول إلى وضع ملء الشاشة",
   "menu.zoomWindow": "تكبير/تصغير",
+  "rename.convoTitle": "إعادة تسمية المحادثة",
+  "rename.projectTitle": "إعادة تسمية المشروع",
+  "rename.subtitle": "اجعله قصيرًا وسهل التمييز",
+  "menu.projectAppearance": "أيقونة المشروع ولونه",
 }
 
 const bs: Table = {
@@ -8802,6 +8818,10 @@ const bs: Table = {
   "menu.developerTools": "Alati za programere",
   "menu.enterFullscreen": "Uđi u prikaz preko cijelog ekrana",
   "menu.zoomWindow": "Zumiraj",
+  "rename.convoTitle": "Preimenuj razgovor",
+  "rename.projectTitle": "Preimenuj projekat",
+  "rename.subtitle": "Neka bude kratko i prepoznatljivo",
+  "menu.projectAppearance": "Ikona i boja projekta",
 }
 
 const da: Table = {
@@ -10521,6 +10541,10 @@ const da: Table = {
   "menu.developerTools": "Udviklerværktøjer",
   "menu.enterFullscreen": "Fuld skærm",
   "menu.zoomWindow": "Zoom",
+  "rename.convoTitle": "Omdøb chat",
+  "rename.projectTitle": "Omdøb projekt",
+  "rename.subtitle": "Hold det kort og genkendeligt",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const de: Table = {
@@ -12240,6 +12264,10 @@ const de: Table = {
   "menu.developerTools": "Entwicklertools",
   "menu.enterFullscreen": "Vollbild",
   "menu.zoomWindow": "Zoomen",
+  "rename.convoTitle": "Chat umbenennen",
+  "rename.projectTitle": "Projekt umbenennen",
+  "rename.subtitle": "Halten Sie es kurz und wiedererkennbar",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const es: Table = {
@@ -13959,6 +13987,10 @@ const es: Table = {
   "menu.developerTools": "Herramientas de desarrollo",
   "menu.enterFullscreen": "Pantalla completa",
   "menu.zoomWindow": "Zoom",
+  "rename.convoTitle": "Renombrar chat",
+  "rename.projectTitle": "Renombrar proyecto",
+  "rename.subtitle": "Manténlo breve y fácil de reconocer",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const fr: Table = {
@@ -15678,6 +15710,10 @@ const fr: Table = {
   "menu.developerTools": "Outils de développement",
   "menu.enterFullscreen": "Plein écran",
   "menu.zoomWindow": "Zoom",
+  "rename.convoTitle": "Renommer la conversation",
+  "rename.projectTitle": "Renommer le projet",
+  "rename.subtitle": "Choisissez un nom court et reconnaissable",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const ja: Table = {
@@ -17397,6 +17433,10 @@ const ja: Table = {
   "menu.developerTools": "開発者ツール",
   "menu.enterFullscreen": "フルスクリーン表示",
   "menu.zoomWindow": "ズーム",
+  "rename.convoTitle": "会話の名前を変更",
+  "rename.projectTitle": "プロジェクトの名前を変更",
+  "rename.subtitle": "短く分かりやすい名前にしましょう",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const ko: Table = {
@@ -19116,6 +19156,10 @@ const ko: Table = {
   "menu.developerTools": "개발자 도구",
   "menu.enterFullscreen": "전체 화면 시작",
   "menu.zoomWindow": "확대/축소",
+  "rename.convoTitle": "대화 이름 변경",
+  "rename.projectTitle": "프로젝트 이름 변경",
+  "rename.subtitle": "짧고 알아보기 쉽게 지어주세요",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const nb: Table = {
@@ -20835,6 +20879,10 @@ const nb: Table = {
   "menu.developerTools": "Utviklerverktøy",
   "menu.enterFullscreen": "Fullskjerm",
   "menu.zoomWindow": "Zoom",
+  "rename.convoTitle": "Gi samtalen nytt navn",
+  "rename.projectTitle": "Gi prosjektet nytt navn",
+  "rename.subtitle": "Hold det kort og gjenkjennelig",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const pl: Table = {
@@ -22554,6 +22602,10 @@ const pl: Table = {
   "menu.developerTools": "Narzędzia dla programistów",
   "menu.enterFullscreen": "Pełny ekran",
   "menu.zoomWindow": "Powiększenie",
+  "rename.convoTitle": "Zmień nazwę rozmowy",
+  "rename.projectTitle": "Zmień nazwę projektu",
+  "rename.subtitle": "Zachowaj krótką i łatwo rozpoznawalną nazwę",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const ptBR: Table = {
@@ -24273,6 +24325,10 @@ const ptBR: Table = {
   "menu.developerTools": "Ferramentas do desenvolvedor",
   "menu.enterFullscreen": "Entrar em tela cheia",
   "menu.zoomWindow": "Zoom",
+  "rename.convoTitle": "Renomear chat",
+  "rename.projectTitle": "Renomear projeto",
+  "rename.subtitle": "Mantenha curto e reconhecível",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const ru: Table = {
@@ -25992,6 +26048,10 @@ const ru: Table = {
   "menu.developerTools": "Инструменты разработчика",
   "menu.enterFullscreen": "Полноэкранный режим",
   "menu.zoomWindow": "Масштаб",
+  "rename.convoTitle": "Переименовать чат",
+  "rename.projectTitle": "Переименовать проект",
+  "rename.subtitle": "Сделайте название коротким и легко узнаваемым",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const th: Table = {
@@ -27711,6 +27771,10 @@ const th: Table = {
   "menu.developerTools": "เครื่องมือนักพัฒนา",
   "menu.enterFullscreen": "เข้าสู่โหมดเต็มหน้าจอ",
   "menu.zoomWindow": "ซูม",
+  "rename.convoTitle": "เปลี่ยนชื่อแชต",
+  "rename.projectTitle": "เปลี่ยนชื่อโปรเจกต์",
+  "rename.subtitle": "ตั้งให้สั้นและจำง่าย",
+  "menu.projectAppearance": "ไอคอนและสีของโปรเจกต์",
 }
 
 const tr: Table = {
@@ -29430,6 +29494,10 @@ const tr: Table = {
   "menu.developerTools": "Geliştirici Araçları",
   "menu.enterFullscreen": "Tam Ekran",
   "menu.zoomWindow": "Yakınlaştır",
+  "rename.convoTitle": "Sohbeti yeniden adlandır",
+  "rename.projectTitle": "Projeyi yeniden adlandır",
+  "rename.subtitle": "Kısa ve tanınabilir tutun",
+  "menu.projectAppearance": "Project icon and color",
 }
 
 const uk: Table = {
@@ -31149,6 +31217,10 @@ const uk: Table = {
   "menu.developerTools": "Інструменти розробника",
   "menu.enterFullscreen": "Увійти в повноекранний режим",
   "menu.zoomWindow": "Масштаб",
+  "rename.convoTitle": "Перейменувати чат",
+  "rename.projectTitle": "Перейменувати проєкт",
+  "rename.subtitle": "Коротко й упізнавано",
+  "menu.projectAppearance": "Значок і колір проєкту",
 }
 // --- end generated language tables ---
 

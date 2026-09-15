@@ -348,7 +348,6 @@ const serverPanel = ref(false)
  * The header, so the rename command can start the title's own editor. Renaming
  * is inline now - there is no dialog left for a flag to open.
  */
-const header = ref<InstanceType<typeof SessionHeader>>()
 /** The project a new workspace is being branched from, while it is being named. */
 const namingWorkspace = ref<string>()
 const choosingServer = ref(false)
@@ -375,6 +374,28 @@ function openServerInfo() {
 }
 /** Directory whose presentation is being edited, if any. */
 const editingProject = ref<string>()
+
+/* MiMo's single rename dialog, for a conversation or for a project. */
+const renamingSession = ref<{ id: string; title: string }>()
+const renamingProject = ref<string>()
+
+function beginRename(sessionID = app.currentID) {
+  const session = app.sessions.find((entry) => entry.id === sessionID)
+  if (session) renamingSession.value = { id: session.id, title: sessionTitle(session.title) }
+}
+
+/* The dialog closes first, then the rename runs, as MiMo orders it. */
+async function submitSessionRename(title: string) {
+  const target = renamingSession.value
+  renamingSession.value = undefined
+  if (target && title !== target.title) await app.rename(target.id, title)
+}
+
+async function submitProjectRename(name: string) {
+  const directory = renamingProject.value
+  renamingProject.value = undefined
+  if (directory) await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [directory]: name } })
+}
 const composer = ref<InstanceType<typeof Composer>>()
 const stream = ref<InstanceType<typeof MessageStream>>()
 
@@ -1633,6 +1654,8 @@ const sessionMenuItems = computed(() => {
  */
 const PROJECT_MENU: { id: string; label: string; icon: string; divided?: boolean; danger?: boolean }[] = [
   { id: "rename", label: "menu.renameProject", icon: "M11.2 2.6 13.4 4.8 5.6 12.6 2.8 13.2 3.4 10.4z" },
+  /* MCode's own: the icon and colour a project wears, which MiMo's name-only rename has no room for. */
+  { id: "appearance", label: "menu.projectAppearance", icon: "M8 2.4a5.6 5.6 0 1 0 0 11.2c.8 0 1.2-.5 1.2-1 0-.6-.4-.8-.4-1.3 0-.6.5-1 1.1-1h1.3a2.4 2.4 0 0 0 2.4-2.4C13.6 4.6 11.1 2.4 8 2.4zM5.2 7.4h.01M6.6 4.9h.01M9.6 4.9h.01" },
   { id: "pin", label: "menu.pinProject", icon: "M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" },
   { id: "archive", label: "menu.archiveProject", icon: "M2.2 3h11.6v2.6H2.2zM3.2 5.6h9.6V13H3.2zM6.4 8.2h3.2", divided: true },
   { id: "batch", label: "menu.batch", icon: "M2.4 4.4h1.6M6.6 4.4h7M2.4 8h1.6M6.6 8h7M2.4 11.6h1.6M6.6 11.6h7" },
@@ -1658,6 +1681,9 @@ function rekey<T>(map: Record<string, T> | undefined, from: string, to: string):
 
 const PROJECT_ACTIONS: Record<string, (directory: string) => void | Promise<void>> = {
   rename: (directory) => {
+    renamingProject.value = directory
+  },
+  appearance: (directory) => {
     editingProject.value = directory
   },
   /* MiMo's pinToFront: the latest pin heads 置顶, and a toast says what happened. */
@@ -1809,13 +1835,9 @@ async function runSessionMenu(key: string) {
   await commands.value.find((entry) => entry.id === key)?.run()
 }
 
-/* A double-click on a row's title renames it, as its menu's rename does. */
-async function renameFromSide(sessionID: string) {
-  if (app.currentID !== sessionID) {
-    view.value = "session"
-    await app.open(sessionID)
-  }
-  await commands.value.find((entry) => entry.id === "session.rename")?.run()
+/* A double-click on a row's title renames it in the same dialog its menu's rename opens. */
+function renameFromSide(sessionID: string) {
+  beginRename(sessionID)
 }
 
 async function confirmDeleteSession() {
@@ -2430,7 +2452,7 @@ const bindableCommands = computed(() => {
       title: t("cmd.rename"),
       hint: "Ctrl+Alt+R",
       enabled: hasSession,
-      run: () => header.value?.begin(),
+      run: () => beginRename(),
     },
     {
       id: "session.undo",
@@ -3088,7 +3110,9 @@ const modalOpen = computed(
     choosingServer.value ||
     managingServers.value ||
     Boolean(namingWorkspace.value) ||
-    Boolean(editingProject.value),
+    Boolean(editingProject.value) ||
+    Boolean(renamingSession.value) ||
+    Boolean(renamingProject.value),
 )
 
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
@@ -3252,7 +3276,7 @@ function onKeydown(event: KeyboardEvent) {
   if (mod && event.altKey && event.key.toLowerCase() === "r") {
     if (modalOpen.value || !app.currentID || isHome.value) return
     event.preventDefault()
-    header.value?.begin()
+    beginRename()
     return
   }
 
@@ -3967,14 +3991,13 @@ onBeforeUnmount(() => {
             before the first message used to vanish silently.
           -->
           <SessionHeader
-            ref="header"
             :info-open="infoShowing"
             :bottom-open="terminalUp"
             :side-collapsed="!leftPanel"
             :panel-beside="panelBeside"
             :has-content="!empty"
             @info="toggleInfo"
-            @rename="(title) => app.currentID && void app.rename(app.currentID, title)"
+            @rename="beginRename()"
             @menu="(x, y) => (sessionMenu = { x, y, header: true })"
             @bottom="terminalOpen = !terminalOpen"
           />
@@ -4196,6 +4219,24 @@ onBeforeUnmount(() => {
       v-if="editingProject"
       :directory="editingProject"
       @close="editingProject = undefined"
+    />
+
+    <RenameDialog
+      v-if="renamingSession"
+      :value="renamingSession.title"
+      :heading="t('rename.convoTitle')"
+      :subtitle="t('rename.subtitle')"
+      @close="renamingSession = undefined"
+      @submit="submitSessionRename"
+    />
+
+    <RenameDialog
+      v-if="renamingProject"
+      :value="projectName(renamingProject, app.config?.projectNames)"
+      :heading="t('rename.projectTitle')"
+      :subtitle="t('rename.subtitle')"
+      @close="renamingProject = undefined"
+      @submit="submitProjectRename"
     />
 
   </div>

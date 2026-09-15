@@ -8,21 +8,53 @@ import { t } from "../lib/i18n"
  * This began as the session rename, which had been a window.prompt - Electron
  * refuses those outright, throwing "prompt() is not supported", so the command
  * did nothing at all. Anything that needs a line of text from the user has to
- * be drawn by the app, and there turned out to be three such places.
+ * be drawn by the app.
+ *
+ * Drawn as MiMo's rename modal: 430 wide on a 16px corner, a 17px title with a
+ * 13px subtitle and a close button beside it, a bordered 14px field capped at 80
+ * characters, then 取消 and 保存.
  */
 const props = withDefaults(
-  defineProps<{ value: string; heading?: string; placeholder?: string; confirm?: string }>(),
-  { heading: undefined, placeholder: undefined, confirm: undefined },
+  defineProps<{
+    value: string
+    heading?: string
+    subtitle?: string
+    placeholder?: string
+    confirm?: string
+    maxLength?: number
+    closable?: boolean
+  }>(),
+  { heading: undefined, subtitle: undefined, placeholder: undefined, confirm: undefined, maxLength: 80, closable: true },
 )
 const emit = defineEmits<{ close: []; submit: [title: string] }>()
 
-const draft = ref(props.value)
+/** Cut by code point, so an emoji or a CJK surrogate pair is never split in half. */
+function clamp(text: string): string {
+  const points = Array.from(text)
+  return points.length > props.maxLength ? points.slice(0, props.maxLength).join("") : text
+}
+
+const draft = ref(clamp(props.value))
 const field = ref<HTMLInputElement>()
+
+function onInput(event: Event) {
+  const input = event.target as HTMLInputElement
+  const next = clamp(input.value)
+  if (next !== input.value) input.value = next
+  draft.value = next
+}
 
 function submit() {
   const next = draft.value.trim()
   if (!next) return
   emit("submit", next)
+}
+
+/* Enter while an IME is composing picks a candidate; it must not save. */
+function onEnter(event: KeyboardEvent) {
+  if (event.isComposing || event.keyCode === 229) return
+  event.preventDefault()
+  submit()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -39,19 +71,33 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
-    <div v-modal class="dialog">
-      <h2>{{ heading ?? t("cmd.rename") }}</h2>
+    <div v-modal class="dialog" data-rename-dialog role="dialog" aria-labelledby="rename-title">
+      <div class="head">
+        <div class="head-text">
+          <h2 id="rename-title">{{ heading ?? t("cmd.rename") }}</h2>
+          <p v-if="subtitle" class="subtitle">{{ subtitle }}</p>
+        </div>
+        <button v-if="closable" class="close" type="button" :aria-label="t('common.close')" @click="emit('close')">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          </svg>
+        </button>
+      </div>
       <input
         ref="field"
-        v-model="draft"
+        :value="draft"
         class="field"
         spellcheck="false"
+        :maxlength="maxLength"
         :placeholder="placeholder"
-        @keydown.enter="submit"
+        @input="onInput"
+        @keydown.enter="onEnter"
       />
       <footer>
-        <button class="ghost" @click="emit('close')">{{ t("common.cancel") }}</button>
-        <button class="go" :disabled="!draft.trim()" @click="submit">{{ confirm ?? t("common.save") }}</button>
+        <button class="ghost" type="button" @click="emit('close')">{{ t("common.cancel") }}</button>
+        <button class="go" type="button" data-rename-save :disabled="!draft.trim()" @click="submit">
+          {{ confirm ?? t("common.save") }}
+        </button>
       </footer>
     </div>
   </div>
@@ -70,43 +116,79 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 .dialog {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  width: min(420px, 88vw);
-  padding: 20px 22px 18px;
+  box-sizing: border-box;
+  width: min(430px, 88vw);
+  padding: 22px 24px;
   background: var(--surface-raised);
   border: 1px solid var(--border-weak);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lg);
+  border-radius: 16px;
+  box-shadow: var(--shadow-overlay);
+}
+
+/* Title and subtitle at the start, the close button at the end, 16 above the field. */
+.head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block-end: 16px;
+}
+
+.head-text {
+  min-width: 0;
 }
 
 h2 {
   margin: 0;
   color: var(--text-strong);
-  font-size: calc(15px * var(--ui-font-scale, 1));
-  font-weight: 530;
-  line-height: 20px;
-  letter-spacing: -0.13px;
+  font-size: calc(17px * var(--ui-font-scale, 1));
+  font-weight: 400;
+}
+
+.subtitle {
+  margin: 3px 0 0;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.close {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--text-weak);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+}
+
+.close:hover {
+  color: var(--text-strong);
+  background: var(--surface-hover);
 }
 
 .field {
-  /*
-   * No border. opencode's shared `text-input-v2` is a 60% fill of bg-layer-02
-   * that goes solid on focus, at radius 6 - `--surface-layer` and
-   * `--radius-md` here. Focus used to move a border colour that no longer
-   * exists.
-   */
-  height: 36px;
-  padding: 0 12px;
+  box-sizing: border-box;
+  width: 100%;
+  margin-block-end: 18px;
+  padding: 10px 12px;
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--surface-layer) 60%, transparent);
-  border: 0;
-  border-radius: var(--radius-md);
+  background: #fff;
+  border: 1px solid var(--border-weak);
+  border-radius: 9px;
+  outline: none;
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
-.field:focus {
-  background: var(--surface-layer);
-  outline: none;
+:root[data-theme="dark"] .field {
+  background: var(--surface-base);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .field {
+    background: var(--surface-base);
+  }
 }
 
 footer {
@@ -115,12 +197,20 @@ footer {
   gap: 10px;
 }
 
+.ghost,
+.go {
+  padding: 8px 18px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  cursor: pointer;
+}
+
 .ghost {
-  height: 32px;
-  padding: 0 14px;
   color: var(--text-base);
-  border-radius: var(--radius-md);
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  background: var(--surface-base);
+  border-color: var(--border-weak);
 }
 
 .ghost:hover {
@@ -128,17 +218,19 @@ footer {
   background: var(--surface-hover);
 }
 
+/* The primary pair, the same one the confirm dialog's non-destructive button uses. */
 .go {
-  height: 32px;
-  padding: 0 18px;
-  color: var(--surface-base);
-  background: var(--text-strong);
-  border-radius: var(--radius-md);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 530;
+  color: var(--button-primary-text);
+  background: var(--button-primary);
+  border-color: var(--button-primary);
+}
+
+.go:hover:not(:disabled) {
+  opacity: 0.9;
 }
 
 .go:disabled {
-  opacity: 0.45;
+  opacity: 0.5;
+  cursor: default;
 }
 </style>
