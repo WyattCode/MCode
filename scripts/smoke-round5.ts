@@ -26,6 +26,7 @@ import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import { TOOLS } from "../src/server/tool/registry"
 import { execFileSync } from "node:child_process"
 import { attachmentParts, imageSize } from "../src/server/provider/attachment-parts"
+import { isSummary, touchedFiles } from "../src/server/session/summary"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -44,6 +45,9 @@ export type Check = (name: string, condition: boolean, detail?: unknown) => void
 type Reply = (response: ServerResponse, body: Record<string, any>) => void | Promise<void>
 
 const frame = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`
+
+/** What the fake answers a summary request with unless told otherwise: MCode's sections, in their tags. */
+const DEFAULT_SUMMARY = "<summary>\n## Task overview\n- probe task\n\n## Current state\n- probe done\n\n## Next steps\n1. finish the probe\n</summary>"
 
 /** A streamed text answer, OpenAI chat-completions shape. */
 export const say =
@@ -91,6 +95,9 @@ export async function engine(options: { custom?: Partial<CustomProvider>; langua
   /* Title requests go apart: they run beside a turn's own, and would otherwise take its scripted replies. */
   const titleBodies: Record<string, any>[] = []
   const titles: string[] = []
+  /* Summary requests go apart too, answered from their own queue: a reply's text, or a scripted reply. */
+  const summaryBodies: Record<string, any>[] = []
+  const summaries: (string | Reply)[] = []
   /* Set to hold a title reply back until a check has done what it needs first. */
   const hold: { gate?: Promise<void> } = {}
   const server = createServer((request, response) => {
@@ -102,6 +109,12 @@ export async function engine(options: { custom?: Partial<CustomProvider>; langua
         titleBodies.push(body)
         await hold.gate
         return say(titles.shift() ?? "A probe title")(response, body)
+      }
+      const lastMessage = (body.messages as Record<string, unknown>[] | undefined)?.at(-1)
+      if (JSON.stringify(lastMessage?.content ?? "").includes("this conversation is about to be compacted")) {
+        summaryBodies.push(body)
+        const next = summaries.shift() ?? DEFAULT_SUMMARY
+        return (typeof next === "string" ? say(next) : next)(response, body)
       }
       bodies.push(body)
       headers.push(request.headers)
@@ -152,7 +165,7 @@ export async function engine(options: { custom?: Partial<CustomProvider>; langua
   const assistants = async (sessionID: string) =>
     (await store.messages(sessionID)).filter((message): message is AssistantMessage => message.role === "assistant")
   const close = () => new Promise<void>((resolve) => server.close(() => resolve()))
-  return { dir, project, replies, bodies, headers, paths, titleBodies, titles, hold, events, times, storage, bus, config, permissions, store, runner, model, idle, until, assistants, close, port }
+  return { dir, project, replies, bodies, headers, paths, titleBodies, titles, hold, summaryBodies, summaries, events, times, storage, bus, config, permissions, store, runner, model, idle, until, assistants, close, port }
 }
 
 /** The text of a request's messages, for looking for something in it. */
@@ -731,6 +744,99 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("the picture is read and sent to a model that reads images", Array.isArray(sent?.content) && sent.content.some((part: Record<string, any>) => part.type === "image_url"))
       check("a file that is gone is named as unreadable", sentText.includes("missing.txt was attached but could not be read"))
       check("and the message says where the files are", sentText.includes("# Attached files") && sentText.includes("big.log"))
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: compaction's summary, continuation and trigger (E8)")
+  {
+    const call = (id: string, name: string, input: Record<string, unknown>, metadata?: Record<string, unknown>) =>
+      ({ type: "tool", id, callID: id, name, status: "completed", input, output: "ok", ...(metadata ? { metadata } : {}), time: { created: 1 } }) as AssistantMessage["parts"][number]
+    const work: Message = {
+      id: "a1",
+      sessionID: "s",
+      role: "assistant",
+      model: { provider: "p", model: "m" },
+      agent: "build",
+      parts: [
+        call("c1", "read", { path: "src/a.ts", offset: 3, limit: 5 }),
+        call("c2", "edit", { path: "src/a.ts", oldString: "x", newString: "y" }),
+        call("c3", "write", { path: "notes.md", content: "n" }, { created: true }),
+        ...["b", "c", "d", "e", "f"].map((name, index) => call(`r${index}`, "read", { path: `${name}.ts` })),
+        call("c4", "read", { path: "src/a.ts" }),
+      ],
+      time: { created: 1 },
+    }
+    const manifest = touchedFiles([work], "/proj")
+    check("the manifest keeps the five files most recently touched, newest last", manifest.length === 5 && manifest.at(-1)?.startsWith("src/a.ts:") === true && !manifest.some((line) => line.startsWith("b.ts")), manifest)
+    check("with each one's last three events", manifest.at(-1) === "src/a.ts: read: lines 3-7 then edited then read: full", manifest.at(-1))
+    const created: Message = { ...work, parts: [call("w1", "write", { path: "notes.md", content: "n" }, { created: true }), call("w2", "write", { path: "old.md", content: "o" })] } as Message
+    check("a file a write created is written, one it replaced is edited", JSON.stringify(touchedFiles([created], "/proj")) === JSON.stringify(["notes.md: written", "old.md: edited"]), touchedFiles([created], "/proj"))
+    check("a summary is known by its sections, a sentence is not", isSummary(DEFAULT_SUMMARY.replace(/<\/?summary>/g, "")) && !isSummary("Let me look at one more file first."))
+
+    const e = await engine({ custom: { models: [{ id: "m", name: "M", limit: { context: 1000 } }] } })
+    try {
+      // Manual: the conversation replayed as messages, under its own system prompt and tools.
+      const manual = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: manual.id, text: "FIRST request" })
+      await e.idle(manual.id)
+      await e.runner.prompt({ sessionID: manual.id, text: "SECOND request" })
+      await e.idle(manual.id)
+      const turnSystem = e.bodies.at(-1)?.messages?.[0]?.content
+      await e.runner.compact(manual.id)
+      const asked = e.summaryBodies.at(-1)
+      const replayed = (asked?.messages as Record<string, any>[]) ?? []
+      check("the summary request carries the conversation's own system prompt and tools", asked !== undefined && replayed[0]?.content === turnSystem && (asked.tools?.length ?? 0) > 0, { tools: asked?.tools?.length })
+      check(
+        "and replays the conversation as its messages, the instruction last",
+        replayed.some((message) => message.role === "user" && JSON.stringify(message.content).includes("FIRST request")) &&
+          JSON.stringify(replayed.at(-1)?.content).includes("## Task overview") &&
+          !JSON.stringify(replayed.at(-1)?.content).includes("FIRST request"),
+        replayed.map((message) => message.role),
+      )
+      check("with the model's usual output cap", asked?.max_tokens === 32_000, asked?.max_tokens)
+      const stored = await e.store.get(manual.id)
+      check("the summary is stored with its trigger", stored?.compacted?.trigger === "manual" && stored.compacted.summary.startsWith("## Task overview"), stored?.compacted)
+      await e.runner.prompt({ sessionID: manual.id, text: "THIRD request" })
+      await e.idle(manual.id)
+      const third = wireText(e.bodies.at(-1))
+      check("the next request opens with the tagged summary instead of the conversation", third.includes('<compacted-context trigger=\\"manual\\">') && !third.includes("FIRST request") && third.includes("THIRD request"), third.slice(0, 600))
+      check("and a manual compaction brings no continue message", !third.includes("was just compacted"))
+
+      // A reply that is not a summary, or a tool call, leaves the conversation as it was.
+      e.summaries.push("Let me look at one more file first.")
+      const before = (await e.store.get(manual.id))?.compacted?.at
+      const refused = await e.runner.compact(manual.id).then(() => "", (error: Error) => error.message)
+      check("a sentence is refused as a summary", refused.includes("did not return a summary") && (await e.store.get(manual.id))?.compacted?.at === before, refused)
+      e.summaries.push(calls([{ name: "list", input: { path: "." } }]))
+      const called = await e.runner.compact(manual.id).then(() => "", (error: Error) => error.message)
+      check("so is a tool call while summarising", called.includes("called a tool"), called)
+
+      // Automatic: a turn that ends over the line is compacted when the next one starts, and told to carry on.
+      const auto = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(say("a big answer", "stop", { prompt_tokens: 950, completion_tokens: 10 }))
+      await e.runner.prompt({ sessionID: auto.id, text: "AUTO first" })
+      await e.idle(auto.id)
+      check("a turn that ends over the line is not compacted there", !(await e.store.get(auto.id))?.compacted)
+      await e.runner.prompt({ sessionID: auto.id, text: "AUTO next" })
+      await e.idle(auto.id)
+      const autoAfter = await e.store.get(auto.id)
+      const autoWire = wireText(e.bodies.at(-1))
+      check("the next turn starts with an automatic compaction", autoAfter?.compacted?.trigger === "automatic", autoAfter?.compacted)
+      check("and its request is the summary and a note to carry on", autoWire.includes('trigger=\\"automatic\\"') && autoWire.includes("was just compacted"), autoWire.slice(0, 600))
+
+      // Overflow: the provider refuses for length, the conversation is compacted and the request posted again.
+      const over = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(failure(400, {}, { error: { message: "This model's maximum context length is 1000 tokens. However, your messages resulted in 2400 tokens." } }))
+      await e.runner.prompt({ sessionID: over.id, text: "OVERFLOW request" })
+      await e.idle(over.id)
+      const overAfter = await e.store.get(over.id)
+      const asks = (await e.store.messages(over.id)).filter((message) => message.role === "user" && message.text === "OVERFLOW request")
+      const retry = wireText(e.bodies.at(-1))
+      check("a refusal for length compacts as an overflow", overAfter?.compacted?.trigger === "provider-overflow", overAfter?.compacted)
+      check("and posts the request again after the summary", asks.length === 2 && retry.includes('trigger=\\"provider-overflow\\"') && retry.includes("OVERFLOW request"), { asks: asks.length, retry: retry.slice(0, 400) })
+      check("and the step runs to an answer", (await e.assistants(over.id)).at(-1)?.finish === "end_turn")
     } finally {
       await e.close()
     }

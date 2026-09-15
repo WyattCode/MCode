@@ -92,9 +92,17 @@ export interface SessionInfo {
    *
    * Everything up to and including `messageID` is sent to the model as
    * `summary` instead of verbatim. The messages themselves are kept: the point
-   * is to shrink the context, not to lose the history.
+   * is to shrink the context, not to lose the history. `trigger` is what set it
+   * off, MiMo's label, and `files` the files the summarised part worked on,
+   * each with what happened to it, which the next request lists.
    */
-  compacted?: { messageID: string; summary: string; at: number }
+  compacted?: {
+    messageID: string
+    summary: string
+    at: number
+    trigger?: "manual" | "automatic" | "provider-overflow"
+    files?: string[]
+  }
   /**
    * Where the conversation has been rolled back to, if it has been.
    *

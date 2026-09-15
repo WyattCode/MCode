@@ -40,14 +40,8 @@ import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
-import {
-  SUMMARY_OUTPUT_TOKENS,
-  isContextOverflow,
-  isOverflowByCount,
-  maxOutputTokens,
-  summaryWouldFit,
-} from "./overflow"
-import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
+import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
+import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { repositoryState, systemPrompt } from "./prompt"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
@@ -151,15 +145,6 @@ const TITLE_TIMEOUT_MS = 60_000
 
 /** The first message is quoted up to this many characters for its title. */
 const TITLE_SOURCE_CHARS = 4000
-
-const COMPACT_SYSTEM = [
-  "You are compacting a coding session so it can continue in a smaller context.",
-  "Write a dense summary of everything that still matters: what the user asked for,",
-  "what was decided and why, which files and symbols were touched, what is done,",
-  "what is still open, and any constraint or preference the user stated.",
-  "Keep exact names, paths and identifiers. Omit pleasantries and narration.",
-  "Write it as notes to yourself, not as a report to the user.",
-].join(" ")
 
 /**
  * What the model is told on the step that has to be the last one.
@@ -473,15 +458,27 @@ export class SessionRunner {
     // sending everything is the safe direction.
     if (at < 0) return messages
 
+    // MiMo's projection: the summary tagged with its trigger, and the files it had been working on.
     const summary: UserMessage = {
       id: `${mark.messageID}:summary`,
       sessionID: session.id,
       role: "user",
-      text: mark.summary,
+      text: compactedText(mark),
       attachments: [],
       time: { created: mark.at },
     }
-    return [summary, ...messages.slice(at + 1)]
+    const after = messages.slice(at + 1)
+    // Nothing re-posted after an automatic or overflow compaction: the model is told to carry on.
+    if (after.length || (mark.trigger ?? "manual") === "manual") return [summary, ...after]
+    const carryOn: UserMessage = {
+      id: `${mark.messageID}:continue`,
+      sessionID: session.id,
+      role: "user",
+      text: continueNote(mark.trigger ?? "automatic"),
+      attachments: [],
+      time: { created: mark.at },
+    }
+    return [summary, carryOn]
   }
 
   /**
@@ -850,7 +847,7 @@ export class SessionRunner {
     const controller = new AbortController()
     this.running.set(sessionID, controller)
     try {
-      return await this.compactNow(session, controller.signal)
+      return await this.compactNow(session, controller.signal, "manual")
     } finally {
       this.running.delete(sessionID)
       this.bus.publish({ type: "session.idle", sessionID })
@@ -858,33 +855,55 @@ export class SessionRunner {
   }
 
   /**
-   * The compaction itself, for the button above and for a turn that has
-   * outgrown its model (see `run`). Streams a summary of everything the model
-   * currently sees and records it as the new starting point.
+   * The system prompt a conversation's requests carry: built once and reused,
+   * as MiMo's prefix snapshot is, so a new file or a changed working tree does
+   * not start its cache over. Rebuilt only when what it was built for changes -
+   * the agent, the mode, the instructions, the model, or the tools. A compaction
+   * sends the same one, so its request reads from that cache too.
    */
-  private async compactNow(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+  private async systemFor(session: SessionInfo): Promise<string> {
+    const config = this.config.get()
+    const key = JSON.stringify([
+      session.agent,
+      session.staged === true,
+      config.instructions ?? "",
+      session.model.provider,
+      session.model.model,
+      this.tools(session.agent, session.model.model, session.parentID ?? session.id).map((tool) => tool.name),
+    ])
+    const frozen = this.prefixes.get(session.id)
+    const base =
+      frozen?.key === key
+        ? frozen.system
+        : await systemPrompt({
+            directory: session.directory,
+            agent: session.agent,
+            staged: session.staged,
+            instructions: config.instructions,
+            globalAgentsFile: this.globalAgents,
+          })
+    this.prefixes.set(session.id, { key, system: base })
+    // subagents: a subagent is told what it is, after what its agent would be told anyway.
+    return session.parentID ? `${base}\n\n${SUBAGENT_NOTE}` : base
+  }
+
+  /**
+   * The compaction itself, for the button above and for a turn that has
+   * outgrown its model (see `run`).
+   *
+   * MiMo's shape: the conversation as the model currently sees it is replayed
+   * with its own system prompt and tools, and one instruction is added at the
+   * end. Calling a tool is not allowed while summarising; the output cap is the
+   * model's usual one. For an overflow the attached files are left out, since
+   * they are what made it too large. A reply that is empty, not a summary, a
+   * tool call, or itself too large leaves the conversation as it was.
+   */
+  private async compactNow(session: SessionInfo, signal: AbortSignal, trigger: CompactionTrigger): Promise<SessionInfo> {
     const stored = await this.store.messages(session.id)
     const live = this.liveMessages(session, stored)
-    /*
-     * What a new summary has to cover: everything since the last one. The
-     * last summary itself goes in separately, as the reference passes it, so
-     * the model is told to carry it forward rather than shown it as a message.
-     */
-    const previous = session.compacted
-    const since = (() => {
-      if (!previous) return live
-      const at = live.findIndex((message) => message.id === previous.messageID)
-      return at < 0 ? live : live.slice(at + 1)
-    })()
-    const selected = selectForSummary(since)
-    if (!selected) throw new Error("Nothing to compact yet")
-    const prompt = buildSummaryPrompt({ previousSummary: previous?.summary, context: [selected.head] })
-    // The reference's own guard: a summary request it can see will not fit is
-    // not sent. Measured on the prompt that will actually go out, not on the
-    // raw transcript, since tool output is cut to 2,000 characters in it.
-    if (!summaryWouldFit(prompt.length, this.config.modelEntry(session.model)?.contextWindow ?? 0)) {
-      throw new Error("This conversation is too long to summarise within the model's context window")
-    }
+    const last = live.at(-1)
+    const context = withChatHeaders(this.contextFor(session, stored))
+    if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
 
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
@@ -896,84 +915,123 @@ export class SessionRunner {
           : OpenAICompatible
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const entry = this.config.modelEntry(session.model)
+    const replay =
+      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map())
+    const instruction: UserMessage = {
+      id: `${session.id}:compaction`,
+      sessionID: session.id,
+      role: "user",
+      text: SUMMARY_INSTRUCTION,
+      attachments: [],
+      time: { created: Date.now() },
+    }
 
     let summary = ""
+    let called = false
     this.summarising.add(session.id)
     this.bus.publish({ type: "session.compacting", sessionID: session.id, active: true })
     try {
-      await adapter.stream(
+      const outcome = await adapter.stream(
         {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
-          system: COMPACT_SYSTEM,
-          /*
-           * One user message, the conversation quoted inside it and the
-           * instruction after it, as the reference sends it. Not the
-           * transcript replayed as a live conversation, which a model
-           * continues rather than summarises.
-           */
-          history: [
-            {
-              id: `${session.id}:summary-request`,
-              sessionID: session.id,
-              role: "user",
-              text: prompt,
-              attachments: [],
-              time: { created: Date.now() },
-            },
-          ],
-          tools: [],
-          effort: "low",
+          system: await this.systemFor(session),
+          history: [...replay, instruction],
+          tools: this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+          effort: session.effort ?? this.config.get().effort,
+          variants: this.config.variants(session.model),
           showReasoning: false,
           signal,
           baseURL: definition.baseURL,
           headers: definition.headers,
           accountId: tokens?.accountId,
-          /*
-           * A summary is short, and asking for the usual 32k is what stopped
-           * this from working the first time: a transcript that had just been
-           * refused at 230,145 tokens plus a 32,000 answer is one token over
-           * the same window, so the summary was refused too. The reference asks
-           * for 4,096 here (its SUMMARY_OUTPUT_TOKENS), which leaves the room
-           * a summary of an overlong conversation needs.
-           */
-          maxOutput: Math.min(maxOutputTokens(session.model, this.config.modelEntry(session.model)), SUMMARY_OUTPUT_TOKENS),
-          outputLimit: this.config.modelEntry(session.model)?.maxOutput,
+          maxOutput: maxOutputTokens(session.model, entry),
+          outputLimit: entry?.maxOutput,
+          sessionID: session.id,
+          cacheTTL: entry?.cacheTTL,
+          inputs: modelInputs(entry),
+          sampling: samplingFor(session.model.model, entry?.temperature === true),
+          extra: providerExtras(session.model.provider, entry?.reasoning === true),
         },
         (event) => {
           if (event.type === "text.delta") summary += event.text
+          if (event.type === "tool") called = true
         },
       )
+      if (outcome.toolCalls.length) called = true
+    } catch (failure) {
+      if (isContextOverflow(describe(failure))) throw new Error("This conversation is too large to compact")
+      throw failure
     } finally {
       this.summarising.delete(session.id)
       this.bus.publish({ type: "session.compacting", sessionID: session.id, active: false })
     }
-    summary = summary.trim()
+    if (called) throw new Error("The model called a tool instead of writing a summary")
+    summary = extractSummary(summary)
     if (!summary) throw new Error("The model returned an empty summary")
     if (!isSummary(summary)) throw new Error("The model did not return a summary")
+    const files = touchedFiles(context, session.directory)
     return this.store.update(session.id, {
-      // The last message the summary covers. Everything after it - the kept
-      // end - stays in the model's view word for word, as the reference keeps
-      // its `recent`.
-      compacted: { messageID: selected.mark.id, summary, at: Date.now() },
+      // The last message the summary covers: the whole conversation as it stood.
+      compacted: { messageID: last.id, summary, at: Date.now(), trigger, ...(files.length ? { files } : {}) },
     })
   }
 
   /**
-   * A compaction nothing is waiting on.
-   *
-   * The one made because a step's token count crossed the line is ahead of
-   * need: the step itself succeeded, and failing to summarise must not turn a
-   * finished turn into an error. The reference's `compactIfNeeded` returns
-   * false and carries on; so does this. If the next request is then refused
-   * for length, the rescue in `run` takes it from there.
+   * MiMo's compaction at the start of a turn: when the last finished reply
+   * since the last compaction crossed the line, the conversation is compacted
+   * before the model is asked again. A failure leaves the turn to go on; if
+   * its request is then refused for length, the rescue in `run` takes over.
    */
-  private async compactQuietly(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+  private async compactIfCrossed(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+    const live = this.liveMessages(session, await this.store.messages(session.id))
+    const from = session.compacted ? live.findIndex((message) => message.id === session.compacted?.messageID) + 1 : 0
+    const reply = live
+      .slice(from)
+      .reverse()
+      .find((message): message is AssistantMessage => message.role === "assistant" && message.finish !== undefined && message.usage !== undefined)
+    if (!reply?.usage || !isOverflowByCount(reply.usage, this.config.modelEntry(session.model))) return session
     try {
-      return await this.compactNow(session, signal)
+      return await this.compactNow(session, signal, "automatic")
     } catch {
       return session
     }
+  }
+
+  /**
+   * MiMo's overflow compaction: a request too large for the model, or a step
+   * that crossed the line mid-turn. The conversation is compacted and the
+   * user's last request posted again after the summary, its attached files
+   * left out, so the turn carries on from what was asked. Undefined when the
+   * compaction could not be made.
+   */
+  private async compactForOverflow(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo | undefined> {
+    let compacted: SessionInfo
+    try {
+      compacted = await this.compactNow(session, signal, "provider-overflow")
+    } catch {
+      return undefined
+    }
+    const live = this.liveMessages(compacted, await this.store.messages(session.id))
+    const asked = [...live].reverse().find((message): message is UserMessage => message.role === "user" && !message.notices?.length && Boolean(message.text.trim()))
+    if (!asked) return compacted
+    const left = asked.attachments.map((file) => file.path.split(/[\\/]/).pop() ?? file.path)
+    const again: UserMessage = {
+      id: Identifier.message(),
+      sessionID: session.id,
+      role: "user",
+      text: asked.text,
+      attachments: [],
+      ...(asked.annotations?.length ? { annotations: asked.annotations } : {}),
+      ...(left.length || asked.reminders?.length
+        ? { reminders: [...(asked.reminders ?? []), ...(left.length ? [`Attached files were left out to make the conversation fit: ${left.join(", ")}.`] : [])] }
+        : {}),
+      time: { created: Date.now() },
+    }
+    await this.store.saveMessage(again)
+    this.turn(session.id).messages.push(again.id)
+    return compacted
   }
 
   async prompt(input: PromptInput): Promise<string> {
@@ -1509,34 +1567,8 @@ export class SessionRunner {
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const config = this.config.get()
-    /*
-     * MiMo's prefix snapshot: the system prompt is built once for a
-     * conversation and reused, so a new file or a changed working tree does not
-     * start its cache over. It is rebuilt only when what it was built for
-     * changes - the agent, the mode, the instructions, the model, or the tools.
-     */
-    const prefixKey = JSON.stringify([
-      session.agent,
-      session.staged === true,
-      config.instructions ?? "",
-      session.model.provider,
-      session.model.model,
-      this.tools(session.agent, session.model.model, sessionID).map((tool) => tool.name),
-    ])
-    const frozen = this.prefixes.get(sessionID)
-    const base =
-      frozen?.key === prefixKey
-        ? frozen.system
-        : await systemPrompt({
-            directory: session.directory,
-            agent: session.agent,
-            staged: session.staged,
-            instructions: config.instructions,
-            globalAgentsFile: this.globalAgents,
-          })
-    this.prefixes.set(sessionID, { key: prefixKey, system: base })
-    // subagents: a subagent is told what it is, after what its agent would be told anyway.
-    const system = session.parentID ? `${base}\n\n${SUBAGENT_NOTE}` : base
+    // MiMo's prefix snapshot (see systemFor).
+    const system = await this.systemFor(session)
 
     /*
      * subagents: a `subtask` command's subagent works first, as a task call on
@@ -1571,10 +1603,13 @@ export class SessionRunner {
       if (controller.signal.aborted) return
     }
 
+    // MiMo compacts at the start of a turn when the last finished reply crossed the line.
+    if (!lead) session = await this.compactIfCrossed(session, controller.signal)
+
     /*
      * The step that was last rescued by a compaction. A request the provider
      * refuses as too long is retried once against the compacted transcript,
-     * as the reference does; refused again, the error stands.
+     * as MiMo does; refused again, the error stands.
      */
     let rescued = -1
     /*
@@ -1717,29 +1752,18 @@ export class SessionRunner {
       } catch (failure) {
         /*
          * A provider that refuses the request as too long is answered the way
-         * the reference answers it: the transcript is compacted and the step
-         * runs again. The refusal is already on the transcript, in red, from
-         * `stream`; what follows it is the summary and the continuation.
-         * Only one rescue per step - a summary that is itself too long is a
-         * real failure, and it is left to stand.
+         * MiMo answers it: an overflow compaction, the user's request posted
+         * again after the summary, and the step run again. The refusal is
+         * already on the transcript, in red, from `stream`. Only one rescue per
+         * step - a summary that is itself too large is a real failure, and the
+         * original refusal is left to stand.
          */
         const reason = failure instanceof Shown ? failure.reason : failure
-        if (
-          rescued !== step &&
-          !controller.signal.aborted &&
-          // compactNow measures the prompt it will send and refuses if it
-          // cannot fit, which leaves the original refusal standing.
-          isContextOverflow(describe(reason))
-        ) {
+        if (rescued !== step && !controller.signal.aborted && isContextOverflow(describe(reason))) {
           rescued = step
-          try {
-            session = await this.compactNow(session, controller.signal)
-          } catch {
-            // The summary failed too - the same refusal, usually. The one
-            // already on the message stands; a second notice would say
-            // nothing the first did not.
-            throw failure
-          }
+          const compacted = await this.compactForOverflow(session, controller.signal)
+          if (!compacted) throw failure
+          session = compacted
           step -= 1
           continue
         }
@@ -1758,11 +1782,11 @@ export class SessionRunner {
       assistant.usage = usage
       await this.store.addUsage(sessionID, usage)
       /*
-       * The reference's other trigger: once the tokens the provider reports
-       * reach the window less the room an answer needs, the transcript is
-       * compacted before the model is asked again. Nothing for a model whose
-       * window is not known - a discovered model reports 0 - which then has
-       * only the refusal above to fall back on.
+       * MiMo's count trigger: once the tokens the provider reports reach 90%
+       * of the window, a turn that goes on is compacted as an overflow before
+       * the model is asked again, and one that ends is compacted when the next
+       * turn starts. Nothing for a model whose window is not known - a
+       * discovered model reports 0 - which has only the refusal to fall back on.
        */
       const overflowing = isOverflowByCount(usage, this.config.modelEntry(session.model))
 
@@ -1789,20 +1813,16 @@ export class SessionRunner {
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
         if (next.note && !lastStep) {
-          if (overflowing) session = await this.compactQuietly(session, controller.signal)
+          if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
           continue
         }
         /*
          * The model has stopped, but the user may have typed while it was
          * writing. Read with nothing awaited after the save above, so that a
          * message arriving from this instant onwards is the release's business
-         * and cannot fall between the two.
+         * and cannot fall between the two. A turn that ends over the line is
+         * compacted when the next one starts, as MiMo's is.
          */
-        if (overflowing) {
-          // Compacted at the end of the turn, so the next one starts inside
-          // the window instead of being refused on its first request.
-          session = await this.compactQuietly(session, controller.signal)
-        }
         if (!this.steered(sessionID)) return
         continue
       }
@@ -1830,9 +1850,8 @@ export class SessionRunner {
       await this.store.saveMessage(assistant)
 
       if (controller.signal.aborted) return
-      // The reference compacts after the step that crossed the line, before
-      // the model is asked again.
-      if (overflowing) session = await this.compactQuietly(session, controller.signal)
+      // MiMo compacts a step that crossed the line mid-turn as an overflow, before the model is asked again.
+      if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
     }
   }
 
@@ -2797,6 +2816,15 @@ interface Turn {
  */
 function pathKey(target: string): string {
   return process.platform === "win32" ? target.toLowerCase() : target
+}
+
+/** An overflow compaction leaves attached files out of what it replays, naming each where it was. */
+function withoutAttachments(history: Message[]): Message[] {
+  return history.map((message) => {
+    if (message.role !== "user" || !message.attachments.length) return message
+    const names = message.attachments.map((file) => file.path.split(/[\\/]/).pop() ?? file.path)
+    return { ...message, attachments: [], text: `${message.text}\n\n[Attached files left out to make the conversation fit: ${names.join(", ")}]` }
+  })
 }
 
 /** What a model reads besides text, from its catalog entry; the image switch counts where no image input is stated. */

@@ -60,11 +60,12 @@ let onRequest: ((n: number) => void) | undefined
  */
 let script: { name: string; input: Record<string, unknown> }[][] = []
 /**
- * What the fake says to a summary request - one that quotes the conversation
- * in <conversation> tags, as a compaction now does. Shaped like the
- * reference's template, because a reply that is not is refused.
+ * What the fake says to a summary request - one that ends on the compaction
+ * instruction, as a compaction now does (round 5, E8: the conversation is
+ * replayed as messages rather than quoted). Written in the instruction's
+ * sections, because a reply that is not is refused.
  */
-const FAKE_SUMMARY = "## Objective\n- a summary of the work so far\n\n## Next Move\n1. (none)"
+const FAKE_SUMMARY = "## Task overview\n- a summary of the work so far\n\n## Current state\n- (none)\n\n## Next steps\n1. (none)"
 /** When set, the fake answers a summary request with this instead - a model that carries on. */
 let summaryReply: string | undefined
 /** When set, the usage the fake reports for a plain reply, so a window can be crossed by count. */
@@ -116,17 +117,18 @@ const server = http.createServer((request, response) => {
        * case would pass whatever ceiling the summary asked for.
        */
       /*
-       * A summary request quotes the conversation between <conversation> tags
-       * and wraps it in a template; only the quoted part is the conversation.
-       * A turn carries it as messages. Either way it is the conversation's
-       * length that stands for its tokens, so the same conversation weighs
-       * the same however it is sent.
+       * A summary request replays the conversation as messages and ends on the
+       * compaction instruction; a turn carries the same messages. Either way it
+       * is the conversation's length that stands for its tokens, so the
+       * instruction is left out and the same conversation weighs the same
+       * however it is sent.
        */
       const turns = (asked.messages ?? []).filter((message) => message.role !== "system")
-      const quoted = /<conversation>([\s\S]*?)<\/conversation>/.exec(String(turns.at(-1)?.content ?? ""))
-      const weight = quoted
-        ? quoted[1].length
-        : turns.reduce((sum, message) => sum + (typeof message.content === "string" ? message.content.length : 0), 0)
+      const summarising = String(turns.at(-1)?.content ?? "").includes("this conversation is about to be compacted")
+      const weight = (summarising ? turns.slice(0, -1) : turns).reduce(
+        (sum, message) => sum + (typeof message.content === "string" ? message.content.length : 0),
+        0,
+      )
       enforceWindow.baseline ??= weight
       const input = Math.round((enforceWindow.tokens * weight) / (enforceWindow.baseline || weight))
       const output = asked.max_tokens ?? 0
@@ -181,7 +183,7 @@ const server = http.createServer((request, response) => {
 
     response.writeHead(200, { "content-type": "text/event-stream" })
     const chunks = [
-      { choices: [{ delta: { content: body.includes("<conversation>") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
+      { choices: [{ delta: { content: body.includes("this conversation is about to be compacted") ? (summaryReply ?? FAKE_SUMMARY) : "a summary" } }] },
       { choices: [{ delta: {}, finish_reason: "stop" }], usage: reportedUsage ?? { prompt_tokens: 10, completion_tokens: 5 } },
     ]
     let first = true
@@ -567,15 +569,15 @@ async function main(): Promise<void> {
   }
 
   /*
-   * A conversation that has outgrown its model. The reference answers it two
-   * ways and MCode now does the same: a provider that refuses the request as
-   * too long has the transcript compacted and the step retried once; and a
-   * model whose window is known is compacted as soon as the tokens it reports
-   * reach that window less the room an answer needs. The screen this came
-   * from was the first kind - a discovered vLLM model, window unknown to
-   * MCode, answering 400 with "maximum context length is 262144 tokens" after
-   * 230k of transcript went out with a 32k answer requested on top, and the
-   * turn ending in red.
+   * A conversation that has outgrown its model. MiMo answers it two ways and
+   * MCode now does the same: a provider that refuses the request as too long
+   * has the conversation compacted, the request posted again and the step
+   * retried once; and a model whose window is known is compacted once the
+   * tokens it reports reach 90% of that window. The screen this came from was
+   * the first kind - a discovered vLLM model, window unknown to MCode,
+   * answering 400 with "maximum context length is 262144 tokens" after 230k
+   * of transcript went out with a 32k answer requested on top, and the turn
+   * ending in red.
    */
   console.log("a request refused as too long is compacted and retried")
   {
@@ -609,35 +611,27 @@ async function main(): Promise<void> {
     // refusal, then the summary request, then the retry
     check("three requests: refusal, summary, retry", requests.length - before === 3, String(requests.length - before))
     const retry = JSON.parse(requests[requests.length - 1] ?? "{}") as { messages?: { content?: unknown }[]; max_tokens?: number }
-    /*
-     * The summary is what makes the rescue possible, so it has to fit where
-     * the request that was just refused did not. Asking for the usual 32,000
-     * is exactly what broke the first attempt: 230,145 tokens of transcript
-     * plus 32,000 is one token over the window that had refused it, so the
-     * summary was refused as well and the turn ended on the original error.
-     */
     const summaryRequest = JSON.parse(requests[requests.length - 2] ?? "{}") as {
       max_tokens?: number
       messages?: { role?: string; content?: unknown }[]
     }
     /*
-     * One user message quoting the conversation, not the transcript
-     * replayed. A model shown its own work in progress carries on with it:
-     * both real compactions on the machine this was found on came back as
-     * the next step of the task and replaced the conversation with it.
+     * Round 5 (E8), MiMo's shape: the conversation replayed as its own
+     * messages with the instruction added last, rather than quoted inside one
+     * message. A model that carries on instead of summarising is still caught:
+     * a reply without the instruction's sections is refused (see below).
      */
     const summaryTurns = (summaryRequest.messages ?? []).filter((message) => message.role !== "system")
     check(
-      "the summary request is the conversation quoted in one user message",
-      summaryTurns.length === 1 &&
-        summaryTurns[0].role === "user" &&
-        String(summaryTurns[0].content).includes("<conversation>") &&
-        String(summaryTurns[0].content).includes("## Objective"),
+      "the summary request replays the conversation, the instruction last",
+      summaryTurns.length > 1 &&
+        summaryTurns.some((message) => String(message.content).includes("something to have a transcript")) &&
+        String(summaryTurns.at(-1)?.content).includes("## Task overview"),
       JSON.stringify(summaryTurns.map((message) => message.role)),
     )
     check(
-      "the summary asked for the summary ceiling, not the usual one",
-      summaryRequest.max_tokens === 4096,
+      "and asks for the model's usual output cap, as MiMo's does",
+      summaryRequest.max_tokens === 32000,
       String(summaryRequest.max_tokens),
     )
     check(
@@ -650,12 +644,10 @@ async function main(): Promise<void> {
 
   /*
    * The same thing against a provider that enforces its window rather than
-   * refusing to order. This is the case the first rescue got wrong: it
-   * compacted by sending the whole transcript again and asking for the usual
-   * 32,000 output, which is over the same window the request had just been
-   * refused for, so the summary was refused too and the turn ended on the
-   * original error - exactly what the user's screen showed. The summary has
-   * to ask for less than the answer did.
+   * refusing to order. Round 5 (E8): MiMo's summary asks for the model's usual
+   * output, so a conversation whose summary cannot fit either is left as it
+   * was - no half-made summary replaces it - and the turn ends on the
+   * provider's refusal. The compaction still says it started and stopped.
    */
   /*
    * A turn that keeps calling tools. Unlimited by default, as the reference
@@ -723,7 +715,7 @@ async function main(): Promise<void> {
     await config.set({ maxSteps: undefined })
   }
 
-  console.log("the summary fits where the answer did not")
+  console.log("a summary too large for the window leaves the conversation as it was")
   {
     const compactionEvents: boolean[] = []
     let sawListedWhileCompacting: boolean | undefined
@@ -742,7 +734,7 @@ async function main(): Promise<void> {
     await settle
 
     // 230,145 of transcript against a 262,144 window: a 32,000 answer is one
-    // token too many, a 4,096 summary is not.
+    // token too many, and so is a summary asking for the same.
     enforceWindow = { window: 262144, tokens: 230145 }
     script = []
     const second = idle(tight.id)
@@ -774,8 +766,8 @@ async function main(): Promise<void> {
     )
     check("and that it had finished", compactionEvents.at(-1) === false, JSON.stringify(compactionEvents))
     const last = messages.filter((message) => message.role === "assistant").at(-1)
-    check("the session was compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
-    check("and the turn finished after it", last?.finish === "end_turn" && !last.error, String(last?.finish ?? last?.error))
+    check("a summary that cannot fit leaves the conversation uncompacted", !after?.compacted, JSON.stringify(after?.compacted ?? null))
+    check("and the turn ends on the provider's refusal", last?.finish === "error" && Boolean(last.error), String(last?.finish ?? last?.error))
   }
 
   /*
@@ -807,10 +799,9 @@ async function main(): Promise<void> {
 
   console.log("a model with a known window is compacted by count")
   {
-    // A 10,000 window with a 1,000 ceiling leaves 9,000 usable, and the fake
-    // reports 9,000 + 5 for the turn: one step over. Large enough that the
-    // summary request itself - its template alone is a few hundred tokens -
-    // still fits, which a 20-token window never did.
+    // A 10,000 window leaves MiMo's 90%, 9,000, usable, and the fake reports
+    // 9,000 + 5 for the turn: over the line. Large enough that the summary
+    // request itself still fits, which a 20-token window never did.
     await config.setDiscovered("fake", [
       { id: "m", name: "M", contextWindow: 10000, maxOutput: 1000, input: 0, output: 0 },
     ])
@@ -822,30 +813,40 @@ async function main(): Promise<void> {
     await runner.prompt({ sessionID: counted.id, text: "hello" })
     await turn
     const after = await sessions.get(counted.id)
-    check("the turn ended compacted", Boolean(after?.compacted), JSON.stringify(after?.compacted ?? null))
-    check("in two requests: the answer, then the summary", requests.length - before === 2, String(requests.length - before))
+    // Round 5 (E8): MiMo compacts a turn that ended over the line when the next one starts, not at its end.
+    check("a turn that ends over the line is not compacted there", !after?.compacted, JSON.stringify(after?.compacted ?? null))
+    check("in one request: the answer", requests.length - before === 1, String(requests.length - before))
     const answer = JSON.parse(requests[before] ?? "{}") as { max_tokens?: number }
     check("and the request asked for the model's own ceiling", answer.max_tokens === 1000, String(answer.max_tokens))
+    const next = idle(counted.id)
+    await runner.prompt({ sessionID: counted.id, text: "and the next" })
+    await next
+    const nextAfter = await sessions.get(counted.id)
+    check("the next turn starts with an automatic compaction", nextAfter?.compacted?.trigger === "automatic", JSON.stringify(nextAfter?.compacted ?? null))
+    check("in three requests: the answer, the summary, the next answer", requests.length - before === 3, String(requests.length - before))
 
     /*
-     * The same crossing, but the model will not summarise. The turn had
-     * already succeeded; a compaction made ahead of need must not turn it into
-     * an error. The reference's compactIfNeeded returns false and carries on.
+     * The same crossing, but the model will not summarise. The next turn's
+     * compaction is ahead of need: it failing must not turn that turn into an
+     * error. MiMo's quiet compaction returns and the turn carries on.
      */
     const ahead = await sessions.create({ directory: project, model: { provider: "fake", model: "m" } })
     /*
-     * Watched on the bus, not read off the message: the compaction happens
-     * after the answer is saved as end_turn, so a failure that escaped would
-     * leave that message looking finished and only show up as an error event.
+     * Watched on the bus, not read off the message: a failure that escaped the
+     * compaction would leave the answer looking finished and only show up as
+     * an error event.
      */
     const aheadErrors: string[] = []
     const offAhead = bus.subscribe((event) => {
       if (event.type === "session.error" && event.sessionID === ahead.id) aheadErrors.push(event.error)
     })
-    summaryReply = "Let me look at one more file first."
     script = []
-    const quiet = idle(ahead.id)
+    const crossing = idle(ahead.id)
     await runner.prompt({ sessionID: ahead.id, text: "hello again" })
+    await crossing
+    summaryReply = "Let me look at one more file first."
+    const quiet = idle(ahead.id)
+    await runner.prompt({ sessionID: ahead.id, text: "and once more" })
     await quiet
     summaryReply = undefined
     offAhead()

@@ -11,7 +11,7 @@ import { commandRisk } from "../src/server/command-risk"
 import { Permissions } from "../src/server/permission"
 import { DEFAULT_PERMISSIONS as PERMISSION_DEFAULTS } from "../src/shared/protocol"
 import { discoverModels } from "../src/server/provider/discover"
-import { isSummary, selectForSummary } from "../src/server/session/summary"
+import { isSummary } from "../src/server/session/summary"
 import { OpenAICompatible, toMessages } from "../src/server/provider/openai"
 import { modelVariants } from "../src/server/provider/variants"
 import { ProviderError } from "../src/server/provider/types"
@@ -1494,34 +1494,12 @@ async function main() {
      * turn on the provider's refusal.
      */
     {
-      const at = Date.now()
-      const conversation = [
-        { id: "u1", sessionID: "s", role: "user" as const, text: "start", attachments: [], time: { created: at } },
-        {
-          id: "a1",
-          sessionID: "s",
-          role: "assistant" as const,
-          model: { provider: "p", model: "m" },
-          agent: "build" as const,
-          parts: [{ id: "t1", type: "text" as const, text: "x".repeat(100_000) }],
-          time: { created: at },
-        },
-      ]
-      let picked: ReturnType<typeof selectForSummary>
-      let thrown: unknown
-      try {
-        picked = selectForSummary(conversation)
-      } catch (failure) {
-        thrown = failure
-      }
-      check("a last message larger than the kept end does not break the split", !thrown, String(thrown))
-      check("and the summary covers everything, marked at the last message", picked?.mark.id === "a1" && picked.recent === "", picked?.mark.id)
-
       /*
        * What counts as a summary. The two real failures were one sentence of
-       * the task carrying on; a model that translates the template's
-       * headings still writes sections, and refusing it would leave the turn
-       * on the provider's 400.
+       * the task carrying on; a model that translates the section headings
+       * still writes sections, and refusing it would leave the turn on the
+       * provider's 400. (round 5, E8: the conversation is now replayed as
+       * messages, so there is no quoted split left to check.)
        */
       check(
         "a continuation of the task is not a summary",
@@ -1531,7 +1509,7 @@ async function main() {
         "a summary with translated headings is one",
         isSummary("## 目标\n- 审计两个新功能\n\n## 工作状态\n- 已完成构建\n\n## 下一步\n1. 修复枚举"),
       )
-      check("the template as written is one", isSummary("## Objective\n- audit\n\n## Next Move\n1. (none)"))
+      check("the sections as written are one", isSummary("## Task overview\n- audit\n\n## Next steps\n1. (none)"))
     }
 
     /*
