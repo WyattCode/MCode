@@ -11,6 +11,9 @@ import { TaskTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
+import { HistoryTool } from "./history"
+import { MemoryTool } from "./memory"
+import { CronTool } from "./cron"
 
 /**
  * The tool surface offered to the model.
@@ -51,6 +54,11 @@ export const TOOLS: ToolDefinition[] = [
   TalkToSessionTool,
   CreateSessionTool,
   UpdateSessionTool,
+  // history: appended after those for the same reason.
+  HistoryTool,
+  MemoryTool,
+  // cron: appended after those for the same reason.
+  CronTool,
 ]
 
 /**
@@ -137,6 +145,11 @@ const READS = new Set([
   "talk_to_session",
   "create_session",
   "update_session",
+  // history, memory: they only read the app's own record.
+  "history",
+  "memory",
+  // cron: scheduling changes no file but the task list, and a fired prompt's turn records its own.
+  "cron",
 ])
 
 /**

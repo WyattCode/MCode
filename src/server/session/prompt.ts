@@ -38,6 +38,21 @@ export interface PromptContext {
   globalAgentsFile?: string
   /** Whether the conversation works in stages. */
   staged?: boolean
+  /** memory: the memory files a top-level conversation keeps; absent for a subagent. */
+  memory?: { project: string; global: string; notes: string }
+}
+
+/* memory: what the model is told about memory, in this app's words; MiMo's desktop build describes the same three files. */
+function memorySection(files: { project: string; global: string; notes: string }): string {
+  return `## Memory
+
+Some notes outlast this conversation. They are markdown files you read and write with the ordinary tools, without asking:
+
+- Project memory: \`${files.project}\` - what the project is, rules the user set for it, design decisions and facts later conversations in this project will need. Edit it when the user states a lasting rule or decision for the project, or when you learn something durable.
+- Global memory: \`${files.global}\` - the user's preferences that hold in every project.
+- This conversation's notes: \`${files.notes}\` - your one scratchpad. Add entries headed \`## [turn N · YYYY-MM-DDTHH:MM:SSZ]\` for open questions, quotes worth keeping or context that will matter later. Do not create other memory files.
+
+Before asking the user something they may already have told you, search with the memory tool; use the history tool for exact past wording.`
 }
 
 /**
@@ -110,6 +125,8 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
 
   const commands = await projectCommands(context.directory)
   if (commands) sections.push(commands)
+
+  if (context.memory) sections.push(memorySection(context.memory))
 
   /*
    * Last, and in this order: the environment changes per project, the

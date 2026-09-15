@@ -1,6 +1,7 @@
 import path from "node:path"
 import fs from "node:fs/promises"
 import { ToolError, type ToolContext } from "./types"
+import { isMemoryPath } from "../history/service"
 
 /**
  * Resolves a model-supplied path against the session directory and refuses
@@ -99,6 +100,8 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   if (!relative.startsWith("..") && !path.isAbsolute(relative)) return resolved
 
   if (context.permissions.allowsOutside(context.sessionID, real)) return resolved
+  // memory: the memory folder is reached without asking, as MiMo does.
+  if (isMemoryPath(real)) return resolved
 
   // Approve the directory itself, not the file, so reading a second file in the
   // same folder does not ask again.

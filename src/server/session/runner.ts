@@ -49,6 +49,7 @@ import {
 } from "./overflow"
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
+import { memoryFilesFor } from "../history/service"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -178,7 +179,9 @@ const MAX_STEPS_PROMPT = [
  * turn while it is still running, and so an abort can land mid-tool.
  */
 /** Tools a subagent never gets: starting subagents, and talking to other conversations. */
-const SUBAGENT_WITHHELD = new Set(["task", "contacts", "talk_to_session", "create_session", "update_session"])
+const SUBAGENT_WITHHELD = new Set(["task", "contacts", "talk_to_session", "create_session", "update_session", "automation_update"])
+/* history, memory, cron: MiMo's explore agent is denied everything but reading and searching the project. */
+const EXPLORE_WITHHELD = new Set(["history", "memory", "cron"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -1344,6 +1347,8 @@ export class SessionRunner {
       staged: session.staged,
       instructions: config.instructions,
       globalAgentsFile: this.globalAgents,
+      // memory: told to a conversation's own turns, not to a subagent's, as MiMo does.
+      memory: session.parentID ? undefined : memoryFilesFor(session.directory, session.id),
     })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
     const system = session.parentID ? `${base}\n\n${SUBAGENT_NOTE}` : base
@@ -1483,7 +1488,7 @@ export class SessionRunner {
               : history,
         // subagents: a subagent is never handed the task tool, so it cannot start subagents of its own,
         // nor the session chat tools, which refuse a subagent anyway and only cost it a wasted call.
-        tools: lastStep ? [] : this.tools(session.agent, session.model.model).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+        tools: lastStep ? [] : this.tools(session.agent, session.model.model).filter((tool) => !session.parentID || (!SUBAGENT_WITHHELD.has(tool.name) && !(session.subagent?.type === "explore" && EXPLORE_WITHHELD.has(tool.name)))),
         effort,
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,
