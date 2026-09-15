@@ -967,6 +967,14 @@ const archived = computed(() =>
   app.sessions.filter((session) => session.archived).sort((a, b) => b.updated - a.updated),
 )
 
+/* MiMo's row line: 已归档 · 项目「name」 · time, or without the project for a scratch task. */
+function archivedDescription(session: { directory: string; updated: number; scratch?: boolean }): string {
+  const head = session.scratch
+    ? t("set.archivedPlain")
+    : t("set.archivedIn", { project: projectName(session.directory, app.config?.projectNames) })
+  return `${head} · ${ago(session.updated)}`
+}
+
 /*
  * MiMo's batch management for archived conversations: a toggle beside the
  * heading turns the rows into checkboxes, and a toolbar selects all or none,
@@ -3058,39 +3066,28 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <!-- Archive -->
         <template v-else-if="section === 'archive'">
-          <h2>{{ t("set.nav.archive") }}</h2>
-          <p class="note">{{ t("set.archiveSub") }}</p>
-
-          <h3 class="sub-head">{{ t("set.closedProjects") }}</h3>
-          <p class="sub-note">{{ t("set.closedSub") }}</p>
-
-          <div v-if="!closedProjects.length" class="empty-note">{{ t("set.closedEmpty") }}</div>
-
-          <div v-else class="card">
-            <div v-for="directory in closedProjects" :key="directory" class="line">
-              <div class="line-text">
-                <div class="line-title">{{ projectName(directory, app.config?.projectNames) }}</div>
-                <div class="line-sub">{{ directory }}</div>
-              </div>
-              <div class="confirm">
-                <button class="ctl-btn" @click="reopenProject(directory)">{{ t("set.reopen") }}</button>
-              </div>
-            </div>
-          </div>
-
-          <div class="sec-row archived-head">
-            <h3 class="sub-head">{{ t("set.archivedSessions") }}</h3>
+          <!-- MiMo's header: the page title, and 批量管理 at its far end while anything is archived. -->
+          <div class="page-head">
+            <h2>{{ t("set.nav.archive") }}</h2>
             <button
               v-if="archived.length"
-              class="ctl-btn batch-toggle"
+              class="archived-manage"
+              data-archived-manage
               @click="selecting ? stopSelecting() : (selecting = true)"
             >
               {{ selecting ? t("set.batchDone") : t("set.batchManage") }}
             </button>
           </div>
-          <p class="sub-note">{{ t("set.archivedSub") }}</p>
 
-          <div v-if="!archived.length" class="empty-note">{{ t("set.archiveEmpty") }}</div>
+          <!-- MiMo's empty state is a card holding one row, not a loose note. -->
+          <div v-if="!archived.length" class="card">
+            <div class="line" data-archived-empty>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.archivedEmptyTitle") }}</div>
+                <div class="line-sub">{{ t("set.archivedEmptyDesc") }}</div>
+              </div>
+            </div>
+          </div>
 
           <template v-else>
             <div v-if="selecting" class="batch-bar">
@@ -3103,7 +3100,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   {{ t("set.restoreN", { n: String(pickedLive.length) }) }}
                 </button>
                 <button
-                  class="plink danger"
+                  class="archived-delete"
                   data-batch="delete"
                   :disabled="!pickedLive.length"
                   @click="confirmingDelete = { ids: [...pickedLive] }"
@@ -3114,36 +3111,58 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
 
             <div class="card">
-              <div
-                v-for="session in archived"
-                :key="session.id"
-                class="line archived-row"
-                :class="{ picking: selecting }"
-                :role="selecting ? 'checkbox' : undefined"
-                :aria-checked="selecting ? pickedLive.includes(session.id) : undefined"
-                @click="selecting && togglePick(session.id)"
-              >
-                <span v-if="selecting" class="check" :class="{ on: pickedLive.includes(session.id) }" aria-hidden="true">
-                  <svg v-if="pickedLive.includes(session.id)" width="10" height="10" viewBox="0 0 12 12" fill="none">
-                    <path d="M2.5 6.2 5 8.6l4.5-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
-                  </svg>
-                </span>
+              <div v-for="session in archived" :key="session.id" class="line archived-row" :data-archived-row="session.id">
                 <div class="line-text">
-                  <div class="line-title">{{ sessionTitle(session.title) }}</div>
-                  <div class="line-sub">{{ session.directory }} · {{ ago(session.updated) }}</div>
+                  <!-- In select mode the checkbox and the title are the toggle; the rest of the row is not. -->
+                  <div
+                    class="line-title archived-title"
+                    :class="{ picking: selecting }"
+                    :role="selecting ? 'checkbox' : undefined"
+                    :aria-checked="selecting ? pickedLive.includes(session.id) : undefined"
+                    @click="selecting && togglePick(session.id)"
+                  >
+                    <span v-if="selecting" class="check" :class="{ on: pickedLive.includes(session.id) }" aria-hidden="true">
+                      <svg v-if="pickedLive.includes(session.id)" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M2.5 6.2 5 8.6l4.5-5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+                      </svg>
+                    </span>
+                    <span class="archived-name">{{ sessionTitle(session.title) }}</span>
+                  </div>
+                  <div class="line-sub">{{ archivedDescription(session) }}</div>
                 </div>
                 <div v-if="!selecting" class="confirm">
-                  <button class="ctl-btn" @click="app.archive(session.id, false)">{{ t("set.unarchive") }}</button>
+                  <button class="ctl-btn" data-archived-restore @click="app.archive(session.id, false)">{{ t("set.unarchive") }}</button>
                   <button
-                    class="plink danger"
+                    class="archived-delete"
+                    data-archived-delete
                     @click="confirmingDelete = { ids: [session.id], title: sessionTitle(session.title) }"
                   >
-                    {{ t("set.deleteForever") }}
+                    {{ t("set.archivedDelete") }}
                   </button>
                 </div>
               </div>
             </div>
           </template>
+
+          <!-- MCode's own undo for closed projects, kept below MiMo's list under its own heading. -->
+          <h3 class="closed-head">{{ t("set.closedProjects") }}</h3>
+          <div class="card" data-closed-projects>
+            <div v-if="!closedProjects.length" class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.archivedEmptyTitle") }}</div>
+                <div class="line-sub">{{ t("set.closedSub") }}</div>
+              </div>
+            </div>
+            <div v-for="directory in closedProjects" :key="directory" class="line">
+              <div class="line-text">
+                <div class="line-title">{{ projectName(directory, app.config?.projectNames) }}</div>
+                <div class="line-sub">{{ directory }}</div>
+              </div>
+              <div class="confirm">
+                <button class="ctl-btn" @click="reopenProject(directory)">{{ t("set.reopen") }}</button>
+              </div>
+            </div>
+          </div>
 
           <Teleport to="body">
             <ConfirmDialog
@@ -3158,7 +3177,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   ? t('set.deleteOneBody', { title: confirmingDelete.title })
                   : t('set.deleteManyBody', { n: String(confirmingDelete.ids.length) })
               "
-              :confirm-label="t('set.deleteForever')"
+              :confirm-label="t('set.archivedDelete')"
               @confirm="confirmRemove"
               @close="confirmingDelete = undefined"
             />
@@ -3416,28 +3435,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 .font-field::placeholder {
   color: var(--text-weak);
-}
-
-/* Splits the two kinds of undo on this page without turning them into tabs. */
-/* The same heading the rest of the settings use; it was a smaller uppercase
-   label here, and referred to a token that does not exist. */
-.sub-head {
-  margin: 28px 0 12px;
-  color: var(--text-strong);
-  font-size: calc(15px * var(--ui-font-scale, 1));
-  font-weight: 640;
-  line-height: 1;
-}
-
-.sub-head:first-of-type {
-  margin-top: 6px;
-}
-
-.sub-note {
-  margin: -8px 0 14px;
-  color: var(--text-weak);
-  font-size: calc(12.5px * var(--ui-font-scale, 1));
-  line-height: 1.6;
 }
 
 .overlay {
@@ -4816,11 +4813,6 @@ h3 {
   font-size: calc(12.5px * var(--ui-font-scale, 1));
 }
 
-.empty-note {
-  padding: 18px 2px;
-  color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
 /* Provider rows read as a scannable list: identity on the left, one action on
    the right. The key field is disclosed per row rather than always present -
    eleven permanent input boxes was a wall, not a list. */
@@ -5462,28 +5454,101 @@ h3 {
   cursor: default;
 }
 
-.archived-head h3 {
+/* MiMo's archived header: the page title with 批量管理 at its far end. */
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-block-end: 27px;
+}
+
+.page-head h2 {
   margin: 0;
 }
 
-.archived-row.picking {
-  gap: 10px;
+.archived-manage {
+  margin-inline-start: auto;
+  padding: 5px 12px;
+  color: var(--text-strong);
+  background: var(--surface-base);
+  border: 1px solid var(--border-weak);
+  border-radius: 7px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  font-weight: 400;
+}
+
+.archived-manage:hover {
+  background: var(--surface-hover);
+}
+
+/* MiMo's ghost delete: red text, a light red wash on hover. */
+.archived-delete {
+  padding: 4px 10px;
+  color: #d93025;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+.archived-delete:hover:not(:disabled) {
+  background: #fdecea;
+}
+
+:root[data-theme="dark"] .archived-delete {
+  color: #ff9b7f;
+}
+
+:root[data-theme="dark"] .archived-delete:hover:not(:disabled) {
+  background: #3a2320;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .archived-delete {
+    color: #ff9b7f;
+  }
+
+  :root:not([data-theme="light"]) .archived-delete:hover:not(:disabled) {
+    background: #3a2320;
+  }
+}
+
+.archived-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.archived-title.picking {
   cursor: pointer;
 }
 
+.archived-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* MiMo's checkbox: 18 square, 5 round; the send fill with a heavy white tick when checked. */
 .check {
   display: grid;
   flex-shrink: 0;
   place-items: center;
-  width: 16px;
-  height: 16px;
-  color: var(--surface-raised);
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  color: var(--button-primary-text);
   border: 1px solid var(--text-weak);
-  border-radius: 4px;
+  border-radius: 5px;
 }
 
 .check.on {
-  background: var(--text-strong);
-  border-color: var(--text-strong);
+  background: var(--button-primary);
+  border-color: var(--button-primary);
+}
+
+.closed-head {
+  margin-block-start: 36px;
 }
 </style>
