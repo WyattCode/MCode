@@ -14,6 +14,9 @@ import { McpServers } from "./mcp"
 import { createSampler } from "./mcp-sampling"
 import { handle } from "./handlers"
 import { bindDesktopSettings } from "./tool/desktop-settings"
+import { startHistory, stopHistory } from "./history/service"
+import { startScheduler } from "./cron/start"
+import { startAutomations } from "./automation/start"
 
 export interface Runtime {
   storage: Storage
@@ -67,6 +70,12 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
+  // history: the search index beside the store, filled in the background.
+  const history = startHistory(dataDirectory, sessions, storage, bus)
+  // cron: scheduled prompts fire into their conversations while the app runs.
+  const scheduler = startScheduler(runner, sessions, config, bus)
+  // automation: MiMo's scheduled tasks, kept in the data folder and run while the app is open.
+  const automations = startAutomations(dataDirectory, runner, sessions, config, bus)
   const shells = new Shells(bus)
   const mcp = new McpServers(bus, config, storage)
   mcp.useSampling(createSampler({ config, auth, permissions }))
@@ -142,6 +151,9 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
     async close() {
       await shells.closeAll()
       mcp.close()
+      await scheduler.stop()
+      await automations.stop()
+      stopHistory(history)
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))
     },

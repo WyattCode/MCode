@@ -1,8 +1,10 @@
-import type { Message } from "@shared/protocol"
-import { withAnnotations } from "@shared/annotations"
+import type { Message, ModelModalities } from "@shared/protocol"
+import { attachmentParts } from "./attachment-parts"
+import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, systemText, wireOfBody } from "./types"
+import { requestHistory } from "./history"
 import { USER_AGENT } from "../auth/oauth"
 import { stallGuard } from "./stall"
 
@@ -31,7 +33,7 @@ interface StreamEvent {
   /** Present on `error` frames; `response.failed` nests it under `response`. */
   message?: string
   code?: string
-  error?: { message?: string }
+  error?: { message?: string; code?: string; type?: string }
   response?: {
     error?: { message?: string }
     usage?: {
@@ -62,23 +64,23 @@ function toolSchemas(tools: ToolDefinition[]) {
  * the backend rejects the turn - the same constraint as the other adapters,
  * expressed with different item types.
  */
-function toInput(history: Message[]): Record<string, unknown>[] {
+function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
 
-  for (const message of history) {
+  for (const message of requestHistory(history)) {
     if (message.role === "user") {
-      const attachments = message.attachments ?? []
-      const images = attachments.filter((attachment) => attachment.mime.startsWith("image/"))
-      const files = attachments
-        .filter((attachment) => !attachment.mime.startsWith("image/"))
-        .map((attachment) => `<file path="${attachment.path}">\n${attachment.data}\n</file>`)
-      const text = [...files, withAnnotations(message.text, message.annotations, message.fileNotices)].filter(Boolean).join("\n\n")
+      // MiMo's parts: images and PDFs the model reads go natively, anything else as text or a note.
+      const parts = attachmentParts(message.attachments ?? [], inputs, "responses")
+      const text = [...parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])), userText(message)].filter(Boolean).join("\n\n")
       const content = [
         ...(text ? [{ type: "input_text", text }] : []),
-        ...images.map((image) => ({
-          type: "input_image",
-          image_url: `data:${image.mime};base64,${image.data}`,
-        })),
+        ...parts.flatMap((part): Record<string, unknown>[] =>
+          part.kind === "image"
+            ? [{ type: "input_image", image_url: `data:${part.mime};base64,${part.data}` }]
+            : part.kind === "pdf"
+              ? [{ type: "input_file", filename: part.name, file_data: `data:application/pdf;base64,${part.data}` }]
+              : [],
+        ),
       ]
       if (content.length) out.push({ type: "message", role: "user", content })
       continue
@@ -99,10 +101,7 @@ function toInput(history: Message[]): Record<string, unknown>[] {
 
     for (const part of message.parts) {
       if (part.type !== "tool") continue
-      // A call with no result is worse than no call at all: the backend rejects
-      // an unpaired function_call, so an interrupted turn would poison every
-      // later request in the session. Drop the pair, not just the output.
-      if (part.status === "pending" || part.status === "running") continue
+      // A call that never finished arrives here already answered as interrupted (see history.ts).
       out.push({
         type: "function_call",
         call_id: part.callID,
@@ -177,6 +176,12 @@ export function reasoningRequest(
   return { reasoning: { effort, summary: showReasoning ? "auto" : "concise" } }
 }
 
+/** Whether a model keeps its default verbosity: anything but a GPT-5.x that is not codex or chat. */
+export function verbose(modelID: string): boolean {
+  const id = modelID.toLowerCase()
+  return !/(?:^|\/)gpt-5\.\d/.test(id) || id.includes("codex") || id.includes("-chat")
+}
+
 export const ChatGPTSubscription: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const base = (request.baseURL ?? "https://chatgpt.com/backend-api/codex").replace(/\/$/, "")
@@ -189,6 +194,8 @@ export const ChatGPTSubscription: ProviderAdapter = {
       "User-Agent": USER_AGENT,
     }
     if (request.accountId) headers["chatgpt-account-id"] = request.accountId
+    // MiMo keeps a conversation's requests together with this header.
+    if (request.sessionID) headers["x-session-affinity"] = request.sessionID
 
     // MiMo's timeouts for this API: 300s to the response headers, then 480s of quiet at most.
     const guard = stallGuard(request.signal, true)
@@ -198,15 +205,19 @@ export const ChatGPTSubscription: ProviderAdapter = {
       signal: guard.signal,
       body: JSON.stringify({
         model: request.model.model,
-        instructions: request.system,
-        input: toInput(request.history),
+        instructions: systemText(request),
+        input: toInput(request.history, request.inputs),
         tools: toolSchemas(request.tools),
         tool_choice: "auto",
         parallel_tool_calls: false,
         // Nothing is retained server-side: the transcript lives in this app.
         store: false,
         stream: true,
+        // MiMo's prompt cache key for OpenAI: the conversation's id, so its prefix is found again.
+        ...(request.sessionID ? { prompt_cache_key: request.sessionID } : {}),
         ...reasoningRequest(request.effort, request.variants, request.showReasoning),
+        // MiMo asks GPT-5.x for terse text, except the codex and chat models.
+        ...(verbose(request.model.model) ? {} : { text: { verbosity: "low" } }),
       }),
     }).catch((err: unknown) => {
       guard.dispose()
@@ -216,7 +227,7 @@ export const ChatGPTSubscription: ProviderAdapter = {
     if (!response.ok || !response.body) {
       guard.dispose()
       const detail = await response.text().catch(() => "")
-      throw new Error(`ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`)
+      throw new ProviderHttpError(`ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`, response.status, headersOf(response), wireOfBody(detail))
     }
 
     const toolCalls: ToolCall[] = []
@@ -318,11 +329,12 @@ export const ChatGPTSubscription: ProviderAdapter = {
 
           case "response.completed":
           case "response.incomplete": {
+            // MiMo's split: input without the cached tokens it includes, output without the reasoning.
             const reported = event.response?.usage
-            usage.input = reported?.input_tokens ?? 0
-            usage.output = reported?.output_tokens ?? 0
-            usage.reasoning = reported?.output_tokens_details?.reasoning_tokens ?? 0
             usage.cacheRead = reported?.input_tokens_details?.cached_tokens ?? 0
+            usage.reasoning = reported?.output_tokens_details?.reasoning_tokens ?? 0
+            usage.input = (reported?.input_tokens ?? 0) - usage.cacheRead
+            usage.output = (reported?.output_tokens ?? 0) - usage.reasoning
             if (event.type === "response.incomplete") stop = "max_tokens"
             settled = true
             break
@@ -337,6 +349,10 @@ export const ChatGPTSubscription: ProviderAdapter = {
                 event.error?.message ??
                 event.message ??
                 "ChatGPT stream failed without saying why.",
+              undefined,
+              undefined,
+              // The code decides the retry: GPT's overload answer is tried at once, three times at most.
+              { ...(event.code ? { code: event.code } : {}), ...(event.error?.code ? { code: event.error.code } : {}), ...(event.error?.type ? { type: event.error.type } : {}) },
             )
         }
       }

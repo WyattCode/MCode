@@ -29,6 +29,8 @@ import {
 import { isKnownOpenWith } from "@shared/open-app"
 import { installedOpenAppIcons, installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
+import { SOUNDFONT } from "@shared/soundfont"
+import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
 import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
@@ -1174,6 +1176,15 @@ app.whenReady().then(async () => {
     if (tray) refreshTray(true)
     return { ok: true }
   })
+
+  /* A reply's score plays through the soundfont beside the asar; the window gets its bytes only once they verify. */
+  ipcMain.handle("mcode:soundfont", () =>
+    readSoundfont(
+      app.isPackaged
+        ? path.join(process.resourcesPath, "soundfont", SOUNDFONT.file)
+        : path.join(here, "../../resources/soundfont", SOUNDFONT.file),
+    ),
+  )
 
   /* MiMo's 显示服务器 (Linux): the saved choice and what it resolves to; elsewhere, unsupported. */
   ipcMain.handle("mcode:display-server", () =>

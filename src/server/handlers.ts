@@ -400,7 +400,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {} satisfies Handled<"session.delete">
 
     case "session.rename":
-      return { session: await runtime.sessions.update(request.sessionID, { title: request.title }) }
+      // A title the user chose is theirs: the generated one never replaces it.
+      return { session: await runtime.sessions.update(request.sessionID, { title: request.title, titleSource: "user" }) }
 
     /*
      * The conversation stays as it is; only the project it works in changes.
@@ -903,6 +904,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ...(Object.keys(headers).length ? { headers } : {}),
             models,
             ...(environment ? { environment } : {}),
+            // A Claude-style gateway speaks the Messages API; absent stays OpenAI-compatible.
+            ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
           },
         ],
       })
@@ -949,6 +952,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 ...(Object.keys(headers).length ? { headers } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
+                ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
               }
             : entry,
         ),

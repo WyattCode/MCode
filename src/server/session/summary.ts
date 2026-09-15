@@ -1,193 +1,134 @@
-import type { Message } from "@shared/protocol"
-import { withAnnotations } from "@shared/annotations"
-import { estimateTokens } from "./overflow"
+import path from "node:path"
+import type { Message, ToolPart } from "@shared/protocol"
+import { reminder } from "./reminders"
 
 /**
- * What a compaction asks the model for, and how the conversation is put in
- * front of it. The reference's `SessionCompaction` - its template, its
- * instructions, its serializer and its split - kept as they stand.
+ * Compaction as MiMo does it, in MCode's words.
  *
- * The shape matters more than the wording. MCode used to replay the whole
- * transcript as a live conversation with a one-line system prompt on top, and
- * a model shown 230k tokens of work in progress does the natural thing: it
- * carries on. Both real compactions on the machine this was found on came
- * back as the next step of the task - "Let me grab the last few source-field
- * bounds...", "I'll check the GameCategory enum next" - and replaced hundreds
- * of messages of context with one sentence. The reference quotes the
- * conversation as text inside a single user message and puts the instruction
- * after it, so the last thing the model reads is what to write.
+ * The conversation is replayed to the model as it stands - its own system
+ * prompt, its tools, its messages - with one instruction added at the end,
+ * so the request reads back from the cache the turns already wrote. The reply
+ * replaces everything before it: the next request opens with the summary,
+ * tagged with what set the compaction off, and a list of the files the
+ * summarised part had been working on, so the model reads them again before
+ * editing them.
  */
 
-/** The reference's `DEFAULT_KEEP_TOKENS`: how much of the recent end stays word for word. */
-export const KEEP_RECENT_TOKENS = 8_000
+/** What set a compaction off: the user's button, the count crossing the line at a turn's start, or a request too large for the model. */
+export type CompactionTrigger = "manual" | "automatic" | "provider-overflow"
 
-/** The reference's `TOOL_OUTPUT_MAX_CHARS`. */
-const TOOL_OUTPUT_MAX_CHARS = 2_000
+/** The instruction appended to the replayed conversation. */
+export const SUMMARY_INSTRUCTION = [
+  "Stop working on the task for a moment: this conversation is about to be compacted, and your reply will replace everything above it.",
+  "Write a summary another agent can carry on from, with exactly these sections:",
+  "",
+  "## Task overview",
+  "What the user asked for, and what finished looks like.",
+  "",
+  "## Current state",
+  "What is done, which files were created or changed, and what came out of it.",
+  "",
+  "## Discoveries",
+  "Constraints, decisions and their reasons, errors met, and approaches that did not work.",
+  "",
+  "## Next steps",
+  "What to do next, anything in the way, and in what order.",
+  "",
+  "## Context to preserve",
+  "The user's preferences, details of the domain, and anything promised to the user.",
+  "",
+  "Keep exact paths, names, commands and error text, and be brief. Do not call any tool. Put the whole summary between <summary> and </summary>.",
+].join("\n")
 
-/** The reference's `SUMMARY_TEMPLATE`, verbatim. */
-const SUMMARY_TEMPLATE = `Output exactly the Markdown structure shown inside <template> and keep the section order unchanged. Do not include the <template> tags in your response.
-<template>
-## Objective
-- [one or two brief sentences describing what the user is trying to accomplish]
-
-## Important Details
-- [constraints/preferences, decisions and why, important facts/assumptions, exact context needed to continue, or "(none)"]
-
-## Work State
-### Completed
-- [finished work, verified facts, or changes made; otherwise "(none)"]
-
-### Active
-- [current work, partial changes, or investigation state; otherwise "(none)"]
-
-### Blocked
-- [blockers, failing commands, or unknowns; otherwise "(none)"]
-
-## Next Move
-1. [immediate concrete action, or "(none)"]
-2. [next action if known, or "(none)"]
-
-## Relevant Files
-- [file or directory path: why it matters, or "(none)"]
-</template>
-
-Rules:
-- Keep every section, even when empty.
-- Use terse bullets, not prose paragraphs.
-- Preserve exact file paths, symbols, commands, error strings, URLs, and identifiers when known.
-- Do not mention the summary process or that context was compacted.`
-
-/** The reference's `SUMMARY_UPDATE_INSTRUCTIONS`, verbatim. */
-const SUMMARY_UPDATE_INSTRUCTIONS = `The <prior-summary> summarizes everything that happened before the <conversation>. Construct a new summary that combines both. The <prior-summary> is discarded after this: anything you do not carry into the new summary is lost.
-
-When combining:
-- Carry forward objectives, constraints, user directives, decisions, and parallel workstreams from the <prior-summary> even when the <conversation> does not mention them. Drop only what is finished and no longer needed.
-- The <conversation> is more recent than the <prior-summary>. Where they conflict, the conversation wins: state the corrected fact and drop the old claim.
-- Add new progress, decisions, constraints, and context from the conversation.
-- Move completed work from "Active" to "Completed".
-- If a blocker has been resolved, update the summary to reflect that while keeping any details still needed to continue the work.
-- Update "Objective" and "Next Move" to reflect the current work state.`
-
-/** The reference's `truncate`. */
-function truncate(value: string): string {
-  return value.length <= TOOL_OUTPUT_MAX_CHARS ? value : `${value.slice(0, TOOL_OUTPUT_MAX_CHARS)}\n[truncated]`
-}
-
-/** The reference's `serialize`, over MCode's message shapes. */
-export function serialize(message: Message): string {
-  if (message.role === "user") {
-    const files = message.attachments.map((file) => `[Attached ${file.mime}: ${file.path}]`)
-    return [`[User]: ${withAnnotations(message.text, message.annotations, message.fileNotices)}`, ...files].join("\n")
-  }
-  return message.parts
-    .flatMap((part) => {
-      if (part.type === "text") return [`[Assistant]: ${part.text}`]
-      if (part.type === "reasoning") return part.text ? [`[Assistant reasoning]: ${part.text}`] : []
-      if (part.type !== "tool") return []
-      const call = `[Assistant tool call]: ${part.name}(${JSON.stringify(part.input ?? {})})`
-      if (part.status === "completed") return [call, `[Tool result]: ${truncate(part.output ?? "")}`]
-      if (part.status === "error") return [call, `[Tool error]: ${part.error ?? ""}`]
-      return [call]
-    })
-    .join("\n")
-}
-
-/**
- * The reference's `select`: the recent end of the conversation, up to
- * `KEEP_RECENT_TOKENS`, stays word for word after the summary, and everything
- * before it is what the summary covers.
- *
- * `mark` is the last message the summary covers - the one the compaction
- * records, so the model's view afterwards is the summary followed by the kept
- * end. When the whole conversation fits inside the kept end the reference
- * declines to compact; here that is answered by summarising all of it,
- * because a refusal after a provider has already rejected the request for
- * length leaves the turn with nowhere to go.
- */
-export function selectForSummary(
-  messages: Message[],
-  keep = KEEP_RECENT_TOKENS,
-): { head: string; recent: string; mark: Message } | undefined {
-  const rendered = messages.map((message, index) => ({ index, text: serialize(message) })).filter((entry) => entry.text)
-  if (rendered.length === 0) return undefined
-
-  let total = 0
-  let split = rendered.length
-  for (let at = rendered.length - 1; at >= 0; at--) {
-    const next = total + estimateTokens(rendered[at].text.length)
-    if (next > keep) break
-    total = next
-    split = at
-  }
-
-  /*
-   * Either end means there is no split to make. `split === 0` is a
-   * conversation that fits inside the kept end entirely; `split` still at the
-   * length is one whose last message alone is over it - a long reasoning
-   * block or a pasted file does that, since only tool output is cut - so
-   * nothing can be kept. Both summarise everything and mark the last message.
-   * Reading `rendered[split]` in the second case is what crashed here: the
-   * reference only ever slices at the split, and slicing past the end is
-   * harmless where indexing is not.
-   */
-  if (split === 0 || split === rendered.length) {
-    return {
-      head: rendered.map((entry) => entry.text).join("\n\n"),
-      recent: "",
-      mark: messages[messages.length - 1],
-    }
-  }
-  return {
-    head: rendered
-      .slice(0, split)
-      .map((entry) => entry.text)
-      .join("\n\n"),
-    recent: rendered
-      .slice(split)
-      .map((entry) => entry.text)
-      .join("\n\n"),
-    // The message just before the first one kept, in the unfiltered list, so
-    // a message that serialises to nothing is never stranded on either side.
-    mark: messages[rendered[split].index - 1],
-  }
-}
-
-/** The reference's `buildPrompt`. */
-export function buildSummaryPrompt(input: { previousSummary?: string; context: string[] }): string {
-  const conversation = `Here is the conversation so far:\n\n<conversation>\n${input.context.join("\n\n")}\n</conversation>`
-  if (!input.previousSummary) {
-    return [
-      conversation,
-      "Create a new anchored summary from the conversation history in the <conversation> tags above so another coding agent can continue the work.",
-      SUMMARY_TEMPLATE,
-    ].join("\n\n")
-  }
-  return [
-    conversation,
-    `Here is the summary of the conversation before the <conversation> above:\n\n<prior-summary>\n${input.previousSummary}\n</prior-summary>`,
-    SUMMARY_UPDATE_INSTRUCTIONS,
-    SUMMARY_TEMPLATE,
-  ].join("\n\n")
+/** The summary inside its tags, or the reply as it came when the tags were left off. */
+export function extractSummary(text: string): string {
+  const found = /<summary>([\s\S]*?)<\/summary>/i.exec(text)
+  return (found ? found[1]! : text.replace(/<\/?summary>/gi, "")).trim()
 }
 
 /**
  * Whether a reply is a summary at all.
  *
- * Not in the reference, which trusts any non-empty reply. It is here because
- * the failure it catches is the one that was seen: a model that continues the
- * task instead of summarising it returns a sentence, and accepting that
- * replaces the whole conversation with it - silently, with nothing on screen
- * to say the context is gone. The template's first heading is the cheapest
- * sign the instruction was followed; a reply without it is refused, and the
- * provider's own rejection of the original request stands instead.
- *
- * Three or more second-level headings count as well. Measured on the user's
- * own Qwen with a Chinese conversation, the template's English headings came
- * back as written; but a model that translates them - "## 目标" - would
- * otherwise have a real summary refused and the turn left on a 400, and a
- * one-sentence continuation has no headings at all, so it is still refused.
+ * A model that carries on with the task instead of summarising it returns a
+ * sentence, and accepting that would replace the whole conversation with it.
+ * The first section's heading is the plainest sign the instruction was
+ * followed; three or more second-level headings count as well, for a model
+ * that translates them.
  */
 export function isSummary(text: string): boolean {
-  if (/^\s*##\s*Objective\b/m.test(text)) return true
+  if (/^\s*##\s*Task overview\b/im.test(text)) return true
   return (text.match(/^\s*##\s+\S/gm) ?? []).length >= 3
+}
+
+/** MiMo keeps the five files most recently worked on, and each one's last three events. */
+const MANIFEST_FILES = 5
+const MANIFEST_EVENTS = 3
+
+function eventOf(part: ToolPart): string | undefined {
+  const input = part.input ?? {}
+  if (part.name === "read") {
+    const offset = typeof input.offset === "number" ? input.offset : undefined
+    const limit = typeof input.limit === "number" ? input.limit : undefined
+    if (offset !== undefined && limit !== undefined) return `read: lines ${offset}-${offset + limit - 1}`
+    if (offset !== undefined && offset > 1) return `read: from line ${offset}`
+    return "read: full"
+  }
+  if (part.name === "write") return part.metadata?.created === true ? "written" : "edited"
+  if (part.name === "edit") return input.oldString === "" ? "written" : "edited"
+  if (part.name === "apply_patch") return "edited"
+  return undefined
+}
+
+/**
+ * The files the summarised conversation touched, newest last: each as a path
+ * inside the project with forward slashes, followed by what happened to it.
+ */
+export function touchedFiles(messages: readonly Message[], directory: string): string[] {
+  const order: string[] = []
+  const events = new Map<string, string[]>()
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    for (const part of message.parts) {
+      if (part.type !== "tool" || part.status !== "completed" || typeof part.input?.path !== "string") continue
+      const event = eventOf(part)
+      if (!event) continue
+      const absolute = path.resolve(directory, part.input.path)
+      const inside = path.relative(directory, absolute)
+      const file = (inside && !inside.startsWith("..") && !path.isAbsolute(inside) ? inside : absolute).split(path.sep).join("/")
+      events.set(file, [...(events.get(file) ?? []), event].slice(-MANIFEST_EVENTS))
+      const at = order.indexOf(file)
+      if (at >= 0) order.splice(at, 1)
+      order.push(file)
+    }
+  }
+  return order.slice(-MANIFEST_FILES).map((file) => `${file}: ${(events.get(file) ?? []).join(" then ")}`)
+}
+
+/** What the next request opens with in place of the summarised conversation. */
+export function compactedText(compacted: { summary: string; trigger?: CompactionTrigger; files?: readonly string[] }): string {
+  const wrapper = [
+    `<compacted-context trigger="${compacted.trigger ?? "manual"}">`,
+    "The earlier part of this conversation was compacted into the summary below; nothing else arrived while it was being written.",
+    "",
+    compacted.summary,
+    "</compacted-context>",
+  ].join("\n")
+  if (!compacted.files?.length) return wrapper
+  return [
+    wrapper,
+    "",
+    "# Attachments",
+    "These files were worked on before the compaction. Their contents are no longer in the conversation, so read a file again before editing it:",
+    ...compacted.files.map((file) => `- ${file}`),
+  ].join("\n")
+}
+
+/** MiMo's continue message after a compaction nothing was re-posted after. Request only. */
+export function continueNote(trigger: CompactionTrigger): string {
+  const base = "The conversation was just compacted. If the summary lists next steps, carry on with them; if it is not clear what to do next, ask the user."
+  return reminder(
+    trigger === "provider-overflow"
+      ? `Attached files were left out of the compaction to make the conversation fit; if the user sends large files, suggest smaller ones. ${base}`
+      : base,
+  )
 }

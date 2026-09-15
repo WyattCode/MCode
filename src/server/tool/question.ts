@@ -40,6 +40,8 @@ export class Questions {
     questions: QuestionPrompt[]
     tool?: { messageID: string; callID: string }
     signal?: AbortSignal
+    /** The runner's repeated-call check, drawn by the window in its own words. */
+    loop?: QuestionRequest["loop"]
   }): Promise<QuestionAnswer[]> {
     const request: QuestionRequest = {
       id: Identifier.request(),
@@ -47,6 +49,7 @@ export class Questions {
       questions: input.questions,
       tool: input.tool,
       time: Date.now(),
+      ...(input.loop ? { loop: input.loop } : {}),
     }
 
     return new Promise<QuestionAnswer[]>((resolve, reject) => {

@@ -56,7 +56,7 @@ export function modelKey(ref: ModelRef): string {
  * a catalog edit cannot leave a model advertising levels its family has never
  * accepted.
  */
-function modelInfo(kind: ProviderKind, model: ModelEntry): ModelInfo {
+function modelInfo(kind: ProviderKind, model: ModelEntry, provider: string): ModelInfo {
   const inputs = model.inputs ?? {}
   return {
     id: model.id,
@@ -77,7 +77,7 @@ function modelInfo(kind: ProviderKind, model: ModelEntry): ModelInfo {
       pdf: inputs.pdf ?? false,
     },
     cost: { input: model.input, output: model.output },
-    variants: modelVariants(kind, model),
+    variants: modelVariants(kind, model, provider),
   }
 }
 
@@ -318,6 +318,11 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   if (context !== undefined && !positive(context)) throw new Error(invalid)
   if (output !== undefined && (!positive(output) || context === undefined)) throw new Error(invalid)
   if (positive(context)) out.limit = positive(output) ? { context, output } : { context }
+  // MiMo's other model fields, kept when a config file states them.
+  const inputs = Object.fromEntries((["pdf", "audio", "video"] as const).flatMap((key) => (typeof model.inputs?.[key] === "boolean" ? [[key, model.inputs[key]]] : [])))
+  if (Object.keys(inputs).length) out.inputs = inputs
+  if (model.cacheTTL === "5m" || model.cacheTTL === "1h") out.cacheTTL = model.cacheTTL
+  if (model.interleaved === "reasoning" || model.interleaved === "reasoning_content" || model.interleaved === "reasoning_details") out.interleaved = model.interleaved
   return out
 }
 
@@ -665,7 +670,8 @@ export class Config {
       .map<ProviderDefinition>((entry) => ({
         id: entry.id,
         name: entry.name,
-        kind: "openai-compatible",
+        // MiMo lets a custom provider name its SDK; here that is the protocol it speaks.
+        kind: entry.protocol === "anthropic" ? "anthropic" : "openai-compatible",
         description: "provider.desc.custom",
         baseURL: entry.baseURL,
         headers: entry.headers,
@@ -682,9 +688,13 @@ export class Config {
           name: model.name,
           contextWindow: model.limit?.context ?? 0,
           ...(model.limit?.output ? { maxOutput: model.limit.output } : {}),
-          ...(typeof model.attachment === "boolean"
-            ? { attachment: model.attachment, inputs: { text: true, image: model.attachment } }
+          ...(typeof model.attachment === "boolean" ? { attachment: model.attachment } : {}),
+          // MiMo's modalities: the image switch, and the other inputs a config file may state.
+          ...(typeof model.attachment === "boolean" || model.inputs
+            ? { inputs: { text: true, ...model.inputs, ...(typeof model.attachment === "boolean" ? { image: model.attachment } : {}) } }
             : {}),
+          ...(model.cacheTTL ? { cacheTTL: model.cacheTTL } : {}),
+          ...(model.interleaved ? { interleaved: model.interleaved } : {}),
           input: 0,
           output: 0,
         })),
@@ -804,7 +814,7 @@ export class Config {
     if (!entry) return undefined
     const kind = this.definition(ref.provider)?.kind
     if (!kind) return undefined
-    return modelVariants(kind, entry)
+    return modelVariants(kind, entry, ref.provider)
   }
 
   providers(): ProviderStatus[] {
@@ -825,7 +835,7 @@ export class Config {
       authenticated: Boolean(this.oauth[entry.id]),
       environment: this.environmentKey(entry.id),
       authMethods: entry.authMethods ?? [],
-      models: this.models(entry.id).map((model) => modelInfo(entry.kind, model)),
+      models: this.models(entry.id).map((model) => modelInfo(entry.kind, model, entry.id)),
     }))
   }
 

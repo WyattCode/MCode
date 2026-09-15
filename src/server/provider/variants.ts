@@ -128,24 +128,14 @@ function anthropicAdaptiveEfforts(id: string): string[] | null {
 }
 
 /**
- * The families the reference names and then refuses outright.
- *
- * These reason, and the reference still returns `{}` for them, because their
- * reasoning is not steerable by an effort parameter - sending one is a request
- * field the provider drops.
+ * The families MiMo names and then offers no effort for: they reason, but not
+ * by an effort parameter, so sending one is a field the provider drops. Grok
+ * is here except grok-3-mini, which has its own pair.
  */
-function excluded(id: string, glm52: boolean): boolean {
+function excluded(id: string): boolean {
   return (
-    id.includes("deepseek-chat") ||
-    id.includes("deepseek-reasoner") ||
-    id.includes("deepseek-r1") ||
-    id.includes("deepseek-v3") ||
-    id.includes("minimax") ||
-    (id.includes("glm") && !glm52) ||
-    id.includes("kimi") ||
-    id.includes("k2p") ||
-    id.includes("qwen") ||
-    id.includes("big-pickle")
+    ["minimax", "glm", "mistral", "kimi", "k2p", "qwen", "big-pickle"].some((mark) => id.includes(mark)) ||
+    (id.includes("grok") && !id.includes("grok-3-mini"))
   )
 }
 
@@ -164,17 +154,17 @@ function narrow(efforts: readonly string[]): Effort[] {
  * own heuristic runs instead, which is the code path it uses when models.dev
  * says nothing.
  */
-export function modelVariants(kind: ProviderKind, entry: ModelEntry): Effort[] {
+export function modelVariants(kind: ProviderKind, entry: ModelEntry, provider?: string): Effort[] {
   // @22185521: `if (!model.capabilities.reasoning) return {}` is the first line
   // of the function, and it is the whole reason a chat model shows no pill.
   if (!entry.reasoning) return []
   if (entry.efforts) return narrow(entry.efforts)
 
   const id = entry.id.toLowerCase()
-  const glm52 = ["glm-5.2", "glm-5-2", "glm-5p2"].some((mark) => id.includes(mark))
-  if (glm52 && kind === "openai-compatible") return narrow(["high", "max"])
-  if (excluded(id, glm52)) return []
+  if (excluded(id)) return []
   if (id.includes("grok-3-mini")) return narrow(["low", "high"])
+  // MiMo steers DeepSeek's reasoning only on DeepSeek's own provider, with its high and max.
+  if (id.includes("deepseek")) return provider === "deepseek" && kind === "openai-compatible" ? narrow(["high", "max"]) : []
 
   if (kind === "anthropic") {
     const adaptive = anthropicAdaptiveEfforts(id)
@@ -191,9 +181,6 @@ export function modelVariants(kind: ProviderKind, entry: ModelEntry): Effort[] {
 
   if (kind === "chatgpt") return narrow(openaiCompatibleEfforts(id))
 
-  // @22185521, the `@ai-sdk/openai-compatible` arm.
-  if (id.includes("north-mini-code")) return narrow(["none", "high"])
-  const efforts = [...WIDELY_SUPPORTED]
-  if (id.includes("deepseek-v4")) efforts.push("max")
-  return narrow(efforts)
+  // MiMo's OpenAI-compatible arm: the three widely supported levels.
+  return narrow(WIDELY_SUPPORTED)
 }

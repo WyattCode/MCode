@@ -17,6 +17,7 @@ import { CHIMES, chimeOf, type Chime } from "@shared/chime"
 import ConfirmDialog from "./ConfirmDialog.vue"
 import LanguageMenu from "./LanguageMenu.vue"
 import VoiceUsageDialog from "./VoiceUsageDialog.vue"
+import ThirdPartyDialog from "./ThirdPartyDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
@@ -876,6 +877,7 @@ async function flashMatch(query: string) {
 
 /* MiMo's 用法详情 for 智能编辑. */
 const voiceUsageOpen = ref(false)
+const licensesOpen = ref(false)
 
 /*
  * MiMo's guard on an environment with unsaved edits: every way out - the
@@ -1597,7 +1599,8 @@ function onKeydown(event: KeyboardEvent) {
     confirmingDelete.value ||
     removingProject.value ||
     confirmingAgentsDelete.value ||
-    voiceUsageOpen.value
+    voiceUsageOpen.value ||
+    licensesOpen.value
   ) {
     return
   }
@@ -2843,7 +2846,17 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 @change="app.patchConfig({ updateFeed: ($event.target as HTMLInputElement).value.trim() })"
               />
             </div>
+
+            <!-- MCode's own row, not MiMo's: the notices its bundled score synth and soundfont require. -->
+            <div class="line" data-licenses-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.licenses") }}</div>
+                <div class="line-sub">{{ t("set.licensesSub") }}</div>
+              </div>
+              <button class="ctl-btn" data-licenses-open @click="licensesOpen = true">{{ t("set.licensesView") }}</button>
+            </div>
           </div>
+          <ThirdPartyDialog v-if="licensesOpen" @close="licensesOpen = false" />
 
         </template>
 

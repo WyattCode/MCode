@@ -1,13 +1,30 @@
 import Anthropic from "@anthropic-ai/sdk"
-import type { Message, ModelRef, Usage } from "@shared/protocol"
-import { withAnnotations } from "@shared/annotations"
+import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
+import { attachmentParts } from "./attachment-parts"
+import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
 import { guarded, stallGuard } from "./stall"
+import { costOf } from "../session/usage"
+import { requestHistory } from "./history"
 
-export function createClient(apiKey: string, maxRetries = 2): Anthropic {
-  return new Anthropic({ apiKey, maxRetries })
+/**
+ * A Messages client, for Anthropic itself or a gateway that speaks its API.
+ *
+ * A gateway's address is written as MiMo's form takes it, ending in `/v1`; the
+ * SDK adds its own `/v1/messages`, so that ending is taken off. With no key, a
+ * gateway that authenticates by its own header is reached with that header
+ * alone.
+ */
+export function createClient(apiKey: string, maxRetries = 2, baseURL?: string, headers?: Record<string, string>): Anthropic {
+  const root = baseURL?.replace(/\/+$/, "").replace(/\/v1$/, "")
+  return new Anthropic({
+    apiKey: apiKey || null,
+    maxRetries,
+    ...(root ? { baseURL: root } : {}),
+    ...(headers && Object.keys(headers).length ? { defaultHeaders: headers } : {}),
+  })
 }
 
 export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
@@ -24,43 +41,43 @@ export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
  * Two things matter here. Every `tool_use` block must be answered by a
  * `tool_result` with the same id in the immediately following user turn, or the
  * API rejects the request - so tool results are emitted as one batched user
- * message per assistant turn. And reasoning is deliberately not replayed: only
- * the summarized text is stored, not the signed original, and sending an
- * unsigned thinking block back is worse than sending none.
+ * message per assistant turn. And thinking goes back only with its signature,
+ * to the model that signed it, as MiMo keeps it: an unsigned thinking block, or
+ * one from another model, is worse than none.
  */
-export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[] {
+export function toProviderMessages(messages: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = []
 
-  for (const message of messages) {
+  for (const message of requestHistory(messages)) {
     if (message.role === "user") {
       const content: Anthropic.ContentBlockParam[] = []
-      for (const attachment of message.attachments ?? []) {
-        if (attachment.mime.startsWith("image/")) {
-          content.push({
-            type: "image",
-            source: { type: "base64", media_type: attachment.mime as "image/png", data: attachment.data },
-          })
-        } else {
-          content.push({ type: "text", text: `<file path="${attachment.path}">\n${attachment.data}\n</file>` })
-        }
+      // MiMo's parts: images and PDFs the model reads go natively, anything else as text or a note.
+      for (const part of attachmentParts(message.attachments ?? [], inputs, "anthropic")) {
+        if (part.kind === "text") content.push({ type: "text", text: part.text })
+        else if (part.kind === "image") content.push({ type: "image", source: { type: "base64", media_type: part.mime as "image/png", data: part.data } })
+        else if (part.kind === "pdf") content.push({ type: "document", source: { type: "base64", media_type: "application/pdf", data: part.data }, title: part.name })
       }
-      const text = withAnnotations(message.text, message.annotations, message.fileNotices)
+      const text = userText(message)
       if (text) content.push({ type: "text", text })
       if (content.length) out.push({ role: "user", content })
       continue
     }
 
     const assistant: Anthropic.ContentBlockParam[] = []
+    const calls: Anthropic.ContentBlockParam[] = []
     const results: Anthropic.ToolResultBlockParam[] = []
+    // MiMo keeps signed thinking only for the model that wrote it.
+    const sameModel = Boolean(model && message.model.provider === model.provider && message.model.model === model.model)
 
     for (const part of message.parts) {
-      if (part.type === "text") {
+      if (part.type === "reasoning") {
+        if (sameModel && part.signature) assistant.push({ type: "thinking", thinking: part.text, signature: part.signature })
+      } else if (part.type === "text") {
         if (part.text.trim()) assistant.push({ type: "text", text: part.text })
       } else if (part.type === "tool") {
-        // A tool the model asked for but that never ran (aborted turn) would
-        // leave an unanswered tool_use, so skip the pair entirely.
-        if (part.status === "pending" || part.status === "running") continue
-        assistant.push({ type: "tool_use", id: part.callID, name: part.name, input: part.input })
+        // A call that never finished arrives here already answered as interrupted (see history.ts).
+        // Calls go after every other part, as MiMo splits a reply whose words follow its calls.
+        calls.push({ type: "tool_use", id: part.callID, name: part.name, input: part.input })
         results.push({
           type: "tool_result",
           tool_use_id: part.callID,
@@ -70,23 +87,31 @@ export function toProviderMessages(messages: Message[]): Anthropic.MessageParam[
       }
     }
 
-    if (assistant.length) out.push({ role: "assistant", content: assistant })
+    if (assistant.length || calls.length) out.push({ role: "assistant", content: [...assistant, ...calls] })
     if (results.length) out.push({ role: "user", content: results })
   }
 
   return out
 }
 
-export function usageFrom(usage: Anthropic.Usage | undefined, entry?: { input: number; output: number }): Usage {
+/*
+ * Anthropic's `input_tokens` already leaves out cache reads and writes, which
+ * is how MiMo counts input; reasoning is not reported apart from output.
+ */
+export function usageFrom(
+  usage: Anthropic.Usage | undefined,
+  entry?: { input: number; output: number; cacheRead?: number; cacheWrite?: number },
+): Usage {
   const input = usage?.input_tokens ?? 0
   const output = usage?.output_tokens ?? 0
   const cacheRead = usage?.cache_read_input_tokens ?? 0
   const cacheWrite = usage?.cache_creation_input_tokens ?? 0
-  const cost = entry ? ((input + cacheWrite) * entry.input + output * entry.output) / 1_000_000 : 0
-  return { input, output, reasoning: 0, cacheRead, cacheWrite, cost }
+  const counted = { input, output, reasoning: 0, cacheRead, cacheWrite }
+  return { ...counted, cost: costOf(counted, entry) }
 }
 
-const MAX_TOKENS = 64_000
+/** What a request asks for when the caller named no cap. */
+const MAX_TOKENS = 32_000
 
 /**
  * The levels Anthropic's `output_config.effort` will take.
@@ -109,19 +134,13 @@ export interface AnthropicReasoning {
 }
 
 /**
- * `Math.min(16e3, Math.floor(model.limit.output / 2 - 1))` @22216297, and
- * `Math.min(31999, model.limit.output - 1)` beside it.
- *
- * The reference divides the model's own output limit; this app sends a fixed
- * `max_tokens` on every Anthropic request and the API requires the budget to
- * be smaller than it, so `max_tokens` is the limit that matters here. At the
- * 64k this app sends, the arithmetic lands on the reference's own 16000 and
- * 31999 - it is written out rather than hardcoded so the two stay in step if
- * that constant ever moves.
+ * MiMo's thinking budgets, cut from the model's own output limit: high is
+ * min(16000, limit / 2 - 1) and max is min(31999, limit - 1). The API also
+ * wants the budget under `max_tokens`, so it is kept below that too.
  */
-function budget(level: "high" | "max", maxTokens: number): number {
-  if (level === "max") return Math.min(31_999, maxTokens - 1)
-  return Math.min(16_000, Math.floor(maxTokens / 2 - 1))
+function budget(level: "high" | "max", outputLimit: number, maxTokens: number): number {
+  const wanted = level === "max" ? Math.min(31_999, outputLimit - 1) : Math.min(16_000, Math.floor(outputLimit / 2 - 1))
+  return Math.max(1_024, Math.min(wanted, maxTokens - 1))
 }
 
 /**
@@ -156,6 +175,7 @@ export function reasoningRequest(
   variants: readonly string[] | undefined,
   showReasoning: boolean,
   maxTokens: number,
+  outputLimit = maxTokens,
 ): AnthropicReasoning {
   if (variants && !variants.includes(effort)) return {}
   const id = model.toLowerCase()
@@ -180,7 +200,7 @@ export function reasoningRequest(
   if (anthropicOpus45(id)) {
     const level = OUTPUT_EFFORTS.find((entry) => entry === effort)
     return {
-      thinking: { type: "enabled", budget_tokens: budget("high", maxTokens), display },
+      thinking: { type: "enabled", budget_tokens: budget("high", outputLimit, maxTokens), display },
       ...(level ? { output_config: { effort: level } } : {}),
     }
   }
@@ -188,41 +208,66 @@ export function reasoningRequest(
   return {
     thinking: {
       type: "enabled",
-      budget_tokens: budget(effort === "max" ? "max" : "high", maxTokens),
+      budget_tokens: budget(effort === "max" ? "max" : "high", outputLimit, maxTokens),
       display,
     },
   }
 }
 
+type MessagesBody = Parameters<Anthropic["messages"]["stream"]>[0]
+type CacheMark = { type: "ephemeral"; ttl?: "5m" | "1h" }
+
+/** Puts a cache mark on a message's last block, turning plain text into a block to carry it. */
+function markLast(message: Anthropic.MessageParam, mark: CacheMark): void {
+  if (typeof message.content === "string") {
+    message.content = [{ type: "text", text: message.content, cache_control: mark }]
+    return
+  }
+  const last = message.content[message.content.length - 1]
+  if (last && last.type !== "thinking" && last.type !== "redacted_thinking") (last as { cache_control?: CacheMark }).cache_control = mark
+}
+
+/**
+ * The Messages request, with MiMo's cache marks: the system prompt, the last
+ * tool definition and the last two messages, so each step reads back what the
+ * one before it wrote. The cap is MiMo's, held to the model's own ceiling when
+ * the catalog knows it - what MiMo's Anthropic SDK does for a model it
+ * recognises - and the thinking budgets are cut from that ceiling.
+ */
+export function messagesRequest(request: TurnRequest): MessagesBody {
+  const limit = request.outputLimit && request.outputLimit > 0 ? request.outputLimit : undefined
+  const wanted = request.maxOutput ?? MAX_TOKENS
+  const maxTokens = limit ? Math.min(wanted, limit) : wanted
+  const mark: CacheMark = { type: "ephemeral", ...(request.cacheTTL === "1h" ? { ttl: "1h" as const } : {}) }
+  const tools = toolSchemas(request.tools)
+  if (tools.length) tools[tools.length - 1] = { ...tools[tools.length - 1]!, cache_control: mark }
+  const messages = toProviderMessages(request.history, request.inputs, request.model)
+  for (const message of messages.slice(-2)) markLast(message, mark)
+  return {
+    model: request.model.model,
+    max_tokens: maxTokens,
+    // The conversation's own tail follows the marked prefix unmarked, so the prefix reads from one cache across conversations.
+    system: [{ type: "text", text: request.system, cache_control: mark }, ...(request.systemTail ? [{ type: "text" as const, text: request.systemTail }] : [])],
+    tools,
+    messages,
+    ...reasoningRequest(request.model.model, request.effort, request.variants, request.showReasoning, maxTokens, limit ?? wanted),
+    // MiMo's family sampling: none for Claude, set for another family reached over this protocol.
+    ...(request.sampling?.temperature !== undefined ? { temperature: request.sampling.temperature } : {}),
+    ...(request.sampling?.topP !== undefined ? { top_p: request.sampling.topP } : {}),
+    ...(request.sampling?.topK !== undefined ? { top_k: request.sampling.topK } : {}),
+  }
+}
+
 export const AnthropicAdapter: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
-    const client = createClient(request.apiKey, request.retries)
-    /*
-     * The reference's maxOutputTokens applies to every provider: the model's
-     * own ceiling when known and smaller, else 32k. The thinking budgets below
-     * are cut from the same number, so they stay under it.
-     */
-    const maxTokens = Math.min(MAX_TOKENS, request.maxOutput ?? MAX_TOKENS)
-
+    const client = createClient(request.apiKey, request.retries, request.baseURL, request.headers)
     // MiMo's stall timeout: a stream that goes quiet for 480s is cut off and retried.
     const guard = stallGuard(request.signal, false)
-    const stream = client.messages.stream(
-      {
-        model: request.model.model,
-        max_tokens: maxTokens,
-        system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
-        tools: toolSchemas(request.tools),
-        messages: toProviderMessages(request.history),
-        ...reasoningRequest(
-          request.model.model,
-          request.effort,
-          request.variants,
-          request.showReasoning,
-          maxTokens,
-        ),
-      },
-      { signal: guard.signal },
-    )
+    const stream = client.messages.stream(messagesRequest(request), {
+      signal: guard.signal,
+      // MiMo keeps a conversation's requests together with this header.
+      ...(request.sessionID ? { headers: { "x-session-affinity": request.sessionID } } : {}),
+    })
 
     for await (const event of guarded(stream, guard)) {
       if (request.signal.aborted) break
@@ -240,6 +285,8 @@ export const AnthropicAdapter: ProviderAdapter = {
           emit({ type: "text.delta", index: event.index, text: event.delta.text })
         } else if (event.delta.type === "thinking_delta") {
           emit({ type: "reasoning.delta", index: event.index, text: event.delta.thinking })
+        } else if (event.delta.type === "signature_delta") {
+          emit({ type: "reasoning.signature", index: event.index, signature: event.delta.signature })
         }
         continue
       }
@@ -273,7 +320,7 @@ export const AnthropicAdapter: ProviderAdapter = {
             ? "tool_use"
             : "end_turn"
 
-    return { stop, toolCalls, usage: usageFrom(final.usage) }
+    return { stop, toolCalls, usage: usageFrom(final.usage), ...(final.stop_reason ? { finishReason: final.stop_reason } : {}) }
   },
 }
 

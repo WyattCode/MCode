@@ -1,19 +1,29 @@
 import type { NoteTimingEvent, TuneObject } from "abcjs"
 import { sanitizeAbcSvg } from "./diagram"
-import { playbackController, renderSeconds, scoreNotes, scoreProblem, tuneSeconds, type ScoreNote } from "./abc-play"
+import {
+  ABC_SAMPLE_RATE,
+  patchTrackPrograms,
+  playbackController,
+  renderSeconds,
+  scoreNotes,
+  scoreProblem,
+  tuneSeconds,
+  withVoicePrograms,
+  type ScoreNote,
+} from "./abc-play"
+import { renderWithFluidSynth } from "./abc-fluidsynth"
 
 /*
  * What MiMo's ABC block needs from the window: abcjs loaded once on first use,
  * a score drawn and sanitised before it is put in the page, and the tune
  * played through Web Audio.
  *
- * Playing differs from MiMo underneath. MiMo renders the tune's MIDI through
- * FluidSynth and a bundled General MIDI soundfont; abcjs's own synth fetches
- * its instrument samples from a web host, which this window's content policy
- * refuses and which no remote host is added for. So the notes of abcjs's own
- * audio sequence are voiced here by a small oscillator synth, rendered offline
- * into one buffer, with abcjs's TimingCallbacks lighting the notes as MiMo's
- * does. Nothing is fetched.
+ * Playing is MiMo's: the tune becomes MIDI (instruments fixed up before and
+ * after), FluidSynth renders it offline with the bundled MuseScore_General
+ * soundfont into one buffer (lib/abc-fluidsynth), and abcjs's TimingCallbacks
+ * light the notes. When the engine or the soundfont cannot be had, the notes
+ * of abcjs's own audio sequence are voiced instead by a small oscillator synth,
+ * so a score still plays. Nothing is fetched either way.
  */
 
 type Abcjs = typeof import("abcjs")
@@ -72,6 +82,9 @@ export async function renderScore(target: HTMLElement, source: string): Promise<
   }
 }
 
+/** What voiced the tune: FluidSynth with the soundfont, or the oscillator synth it falls back to. */
+export type ScoreEngine = "fluidsynth" | "basic"
+
 export interface ScoreAudio {
   start: () => Promise<void>
   pause: () => void
@@ -81,9 +94,9 @@ export interface ScoreAudio {
   seek: (share: number) => void
   durationMs: number
   timings: NoteTimingEvent[]
+  engine: ScoreEngine
 }
 
-const SAMPLE_RATE = 44_100
 let context: AudioContext | undefined
 
 /* One note: a triangle with a quiet octave above, a quick attack, a settle, and a short release. */
@@ -120,27 +133,52 @@ function elementsOf(event: NoteTimingEvent | null): Element[] {
   return groups.flatMap((group) => (Array.isArray(group) ? group.filter((element): element is HTMLElement => element instanceof Element) : []))
 }
 
+/* MiMo's path: MIDI without abcjs's chord and bass accompaniment, rendered by FluidSynth. */
+async function soundfontBuffer(abcjs: Abcjs, source: string, length: number, live: AudioContext): Promise<AudioBuffer> {
+  const midi: unknown = abcjs.synth.getMidiFile(withVoicePrograms(source), { midiOutputType: "binary", chordvol: 0, bassvol: 0 })
+  const file: unknown = Array.isArray(midi) ? midi[0] : midi
+  const bytes = file instanceof Uint8Array ? file : file instanceof ArrayBuffer ? new Uint8Array(file) : undefined
+  if (!bytes?.byteLength) throw new Error("abc produced no midi")
+  return renderWithFluidSynth(patchTrackPrograms(bytes), length, live)
+}
+
+/* The fallback: abcjs's note sequence through the oscillator voice above. */
+async function basicBuffer(sequence: { tempo?: unknown; tracks?: unknown }, length: number): Promise<AudioBuffer> {
+  if (typeof OfflineAudioContext !== "function") throw new Error("audio not supported")
+  const notes = scoreNotes(sequence, length)
+  if (!notes.length) throw new Error("abc produced no notes to play")
+  const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil(length * ABC_SAMPLE_RATE)), ABC_SAMPLE_RATE)
+  const master = offline.createDynamicsCompressor()
+  master.connect(offline.destination)
+  for (const note of notes) voice(offline, master, note)
+  return offline.startRendering()
+}
+
 /** The tune rendered to a buffer and a player over it; `watch` hears which notes sound and how far along it is. */
 export async function prepareScoreAudio(
   tune: TuneObject,
+  source: string,
   onEnded: () => void,
   watch: { onEvent: (elements: Element[]) => void; onProgress: (share: number) => void },
 ): Promise<ScoreAudio> {
   const abcjs = await loadAbcjs()
   const Context = window.AudioContext
-  if (!Context || typeof OfflineAudioContext !== "function") throw new Error("audio not supported")
+  if (!Context) throw new Error("audio not supported")
   context ??= new Context()
   const live = context
   const sequence = tune.setUpAudio({})
   const seconds = tuneSeconds(sequence)
   const length = renderSeconds(seconds)
-  const notes = scoreNotes(sequence, length)
-  if (!notes.length) throw new Error("abc produced no notes to play")
-  const offline = new OfflineAudioContext(2, Math.max(1, Math.ceil(length * SAMPLE_RATE)), SAMPLE_RATE)
-  const master = offline.createDynamicsCompressor()
-  master.connect(offline.destination)
-  for (const note of notes) voice(offline, master, note)
-  const buffer = await offline.startRendering()
+  let engine: ScoreEngine = "fluidsynth"
+  let buffer: AudioBuffer
+  try {
+    buffer = await soundfontBuffer(abcjs, source, length, live)
+  } catch (error) {
+    // Not a failure to play: the tune is voiced by the built-in synth instead.
+    console.info("abc: soundfont playback unavailable, using the built-in synth", error)
+    engine = "basic"
+    buffer = await basicBuffer(sequence, length)
+  }
   const duration = seconds ?? buffer.duration
 
   const controller = playbackController(
@@ -201,5 +239,6 @@ export async function prepareScoreAudio(
     },
     durationMs: duration * 1000,
     timings: timer.noteTimings ?? [],
+    engine,
   }
 }

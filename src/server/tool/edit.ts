@@ -4,6 +4,7 @@ import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
 import { unifiedDiff } from "../diff"
+import { isMemoryPath } from "../history/service"
 
 /** The longest closest-match hint a failed edit carries. */
 const HINT_MAX_CHARS = 2000
@@ -85,7 +86,8 @@ export const WriteTool: ToolDefinition = {
       const previous = await fs.readFile(target, "utf8").catch(() => undefined)
       const diff = unifiedDiff(display, previous ?? "", content)
 
-      await context.permissions.ask({
+      // memory: memory files are written without asking, as MiMo does.
+      if (!isMemoryPath(target)) await context.permissions.ask({
         sessionID: context.sessionID,
         messageID: context.messageID,
         callID: context.callID,
@@ -135,7 +137,9 @@ export const EditTool: ToolDefinition = {
     if (oldString === newString) throw new ToolError("old_string and new_string are the same, so there is nothing to change")
 
     return locked(target, async () => {
-      const ask = (diff: string) =>
+      // memory: memory files are edited without asking, as MiMo does.
+      const ask = async (diff: string) =>
+        isMemoryPath(target) ||
         context.permissions.ask({
           sessionID: context.sessionID,
           messageID: context.messageID,

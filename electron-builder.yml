@@ -10,6 +10,10 @@ extraResources:
   # agent's shell can also run their scripts.
   - from: resources/skills
     to: skills
+  # The score soundfont (MuseScore_General.sf3, MIT), placed and verified by
+  # scripts/soundfont.mjs before a package build; the main process reads it.
+  - from: resources/soundfont
+    to: soundfont
 
 files:
   - out/**/*
@@ -21,6 +25,10 @@ files:
 # what shipping them inside would produce.
 asarUnpack:
   - "**/node_modules/@lydell/node-pty*/**"
+  # FluidSynth's WebAssembly build is LGPL-2.1 and must stay a file a user can
+  # replace, so it and its licence sit in app.asar.unpacked; the page's
+  # ./vendor/ address still reaches it there.
+  - "out/renderer/vendor/**"
 
 win:
   target:

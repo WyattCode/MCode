@@ -74,6 +74,8 @@ const form = ref({
   providerID: editing?.id ?? "",
   name: editing?.name ?? "",
   baseURL: editing?.baseURL ?? "",
+  /* Which API the gateway speaks; a provider stored before this existed is OpenAI-compatible. */
+  protocol: (editing?.protocol ?? "openai") as NonNullable<CustomProvider["protocol"]>,
   apiKey: editing?.environment ? `{env:${editing.environment}}` : "",
   models: editing?.models?.length
     ? editing.models.map((model) => ({
@@ -162,6 +164,7 @@ interface Resolved {
   apiKey: string
   headers: Record<string, string>
   models: CustomModel[]
+  protocol: NonNullable<CustomProvider["protocol"]>
 }
 
 /**
@@ -250,7 +253,7 @@ function validate(): Resolved | undefined {
   }
 
   if (!ok) return undefined
-  return { id: providerID, name, baseURL, apiKey: form.value.apiKey.trim(), headers, models }
+  return { id: providerID, name, baseURL, apiKey: form.value.apiKey.trim(), headers, models, protocol: form.value.protocol }
 }
 
 /*
@@ -335,6 +338,16 @@ defineExpose({ submit, canSave, busy })
       />
       <div v-if="endpointBad" class="cperror" data-endpoint-invalid>{{ t("model.endpointInvalid") }}</div>
       <div v-else class="cphelp" data-endpoint-hint>{{ t("model.endpointHint") }}</div>
+    </div>
+
+    <!-- Which API the gateway speaks: MiMo names an SDK in its config; MCode, which has no such file, asks here. -->
+    <div class="cpfield">
+      <label class="cplabel" for="cp-protocol">{{ t("provider.custom.field.protocol.label") }}</label>
+      <select id="cp-protocol" v-model="form.protocol" class="cpin" data-custom-protocol>
+        <option value="openai">{{ t("provider.custom.protocol.openai") }}</option>
+        <option value="anthropic">{{ t("provider.custom.protocol.anthropic") }}</option>
+      </select>
+      <div class="cphelp">{{ t("provider.custom.field.protocol.description") }}</div>
     </div>
 
     <!-- A password field with MiMo's eye; `{env:VAR}` still works, and the eye shows what was written. -->

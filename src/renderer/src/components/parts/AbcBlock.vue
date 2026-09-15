@@ -2,8 +2,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { t } from "../../lib/i18n"
 import { notifyFailure } from "../../lib/toast"
-import { prepareScoreAudio, renderScore, type RenderedScore, type ScoreAudio } from "../../lib/abc"
+import { prepareScoreAudio, renderScore, type RenderedScore, type ScoreAudio, type ScoreEngine } from "../../lib/abc"
 import { claimScoreAudio, progressAt, releaseScoreAudio } from "../../lib/abc-play"
+import { warmFluidSynth } from "../../lib/abc-fluidsynth"
 
 /**
  * MiMo's ABC block: an ```abc fence (or an .abc file in the files tab) drawn
@@ -23,6 +24,8 @@ const state = ref<"idle" | "loading" | "playing" | "paused">("idle")
 const progress = ref(0)
 const copied = ref(false)
 const score = ref<HTMLElement>()
+/* Which voice the last press played through, on the block for anyone checking. */
+const engine = ref<ScoreEngine>()
 
 const source = computed(() => props.code.replace(/\n+$/, ""))
 const lines = computed(() => source.value.split("\n"))
@@ -69,6 +72,7 @@ async function draw() {
     if (mine !== generation) return
     rendered = result
     ready.value = true
+    warmFluidSynth()
   } catch {
     if (mine !== generation) return
     host.innerHTML = ""
@@ -111,13 +115,14 @@ async function togglePlay() {
   const mine = generation
   try {
     claimScoreAudio(stop)
-    const prepared = await prepareScoreAudio(rendered.tune, ended, { onEvent: light, onProgress: (share) => (progress.value = share) })
+    const prepared = await prepareScoreAudio(rendered.tune, source.value, ended, { onEvent: light, onProgress: (share) => (progress.value = share) })
     // Another score started, or this one was redrawn, while the audio was being made.
     if (mine !== generation || state.value !== "loading") {
       prepared.stop()
       return
     }
     audio = prepared
+    engine.value = prepared.engine
     await prepared.start()
     state.value = "playing"
   } catch {
@@ -180,7 +185,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 </script>
 
 <template>
-  <div class="md-codeblock md-abc" data-abc-block>
+  <div class="md-codeblock md-abc" data-abc-block :data-abc-engine="engine">
     <div class="md-code-head md-abc-head">
       <span class="md-code-lang">abc</span>
       <div class="md-abc-tools">

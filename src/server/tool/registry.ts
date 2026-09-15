@@ -13,6 +13,10 @@ import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-setting
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
 import { NotebookEditTool } from "./notebook"
 import { SkillSearchTool, SkillTool } from "./skill"
+import { HistoryTool } from "./history"
+import { MemoryTool } from "./memory"
+import { CronTool } from "./cron"
+import { AutomationUpdateTool } from "./automation"
 
 /**
  * The tool surface offered to the model.
@@ -59,6 +63,13 @@ export const TOOLS: ToolDefinition[] = [
   // skills: appended, in MiMo's order (search, then load), for the same reason.
   SkillSearchTool,
   SkillTool,
+  // history: appended after those for the same reason.
+  HistoryTool,
+  MemoryTool,
+  // cron: appended after those for the same reason.
+  CronTool,
+  // automation: MiMo desktop's scheduled tasks, appended after those for the same reason.
+  AutomationUpdateTool,
 ]
 
 /**
@@ -127,6 +138,13 @@ const READS = new Set([
   // skills: loading instructions reads files, and changes none.
   "skill",
   "skill_search",
+  // history, memory: they only read the app's own record.
+  "history",
+  "memory",
+  // cron: scheduling changes no file but the task list, and a fired prompt's turn records its own.
+  "cron",
+  // automation: its runs are turns of their own, which record their own changes.
+  "automation_update",
 ])
 
 /**

@@ -26,6 +26,13 @@ export interface ModelEntry {
   /** USD per million tokens. Zero means unknown, and the cost readout hides it. */
   input: number
   output: number
+  /** USD per million cached tokens read and written; absent prices count as nothing, as MiMo's do. */
+  cacheRead?: number
+  cacheWrite?: number
+  /** MiMo's `cachePromptTTL`: a model that asks for the hour-long prompt cache. */
+  cacheTTL?: "5m" | "1h"
+  /** MiMo's `interleaved.field`: where an OpenAI-compatible model reads its earlier reasoning back from. */
+  interleaved?: string
   /**
    * What the model can do, in the reference's own vocabulary.
    *
@@ -293,6 +300,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -306,6 +315,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 3,
     output: 15,
+    cacheRead: 0.3,
+    cacheWrite: 3.75,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -319,6 +330,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -332,6 +345,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -345,6 +360,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 5,
     output: 25,
+    cacheRead: 0.5,
+    cacheWrite: 6.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -358,6 +375,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 1_000_000,
     input: 3,
     output: 15,
+    cacheRead: 0.3,
+    cacheWrite: 3.75,
     reasoning: true,
     attachment: true,
     toolCall: true,
@@ -371,6 +390,8 @@ const ANTHROPIC_MODELS: ModelEntry[] = [
     contextWindow: 200_000,
     input: 1,
     output: 5,
+    cacheRead: 0.1,
+    cacheWrite: 1.25,
     reasoning: true,
     attachment: true,
     toolCall: true,
