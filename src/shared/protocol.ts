@@ -830,6 +830,38 @@ export interface LocalServer {
 
 export type VoiceMode = "fast" | "smart"
 
+/**
+ * The composer's text and its caret or selection, for 智能编辑 to act on.
+ *
+ * Offsets are UTF-16 code units, which is what a textarea reports and accepts,
+ * so the window can put the caret back exactly where the answer says.
+ */
+export interface VoiceDraft {
+  text: string
+  selectionStart: number
+  selectionEnd: number
+}
+
+/** What 智能编辑 made of one utterance: the whole new text and where the caret or selection lands. */
+export type VoiceEdit = VoiceDraft
+
+/**
+ * MiMo's close decision for a window.
+ *
+ * A quit in progress, or any other window still open, closes normally. The last
+ * window is hidden instead of closed on macOS, or wherever the tray switch is on,
+ * so the app keeps running behind its tray or menu bar icon; otherwise it closes.
+ */
+export function closeHidesToTray(state: {
+  quitting: boolean
+  otherWindows: number
+  platform: string
+  trayEnabled: boolean
+}): boolean {
+  if (state.quitting || state.otherWindows > 0) return false
+  return state.platform === "darwin" || state.trayEnabled
+}
+
 /** Usage gathered under one heading - a day, a model, or everything. */
 export interface UsageBucket {
   /** A date as YYYY-MM-DD, or a model as "provider/model". */
@@ -1164,11 +1196,12 @@ export interface AppConfig {
    */
   voiceModel?: ModelRef
   /**
-   * Whether the app keeps an icon in the system tray.
+   * Whether the app keeps an icon in the system tray (the menu bar on macOS).
    *
-   * On by default, which is what the reference does. Closing the window still
-   * closes it - a tray icon is a way back to a running app, not a trapdoor
-   * that makes the close button mean something else.
+   * On by default, as in MiMo. While it is on, closing the last window hides it
+   * to the tray and the app keeps running, which is MiMo's rule and the reason
+   * the switch's description says so; see closeHidesToTray. Quitting from the
+   * tray, the app menu or the footer menu still quits.
    */
   tray: boolean
   /** Whether text is drawn with the lighter antialiasing or the system's own. */
@@ -1249,10 +1282,14 @@ export interface AppConfig {
   shell: string
 }
 
-/** One hand-typed model on a custom provider: an id to send, a name to show. */
+/** One hand-typed model on a custom provider: an id to send, a name to show, and MiMo's 高级配置. */
 export interface CustomModel {
   id: string
   name: string
+  /** Whether it reads images; absent means the provider or catalog default decides. */
+  attachment?: boolean
+  /** Token limits: the input (context) window and the output cap. An output limit needs an input limit. */
+  limit?: { context?: number; output?: number }
 }
 
 export interface CustomProvider {
@@ -1521,6 +1558,8 @@ export type Request =
       mode?: VoiceMode
       /** What the window is showing, so the considered mode can say it better. */
       language?: string
+      /** The composer's text and selection; with it, 智能编辑 can carry out edit and caret instructions. */
+      draft?: VoiceDraft
     }
   | { type: "git.status"; directory: string; scope?: "worktree" | "branch" }
   | { type: "git.init"; directory: string }
@@ -1749,7 +1788,8 @@ export interface ResponseMap {
   "app.paths": { paths: AppPaths }
   "usage.summary": { summary: UsageSummary }
   "local.servers": { servers: LocalServer[] }
-  "voice.transcribe": { text: string; heard: string }
+  /* `edit` is 智能编辑's validated answer when a draft was sent; without it the window types `text` in. */
+  "voice.transcribe": { text: string; heard: string; edit?: VoiceEdit }
   "workspace.list": { worktrees: Worktree[] }
   "workspace.create": { directory: string; branch: string }
   "workspace.remove": Record<string, never>

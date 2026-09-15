@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { VoiceRecorder, splitSendWord, type VoiceState } from "../lib/voice"
+import { VoiceRecorder, applyVoiceResult, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, ModelInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
@@ -644,25 +644,31 @@ async function toggleVoice() {
       const recording = await recorder.stop()
       /* A press and an immediate second press is a slip, not a message. */
       if (!recording || recording.ms < 350) return
+      /* The box and its caret go along, so 智能编辑 can edit them; lib/voice decides what lands. */
+      const draft = {
+        text: text.value,
+        selectionStart: input.value?.selectionStart ?? text.value.length,
+        selectionEnd: input.value?.selectionEnd ?? text.value.length,
+      }
       const result = await app.client?.request({
         type: "voice.transcribe",
         audio: recording.audio,
         mime: recording.mime,
         language: language.value,
+        draft,
       })
       // Cancelled while it was being written down.
       if (run !== voiceRun) return
-      const said = (result?.text ?? "").trim()
-      if (!said) return
-      const { text: spoken, send } = splitSendWord(said)
-      if (spoken) {
-        const existing = text.value.trim()
-        text.value = existing ? `${existing} ${spoken}` : spoken
+      if (!result) return
+      const next = applyVoiceResult(draft, result)
+      if (next.text !== text.value) {
+        text.value = next.text
         await nextTick(resize)
       }
+      input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
       /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
       const sendsByVoice = (app.config?.voiceSend ?? false) && (app.config?.voiceMode ?? "smart") === "smart"
-      if (send && sendsByVoice && text.value.trim()) {
+      if (next.send && sendsByVoice && text.value.trim()) {
         voice.value = "idle"
         voiceCue.value = t("voice.detected", { cmd: t("composer.send") })
         await new Promise((resolve) => setTimeout(resolve, CUE_MS))

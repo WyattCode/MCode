@@ -33,7 +33,10 @@ import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
-import { splitSendWord } from "../src/renderer/src/lib/voice"
+import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
+import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, parseVoiceEdit, voiceDraftOf, voiceEditMessages } from "../src/server/handlers"
+import { customModelOf } from "../src/server/config"
+import { closeHidesToTray } from "../src/shared/protocol"
 import { addressToURL, safeURL } from "../src/shared/web-address"
 import { ToolError } from "../src/server/tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../src/server/tool/validate"
@@ -2462,6 +2465,130 @@ async function main() {
       splitSendWord("send the patch to review").text === "send the patch to review",
     )
     check("nothing said is nothing sent", splitSendWord("   ").send === false)
+  }
+
+  section("Voice smart edit")
+  {
+    /* No model is called: the prompt, the parser and the window's hook are held on their own. */
+    const draft = { text: "周五开会，记得带电脑。", selectionStart: 2, selectionEnd: 2 }
+    const [system, user] = voiceEditMessages(draft, "把周五改成周四")
+    check("the smart edit call uses MCode's own instruction", system.role === "system" && system.content === VOICE_EDIT_PROMPT, system)
+    check("the caret is marked where the draft has it", user.content === "<box>周五‸开会，记得带电脑。</box>\n<speech>把周五改成周四</speech>", user.content)
+    const selected = voiceEditMessages({ text: "one two three", selectionStart: 4, selectionEnd: 7 }, "delete that")[1]
+    check("a selection is wrapped instead", selected.content.startsWith("<box>one ⟦two⟧ three</box>"), selected.content)
+
+    const edit = parseVoiceEdit('{"before": "周四开会，", "selected": "", "after": "记得带电脑。"}')
+    check(
+      "an answer becomes the whole text with the caret between before and after",
+      edit?.text === "周四开会，记得带电脑。" && edit.selectionStart === 5 && edit.selectionEnd === 5,
+      edit,
+    )
+    const fenced = parseVoiceEdit('Sure:\n```json\n{"before": "", "selected": "hello", "after": " world"}\n```')
+    check("a fence and prose around the object are tolerated", fenced?.selectionStart === 0 && fenced.selectionEnd === 5, fenced)
+    check("an answer that is not JSON is refused", parseVoiceEdit("周四开会，记得带电脑。") === undefined)
+    check("an answer without string before and after is refused", parseVoiceEdit('{"text": "x", "cursor": 1}') === undefined)
+    check("a non-string selection is refused", parseVoiceEdit('{"before": "a", "selected": 3, "after": "b"}') === undefined)
+    check("an array is refused", parseVoiceEdit('[{"before": "a", "after": "b"}]') === undefined)
+    const marked = parseVoiceEdit('{"before": "a‸", "after": "⟦b⟧"}')
+    check("stray markers never reach the message", marked?.text === "ab" && marked.selectionStart === 1, marked)
+    check("an answer past the cap is refused", parseVoiceEdit(JSON.stringify({ before: "x".repeat(VOICE_EDIT_MAX + 1), after: "" })) === undefined)
+    check("an emptied box is a valid edit", parseVoiceEdit('{"before": "", "selected": "", "after": ""}')?.text === "")
+
+    check("a draft is clamped into its text", JSON.stringify(voiceDraftOf({ text: "abc", selectionStart: 9, selectionEnd: -2 })) === JSON.stringify({ text: "abc", selectionStart: 0, selectionEnd: 3 }))
+    check("a malformed draft is ignored", voiceDraftOf({ text: 3, selectionStart: 0, selectionEnd: 0 }) === undefined && voiceDraftOf(undefined) === undefined)
+
+    const typed = applyVoiceResult({ text: "hello world", selectionStart: 6, selectionEnd: 11 }, { text: "there", heard: "there" })
+    check("without an edit the words replace the selection", typed.text === "hello there" && typed.selectionStart === 11 && !typed.send, typed)
+    const spaced = applyVoiceResult({ text: "open", selectionStart: 4, selectionEnd: 4 }, { text: "the file", heard: "the file" })
+    check("Latin words get a space between them", spaced.text === "open the file", spaced)
+    const joined = applyVoiceResult({ text: "打开", selectionStart: 2, selectionEnd: 2 }, { text: "安装包", heard: "安装包" })
+    check("CJK text gets none", joined.text === "打开安装包" && joined.selectionStart === 5, joined)
+    const sending = applyVoiceResult({ text: "", selectionStart: 0, selectionEnd: 0 }, { text: "打开安装包 发送", heard: "打开安装包发送" })
+    check("a trailing send word is taken off and reported", sending.text === "打开安装包" && sending.send, sending)
+    const moved = applyVoiceResult(
+      { text: "abc", selectionStart: 3, selectionEnd: 3 },
+      { text: "光标移到开头", heard: "光标移到开头", edit: { text: "abc", selectionStart: 0, selectionEnd: 0 } },
+    )
+    check("an edit that only moves the caret keeps the text", moved.text === "abc" && moved.selectionStart === 0 && !moved.send, moved)
+    const editSend = applyVoiceResult(
+      { text: "", selectionStart: 0, selectionEnd: 0 },
+      { text: "hi send", heard: "hi send", edit: { text: "hi send", selectionStart: 7, selectionEnd: 7 } },
+    )
+    check("a send word the model left in is still an instruction", editSend.text === "hi" && editSend.send && editSend.selectionStart === 2, editSend)
+    const wild = applyVoiceResult(
+      { text: "", selectionStart: 0, selectionEnd: 0 },
+      { text: "x", heard: "x", edit: { text: "abc", selectionStart: 99, selectionEnd: -5 } },
+    )
+    check("an edit's offsets are clamped into its text", wild.selectionStart === 0 && wild.selectionEnd === 3, wild)
+  }
+
+  section("Close to tray")
+  {
+    const base = { quitting: false, otherWindows: 0, platform: "win32", trayEnabled: true }
+    check("the last window hides while the tray is on", closeHidesToTray(base))
+    check("and closes with it off", !closeHidesToTray({ ...base, trayEnabled: false }))
+    check("macOS hides the last window either way", closeHidesToTray({ ...base, platform: "darwin", trayEnabled: false }))
+    check("a quit in progress always closes", !closeHidesToTray({ ...base, quitting: true }) && !closeHidesToTray({ ...base, platform: "darwin", quitting: true }))
+    check("a window that is not the last one closes", !closeHidesToTray({ ...base, otherWindows: 1 }))
+    check("Linux follows the switch too", closeHidesToTray({ ...base, platform: "linux" }) && !closeHidesToTray({ ...base, platform: "linux", trayEnabled: false }))
+  }
+
+  section("Custom model limits")
+  {
+    const plain = customModelOf({ id: " big ", name: " Big " })
+    check("a plain model is trimmed and carries nothing else", JSON.stringify(plain) === JSON.stringify({ id: "big", name: "Big" }), plain)
+    const full = customModelOf({ id: "m", name: "M", attachment: false, limit: { context: 131072, output: 16384 } })
+    check("the image switch and both limits are kept", full.attachment === false && full.limit?.context === 131072 && full.limit.output === 16384, full)
+    check("an input limit alone is fine", customModelOf({ id: "m", name: "M", limit: { context: 32768 } }).limit?.output === undefined)
+    const refuses = (limit: { context?: number; output?: number }) => {
+      try {
+        customModelOf({ id: "m", name: "M", limit })
+        return false
+      } catch {
+        return true
+      }
+    }
+    check("an output limit without an input limit is refused", refuses({ output: 8192 }))
+    check("zero, negative and fractional limits are refused", refuses({ context: 0 }) && refuses({ context: -1 }) && refuses({ context: 1.5 }) && refuses({ context: 1024, output: 2.5 }))
+
+    const config = backend.runtime.config
+    await call({
+      type: "provider.addCustom",
+      id: "limits",
+      name: "Limits",
+      baseURL: "https://limits.example.com/v1",
+      apiKey: "k",
+      models: [
+        { id: "seeing", name: "Seeing", attachment: true, limit: { context: 262144, output: 65536 } },
+        { id: "blind", name: "Blind", attachment: false },
+        { id: "plain", name: "Plain" },
+      ],
+    })
+    const stored = config.get().customProviders.find((entry) => entry.id === "limits")
+    check("advanced fields are stored", stored?.models?.[0]?.limit?.context === 262144 && stored.models[1]?.attachment === false && stored.models[2]?.attachment === undefined, stored?.models)
+    const seeing = config.modelEntry({ provider: "limits", model: "seeing" })
+    check("the input limit becomes the context window", seeing?.contextWindow === 262144, seeing)
+    check("the output limit becomes the output cap", seeing?.maxOutput === 65536, seeing)
+    const info = config.providers().find((entry) => entry.id === "limits")?.models
+    check(
+      "the picker is told which models read images",
+      info?.find((m) => m.id === "seeing")?.attachment === true && info?.find((m) => m.id === "blind")?.attachment === false,
+      info,
+    )
+    check("an unset limit stays the provider default", config.modelEntry({ provider: "limits", model: "plain" })?.contextWindow === 0)
+    const refused = await call({
+      type: "provider.updateCustom",
+      id: "limits",
+      name: "Limits",
+      baseURL: "https://limits.example.com/v1",
+      apiKey: "",
+      models: [{ id: "seeing", name: "Seeing", limit: { output: 4096 } }],
+    }).then(
+      () => "",
+      (error: Error) => error.message,
+    )
+    check("the backend refuses an output limit without an input limit", refused.includes("output limit needs an input limit"), refused)
+    await call({ type: "provider.removeCustom", provider: "limits" })
   }
 
   section("The address bar")

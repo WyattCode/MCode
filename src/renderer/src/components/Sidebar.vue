@@ -7,6 +7,7 @@ import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
+import UpdatePill from "./UpdatePill.vue"
 
 /**
  * The 2.0 side column.
@@ -1491,6 +1492,8 @@ function pickNewProject(key: string) {
         </span>
         <span class="row-label plain">{{ t("rail.settings") }}</span>
       </button>
+      <!-- MiMo's update capsule, after the footer menu and only while the column is open. -->
+      <UpdatePill v-if="!collapsed" />
     </div>
     <ContextMenu
       v-if="footMenu"

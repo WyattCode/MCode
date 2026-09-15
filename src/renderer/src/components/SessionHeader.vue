@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from "vue"
+import { computed, ref } from "vue"
 import { useApp } from "../stores/app"
 import ContextMenu from "./ContextMenu.vue"
 import { useOpenWith } from "../lib/open-with"
@@ -25,48 +25,14 @@ const app = useApp()
 /* `panelBeside`: a side panel stands to the right, so this row ends at the column instead of under the toggle. */
 defineProps<{ infoOpen?: boolean; bottomOpen?: boolean; sideCollapsed?: boolean; hasContent?: boolean; panelBeside?: boolean }>()
 
-const emit = defineEmits<{ rename: [title: string]; menu: [x: number, y: number]; info: []; bottom: [] }>()
+/* `rename` asks the app for MiMo's rename dialog; the header no longer edits in place. */
+const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; info: []; bottom: [] }>()
 
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
 
 /* MiMo's card over the title: the project, the folder and when it last changed. */
 const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames) : undefined))
 const pinned = computed(() => Boolean(app.current && app.isPinned(app.current.id)))
-
-/*
- * Renaming happens here, in the title itself.
- *
- * The reference turns this exact box into a focused input - measured at
- * `18,56 42x24` with `4px 8px` of padding and 13px/530 type, which is the
- * static title's own geometry - so the name is edited where it is read. A modal
- * used to open instead: a scrim, a heading and two buttons to change one word.
- */
-const editing = ref(false)
-const draft = ref("")
-const field = ref<HTMLInputElement>()
-
-async function begin() {
-  if (!app.current) return
-  draft.value = title.value
-  editing.value = true
-  await nextTick()
-  field.value?.focus()
-  field.value?.select()
-}
-
-function commit() {
-  if (!editing.value) return
-  editing.value = false
-  const next = draft.value.trim()
-  // An empty name is a cancel: a session with no title cannot be found again.
-  if (next && next !== title.value) emit("rename", next)
-}
-
-function cancel() {
-  editing.value = false
-}
-
-defineExpose({ begin })
 
 /* MiMo's open-location control: the folder the conversation works in. */
 const directory = computed(() => app.current?.directory)
@@ -94,7 +60,7 @@ function openMenu(event: MouseEvent) {
     <div class="left">
       <!-- MiMo marks a pinned conversation before its title. -->
       <span
-        v-if="pinned && !editing"
+        v-if="pinned"
         class="pin-mark"
         :aria-label="t('header.pinnedTip')"
         v-tip="{ label: t('header.pinnedTip'), placement: 'bottom' }"
@@ -103,17 +69,8 @@ function openMenu(event: MouseEvent) {
           <path d="M9.6 2.2 13.8 6.4l-1.5.4-2.3 2.3.4 2.6-1.2 1.2-5.5-5.5 1.2-1.2 2.6.4 2.3-2.3zM5.6 10.4 2.6 13.4" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" />
         </svg>
       </span>
-      <input
-        v-if="editing"
-        ref="field"
-        v-model="draft"
-        class="title title-field"
-        spellcheck="false"
-        @keydown.enter="commit"
-        @keydown.esc="cancel"
-        @blur="commit"
-      />
-      <h1 v-else class="title" v-tip="card ? { card, placement: 'bottom' } : ''" @click="begin">{{ title }}</h1>
+      <!-- A plain label; a double-click opens MiMo's rename dialog. -->
+      <h1 class="title" v-tip="card ? { card, placement: 'bottom' } : ''" @dblclick="emit('rename')">{{ title }}</h1>
 
       <!--
         Beside the name rather than at the far end of the bar: it is this
@@ -254,24 +211,6 @@ function openMenu(event: MouseEvent) {
   transition: background 0.12s;
 }
 
-/*
- * The same box, now typeable. The reference's editor measures identically to
- * its static title - `42x24` on `4px 8px`, transparent, no ring - so the name
- * is edited exactly where it sat rather than the line reflowing around a field.
- *
- * `field-sizing` is what keeps that true: an input is 20-odd characters wide by
- * default, which would push the header's controls sideways the moment editing
- * began.
- */
-.title-field {
-  field-sizing: content;
-  min-width: 6ch;
-  background: transparent;
-  border: 0;
-  outline: none;
-  cursor: text;
-}
-
 
 .right {
   display: flex;
@@ -332,17 +271,6 @@ function openMenu(event: MouseEvent) {
   font-weight: 400;
   line-height: 26px;
   letter-spacing: 0;
-}
-
-/* Being renamed: MiMo's field, a faint line round the column's ground, 7 round. */
-.title.title-field {
-  box-sizing: border-box;
-  min-width: 100px;
-  padding: 0 8px;
-  background: var(--surface-base);
-  border: 1px solid color-mix(in srgb, var(--surface-base), var(--text-strong) 10%);
-  border-radius: 7px;
-  line-height: normal;
 }
 
 /*

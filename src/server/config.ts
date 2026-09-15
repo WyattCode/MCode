@@ -298,6 +298,28 @@ function customProviderWrite(
   }
 }
 
+type CustomModelEntry = NonNullable<CustomProvider["models"]>[number]
+
+/**
+ * A custom model as it may be stored: its id and name trimmed, and MiMo's
+ * 高级配置 checked. The image switch has three states (absent is the default),
+ * and each limit is a positive whole number of tokens, with an output limit
+ * allowed only beside an input limit. A limit that breaks those rules is
+ * refused rather than quietly dropped, so a mistyped cap never passes as set.
+ */
+export function customModelOf(model: CustomModelEntry): CustomModelEntry {
+  const out: CustomModelEntry = { id: String(model.id ?? "").trim(), name: String(model.name ?? "").trim() }
+  if (typeof model.attachment === "boolean") out.attachment = model.attachment
+  const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0
+  const context = model.limit?.context
+  const output = model.limit?.output
+  const invalid = "A model limit must be a positive whole number, and an output limit needs an input limit"
+  if (context !== undefined && !positive(context)) throw new Error(invalid)
+  if (output !== undefined && (!positive(output) || context === undefined)) throw new Error(invalid)
+  if (positive(context)) out.limit = positive(output) ? { context, output } : { context }
+  return out
+}
+
 export class Config {
   private current: AppConfig = defaults()
   private credentials: Record<string, string> = {}
@@ -588,10 +610,15 @@ export class Config {
          * endpoints have no such route, and asking is how a working provider
          * ends up showing an empty picker.
          */
+        /* MiMo's 高级配置 reaches the catalog: limits feed compaction and max_tokens, the image switch the attachment check. */
         models: entry.models?.map((model) => ({
           id: model.id,
           name: model.name,
-          contextWindow: 0,
+          contextWindow: model.limit?.context ?? 0,
+          ...(model.limit?.output ? { maxOutput: model.limit.output } : {}),
+          ...(typeof model.attachment === "boolean"
+            ? { attachment: model.attachment, inputs: { text: true, image: model.attachment } }
+            : {}),
           input: 0,
           output: 0,
         })),

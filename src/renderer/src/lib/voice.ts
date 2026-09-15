@@ -13,6 +13,8 @@
  * whichever model the reader has pointed the feature at.
  */
 
+import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
+
 /** The longest single recording. A minute of speech is already a long message. */
 const MAX_MS = 60_000
 
@@ -202,6 +204,54 @@ export function splitSendWord(text: string): { text: string; send: boolean } {
     if (pattern.test(trimmed)) return { text: trimmed.replace(pattern, "").trim(), send: true }
   }
   return { text: trimmed, send: false }
+}
+
+/** Latin letters and digits want a space between words; CJK text and punctuation do not. */
+const WORDISH_END = /[A-Za-z0-9,.;:!?)\]'"]$/
+const WORDISH_START = /^[A-Za-z0-9(["']/
+
+/**
+ * What one recording does to the composer.
+ *
+ * 智能编辑 answers with the whole new text and the caret or selection when the
+ * server understood the utterance as an edit; anything else - quick input, an
+ * older server, or an answer that failed validation - is typed in where the
+ * caret is, replacing the selection. This is the one hook the composer calls,
+ * so the rules live here where smoke can hold them.
+ */
+export function applyVoiceResult(
+  draft: VoiceDraft,
+  result: { text: string; heard: string; edit?: VoiceEdit },
+): VoiceDraft & { send: boolean } {
+  const length = draft.text.length
+  const clampTo = (value: number, max: number) => Math.max(0, Math.min(Number.isFinite(value) ? Math.floor(value) : max, max))
+
+  if (result.edit) {
+    const said = splitSendWord(result.heard)
+    let text = result.edit.text
+    let start = clampTo(result.edit.selectionStart, text.length)
+    let end = clampTo(result.edit.selectionEnd, text.length)
+    // A trailing send word the model left in the text is still an instruction, not content.
+    const trailing = splitSendWord(text)
+    if (said.send && trailing.send) {
+      text = trailing.text
+      start = Math.min(start, text.length)
+      end = Math.min(end, text.length)
+    }
+    return { text, selectionStart: Math.min(start, end), selectionEnd: Math.max(start, end), send: said.send || trailing.send }
+  }
+
+  const { text: spoken, send } = splitSendWord(result.text)
+  const start = clampTo(Math.min(draft.selectionStart, draft.selectionEnd), length)
+  const end = clampTo(Math.max(draft.selectionStart, draft.selectionEnd), length)
+  if (!spoken) return { text: draft.text, selectionStart: start, selectionEnd: end, send }
+  const before = draft.text.slice(0, start)
+  const after = draft.text.slice(end)
+  const lead = before && !/\s$/.test(before) && WORDISH_END.test(before) && WORDISH_START.test(spoken) ? " " : ""
+  const trail = after && !/^\s/.test(after) && WORDISH_START.test(after) && WORDISH_END.test(spoken) ? " " : ""
+  const inserted = lead + spoken + trail
+  const caret = before.length + lead.length + spoken.length
+  return { text: before + inserted + after, selectionStart: caret, selectionEnd: caret, send }
 }
 
 /**
