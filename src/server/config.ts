@@ -1,5 +1,5 @@
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
-import { normalizeChord } from "@shared/chord"
+import { normalizeChord, retireKeybinds } from "@shared/chord"
 import fs from "node:fs/promises"
 import { watch as watchFiles, type FSWatcher } from "node:fs"
 import path from "node:path"
@@ -392,6 +392,11 @@ export class Config {
       const binds: Record<string, string> = {}
       for (const [id, chord] of Object.entries(this.current.keybinds ?? {})) binds[id] = normalizeChord(chord)
       this.current.keybinds = binds
+    })
+
+    // Round five dropped the chords MiMo lacks; see `retireKeybinds` for what a saved binding keeps.
+    once("keybind-retired-r5", () => {
+      this.current.keybinds = retireKeybinds(this.current.keybinds ?? {})
     })
 
     /*

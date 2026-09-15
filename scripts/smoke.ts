@@ -40,7 +40,7 @@ import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFil
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
-import { normalizeChord } from "../src/shared/chord"
+import { RETIRED_DEFAULTS, normalizeChord, retireKeybinds } from "../src/shared/chord"
 import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
@@ -2953,7 +2953,12 @@ async function main() {
     check("Ctrl+T too", pageKeyAction(press("t", "KeyT", { control: true })).kind === "forward")
     check("Ctrl+period, for annotating", pageKeyAction(press(".", "Period", { control: true })).kind === "forward")
     check("Ctrl+Shift+B, by its capital letter", pageKeyAction(press("B", "KeyB", { control: true, shift: true })).kind === "forward")
-    check("Ctrl+Shift+period, typed as >", pageKeyAction(press(">", "Period", { control: true, shift: true })).kind === "forward")
+    check("Ctrl+Shift+slash, typed as ?", pageKeyAction(press("?", "Slash", { control: true, shift: true })).kind === "forward")
+    check(
+      "chords MiMo lacks are left to the page",
+      ["Ctrl+Shift+.", "Ctrl+U", "Ctrl+G", "Alt+←", "Ctrl+Alt+1"].every((chord) => !APP_CHORDS.includes(chord)) &&
+        pageKeyAction(press("u", "KeyU", { control: true })).kind === "none",
+    )
     check("Ctrl+R reloads the page itself", JSON.stringify(pageKeyAction(press("r", "KeyR", { control: true }))) === JSON.stringify({ kind: "reload", force: false }))
     check("Ctrl+Shift+R force-reloads it", JSON.stringify(pageKeyAction(press("R", "KeyR", { control: true, shift: true }))) === JSON.stringify({ kind: "reload", force: true }))
     check("Ctrl+C stays with the page", pageKeyAction(press("c", "KeyC", { control: true })).kind === "none")
@@ -2981,7 +2986,7 @@ async function main() {
     const plainKeys = keysIn(block("const handlers: Record<string, () => void> = {"))
     const shiftedKeys = keysIn(block("const shifted: Record<string, () => void> = {"))
     const altKeys = [...appSource.matchAll(/mod && event\.altKey && event\.key\.toLowerCase\(\) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
-    check("App.vue's handler tables were found", plainKeys.length > 15 && shiftedKeys.length > 12 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
+    check("App.vue's handler tables were found", plainKeys.length > 12 && shiftedKeys.length > 6 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
     const wanted = [
       ...plainKeys.filter((key) => key !== "F" && key !== "R").map((key) => `Ctrl+${key}`),
       ...shiftedKeys.filter((key) => key !== "R").map((key) => `Ctrl+Shift+${key}`),
@@ -4595,6 +4600,47 @@ async function main() {
     await again.load()
     check("a chord saved after the migration is not rewritten again on the next load", again.get().keybinds["view.server"] === "Ctrl+Shift+{")
     await fs.rm(chordData, { recursive: true, force: true })
+  }
+
+  section("round 5: chords MiMo lacks are gone, saved bindings keep working (R26)")
+  {
+    const retired = retireKeybinds({
+      "agent.cycle": "Ctrl+Shift+Y",
+      "app.attachFile": "Ctrl+U",
+      "session.prevUnread": "Alt+Shift+↑",
+      "app.mcp": "",
+      "project.3": "Ctrl+Alt+Q",
+      "session.new": "Ctrl+Alt+N",
+      "app.back": "",
+    })
+    check(
+      "a chord of the user's own on a command that lost its default stays",
+      retired["agent.cycle"] === "Ctrl+Shift+Y",
+      retired,
+    )
+    check(
+      "a binding that restated or cleared a dropped default goes",
+      !("app.attachFile" in retired) && !("session.prevUnread" in retired) && !("app.mcp" in retired),
+      retired,
+    )
+    check("the numbered project slots go with their bindings", !("project.3" in retired), retired)
+    check("bindings of MiMo's own commands are untouched", retired["session.new"] === "Ctrl+Alt+N" && retired["app.back"] === "", retired)
+    const appSource = await fs.readFile(path.join(process.cwd(), "src/renderer/src/App.vue"), "utf8")
+    const stillDefault = Object.entries(RETIRED_DEFAULTS).filter(([, chord]) => appSource.includes(`hint: "${chord}"`))
+    check("no command in App.vue still carries a dropped default", stillDefault.length === 0, stillDefault)
+    check("nor the numbered project slots", !appSource.includes("id: `project.${"))
+
+    const retireData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-retire-"))
+    const retireStorage = new SubagentStorage(path.join(retireData, "storage"))
+    await retireStorage.write("config", {
+      keybinds: { "agent.cycle": "Ctrl+Shift+Y", "workspace.new": "Ctrl+Shift+W" },
+      migrations: ["theme-mcode-2", "keybind-ids-r3", "keybind-chords-r4"],
+    })
+    const retireConfig = new SubagentConfig(retireStorage, new Bus(), path.join(retireData, "credentials.json"))
+    await retireConfig.load()
+    const loaded = retireConfig.get().keybinds
+    check("loading the config applies it once", loaded["agent.cycle"] === "Ctrl+Shift+Y" && !("workspace.new" in loaded), loaded)
+    await fs.rm(retireData, { recursive: true, force: true })
   }
   const pageCommands = [
     { id: "session.archive", title: "Archive this session", hint: "Ctrl+Alt+A" },

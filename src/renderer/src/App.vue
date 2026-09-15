@@ -73,7 +73,7 @@ import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
 import { HOME_SCOPE } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
-import { createFind, openFind, stepFind } from "./lib/find"
+import { createFind, openFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
 import { chimeOf, longTask } from "@shared/chime"
 import { themeTokens } from "./lib/theme-engine"
@@ -1238,10 +1238,9 @@ function reloadBrowser(force = false) {
   void rightPanel.value?.reloadTarget()?.reload(force)
 }
 
-/* Ctrl+period is MiMo's annotate while a browser tab shows a page; on a blank tab or elsewhere it steps the agent. */
-function annotateOrCycleAgent() {
-  const pane = browserShowing.value ? rightPanel.value?.activeBrowser() : undefined
-  if (!pane?.toggleAnnotate()) void cycleAgent(1)
+/* Ctrl+period is MiMo's annotate while a browser tab shows a page, and nothing anywhere else. */
+function annotateBrowser() {
+  if (browserShowing.value) rightPanel.value?.activeBrowser()?.toggleAnnotate()
 }
 
 /*
@@ -2530,7 +2529,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "view.model",
       group: "key.groupModels",
       title: t("cmd.switchModel"),
-      // MiMo's chord for its model picker; Ctrl+' still opens the same menu.
       hint: "Ctrl+Shift+M",
       // The picker hangs off the composer's model pill, and the composer is
       // only mounted inside a project - so on the home screen this command had
@@ -2623,11 +2621,12 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       // The title swaps with the state, so the row always names what pressing
-      // it will do rather than what is currently true.
+      // it will do rather than what is currently true. Turning it on is full
+      // access, so it waits for the settings switch as the composer's chip does.
       id: "permissions.autoaccept",
       group: "key.groupSession",
       title: autoAcceptAll() ? t("cmd.autoAcceptOff") : t("cmd.autoAcceptOn"),
-      hint: "Ctrl+Shift+A",
+      enabled: autoAcceptAll() || Boolean(app.config?.allowFullAccess),
       run: () => void toggleAutoAccept(),
     },
     {
@@ -2798,7 +2797,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "workspace.new",
       group: "key.groupGeneral",
       title: t("workspace.new"),
-      hint: "Ctrl+Shift+W",
       enabled: hasSession,
       run: () => void newWorkspace(),
     },
@@ -2813,7 +2811,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "composer.promptMode",
       group: "key.groupPrompt",
       title: t("cmd.promptMode"),
-      hint: "Ctrl+Shift+E",
       enabled: hasSession,
       run: () => composer.value?.setMode("normal"),
     },
@@ -2821,7 +2818,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "composer.shellMode",
       group: "key.groupPrompt",
       title: t("cmd.shellMode"),
-      hint: "Ctrl+Shift+X",
       enabled: hasSession,
       run: () => composer.value?.setMode("shell"),
     },
@@ -2846,7 +2842,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "app.attachFile",
       group: "key.groupNavigation",
       title: t("cmd.attachFile"),
-      hint: "Ctrl+U",
       enabled: hasSession,
       run: () => composer.value?.pick(),
     },
@@ -2880,21 +2875,18 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "app.searchProjects",
       group: "key.groupGeneral",
       title: t("cmd.searchProjects"),
-      hint: "Ctrl+Shift+O",
       run: () => openPalette("projects"),
     },
     {
       id: "session.prevUnread",
       group: "key.groupSession",
       title: t("cmd.prevUnread"),
-      hint: "Alt+Shift+↑",
       run: () => void stepUnread(-1),
     },
     {
       id: "session.nextUnread",
       group: "key.groupSession",
       title: t("cmd.nextUnread"),
-      hint: "Alt+Shift+↓",
       run: () => void stepUnread(1),
     },
     {
@@ -2914,35 +2906,30 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "session.prevMessage",
       group: "key.groupSession",
       title: t("cmd.prevMessage"),
-      hint: "Ctrl+Alt+[",
       run: () => stream.value?.stepMessage(-1),
     },
     {
       id: "session.nextMessage",
       group: "key.groupSession",
       title: t("cmd.nextMessage"),
-      hint: "Ctrl+Alt+]",
       run: () => stream.value?.stepMessage(1),
     },
     {
       id: "session.reopenTab",
       group: "key.groupGeneral",
       title: t("cmd.reopenTab"),
-      hint: "Ctrl+Shift+T",
       run: () => void app.reopenTab(),
     },
     {
       id: "app.mcp",
       group: "key.groupModels",
       title: t("cmd.mcp"),
-      hint: "Ctrl+;",
       run: () => openSettings("mcp"),
     },
     {
       id: "session.previous",
       group: "key.groupSession",
       title: t("key.prevSession"),
-      // MiMo's chord; Alt+Up still steps as well.
       hint: "Ctrl+Shift+[",
       run: () => void stepSession(-1),
     },
@@ -2950,7 +2937,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "session.next",
       group: "key.groupSession",
       title: t("key.nextSession"),
-      // MiMo's chord; Alt+Down still steps as well.
       hint: "Ctrl+Shift+]",
       run: () => void stepSession(1),
     },
@@ -2958,7 +2944,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "agent.cycle",
       group: "key.groupModels",
       title: t("key.cycleAgent"),
-      hint: "Ctrl+.",
       enabled: hasSession,
       run: () => void cycleAgent(1),
     },
@@ -2966,7 +2951,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "agent.cycle.reverse",
       group: "key.groupModels",
       title: t("key.cycleAgentBack"),
-      hint: "Ctrl+Shift+.",
       enabled: hasSession,
       run: () => void cycleAgent(-1),
     },
@@ -3007,14 +2991,12 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "project.previous",
       group: "key.groupGeneral",
       title: t("key.prevProject"),
-      hint: "Ctrl+Alt+↑",
       run: () => void stepProject(-1),
     },
     {
       id: "project.next",
       group: "key.groupGeneral",
       title: t("key.nextProject"),
-      hint: "Ctrl+Alt+↓",
       run: () => void stepProject(1),
     },
     {
@@ -3028,7 +3010,6 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "theme.scheme.cycle",
       group: "key.groupGeneral",
       title: t("cmd.cycleScheme"),
-      hint: "Ctrl+Shift+S",
       run: () => void cycleScheme(),
     },
     {
@@ -3186,19 +3167,6 @@ const bindableCommands = computed((): AppCommand[] => {
       hint: "Ctrl+0",
       run: () => window.mcode.zoom("reset"),
     },
-    /*
-     * One per slot rather than one row covering the range: each carries its own
-     * chord, so each has to be separately bindable. Hidden, because nine near
-     * identical rows would crowd out everything else in the palette.
-     */
-    ...openProjects.value.slice(0, 9).map((directory, at) => ({
-      id: `project.${at + 1}`,
-      group: "key.groupGeneral",
-      title: t("key.openProjectNumbered", { name: projectName(directory, app.config?.projectNames) }),
-      hint: `Ctrl+Alt+${at + 1}`,
-      hidden: true,
-      run: () => startIn(directory),
-    })),
     {
       // MiMo's branchConvo: the whole conversation at once, titled 「… (分支)」; the store toasts either way.
       id: "session.fork",
@@ -3329,6 +3297,7 @@ function onKeydown(event: KeyboardEvent) {
     if (bound) {
       const command = commands.value.find((entry) => entry.id === bound)
       if (command && command.enabled !== false) {
+        if (TYPING_OFF.has(command.id) && typingIn(event.target)) return
         event.preventDefault()
         void command.run()
         return
@@ -3349,60 +3318,6 @@ function onKeydown(event: KeyboardEvent) {
     if (modalOpen.value) return
     event.preventDefault()
     void stepRecent(event.shiftKey ? -1 : 1)
-    return
-  }
-
-  /*
-   * Alt+arrow walks the visit history. The bar used to carry a pair of arrow
-   * buttons for this; the new one is a row of tabs, and the shortcut is what
-   * keeps the history reachable now that they are gone.
-   */
-  if (event.altKey && !mod && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-    if (modalOpen.value) return
-    event.preventDefault()
-    void (event.key === "ArrowLeft" ? back() : forward())
-    return
-  }
-
-  /*
-   * Alt+up and down step through the open conversations; adding Ctrl steps
-   * through the projects instead. Same axis, one level out - which is why they
-   * share a key and differ by a modifier.
-   */
-  if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-    if (modalOpen.value) return
-    event.preventDefault()
-    const by = event.key === "ArrowUp" ? -1 : 1
-    // Adding shift narrows the walk to the conversations asking for attention.
-    if (event.shiftKey) void stepUnread(by)
-    else void (mod ? stepProject(by) : stepSession(by))
-    return
-  }
-
-  /*
-   * Ctrl+Alt+bracket moves through the conversation itself, where the bare
-   * bracket moves through the history of what was visited.
-   */
-  if (mod && event.altKey && (event.key === "[" || event.key === "]")) {
-    if (modalOpen.value) return
-    event.preventDefault()
-    stream.value?.stepMessage(event.key === "[" ? -1 : 1)
-    return
-  }
-
-  /*
-   * Ctrl+Alt and a digit opens the slot the strip shows in that position.
-   *
-   * The reference puts this on Ctrl and a digit; here that already opens the
-   * project in that position, and moving a shortcut a reader already uses is a
-   * worse trade than putting the new one a modifier away.
-   */
-  if (mod && event.altKey && /^[1-9]$/.test(event.key)) {
-    if (modalOpen.value) return
-    const directory = openProjects.value[Number(event.key) - 1]
-    if (!directory) return
-    event.preventDefault()
-    startIn(directory)
     return
   }
 
@@ -3497,15 +3412,9 @@ function onKeydown(event: KeyboardEvent) {
    * Find first, and only if a host will have it.
    *
    * `openFind` answers false when the chord was typed into a text field or when
-   * no host wants it, and then Ctrl+F does nothing, as MiMo's does. Ctrl+G
-   * steps, Ctrl+Shift+G steps back, and neither does anything at all unless a
-   * bar is open.
+   * no host wants it, and then Ctrl+F does nothing, as MiMo's does.
    */
   if (!event.shiftKey && event.key === "f" && openFind(event)) {
-    event.preventDefault()
-    return
-  }
-  if (event.key === "g" && stepFind(event.shiftKey ? -1 : 1, event)) {
     event.preventDefault()
     return
   }
@@ -3529,28 +3438,9 @@ function onKeydown(event: KeyboardEvent) {
       // MiMo's model picker and working directory.
       m: () => composer.value?.openModelMenu(),
       c: copyWorkingDirectory,
-      // Stepping back through a search while one is open; otherwise the review tab.
-      g: () => {
-        if (!stepFind(-1, event)) openReviewTab()
-      },
-      // Approve everything, or stop. Symmetric, and it always says so.
-      a: () => void toggleAutoAccept(),
-      // Searching the projects rather than the sessions inside one.
-      o: () => openPalette("projects"),
-      // A second checkout of the project, on its own branch.
-      w: () => void newWorkspace(),
-      // The two composer modes, on the reference's keys.
-      x: () => composer.value?.setMode("shell"),
-      e: () => composer.value?.setMode("normal"),
+      g: openReviewTab,
       // The box, on MiMo's chord; Ctrl+L is the browser's address bar.
       l: () => composer.value?.focus(),
-      // Agents, backwards; forwards is Ctrl+period.
-      ".": () => void cycleAgent(-1),
-      // Reopening a closed tab. The theme steps from its own command, which has no chord.
-      t: () => void app.reopenTab(),
-      // The scheme, then the palette. Stepping rather than opening a dialog is
-      // what makes them worth a key: the answer is on screen immediately.
-      s: () => void cycleScheme(),
       // MiMo's browser toggle.
       b: toggleBrowserTab,
       // And the list of all of these, which is a settings page here.
@@ -3592,14 +3482,11 @@ function onKeydown(event: KeyboardEvent) {
 
   const handlers: Record<string, () => void> = {
     k: toggleSearch,
-    // MiMo's files tab, and the reference's attach on its key.
+    // MiMo's files tab.
     p: openFilesTab,
-    u: () => composer.value?.pick(),
     b: () => (leftPanel.value = !leftPanel.value),
     "`": () => (terminalOpen.value = !terminalOpen.value),
-    m: () => composer.value?.openModelMenu(),
     ",": openSettings,
-    ";": () => openSettings("mcp"),
     n: () => void newSession(),
     // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
     t: () => void openBrowserTab(),
@@ -3610,17 +3497,15 @@ function onKeydown(event: KeyboardEvent) {
     w: () => window.mcode.window("close"),
     // The browser's address bar while it is open, else the box.
     l: focusBrowserAddress,
-    // The model picker, on the key opencode uses for it. There is one picker
-    // and it hangs off the pill, so both keys open the same menu.
-    "'": () => composer.value?.openModelMenu(),
-    // Annotate while a browser tab is showing, else agents forwards. Reverse is Ctrl+Shift+period.
-    ".": annotateOrCycleAgent,
-    // The reference walks the visit history on these as well as on Alt+arrow.
+    // MiMo's annotate, while a browser tab is showing.
+    ".": annotateBrowser,
     "[": back,
     "]": forward,
   }
   const handler = handlers[event.key]
   if (!handler) return
+  // MiMo's back and forward alone stay out of text fields: the bracket is left to what is being typed.
+  if ((event.key === "[" || event.key === "]") && typingIn(event.target)) return
   /*
    * Claimed before the availability test, not after: Ctrl+P belongs to the
    * browser's print dialog otherwise, so letting an unavailable chord fall
@@ -3737,9 +3622,17 @@ const KEY_COMMAND_IDS: Record<string, string> = {
   b: "view.left",
   "`": "view.terminal",
   j: "view.bottom",
-  m: "view.model",
   "[": "app.back",
   "]": "app.forward",
+}
+
+/* MiMo's only two commands marked off in form fields (`formTags: false`). */
+const TYPING_OFF = new Set(["app.back", "app.forward"])
+
+/** A form field or editable text, where MiMo leaves those two chords to the typing. */
+function typingIn(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)
 }
 
 /**
