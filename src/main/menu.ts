@@ -1,6 +1,34 @@
-import { app, Menu, BrowserWindow, type MenuItemConstructorOptions } from "electron"
+import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } from "electron"
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
+import pkg from "../../package.json"
+
+/**
+ * MiMo's 关于 box: a native message box naming the app, its version and the
+ * runtime it is built on, with one OK button.
+ *
+ * The version comes from package.json because app.getVersion() reports
+ * Electron's own version until the app is packaged.
+ */
+export async function showAbout(): Promise<void> {
+  const L = label
+  const detail = [
+    `${L("menu.aboutVersion", "Version")}: ${pkg.version}`,
+    `Electron: ${process.versions.electron}`,
+    `Chrome: ${process.versions.chrome}`,
+    `Node.js: ${process.versions.node}`,
+  ].join("\n")
+  const options: Electron.MessageBoxOptions = {
+    type: "info",
+    title: L("menu.about", "About MCode"),
+    message: "MCode",
+    detail,
+    buttons: [L("menu.aboutOk", "OK")],
+    noLink: true,
+  }
+  const owner = BrowserWindow.getFocusedWindow()
+  await (owner ? dialog.showMessageBox(owner, options) : dialog.showMessageBox(options))
+}
 
 /**
  * Menu bar, laid out as MiMo's: the app's own menu, File, Edit, View and
@@ -62,7 +90,8 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
     {
       label: app.name,
       submenu: [
-        { role: "about", label: L("menu.about", "About MCode") },
+        /* Not Electron's stock about panel: MiMo's version box, on every platform. */
+        { label: L("menu.about", "About MCode"), click: () => void showAbout() },
         { label: L("menu.settings", "Settings"), accelerator: "CmdOrCtrl+,", click: send("menu:settings") },
         /* Hiding is a macOS idea; elsewhere these roles would be rows that do nothing. */
         ...(isMac

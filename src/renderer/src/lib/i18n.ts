@@ -1862,6 +1862,8 @@ const zhCN: Table = {
   "set.archivedPlain": "已归档",
   "set.archivedEmptyTitle": "(暂无)",
   "set.archivedEmptyDesc": "归档的对话会出现在这里",
+  "menu.aboutVersion": "版本",
+  "menu.aboutOk": "确定",
 }
 
 const zhTW: Table = {
@@ -3633,6 +3635,8 @@ const zhTW: Table = {
   "set.archivedPlain": "已封存",
   "set.archivedEmptyTitle": "(無)",
   "set.archivedEmptyDesc": "已封存的對話會顯示在這裡",
+  "menu.aboutVersion": "版本",
+  "menu.aboutOk": "确定",
 }
 
 const en: Table = {
@@ -5405,6 +5409,8 @@ const en: Table = {
   "set.archivedPlain": "Archived",
   "set.archivedEmptyTitle": "(None)",
   "set.archivedEmptyDesc": "Archived chats will appear here",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 // --- generated language tables ---
@@ -7139,6 +7145,8 @@ const ar: Table = {
   "set.archivedPlain": "مؤرشفة",
   "set.archivedEmptyTitle": "(لا شيء)",
   "set.archivedEmptyDesc": "ستظهر المحادثات المؤرشفة هنا",
+  "menu.aboutVersion": "الإصدار",
+  "menu.aboutOk": "حسنًا",
 }
 
 const bs: Table = {
@@ -8872,6 +8880,8 @@ const bs: Table = {
   "set.archivedPlain": "Arhivirano",
   "set.archivedEmptyTitle": "(Nema)",
   "set.archivedEmptyDesc": "Arhivirani razgovori pojavit će se ovdje",
+  "menu.aboutVersion": "Verzija",
+  "menu.aboutOk": "U redu",
 }
 
 const da: Table = {
@@ -10605,6 +10615,8 @@ const da: Table = {
   "set.archivedPlain": "Arkiveret",
   "set.archivedEmptyTitle": "(Ingen)",
   "set.archivedEmptyDesc": "Arkiverede chats vises her",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const de: Table = {
@@ -12338,6 +12350,8 @@ const de: Table = {
   "set.archivedPlain": "Archiviert",
   "set.archivedEmptyTitle": "(Keine)",
   "set.archivedEmptyDesc": "Archivierte Chats werden hier angezeigt",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const es: Table = {
@@ -14071,6 +14085,8 @@ const es: Table = {
   "set.archivedPlain": "Archivado",
   "set.archivedEmptyTitle": "(Ninguno)",
   "set.archivedEmptyDesc": "Los chats archivados aparecerán aquí",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const fr: Table = {
@@ -15804,6 +15820,8 @@ const fr: Table = {
   "set.archivedPlain": "Archivée",
   "set.archivedEmptyTitle": "(Aucune)",
   "set.archivedEmptyDesc": "Les conversations archivées apparaîtront ici",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const ja: Table = {
@@ -17537,6 +17555,8 @@ const ja: Table = {
   "set.archivedPlain": "アーカイブ済み",
   "set.archivedEmptyTitle": "(なし)",
   "set.archivedEmptyDesc": "アーカイブ済みのチャットはここに表示されます",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const ko: Table = {
@@ -19270,6 +19290,8 @@ const ko: Table = {
   "set.archivedPlain": "보관됨",
   "set.archivedEmptyTitle": "(없음)",
   "set.archivedEmptyDesc": "보관된 대화가 여기에 표시됩니다",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const nb: Table = {
@@ -21003,6 +21025,8 @@ const nb: Table = {
   "set.archivedPlain": "Arkivert",
   "set.archivedEmptyTitle": "(Ingen)",
   "set.archivedEmptyDesc": "Arkiverte chatter vises her",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const pl: Table = {
@@ -22736,6 +22760,8 @@ const pl: Table = {
   "set.archivedPlain": "Zarchiwizowano",
   "set.archivedEmptyTitle": "(Brak)",
   "set.archivedEmptyDesc": "Zarchiwizowane rozmowy pojawią się tutaj",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const ptBR: Table = {
@@ -24469,6 +24495,8 @@ const ptBR: Table = {
   "set.archivedPlain": "Arquivado",
   "set.archivedEmptyTitle": "(Nenhum)",
   "set.archivedEmptyDesc": "Os chats arquivados aparecerão aqui",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const ru: Table = {
@@ -26202,6 +26230,8 @@ const ru: Table = {
   "set.archivedPlain": "Архивировано",
   "set.archivedEmptyTitle": "(Нет)",
   "set.archivedEmptyDesc": "Архивированные чаты появятся здесь",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const th: Table = {
@@ -27935,6 +27965,8 @@ const th: Table = {
   "set.archivedPlain": "เก็บถาวรแล้ว",
   "set.archivedEmptyTitle": "(ไม่มี)",
   "set.archivedEmptyDesc": "แชตที่เก็บถาวรจะแสดงที่นี่",
+  "menu.aboutVersion": "เวอร์ชัน",
+  "menu.aboutOk": "ตกลง",
 }
 
 const tr: Table = {
@@ -29668,6 +29700,8 @@ const tr: Table = {
   "set.archivedPlain": "Arşivlendi",
   "set.archivedEmptyTitle": "(Yok)",
   "set.archivedEmptyDesc": "Arşivlenmiş sohbetler burada görünecek",
+  "menu.aboutVersion": "Version",
+  "menu.aboutOk": "OK",
 }
 
 const uk: Table = {
@@ -31401,6 +31435,8 @@ const uk: Table = {
   "set.archivedPlain": "Архівовано",
   "set.archivedEmptyTitle": "(Немає)",
   "set.archivedEmptyDesc": "Тут з’являться архівовані чати",
+  "menu.aboutVersion": "Версія",
+  "menu.aboutOk": "Гаразд",
 }
 // --- end generated language tables ---
 
@@ -31440,6 +31476,8 @@ export function t(key: string, params?: Record<string, string | number>): string
  */
 const MENU_KEYS = [
   "menu.about", "menu.hide", "menu.hideOthers", "menu.quit",
+  // MiMo's About box, drawn by the main process.
+  "menu.aboutVersion", "menu.aboutOk",
   "menu.file", "menu.newSession", "menu.newWindow", "menu.openProject", "menu.settings",
   "menu.edit", "menu.undo", "menu.redo",
   "edit.cut", "edit.copy", "edit.paste", "edit.selectAll",
