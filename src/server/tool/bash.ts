@@ -1,11 +1,16 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process"
+import fs from "node:fs/promises"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
 
 const DEFAULT_TIMEOUT = 120_000
-const MAX_TIMEOUT = 600_000
-const MAX_OUTPUT = 60_000
+/** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
+const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
+/** How much of the latest output the card shows while the command works. */
+const PREVIEW_CHARS = 30_000
+/** The longest delay a timer takes; anything larger would fire at once. */
+const LONGEST_TIMER = 2 ** 31 - 1
 
 /**
  * What the console writes text in, when it is not UTF-8.
@@ -47,25 +52,64 @@ const consoleEncoding = (() => {
 })()
 
 /**
- * Text from a command's bytes.
- *
- * UTF-8 when the bytes are UTF-8, and the console's own encoding when they are
- * not. The question is put strictly - a fatal decoder that throws - because
- * asking loosely and looking for replacement characters cannot tell a stream
- * that is not UTF-8 from one that is and legitimately contains U+FFFD.
+ * The encoding a command's bytes are in: UTF-8 when they are UTF-8, and the
+ * console's own encoding when they are not. The question is put strictly - a
+ * fatal decoder that throws - because asking loosely and looking for
+ * replacement characters cannot tell a stream that is not UTF-8 from one that
+ * is and legitimately contains U+FFFD.
  */
-function decode(bytes: Buffer): string {
+function encodingOf(bytes: Buffer): string {
   try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+    return "utf-8"
   } catch {
     const encoding = consoleEncoding()
-    if (!encoding) return bytes.toString("utf8")
+    if (!encoding) return "utf-8"
     try {
-      return new TextDecoder(encoding).decode(bytes)
+      new TextDecoder(encoding)
+      return encoding
     } catch {
-      return bytes.toString("utf8")
+      return "utf-8"
     }
   }
+}
+
+function decode(bytes: Buffer): string {
+  return new TextDecoder(encodingOf(bytes)).decode(bytes)
+}
+
+const byteLength = (text: string) => Buffer.byteLength(text, "utf8")
+
+/** The start of `text` within `maxBytes`, cut on a character boundary. */
+function headWithin(text: string, maxBytes: number): string {
+  const buffer = Buffer.from(text, "utf8")
+  if (buffer.length <= maxBytes) return text
+  let end = maxBytes
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) end--
+  return buffer.subarray(0, end).toString("utf8")
+}
+
+/** The end of `text` within `maxBytes`: whole lines from the bottom, or the tail of the last line when even that one is too long. */
+function tailWithin(text: string, maxBytes: number): { text: string; cut: boolean } {
+  if (byteLength(text) <= maxBytes) return { text, cut: false }
+  const lines = text.split("\n")
+  const kept: string[] = []
+  let bytes = 0
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const size = byteLength(lines[i]) + (kept.length > 0 ? 1 : 0)
+    if (bytes + size > maxBytes) {
+      if (kept.length === 0) {
+        const buffer = Buffer.from(lines[i], "utf8")
+        let start = Math.max(0, buffer.length - maxBytes)
+        while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start++
+        kept.unshift(buffer.subarray(start).toString("utf8"))
+      }
+      break
+    }
+    kept.unshift(lines[i])
+    bytes += size
+  }
+  return { text: kept.join("\n"), cut: true }
 }
 
 /**
@@ -102,23 +146,24 @@ const REFUSED: { pattern: RegExp; reason: string }[] = [
  */
 const POWERSHELL_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
 
-function shell(chosen?: string): { command: string; args: (script: string) => string[] } {
+export function shellFor(chosen?: string): { command: string; args: (script: string) => string[]; powershell: boolean } {
   const name = (chosen ?? "").trim()
   const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? ""
 
   if (base === "cmd.exe" || base === "cmd") {
-    return { command: name, args: (script) => ["/d", "/s", "/c", script] }
+    return { command: name, args: (script) => ["/d", "/s", "/c", script], powershell: false }
   }
   if (base === "powershell.exe" || base === "pwsh.exe" || base === "pwsh" || base === "powershell") {
     return {
       command: name,
       args: (script) => ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
+      powershell: true,
     }
   }
   if (base && base !== "") {
     // bash, zsh, sh, fish and git-bash all take -lc.
     if (/^(bash|zsh|sh|fish|dash|ksh)(\.exe)?$/.test(base)) {
-      return { command: name, args: (script) => ["-lc", script] }
+      return { command: name, args: (script) => ["-lc", script], powershell: false }
     }
   }
 
@@ -126,9 +171,10 @@ function shell(chosen?: string): { command: string; args: (script: string) => st
     return {
       command: "powershell.exe",
       args: (script) => ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
+      powershell: true,
     }
   }
-  return { command: process.env.SHELL || "/bin/bash", args: (script) => ["-lc", script] }
+  return { command: process.env.SHELL || "/bin/bash", args: (script) => ["-lc", script], powershell: false }
 }
 
 /**
@@ -162,17 +208,26 @@ function stop(child: ChildProcess): void {
 export const BashTool: ToolDefinition = {
   name: "bash",
   description:
-    "Run a shell command in the project directory and return its combined output. Use the dedicated read, edit, glob, and grep tools for file work instead of shelling out - they are faster and give better output. Reach for bash for builds, tests, package managers, and version control.",
+    "Run a shell command in the project and return what it printed. Use the read, edit, glob and grep tools for file work instead of shelling out - they are faster and give better output. Reach for bash for builds, tests, package managers and version control. Set workdir rather than starting the command with cd. A command is stopped after two minutes unless timeout gives it longer. Output past about 30,000 tokens (max_output_tokens) comes back with its middle left out, and the whole of it is saved to a file named in the result.",
   permission: "bash",
   parameters: {
     type: "object",
     properties: {
       command: { type: "string", description: "The command line to run" },
-      description: { type: "string", description: "Short present-tense description of what this does, e.g. 'Run unit tests'" },
-      cwd: { type: "string", description: "Working directory, relative to the project root" },
-      timeout: { type: "number", description: `Milliseconds before the command is killed, default ${DEFAULT_TIMEOUT}` },
+      timeout: { type: "number", description: `Milliseconds before the command is stopped, ${DEFAULT_TIMEOUT} when left out` },
+      max_output_tokens: {
+        type: "integer",
+        description: `Roughly how many tokens of output come back in the result, ${DEFAULT_MAX_OUTPUT_TOKENS} when left out; past that the middle is left out and the whole output saved to a file`,
+      },
+      workdir: { type: "string", description: "Folder to run the command in, the project root when left out" },
+      interactive: {
+        type: "boolean",
+        description:
+          "Whether the command waits for someone to type - a password, a y/N prompt. This app cannot hand its terminal over, so such a command gets no input and ends; give it what it needs on the command line instead",
+      },
+      description: { type: "string", description: "What the command does, in five to ten words, e.g. 'Run unit tests'" },
     },
-    required: ["command", "description"],
+    required: ["command"],
     additionalProperties: false,
   },
   async execute(input, context) {
@@ -187,20 +242,25 @@ export const BashTool: ToolDefinition = {
       }
     }
 
-    const cwd = input.cwd ? await resolvePath(context, String(input.cwd)) : context.directory
-    const timeout = Math.min(MAX_TIMEOUT, Number(input.timeout ?? DEFAULT_TIMEOUT))
+    const timeout = input.timeout === undefined ? DEFAULT_TIMEOUT : Number(input.timeout)
+    if (!Number.isFinite(timeout) || timeout < 0) throw new ToolError(`timeout has to be a number of milliseconds, zero or more: ${String(input.timeout)}`)
+    const maxTokens = input.max_output_tokens === undefined ? DEFAULT_MAX_OUTPUT_TOKENS : Number(input.max_output_tokens)
+    if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new ToolError(`max_output_tokens has to be a positive whole number: ${String(input.max_output_tokens)}`)
+    const description = typeof input.description === "string" ? input.description : ""
+
+    const cwd = input.workdir ? await resolvePath(context, String(input.workdir)) : context.directory
 
     await context.permissions.ask({
       sessionID: context.sessionID,
       messageID: context.messageID,
       callID: context.callID,
       kind: "bash",
-      title: String(input.description ?? "Run command"),
+      title: description || "Run command",
       subject: command,
       preview: command,
     })
 
-    const { command: bin, args } = shell(context.shell)
+    const { command: bin, args } = shellFor(context.shell)
 
     return await new Promise((resolve, reject) => {
       /*
@@ -218,7 +278,15 @@ export const BashTool: ToolDefinition = {
        */
       const child = spawn(bin, args(command), {
         cwd,
-        env: { ...process.env, GIT_PAGER: "cat", PAGER: "cat", TERM: "dumb", NO_COLOR: "1" },
+        env: {
+          ...process.env,
+          GIT_PAGER: "cat",
+          PAGER: "cat",
+          TERM: "dumb",
+          NO_COLOR: "1",
+          // As MiMo sets it: Python on Windows otherwise writes the console codepage, or fails on a character it cannot encode.
+          ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
+        },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
         /*
@@ -231,45 +299,113 @@ export const BashTool: ToolDefinition = {
       })
 
       /*
-       * Bytes first, text at the end.
+       * MiMo's accounting, in bytes. The result shows `budget` bytes: the first
+       * half of it from the very start of the output and the rest from the end.
+       * Twice that much of the latest output is held, and once the output passes
+       * the budget the whole of it goes to a file instead of memory.
        *
-       * `chunk.toString("utf8")` was wrong twice over. A character split across
-       * two chunks decodes as two broken halves, which is a matter of timing
-       * and so appears at random. And a command that does not write UTF-8 -
-       * every native tool on a Chinese Windows writes the console codepage -
-       * decodes to replacement characters throughout. Holding the bytes lets
-       * the encoding be decided once, when all of them are in hand.
-       *
-       * The whole buffer is decoded again on each chunk rather than appended
-       * to, which is what keeps a split character from ever being visible -
-       * including while the command is still running.
+       * Bytes are held rather than text because a character can be split across
+       * two chunks, and a command that does not write UTF-8 - every native tool
+       * on a Chinese Windows writes the console codepage - has to be decoded as
+       * a whole to be decoded at all.
        */
-      const chunks: Buffer[] = []
-      let seen = 0
-      let output = ""
-      let truncated = false
+      const budget = maxTokens * 4
+      const keep = budget * 2
+      const head: Buffer[] = []
+      let headBytes = 0
+      const recent: Buffer[] = []
+      let recentBytes = 0
+      let total = 0
+      let dropped = false
+      let spill: Buffer[] | undefined = []
+      let decoder: InstanceType<typeof TextDecoder> | undefined
+      let saved: Promise<string | undefined> | undefined
       let settled = false
 
       const append = (chunk: Buffer) => {
-        if (truncated) return
-        const room = MAX_OUTPUT - seen
-        const kept = chunk.byteLength > room ? chunk.subarray(0, room) : chunk
-        chunks.push(kept)
-        seen += kept.byteLength
-        if (kept.byteLength < chunk.byteLength) truncated = true
-        output = decode(Buffer.concat(chunks))
-        context.progress(output)
+        total += chunk.byteLength
+        const room = Math.floor(budget / 2) - headBytes
+        if (room > 0) {
+          const part = chunk.subarray(0, room)
+          head.push(part)
+          headBytes += part.byteLength
+        }
+        recent.push(chunk)
+        recentBytes += chunk.byteLength
+        while (recentBytes > keep && recent.length > 1) {
+          recentBytes -= recent.shift()!.byteLength
+          dropped = true
+        }
+        if (spill) {
+          spill.push(chunk)
+          if (total > budget) {
+            const all = Buffer.concat(spill)
+            spill = undefined
+            const outputs = context.toolOutputs
+            if (outputs) {
+              decoder = new TextDecoder(encodingOf(all))
+              saved = outputs.save(decoder.decode(all, { stream: true })).catch(() => undefined)
+            }
+          }
+        } else if (saved && decoder) {
+          const text = decoder.decode(chunk, { stream: true })
+          saved = saved.then(async (file) => {
+            if (file) await fs.appendFile(file, text, "utf8").catch(() => {})
+            return file
+          })
+        }
+        const latest = decode(Buffer.concat(recent))
+        context.progress(latest.length > PREVIEW_CHARS ? `...\n\n${latest.slice(-PREVIEW_CHARS)}` : latest)
       }
 
       child.stdout.on("data", append)
       child.stderr.on("data", append)
 
+      const finish = async (code: number | null, expired: boolean) => {
+        if (saved && decoder) {
+          const rest = decoder.decode()
+          if (rest) {
+            saved = saved.then(async (file) => {
+              if (file) await fs.appendFile(file, rest, "utf8").catch(() => {})
+              return file
+            })
+          }
+        }
+        const file = saved ? await saved : undefined
+        const raw = decode(Buffer.concat(recent))
+        const end = tailWithin(raw, budget)
+        const cut = dropped || end.cut
+        let output = end.text
+        if (cut && file) {
+          const start = headWithin(decode(Buffer.concat(head)).replace(/�+$/, ""), Math.floor(budget / 2))
+          const suffix = tailWithin(raw, Math.max(0, budget - byteLength(start))).text
+          const shown = byteLength(start) + byteLength(suffix)
+          output = `The output was cut: about ${Math.ceil(total / 4)} tokens in all.\n\n${start}\n… about ${Math.ceil(Math.max(0, total - shown) / 4)} tokens left out …\n${suffix}`
+        }
+        if (!output) output = "(no output)"
+        /*
+         * A command that ran out of time is not a failure of the tool, as MiMo
+         * has it: what it printed comes back, with a note saying it was stopped.
+         * The exit code stays in the metadata, where MiMo keeps it too.
+         */
+        if (expired) {
+          output += `\n\n(The command was stopped when it ran past its ${timeout} ms timeout. If it needs longer and is not waiting for input, run it again with a larger timeout.)`
+        }
+        if (cut && file) output += `\n\nThe whole output is saved at ${file}`
+        resolve({
+          output,
+          title: description || command,
+          metadata: { command, cwd, exit: code, description, truncated: cut, ...(cut && file ? { outputPath: file } : {}) },
+        })
+      }
+
       const timer = setTimeout(() => {
         if (settled) return
         settled = true
+        context.signal.removeEventListener("abort", onAbort)
         stop(child)
-        reject(new ToolError(`Command timed out after ${timeout}ms:\n${output}`))
-      }, timeout)
+        void finish(null, true)
+      }, Math.min(LONGEST_TIMER, timeout + 100))
 
       const onAbort = () => {
         if (settled) return
@@ -293,16 +429,7 @@ export const BashTool: ToolDefinition = {
         settled = true
         clearTimeout(timer)
         context.signal.removeEventListener("abort", onAbort)
-
-        const body = output.trim() || "(no output)"
-        const suffix = truncated ? `\n\n(output truncated at ${MAX_OUTPUT} bytes)` : ""
-        resolve({
-          // A non-zero exit is information for the model, not a tool failure -
-          // it needs to see the output to decide what to do next.
-          output: code === 0 ? body + suffix : `Exit code ${code}\n\n${body}${suffix}`,
-          title: String(input.description ?? command),
-          metadata: { command, cwd, exit: code, truncated },
-        })
+        void finish(code, false)
       })
     })
   },

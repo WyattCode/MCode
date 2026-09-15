@@ -828,6 +828,48 @@ async function main() {
     .catch((err: Error) => (refused = err.message.includes("Refused")))
   check("bash refuses recursive force delete", refused)
 
+  // E22: MiMo's bash - workdir, max_output_tokens with the middle left out and the whole saved, a timeout that returns what ran, the exit code kept out of the output.
+  {
+    const bashOutputs = new ToolOutputs(await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-output-")))
+    const bashContext = (callID: string) => ({ ...context(callID), toolOutputs: bashOutputs })
+    const bash = findTool("bash")!
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+    const long = await bash.execute({ command: `node -e "process.stdout.write('ab'.repeat(3000))"`, description: "Print a lot", max_output_tokens: 100 }, bashContext("b-e22-1"))
+    const whole = await fs.readFile(String(long.metadata?.outputPath ?? ""), "utf8").catch(() => "")
+    check(
+      "past max_output_tokens the middle is left out and the whole output saved",
+      long.output.startsWith("The output was cut: about 1500 tokens in all.") && long.output.includes("tokens left out") && long.metadata?.truncated === true && whole.length === 6000,
+      { output: long.output.slice(0, 200), metadata: long.metadata, saved: whole.length },
+    )
+    const where = await bash.execute({ command: `node -e "console.log(process.cwd())"`, workdir: "src" }, bashContext("b-e22-2"))
+    check("workdir sets where the command runs", where.output.trim().toLowerCase() === path.join(project, "src").toLowerCase(), where.output)
+    const failing = await bash.execute({ command: `node -e "process.exit(3)"` }, bashContext("b-e22-3"))
+    // PowerShell reports a failed native command as 1 rather than passing its code on; either way it is not 0.
+    check(
+      "an exit code is kept in metadata, not written into the output",
+      failing.output === "(no output)" && typeof failing.metadata?.exit === "number" && failing.metadata.exit !== 0,
+      failing,
+    )
+    const startedAt = Date.now()
+    const slow = await bash
+      .execute({ command: `node -e "console.log('started'); setInterval(() => {}, 1000)"`, timeout: 1500 }, bashContext("b-e22-4"))
+      .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+    check(
+      "a timeout stops the command and returns what it printed, with a note",
+      slow.includes("started") && slow.includes("1500 ms timeout") && !slow.startsWith("ERROR") && Date.now() - startedAt < 10_000,
+      slow,
+    )
+    if (process.platform === "win32") {
+      const python = await bash.execute({ command: `node -e "console.log(process.env.PYTHONIOENCODING)"` }, bashContext("b-e22-5"))
+      check("Python is told to write UTF-8 on Windows", python.output.trim() === "utf-8", python.output)
+    }
+    const negative = await bash.execute({ command: "echo x", timeout: -1 }, bashContext("b-e22-6")).then(() => "ran", (error: Error) => error.message)
+    check("a negative timeout is refused before anything runs", negative.includes("timeout"), negative)
+    clearInterval(approving)
+  }
+
   // -------------------------------------------------------------- permission
   section("Permissions")
   // edit is not auto-approved, so this must park until answered.
