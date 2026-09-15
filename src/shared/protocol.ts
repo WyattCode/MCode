@@ -53,6 +53,11 @@ export interface SessionInfo {
   sideOf?: string
   /** The conversation this one was branched from, for the marker at its top. */
   forkOf?: string
+  /**
+   * This conversation's own access level, as MiMo keeps one per conversation.
+   * Absent follows the app's default level.
+   */
+  access?: "ask" | "auto" | "full"
   /*
    * subagents: a subagent's own conversation, and where in its parent it was
    * started - the parent conversation, the assistant message and the task call.
@@ -1570,6 +1575,7 @@ export type Request =
   | { type: "session.revertTurn"; sessionID: string; messageIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
+  | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
   | { type: "session.staged"; sessionID: string; staged: boolean }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
@@ -1849,6 +1855,7 @@ export interface ResponseMap {
    */
   "session.revert": { session: SessionInfo; files: number; history: HistoryDepth }
   "session.agent": { session: SessionInfo }
+  "session.access": { session: SessionInfo }
   "session.staged": { session: SessionInfo }
   "session.delete": Record<string, never>
   "session.compact": { session: SessionInfo }

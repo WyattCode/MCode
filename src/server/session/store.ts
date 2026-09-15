@@ -185,6 +185,27 @@ export class SessionStore {
     return next
   }
 
+  /*
+   * MiMo's per-conversation access level. Written without touching `updated`:
+   * choosing a level is not activity, and must not move the conversation up
+   * the side column.
+   */
+  async setAccess(sessionID: string, access: SessionInfo["access"]): Promise<SessionInfo> {
+    const session = await this.require(sessionID)
+    const next: SessionInfo = { ...session, access }
+    if (!access) delete next.access
+    await this.storage.write(this.infoKey(sessionID), next)
+    this.bus.publish({ type: "session.updated", session: next })
+    return next
+  }
+
+  /** Turning off full access puts every conversation that was at it back on the default, as MiMo does. */
+  async dropFullAccess(): Promise<void> {
+    for (const session of await this.list()) {
+      if (session.access === "full") await this.setAccess(session.id, undefined)
+    }
+  }
+
   /** Folds one assistant turn's usage into the session running total. */
   async addUsage(sessionID: string, usage: Usage): Promise<void> {
     const session = await this.require(sessionID)

@@ -1,5 +1,5 @@
 import type { PermissionRequest, QuestionAnswer, QuestionPrompt, QuestionRequest } from "@shared/protocol"
-import { PERMISSION_KINDS } from "@shared/protocol"
+import type { Access } from "@shared/access"
 
 /**
  * The rules behind the dock above the composer, kept apart from the components
@@ -79,15 +79,6 @@ export function freshGuide(): GuideState {
   return { allowCount: 0, dismissed: false, taskAllowOn: false }
 }
 
-export type Access = "ask" | "auto" | "full"
-
-/** The access level, read the way the composer's chip reads it. */
-export function accessOf(config: { accessLevel?: string; permissions?: Readonly<Record<string, string>> } | undefined): Access {
-  if (config?.accessLevel === "auto") return "auto"
-  const map = config?.permissions
-  if (!map) return "ask"
-  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
-}
 
 /*
  * MiMo's rule (`Mge`): only over a permission card, never a delete, only at the

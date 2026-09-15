@@ -457,6 +457,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "session.agent":
       return { session: await runtime.sessions.update(request.sessionID, { agent: request.agent }) }
 
+    case "session.access":
+      return { session: await runtime.sessions.setAccess(request.sessionID, request.access) }
+
     case "session.staged":
       return { session: await runtime.sessions.update(request.sessionID, { staged: request.staged }) }
 
@@ -526,8 +529,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "config.get":
       return { config: runtime.config.get() } satisfies Handled<"config.get">
 
-    case "config.set":
-      return { config: await runtime.config.set(request.patch) } satisfies Handled<"config.set">
+    case "config.set": {
+      const config = await runtime.config.set(request.patch)
+      if (request.patch.allowFullAccess === false) await runtime.sessions.dropFullAccess()
+      return { config } satisfies Handled<"config.set">
+    }
 
     case "app.paths": {
       /*

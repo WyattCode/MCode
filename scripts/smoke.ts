@@ -82,8 +82,8 @@ import type { PermissionRecord } from "../src/shared/protocol"
 import type { ServerResponse } from "node:http"
 import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
+import { accessAction, defaultAccess, sessionAccess } from "../src/shared/access"
 import {
-  accessOf,
   composerAnswers,
   confirmQueue,
   guideShown,
@@ -998,7 +998,7 @@ async function main() {
     const allAllowed = Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"]))
     check(
       "the level is read the way the composer chip reads it",
-      accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
+      defaultAccess({ accessLevel: "auto" }) === "auto" && defaultAccess({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && defaultAccess({ permissions: allAllowed }) === "full",
     )
 
     // 帮我审批 turns on the middle level; what it lets through stops waiting, a delete does not.
@@ -1024,6 +1024,41 @@ async function main() {
     gate.rejectAll("s-guide")
     await deleteAsk
     stopEdit()
+
+    // R3: MiMo keeps the access level per conversation; one without follows the default.
+    const own = { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: true }
+    check(
+      "a conversation without a level of its own follows the default",
+      sessionAccess(undefined, own) === "ask" && sessionAccess(undefined, { ...own, accessLevel: "auto" }) === "auto" && sessionAccess("bogus", own) === "ask",
+    )
+    check(
+      "a conversation's own level wins over the default",
+      sessionAccess("auto", own) === "auto" && sessionAccess("full", own) === "full" && sessionAccess("ask", { ...own, accessLevel: "auto" }) === "ask",
+    )
+    check("its own full access lapses once full access is not allowed", sessionAccess("full", { ...own, allowFullAccess: false }) === "ask")
+    const fullDefault = { permissions: { ...allAllowed, bash: "deny" }, accessBefore: { ...PERMISSION_DEFAULTS }, allowFullAccess: true }
+    check(
+      "below full access a conversation runs on the map full access set aside, and a refusal holds at every level",
+      defaultAccess(fullDefault) === "full" &&
+        accessAction("edit", "ask", fullDefault) === PERMISSION_DEFAULTS.edit &&
+        accessAction("edit", "full", fullDefault) === "allow" &&
+        accessAction("bash", "ask", fullDefault) === "deny" &&
+        accessAction("bash", "full", fullDefault) === "deny",
+    )
+    const levelsBus = new Bus()
+    const levels: Record<string, string | undefined> = { "s-own": "auto" }
+    const levelGate = new Permissions(levelsBus, { get: () => ({ ...own }) } as never)
+    levelGate.useSessions(async (id) => levels[id])
+    const editIn = (sessionID: string) => levelGate.ask({ sessionID, messageID: "m", callID: `c-${sessionID}`, kind: "edit", title: "t", subject: "a.ts" })
+    const within = (promise: Promise<void>) => Promise.race([promise.then(() => "ran"), new Promise((resolve) => setTimeout(() => resolve("waiting"), 50))])
+    const waitingEdit = editIn("s-other")
+    check(
+      "an edit runs in the conversation on 帮我审批 and waits in one on the default",
+      (await within(editIn("s-own"))) === "ran" && (await within(waitingEdit)) === "waiting",
+    )
+    levels["s-other"] = "full"
+    levelsBus.publish({ type: "session.updated", session: {} as never })
+    check("raising that one conversation's level lets its waiting edit through", (await within(waitingEdit)) === "ran" && levelGate.outstanding().length === 0)
   }
 
   section("Tool arguments")

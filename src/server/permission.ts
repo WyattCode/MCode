@@ -6,7 +6,8 @@ import type {
   PermissionRequest,
   PermissionResponse,
 } from "@shared/protocol"
-import { DEFAULT_PERMISSIONS, PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
+import { PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
+import { accessAction, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { Identifier } from "@shared/id"
 import type { CommandRisk } from "./command-risk"
 import { LOST_WORK, commandRisk } from "./command-risk"
@@ -136,9 +137,28 @@ export class Permissions {
     private readonly config: Config,
   ) {
     this.bus.subscribe((event) => {
-      if (event.type !== "config.updated") return
-      this.drainDecided()
+      // A conversation's own level changing settles its waiting questions the way a settings change does.
+      if (event.type !== "config.updated" && event.type !== "session.updated") return
+      void this.drainDecided()
     })
+  }
+
+  /** Where a conversation's own access level is read; without it every conversation follows the default. */
+  private sessionLevel?: (sessionID: string) => Promise<unknown>
+
+  useSessions(level: (sessionID: string) => Promise<unknown>): void {
+    this.sessionLevel = level
+  }
+
+  /*
+   * Answered at once when there is nowhere to read a conversation's level, so a
+   * question is raised in the same tick as the call, as it always was.
+   */
+  private levelOf(sessionID: string): Access | Promise<Access> {
+    if (!this.sessionLevel) return sessionAccess(undefined, this.config.get())
+    return this.sessionLevel(sessionID)
+      .catch(() => undefined)
+      .then((own) => sessionAccess(own, this.config.get()))
   }
 
   /** The session runner hands this over once it exists; it owns the models. */
@@ -199,10 +219,10 @@ export class Permissions {
    * a build newer than this config - and it is what happened before, when an
    * unknown name simply failed to match anything in the approved list.
    */
-  action(kind: string): PermissionAction {
+  action(kind: string, level: Access = defaultAccess(this.config.get())): PermissionAction {
     const bucket = bucketOf(kind)
     if (!bucket) return "ask"
-    return this.config.get().permissions?.[bucket] ?? DEFAULT_PERMISSIONS[bucket]
+    return accessAction(bucket, level, this.config.get())
   }
 
   /** True when `target` sits under something already approved for this session. */
@@ -238,7 +258,9 @@ export class Permissions {
      */
     scope?: string
   }): Promise<void> {
-    const action = this.action(input.kind)
+    const found = this.levelOf(input.sessionID)
+    const level = found instanceof Promise ? await found : found
+    const action = this.action(input.kind, level)
     /*
      * Read first, before anything remembered. A bucket switched to Deny has to
      * beat an "always" granted earlier in the same session, or turning a tool
@@ -247,7 +269,7 @@ export class Permissions {
     if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
     if (action === "allow") return
     // The middle access level. A refusal set in settings has already won above.
-    if (this.config.get().accessLevel === "auto") {
+    if (level === "auto") {
       if (autoAllows(input.kind, input.subject)) return
       if (input.kind === "bash" && (await this.reviewed(input.sessionID, input.subject))) return
     }
@@ -414,10 +436,14 @@ export class Permissions {
    * A bucket moved back to Ask leaves its questions alone. The answer to "stop
    * approving these" is not to answer the one already on screen for them.
    */
-  drainDecided(): void {
-    const auto = this.config.get().accessLevel === "auto"
+  async drainDecided(): Promise<void> {
     for (const [id, pending] of [...this.pending]) {
-      const action = this.action(pending.request.kind)
+      const found = this.levelOf(pending.request.sessionID)
+      const level = found instanceof Promise ? await found : found
+      // Answered, or settled by another pass, while the level was read.
+      if (this.pending.get(id) !== pending) continue
+      const action = this.action(pending.request.kind, level)
+      const auto = level === "auto"
       /*
        * The middle level switched on while a question was up - MiMo's 帮我审批 -
        * lets through what it would not have asked about, as an approval for once.

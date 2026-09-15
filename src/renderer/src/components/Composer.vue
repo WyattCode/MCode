@@ -12,6 +12,7 @@ import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shar
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
 import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
+import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
 import { badgeStyle, fileBadge } from "../lib/filetype"
@@ -1822,24 +1823,19 @@ onBeforeUnmount(() => {
 
 /**
  * The access chip's three positions, as MiMo has them: the default, "approve
- * for me" in the middle, and full access. "full" is what is left once nothing
- * asks - a map with a deny in it still counts, since a deny never prompts
- * either. The middle one is carried by `accessLevel`, and the server applies
- * it on top of whatever the map says.
+ * for me" in the middle, and full access. On the home screen the chip is the
+ * app's default level; in a conversation it is that conversation's own, which
+ * MiMo keeps per conversation and a conversation without one takes from the
+ * default (@shared/access).
  */
-const ACCESS_CHOICES = ["ask", "auto", "full"] as const
-type Access = (typeof ACCESS_CHOICES)[number]
-
-const access = computed<Access>(() => {
-  if (app.config?.accessLevel === "auto") return "auto"
-  const map = app.config?.permissions
-  if (!map) return "ask"
-  return PERMISSION_KINDS.some((kind) => map[kind] === "ask") ? "ask" : "full"
-})
+const accessHere = computed(() => !props.fresh && !props.side && Boolean(sessionID.value))
+const access = computed<Access>(() =>
+  accessHere.value ? sessionAccess(session.value?.access, app.config) : defaultAccess(app.config),
+)
 
 /* Full access is offered only once settings allow it - or while it is already on, so it can be left. */
 const accessChoices = computed(() =>
-  ACCESS_CHOICES.filter((entry) => entry !== "full" || app.config?.allowFullAccess || access.value === "full"),
+  ACCESS_LEVELS.filter((entry) => entry !== "full" || app.config?.allowFullAccess || access.value === "full"),
 )
 
 /* Set while the question before full access is on screen. */
@@ -1933,11 +1929,23 @@ async function confirmFull() {
 }
 
 /*
- * Moving between the default and the middle level leaves the map alone - the
- * middle level is applied on top of it. Only entering and leaving full access
- * rewrites the map, and leaving it puts back what was there.
+ * In a conversation the level is saved with that conversation alone. On the
+ * home screen it is the default: moving between the default and the middle
+ * level leaves the map alone - the middle level is applied on top of it. Only
+ * entering and leaving full access rewrites the map, and leaving it puts back
+ * what was there.
  */
 async function applyAccess(next: Access) {
+  const id = sessionID.value
+  if (accessHere.value && id) {
+    try {
+      await app.setAccess(id, next)
+      app.announceAccess(next)
+    } catch (err) {
+      notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))
+    }
+    return
+  }
   const map = app.config?.permissions
   if (!map) return
   const leavingFull = access.value === "full"

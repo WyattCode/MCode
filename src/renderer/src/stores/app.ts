@@ -1404,6 +1404,11 @@ export const useApp = defineStore("app", () => {
     }
   }
 
+  /** MiMo's per-conversation access level; the home screen's chip changes the default instead. */
+  async function setAccess(sessionID: string, access: "ask" | "auto" | "full") {
+    await api().request({ type: "session.access", sessionID, access })
+  }
+
   /** MiMo's effort is one app-wide level: every conversation, and the next, runs at it. */
   async function setEffort(effort: Effort) {
     await patchConfig({ effort })
@@ -1974,6 +1979,7 @@ export const useApp = defineStore("app", () => {
     setModel,
     setSmart,
     setEffort,
+    setAccess,
     setAgent,
     setStaged,
     patchConfig,
