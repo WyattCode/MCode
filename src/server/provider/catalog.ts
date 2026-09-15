@@ -31,6 +31,8 @@ export interface ModelEntry {
   cacheWrite?: number
   /** MiMo's `cachePromptTTL`: a model that asks for the hour-long prompt cache. */
   cacheTTL?: "5m" | "1h"
+  /** MiMo's `interleaved.field`: where an OpenAI-compatible model reads its earlier reasoning back from. */
+  interleaved?: string
   /**
    * What the model can do, in the reference's own vocabulary.
    *

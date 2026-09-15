@@ -49,6 +49,7 @@ import { providerExtras, samplingFor } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
+import { forWire } from "../provider/wire-ids"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
@@ -1644,7 +1645,10 @@ export class SessionRunner {
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // this turn's continuation notes follow the replies they answer; and three identical steps
       // in a row bring a note to change approach.
-      const history = await withAttachmentData(withSameStepsNote(withNotes(step > 0 ? frameSteered(chatted) : chatted, notes)), session.directory, attachmentData)
+      const history = forWire(
+        await withAttachmentData(withSameStepsNote(withNotes(step > 0 ? frameSteered(chatted) : chatted, notes)), session.directory, attachmentData),
+        session.model,
+      )
 
       const effort = session.effort ?? config.effort
 
@@ -1745,6 +1749,8 @@ export class SessionRunner {
         cacheTTL: this.config.modelEntry(session.model)?.cacheTTL,
         // What the model reads besides text: an attachment it cannot read goes as a note.
         inputs: modelInputs(this.config.modelEntry(session.model)),
+        // MiMo's interleaved reasoning, for a model that reads its own reasoning back.
+        interleaved: interleavedField(definition.kind, session.model, this.config.modelEntry(session.model)),
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
         extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true),
@@ -1913,6 +1919,13 @@ export class SessionRunner {
         const part = blocks.get(event.index)
         if (part?.type === "reasoning") {
           part.time.completed = Date.now()
+          dirty = true
+        }
+      } else if (event.type === "reasoning.signature") {
+        // Kept so the thinking can be sent back to the same model, as MiMo keeps it.
+        const part = blocks.get(event.index)
+        if (part?.type === "reasoning") {
+          part.signature = event.signature
           dirty = true
         }
       } else if (event.type === "tool") {
@@ -2816,6 +2829,16 @@ interface Turn {
  */
 function pathKey(target: string): string {
   return process.platform === "win32" ? target.toLowerCase() : target
+}
+
+/**
+ * MiMo's interleaved field: what the model's entry states, else `reasoning_content`
+ * for a DeepSeek model reached over the OpenAI-compatible wire.
+ */
+function interleavedField(kind: string, model: ModelRef, entry: ModelEntry | undefined): string | undefined {
+  if (kind !== "openai-compatible") return undefined
+  if (entry?.interleaved) return entry.interleaved
+  return model.model.toLowerCase().includes("deepseek") ? "reasoning_content" : undefined
 }
 
 /** An overflow compaction leaves attached files out of what it replays, naming each where it was. */

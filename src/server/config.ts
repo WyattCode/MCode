@@ -315,6 +315,7 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   const inputs = Object.fromEntries((["pdf", "audio", "video"] as const).flatMap((key) => (typeof model.inputs?.[key] === "boolean" ? [[key, model.inputs[key]]] : [])))
   if (Object.keys(inputs).length) out.inputs = inputs
   if (model.cacheTTL === "5m" || model.cacheTTL === "1h") out.cacheTTL = model.cacheTTL
+  if (model.interleaved === "reasoning" || model.interleaved === "reasoning_content" || model.interleaved === "reasoning_details") out.interleaved = model.interleaved
   return out
 }
 
@@ -670,6 +671,7 @@ export class Config {
             ? { inputs: { text: true, ...model.inputs, ...(typeof model.attachment === "boolean" ? { image: model.attachment } : {}) } }
             : {}),
           ...(model.cacheTTL ? { cacheTTL: model.cacheTTL } : {}),
+          ...(model.interleaved ? { interleaved: model.interleaved } : {}),
           input: 0,
           output: 0,
         })),

@@ -27,6 +27,8 @@ import { TOOLS } from "../src/server/tool/registry"
 import { execFileSync } from "node:child_process"
 import { attachmentParts, imageSize } from "../src/server/provider/attachment-parts"
 import { isSummary, touchedFiles } from "../src/server/session/summary"
+import { claudeCallID, forWire, mistralCallID } from "../src/server/provider/wire-ids"
+import { toProviderMessages } from "../src/server/provider/anthropic"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -837,6 +839,59 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("a refusal for length compacts as an overflow", overAfter?.compacted?.trigger === "provider-overflow", overAfter?.compacted)
       check("and posts the request again after the summary", asks.length === 2 && retry.includes('trigger=\\"provider-overflow\\"') && retry.includes("OVERFLOW request"), { asks: asks.length, retry: retry.slice(0, 400) })
       check("and the step runs to an answer", (await e.assistants(over.id)).at(-1)?.finish === "end_turn")
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: reasoning replayed where required, tool-call ids sanitised (E42)")
+  {
+    check("Claude's ids keep letters, digits, _ and -", claudeCallID("call:1/x.y-z_2") === "call_1_x_y-z_2")
+    check("Mistral's are nine letters and digits", mistralCallID("call_ab-12") === "callab120" && mistralCallID("toolu_0123456789xyz") === "toolu0123")
+    const user = (id: string, text: string): Message => ({ id, sessionID: "s", role: "user", text, attachments: [], time: { created: 1 } })
+    const reply = (id: string, parts: AssistantMessage["parts"], model = { provider: "p", model: "m" }): Message => ({ id, sessionID: "s", role: "assistant", model, agent: "build", parts, time: { created: 2 }, finish: "end_turn" })
+    const done = (callID: string) => ({ type: "tool", id: callID, callID, name: "read", status: "completed", input: { path: "a" }, output: "ok", time: { created: 1 } }) as AssistantMessage["parts"][number]
+    const history = [user("u1", "go"), reply("a1", [done("call:odd/1")]), user("u2", "and then")]
+    const claude = forWire(history, { provider: "openrouter", model: "anthropic/claude-sonnet-5" })
+    const claudePart = claude[1]?.role === "assistant" ? claude[1].parts[0] : undefined
+    check("a Claude request carries sanitised ids, the transcript its own", claudePart?.type === "tool" && claudePart.callID === "call_odd_1" && (history[1] as AssistantMessage).parts[0]?.type === "tool" && ((history[1] as AssistantMessage).parts[0] as { callID: string }).callID === "call:odd/1")
+    const onMistral = forWire(history, { provider: "mistral", model: "mistral-large" })
+    check("a tool result followed by a user message gets Mistral a Done. between", onMistral.length === 4 && onMistral[2]?.role === "assistant" && JSON.stringify(onMistral[2]).includes("Done."), onMistral.map((m) => m.role))
+    check("any other model is left alone", forWire(history, { provider: "lmstudio", model: "qwen3" }) === history)
+
+    const thought = reply("a2", [{ type: "reasoning", id: "r", text: "because", time: { created: 1 } }, { type: "text", id: "t", text: "answer" }])
+    const replayed = toMessages("s", [user("u1", "q"), thought], undefined, "reasoning_content") as Record<string, any>[]
+    check("an interleaved model reads its reasoning back in its own field", replayed[2]?.reasoning_content === "because" && replayed[2].content === "answer", replayed[2])
+    check("other models are sent none", !("reasoning_content" in ((toMessages("s", [user("u1", "q"), thought]) as Record<string, any>[])[2] ?? {})))
+
+    const signedModel = { provider: "anthropic", model: "claude-opus-5" }
+    const signed = reply("a3", [{ type: "text", id: "t1", text: "first" }, done("toolu_1"), { type: "reasoning", id: "r1", text: "", time: { created: 1 }, signature: "sig" }], signedModel)
+    const back = toProviderMessages([user("u1", "q"), signed], undefined, signedModel) as Record<string, any>[]
+    const blocks = back[1]?.content as Record<string, any>[]
+    check("signed thinking goes back to the model that signed it", blocks?.some((block) => block.type === "thinking" && block.signature === "sig"), blocks?.map((block) => block.type))
+    check("and a reply's calls come after its other parts", blocks?.at(-1)?.type === "tool_use", blocks?.map((block) => block.type))
+    const elsewhere = toProviderMessages([user("u1", "q"), signed], undefined, { provider: "anthropic", model: "claude-sonnet-5" }) as Record<string, any>[]
+    check("but not to another model", !(elsewhere[1]?.content as Record<string, any>[]).some((block) => block.type === "thinking"))
+
+    // On the wire: a DeepSeek model's reasoning is kept as it streams and sent back next time.
+    const e = await engine({ custom: { models: [{ id: "deepseek-v4", name: "DeepSeek" }] } })
+    try {
+      e.replies.push((response) => {
+        response.writeHead(200, { "content-type": "text/event-stream" })
+        response.write(frame({ choices: [{ delta: { reasoning_content: "thinking it over" } }] }))
+        response.write(frame({ choices: [{ delta: { content: "an answer" } }] }))
+        response.end(frame({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } }) + "data: [DONE]\n\n")
+      })
+      const model = { provider: "fake", model: "deepseek-v4" }
+      const session = await e.store.create({ directory: e.project, model })
+      await e.runner.prompt({ sessionID: session.id, text: "think first" })
+      await e.idle(session.id)
+      const kept = (await e.assistants(session.id)).at(-1)?.parts.find((part) => part.type === "reasoning")
+      check("its reasoning is kept though reasoning is not shown", kept?.type === "reasoning" && kept.text === "thinking it over", kept)
+      await e.runner.prompt({ sessionID: session.id, text: "and again" })
+      await e.idle(session.id)
+      const assistantSent = (e.bodies.at(-1)?.messages as Record<string, any>[]).find((m) => m.role === "assistant")
+      check("and sent back in reasoning_content", assistantSent?.reasoning_content === "thinking it over", assistantSent)
     } finally {
       await e.close()
     }

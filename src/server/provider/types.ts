@@ -16,6 +16,8 @@ export type TurnEvent =
   | { type: "reasoning.start"; index: number }
   | { type: "reasoning.delta"; index: number; text: string }
   | { type: "block.end"; index: number }
+  /** Anthropic's signature over a thinking block, sent once the block is complete. */
+  | { type: "reasoning.signature"; index: number; signature: string }
   /** A tool the model wants to run, announced as soon as its name is known. */
   | { type: "tool"; callID: string; name: string }
 
@@ -81,6 +83,12 @@ export interface TurnRequest {
   cacheTTL?: "5m" | "1h"
   /** What the model reads besides text; an attachment of a kind it lacks is sent as a note instead (MiMo's unsupported parts). */
   inputs?: Partial<ModelModalities>
+  /**
+   * MiMo's interleaved reasoning: the assistant-message field an
+   * OpenAI-compatible model reads its earlier reasoning back from. Set, the
+   * reasoning is kept as it streams and sent back in that field.
+   */
+  interleaved?: string
   /**
    * How many times the SDK may quietly resend a failed request itself. The turn
    * loop passes 0 because it retries in the open, with a row saying so; other

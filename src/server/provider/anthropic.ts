@@ -26,11 +26,11 @@ export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
  * Two things matter here. Every `tool_use` block must be answered by a
  * `tool_result` with the same id in the immediately following user turn, or the
  * API rejects the request - so tool results are emitted as one batched user
- * message per assistant turn. And reasoning is deliberately not replayed: only
- * the summarized text is stored, not the signed original, and sending an
- * unsigned thinking block back is worse than sending none.
+ * message per assistant turn. And thinking goes back only with its signature,
+ * to the model that signed it, as MiMo keeps it: an unsigned thinking block, or
+ * one from another model, is worse than none.
  */
-export function toProviderMessages(messages: Message[], inputs?: Partial<ModelModalities>): Anthropic.MessageParam[] {
+export function toProviderMessages(messages: Message[], inputs?: Partial<ModelModalities>, model?: ModelRef): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = []
 
   for (const message of requestHistory(messages)) {
@@ -49,14 +49,20 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
     }
 
     const assistant: Anthropic.ContentBlockParam[] = []
+    const calls: Anthropic.ContentBlockParam[] = []
     const results: Anthropic.ToolResultBlockParam[] = []
+    // MiMo keeps signed thinking only for the model that wrote it.
+    const sameModel = Boolean(model && message.model.provider === model.provider && message.model.model === model.model)
 
     for (const part of message.parts) {
-      if (part.type === "text") {
+      if (part.type === "reasoning") {
+        if (sameModel && part.signature) assistant.push({ type: "thinking", thinking: part.text, signature: part.signature })
+      } else if (part.type === "text") {
         if (part.text.trim()) assistant.push({ type: "text", text: part.text })
       } else if (part.type === "tool") {
         // A call that never finished arrives here already answered as interrupted (see history.ts).
-        assistant.push({ type: "tool_use", id: part.callID, name: part.name, input: part.input })
+        // Calls go after every other part, as MiMo splits a reply whose words follow its calls.
+        calls.push({ type: "tool_use", id: part.callID, name: part.name, input: part.input })
         results.push({
           type: "tool_result",
           tool_use_id: part.callID,
@@ -66,7 +72,7 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
       }
     }
 
-    if (assistant.length) out.push({ role: "assistant", content: assistant })
+    if (assistant.length || calls.length) out.push({ role: "assistant", content: [...assistant, ...calls] })
     if (results.length) out.push({ role: "user", content: results })
   }
 
@@ -220,7 +226,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
   const mark: CacheMark = { type: "ephemeral", ...(request.cacheTTL === "1h" ? { ttl: "1h" as const } : {}) }
   const tools = toolSchemas(request.tools)
   if (tools.length) tools[tools.length - 1] = { ...tools[tools.length - 1]!, cache_control: mark }
-  const messages = toProviderMessages(request.history, request.inputs)
+  const messages = toProviderMessages(request.history, request.inputs, request.model)
   for (const message of messages.slice(-2)) markLast(message, mark)
   return {
     model: request.model.model,
@@ -261,6 +267,8 @@ export const AnthropicAdapter: ProviderAdapter = {
           emit({ type: "text.delta", index: event.index, text: event.delta.text })
         } else if (event.delta.type === "thinking_delta") {
           emit({ type: "reasoning.delta", index: event.index, text: event.delta.thinking })
+        } else if (event.delta.type === "signature_delta") {
+          emit({ type: "reasoning.signature", index: event.index, signature: event.delta.signature })
         }
         continue
       }

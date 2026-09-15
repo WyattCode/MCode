@@ -177,6 +177,8 @@ export interface ReasoningPart {
   id: string
   text: string
   time: { created: number; completed?: number }
+  /** Anthropic's signature over the thinking, kept so the block can be sent back to the same model, as MiMo keeps it. */
+  signature?: string
 }
 
 export type AssistantPart = TextPart | ReasoningPart | ToolPart
@@ -1456,6 +1458,8 @@ export interface CustomModel {
   /** MiMo's model fields a config file can set beyond the form: which other inputs it reads, and an hour-long prompt cache. */
   inputs?: { pdf?: boolean; audio?: boolean; video?: boolean }
   cacheTTL?: "5m" | "1h"
+  /** MiMo's `interleaved.field`: the message field an OpenAI-compatible model reads its own earlier reasoning back from. */
+  interleaved?: "reasoning" | "reasoning_content" | "reasoning_details"
 }
 
 export interface CustomProvider {

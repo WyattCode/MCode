@@ -70,7 +70,7 @@ function toolSchemas(tools: ToolDefinition[]) {
  * `role: "tool"` entries keyed by call id, which is what this format expects
  * in place of Anthropic's batched tool_result blocks.
  */
-export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>) {
+export function toMessages(system: string, history: Message[], inputs?: Partial<ModelModalities>, interleaved?: string) {
   const out: Record<string, unknown>[] = [{ role: "system", content: system }]
 
   for (const message of requestHistory(history)) {
@@ -117,9 +117,19 @@ export function toMessages(system: string, history: Message[], inputs?: Partial<
       (part) => part.type === "tool" && (part.status === "completed" || part.status === "error"),
     )
 
+    // MiMo's interleaved reasoning: a model that reads its reasoning back gets it in its own field.
+    const reasoning = interleaved
+      ? message.parts
+          .filter((part) => part.type === "reasoning")
+          .map((part) => (part.type === "reasoning" ? part.text : ""))
+          .join("")
+          .trim()
+      : ""
+
     if (text || calls.length) {
       out.push({
         role: "assistant",
+        ...(interleaved && reasoning ? { [interleaved]: reasoning } : {}),
         content: text || null,
         ...(calls.length
           ? {
@@ -177,7 +187,7 @@ export const OpenAICompatible: ProviderAdapter = {
     const root = (request.baseURL ?? "").replace(/\/+$/, "")
     if (!root) throw new Error("This provider has no base URL configured")
 
-    const messages = toMessages(request.system, request.history, request.inputs)
+    const messages = toMessages(request.system, request.history, request.inputs, request.interleaved)
     const tools: Record<string, unknown>[] = toolSchemas(request.tools)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
 
@@ -283,7 +293,8 @@ export const OpenAICompatible: ProviderAdapter = {
       if (!delta) continue
 
       const reasoning = delta.reasoning_content ?? delta.reasoning
-      if (reasoning && request.showReasoning) {
+      // Kept when it is shown, or when the model reads it back later (interleaved).
+      if (reasoning && (request.showReasoning || request.interleaved)) {
         if (!reasoningOpen) {
           reasoningOpen = true
           emit({ type: "reasoning.start", index: 1 })
