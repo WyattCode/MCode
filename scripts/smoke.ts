@@ -69,6 +69,15 @@ import {
 import { filterMenu } from "../src/renderer/src/lib/menu"
 import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
 import { interruptedTurn } from "../src/shared/resume"
+import { detectCodeLanguage, insertFence } from "../src/renderer/src/lib/paste-code"
+import {
+  appendMentions,
+  mentionBackspace,
+  projectRelative,
+  promptHistory,
+  slashAt,
+  slashLead,
+} from "../src/renderer/src/lib/composer-text"
 import type { Message } from "../src/shared/protocol"
 import { dismiss, notice, notify, notifyFailure, toastID, toasts } from "../src/renderer/src/lib/toast"
 
@@ -2476,6 +2485,38 @@ async function main() {
     )
     internals.steering.delete(steerSession.id)
     internals.pending.delete(steerSession.id)
+  }
+
+  section("Composer text rules")
+  {
+    const js = ["const a = 1", "let b = a + 1", "function add(x, y) {", "  return x + y", "}", "console.log(add(a, b))"].join("\n")
+    check("five lines of code are fenced as their language", detectCodeLanguage(js) === "js", detectCodeLanguage(js))
+    check("JSON that parses is json", detectCodeLanguage('{\n  "a": 1,\n  "b": [1, 2],\n  "c": {\n    "d": true\n  }\n}') === "json")
+    check("four lines are too few", detectCodeLanguage("const a = 1\nlet b = 2\nconst c = 3\nlet d = 4") === undefined)
+    check("prose is not code", detectCodeLanguage("Dear team,\n\nthanks for the update.\nI will look tomorrow.\nBest,\nWyatt") === undefined)
+    check("text already fenced is left alone", detectCodeLanguage("```\n" + js + "\n```") === undefined)
+    const fenced = insertFence("see: tail", 5, 5, "js", "a()\n\n")
+    check("the fence gets lines of its own", fenced.text === "see: \n```js\na()\n```\ntail", fenced.text)
+    check("and the caret lands after it", fenced.caret === "see: \n```js\na()\n```\n".length, fenced.caret)
+
+    const says = (id: string, text: string) => ({ id, sessionID: "s", role: "user", text, attachments: [], time: { created: 1 } }) as Message
+    const walk = promptHistory([says("1", " one "), says("2", "one"), says("3", "two"), says("4", "  ")])
+    check("history trims and drops repeats in a row", walk.join("|") === "one|two", walk)
+
+    const removed = mentionBackspace("see @src/app.ts now", 16, ["src/app.ts"])
+    check("backspace after a mention and its space takes the whole mention", removed?.text === "see now" && removed.caret === 4, removed)
+    check("an @ inside a word is not a mention", mentionBackspace("mail@src/app.ts", 15, ["src/app.ts"]) === undefined)
+
+    check("a slash on a later line opens the menu", slashAt("hello\n  /com", 12)?.query === "com")
+    check("a slash inside a sentence does not", slashAt("and/or", 6) === undefined)
+    check("a space after the name ends the search", slashAt("/deploy west", 12) === undefined)
+    const lead = slashLead("\n  /compact now", new Set(["compact"]))
+    check("the highlight finds a known command after blank lines", lead?.newlines === 1 && lead.indent === "  " && lead.token === "/compact", lead)
+    check("but not an unknown one", slashLead("/nope", new Set(["compact"])) === undefined)
+
+    check("a file under the project is named from its root", projectRelative("C:\\Work\\Proj", "c:/work/proj/src/a.ts") === "src/a.ts")
+    check("a file outside it is not", projectRelative("C:\\Work\\Proj", "C:\\Work\\Projects\\a.ts") === undefined)
+    check("dropped mentions are appended with one space before them", appendMentions("look at", ["a.ts", "b.ts"]) === "look at @a.ts @b.ts ")
   }
 
   section("The @ menu: folders and search")
