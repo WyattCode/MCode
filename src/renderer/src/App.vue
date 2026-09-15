@@ -33,6 +33,7 @@ import VideoPreview from "./components/VideoPreview.vue"
 import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
+import { installUpdate, markUpdateReady } from "./components/UpdatePill.vue"
 import TerminalDrawer from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
@@ -59,7 +60,7 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { useRightPanel } from "./stores/right-panel"
 import { editedFiles } from "./lib/edited-files"
-import { notify, notifyFailure } from "./lib/toast"
+import { dismiss, notify, notifyFailure } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
@@ -189,32 +190,18 @@ onBeforeUnmount(() => mainObserver?.disconnect())
  * the check.
  */
 const downloadedUpdate = ref<string>()
-/*
- * Whether the ready dialog is up. Dismissing it keeps the download, as MiMo
- * keeps its: the update page then offers 重启更新 in its version row.
- */
-const updatePrompt = ref(false)
 /** A check in flight, so the update page can say 检查中… and not start another. */
 const updateChecking = ref(false)
 
-async function fetchUpdate(url: string, version: string, sha256: string) {
+/* Fetched: MiMo's footer capsule and its bubble take it from here, and no modal interrupts. */
+async function fetchUpdate(url: string, version: string, sha256: string, notes: string) {
   try {
     await window.mcode.downloadUpdate(url, version, sha256)
     downloadedUpdate.value = version
-    updatePrompt.value = true
+    markUpdateReady(version, notes)
+    notify(t("update.readyToast"))
   } catch (err) {
     notifyFailure(t("update.failed"), reasonOf(err))
-  }
-}
-
-async function installUpdate() {
-  updatePrompt.value = false
-  try {
-    await window.mcode.installUpdate()
-  } catch (err) {
-    // The app is still here, so it can still say why.
-    notifyFailure(t("update.failed"), reasonOf(err))
-    downloadedUpdate.value = undefined
   }
 }
 
@@ -632,6 +619,8 @@ async function checkForUpdates() {
     return
   }
   updateChecking.value = true
+  /* MiMo's sticky 正在检查更新…, up for as long as the check runs. */
+  const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
   try {
     /*
      * Asked of the main process rather than fetched here. This window is served
@@ -639,28 +628,28 @@ async function checkForUpdates() {
      * reach nothing else, so its own fetch of the feed never left the process -
      * the check reported "Failed to fetch" whatever the feed said.
      */
-    const { version, url, sha256 } = await window.mcode.checkUpdates(feed)
+    const { version, url, sha256, notes } = await window.mcode.checkUpdates(feed)
     if (!version) throw new Error("the feed named no version")
     if (version === app.version) {
       notify(t("update.current"))
       return
     }
-    notify(t("update.available", { version }))
-    /*
-     * A feed that names a version but no installer is as far as this goes -
-     * saying a newer one exists is still worth saying, and it is what this
-     * command did for every feed until now.
-     */
-    if (!url) return
-    void fetchUpdate(url, version, sha256)
+    /* A feed that names a version but no installer can only say where to get it. */
+    if (!url) {
+      notify(t("update.found", { version }))
+      return
+    }
+    notify(t("update.downloading"))
+    void fetchUpdate(url, version, sha256, notes)
   } catch (err) {
     /*
      * Electron wraps anything thrown in a handler as "Error invoking remote
      * method 'mcode:check-updates': ...", which tells the reader about our IPC
      * rather than about their feed. Only the reason is worth showing.
      */
-    notifyFailure(t("update.failed"), reasonOf(err))
+    notifyFailure(t("update.checkFailed"), reasonOf(err))
   } finally {
+    dismiss(checking)
     updateChecking.value = false
   }
 }
@@ -4243,20 +4232,6 @@ onBeforeUnmount(() => {
   <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
   <ImagePreview />
   <VideoPreview />
-
-  <!--
-    Fetched and ready. The reference offers exactly this, in these words, once
-    the download it started on its own has finished.
-  -->
-  <ConfirmDialog
-    v-if="downloadedUpdate && updatePrompt"
-    :title="t('update.readyTitle')"
-    :body="t('update.readyBody', { version: downloadedUpdate })"
-    :confirm-label="t('update.installRestart')"
-    :danger="false"
-    @confirm="installUpdate"
-    @close="updatePrompt = false"
-  />
 
   <ConfirmDialog
     v-if="deletingWorkspace"

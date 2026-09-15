@@ -506,12 +506,14 @@ app.whenReady().then(async () => {
     if (!/^https?:\/\//.test(address)) throw new Error("the feed must be an http address")
     const response = await fetch(address, { cache: "no-store" })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const payload = (await response.json()) as { version?: string; url?: string; sha256?: string }
+    const payload = (await response.json()) as { version?: string; url?: string; sha256?: string; notes?: unknown }
     return {
       version: payload.version?.trim() ?? "",
       url: payload.url?.trim() ?? "",
       // Optional, and checked only when the feed offers one.
       sha256: payload.sha256?.trim() ?? "",
+      // Optional release notes for the update bubble; older feeds simply have none.
+      notes: typeof payload.notes === "string" ? payload.notes.slice(0, 20_000) : "",
     }
   })
 
