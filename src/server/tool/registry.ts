@@ -8,6 +8,7 @@ import { QuestionTool } from "./question"
 import { ApplyPatchTool } from "./patch"
 import { InvalidTool } from "./invalid"
 import { TaskTool } from "./subagent"
+import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
 
 /**
  * The tool surface offered to the model.
@@ -38,6 +39,11 @@ export const TOOLS: ToolDefinition[] = [
   WebFetchTool,
   // subagents: last, so the prefix every earlier request cached stays as it was.
   TaskTool,
+  // session chat: appended after it for the same reason.
+  ContactsTool,
+  TalkToSessionTool,
+  CreateSessionTool,
+  UpdateSessionTool,
 ]
 
 /**
@@ -46,7 +52,8 @@ export const TOOLS: ToolDefinition[] = [
  * `bash` belongs here: a shell is a way to write a file like any other, and a
  * mode that promises to change nothing cannot hand one out.
  */
-const MUTATING = new Set(["write", "edit", "bash", "apply_patch"])
+// session chat: making another conversation act, or changing its record, is acting too; Plan keeps contacts.
+const MUTATING = new Set(["write", "edit", "bash", "apply_patch", "talk_to_session", "create_session", "update_session"])
 
 /**
  * Whether a model is given `apply_patch` in place of `edit` and `write`.
@@ -103,7 +110,8 @@ export function findTool(name: string): ToolDefinition | undefined {
  * Tools that only ever read. `task` is here because it does nothing to files
  * itself: its subagent's own calls are recorded into the parent's turn.
  */
-const READS = new Set(["read", "list", "glob", "grep", "todowrite", "webfetch", "question", "invalid", "task"])
+// session chat: the four touch no project file; the target's own turn records its own changes.
+const READS = new Set(["read", "list", "glob", "grep", "todowrite", "webfetch", "question", "invalid", "task", "contacts", "talk_to_session", "create_session", "update_session"])
 
 /**
  * How much of what a tool does to the project can be seen from the runner.
