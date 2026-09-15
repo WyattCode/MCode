@@ -83,6 +83,8 @@ import { PermissionDenied, Permissions } from "../src/server/permission"
 import { QUESTION_DISMISSED, QuestionTool, Questions } from "../src/server/tool/question"
 import {
   accessOf,
+  accessPatch,
+  fullAccessOff,
   composerAnswers,
   confirmQueue,
   guideShown,
@@ -966,6 +968,55 @@ async function main() {
       "the level is read the way the composer chip reads it",
       accessOf({ accessLevel: "auto" }) === "auto" && accessOf({ permissions: { ...PERMISSION_DEFAULTS } }) === "ask" && accessOf({ permissions: allAllowed }) === "full",
     )
+
+    section("round 5: turning off the full access switch (D2)")
+    {
+      const mine = { ...PERMISSION_DEFAULTS, bash: "allow" as const, webfetch: "deny" as const }
+      const toFull = accessPatch({ permissions: mine, accessLevel: "ask" }, "full")!
+      check(
+        "full allows every bucket but a deny, and keeps the map it replaced",
+        accessOf(toFull) === "full" && toFull.permissions.webfetch === "deny" && toFull.accessBefore?.bash === "allow",
+        toFull,
+      )
+      const off = fullAccessOff({ ...toFull })
+      check(
+        "switching off at full access drops to the default level with the user's own answers back",
+        off.dropped &&
+          off.patch.allowFullAccess === false &&
+          off.patch.accessLevel === "ask" &&
+          accessOf(off.patch) === "ask" &&
+          off.patch.permissions?.bash === "allow" &&
+          off.patch.permissions?.edit === PERMISSION_DEFAULTS.edit &&
+          off.patch.accessBefore === undefined,
+        off,
+      )
+      const offAsk = fullAccessOff({ permissions: { ...PERMISSION_DEFAULTS }, accessLevel: "auto" })
+      check(
+        "switching off below full access only turns the switch off",
+        !offAsk.dropped && JSON.stringify(offAsk.patch) === JSON.stringify({ allowFullAccess: false }),
+        offAsk,
+      )
+      const guardConfig = { permissions: toFull.permissions, accessBefore: toFull.accessBefore, accessLevel: "full", allowFullAccess: false }
+      const guarded = new Permissions(new Bus(), { get: () => guardConfig } as never)
+      check(
+        "the server does not honour full access while its switch is off",
+        guarded.action("edit") === PERMISSION_DEFAULTS.edit && guarded.action("bash") === "allow" && guarded.action("webfetch") === "deny",
+      )
+      guardConfig.allowFullAccess = true
+      check("and honours it once the switch is on", guarded.action("edit") === "allow")
+
+      const fullData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-fullswitch-"))
+      const fullStorage = new SubagentStorage(path.join(fullData, "storage"))
+      await fullStorage.write("config", { permissions: allAllowed, accessLevel: "full", allowFullAccess: false })
+      const fullConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
+      await fullConfig.load()
+      check("a config already at full access keeps it on upgrade by turning the switch on", fullConfig.get().allowFullAccess === true)
+      await fullStorage.write("config", { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: false })
+      const askConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
+      await askConfig.load()
+      check("a config below full access leaves the switch off", askConfig.get().allowFullAccess === false)
+      await fs.rm(fullData, { recursive: true, force: true })
+    }
 
     // 帮我审批 turns on the middle level; what it lets through stops waiting, a delete does not.
     let level = "ask"

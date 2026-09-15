@@ -394,6 +394,18 @@ export class Config {
       this.current.keybinds = binds
     })
 
+    /*
+     * Full access now needs its settings switch, and the server holds a config
+     * at full access with the switch off to the default. A config that reached
+     * full access before that rule (the auto-accept chord, the per-tool rows)
+     * turns the switch on instead, so nobody's permissions change on upgrade.
+     */
+    once("full-access-switch-r5", () => {
+      const map = this.current.permissions
+      const full = this.current.accessLevel !== "auto" && PERMISSION_KINDS.every((kind) => map[kind] !== "ask")
+      if (full && !this.current.allowFullAccess) this.current.allowFullAccess = true
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }

@@ -8,7 +8,8 @@ import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { drafts, homeFilled, keepHomeDraft, loadHomeDraft } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
-import { DEFAULT_PERMISSIONS, PERMISSION_ACTIONS, PERMISSION_KINDS } from "@shared/protocol"
+import { PERMISSION_KINDS } from "@shared/protocol"
+import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
 import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
@@ -1907,34 +1908,12 @@ async function confirmFull() {
   await applyAccess("full")
 }
 
-/*
- * Moving between the default and the middle level leaves the map alone - the
- * middle level is applied on top of it. Only entering and leaving full access
- * rewrites the map, and leaving it puts back what was there.
- */
+/* The map arithmetic is shared with the settings switch, which drops full access the same way. */
 async function applyAccess(next: Access) {
-  const map = app.config?.permissions
-  if (!map) return
-  const leavingFull = access.value === "full"
-  let permissions = map
-  let accessBefore = app.config?.accessBefore
-  if (next === "full") {
-    permissions = { ...map }
-    for (const kind of PERMISSION_KINDS) if (permissions[kind] !== "deny") permissions[kind] = "allow"
-    accessBefore = { ...map }
-  } else if (leavingFull) {
-    const kept = app.config?.accessBefore ?? {}
-    permissions = { ...map }
-    for (const kind of PERMISSION_KINDS) {
-      if (permissions[kind] === "deny") continue
-      const restored = kept[kind]
-      permissions[kind] =
-        restored && (PERMISSION_ACTIONS as readonly string[]).includes(restored) ? restored : DEFAULT_PERMISSIONS[kind]
-    }
-    accessBefore = undefined
-  }
+  const patch = app.config ? accessPatch(app.config, next) : undefined
+  if (!patch) return
   try {
-    await app.patchConfig({ permissions, accessBefore, accessLevel: next }, { quiet: true })
+    await app.patchConfig(patch, { quiet: true })
     app.announceAccess(next)
   } catch (err) {
     notifyFailure(t("composer.access.failed"), err instanceof Error ? err.message : String(err))

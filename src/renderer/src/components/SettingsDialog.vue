@@ -32,6 +32,7 @@ import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToo
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
+import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
 import { installUpdate, updateState } from "./UpdatePill.vue"
@@ -1382,6 +1383,23 @@ function permissionOf(bucket: PermissionKind): PermissionAction {
   return app.config?.permissions?.[bucket] ?? DEFAULT_PERMISSIONS[bucket]
 }
 
+/* MiMo's switch: turned off while at full access, the level drops to the default and says so. */
+async function toggleFullAccess() {
+  const config = app.config
+  if (!config) return
+  if (!config.allowFullAccess) {
+    await app.patchConfig({ allowFullAccess: true })
+    return
+  }
+  const { patch, dropped } = fullAccessOff(config)
+  try {
+    await app.patchConfig(patch)
+    if (dropped) app.announceAccess("ask")
+  } catch {
+    /* patchConfig has said so */
+  }
+}
+
 function actionLabel(action: PermissionAction): string {
   if (action === "allow") return t("set.permAllow")
   if (action === "deny") return t("set.permDeny")
@@ -1959,7 +1977,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 role="switch"
                 :aria-checked="Boolean(app.config?.allowFullAccess)"
                 :aria-label="t('set.allowFullAccess')"
-                @click="app.patchConfig({ allowFullAccess: !app.config?.allowFullAccess })"
+                @click="toggleFullAccess"
               >
                 <span class="knob" />
               </button>
