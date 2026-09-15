@@ -8902,7 +8902,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
       if (lastUser.includes("SPAWN-EXPLORE")) return call("actor", { action: "run", description: "look around", prompt: "EXPLORE-CHILD", subagent_type: "explore" })
       if (lastUser.includes("SPAWN-GENERAL")) return call("actor", { action: "run", description: "do work", prompt: "GENERAL-CHILD", subagent_type: "general" })
       if (lastUser.includes("SCHEDULE-IT")) return call("cron", { operation: { action: "schedule", cron: "*/5 * * * *", prompt: "CRON-WRITES" } })
-      if (lastUser.includes("CRON-WRITES")) return call("write", { path: "from-cron.txt", content: "x" })
+      if (lastUser.includes("CRON-WRITES")) return call("write", { file_path: "from-cron.txt", content: "x" })
       if (lastUser.includes("HISTORY-IT")) return call("history", { operation: "search", query: "quokkafile", scope: "global" })
       return say("nothing to do")
     })
