@@ -15,6 +15,7 @@ import { isKnownOpenWith } from "@shared/open-app"
 import { installedOpenApps } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { applyZoom } from "./zoom"
+import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import {
   act,
@@ -85,10 +86,19 @@ let pendingLink: string | undefined = linkInArgs(process.argv)
  */
 if (app.isPackaged && !app.requestSingleInstanceLock()) app.exit(0)
 
+/*
+ * MiMo's raise: a moment always on top around the show, because Windows' focus
+ * rules otherwise leave a window called up from a notification behind whatever
+ * has the foreground. Any taskbar flash is spent once the window is up.
+ */
 function raise(window: BrowserWindow) {
+  if (window.isDestroyed()) return
   if (window.isMinimized()) window.restore()
+  window.setAlwaysOnTop(true)
   window.show()
+  window.setAlwaysOnTop(false)
   window.focus()
+  window.flashFrame(false)
 }
 
 /** Shows a linked session in the window that is up, or keeps it for the first one. */
@@ -242,12 +252,14 @@ function createWindow(): BrowserWindow {
     y: spot.y,
     width: spot.width,
     height: spot.height,
-    minWidth: 720,
-    minHeight: 480,
+    minWidth: WINDOW_MIN.width,
+    minHeight: WINDOW_MIN.height,
     show: false,
     // The renderer draws its own title bar so the window matches the app's
     // dark chrome instead of the OS default.
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+    // MiMo's traffic lights, 5 in and 15 down.
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 5, y: 15 } } : {}),
     /*
      * Windows keeps its own caption buttons, drawn into the bar as an overlay.
      *
@@ -259,7 +271,8 @@ function createWindow(): BrowserWindow {
     ...(process.platform === "win32"
       ? { frame: false, titleBarOverlay: captionOverlay() }
       : {}),
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff",
+    // MiMo's main plane before the first paint.
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff",
     // Only used before packaging - a packaged build takes its icon from the
     // bundle (.icns) or the executable resource (.ico). macOS ignores this.
     icon: windowIcon(),
@@ -283,12 +296,37 @@ function createWindow(): BrowserWindow {
   // it once at creation.
   const paintBackground = () => {
     if (window.isDestroyed()) return
-    window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff")
+    window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff")
     // The overlay is painted by the OS and does not follow the page's colours.
     refreshTitlebar(window)
   }
   nativeTheme.on("updated", paintBackground)
   window.on("closed", () => nativeTheme.off("updated", paintBackground))
+
+  // A notification that could not be shown flashes the taskbar instead; coming back ends it.
+  window.on("focus", () => window.flashFrame(false))
+
+  /*
+   * MiMo's right-click on text and pictures: the OS menu, with only the rows
+   * that can act. The app's own drawn menus cancel the event in the page, and a
+   * cancelled contextmenu never reaches here, so those keep theirs.
+   */
+  window.webContents.on("context-menu", (_event, params) => {
+    const rows = textMenuItems(params)
+    if (!rows.length) return
+    const L = label
+    const template: Electron.MenuItemConstructorOptions[] = rows.map((row) => {
+      if (row === "copyImage") {
+        return { label: L("edit.copyImage", "Copy Image"), click: () => window.webContents.copyImageAt(params.x, params.y) }
+      }
+      if (row === "copyImageUrl") {
+        return { label: L("edit.copyImageAddress", "Copy Image Address"), click: () => clipboard.writeText(params.srcURL) }
+      }
+      const names = { copy: ["edit.copy", "Copy"], cut: ["edit.cut", "Cut"], paste: ["edit.paste", "Paste"], selectAll: ["edit.selectAll", "Select All"] } as const
+      return { role: row, label: L(names[row][0], names[row][1]) }
+    })
+    Menu.buildFromTemplate(template).popup({ window })
+  })
 
   // Maximise before the first paint, so the window does not appear at its
   // restored size and then jump.
@@ -452,28 +490,52 @@ app.whenReady().then(async () => {
   })
 
   /*
-   * A desktop notification, raised only while the window is in the background.
+   * MiMo's task notification: a finished task or one waiting on a confirmation,
+   * shown only while the window is minimised, hidden or in the background.
    *
-   * Telling someone their turn finished while they are watching it finish is
-   * noise; the point of the notification is to reach them when they have gone
-   * to do something else. Clicking it brings the window back.
+   * Titled "project · conversation" and worded by kind; silent only when the
+   * renderer says a chime is playing instead. Where the OS cannot show one, or
+   * showing it fails, the taskbar flashes. Clicking raises the window and opens
+   * the conversation it is about.
    */
-  ipcMain.on("mcode:notify", (event, title: string, body: string, sessionID?: string) => {
-    if (!Notification.isSupported()) return
+  ipcMain.on("mcode:task-notice", (event, raw: unknown) => {
     const owner = BrowserWindow.fromWebContents(event.sender)
-    if (owner && owner.isFocused()) return
-    const note = new Notification({ title, body, silent: true })
-    note.on("click", () => {
-      if (!owner || owner.isDestroyed()) return
-      if (owner.isMinimized()) owner.restore()
-      owner.show()
-      owner.focus()
-      // And on to what it was about. Raising the window left the reader on
-      // whatever session they had open, which is the one they already knew
-      // about; the reference navigates to the session that spoke.
-      if (sessionID) owner.webContents.send("mcode:notify-click", sessionID)
-    })
-    note.show()
+    if (!owner) return
+    const state = {
+      destroyed: owner.isDestroyed(),
+      minimized: owner.isMinimized(),
+      visible: owner.isVisible(),
+      focused: owner.isFocused(),
+    }
+    if (!wantsNotice(state)) return
+    if (!Notification.isSupported()) {
+      owner.flashFrame(true)
+      return
+    }
+    const notice = readTaskNotice(raw)
+    const body =
+      notice.kind === "confirm"
+        ? label("notify.confirm", "Your confirmation is needed before the task can continue")
+        : label("notify.done", "Task completed")
+    try {
+      const note = new Notification({ title: noticeTitle(app.getName(), notice), body, silent: notice.silent })
+      note.on("click", () => {
+        raise(owner)
+        if (notice.sessionID && !owner.isDestroyed()) owner.webContents.send("mcode:notify-click", notice.sessionID)
+      })
+      note.show()
+    } catch {
+      owner.flashFrame(true)
+    }
+  })
+
+  /* MiMo's badge: conversations with an unseen finish or waiting on a confirmation. A no-op on Windows. */
+  let badge = -1
+  ipcMain.on("mcode:badge", (_event, raw: unknown) => {
+    const count = badgeCount(raw)
+    if (count === badge) return
+    badge = count
+    app.setBadgeCount(count)
   })
 
   ipcMain.handle("mcode:clipboard-text", () => clipboard.readText())
@@ -745,7 +807,12 @@ app.whenReady().then(async () => {
     return result.filePath
   })
 
-  ipcMain.on("mcode:zoom", (event, action: "in" | "out" | "reset") => applyZoom(event.sender, action))
+  ipcMain.on("mcode:zoom", (event, action: "in" | "out" | "reset") => {
+    if (action === "in" || action === "out" || action === "reset") applyZoom(action, event.sender)
+  })
+
+  // The window's zoom as a whole percent, asked once at load for MiMo's startup notice.
+  ipcMain.handle("mcode:zoom-percent", (event) => Math.round(event.sender.getZoomFactor() * 100))
 
   /*
    * The icon the window and the taskbar wear.

@@ -1,7 +1,11 @@
 import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } from "electron"
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
+import { quitPress } from "./desktop-rules"
 import pkg from "../../package.json"
+
+/* When the first Cmd+Q was pressed, while it is still waiting for a second. */
+let quitArmedAt: number | undefined
 
 /**
  * MiMo's 关于 box: a native message box naming the app, its version and the
@@ -76,10 +80,7 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
 
   const send = (channel: string) => () => BrowserWindow.getFocusedWindow()?.webContents.send(channel)
 
-  const zoom = (action: "in" | "out" | "reset") => () => {
-    const contents = BrowserWindow.getFocusedWindow()?.webContents
-    if (contents) applyZoom(contents, action)
-  }
+  const zoom = (action: "in" | "out" | "reset") => () => applyZoom(action, BrowserWindow.getFocusedWindow()?.webContents)
 
   const isMac = process.platform === "darwin"
   /* Reloading and the developer tools are for a development build, as MiMo keeps them. */
@@ -103,7 +104,23 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
             ] as MenuItemConstructorOptions[])
           : []),
         separator,
-        { role: "quit", label: L("menu.quitApp", "Quit MCode"), accelerator: "CmdOrCtrl+Q" },
+        isMac
+          ? {
+              /*
+               * MiMo's macOS quit: the chord only arms, and says so in the window;
+               * a second Cmd+Q within two seconds quits. Choosing the row quits at once.
+               */
+              label: L("menu.quitApp", "Quit MCode"),
+              accelerator: "CmdOrCtrl+Q",
+              click: (_item, _window, event) => {
+                if (!event.triggeredByAccelerator) return app.quit()
+                const press = quitPress(quitArmedAt, Date.now())
+                quitArmedAt = press.armedAt
+                if (press.quit) return app.quit()
+                BrowserWindow.getFocusedWindow()?.webContents.send("mcode:quit-hint")
+              },
+            }
+          : { role: "quit", label: L("menu.quitApp", "Quit MCode"), accelerator: "CmdOrCtrl+Q" },
       ],
     },
     {
@@ -120,10 +137,11 @@ export function buildMenu(createWindow: () => BrowserWindow): void {
         { label: L("menu.openFolder", "Open Folder"), ...shown("CmdOrCtrl+O"), click: send("menu:open-project") },
         separator,
         /*
-         * A plain action rather than the close role, whose Ctrl+W / Cmd+W the
-         * app already spends on closing the current tab.
+         * MiMo's Ctrl+W / Cmd+W closes the window, which hides to the tray when
+         * that is on. Shown rather than claimed: the window answers the key itself,
+         * after its check for an open dialog.
          */
-        { label: L("menu.fileClose", "Close"), click: () => BrowserWindow.getFocusedWindow()?.close() },
+        { label: L("menu.fileClose", "Close"), ...shown("CmdOrCtrl+W"), click: () => BrowserWindow.getFocusedWindow()?.close() },
       ],
     },
     {
