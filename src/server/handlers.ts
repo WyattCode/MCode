@@ -1170,7 +1170,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const found = runtime.shells.attach(request.shellID)
       // A shell that is not there reads as an empty, finished one rather than
       // an error: the drawer's job is to draw what is left, not to complain.
-      return (found ?? { data: "", alive: false }) satisfies Handled<"shell.attach">
+      return (found ?? { data: "", alive: false, used: false }) satisfies Handled<"shell.attach">
     }
 
     case "shell.close":

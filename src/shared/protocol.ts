@@ -398,6 +398,8 @@ export interface ShellSummary {
   cwd: string
   /** False once the process has ended; its output is still there to read. */
   alive: boolean
+  /** Typed into at some point, so closing it asks first. */
+  used: boolean
 }
 
 export interface GitChange {
@@ -1784,7 +1786,7 @@ export interface ResponseMap {
   "shell.resize": Record<string, never>
   "shell.close": Record<string, never>
   "shell.list": { shells: ShellSummary[] }
-  "shell.attach": { data: string; alive: boolean }
+  "shell.attach": { data: string; alive: boolean; used: boolean }
   "app.paths": { paths: AppPaths }
   "usage.summary": { summary: UsageSummary }
   "local.servers": { servers: LocalServer[] }

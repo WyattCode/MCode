@@ -2,6 +2,7 @@ import path from "node:path"
 import { statSync } from "node:fs"
 import { spawn as ptySpawn, type IPty } from "@lydell/node-pty"
 import { Identifier } from "@shared/id"
+import { typedInput } from "@shared/terminal-input"
 import type { Bus } from "./bus"
 import type { ShellSummary } from "@shared/protocol"
 
@@ -71,6 +72,8 @@ interface Running {
   output: string[]
   bytes: number
   alive: boolean
+  /** Something was typed into it; kept past its exit, as MiMo's userInteracted is. */
+  used: boolean
 }
 
 export class Shells {
@@ -160,13 +163,16 @@ export class Shells {
       this.bus.publish({ type: "shell.exit", shellID, code: exitCode })
     })
 
-    this.shells.set(shellID, { proc, sessionID, cwd, owner, output: [], bytes: 0, alive: true })
+    this.shells.set(shellID, { proc, sessionID, cwd, owner, output: [], bytes: 0, alive: true, used: false })
     return shellID
   }
 
   write(shellID: string, data: string): void {
     const found = this.shells.get(shellID)
-    if (found?.alive) found.proc.write(data)
+    if (!found?.alive) return
+    // Held here so a pane that comes back still knows to ask before closing.
+    if (!found.used && typedInput(data)) found.used = true
+    found.proc.write(data)
   }
 
   /**
@@ -240,16 +246,16 @@ export class Shells {
     for (const [shellID, entry] of this.shells) {
       if (entry.sessionID !== sessionID) continue
       if (owner && entry.owner && entry.owner !== owner) continue
-      found.push({ shellID, cwd: entry.cwd, alive: entry.alive })
+      found.push({ shellID, cwd: entry.cwd, alive: entry.alive, used: entry.used })
     }
     return found
   }
 
   /** Everything a shell has printed, for a pane that has to redraw itself. */
-  attach(shellID: string): { data: string; alive: boolean } | undefined {
+  attach(shellID: string): { data: string; alive: boolean; used: boolean } | undefined {
     const found = this.shells.get(shellID)
     if (!found) return undefined
-    return { data: found.output.join(""), alive: found.alive }
+    return { data: found.output.join(""), alive: found.alive, used: found.used }
   }
 
   /** Keeps the tail of what a shell printed, dropping the oldest first. */
