@@ -25,6 +25,9 @@ import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
 import { Permissions } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
+
+// round 5: these providers are scripted reply by reply, and a background title request would take one.
+process.env.MCODE_GENERATE_TITLES = "0"
 import { SessionRunner } from "../src/server/session/runner"
 import { Shells } from "../src/server/shell"
 import { McpServers } from "../src/server/mcp"

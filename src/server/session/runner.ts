@@ -48,7 +48,9 @@ import {
   summaryWouldFit,
 } from "./overflow"
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
-import { systemPrompt, titleFrom } from "./prompt"
+import { systemPrompt } from "./prompt"
+import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
+import { interfaceLocale } from "./locale"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
@@ -136,6 +138,12 @@ const REVIEW_OUTPUT_TOKENS = 2048
 
 /** The latest request is quoted from its end, where the instruction usually is. */
 const REVIEW_REQUEST_CHARS = 4000
+
+/** How long a title may take before the fallback is kept. */
+const TITLE_TIMEOUT_MS = 60_000
+
+/** The first message is quoted up to this many characters for its title. */
+const TITLE_SOURCE_CHARS = 4000
 
 const COMPACT_SYSTEM = [
   "You are compacting a coding session so it can continue in a smaller context.",
@@ -1210,13 +1218,83 @@ export class SessionRunner {
     await this.store.saveMessage(user)
     this.turn(session.id).messages = [user.id]
 
-    // First real prompt names the session, so the sidebar stops saying "New session".
-    if (session.title === "New session" && input.text.trim()) {
-      await this.store.update(session.id, { title: titleFrom(input.text) })
+    /*
+     * MiMo's titles: the first prompt of a conversation nobody has named sets
+     * the fallback at once, and a model names the task in the background.
+     * Subagents keep the name they were started with.
+     */
+    if (!session.parentID && session.titleSource === undefined && session.title === UNTITLED) {
+      const fallback = fallbackTitle(input.text, input.attachments ?? [])
+      session = await this.store.update(session.id, { title: fallback, titleSource: "fallback" })
+      if (/\p{L}/u.test(input.text)) void this.generateTitle(session.id, input.text).catch(() => undefined)
     }
 
     this.launch(session.id, apiKey, controller, false, lead)
     return user.id
+  }
+
+  /**
+   * MiMo's generated title: one short request, the first message as data and
+   * the interface language as a hint, on the conversation's own model (MCode
+   * has no small-model setting). Written only while the title is still the
+   * fallback, so a rename made meanwhile wins; anything that fails leaves the
+   * fallback where it is. `MCODE_GENERATE_TITLES=0` turns it off for checks
+   * whose scripted providers would otherwise have a reply taken by it.
+   */
+  private async generateTitle(sessionID: string, text: string): Promise<void> {
+    if (process.env.MCODE_GENERATE_TITLES === "0") return
+    const session = await this.store.get(sessionID)
+    if (!session || session.titleSource !== "fallback") return
+    const definition = this.config.definition(session.model.provider)
+    if (!definition || !this.config.usable(session.model.provider)) return
+    const adapter: ProviderAdapter =
+      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const entry = this.config.modelEntry(session.model)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
+    let answer = ""
+    try {
+      await adapter.stream(
+        {
+          apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
+          model: session.model,
+          system: TITLE_SYSTEM,
+          history: [
+            {
+              id: `${session.id}:title`,
+              sessionID: session.id,
+              role: "user",
+              text: titlePrompt(text.slice(0, TITLE_SOURCE_CHARS), interfaceLocale(this.config.get().language)),
+              attachments: [],
+              time: { created: Date.now() },
+            },
+          ],
+          tools: [],
+          effort: "low",
+          variants: this.config.variants(session.model),
+          showReasoning: false,
+          signal: controller.signal,
+          baseURL: definition.baseURL,
+          headers: definition.headers,
+          accountId: tokens?.accountId,
+          maxOutput: maxOutputTokens(session.model, entry),
+          outputLimit: entry?.maxOutput,
+        },
+        (event) => {
+          if (event.type === "text.delta") answer += event.text
+        },
+      )
+    } catch {
+      return
+    } finally {
+      clearTimeout(timer)
+    }
+    const title = cleanTitle(answer)
+    if (!title) return
+    const current = await this.store.get(sessionID)
+    if (current?.titleSource !== "fallback") return
+    await this.store.update(sessionID, { title, titleSource: "generated" })
   }
 
   /**

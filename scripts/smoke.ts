@@ -218,6 +218,8 @@ function section(name: string) {
 }
 
 async function main() {
+  // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.
+  process.env.MCODE_GENERATE_TITLES = "0"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-"))
   const dataDirectory = path.join(root, "data")
   const project = path.join(root, "project")
@@ -5104,7 +5106,8 @@ async function main() {
   await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
-  // round 5: the turn loop, providers, context and prompt, in their own file.
+  // round 5: the turn loop, providers, context and prompt, in their own file; its provider answers title requests apart.
+  delete process.env.MCODE_GENERATE_TITLES
   await roundFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)

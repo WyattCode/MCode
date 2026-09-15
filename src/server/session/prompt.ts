@@ -240,10 +240,3 @@ async function readJSON(file: string): Promise<Record<string, unknown> | undefin
     return undefined
   }
 }
-
-/** First line of the user's opening message, trimmed into a sidebar title. */
-export function titleFrom(text: string): string {
-  const line = text.trim().split("\n")[0].replace(/\s+/g, " ")
-  if (line.length <= 60) return line || "New session"
-  return line.slice(0, 57) + "..."
-}

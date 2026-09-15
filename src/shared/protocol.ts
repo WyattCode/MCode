@@ -19,6 +19,13 @@ export interface HistoryDepth {
 export interface SessionInfo {
   id: string
   title: string
+  /**
+   * Where the title came from: the first prompt's fallback, the model's
+   * generated title, or the user's own rename. MiMo generates once, only over
+   * the fallback, so a rename is never replaced. Absent on sessions stored
+   * before this existed, which are treated as already named.
+   */
+  titleSource?: "fallback" | "generated" | "user"
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef

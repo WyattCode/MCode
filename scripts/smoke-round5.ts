@@ -15,6 +15,7 @@ import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
 import { ABORTED_TOOL, INTERRUPTED_RESULT, requestHistory } from "../src/server/provider/history"
 import { toMessages } from "../src/server/provider/openai"
 import { repeatsCall } from "../src/server/session/reminders"
+import { UNTITLED, clampTitle, cleanTitle, fallbackTitle } from "../src/server/session/title"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -77,11 +78,21 @@ export async function engine(options: { custom?: Partial<CustomProvider>; langua
   const bodies: Record<string, any>[] = []
   const headers: IncomingHttpHeaders[] = []
   const paths: string[] = []
+  /* Title requests go apart: they run beside a turn's own, and would otherwise take its scripted replies. */
+  const titleBodies: Record<string, any>[] = []
+  const titles: string[] = []
+  /* Set to hold a title reply back until a check has done what it needs first. */
+  const hold: { gate?: Promise<void> } = {}
   const server = createServer((request, response) => {
     let raw = ""
     request.on("data", (chunk) => (raw += chunk))
     request.on("end", async () => {
       const body = raw ? (JSON.parse(raw) as Record<string, any>) : {}
+      if (JSON.stringify(body.messages?.[0]?.content ?? body.system ?? "").includes("title of a conversation")) {
+        titleBodies.push(body)
+        await hold.gate
+        return say(titles.shift() ?? "A probe title")(response, body)
+      }
       bodies.push(body)
       headers.push(request.headers)
       paths.push(request.url ?? "")
@@ -131,7 +142,7 @@ export async function engine(options: { custom?: Partial<CustomProvider>; langua
   const assistants = async (sessionID: string) =>
     (await store.messages(sessionID)).filter((message): message is AssistantMessage => message.role === "assistant")
   const close = () => new Promise<void>((resolve) => server.close(() => resolve()))
-  return { dir, project, replies, bodies, headers, paths, events, times, storage, bus, config, permissions, store, runner, model, idle, until, assistants, close, port }
+  return { dir, project, replies, bodies, headers, paths, titleBodies, titles, hold, events, times, storage, bus, config, permissions, store, runner, model, idle, until, assistants, close, port }
 }
 
 /** The text of a request's messages, for looking for something in it. */
@@ -447,6 +458,75 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       e.replies.push(say("", "content_filter"))
       run = await turn("FILTERED")
       check("a content-filter finish ends the turn in error", run.sent.length === 1 && run.last?.finish === "refusal" && String(run.last.error).includes("content filter"), run.last)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: generated titles (E6)")
+  {
+    check("the fallback is the first non-empty line", fallbackTitle("\n  \n  Fix the login bug  \nand more") === "Fix the login bug")
+    check("then the attachments' names", fallbackTitle("   ", [{ path: "C:/work/report.pdf" }, { path: "shot.png" }]) === "report.pdf, shot.png")
+    check("then untitled", fallbackTitle("", []) === UNTITLED)
+    const long = "x".repeat(60)
+    check("48 code points at most, ending in an ellipsis", clampTitle(long) === `${"x".repeat(47)}\u2026` && [...clampTitle("\u{1F600}".repeat(50))].length === 48, clampTitle(long))
+    check("quotes and a title prefix are taken off", cleanTitle('Title: "Fix the login bug"') === "Fix the login bug" && cleanTitle("「修复登录问题」") === "修复登录问题")
+    check("reasoning tags go, and the first line is the title", cleanTitle("<think>hmm</think>\nRename the users table\nextra") === "Rename the users table")
+    check(
+      "tool calls, JSON, markup, placeholders, ids and titles with no letters are refused",
+      [
+        '<tool_call>{"name":"x"}</tool_call>',
+        '{"name": "set_title", "arguments": {}}',
+        "<div>Hi</div>",
+        "New session",
+        "未命名",
+        "ses_01ABCDEF",
+        "1234 !!",
+        "to=functions.title",
+      ].every((raw) => cleanTitle(raw) === undefined),
+    )
+    check("trailing punctuation is kept", cleanTitle("Why does the build fail?") === "Why does the build fail?")
+
+    const e = await engine({ language: "de" })
+    try {
+      e.titles.push("Deploy pipeline repair")
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "The deploy pipeline fails on step three\nplease look" })
+      const fallback = await e.store.get(session.id)
+      check("the first prompt sets the fallback at once", fallback?.title === "The deploy pipeline fails on step three" && fallback.titleSource === "fallback", fallback)
+      await e.idle(session.id)
+      check("and the generated title replaces it", await e.until(async () => (await e.store.get(session.id))?.title === "Deploy pipeline repair"), await e.store.get(session.id))
+      check("once", (await e.store.get(session.id))?.titleSource === "generated" && e.titleBodies.length === 1, e.titleBodies.length)
+      const asked = wireText(e.titleBodies[0])
+      check("the request quotes the first message as data, with the interface language as a hint", asked.includes("The deploy pipeline fails") && asked.includes("<conversation>") && asked.includes("prefer de"), asked.slice(0, 500))
+      await e.runner.prompt({ sessionID: session.id, text: "second message" })
+      await e.idle(session.id)
+      check("a later prompt asks for no title", e.titleBodies.length === 1)
+
+      // A rename made while the title is being written wins.
+      let release: () => void = () => {}
+      e.hold.gate = new Promise<void>((resolve) => (release = resolve))
+      e.titles.push("Too late")
+      const renamed = await e.store.create({ directory: e.project, model: e.model })
+      const titled = e.titleBodies.length
+      await e.runner.prompt({ sessionID: renamed.id, text: "Tidy the readme" })
+      // The title request is on its way and held; the rename lands before its answer.
+      await e.until(() => e.titleBodies.length > titled)
+      await e.store.update(renamed.id, { title: "My own name", titleSource: "user" })
+      release()
+      e.hold.gate = undefined
+      await e.idle(renamed.id)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      check("a title the user chose is never replaced", (await e.store.get(renamed.id))?.title === "My own name", await e.store.get(renamed.id))
+
+      e.titles.push('{"name": "set_title", "arguments": {"title": "x"}}')
+      const refused = await e.store.create({ directory: e.project, model: e.model })
+      const before = e.titleBodies.length
+      await e.runner.prompt({ sessionID: refused.id, text: "Check the logs" })
+      await e.idle(refused.id)
+      await e.until(() => e.titleBodies.length > before)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      check("a refused title leaves the fallback", (await e.store.get(refused.id))?.title === "Check the logs", await e.store.get(refused.id))
     } finally {
       await e.close()
     }
