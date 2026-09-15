@@ -7,6 +7,8 @@ import QuestionCard from "./parts/QuestionCard.vue"
 import ErrorStep from "./parts/ErrorStep.vue"
 import RetryRow from "./parts/RetryRow.vue"
 import TextShimmer from "./parts/TextShimmer.vue"
+import MessageSourceRow from "./parts/MessageSource.vue"
+import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentNotice } from "@shared/protocol"
 import { buildRows, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
@@ -87,8 +89,8 @@ interface Steer {
   at: number
   /** subagents: news of background subagents, drawn as MiMo's pills rather than a bubble. */
   notices?: SubagentNotice[]
-  /** subagents: a follow-up the parent sent, labelled 来自 {source} 的消息. */
-  inbox?: { from: string }
+  /** subagents: a follow-up the parent sent, labelled 来自 {source} 的消息; session chat: another conversation's message. */
+  inbox?: MessageSource
 }
 
 /*
@@ -122,8 +124,8 @@ interface Turn {
   annotations?: Annotation[]
   /** subagents: a turn the runner started to tell of background subagents; it has no question. */
   notices?: SubagentNotice[]
-  /** subagents: a turn a subagent took for its parent's follow-up. */
-  inbox?: { from: string }
+  /** subagents: a turn a subagent took for its parent's follow-up; session chat: for another conversation's message. */
+  inbox?: MessageSource
   /** When the user sent it, for the footer under their own message. */
   asked?: number
   parts: AssistantPart[]
@@ -915,7 +917,8 @@ defineExpose({ stepMessage, scroller })
       <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id">
         <!-- subagents: what a subagent was handed, labelled as MiMo labels it. -->
         <div v-if="subagent && at === 0 && turn.text !== undefined && !turn.inbox" class="subagent-initial" data-subagent-initial>{{ t("subagentDetail.initialTask") }}</div>
-        <div v-else-if="subagent && turn.inbox" class="subagent-initial" data-subagent-inbox>{{ t("subagentDetail.inboxSource", { source: turn.inbox.from }) }}</div>
+        <!-- session chat: the same row names another conversation, over the question it sent. -->
+        <MessageSourceRow v-else-if="turn.inbox && (subagent || (!latest && turn.inbox.sessionID))" :source="turn.inbox" />
         <div
           v-if="!latest && (turn.text !== undefined || turn.attachments?.length)"
           class="msg user"
@@ -1164,7 +1167,7 @@ defineExpose({ stepMessage, scroller })
                   </span>
                 </template>
               </div>
-              <div v-if="subagent && row.steer.inbox" class="subagent-initial" data-subagent-inbox>{{ t("subagentDetail.inboxSource", { source: row.steer.inbox.from }) }}</div>
+              <MessageSourceRow v-if="row.steer.inbox && (subagent || row.steer.inbox.sessionID)" :source="row.steer.inbox" />
               <div v-if="row.steer.text" class="user-bubble steer-bubble">{{ row.steer.text }}</div>
               <span v-if="steerWaiting(turn, at, row.steer)" class="steer-note">{{ t("stream.steerWaiting") }}</span>
             </div>

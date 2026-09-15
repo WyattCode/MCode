@@ -20,6 +20,7 @@ import { Client } from "../lib/client"
 import { t } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import { projectsByRecency } from "@shared/projects"
+import type { ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
@@ -47,6 +48,9 @@ export const useApp = defineStore("app", () => {
    * may have moved on by the time the turn ends.
    */
   const running = ref(new Set<string>())
+  /** session chat: each conversation's messages in flight with others, as the server last reported them. */
+  const chatLinks = shallowRef<Record<string, ChatLink[]>>({})
+  const chatLinksOf = (sessionID: string): ChatLink[] => chatLinks.value[sessionID] ?? []
   /*
    * When each running turn began, as far as this window saw it, and the last
    * turn to end on its own with how long it took - which is what decides
@@ -517,6 +521,10 @@ export const useApp = defineStore("app", () => {
        * message or replaces one, so a window holding the old list would go on
        * showing rolled back turns that are no longer on disk. Read again.
        */
+      // session chat: always the whole picture, so it replaces what was there.
+      case "session.chatLinks":
+        chatLinks.value = event.links
+        break
       case "session.reverted":
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
@@ -792,6 +800,7 @@ export const useApp = defineStore("app", () => {
      * for the same reason it answers with which sessions are running.
      */
     pendingPermissions.value = groupPermissions(listed.permissions)
+    chatLinks.value = listed.chatLinks ?? {}
     restoreTabs()
     booted = true
     /*
@@ -922,6 +931,7 @@ export const useApp = defineStore("app", () => {
       // The same replay as on boot: a socket that dropped missed anything
       // published while it was down, a permission request included.
       pendingPermissions.value = groupPermissions(listed.permissions)
+      chatLinks.value = listed.chatLinks ?? {}
       if (currentID.value) await open(currentID.value)
     } catch {
       // A socket that dropped again; the next open will bring another attempt.
@@ -1807,6 +1817,9 @@ export const useApp = defineStore("app", () => {
     failed,
     markAllRead,
     running,
+    // session chat
+    chatLinks,
+    chatLinksOf,
     finished,
     clearPermission,
     reopenTab,

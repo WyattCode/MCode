@@ -558,6 +558,82 @@ html[data-motion="on"] ::-webkit-scrollbar-thumb {
   font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
+/*
+ * session chat: MiMo's card lines for messages between conversations - 11px in
+ * its blue, a 9px mark 6 before the words (a dot in a faint ring while waiting
+ * for a reply, a bare 5px dot while handling one), underlined under the pointer
+ * when the line opens the other conversation. A card holding one takes the
+ * pointer so the line can be pressed.
+ */
+.app-tip.interactive {
+  pointer-events: auto;
+}
+
+.app-tip-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0;
+  color: #2f6fed;
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: calc(11px * var(--ui-font-scale, 1));
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+button.app-tip-link {
+  cursor: pointer;
+}
+
+button.app-tip-link:hover {
+  text-decoration: underline;
+}
+
+.app-tip-link-mark {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 9px;
+  height: 9px;
+}
+
+.app-tip-link[data-direction="inbound"] .app-tip-link-mark {
+  width: 5px;
+  height: 5px;
+}
+
+.app-tip-link[data-direction="outbound"] .app-tip-link-mark::before {
+  position: absolute;
+  inset: 0;
+  background: currentColor;
+  border-radius: 50%;
+  opacity: 0.25;
+  content: "";
+}
+
+.app-tip-link-dot {
+  position: relative;
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+:root[data-theme="dark"] .app-tip-link {
+  color: #5a9cff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .app-tip-link {
+    color: #5a9cff;
+  }
+}
+
 :root[data-theme="dark"] .app-tip {
   color: #f4f4f5;
   background: #181818;

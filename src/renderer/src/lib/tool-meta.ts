@@ -39,7 +39,8 @@ export const SINGLE_TITLE_MAX = 120
 export const OUTPUT_CAP = 3000
 
 /** The tools the tables name in every state. `apply_patch` speaks as an edit. */
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task"])
+// session chat: `contacts` is the one of its four tools MiMo's step tables name.
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "task", "contacts"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
