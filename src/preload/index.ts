@@ -176,6 +176,9 @@ const api = {
    */
   titlebarMode: (mode: "dark" | "light"): void => ipcRenderer.send("mcode:titlebar-mode", mode),
 
+  /** MiMo's setNativeTheme: native menus, dialogs and the window's first paint follow the app theme. */
+  nativeTheme: (theme: "system" | "light" | "dark"): void => ipcRenderer.send("mcode:native-theme", theme),
+
   /** Which colourway the window and the taskbar should wear; `ok` is false when the icon could not be applied. */
   appIcon: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke("mcode:app-icon", id),
 

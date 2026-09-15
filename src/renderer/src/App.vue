@@ -929,6 +929,13 @@ watch(
 )
 
 /*
+ * MiMo's native theme: main sets the OS-drawn surfaces (context menus, the
+ * tray menu, message boxes, the pre-paint background) to the chosen scheme and
+ * keeps it for the next launch's first paint.
+ */
+watch(theme, (value) => window.mcode.nativeTheme(value), { immediate: true })
+
+/*
  * The icon the window wears. Main cannot read the config document, so it is
  * told - at startup as well as on a change, because a window created before
  * the config arrived is wearing the packaged default.

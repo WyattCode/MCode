@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { PowerHold } from "./power"
 import { DailyLog, LOG_DIR } from "./log-file"
+import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
 import { scratchRoot } from "../server/scratch"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
@@ -115,6 +116,26 @@ captureConsole(logs)
 app.on("will-quit", () => void logs.close())
 process.on("uncaughtException", (error) => recordProcessError("uncaught exception", error))
 process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))
+
+/*
+ * MiMo's native theme at boot: the saved app theme is applied before any
+ * window exists, so the first paint, the text context menu, the tray menu and
+ * message boxes already match a dark app on a light system (and the reverse).
+ */
+const bootPrefsFile = path.join(app.getPath("userData"), BOOT_PREFS_FILE)
+let bootPrefs: BootPrefs = { ...BOOT_DEFAULTS }
+try {
+  bootPrefs = readBootPrefs(readFileSync(bootPrefsFile, "utf8"))
+} catch {
+  // No file yet: follow the system.
+}
+nativeTheme.themeSource = bootPrefs.theme
+
+/* Written for the next launch; a failed write only means the next boot uses the old choice. */
+function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
+  bootPrefs = { ...bootPrefs, ...patch }
+  return fs.writeFile(bootPrefsFile, writeBootPrefs(bootPrefs), "utf8").catch((error) => console.warn("[boot-prefs] not saved", error))
+}
 
 let backend: Backend | undefined
 
@@ -344,8 +365,8 @@ function createWindow(show = true): BrowserWindow {
     ...(process.platform === "win32"
       ? { frame: false, titleBarOverlay: captionOverlay() }
       : {}),
-    // MiMo's main plane before the first paint.
-    backgroundColor: nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff",
+    // MiMo's main plane before the first paint; the native theme already follows the saved app theme.
+    backgroundColor: windowBackground(nativeTheme.shouldUseDarkColors),
     // Only used before packaging - a packaged build takes its icon from the
     // bundle (.icns) or the executable resource (.ico). macOS ignores this.
     icon: windowIcon(),
@@ -367,11 +388,11 @@ function createWindow(show = true): BrowserWindow {
   if (!show) window.webContents.setBackgroundThrottling(false)
 
   // The renderer paints over this, but it is what shows during a resize or
-  // before the first frame - so it has to track the OS theme, not just sample
-  // it once at creation.
+  // before the first frame - so it has to track the native theme, which the
+  // app theme sets (mcode:native-theme), not just sample it once at creation.
   const paintBackground = () => {
     if (window.isDestroyed()) return
-    window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? "#181818" : "#ffffff")
+    window.setBackgroundColor(windowBackground(nativeTheme.shouldUseDarkColors))
     // The overlay is painted by the OS and does not follow the page's colours.
     refreshTitlebar(window)
   }
@@ -1119,6 +1140,17 @@ app.whenReady().then(async () => {
     await fs.writeFile(displayServerFile, JSON.stringify({ displayServer: pref }), "utf8")
     displayServer = pref
     return { ok: true, pref }
+  })
+
+  /*
+   * MiMo's setNativeTheme. Setting the source raises nativeTheme's "updated",
+   * which repaints every window's background and caption band; the choice is
+   * kept so the next launch paints right before any page has loaded.
+   */
+  ipcMain.on("mcode:native-theme", (_event, raw: unknown) => {
+    const theme = themePref(raw)
+    if (nativeTheme.themeSource !== theme) nativeTheme.themeSource = theme
+    if (bootPrefs.theme !== theme) void saveBootPrefs({ theme })
   })
 
   ipcMain.on("mcode:titlebar-mode", (event, mode: "dark" | "light") => {
