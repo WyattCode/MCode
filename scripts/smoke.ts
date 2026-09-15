@@ -69,7 +69,7 @@ import { listedProjects, projectsByRecency, reconciledProjects } from "../src/sh
 import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
-import { addressToURL, safeURL } from "../src/shared/web-address"
+import { addressToURL, pageMayNavigate, safeURL } from "../src/shared/web-address"
 import * as mediaPlatform from "../src/shared/media-platform"
 import * as abcPlay from "../src/renderer/src/lib/abc-play"
 import {
@@ -253,6 +253,9 @@ async function main() {
   section("WebSocket protocol")
   // Tasks started with no project get folders of their own; keep them in here.
   process.env.MCODE_SCRATCH_ROOT = path.join(root, "scratch")
+  // A stored config, so these checks run at the default level rather than a first install's 帮我审批 (R12).
+  await fs.mkdir(path.join(dataDirectory, "storage"), { recursive: true })
+  await fs.writeFile(path.join(dataDirectory, "storage", "config.json"), "{}")
   const backend = await startBackend(dataDirectory)
   check("backend picked a port", backend.port > 0, backend.port)
 
@@ -1104,6 +1107,30 @@ async function main() {
       const askConfig = new SubagentConfig(fullStorage, new Bus(), path.join(fullData, "credentials.json"))
       await askConfig.load()
       check("a config below full access leaves the switch off", askConfig.get().allowFullAccess === false)
+
+      /* R12, the user's 2026-09-15 decision: MiMo's first-install defaults, and only where nothing is stored. */
+      const freshData = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-firstinstall-"))
+      const freshStorage = new SubagentStorage(path.join(freshData, "storage"))
+      const freshConfig = new SubagentConfig(freshStorage, new Bus(), path.join(freshData, "credentials.json"))
+      await freshConfig.load()
+      check(
+        "a first install starts on 帮我审批 with full access allowed",
+        freshConfig.get().accessLevel === "auto" && freshConfig.get().allowFullAccess === true,
+        { accessLevel: freshConfig.get().accessLevel, allowFullAccess: freshConfig.get().allowFullAccess },
+      )
+      check("and its permission map is the ordinary default", JSON.stringify(freshConfig.get().permissions) === JSON.stringify(PERMISSION_DEFAULTS))
+      const storedAsk = { permissions: { ...PERMISSION_DEFAULTS }, allowFullAccess: false, theme: "dark" }
+      await freshStorage.write("config", storedAsk)
+      const keptConfig = new SubagentConfig(freshStorage, new Bus(), path.join(freshData, "credentials.json"))
+      await keptConfig.load()
+      check(
+        "a stored config without an access level keeps the default level and the switch off",
+        keptConfig.get().accessLevel === undefined && keptConfig.get().allowFullAccess === false,
+        { accessLevel: keptConfig.get().accessLevel, allowFullAccess: keptConfig.get().allowFullAccess },
+      )
+      const onDisk = JSON.parse(await fs.readFile(path.join(freshData, "storage", "config.json"), "utf8")) as Record<string, unknown>
+      check("and nothing rewrites those stored fields", onDisk.accessLevel === undefined && onDisk.allowFullAccess === false, { accessLevel: onDisk.accessLevel, allowFullAccess: onDisk.allowFullAccess })
+      await fs.rm(freshData, { recursive: true, force: true })
       await fs.rm(fullData, { recursive: true, force: true })
     }
 
@@ -3328,13 +3355,38 @@ async function main() {
 
   section("The address bar")
   {
-    /*
-     * The two refusals the panel rests on. A file:// in the address bar would
-     * turn a browser panel into a reader for every file the user owns.
-     */
-    check("a file path is refused", safeURL("file:///C:/Windows/win.ini") === undefined)
+    /* What a page may navigate to: the web, and nothing with another scheme. */
+    check("a page may not be sent to a file", safeURL("file:///C:/Windows/win.ini") === undefined)
     check("and so is anything else with a scheme", safeURL("mcode://settings") === undefined)
     check("http survives", safeURL("http://example.com/") === "http://example.com/")
+
+    /* The user's 2026-09-15 decision: MiMo's address bar opens local files, encoded as MiMo encodes them. */
+    check("a Windows path opens as a file", addressToURL("C:\\Users\\a b\\x#1?.html") === "file:///C:/Users/a%20b/x%231%3F.html", addressToURL("C:\\Users\\a b\\x#1?.html"))
+    check("a drive path with forward slashes too", addressToURL("d:/notes/index.html") === "file:///d:/notes/index.html", addressToURL("d:/notes/index.html"))
+    check("a path from the root too", addressToURL("/tmp/page.html") === "file:///tmp/page.html", addressToURL("/tmp/page.html"))
+    check("a typed file address opens", addressToURL("file:///C:/notes/") === "file:///C:/notes/")
+    check("file://localhost is this machine", addressToURL("file://localhost/C:/notes/a.txt") === "file:///C:/notes/a.txt", addressToURL("file://localhost/C:/notes/a.txt"))
+    check("a network share is refused as a path", addressToURL("\\\\server\\share\\a.html") === undefined)
+    check("and as //server", addressToURL("//server/share/a.html") === undefined)
+    check("and as a file address with a host", addressToURL("file://server/share/a.html") === undefined)
+    check("and as file://// with an empty host", addressToURL("file:////server/share/a.html") === undefined)
+    // Never opened as what they are: at most they are words to search for, as before.
+    const searchOnly = (typed: string) => {
+      const url = addressToURL(typed)
+      return url === undefined || url.startsWith("https://www.google.com/search?q=")
+    }
+    check("javascript stays refused", searchOnly("javascript:alert(1)"), addressToURL("javascript:alert(1)"))
+    check("data stays refused", searchOnly("data:text/html,<b>x</b>"), addressToURL("data:text/html,<b>x</b>"))
+    check("the app's own scheme stays refused", addressToURL("mcode://settings") === undefined)
+    check("so does devtools", addressToURL("devtools://devtools/bundled/inspector.html") === undefined)
+
+    /* Links: the web from anywhere, a file only from a local page. */
+    check("a local page may link to its neighbour", pageMayNavigate("file:///C:/notes/a.html", "file:///C:/notes/b.html"))
+    check("a local page may link to the web", pageMayNavigate("file:///C:/notes/a.html", "https://example.com/"))
+    check("a web page may not link to a file", !pageMayNavigate("https://example.com/", "file:///C:/Windows/win.ini"))
+    check("a blank page may not be sent to a file", !pageMayNavigate("", "file:///C:/Windows/win.ini"))
+    check("a local page may not reach a network share", !pageMayNavigate("file:///C:/notes/a.html", "file://server/share/x.html"))
+    check("a local page may not run javascript: as a navigation", !pageMayNavigate("file:///C:/notes/a.html", "javascript:alert(1)"))
 
     /*
      * A port means a development server, and a development server means http.
@@ -6509,6 +6561,8 @@ async function subagentChecks(root: string) {
   const storage = new SubagentStorage(path.join(data, "storage"))
   const bus = new Bus()
   const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  // A stored config, so a subagent's request asks at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1`, models: [{ id: "m", name: "M" }] }], directory: project })
   await config.setApiKey("fake", "k")
@@ -7052,6 +7106,8 @@ async function sessionChatChecks(root: string, project: string) {
   const storage = new SubagentStorage(path.join(data, "storage"))
   const bus = new Bus()
   const config = new SubagentConfig(storage, bus, path.join(data, "credentials.json"))
+  // A stored config, so these checks run at the default level rather than a first install's 帮我审批.
+  await storage.write("config", {})
   await config.load()
   await config.set({ customProviders: [{ id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${port}/v1` }], directory: project })
   await config.setApiKey("fake", "k")
