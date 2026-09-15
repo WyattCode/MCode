@@ -40,7 +40,8 @@ export const OUTPUT_CAP = 3000
 
 /** The tools the tables name in every state. `apply_patch` speaks as an edit. */
 // session chat: `contacts` is the one of its four tools MiMo's step tables name.
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search"])
+// memory: named in MiMo's tables; history, cron and automation_update are not, and read through the fallbacks.
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
@@ -217,6 +218,9 @@ export function stepTitle(part: ToolPart): string {
       return text(input.name).trim() || part.title || ""
     case "skill_search":
       return text(input.query).trim() || part.title || ""
+    // memory: MiMo's title is the first of query, path, key, name and operation that has words.
+    case "memory":
+      return [input.query, input.path, input.key, input.name, input.operation].map((value) => text(value).trim()).find(Boolean) ?? ""
   }
   if (BUILT_IN.has(part.name)) return part.title || ""
   // Anything else - an MCP tool - is described by what it was given.

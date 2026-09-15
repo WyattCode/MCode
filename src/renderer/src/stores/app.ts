@@ -26,6 +26,7 @@ import { findModel, withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
 import { readLegacyMessage } from "@shared/subagent"
+import { isScheduledPrompt } from "@shared/scheduled"
 import { returnFileNotices, takeFileNotices } from "../lib/file-notices"
 
 export const useApp = defineStore("app", () => {
@@ -63,6 +64,9 @@ export const useApp = defineStore("app", () => {
    */
   const turnStarted = new Map<string, number>()
   const finished = ref<{ sessionID: string; elapsed: number }>()
+  /* automation: conversations whose running turn is a scheduled task's run, and the last run the user should be told about. */
+  const automationRuns = ref(new Set<string>())
+  const automationNotice = ref<{ sessionID: string; at: number }>()
 
   /** Starts the clock on turns not seen beginning, and forgets the ones no longer running. */
   function clockTurns(ids: Iterable<string>) {
@@ -554,6 +558,11 @@ export const useApp = defineStore("app", () => {
          */
         {
           const message = event.message
+          // cron, automation: a scheduled prompt starts a turn nobody sent from this window; it shows working, is timed and notifies like one.
+          if (message.role === "user" && !message.steered && !running.value.has(message.sessionID) && (message.inbox?.automationID || isScheduledPrompt(message.text))) {
+            running.value = new Set(running.value).add(message.sessionID)
+            turnStarted.set(message.sessionID, Date.now())
+          }
           if (message.role === "user" && message.notices?.length && !message.steered) noticeWoken.add(message.sessionID)
           else if (message.role === "assistant" && !message.finish && !message.time.completed && noticeWoken.delete(message.sessionID) && !running.value.has(message.sessionID)) {
             running.value = new Set(running.value).add(message.sessionID)
@@ -598,6 +607,16 @@ export const useApp = defineStore("app", () => {
         if (message?.role !== "assistant") break
         const part = message.parts[location.index]
         if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+        break
+      }
+      case "automation.run": {
+        const runs = new Set(automationRuns.value)
+        if (event.phase === "started") runs.add(event.sessionID)
+        else {
+          runs.delete(event.sessionID)
+          if (event.notify) automationNotice.value = { sessionID: event.sessionID, at: Date.now() }
+        }
+        automationRuns.value = runs
         break
       }
       case "session.compacting": {
@@ -1916,6 +1935,8 @@ export const useApp = defineStore("app", () => {
     chatLinks,
     chatLinksOf,
     finished,
+    automationRuns,
+    automationNotice,
     clearPermission,
     reopenTab,
     recent,
