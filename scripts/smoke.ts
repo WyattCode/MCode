@@ -4364,6 +4364,26 @@ async function main() {
     check("todowrite statuses read as MiMo's", idle.map((task) => task.status).join() === "done,stalled,open", idle)
     check("a child is drawn under its parent", idle[2]?.depth === 1, idle)
     check("in progress during the turn that wrote it stays in progress", infoTasks(said, true)[1]?.status === "in_progress")
+
+    // MiMo's list leaves abandoned work out, counts only what it lists, and indents by dotted id or parent.
+    const planned = [
+      turn("a2", [
+        tool("t2", "todowrite", {}, { todos: [
+          { id: "1", content: "plan", status: "completed" },
+          { id: "1.1", content: "sketch", status: "pending" },
+          { id: "2", content: "dropped", status: "cancelled" },
+          { id: "3", content: "given up", status: "abandoned" },
+          { id: "4", content: "orphan", status: "pending", parentId: "3" },
+          { id: "1.2.1", content: "deep", status: "pending", parentId: "1" },
+        ] }, 30),
+      ], 29),
+    ]
+    const plan = infoTasks(planned, false)
+    const depthOfTask = (id: string) => plan.find((task) => task.id === id)?.depth
+    check("cancelled and abandoned tasks are not listed", plan.map((task) => task.id).join() === "1,1.2.1,1.1,4", plan)
+    check("the task count is done over what is listed", `${plan.filter((task) => task.status === "done").length}/${plan.length}` === "1/4", plan)
+    check("a task indents by the deeper of its dotted id and its parent", depthOfTask("1.2.1") === 2 && depthOfTask("1.1") === 1 && depthOfTask("1") === 0, plan)
+    check("a task whose parent was abandoned stands at the top", depthOfTask("4") === 0, plan)
   }
 
   // ------------------------------------------------- chatgpt adapter ------

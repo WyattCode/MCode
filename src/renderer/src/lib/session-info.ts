@@ -66,13 +66,23 @@ function mapStatus(status: string): InfoTaskStatus {
   return "open"
 }
 
+/** How deep a dotted id says it is: `1.2.3` sits two under the top. */
+function dottedDepth(id: string): number {
+  return id.split(".").length - 1
+}
+
 /**
  * The plan as the card lists it: parents before their children, and an item
  * still marked in progress shown as stalled unless it was written during the
  * turn running now - otherwise the turn that meant to finish it has ended.
+ *
+ * As in MiMo, abandoned work is left out altogether - not drawn, and so not in
+ * the card's done / total either - and an item is indented by the deeper of
+ * its dotted id and one under its parent.
  */
 export function infoTasks(messages: readonly Message[], running: boolean): InfoTask[] {
-  const { todos, at } = latestTodoWrite(messages)
+  const { todos: written, at } = latestTodoWrite(messages)
+  const todos = written.filter((todo) => mapStatus(todo.status) !== "abandoned")
   if (!todos.length) return []
   let runStarted = Infinity
   if (running) {
@@ -92,9 +102,24 @@ export function infoTasks(messages: readonly Message[], running: boolean): InfoT
     const parent = todo.parentId && ids.has(todo.parentId) && todo.parentId !== todo.id ? todo.parentId : ""
     byParent.set(parent, [...(byParent.get(parent) ?? []), todo])
   }
+  const byId = new Map(todos.map((todo) => [todo.id, todo]))
+  const depths = new Map<string, number>()
+  // A parent loop stops at the item met twice, which keeps its dotted depth.
+  const depthOf = (todo: Todo, path: Set<string>): number => {
+    const known = depths.get(todo.id)
+    if (known !== undefined) return known
+    let depth = dottedDepth(todo.id)
+    if (!path.has(todo.id)) {
+      path.add(todo.id)
+      const parent = todo.parentId && todo.parentId !== todo.id ? byId.get(todo.parentId) : undefined
+      if (parent) depth = Math.max(depth, depthOf(parent, path) + 1)
+    }
+    depths.set(todo.id, depth)
+    return depth
+  }
   const out: InfoTask[] = []
   const seen = new Set<string>()
-  const walk = (parent: string, depth: number) => {
+  const walk = (parent: string) => {
     for (const todo of byParent.get(parent) ?? []) {
       if (seen.has(todo.id)) continue
       seen.add(todo.id)
@@ -103,17 +128,17 @@ export function infoTasks(messages: readonly Message[], running: boolean): InfoT
         id: todo.id,
         summary: todo.content,
         status: mapped === "in_progress" && !current ? "stalled" : mapped,
-        depth,
+        depth: depthOf(todo, new Set()),
       })
-      walk(todo.id, depth + 1)
+      walk(todo.id)
     }
   }
-  walk("", 0)
+  walk("")
   // Anything caught in a parent loop is still listed, at the top.
   for (const todo of todos) {
     if (seen.has(todo.id)) continue
     seen.add(todo.id)
-    out.push({ id: todo.id, summary: todo.content, status: mapStatus(todo.status), depth: 0 })
+    out.push({ id: todo.id, summary: todo.content, status: mapStatus(todo.status), depth: dottedDepth(todo.id) })
   }
   return out
 }
