@@ -74,7 +74,6 @@ const splitPath = () => {
 }
 /* The watcher answers with whichever spelling it was asked with; slashes and case still name one file. */
 const samePath = (a: string, b: string) => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase()
-let loadedPath = ""
 const doc = shallowRef<PDFDocumentProxy>()
 const count = ref(0)
 const ratios = ref<number[]>([])
@@ -107,7 +106,8 @@ let saved: { path: string; top: number } | null = null
 let stopRestore: (() => void) | undefined
 
 function fail(err: unknown) {
-  failure.value = t("rp.pdf.failed", { err: String(err instanceof Error ? err.message : err).slice(0, 120) })
+  // As MiMo: the exception's name stays in front of its message ("PasswordException: No password given").
+  failure.value = t("rp.pdf.failed", { err: String(err).slice(0, 120) })
   loading.value = false
   if (scroller.value) scroller.value.style.visibility = ""
   restoring.value = false
@@ -144,18 +144,16 @@ async function load() {
   for (const key of Object.keys(sizes)) delete sizes[Number(key)]
   visible.value = [0, -1]
   current.value = 1
-  // A reload of the same file keeps its zoom, as the saved scroll offset is measured at that zoom.
-  if (loadedPath !== props.path) {
-    zoom.value = 1
-    loadedPath = props.path
-  }
+  // Every load returns to 100%, as MiMo's does after a write, an outside change, undo or a restore (the user's choice).
+  zoom.value = 1
   try {
     const [dir, base] = splitPath()
     const [lib, read] = await Promise.all([library(), window.mcode.readFileBytes(dir, base)])
     if (mine !== generation) return
     if (!read.ok || read.unchanged) {
       const reason = read.ok ? "" : read.reason
-      return fail(reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : t("office.serveFailed"))
+      // No server is involved in reading a PDF, so any other reason is shown as the read's own.
+      return fail(reason === "noent" ? t("office.fileMissing") : reason === "toobig" ? t("rp.files.errTooBig") : reason || "read failed")
     }
     lastBase64 = read.base64
     const binary = atob(read.base64)
@@ -328,6 +326,14 @@ async function draw(index: number) {
     return // cancelled by a newer drawing, or the document went away
   }
   if (drawn.get(index) !== state) return
+  /*
+   * react-pdf's end marker, which pdf.js's TextLayer does not add: while a drag
+   * is under way it covers the blanks between lines and past the last glyph,
+   * so the selection grows smoothly instead of snapping to the layer's start.
+   */
+  const end = document.createElement("div")
+  end.className = "endOfContent"
+  text.append(end)
   layer.style.setProperty("--scale-factor", String(scale))
   layer.replaceChildren(canvas, text, links)
   refreshMarks()
@@ -855,6 +861,16 @@ function onEscape(event: KeyboardEvent) {
 let stopWatching: (() => void) | undefined
 let diskTimer: ReturnType<typeof setTimeout> | undefined
 
+/* A press in a page's text marks that layer as selecting until the button is let go anywhere, as react-pdf does. */
+function onTextPress(event: PointerEvent) {
+  const layer = (event.target as Element | null)?.closest?.(".textLayer")
+  if (layer) layer.classList.add("selecting")
+}
+
+function onTextRelease() {
+  for (const layer of rootEl.value?.querySelectorAll(".textLayer.selecting") ?? []) layer.classList.remove("selecting")
+}
+
 onMounted(() => {
   const el = scroller.value
   if (el) {
@@ -862,8 +878,11 @@ onMounted(() => {
     width.value = Math.max(0, el.clientWidth - PAD * 2)
     el.addEventListener("wheel", stopAlign, { passive: true })
     el.addEventListener("pointerdown", stopAlign, { passive: true })
+    el.addEventListener("pointerdown", onTextPress, { passive: true })
     el.addEventListener("click", onLinkClick, true)
   }
+  document.addEventListener("pointerup", onTextRelease, true)
+  document.addEventListener("pointercancel", onTextRelease, true)
   window.addEventListener("keydown", stopAlign)
   document.addEventListener("keydown", onEscape)
   void window.mcode.watchFile(props.path)
@@ -883,7 +902,10 @@ onBeforeUnmount(() => {
   resizer.disconnect()
   el?.removeEventListener("wheel", stopAlign)
   el?.removeEventListener("pointerdown", stopAlign)
+  el?.removeEventListener("pointerdown", onTextPress)
   el?.removeEventListener("click", onLinkClick, true)
+  document.removeEventListener("pointerup", onTextRelease, true)
+  document.removeEventListener("pointercancel", onTextRelease, true)
   window.removeEventListener("keydown", stopAlign)
   document.removeEventListener("keydown", onEscape)
   stopWatching?.()
@@ -1181,12 +1203,27 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
   height: 0;
 }
 
+/* MiMo's fixed 25% blue in both themes, not the system accent. */
 .pdf-view .textLayer ::selection {
-  background: color-mix(in srgb, AccentColor, transparent 75%);
+  color: transparent;
+  background: #2f6fed40;
 }
 
 .pdf-view .textLayer br::selection {
   background: transparent;
+}
+
+.pdf-view .textLayer .endOfContent {
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: -1;
+  display: block;
+  cursor: default;
+  user-select: none;
+}
+
+.pdf-view .textLayer.selecting .endOfContent {
+  top: 0;
 }
 
 .pdf-view .annotationLayer {
@@ -1199,5 +1236,17 @@ const noteInside = (target: Node) => Boolean(rootEl.value?.contains(target))
 .pdf-view .annotationLayer a {
   position: absolute;
   pointer-events: auto;
+}
+
+/* pdf.js's own link hover, which MiMo keeps. */
+.pdf-view .annotationLayer a:hover {
+  opacity: 0.2;
+  background: #ff0;
+  box-shadow: 0 2px 10px #ff0;
+}
+
+/* Links stop taking the pointer while text is being drag-selected across them. */
+.pdf-view .textLayer.selecting ~ .annotationLayer a {
+  pointer-events: none;
 }
 </style>
