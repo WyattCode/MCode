@@ -42,7 +42,7 @@ import NewProjectDialog from "./components/NewProjectDialog.vue"
 import type { MenuItem } from "./lib/menu"
 import ConnectDialog from "./components/ConnectDialog.vue"
 import SearchOverlay from "./components/SearchOverlay.vue"
-import EditMenu from "./components/EditMenu.vue"
+import ErrorBoundary from "./components/ErrorBoundary.vue"
 import Onboarding from "./components/Onboarding.vue"
 import {
   LANGUAGES,
@@ -63,7 +63,7 @@ import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { SIDE_COLUMN_WIDTH, arbitratePanel, boundChord, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
 import { editedFiles } from "./lib/edited-files"
-import { dismiss, notify, notifyFailure } from "./lib/toast"
+import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
@@ -325,6 +325,14 @@ onBeforeUnmount(() => find.unmount())
 const paletteOpen = ref(false)
 /* MiMo's search over conversations, projects and artifacts: the side column's magnifier and Ctrl+K. */
 const searchOpen = ref(false)
+const searchOverlay = ref<InstanceType<typeof SearchOverlay>>()
+
+/* Ctrl+K opens the search, or plays its exit when it is already up. */
+function toggleSearch() {
+  if (!searchOpen.value) searchOpen.value = true
+  else if (searchOverlay.value) searchOverlay.value.close()
+  else searchOpen.value = false
+}
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
 const settingsSection = ref<"general" | "keys" | "server" | "models" | "mcp">()
@@ -576,7 +584,7 @@ async function exportLog() {
   ]
   const body = logLines.length ? logLines : [t("log.empty")]
   const saved = await window.mcode.saveText("mcode-log.txt", [...header, ...body].join("\n"))
-  if (saved) notify(t("log.saved"), saved, revealAction(saved))
+  if (saved) notify(t("log.saved"), { action: revealAction(saved) })
 }
 
 /**
@@ -1363,8 +1371,8 @@ async function toggleAutoAccept() {
     next[kind] = on ? DEFAULT_PERMISSIONS[kind] : "allow"
   }
   await app.patchConfig({ permissions: next, accessLevel: on ? "ask" : "full" })
-  if (on) notify(t("toast.autoOffTitle"), t("toast.autoOffBody"))
-  else notify(t("toast.autoOnTitle"), t("toast.autoOnBody"))
+  // MiMo's notice is its title alone.
+  notify(t(on ? "toast.autoOffTitle" : "toast.autoOnTitle"))
 }
 
 async function focusComposer() {
@@ -2127,9 +2135,8 @@ async function shareSession() {
     const saved = await window.mcode.saveText(`${name}.html`, page)
     // The page is meant to be looked at, so this one opens rather than reveals.
     if (saved) {
-      notify(t("share.saved"), saved, {
-        label: t("share.view"),
-        run: () => void window.mcode.openSaved(saved),
+      notify(t("share.saved"), {
+        action: { label: t("share.view"), run: () => void window.mcode.openSaved(saved) },
       })
     }
   } catch (failure) {
@@ -2159,7 +2166,7 @@ async function undoTurn() {
   if (!id) return
   try {
     const files = await app.undo(id)
-    notify(t("toast.undone", { n: files }), t("toast.undoneBody"))
+    notify(t("toast.undone", { n: files }))
   } catch (failure) {
     notifyFailure(t("toast.undoFailed"), reasonOf(failure))
   }
@@ -2181,7 +2188,7 @@ async function compactSession() {
   if (!id) return
   try {
     await app.compact(id)
-    notify(t("toast.compacted"), t("toast.compactedBody"))
+    notify(t("toast.compacted"))
   } catch (failure) {
     notifyFailure(t("toast.compactFailed"), reasonOf(failure))
   }
@@ -2447,6 +2454,23 @@ async function forward() {
  * The palette narrows this to what is actionable; the shortcuts page must not,
  * because a chord belongs to a command rather than to a moment.
  */
+/*
+ * MiMo's shortcut page, row for row, by the command that stands for each. Its
+ * plugins, automations and phone rows have no MCode counterpart, and its voice
+ * and compose-mode rows wait on the composer exposing those toggles.
+ */
+const MIMO_SHORTCUT_ROWS = new Set([
+  "session.archive", "session.new", "session.side", "session.pin", "session.rename", "view.priority",
+  "browser.address", "input.focus", "app.back", "app.forward", "session.nextRecent", "session.next",
+  "session.prevRecent", "session.previous", "browser.tab", "view.review", "view.bottom", "view.browser",
+  "view.left", "view.right", "view.terminal", "project.open", "app.settings", "window.close",
+  "model.variant.cycle", "model.variant.decrease", "model.variant.increase", "view.model", "composer.send",
+  "session.copyMarkdown", "session.copyLink", "session.copyID", "app.copyDirectory", "session.forkChat",
+  "browser.forceReload", "command.palette", "browser.reload", "app.openFile", "app.shortcuts",
+  ...Array.from({ length: 9 }, (_, index) => `tab.goto.${index + 1}`),
+  "view.rightMax",
+])
+
 const bindableCommands = computed(() => {
   const hasSession = Boolean(app.currentID)
   const inWorkspace = !isHome.value
@@ -2817,8 +2841,8 @@ const bindableCommands = computed(() => {
     {
       id: "app.searchSessions",
       group: "key.groupGeneral",
+      // No chord: MiMo's Ctrl+F is only the find bar's.
       title: t("cmd.searchSessions"),
-      hint: "Ctrl+F",
       run: () => openPalette("sessions"),
     },
     {
@@ -2916,11 +2940,23 @@ const bindableCommands = computed(() => {
       run: () => void cycleAgent(-1),
     },
     {
+      // Unbound, as MiMo leaves it.
       id: "model.variant.cycle",
       group: "key.groupModels",
       title: t("key.cycleEffort"),
-      hint: "Ctrl+Shift+D",
       run: () => void cycleEffort(),
+    },
+    {
+      id: "model.variant.decrease",
+      group: "key.groupModels",
+      title: t("key.decreaseEffort"),
+      run: () => void stepEffort(-1),
+    },
+    {
+      id: "model.variant.increase",
+      group: "key.groupModels",
+      title: t("key.increaseEffort"),
+      run: () => void stepEffort(1),
     },
     {
       id: "project.previous",
@@ -2939,8 +2975,8 @@ const bindableCommands = computed(() => {
     {
       id: "theme.cycle",
       group: "key.groupGeneral",
+      // No chord: Ctrl+Shift+T is reopening a tab, and one chord holds one command.
       title: t("cmd.cycleTheme"),
-      hint: "Ctrl+Shift+T",
       run: () => void cycleTheme(),
     },
     {
@@ -2959,14 +2995,12 @@ const bindableCommands = computed(() => {
       run: () => composer.value?.focus(),
     },
     {
-      id: "tab.close",
+      // MiMo's: the window closes, hiding to the tray when that is on. A tab closes from its own ✕.
+      id: "window.close",
       group: "key.groupGeneral",
-      title: t("key.closeTab"),
+      title: t("key.closeWindow"),
       hint: "Ctrl+W",
-      enabled: hasSession,
-      run: () => {
-        if (app.currentID) app.closeTab(app.currentID)
-      },
+      run: () => window.mcode.window("close"),
     },
     /*
      * The numbered slots. The strip is what they count along - not the sidebar
@@ -3078,7 +3112,6 @@ const bindableCommands = computed(() => {
       id: "terminal.close",
       group: "key.groupTerminal",
       title: t("key.closeTerminal"),
-      hint: "Ctrl+W",
       enabled: terminalOpen.value,
       run: () => drawer.value?.closeActive(),
     },
@@ -3130,9 +3163,39 @@ const bindableCommands = computed(() => {
       run: () => (connectOpen.value = true),
     },
     { id: "app.settings", group: "key.groupGeneral", title: t("cmd.settings"), hint: "Ctrl+,", run: openSettings },
+    // MiMo's unbound rows: copy as Markdown, fork the chat, and the maximised side panel.
+    {
+      id: "session.copyMarkdown",
+      group: "key.groupSession",
+      title: t("menu.copyMarkdown"),
+      enabled: hasSession && app.messages.length > 0,
+      run: () => {
+        if (app.currentID) void ROW_ACTIONS["row.copyMarkdown"](app.currentID, false)
+      },
+    },
+    {
+      id: "session.forkChat",
+      group: "key.groupSession",
+      title: t("key.forkChat"),
+      enabled: hasSession && app.messages.length > 0,
+      run: () => {
+        if (app.currentID) void ROW_ACTIONS["row.continue"](app.currentID, false)
+      },
+    },
+    {
+      id: "view.rightMax",
+      group: "key.groupSession",
+      title: t("key.toggleMaxSide"),
+      enabled: rp.open,
+      run: () => rp.toggleFullscreen(),
+    },
   ]
 
-  return all
+  /*
+   * The shortcuts page lists MiMo's rows and nothing else. Every other command
+   * keeps its chord and its menu entry; it is only left off the page.
+   */
+  return all.map((command) => ({ ...command, hidden: !MIMO_SHORTCUT_ROWS.has(command.id) }))
 })
 
 const commands = computed(() => bindableCommands.value.filter((command) => command.enabled !== false))
@@ -3182,7 +3245,7 @@ async function setLanguage(id: string) {
   await app.patchConfig({ language: id })
   // Named in the language just chosen, which is what makes the step legible
   // when you have landed somewhere you cannot read.
-  notify(t("toast.languageTitle"), t("toast.languageBody", { name: entry?.label ?? id }))
+  notify(t("toast.switchedTo", { name: entry?.label ?? id }))
 }
 
 async function cycleLanguage() {
@@ -3194,7 +3257,7 @@ async function cycleLanguage() {
 /** Steps to the next palette, naming it - there are thirty-seven to walk. */
 async function setTheme(id: string, name: string) {
   await app.patchConfig({ themeID: id })
-  notify(t("toast.themeTitle"), name)
+  notify(t("toast.switchedTo", { name }))
 }
 
 async function cycleTheme() {
@@ -3403,10 +3466,9 @@ function onKeydown(event: KeyboardEvent) {
    * Find first, and only if a host will have it.
    *
    * `openFind` answers false when the chord was typed into a text field or when
-   * no host wants it, and that is deliberately not the same as doing nothing:
-   * Ctrl+F then falls through to the session palette below, which is where this
-   * app has always had it. Ctrl+G steps, Ctrl+Shift+G steps back, and neither
-   * does anything at all unless a bar is open.
+   * no host wants it, and then Ctrl+F does nothing, as MiMo's does. Ctrl+G
+   * steps, Ctrl+Shift+G steps back, and neither does anything at all unless a
+   * bar is open.
    */
   if (!event.shiftKey && event.key === "f" && openFind(event)) {
     event.preventDefault()
@@ -3440,8 +3502,6 @@ function onKeydown(event: KeyboardEvent) {
       g: () => {
         if (!stepFind(-1, event)) openReviewTab()
       },
-      // Step the reasoning effort, which otherwise only lives in settings.
-      d: () => void cycleEffort(),
       // Approve everything, or stop. Symmetric, and it always says so.
       a: () => void toggleAutoAccept(),
       // Searching the projects rather than the sessions inside one.
@@ -3455,12 +3515,8 @@ function onKeydown(event: KeyboardEvent) {
       l: () => composer.value?.focus(),
       // Agents, backwards; forwards is Ctrl+period.
       ".": () => void cycleAgent(-1),
-      // The reference lists this key twice, for reopening a tab and for
-      // stepping the theme. Reopening wins while there is a tab to bring back,
-      // which is what the key means everywhere else; with none, it steps.
-      t: async () => {
-        if (!(await app.reopenTab())) await cycleTheme()
-      },
+      // Reopening a closed tab. The theme steps from its own command, which has no chord.
+      t: () => void app.reopenTab(),
       // The scheme, then the palette. Stepping rather than opening a dialog is
       // what makes them worth a key: the answer is on screen immediately.
       s: () => void cycleScheme(),
@@ -3497,10 +3553,9 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   const handlers: Record<string, () => void> = {
-    k: () => (searchOpen.value = !searchOpen.value),
-    // MiMo's files tab; the reference's session search and attach, on their keys.
+    k: toggleSearch,
+    // MiMo's files tab, and the reference's attach on its key.
     p: openFilesTab,
-    f: () => openPalette("sessions"),
     u: () => composer.value?.pick(),
     b: () => (leftPanel.value = !leftPanel.value),
     "`": () => (terminalOpen.value = !terminalOpen.value),
@@ -3513,9 +3568,8 @@ function onKeydown(event: KeyboardEvent) {
     j: () => (terminalOpen.value = !terminalOpen.value),
     r: () => reloadBrowser(),
     o: () => void browse(),
-    w: () => {
-      if (app.currentID) app.closeTab(app.currentID)
-    },
+    // MiMo's: the window closes, hiding to the tray when that is on.
+    w: () => window.mcode.window("close"),
     // The browser's address bar while it is open, else the box.
     l: focusBrowserAddress,
     // The model picker, on the key opencode uses for it. There is one picker
@@ -3679,72 +3733,103 @@ function onWheel(event: WheelEvent) {
 }
 
 /*
- * Three occasions worth interrupting someone for, each its own setting.
+ * MiMo's task notifications.
  *
- * The main process drops the notification when the window is focused, so
- * nothing here has to reason about whether the user is already looking.
+ * A turn that ends normally - not stopped, not failed - in any conversation says
+ * the task finished, and a permission or a question arriving for any
+ * conversation says it needs a confirmation. The main process titles them
+ * "project · conversation" and drops them while the window is in front. They are
+ * silent only when a chime plays instead: a finish past a minute with the chime
+ * on, or any confirmation with the chime on. A long finish in the conversation
+ * on screen is held while it stays there, and sent once it is left.
+ *
+ * Sound, banner and spoken line stay separate settings: someone watching the
+ * window wants the tone and not the banner; someone away from it the reverse.
  */
-function alertDesktop(kind: "agent" | "permission" | "error", body: string, sessionID?: string) {
-  recordLog(kind === "error" ? "ERROR" : "INFO", body)
-  const config = app.config
-  /*
-   * Sound and banner are decided separately: the reason to want one is not the
-   * reason to want the other. Someone watching the window wants the tone and
-   * not the banner; someone away from it wants the reverse.
-   */
-  if (kind === "permission" && config?.soundPermission) play("permission")
-  if (kind === "error" && config?.soundError) play("error")
+const chimeOn = () => chimeOf(app.config?.taskDoneSound) !== "off"
 
-  /*
-   * The spoken line, beside the banner and on the same reasoning: a short
-   * phrase read aloud is for someone who has looked away, so it waits for the
-   * window to be in the background the way the banner does. It is one line
-   * about what just happened - never the answer itself, which is what the
-   * screen is for.
-   */
-  if (kind !== "permission" && config?.voiceFeedback && document.hidden) {
-    speak(t(`voice.said.${kind}`), language.value)
+function noticeAbout(sessionID: string) {
+  const session = app.sessions.find((entry) => entry.id === sessionID)
+  return {
+    sessionID,
+    title: session ? sessionTitle(session.title) : undefined,
+    project: session && !session.scratch ? projectName(session.directory, app.config?.projectNames) : undefined,
   }
-
-  if (kind === "agent" && config?.notifyAgent === false) return
-  if (kind === "permission" && config?.notifyPermission === false) return
-  if (kind === "error" && config?.notifyError === false) return
-  window.mcode.notify(t(`notify.${kind}`), body, sessionID)
 }
 
-/* Coming back to the window cuts off whatever was being read out. */
+function watching(sessionID: string) {
+  return app.currentID === sessionID && !isHome.value && !document.hidden
+}
+
+const heldNotices = new Set<string>()
+
+function flushNotices() {
+  for (const sessionID of [...heldNotices]) {
+    if (watching(sessionID)) continue
+    heldNotices.delete(sessionID)
+    window.mcode.taskNotice({ kind: "done", ...noticeAbout(sessionID), silent: true })
+  }
+}
+
+/* Coming back to the window cuts off whatever was being read out; leaving it sends what was held. */
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) hush()
+  flushNotices()
 })
+watch([() => app.currentID, isHome], flushNotices)
 
 /*
- * The long-task chime. The store times each turn from when it was seen to start,
- * so a quick reply stays quiet, and one that ran past a minute is heard even
- * when it ends in a conversation other than the one on screen.
+ * A turn that ended on its own. The store times each turn from when it was seen
+ * to start and reports only those that finished normally, in any conversation:
+ * a stopped or failed turn is dropped from its clock rather than reported. So a
+ * quick reply stays quiet, and one past a minute chimes wherever it ended.
  */
 watch(
   () => app.finished,
   (turn) => {
-    if (!turn || !longTask(turn.elapsed)) return
+    if (!turn) return
     const choice = chimeOf(app.config?.taskDoneSound)
-    if (choice !== "off") chime(choice)
+    const chiming = choice !== "off" && longTask(turn.elapsed)
+    if (choice !== "off" && longTask(turn.elapsed)) chime(choice)
+    const about = noticeAbout(turn.sessionID)
+    recordLog("INFO", about.title ?? turn.sessionID)
+    // A short phrase read aloud is for someone who has looked away.
+    if (app.config?.voiceFeedback && document.hidden) speak(t("voice.said.agent"), language.value)
+    if (app.config?.notifyAgent === false) return
+    if (chiming && watching(turn.sessionID)) {
+      heldNotices.add(turn.sessionID)
+      return
+    }
+    window.mcode.taskNotice({ kind: "done", ...about, silent: chiming })
   },
 )
 
-// A turn that was running and now is not has finished, one way or another.
-watch(
-  () => app.busy,
-  (running, was) => {
-    if (running || !was) return
-    alertDesktop("agent", app.current?.title ?? "", app.currentID)
-  },
-)
+/* Every undecided permission and question, across conversations. */
+const awaitingConfirm = computed(() => [
+  ...[...app.pendingPermissions.values()].flat().map((request) => ({ id: request.id, sessionID: request.sessionID })),
+  ...[...confirmDock.pending.values()].map((request) => ({ id: request.id, sessionID: request.sessionID })),
+])
 
+/* The ones already announced, so a queue changing does not announce them again. */
+const announcedConfirms = new Set<string>()
+
+watch(awaitingConfirm, (entries) => {
+  const live = new Set(entries.map((entry) => entry.id))
+  for (const id of [...announcedConfirms]) if (!live.has(id)) announcedConfirms.delete(id)
+  for (const entry of entries) {
+    if (announcedConfirms.has(entry.id)) continue
+    announcedConfirms.add(entry.id)
+    if (app.config?.soundPermission) play("permission")
+    if (app.config?.notifyPermission === false) continue
+    window.mcode.taskNotice({ kind: "confirm", ...noticeAbout(entry.sessionID), silent: chimeOn() })
+  }
+})
+
+/* MiMo's launcher badge: conversations with an unseen finish or waiting on a confirmation. */
 watch(
-  () => app.permission,
-  (request) => {
-    if (request) alertDesktop("permission", request.title, request.sessionID ?? app.currentID)
-  },
+  () => new Set([...app.unseen, ...awaitingConfirm.value.map((entry) => entry.sessionID)]).size,
+  (count) => window.mcode.badge(count),
+  { immediate: true },
 )
 
 /*
@@ -3758,7 +3843,11 @@ watch(
     return last && last.role === "assistant" ? last.error : undefined
   },
   (message) => {
-    if (message) alertDesktop("error", message, app.currentID)
+    if (!message) return
+    // Logged, with its cue and spoken line if they are on; MiMo sends no notification for a failure.
+    recordLog("ERROR", message)
+    if (app.config?.soundError) play("error")
+    if (app.config?.voiceFeedback && document.hidden) speak(t("voice.said.error"), language.value)
   },
 )
 
@@ -3806,7 +3895,23 @@ async function cycleEffort() {
   await app.setEffort(cycleVariant(variants, app.current?.effort))
 }
 
+/** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
+async function stepEffort(by: 1 | -1) {
+  if (!app.currentID) return
+  const variants = findModel(app.providers, app.current?.model)?.variants ?? []
+  if (!variants.length) return
+  const current = app.current?.effort
+  const at = current ? variants.indexOf(current) : -1
+  const next = at === -1 ? (by > 0 ? variants[0] : undefined) : variants[Math.max(0, Math.min(variants.length - 1, at + by))]
+  if (next && next !== current) await app.setEffort(next)
+}
+
 let offMenu: (() => void) | undefined
+let offZoom: (() => void) | undefined
+let offQuitHint: (() => void) | undefined
+
+/* The platform for the zoom notice's key, before the backend has said it. */
+const platformName = () => app.platform || (/Mac/.test(navigator.userAgent) ? "darwin" : "win32")
 
 // A session arriving from anywhere - palette, sidebar, rail - means we are no
 // longer home, and it is a place worth being able to come back to.
@@ -3837,6 +3942,18 @@ onMounted(async () => {
   schemeQuery.addEventListener("change", onSchemeChange)
   window.addEventListener("wheel", onWheel, { passive: false })
   offMenu = window.mcode.onMenu(runMenuCommand)
+  // MiMo's zoom notice after every step, and once at load when the window is not at 100%.
+  offZoom = window.mcode.onZoomChanged((percent) =>
+    notify(zoomNotice(percent, platformName()), { id: ZOOM_TOAST, duration: 5000 }),
+  )
+  void window.mcode
+    .zoomPercent()
+    .then((percent) => {
+      if (Math.round(percent) !== 100) notify(zoomNotice(percent, platformName()), { id: ZOOM_TOAST, duration: 8000 })
+    })
+    .catch(() => undefined)
+  // macOS: a first Cmd+Q only arms the quit, and says so.
+  offQuitHint = window.mcode.onQuitHint(() => notify(t("quit.hint"), { id: "quit-shortcut", duration: 2000 }))
   await boot()
 })
 
@@ -3925,6 +4042,8 @@ onBeforeUnmount(() => {
   schemeQuery.removeEventListener("change", onSchemeChange)
   window.removeEventListener("wheel", onWheel)
   offMenu?.()
+  offZoom?.()
+  offQuitHint?.()
 })
 </script>
 
@@ -3953,6 +4072,8 @@ onBeforeUnmount(() => {
         'panel-full': rp.open && rp.fullscreen,
       }"
     >
+      <!-- MiMo's per-region boundaries: a region that fails to render shows its own strip. -->
+      <ErrorBoundary :reset-key="view">
       <Sidebar
         v-if="!onboarding"
         :collapsed="!leftPanel"
@@ -3986,8 +4107,10 @@ onBeforeUnmount(() => {
         @createIn="newSessionIn"
         @settings="openSettings"
       />
+      </ErrorBoundary>
 
       <main ref="mainPane" class="main" :class="{ 'info-open': infoInline, 'info-shown': infoShowing, beside: panelBeside }">
+        <ErrorBoundary :reset-key="`${view}:${app.currentID ?? ''}`">
         <!-- A turn can run for minutes; the bar is the only thing that says so
              without the user watching the transcript for movement. -->
         <div v-if="app.busy && !onboarding" class="progress"><span /></div>
@@ -4166,6 +4289,7 @@ onBeforeUnmount(() => {
         <div v-if="fileDrag && !onboarding" class="drop-overlay" data-drop-overlay aria-hidden="true">
           <div class="drop-card">{{ t("composer.dropOverlay") }}</div>
         </div>
+        </ErrorBoundary>
       </main>
 
       <!-- Floats over the pane, so opening it neither reflows nor shortens it. -->
@@ -4177,6 +4301,7 @@ onBeforeUnmount(() => {
       <AnnotationMarkers v-if="!onboarding" :mainScope="annotationScope" :disabled="modalOpen" />
 
       <!-- MiMo's right panel: tabs beside the conversation, or its launcher while it holds none. -->
+      <ErrorBoundary :reset-key="app.currentID ?? ''">
       <RightPanel
         v-if="!onboarding"
         ref="rightPanel"
@@ -4193,6 +4318,7 @@ onBeforeUnmount(() => {
         @shell="runShellCommand"
         @terminal="openTerminalTab"
       />
+      </ErrorBoundary>
     </div>
 
     <ReleaseNotesDialog
@@ -4215,6 +4341,7 @@ onBeforeUnmount(() => {
 
     <SearchOverlay
       v-if="searchOpen"
+      ref="searchOverlay"
       @close="searchOpen = false"
       @open="openFromArtifacts"
       @project="startIn"
@@ -4380,9 +4507,6 @@ onBeforeUnmount(() => {
     @pick="runProjectMenu"
     @close="projectMenu = undefined"
   />
-
-  <!-- Listens at the document, so every text field gets the same menu. -->
-  <EditMenu />
 
   <Toasts />
 
@@ -4605,15 +4729,16 @@ onBeforeUnmount(() => {
   z-index: 250;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--interactive) 8%, transparent);
-  border: 2px dashed color-mix(in srgb, var(--interactive) 55%, transparent);
+  /* MiMo's accent is orange in both schemes. */
+  background: color-mix(in srgb, #ff6a2b 8%, transparent);
+  border: 2px dashed color-mix(in srgb, #ff6a2b 55%, transparent);
   border-radius: inherit;
   pointer-events: none;
 }
 
 .drop-card {
   padding: 10px 18px;
-  color: var(--interactive);
+  color: #ff6a2b;
   background: var(--surface-base);
   border-radius: 12px;
   box-shadow: var(--shadow-md);

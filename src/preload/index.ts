@@ -35,10 +35,31 @@ const api = {
   /** Menu bar labels; the translations live here, the menu is built there. */
   menuLabels: (labels: Record<string, string>): void => ipcRenderer.send("mcode:menu-labels", labels),
 
-  /** The clipboard as text, for surfaces that copy and paste it themselves. */
-  /** Raised by the main process, and only when the window is in the background. */
-  notify: (title: string, body: string, sessionID?: string): void =>
-    ipcRenderer.send("mcode:notify", title, body, sessionID),
+  /**
+   * MiMo's task notification: the main process titles and words it, and shows
+   * it only while the window is in the background.
+   */
+  taskNotice: (notice: { kind: "done" | "confirm"; sessionID?: string; title?: string; project?: string; silent: boolean }): void =>
+    ipcRenderer.send("mcode:task-notice", notice),
+
+  /** The launcher badge: conversations with an unseen finish or awaiting a confirmation. */
+  badge: (count: number): void => ipcRenderer.send("mcode:badge", count),
+
+  /** The zoom every window now has, as a whole percent, after any step. */
+  onZoomChanged: (handler: (percent: number) => void): (() => void) => {
+    const listener = (_event: unknown, percent: number) => handler(percent)
+    ipcRenderer.on("mcode:zoom-changed", listener)
+    return () => ipcRenderer.off("mcode:zoom-changed", listener)
+  },
+  /** This window's zoom as a whole percent. */
+  zoomPercent: (): Promise<number> => ipcRenderer.invoke("mcode:zoom-percent"),
+
+  /** macOS: a first Cmd+Q armed the quit. */
+  onQuitHint: (handler: () => void): (() => void) => {
+    const listener = () => handler()
+    ipcRenderer.on("mcode:quit-hint", listener)
+    return () => ipcRenderer.off("mcode:quit-hint", listener)
+  },
 
   /**
    * The session a clicked notification came from, if it named one.

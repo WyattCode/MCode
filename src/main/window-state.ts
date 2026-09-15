@@ -1,6 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { app, screen, type BrowserWindow, type Rectangle } from "electron"
+import { WINDOW_MIN, firstRunSize } from "./desktop-rules"
 
 /**
  * Remembers where the window was and how big it was.
@@ -17,9 +18,8 @@ interface State {
 }
 
 const FILE = "window.json"
-/** First-run size only; the position is left to the OS, which centres it. */
-const DEFAULT = { width: 1280, height: 840 }
-const MIN = { width: 720, height: 480 }
+/* MiMo's minimum; a remembered size smaller than it is grown to it. */
+const MIN = WINDOW_MIN
 /** Writes are cheap but pointless mid-drag; settle first. */
 const SETTLE = 400
 /**
@@ -105,12 +105,8 @@ export function restore(): {
   const saved = read()
   const flags = { maximized: saved?.maximized ?? false, fullScreen: saved?.fullScreen ?? false }
   if (!saved) {
-    const area = screen.getPrimaryDisplay().workArea
-    return {
-      width: Math.min(DEFAULT.width, area.width),
-      height: Math.min(DEFAULT.height, area.height),
-      ...flags,
-    }
+    // First run: MiMo's share of the primary work area; the position is left to the OS, which centres it.
+    return { ...firstRunSize(screen.getPrimaryDisplay().workArea), ...flags }
   }
   return { ...visible(saved.bounds), ...flags }
 }

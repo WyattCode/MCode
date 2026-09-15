@@ -13,32 +13,99 @@ body,
   margin: 0;
 }
 
+/* MiMo's two fallback stacks, set over the generated ones. */
+:root {
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", "Source Han Sans SC", "WenQuanYi Micro Hei", Inter, sans-serif;
+  --font-mono: "SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono",
+    "Liberation Mono", "PingFang SC", "Microsoft YaHei", "Noto Sans Mono CJK SC", "Source Han Mono SC",
+    "WenQuanYi Micro Hei Mono", monospace;
+}
+
+* {
+  overscroll-behavior-x: none;
+}
+
+/* MiMo's body type: 14px on a 1.6 line at 400, with no synthesised bold. */
 body {
   background: var(--surface-base);
   /* text-base is the default body colour; text-strong is for emphasis. */
   color: var(--text-base);
   font-family: var(--font-sans);
-  font-size: calc(var(--font-size-base) * var(--ui-font-scale, 1));
-  /*
-   * Four-forty, not four hundred. opencode sets Inter's variable axis to 440
-   * for body text and 530 for emphasis; at 400 every label in this app read a
-   * shade lighter than the same label in the reference, everywhere at once.
-   */
-  font-weight: 440;
-  line-height: var(--line-height-large);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  font-synthesis-weight: none;
+  line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }
 
-/* The whole app is keyboard-first, so focus must always be visible - but only
-   for keyboard users, never as a click artifact. */
+/*
+ * No ring on focus anywhere by default, as in MiMo: rings belong to the few
+ * controls that draw their own (`.field` below, and per component).
+ */
 :focus {
   outline: none;
 }
 
-:focus-visible {
-  outline: 2px solid var(--interactive);
-  outline-offset: 1px;
+/* MiMo's text selection colour, light and dark. */
+::selection {
+  background: #b3d7ff;
+}
+
+:root[data-theme="dark"] ::selection {
+  background: #33518a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) ::selection {
+    background: #33518a;
+  }
+}
+
+/*
+ * MiMo's selectable text: the interface itself cannot be selected, only content
+ * and code can. Content is marked `data-selectable="content"`; the classes
+ * after it are the content surfaces that do not carry the mark yet (reply text,
+ * the user bubble, the terminal and the PDF text layer).
+ */
+#app {
+  user-select: none;
+}
+
+:is(pre, code),
+[data-selectable="content"],
+[data-selectable="content"] .xterm,
+.text[data-annotate="answer"],
+.user-bubble,
+.xterm,
+.textLayer {
+  user-select: text;
+}
+
+[data-selectable="none"] {
+  user-select: none;
+}
+
+:where(input, textarea, [contenteditable="true"]) {
+  user-select: text;
+}
+
+:is(input, textarea):placeholder-shown {
+  user-select: none;
+}
+
+/*
+ * Menus, notices and tips float over the 50px caption band, which the home strip
+ * and the conversation header mark as a window drag region. As MiMo marks its
+ * portalled layers, they are never part of it.
+ */
+.toasts,
+.toasts .notice,
+.menu,
+.select-pop,
+.app-tip {
+  -webkit-app-region: no-drag;
 }
 
 /*
@@ -76,75 +143,97 @@ textarea {
   border: none;
 }
 
+/* MiMo's code type: the mono stack, inline code a step smaller than its line. */
 code,
-pre,
-kbd {
+kbd,
+samp,
+pre {
   font-family: var(--font-mono);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+code {
+  font-size: 0.875em;
+}
+
+pre code {
+  font-size: inherit;
 }
 
 /*
- * Scrollbars appear while a surface is being used, and are quiet otherwise.
- *
- * opencode hides the platform scrollbar outright and draws its own: a twelve
- * pixel lane carrying a four pixel pill with fully rounded ends, held at
- * opacity 0 and faded in for as long as the surface is scrolled or hovered.
- *
- * The geometry below is that pill exactly. The behaviour is reached a different
- * way, because a platform scrollbar has no opacity to animate: the fill is
- * transparent at rest and coloured in when wanted, which looks the same and
- * needs no wrapper element around every scrolling area. The one thing CSS
- * cannot know on its own is that scrolling is happening, and a single
- * document-level listener supplies it - see lib/scrollbars.ts.
- *
- * Between those two designs this was permanently visible, which drew a grey
- * rail down the edge of every list in the app whether or not it could scroll.
+ * MiMo's scrollbars: a 10px lane with a 6px pill (a 2px transparent border),
+ * transparent at rest and coloured only while the surface is being scrolled.
+ * lib/scrollbars.ts marks the scrolled element and clears it 500ms after the
+ * last scroll; hovering does not reveal it.
  */
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/*
- * Four of the twelve pixels are the pill; the rest is given away as a
- * transparent border, which is how a thumb is inset without a track drawn
- * behind it.
- *
- * Absent until the surface is used. opencode holds its thumb at opacity 0 and
- * fades it in while scrolling; a platform scrollbar cannot be faded, but it can
- * be given a transparent fill and coloured in, which comes to the same thing on
- * screen. What tells the stylesheet that scrolling is happening is one document
- * listener - see lib/scrollbars.ts. Colouring it permanently, as this did, put
- * a grey rail down the edge of every list in the app whether or not it could
- * scroll at all.
- */
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 ::-webkit-scrollbar-thumb {
-  background: transparent;
-  border: 4px solid transparent;
-  border-radius: 9999px;
+  background-color: transparent;
   background-clip: padding-box;
-  transition: background-color 0.2s ease-in-out;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  transition: background-color 0.2s cubic-bezier(0.4, 0, 1, 1);
 }
 
-/* Being scrolled, or under the pointer: both are moments the thumb is wanted. */
-[data-scrolling="true"]::-webkit-scrollbar-thumb,
-*:hover::-webkit-scrollbar-thumb {
-  background: var(--border-weak);
-  background-clip: padding-box;
+[data-scrollbar-active]::-webkit-scrollbar-thumb {
+  background-color: #0000002e;
+  transition-duration: 0.12s;
+  transition-timing-function: cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
-/* On the thumb itself, which is about to be dragged. */
-::-webkit-scrollbar-thumb:hover {
-  background: var(--border-strong);
-  background-clip: padding-box;
+[data-scrollbar-active]::-webkit-scrollbar-thumb:hover {
+  background-color: #0000004d;
+}
+
+:root[data-theme="dark"] [data-scrollbar-active]::-webkit-scrollbar-thumb {
+  background-color: #ffffff2e;
+}
+
+:root[data-theme="dark"] [data-scrollbar-active]::-webkit-scrollbar-thumb:hover {
+  background-color: #ffffff4d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) [data-scrollbar-active]::-webkit-scrollbar-thumb {
+    background-color: #ffffff2e;
+  }
+
+  :root:not([data-theme="light"]) [data-scrollbar-active]::-webkit-scrollbar-thumb:hover {
+    background-color: #ffffff4d;
+  }
+}
+
+/* MiMo's thin variant. */
+.u-scrollbar-thin::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::-webkit-scrollbar-thumb {
+    transition: none;
+  }
+}
+
+html[data-motion="on"] ::-webkit-scrollbar-thumb {
+  transition: none;
 }
 
 /* ------------------------------------------------------------------ */

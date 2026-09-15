@@ -51,7 +51,6 @@ function follow(id: string, link: ToastLink) {
         </svg>
         <span class="text">
           <span class="title">{{ toast.title }}</span>
-          <span v-if="toast.body" class="body">{{ toast.body }}</span>
           <button v-for="link in toast.links" :key="link.label" class="link" @click="follow(toast.id, link)">
             {{ link.label }}
           </button>
@@ -70,9 +69,12 @@ function follow(id: string, link: ToastLink) {
   z-index: 200;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* sonner's expanded stack, which MiMo uses: 14 between notices. */
+  gap: 14px;
   align-items: center;
   pointer-events: none;
+  /* Over the caption band's drag region, never part of it. */
+  -webkit-app-region: no-drag;
 }
 
 /* MiMo's capsule, measured: 16 round, 8 by 12 of padding, 13px text on a 1.3 line. */
@@ -92,6 +94,7 @@ function follow(id: string, link: ToastLink) {
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.3;
   pointer-events: auto;
+  -webkit-app-region: no-drag;
 }
 
 .notice.success {
@@ -166,11 +169,6 @@ function follow(id: string, link: ToastLink) {
 .text {
   min-width: 0;
   overflow-wrap: anywhere;
-}
-
-.body {
-  margin-inline-start: 6px;
-  color: var(--text-weak);
 }
 
 /* MiMo's links: blue, 8 after the title, underlined only under the pointer. */

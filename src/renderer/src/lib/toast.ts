@@ -1,4 +1,5 @@
 import { ref } from "vue"
+import { t } from "./i18n"
 
 /**
  * Brief notices, shown at the top of the window and dismissed on their own.
@@ -24,7 +25,11 @@ export interface ToastLink {
 
 export interface ToastOptions {
   level?: ToastLevel
-  /** Secondary text after the title, kept for callers whose detail is the point (a failure's reason). */
+  /**
+   * A detail older callers pass, usually a failure's reason. MiMo's notice is a
+   * title alone, so this is folded into the title after " · " rather than drawn
+   * as a second text.
+   */
   body?: string
   links?: ToastLink[]
   /** The single link older callers pass; joins `links`. */
@@ -40,9 +45,14 @@ export interface Toast {
   id: string
   level: ToastLevel
   title: string
-  body?: string
   links: ToastLink[]
   closable: boolean
+}
+
+/** The one line a notice shows: the title, and any detail folded in after it. */
+export function toastTitle(title: string, body?: string): string {
+  const detail = body?.trim()
+  return detail ? `${title} · ${detail}` : title
 }
 
 export const DURATION = 5000
@@ -92,10 +102,11 @@ function stop(id: string) {
   clocks.delete(id)
 }
 
-export function show(level: ToastLevel, title: string, options: ToastOptions = {}): string {
+export function show(level: ToastLevel, heading: string, options: ToastOptions = {}): string {
+  const title = toastTitle(heading, options.body)
   const id = options.id ?? toastID(level, title)
   const links = [...(options.links ?? []), ...(options.action ? [options.action] : [])].slice(0, LINKS)
-  const entry: Toast = { id, level, title, body: options.body || undefined, links, closable: options.closable !== false }
+  const entry: Toast = { id, level, title, links, closable: options.closable !== false }
   if (toasts.value.some((item) => item.id === id)) {
     toasts.value = toasts.value.map((item) => (item.id === id ? entry : item))
   } else {
@@ -156,6 +167,16 @@ export function notify(title: string, body?: string | ToastOptions, action?: Toa
 export function notifyFailure(title: string, body?: string | ToastOptions, action?: ToastLink): string {
   const options = typeof body === "object" ? body : { body, action }
   return show(options.level ?? "danger", title, options)
+}
+
+/** The id MiMo's zoom notice replaces itself under. */
+export const ZOOM_TOAST = "app-zoom"
+
+/** MiMo's zoom notice: the percent and the key back to 100%, or that it is back. */
+export function zoomNotice(percent: number, platform: string): string {
+  const whole = Math.round(percent)
+  if (whole === 100) return t("zoom.restored")
+  return t("zoom.changed", { percent: whole, combo: platform === "darwin" ? "⌘0" : "Ctrl+0" })
 }
 
 /* A hidden window is not being read, so no notice runs out while it is. */
