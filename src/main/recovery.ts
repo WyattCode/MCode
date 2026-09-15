@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { app, dialog, shell, type BrowserWindow, type WebContents } from "electron"
 import { label as L } from "./labels"
+import { formatArgs, type DailyLog } from "./log-file"
 import pkg from "../../package.json"
 
 /**
@@ -68,11 +69,14 @@ const MAX_ENTRIES = 100
  */
 let reporting = false
 
+/* The day's log file (MiMo's userData/logs), once main has opened it. */
+let log: DailyLog | undefined
+
 function record(window: string, what: string, detail: Record<string, unknown> = {}): void {
   entries.push({ at: new Date().toISOString(), window, what, detail })
   if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES)
-  // Goes to the terminal in development. In a packaged build nothing is
-  // listening, which is why the export below exists at all.
+  log?.write("error", formatArgs([`[recovery] ${what}`, { window, ...detail }]))
+  // Goes to the terminal in development; the log file has it either way.
   reporting = true
   try {
     console.error(`[recovery] ${what}`, { window, ...detail })
@@ -82,38 +86,33 @@ function record(window: string, what: string, detail: Record<string, unknown> = 
 }
 
 /**
- * Keeps what the main process says, so the report can carry it.
+ * Keeps what the main process says: in memory for the report, and in the day's
+ * log file.
  *
  * The backend runs in this process, and everything it warns or complains about
  * goes to a console that exists only while the app is started from a terminal.
- * Packaged, that output has nowhere to go at all - so the one button offered on
- * a crash screen could hand over what had happened to the window and nothing
- * about what the backend had been saying in the minutes before it.
+ * Packaged, that output had nowhere to go at all.
  *
- * Only warnings and errors. The ordinary chatter of a running app would fill
- * the hundred lines this keeps long before anything went wrong, which would
- * leave the report holding the least interesting hundred lines available.
+ * Warnings and errors are kept in memory; the ordinary chatter of a running app
+ * would fill the hundred lines long before anything went wrong. The file also
+ * takes info lines, as MiMo's does, since it is not capped.
  */
-export function captureConsole(): void {
-  for (const level of ["warn", "error"] as const) {
+export function captureConsole(file: DailyLog): void {
+  log = file
+  for (const level of ["info", "warn", "error"] as const) {
     const original = console[level].bind(console)
     console[level] = (...args: unknown[]) => {
-      original(...args)
+      try {
+        original(...args)
+      } catch {
+        // A closed stdout (EPIPE) must not turn a log line into a crash.
+      }
       if (reporting) return
       reporting = true
       try {
-        const text = args
-          .map((value) => {
-            if (typeof value === "string") return value
-            if (value instanceof Error) return value.stack ?? value.message
-            try {
-              return JSON.stringify(value)
-            } catch {
-              // A value that cannot be serialised is still worth naming.
-              return String(value)
-            }
-          })
-          .join(" ")
+        const text = formatArgs(args)
+        file.write(level, text)
+        if (level === "info") return
         entries.push({ at: new Date().toISOString(), window: "main", what: `console.${level}`, detail: { text } })
         if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES)
       } finally {

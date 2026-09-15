@@ -38,6 +38,7 @@ import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/r
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
 import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFile } from "../src/main/display-server"
 import { PowerHold } from "../src/main/power"
+import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
 import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
@@ -2640,6 +2641,46 @@ async function main() {
     failing.sync(["x"])
     failing.sync([])
     check("a blocker that fails to start holds nothing and stops nothing", failing.state.held.length === 0 && !calls.includes("stop:unexpected"))
+  }
+
+  section("Log files (MiMo's userData/logs, one file a day, 15 days)")
+  {
+    const at = (text: string) => new Date(`${text}T12:00:00`)
+    check("a file is named for its local day", logFileName(new Date(2026, 8, 5, 23, 59)) === "2026-09-05.log")
+    check("a dated name reads back and anything else does not", dayOfLogFile("2026-09-05.log")?.getDate() === 5 && dayOfLogFile("notes.log") === undefined && dayOfLogFile("2026-02-30.log") === undefined)
+    const names = ["2026-09-15.log", "2026-09-01.log", "2026-08-31.log", "2026-07-01.log", "notes.txt", "2026-08-01.log.bak"]
+    check(
+      "files 15 or more days old expire; 14 days and other files are kept",
+      expiredLogFiles(names, at("2026-09-15")).join(",") === "2026-08-31.log,2026-07-01.log",
+      expiredLogFiles(names, at("2026-09-15")),
+    )
+    const secret = "sk-" + "a1b2c3d4e5f6g7h8i9j0"
+    const redacted = redactSecrets(`request failed Authorization: Bearer abc.def-123 {"apiKey":"${secret}"} url?key=XYZ123&x=1 token=hunter2`)
+    check(
+      "keys, bearer tokens and key-like assignments never reach the line",
+      !redacted.includes(secret) && !redacted.includes("abc.def-123") && !redacted.includes("XYZ123") && !redacted.includes("hunter2") && redacted.includes("x=1"),
+      redacted,
+    )
+    check("an ordinary line is left as it is", redactSecrets("[update] check failed (silent): HTTP 404") === "[update] check failed (silent): HTTP 404")
+    const line = logLine("warn", "x".repeat(9000), new Date(Date.UTC(2026, 8, 15, 1, 2, 3)))
+    check("a line carries its time and level and is cut past 8000 characters", line.startsWith("2026-09-15T01:02:03.000Z [warn] ") && line.endsWith("[cut 1000 chars]"), line.slice(0, 40))
+
+    const dir = path.join(root, "logs")
+    await fs.mkdir(dir, { recursive: true })
+    for (const name of ["2026-08-20.log", "2026-09-10.log", "keep.txt"]) await fs.writeFile(path.join(dir, name), "old\n")
+    let now = at("2026-09-15")
+    const daily = new DailyLog({ dir, now: () => now })
+    check("opening the log prunes what has expired", !(await exists(path.join(dir, "2026-08-20.log"))) && (await exists(path.join(dir, "2026-09-10.log"))) && (await exists(path.join(dir, "keep.txt"))))
+    daily.write("info", "first day")
+    now = at("2026-09-26")
+    daily.write("error", `second day ${secret}`)
+    await daily.close()
+    daily.write("info", "after close")
+    const first = await fs.readFile(path.join(dir, "2026-09-15.log"), "utf8")
+    const second = await fs.readFile(path.join(dir, "2026-09-26.log"), "utf8")
+    check("each day's lines go to that day's file", first.includes("[info] first day") && second.includes("[error] second day"), { first, second })
+    check("a day change prunes again", !(await exists(path.join(dir, "2026-09-10.log"))))
+    check("the file never holds the secret, and nothing is written after close", !second.includes(secret) && !second.includes("after close"))
   }
 
   section("Composer menus and home starters")

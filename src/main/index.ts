@@ -6,6 +6,7 @@ import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { PowerHold } from "./power"
+import { DailyLog, LOG_DIR } from "./log-file"
 import { startBackend, type Backend } from "../server/index"
 import { scratchRoot } from "../server/scratch"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
@@ -92,6 +93,15 @@ if (process.platform === "linux") {
     else app.commandLine.appendSwitch(entry.name, entry.value)
   }
 }
+
+/*
+ * MiMo's log files, opened as the module loads so that whatever is said on the
+ * way up - Chromium switches, the backend starting, a failure to start - is on
+ * disk. Old days are pruned here and on each day change.
+ */
+const logs = new DailyLog({ dir: path.join(app.getPath("userData"), LOG_DIR) })
+captureConsole(logs)
+app.on("will-quit", () => void logs.close())
 
 let backend: Backend | undefined
 
@@ -459,12 +469,9 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(async () => {
   /*
-   * Both before the backend starts, so that whatever it says on the way up -
-   * and a failure to come up at all - is already being kept by the time it
-   * happens. That record is the only thing a packaged build has to offer when
-   * someone asks what went wrong.
+   * Before the backend starts, so that a process failing on the way up is
+   * already being recorded by the time it happens.
    */
-  captureConsole()
   wireProcessRecovery()
   // Packaged only: a development build would register the bare Electron binary.
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
@@ -817,6 +824,11 @@ app.whenReady().then(async () => {
    * time, and a page that cannot draw cannot ask a person to quit and reopen.
    */
   ipcMain.on("mcode:relaunch", () => relaunch())
+
+  /* A renderer diagnostics line (MiMo's diagLog): capped, and redacted on its way into the file. */
+  ipcMain.on("mcode:diag-log", (_event, line: unknown) => {
+    if (typeof line === "string" && line) logs.write("renderer", line.slice(0, 4000))
+  })
 
   /*
    * Quits from the footer menu. Said to be intended first, like the tray's Quit,

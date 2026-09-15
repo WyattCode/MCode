@@ -138,6 +138,8 @@ const api = {
    * backend on the way through.
    */
   relaunch: (): void => ipcRenderer.send("mcode:relaunch"),
+  /** A renderer diagnostics line for the day's log file (MiMo's diagLog). */
+  diagLog: (line: string): void => ipcRenderer.send("mcode:diag-log", line),
   /** The footer menu's Quit app: every window, the backend and its terminals. */
   quitApp: (): void => ipcRenderer.send("mcode:quit"),
 
