@@ -5,6 +5,7 @@ import { installTips } from "./lib/tip"
 import { installModal } from "./lib/modal"
 import { installErrorPage } from "./lib/error-page"
 import { watchScrolling } from "./lib/scrollbars"
+import { installSelectContent } from "./lib/select-content"
 import "./styles/base.css"
 
 const app = createApp(App)
@@ -18,4 +19,5 @@ installModal(app)
  */
 installErrorPage(app)
 watchScrolling()
+installSelectContent()
 app.mount("#app")
