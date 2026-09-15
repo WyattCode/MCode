@@ -23,6 +23,8 @@ import SelectMenu from "./SelectMenu.vue"
 import { chime } from "../lib/sound"
 import { CHIMES, chimeOf, type Chime } from "@shared/chime"
 import ConfirmDialog from "./ConfirmDialog.vue"
+import LanguageMenu from "./LanguageMenu.vue"
+import VoiceUsageDialog from "./VoiceUsageDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
@@ -91,7 +93,20 @@ const props = defineProps<{
   /** The version downloaded and waiting for a restart, if any. */
   updateReady?: string
 }>()
-const section = ref<Section>(props.section ?? "general")
+/*
+ * The page on show, written through requestLeave: every nav button, the
+ * search's Enter and its jump pass MiMo's unsaved-environment guard.
+ */
+const currentSection = ref<Section>(props.section ?? "general")
+const section = computed<Section>({
+  get: () => currentSection.value,
+  set: (next) =>
+    requestLeave(() => {
+      currentSection.value = next
+      // A nav click while a query is typed highlights the match on the page it opens, as MiMo's does.
+      if (navQuery.value.trim()) void flashMatch(navQuery.value)
+    }),
+})
 
 /* MiMo's 默认打开目标: the same remembered choice the title bar's open-location control uses. */
 const { options: openOptions, choice: openChoice, choose: chooseOpen } = useOpenWith(() => app.platform)
@@ -724,9 +739,29 @@ const NAV_LABELS: Record<Section, string> = {
   updates: "set.nav.updates",
 }
 
+/* MiMo matches a page by its name or by the words listed for it, so 托盘 finds 常规. */
+const NAV_KEYWORDS: Record<Section, string> = {
+  general: "set.keywords.general",
+  usage: "set.keywords.usage",
+  appearance: "set.keywords.appearance",
+  files: "set.keywords.files",
+  models: "set.keywords.models",
+  server: "set.keywords.server",
+  personal: "set.keywords.personal",
+  keys: "set.keywords.keys",
+  mcp: "set.keywords.mcp",
+  environment: "set.keywords.environment",
+  archive: "set.keywords.archive",
+  updates: "set.keywords.updates",
+}
+
 function navShows(entry: Section): boolean {
   const needle = navQuery.value.trim().toLocaleLowerCase()
-  return !needle || t(NAV_LABELS[entry]).toLocaleLowerCase().includes(needle)
+  if (!needle) return true
+  return (
+    t(NAV_LABELS[entry]).toLocaleLowerCase().includes(needle) ||
+    t(NAV_KEYWORDS[entry]).toLocaleLowerCase().includes(needle)
+  )
 }
 
 const navMatches = computed(() => (Object.keys(NAV_LABELS) as Section[]).filter(navShows))
@@ -734,6 +769,79 @@ const navMatches = computed(() => (Object.keys(NAV_LABELS) as Section[]).filter(
 function openFirstMatch() {
   const first = navMatches.value[0]
   if (first) section.value = first
+}
+
+/* MiMo's search jumps while typing: off a page the query no longer matches, onto the first that does. */
+watch(navQuery, (query) => {
+  if (!query.trim()) return
+  const matches = navMatches.value
+  if (matches.length && !matches.includes(section.value)) section.value = matches[0]
+  else void flashMatch(query)
+})
+
+/*
+ * MiMo's highlight: two frames after the page draws, the first row whose title
+ * or option reads the query scrolls to the middle and holds the selected fill
+ * for 1.6s while it fades. Reduced motion gets the fill without the fade.
+ */
+const contentEl = ref<HTMLElement>()
+let flashTimer: number | undefined
+
+async function flashMatch(query: string) {
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return
+  await nextTick()
+  await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+  const root = contentEl.value
+  if (!root) return
+  const hit = [...root.querySelectorAll<HTMLElement>(".line-title, .choice-btn, h3")].find((element) =>
+    (element.textContent ?? "").toLocaleLowerCase().includes(needle),
+  )
+  if (!hit) return
+  const target = hit.closest<HTMLElement>(".line") ?? hit
+  const motion = document.documentElement.getAttribute("data-motion")
+  const reduced = motion === "on" || (motion !== "off" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
+  target.scrollIntoView({ block: "center", behavior: reduced ? "auto" : "smooth" })
+  for (const element of root.querySelectorAll(".sr-hit")) element.classList.remove("sr-hit")
+  target.classList.add("sr-hit")
+  if (flashTimer) window.clearTimeout(flashTimer)
+  flashTimer = window.setTimeout(() => target.classList.remove("sr-hit"), 1600)
+}
+
+/* MiMo's 用法详情 for 智能编辑. */
+const voiceUsageOpen = ref(false)
+
+/*
+ * MiMo's guard on an environment with unsaved edits: every way out - the
+ * navigation, the search's jump, the back button, close, Escape and the scrim -
+ * asks first, and 离开 discards the edits and does what was asked.
+ */
+const pendingLeave = ref<() => void>()
+
+function requestLeave(action: () => void) {
+  if (!envDirty.value) {
+    action()
+    return
+  }
+  pendingLeave.value = action
+}
+
+function confirmLeave() {
+  const action = pendingLeave.value
+  pendingLeave.value = undefined
+  // Discarded first, so the action runs past a guard that no longer has anything to protect.
+  envName.value = app.config?.projectNames?.[configuring.value ?? ""] ?? ""
+  action?.()
+}
+
+function leaveEnvironment() {
+  requestLeave(() => {
+    configuring.value = undefined
+  })
+}
+
+function requestClose() {
+  requestLeave(() => emit("close"))
 }
 
 const saved = ref<string>()
@@ -1493,7 +1601,24 @@ function onKeydown(event: KeyboardEvent) {
    * without standing down here a single press closed both layers at once.
    */
   if (connectOpen.value) return
-  emit("close")
+  /* As in MiMo, the overlay closes only when nothing on top of it took the Escape. An open picker marks it taken. */
+  if (event.defaultPrevented) return
+  if (confirmingVoiceSend.value) {
+    confirmingVoiceSend.value = false
+    return
+  }
+  // These close themselves on the same press.
+  if (
+    pendingLeave.value ||
+    confirmingClear.value ||
+    confirmingDelete.value ||
+    removingProject.value ||
+    confirmingAgentsDelete.value ||
+    voiceUsageOpen.value
+  ) {
+    return
+  }
+  requestClose()
 }
 
 onMounted(() => window.addEventListener("keydown", onKeydown))
@@ -1501,11 +1626,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </script>
 
 <template>
-  <div class="overlay" @mousedown.self="emit('close')">
+  <div class="overlay" @mousedown.self="requestClose">
     <div v-modal class="dialog">
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
-      <button class="close" :aria-label="t('common.close')" @click="emit('close')">
+      <button class="close" :aria-label="t('common.close')" @click="requestClose">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
         </svg>
@@ -1653,10 +1778,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <div v-if="!navMatches.length" class="nav-empty">{{ t("set.noMatch") }}</div>
       </nav>
 
-      <div class="content">
+      <div ref="contentEl" class="content">
         <!-- General -->
         <template v-if="section === 'general'">
           <h2>{{ t("set.nav.general") }}</h2>
+          <!-- MiMo's 常规 section, repeated under the page title: open target, new project location, language, tray. -->
+          <h3 data-section="basics">{{ t("set.sectionBasics") }}</h3>
           <div class="card">
             <!-- MiMo's 默认打开目标: what 打开位置 opens a folder with, from the apps on this machine. -->
             <div class="line" data-open-target>
@@ -1667,18 +1794,55 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <SelectMenu :model-value="openChoice" :options="openOptions" @update:model-value="chooseOpen($event)" />
             </div>
 
-            <div class="line">
+            <div class="line project-root">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.projectRoot") }}</div>
+                <div class="line-sub">{{ app.config?.projectRoot || t("set.projectRootEmpty") }}</div>
+              </div>
+              <span class="ctl-pair">
+                <button class="ctl-btn" data-pick @click="pickProjectRoot">{{ t("set.pickDir") }}</button>
+                <button v-if="app.config?.projectRoot" class="ctl-btn" data-reset @click="resetProjectRoot">
+                  {{ t("set.resetDir") }}
+                </button>
+              </span>
+            </div>
+
+            <!-- MiMo's searchable picker; an empty language is 自动检测. -->
+            <div class="line" data-language-row>
               <div class="line-text">
                 <div class="line-title">{{ t("set.language") }}</div>
                 <div class="line-sub">{{ t("set.languageSub") }}</div>
               </div>
-              <SelectMenu
-                :model-value="language"
-                :options="languageOptions"
-                @update:model-value="app.patchConfig({ language: $event as Language })"
+              <LanguageMenu
+                :model-value="app.config?.language ?? ''"
+                @update:model-value="app.patchConfig({ language: $event })"
               />
             </div>
 
+            <!-- MiMo's tray row, worded per platform: while on, closing the last window hides it to the tray. -->
+            <div class="line" data-tray-row>
+              <div class="line-text">
+                <div class="line-title">{{ t(app.platform === "darwin" ? "set.trayMac" : "set.tray") }}</div>
+                <div class="line-sub">
+                  {{ t(app.platform === "darwin" ? "set.traySubMac" : app.platform === "win32" ? "set.traySub" : "set.traySubLinux") }}
+                </div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.tray ?? true }"
+                role="switch"
+                :aria-checked="app.config?.tray ?? true"
+                :aria-label="t(app.platform === 'darwin' ? 'set.trayMac' : 'set.tray')"
+                @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+
+          <!-- MiMo's 权限 section: its full access gate, then MCode's own auto-accept. -->
+          <h3 data-section="permissions">{{ t("set.sectionPermissions") }}</h3>
+          <div class="card">
             <!-- MiMo's gate: full access can only be picked in the box once this is on. -->
             <div class="line">
               <div class="line-text">
@@ -1706,7 +1870,288 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <span class="knob" />
               </button>
             </div>
+          </div>
 
+          <!-- MiMo's browser group, ahead of voice as MiMo orders them: the in-app browser itself, and what it has stored. -->
+          <h3 data-section="browser">{{ t("set.browser") }}</h3>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.browserPlugin") }}</div>
+                <div class="line-sub">{{ t("set.browserPluginSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.browserEnabled !== false }"
+                role="switch"
+                :aria-checked="app.config?.browserEnabled !== false"
+                @click="app.patchConfig({ browserEnabled: app.config?.browserEnabled === false })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.browsingData") }}</div>
+                <div class="line-sub">{{ t("set.browsingDataSub") }}</div>
+              </div>
+              <button class="ctl-btn clear-browsing" @click="confirmingClear = true">{{ t("set.clearBrowsingData") }}</button>
+            </div>
+          </div>
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="confirmingClear"
+              :title="t('set.clearBrowsingTitle')"
+              :body="t('set.clearBrowsingBody')"
+              :confirm-label="t('set.clearBrowsingOk')"
+              @confirm="clearBrowsing"
+              @close="confirmingClear = false"
+            />
+          </Teleport>
+
+          <h3 data-section="voice">{{ t("set.voice") }}</h3>
+          <div class="card">
+            <!-- MCode's own and necessary: there is no built-in speech service to fall back on. -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceModel") }}</div>
+                <div class="line-sub">{{ t("set.voiceModelSub") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="voiceModelValue"
+                :options="voiceModelOptions"
+                @update:model-value="setVoiceModel($event)"
+              />
+            </div>
+
+            <!-- MiMo's description follows the mode; 智能编辑's ends in a 用法详情 link to the examples. -->
+            <div class="line" data-voice-mode>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceMode") }}</div>
+                <div class="line-sub" data-voice-mode-sub>
+                  <template v-if="(app.config?.voiceMode ?? 'smart') === 'smart'">
+                    {{ t("set.voiceModeSmartSub") }}&#12288;<span
+                      class="usage-link"
+                      role="button"
+                      tabindex="0"
+                      data-voice-usage-link
+                      @click="voiceUsageOpen = true"
+                      @keydown.enter.prevent="voiceUsageOpen = true"
+                      >{{ t("set.voiceUsageLink") }}</span
+                    >
+                  </template>
+                  <template v-else>{{ t("set.voiceModeFastSub") }}</template>
+                </div>
+              </div>
+              <SelectMenu
+                :model-value="app.config?.voiceMode ?? 'smart'"
+                :options="voiceModes"
+                @update:model-value="app.patchConfig({ voiceMode: $event as 'smart' })"
+              />
+            </div>
+
+            <div v-if="(app.config?.voiceMode ?? 'smart') === 'smart'" class="line" data-voice-send>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceSend") }}</div>
+                <div class="line-sub">{{ t(app.config?.voiceSend ? "set.voiceSendSubOn" : "set.voiceSendSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.voiceSend ?? false }"
+                role="switch"
+                :aria-checked="app.config?.voiceSend ?? false"
+                :aria-label="t('set.voiceSend')"
+                @click="toggleVoiceSend"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.voiceFeedback") }}</div>
+                <div class="line-sub">{{ t("set.voiceFeedbackSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.voiceFeedback ?? true }"
+                role="switch"
+                :aria-checked="app.config?.voiceFeedback ?? true"
+                :aria-label="t('set.voiceFeedback')"
+                @click="app.patchConfig({ voiceFeedback: !(app.config?.voiceFeedback ?? true) })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+          <Teleport to="body">
+            <VoiceUsageDialog v-if="voiceUsageOpen" @close="voiceUsageOpen = false" />
+          </Teleport>
+          <!--
+            MiMo's own dialog for turning voice send on, not the shared confirm:
+            430 wide, a red warning triangle before a 16px title, a light red
+            button, and nothing focused on open.
+          -->
+          <Teleport to="body">
+            <div v-if="confirmingVoiceSend" class="vs-scrim" @mousedown.self="confirmingVoiceSend = false">
+              <div v-modal class="vs-dialog" data-voice-send-confirm role="alertdialog" aria-labelledby="vs-title">
+                <div class="vs-head">
+                  <svg class="vs-warn" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d93025" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                    <path d="M12 9v4M12 17h.01" />
+                  </svg>
+                  <div id="vs-title" class="vs-title">{{ t("set.voiceSendConfirmTitle") }}</div>
+                </div>
+                <p class="vs-body">{{ t("set.voiceSendConfirmBody") }}</p>
+                <div class="vs-actions">
+                  <button class="vs-cancel" type="button" @click="confirmingVoiceSend = false">{{ t("common.cancel") }}</button>
+                  <button class="vs-ok" type="button" data-voice-send-ok @click="enableVoiceSend">{{ t("set.voiceSendConfirmOk") }}</button>
+                </div>
+              </div>
+            </div>
+          </Teleport>
+
+          <!-- MiMo's two sound rows first, then MCode's own permission and error chimes. -->
+          <h3 data-section="sound">{{ t("set.sounds") }}</h3>
+          <div class="card">
+            <div class="line task-done">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.taskDone") }}</div>
+                <div class="line-sub">{{ t("set.taskDoneSub") }}</div>
+              </div>
+              <SelectMenu
+                :model-value="chimeOf(app.config?.taskDoneSound)"
+                :options="chimeOptions"
+                @update:model-value="chooseChime"
+              />
+            </div>
+
+            <div class="line spine-sound">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.spineSound") }}</div>
+                <div class="line-sub">{{ t("set.spineSoundSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.spineSound !== false }"
+                @click="app.patchConfig({ spineSound: app.config?.spineSound === false })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.soundPermission") }}</div>
+                <div class="line-sub">{{ t("set.soundPermissionSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.soundPermission }"
+                @click="app.patchConfig({ soundPermission: !app.config?.soundPermission })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.soundError") }}</div>
+                <div class="line-sub">{{ t("set.soundErrorSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.soundError }"
+                @click="app.patchConfig({ soundError: !app.config?.soundError })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+
+          <h3 data-section="notifications">{{ t("set.notifications") }}</h3>
+          <div class="card">
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.notifyAgent") }}</div>
+                <div class="line-sub">{{ t("set.notifyAgentSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.notifyAgent }"
+                @click="app.patchConfig({ notifyAgent: !app.config?.notifyAgent })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.notifyPermission") }}</div>
+                <div class="line-sub">{{ t("set.notifyPermissionSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.notifyPermission }"
+                @click="app.patchConfig({ notifyPermission: !app.config?.notifyPermission })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.notifyError") }}</div>
+                <div class="line-sub">{{ t("set.notifyErrorSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.notifyError }"
+                @click="app.patchConfig({ notifyError: !app.config?.notifyError })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+
+          <h3 data-section="display">{{ t("set.display") }}</h3>
+          <div class="card">
+            <!--
+              Ahead of the zoom gesture, which is where opencode has it: after
+              the three notification rows and before the display ones.
+            -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.releaseNotes") }}</div>
+                <div class="line-sub">{{ t("set.releaseNotesSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.releaseNotes }"
+                @click="app.patchConfig({ releaseNotes: !app.config?.releaseNotes })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.pinchZoom") }}</div>
+                <div class="line-sub">{{ t("set.pinchZoomSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.pinchZoom }"
+                @click="app.patchConfig({ pinchZoom: !app.config?.pinchZoom })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
+          </div>
+
+          <!-- MCode's own conversation rows, which MiMo's General page has no place for, in a section of their own. -->
+          <h3 data-section="conversation">{{ t("set.sectionConversation") }}</h3>
+          <div class="card">
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.shell") }}</div>
@@ -1769,19 +2214,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <button class="ctl-btn" @click="pickDirectory">{{ app.config?.directory ?? "-" }}</button>
             </div>
 
-            <div class="line project-root">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.projectRoot") }}</div>
-                <div class="line-sub">{{ app.config?.projectRoot || t("set.projectRootEmpty") }}</div>
-              </div>
-              <span class="ctl-pair">
-                <button class="ctl-btn" data-pick @click="pickProjectRoot">{{ t("set.pickDir") }}</button>
-                <button v-if="app.config?.projectRoot" class="ctl-btn" data-reset @click="resetProjectRoot">
-                  {{ t("set.resetDir") }}
-                </button>
-              </span>
-            </div>
-
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.effort") }}</div>
@@ -1794,251 +2226,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               />
             </div>
           </div>
-
-          <h3>{{ t("set.voice") }}</h3>
-          <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.voiceModel") }}</div>
-                <div class="line-sub">{{ t("set.voiceModelSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="voiceModelValue"
-                :options="voiceModelOptions"
-                @update:model-value="setVoiceModel($event)"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.voiceMode") }}</div>
-                <div class="line-sub">{{ t("set.voiceModeSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.voiceMode ?? 'smart'"
-                :options="voiceModes"
-                @update:model-value="app.patchConfig({ voiceMode: $event as 'smart' })"
-              />
-            </div>
-
-            <div v-if="(app.config?.voiceMode ?? 'smart') === 'smart'" class="line" data-voice-send>
-              <div class="line-text">
-                <div class="line-title">{{ t("set.voiceSend") }}</div>
-                <div class="line-sub">{{ t(app.config?.voiceSend ? "set.voiceSendSubOn" : "set.voiceSendSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.voiceSend ?? false }"
-                role="switch"
-                :aria-checked="app.config?.voiceSend ?? false"
-                :aria-label="t('set.voiceSend')"
-                @click="toggleVoiceSend"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-            <Teleport to="body">
-              <ConfirmDialog
-                v-if="confirmingVoiceSend"
-                :title="t('set.voiceSendConfirmTitle')"
-                :body="t('set.voiceSendConfirmBody')"
-                :confirm-label="t('set.voiceSendConfirmOk')"
-                @confirm="enableVoiceSend"
-                @close="confirmingVoiceSend = false"
-              />
-            </Teleport>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.voiceFeedback") }}</div>
-                <div class="line-sub">{{ t("set.voiceFeedbackSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.voiceFeedback ?? true }"
-                role="switch"
-                :aria-checked="app.config?.voiceFeedback ?? true"
-                :aria-label="t('set.voiceFeedback')"
-                @click="app.patchConfig({ voiceFeedback: !(app.config?.voiceFeedback ?? true) })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-          </div>
-
-          <h3>{{ t("set.notifications") }}</h3>
-          <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.notifyAgent") }}</div>
-                <div class="line-sub">{{ t("set.notifyAgentSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.notifyAgent }"
-                @click="app.patchConfig({ notifyAgent: !app.config?.notifyAgent })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.notifyPermission") }}</div>
-                <div class="line-sub">{{ t("set.notifyPermissionSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.notifyPermission }"
-                @click="app.patchConfig({ notifyPermission: !app.config?.notifyPermission })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.notifyError") }}</div>
-                <div class="line-sub">{{ t("set.notifyErrorSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.notifyError }"
-                @click="app.patchConfig({ notifyError: !app.config?.notifyError })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-          </div>
-
-          <h3>{{ t("set.sounds") }}</h3>
-          <div class="card">
-            <div class="line task-done">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.taskDone") }}</div>
-                <div class="line-sub">{{ t("set.taskDoneSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="chimeOf(app.config?.taskDoneSound)"
-                :options="chimeOptions"
-                @update:model-value="chooseChime"
-              />
-            </div>
-
-            <div class="line spine-sound">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.spineSound") }}</div>
-                <div class="line-sub">{{ t("set.spineSoundSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.spineSound !== false }"
-                @click="app.patchConfig({ spineSound: app.config?.spineSound === false })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.soundPermission") }}</div>
-                <div class="line-sub">{{ t("set.soundPermissionSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.soundPermission }"
-                @click="app.patchConfig({ soundPermission: !app.config?.soundPermission })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.soundError") }}</div>
-                <div class="line-sub">{{ t("set.soundErrorSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.soundError }"
-                @click="app.patchConfig({ soundError: !app.config?.soundError })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-          </div>
-
-          <h3>{{ t("set.display") }}</h3>
-          <div class="card">
-            <!--
-              Ahead of the zoom gesture, which is where opencode has it: after
-              the three notification rows and before the display ones.
-            -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.releaseNotes") }}</div>
-                <div class="line-sub">{{ t("set.releaseNotesSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.releaseNotes }"
-                @click="app.patchConfig({ releaseNotes: !app.config?.releaseNotes })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.pinchZoom") }}</div>
-                <div class="line-sub">{{ t("set.pinchZoomSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.pinchZoom }"
-                @click="app.patchConfig({ pinchZoom: !app.config?.pinchZoom })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-          </div>
-
-          <!-- MiMo's browser group: the in-app browser itself, and what it has stored. -->
-          <h3>{{ t("set.browser") }}</h3>
-          <div class="card">
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.browserPlugin") }}</div>
-                <div class="line-sub">{{ t("set.browserPluginSub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.browserEnabled !== false }"
-                role="switch"
-                :aria-checked="app.config?.browserEnabled !== false"
-                @click="app.patchConfig({ browserEnabled: app.config?.browserEnabled === false })"
-              >
-                <span class="knob" />
-              </button>
-            </div>
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.browsingData") }}</div>
-                <div class="line-sub">{{ t("set.browsingDataSub") }}</div>
-              </div>
-              <button class="ctl-btn clear-browsing" @click="confirmingClear = true">{{ t("set.clearBrowsingData") }}</button>
-            </div>
-          </div>
-          <Teleport to="body">
-            <ConfirmDialog
-              v-if="confirmingClear"
-              :title="t('set.clearBrowsingTitle')"
-              :body="t('set.clearBrowsingBody')"
-              :confirm-label="t('set.clearBrowsingOk')"
-              @confirm="clearBrowsing"
-              @close="confirmingClear = false"
-            />
-          </Teleport>
 
           <!--
             What the title bar carries, and what a session offers. The bar
@@ -2334,23 +2521,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 spellcheck="false"
                 @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
               />
-            </div>
-
-            <div class="line" data-tray-row>
-              <div class="line-text">
-                <div class="line-title">{{ t("set.tray") }}</div>
-                <div class="line-sub">{{ t("set.traySub") }}</div>
-              </div>
-              <button
-                class="switch"
-                :class="{ on: app.config?.tray ?? true }"
-                role="switch"
-                :aria-checked="app.config?.tray ?? true"
-                :aria-label="t('set.tray')"
-                @click="app.patchConfig({ tray: !(app.config?.tray ?? true) })"
-              >
-                <span class="knob" />
-              </button>
             </div>
 
             <div class="line">
@@ -2702,7 +2872,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         </template>
 
         <template v-else-if="section === 'environment' && configuring">
-          <button class="env-back" @click="configuring = undefined">
+          <button class="env-back" @click="leaveEnvironment">
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M10 4 6 8l4 4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
@@ -2722,6 +2892,18 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <div class="env-save-row">
             <button class="ctl-btn env-save" :disabled="!envDirty" @click="saveEnv">{{ t("set.envSave") }}</button>
           </div>
+          <!-- MiMo's leave guard: not destructive, so the plain confirm button. -->
+          <Teleport to="body">
+            <ConfirmDialog
+              v-if="pendingLeave"
+              :title="t('set.envLeaveTitle')"
+              :body="t('set.envLeaveBody')"
+              :confirm-label="t('set.envLeaveOk')"
+              :danger="false"
+              @confirm="confirmLeave"
+              @close="pendingLeave = undefined"
+            />
+          </Teleport>
         </template>
 
         <template v-else-if="section === 'environment'">
@@ -2819,6 +3001,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               :title="t('set.removeProject')"
               :body="t('set.removeProjectBody', { name: projectName(removingProject, app.config?.projectNames) })"
               :confirm-label="t('set.removeProjectOk')"
+              :danger="false"
               @confirm="removeProject"
               @close="removingProject = undefined"
             />
@@ -5259,8 +5442,9 @@ h3 {
   margin-top: 7px;
 }
 
+/* MiMo's empty search: 13px dim, 10 at the sides and 16 above. */
 .nav-empty {
-  padding: 8px 11px;
+  padding: 16px 10px 0;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
@@ -5540,5 +5724,157 @@ h3 {
 
 .closed-head {
   margin-block-start: 36px;
+}
+
+/* MiMo's 用法详情: a link-styled span inside the description, underlined 2px below. */
+.usage-link {
+  color: #0077fa;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+:root[data-theme="dark"] .usage-link {
+  color: #6ea8fe;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .usage-link {
+    color: #6ea8fe;
+  }
+}
+
+/* MiMo's voice send dialog: 430 wide on a 16px corner, a warning title row, a light red confirm. */
+.vs-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: grid;
+  place-items: center;
+  background: var(--scrim);
+}
+
+.vs-dialog {
+  box-sizing: border-box;
+  width: min(430px, 88vw);
+  padding: 22px 24px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-weak);
+  border-radius: 16px;
+  box-shadow: var(--shadow-overlay);
+}
+
+.vs-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-block-end: 10px;
+}
+
+.vs-warn {
+  flex-shrink: 0;
+}
+
+.vs-title {
+  color: var(--text-strong);
+  font-size: calc(16px * var(--ui-font-scale, 1));
+  font-weight: 400;
+}
+
+.vs-body {
+  margin: 0 0 18px;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+  white-space: pre-line;
+}
+
+.vs-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.vs-cancel,
+.vs-ok {
+  padding: 8px 18px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  cursor: pointer;
+}
+
+.vs-cancel {
+  color: var(--text-base);
+  background: var(--surface-base);
+  border-color: var(--border-weak);
+}
+
+.vs-cancel:hover {
+  background: var(--surface-hover);
+}
+
+.vs-ok {
+  color: #d93025;
+  background: #fdecea;
+  border-color: #fdecea;
+}
+
+.vs-ok:hover {
+  background: #f9ccc7;
+  border-color: #f9ccc7;
+}
+
+:root[data-theme="dark"] .vs-ok {
+  color: #ff9b7f;
+  background: #3a2320;
+  border-color: #3a2320;
+}
+
+:root[data-theme="dark"] .vs-ok:hover {
+  background: #4a2c27;
+  border-color: #4a2c27;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .vs-ok {
+    color: #ff9b7f;
+    background: #3a2320;
+    border-color: #3a2320;
+  }
+
+  :root:not([data-theme="light"]) .vs-ok:hover {
+    background: #4a2c27;
+    border-color: #4a2c27;
+  }
+}
+
+/* MiMo's search highlight: the selected fill held for the first fifth of 1.6s, then faded. */
+.sr-hit {
+  animation: sr-hit 1.6s ease-out;
+}
+
+@keyframes sr-hit {
+  0%,
+  20% {
+    background: var(--surface-key);
+  }
+
+  100% {
+    background: transparent;
+  }
+}
+
+/* Reduced motion keeps the fill and drops the fade. */
+:root[data-motion="on"] .sr-hit {
+  animation: none;
+  background: var(--surface-key);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-motion="system"] .sr-hit {
+    animation: none;
+    background: var(--surface-key);
+  }
 }
 </style>
