@@ -1,4 +1,5 @@
 import type { PermissionRecord, ToolPart } from "@shared/protocol"
+import { SUBAGENT_ACTIONS, taskAction } from "@shared/subagent"
 import { t } from "./i18n"
 
 /**
@@ -86,6 +87,19 @@ export function toolVerb(name: string, state: StepState): string {
   return t(`toolLabel.${state}Fallback`, { tool: toolName(name) })
 }
 
+/**
+ * subagents: a row's verb, with MiMo's words for a task call that named its
+ * action - 检查子任务状态, 等待子任务, 向子任务发送消息 and so on. A spawn, a call
+ * with no action, and one refused for its arguments keep the task tool's own.
+ */
+export function stepVerb(part: ToolPart, state: StepState): string {
+  const action = part.input?.action
+  if (part.name === "task" && state !== "skipped" && typeof action === "string" && action !== "spawn" && SUBAGENT_ACTIONS.some((known) => known === action)) {
+    return t(`toolLabel.subagentAction.${action}.${state}`)
+  }
+  return toolVerb(part.name, state)
+}
+
 const ICONS: Record<string, StepIconName> = {
   read: "read",
   edit: "edit",
@@ -148,9 +162,13 @@ export function stepTitle(part: ToolPart): string {
       return text(input.tool)
     case "list":
       return text(input.path) || part.title || ""
-    // subagents: a task call is named by its description, as MiMo names an actor step.
-    case "task":
-      return text(input.description) || part.title || ""
+    // subagents: a call that starts one is named by its description; one about a subagent by the one it names; models by nothing.
+    case "task": {
+      const action = taskAction(input)
+      if (action === "run" || action === "spawn") return text(input.description) || part.title || ""
+      if (action === "models") return ""
+      return part.title || text(input.subagent_id)
+    }
   }
   if (BUILT_IN.has(part.name)) return part.title || ""
   // Anything else - an MCP tool - is described by what it was given.

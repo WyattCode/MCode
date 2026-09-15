@@ -7,7 +7,8 @@ import QuestionCard from "./parts/QuestionCard.vue"
 import ErrorStep from "./parts/ErrorStep.vue"
 import RetryRow from "./parts/RetryRow.vue"
 import TextShimmer from "./parts/TextShimmer.vue"
-import type { Annotation, Attachment, AssistantMessage, AssistantPart } from "@shared/protocol"
+import SubagentActivity from "./parts/SubagentActivity.vue"
+import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentNotice } from "@shared/protocol"
 import { buildRows, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { preview, videoUrl } from "../lib/attach"
 import { openImagePreview, openVideoPreview, type ImagePreviewMeta } from "../lib/image-preview"
@@ -84,6 +85,10 @@ interface Steer {
   created: number
   /** How many of the turn's parts came before it. */
   at: number
+  /** subagents: news of background subagents, drawn as MiMo's pills rather than a bubble. */
+  notices?: SubagentNotice[]
+  /** subagents: a follow-up the parent sent, labelled 来自 {source} 的消息. */
+  inbox?: { from: string }
 }
 
 /*
@@ -115,6 +120,10 @@ interface Turn {
   attachments?: Attachment[]
   /** The places the message pointed at, shown under it as MiMo does. */
   annotations?: Annotation[]
+  /** subagents: a turn the runner started to tell of background subagents; it has no question. */
+  notices?: SubagentNotice[]
+  /** subagents: a turn a subagent took for its parent's follow-up. */
+  inbox?: { from: string }
   /** When the user sent it, for the footer under their own message. */
   asked?: number
   parts: AssistantPart[]
@@ -166,14 +175,19 @@ const turns = computed<Turn[]>(() => {
           attachments: message.attachments,
           created: message.time.created,
           at: current.parts.length,
+          notices: message.notices,
+          inbox: message.inbox,
         })
         continue
       }
       current = {
         id: message.id,
-        text: message.text,
+        // subagents: a notice is the runner's words to the model, not a question to show.
+        text: message.notices?.length ? undefined : message.text,
         attachments: message.attachments,
         annotations: message.annotations,
+        notices: message.notices,
+        inbox: message.inbox,
         asked: message.time.created,
         parts: [],
         steers: [],
@@ -451,7 +465,8 @@ function shown(turn: Turn, at: number): Row[] {
 
 /** Rows that belong to MiMo's tight step column rather than the reply's paragraphs. */
 function isStep(row: Row): boolean {
-  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question"
+  // subagents: notices that reached a running turn are a step row of pills, spaced as steps are.
+  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question" || (row.kind === "steer" && Boolean(row.steer.notices?.length))
 }
 
 /*
@@ -899,7 +914,8 @@ defineExpose({ stepMessage, scroller })
       <!-- round3-panel: the floating card draws the latest turn only, without its question. -->
       <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id">
         <!-- subagents: what a subagent was handed, labelled as MiMo labels it. -->
-        <div v-if="subagent && at === 0 && turn.text !== undefined" class="subagent-initial" data-subagent-initial>{{ t("subagentDetail.initialTask") }}</div>
+        <div v-if="subagent && at === 0 && turn.text !== undefined && !turn.inbox" class="subagent-initial" data-subagent-initial>{{ t("subagentDetail.initialTask") }}</div>
+        <div v-else-if="subagent && turn.inbox" class="subagent-initial" data-subagent-inbox>{{ t("subagentDetail.inboxSource", { source: turn.inbox.from }) }}</div>
         <div
           v-if="!latest && (turn.text !== undefined || turn.attachments?.length)"
           class="msg user"
@@ -1064,6 +1080,11 @@ defineExpose({ stepMessage, scroller })
           </div>
         </div>
 
+        <!-- subagents: a turn started by news of background subagents opens with their pills, as MiMo draws its actor notifications. -->
+        <div v-if="!latest && turn.notices?.length" class="subagent-notices" data-subagent-notices>
+          <SubagentActivity :notices="turn.notices" />
+        </div>
+
         <!-- One block answers with every assistant message of the turn: the first names it, and all of them are listed. -->
         <div
           v-if="turn.parts.length || turn.error || turn.finish"
@@ -1105,8 +1126,10 @@ defineExpose({ stepMessage, scroller })
           </div>
 
           <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ step: isStep(row) }">
+            <!-- subagents: news of background subagents that reached the turn while it ran. -->
+            <SubagentActivity v-if="row.kind === 'steer' && row.steer.notices?.length" :notices="row.steer.notices" />
             <div
-              v-if="row.kind === 'steer'"
+              v-else-if="row.kind === 'steer'"
               class="steer"
               :data-user-steer="row.id"
               :data-message-id="row.steer.id"
@@ -1141,6 +1164,7 @@ defineExpose({ stepMessage, scroller })
                   </span>
                 </template>
               </div>
+              <div v-if="subagent && row.steer.inbox" class="subagent-initial" data-subagent-inbox>{{ t("subagentDetail.inboxSource", { source: row.steer.inbox.from }) }}</div>
               <div v-if="row.steer.text" class="user-bubble steer-bubble">{{ row.steer.text }}</div>
               <span v-if="steerWaiting(turn, at, row.steer)" class="steer-note">{{ t("stream.steerWaiting") }}</span>
             </div>
@@ -1710,6 +1734,11 @@ defineExpose({ stepMessage, scroller })
 
 .msg.assistant {
   color: var(--text-strong);
+}
+
+/* subagents: the notices that opened a turn sit where its first step would, two above the head. */
+.subagent-notices {
+  margin-bottom: 2px;
 }
 
 .part + .part {

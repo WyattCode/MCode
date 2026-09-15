@@ -1,59 +1,77 @@
 <script setup lang="ts">
 import { computed } from "vue"
-import type { ToolPart } from "@shared/protocol"
+import type { SubagentNotice, ToolPart } from "@shared/protocol"
 import SubagentAvatar from "./SubagentAvatar.vue"
 import { t } from "../../lib/i18n"
-import { childFor, pillStatus } from "../../lib/subagents"
+import { actionOf, childFor, noticeStatus, pillStatus } from "../../lib/subagents"
 import { subagentAnswer } from "@shared/subagent"
 import { useApp } from "../../stores/app"
 import { useRightPanel } from "../../stores/right-panel"
 
 /**
  * subagents: MiMo's subagent activity row. One pill per subagent - its avatar
- * and name - and after them where they stand: 开始工作 while any works, 已完成
- * once all are done. A pill opens the 子智能体 tab on that subagent.
+ * and name - and after them where they stand. For task calls that is 开始工作
+ * while any works, 已完成 once every one is a run that answered; for the notices
+ * background subagents send back it is their outcome - 已完成, 失败, 已取消,
+ * 可能停滞 - or 已结束 when a row's notices disagree. A pill opens the 子智能体
+ * tab on that subagent.
  */
-const props = defineProps<{ parts: ToolPart[] }>()
+const props = defineProps<{ parts?: ToolPart[]; notices?: SubagentNotice[] }>()
 
 const app = useApp()
 const rp = useRightPanel()
 
-const status = computed(() => pillStatus(props.parts))
+const status = computed(() => (props.notices?.length ? noticeStatus(props.notices) : pillStatus(props.parts ?? [])))
 const statusText = computed(() => t(`subagentActivity.status.${status.value}`))
 
-const pills = computed(() =>
-  props.parts.map((part) => {
+const pills = computed(() => {
+  if (props.notices?.length) {
+    return props.notices.map((notice) => {
+      const child = app.subagentSessions.find((session) => session.id === notice.sessionID)
+      return {
+        // The tab is keyed by the call that started the subagent; a notice whose subagent is gone opens nothing.
+        key: child?.parentCallID,
+        id: notice.sessionID,
+        seed: notice.subagentID,
+        name: notice.description || child?.title || t("subagentActivity.fallbackName"),
+        summary: notice.summary,
+      }
+    })
+  }
+  return (props.parts ?? []).map((part) => {
     const child = childFor(part.callID, app.subagentSessions)
     const described = typeof part.input?.description === "string" ? part.input.description.trim() : ""
     return {
-      key: part.callID,
+      key: part.callID as string | undefined,
+      id: part.callID,
       seed: child?.subagent?.id ?? part.callID,
       name: described || child?.title || t("subagentActivity.fallbackName"),
-      summary: part.status === "completed" ? subagentAnswer(part.output) : undefined,
+      summary: part.status === "completed" && actionOf(part) === "run" ? subagentAnswer(part.output) : undefined,
     }
-  }),
-)
+  })
+})
 </script>
 
 <template>
-  <div class="subagent-activity" data-subagent-activity :data-subagent-status="status">
+  <div class="subagent-activity" data-subagent-activity :data-subagent-status="status" :data-subagent-notice="notices?.length ? '' : undefined">
     <div class="subagent-pill-list">
       <button
         v-for="pill in pills"
-        :key="pill.key"
+        :key="pill.id"
         type="button"
         class="subagent-pill"
         data-subagent-pill
         :data-call-id="pill.key"
-        :aria-label="t('subagentActivity.open', { name: pill.name, status: statusText })"
+        :disabled="!pill.key"
+        :aria-label="pill.key ? t('subagentActivity.open', { name: pill.name, status: statusText }) : `${pill.name}${statusText}`"
         :title="pill.summary"
-        @click="rp.openSubagents(pill.key)"
+        @click="pill.key && rp.openSubagents(pill.key)"
       >
         <SubagentAvatar :seed="pill.seed" compact />
         <span>{{ pill.name }}</span>
       </button>
     </div>
-    <span class="subagent-activity-state">{{ statusText }}</span>
+    <span class="subagent-activity-state" :class="{ failed: status === 'failed' }">{{ statusText }}</span>
   </div>
 </template>
 
@@ -98,6 +116,10 @@ const pills = computed(() =>
   cursor: pointer;
 }
 
+.subagent-pill:disabled {
+  cursor: default;
+}
+
 .subagent-pill > span:last-child {
   min-width: 0;
   overflow: hidden;
@@ -105,7 +127,7 @@ const pills = computed(() =>
   white-space: nowrap;
 }
 
-.subagent-pill:hover {
+.subagent-pill:not(:disabled):hover {
   color: var(--text-strong);
   background: var(--surface-hover);
 }
@@ -115,12 +137,16 @@ const pills = computed(() =>
   outline-offset: 1px;
 }
 
-/* The words after the pills: 13px dim. */
+/* The words after the pills: 13px dim; a failure in MiMo's delete red. */
 .subagent-activity-state {
   flex: none;
   color: color-mix(in srgb, var(--text-strong) 40%, transparent);
   font-size: calc(13px * var(--ui-font-scale, 1));
   white-space: nowrap;
+}
+
+.subagent-activity-state.failed {
+  color: #e5484d;
 }
 
 /* Dark: the pill takes MiMo's panel mixed 92% with side-active. */
