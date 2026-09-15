@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from "vue"
 import { t } from "../lib/i18n"
-import { closeImagePreview, imagePreview, openImagePreview } from "../lib/image-preview"
+import { closeImagePreview, imagePreview, imagePreviewKey, openImagePreview } from "../lib/image-preview"
+import { copyImageFile, fileManagerName } from "../lib/path-open"
+import { notice } from "../lib/toast"
+import { useApp } from "../stores/app"
 
 /**
  * MiMo's image preview.
@@ -11,8 +14,11 @@ import { closeImagePreview, imagePreview, openImagePreview } from "../lib/image-
  * bottom: zoom out, the percentage, zoom in, rotate, reset, then download. Zoom
  * runs from 20% to 800%; the wheel pans up and down and zooms with Ctrl; the
  * picture drags; the keys are - + 0 R D, Esc, and the arrows step through the
- * pictures it was opened with.
+ * pictures it was opened with. A picture opened with its file's path also gets
+ * "copy image" (C) and "show in the file manager" (F) after download.
  */
+const app = useApp()
+
 const MIN_SCALE = 0.2
 const MAX_SCALE = 8
 const START_SCALE = 0.8
@@ -110,6 +116,22 @@ function download() {
   link.remove()
 }
 
+/* The file onto the clipboard: the main process first, the window's own decoder for formats the system cannot read. */
+async function copyImage() {
+  const file = imagePreview.value?.path
+  if (!file) return
+  const direct = await window.mcode.copyImageFromPath(file).catch(() => ({ ok: false as const, error: "" }))
+  const ok = direct.ok || (await copyImageFile(file).then(() => true, () => false))
+  if (ok) notice.info(t("imagePreview.copied"))
+  else notice.danger(t("imagePreview.copyFailed"))
+}
+
+/* MiMo shows the file in its folder without a notice. */
+function reveal() {
+  const file = imagePreview.value?.path
+  if (file) void window.mcode.revealNativePath(file).catch(() => undefined)
+}
+
 function neighbour(by: 1 | -1) {
   const current = imagePreview.value
   const group = current?.group ?? []
@@ -125,38 +147,18 @@ function neighbour(by: 1 | -1) {
 function onKey(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null
   if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return
-  switch (event.key) {
-    case "Escape":
-      close()
-      break
-    case "ArrowLeft":
-      neighbour(-1)
-      break
-    case "ArrowRight":
-      neighbour(1)
-      break
-    case "+":
-    case "=":
-      zoom(1.2)
-      break
-    case "-":
-    case "_":
-      zoom(0.83)
-      break
-    case "0":
-      reset()
-      break
-    case "r":
-    case "R":
-      rotate()
-      break
-    case "d":
-    case "D":
-      download()
-      break
-    default:
-      return
-  }
+  const action = imagePreviewKey(event.key, Boolean(imagePreview.value?.path))
+  if (!action) return
+  if (action === "close") close()
+  else if (action === "previous") neighbour(-1)
+  else if (action === "next") neighbour(1)
+  else if (action === "zoomIn") zoom(1.2)
+  else if (action === "zoomOut") zoom(0.83)
+  else if (action === "reset") reset()
+  else if (action === "rotate") rotate()
+  else if (action === "download") download()
+  else if (action === "copy") void copyImage()
+  else reveal()
   event.preventDefault()
   event.stopPropagation()
 }
@@ -304,6 +306,27 @@ onBeforeUnmount(() => {
           </button>
           <span class="ip-tip">{{ t("imagePreview.download") }}<kbd>D</kbd></span>
         </div>
+        <template v-if="imagePreview.path">
+          <div class="ip-tool">
+            <button type="button" :aria-label="t('imagePreview.copy')" data-preview-tool="copy" @click="copyImage">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="11" height="11" rx="2" />
+                <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+              </svg>
+            </button>
+            <span class="ip-tip">{{ t("imagePreview.copy") }}<kbd>C</kbd></span>
+          </div>
+          <div class="ip-tool">
+            <!-- MiMo says 在访达中显示 on every platform; the platform's own file manager is named here, as elsewhere in MCode. -->
+            <button type="button" :aria-label="t('menu.revealIn', { manager: fileManagerName(app.platform) })" data-preview-tool="reveal" @click="reveal">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 20h16" />
+                <path d="M4 20V8a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v10" />
+              </svg>
+            </button>
+            <span class="ip-tip">{{ t("menu.revealIn", { manager: fileManagerName(app.platform) }) }}<kbd>F</kbd></span>
+          </div>
+        </template>
       </div>
     </div>
   </Teleport>

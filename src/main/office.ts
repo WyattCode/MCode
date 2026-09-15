@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url"
 import { shell, type IpcMain, type WebContents } from "electron"
 import { servePreview } from "./preview-server"
 import { registerPaths } from "./paths"
+import { registerImageClipboard } from "./image-clipboard"
 
 /*
  * The main-process half of MiMo's Office tab: reading a document's bytes (and
@@ -459,6 +460,7 @@ async function convertLegacy(userData: string, input: string) {
 export function registerOffice(ipcMain: IpcMain, userData: string) {
   const versions = new VersionStore(path.join(userData, "office-versions"))
   registerPaths(ipcMain)
+  registerImageClipboard(ipcMain)
 
   ipcMain.handle("mcode:read-file-bytes", (_event, root: string, rel?: string, ifUnchanged?: { size: number; mtimeMs: number }) =>
     readFileBytes(root, rel, ifUnchanged),

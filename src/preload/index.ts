@@ -207,6 +207,8 @@ const api = {
   /** A picture on disk as base64, for copying it to the clipboard. */
   readImageData: (target: string): Promise<{ ok: true; mime: string; base64: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke("mcode:read-image-data", target),
+  /** A picture file straight onto the clipboard; fails for formats the system decoder cannot read. */
+  copyImageFromPath: (target: string): Promise<{ ok: true } | { ok: false; error: string }> => ipcRenderer.invoke("mcode:copy-image-path", target),
   /** Saves a PNG where the person chooses; the path, or undefined when dismissed. */
   savePng: (suggested: string, base64: string): Promise<string | undefined> => ipcRenderer.invoke("mcode:save-png", suggested, base64),
   /** A loopback address a web page is served at, with its folder beside it. */
