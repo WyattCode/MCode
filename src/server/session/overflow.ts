@@ -1,3 +1,4 @@
+import type { ModelRef } from "@shared/protocol"
 import type { ModelEntry } from "../config"
 
 /**
@@ -19,8 +20,11 @@ import type { ModelEntry } from "../config"
  * catching it - the turn simply ended in red.
  */
 
-/** The reference's `OUTPUT_TOKEN_MAX`. */
+/** MiMo's `OUTPUT_TOKEN_MAX`, for models outside its large-output rule. */
 export const OUTPUT_TOKEN_MAX = 32_000
+
+/** What MiMo asks of a Claude, GPT or MiMo model, whatever that model's own ceiling says. */
+export const LARGE_OUTPUT_TOKEN_MAX = 128_000
 
 /** The reference's `COMPACTION_BUFFER`. */
 export const COMPACTION_BUFFER = 20_000
@@ -58,12 +62,16 @@ export function summaryWouldFit(chars: number, contextWindow: number): boolean {
 }
 
 /**
- * How many output tokens a request asks for: the model's own ceiling if it is
- * known and smaller, otherwise the reference's 32k. `maxOutputTokens` in the
- * reference's ProviderTransform, including its `|| OUTPUT_TOKEN_MAX` for a
- * ceiling of zero.
+ * How many output tokens a request asks for, by MiMo's rule: 128k for a MiMo
+ * provider or any model whose id names Claude, GPT or MiMo; otherwise the
+ * model's own ceiling when known and under 32k, else 32k. An Anthropic request
+ * is then held to the model's own ceiling by the adapter, as MiMo's SDK does
+ * for a model it knows.
  */
-export function maxOutputTokens(entry: Pick<ModelEntry, "maxOutput"> | undefined): number {
+export function maxOutputTokens(model: Pick<ModelRef, "provider" | "model">, entry: Pick<ModelEntry, "maxOutput"> | undefined): number {
+  const provider = model.provider.toLowerCase()
+  const id = model.model.toLowerCase()
+  if (provider === "mimo" || provider === "xiaomi" || /claude|gpt|mimo/.test(id)) return LARGE_OUTPUT_TOKEN_MAX
   return Math.min(entry?.maxOutput ?? 0, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX
 }
 
@@ -75,7 +83,7 @@ export function maxOutputTokens(entry: Pick<ModelEntry, "maxOutput"> | undefined
 export function usableContext(entry: Pick<ModelEntry, "contextWindow" | "maxOutput"> | undefined): number {
   const context = entry?.contextWindow ?? 0
   if (context === 0) return 0
-  return Math.max(0, context - maxOutputTokens(entry))
+  return Math.max(0, context - (Math.min(entry?.maxOutput ?? 0, OUTPUT_TOKEN_MAX) || OUTPUT_TOKEN_MAX))
 }
 
 /** The reference's `isOverflow`: false for a model with no known window. */

@@ -63,11 +63,12 @@ export interface TurnRequest {
   /** Workspace the subscription login belongs to; required by the Codex backend. */
   accountId?: string
   /**
-   * Output tokens to ask for. The reference's maxOutputTokens: the model's
-   * own ceiling when known and smaller, else 32k. Unset means the adapter's
-   * default, which is that same 32k.
+   * Output tokens to ask for, by MiMo's rule (`maxOutputTokens` in
+   * session/overflow.ts). Unset means the adapter's default of 32k.
    */
   maxOutput?: number
+  /** The model's own output ceiling when the catalog knows it; an Anthropic request is held under it. */
+  outputLimit?: number
   /**
    * How many times the SDK may quietly resend a failed request itself. The turn
    * loop passes 0 because it retries in the open, with a row saying so; other

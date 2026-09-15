@@ -909,7 +909,8 @@ export class SessionRunner {
            * for 4,096 here (its SUMMARY_OUTPUT_TOKENS), which leaves the room
            * a summary of an overlong conversation needs.
            */
-          maxOutput: Math.min(maxOutputTokens(this.config.modelEntry(session.model)), SUMMARY_OUTPUT_TOKENS),
+          maxOutput: Math.min(maxOutputTokens(session.model, this.config.modelEntry(session.model)), SUMMARY_OUTPUT_TOKENS),
+          outputLimit: this.config.modelEntry(session.model)?.maxOutput,
         },
         (event) => {
           if (event.type === "text.delta") summary += event.text
@@ -1504,7 +1505,8 @@ export class SessionRunner {
          */
         variants: this.config.variants(session.model),
         accountId: tokens?.accountId,
-        maxOutput: maxOutputTokens(this.config.modelEntry(session.model)),
+        maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
+        outputLimit: this.config.modelEntry(session.model)?.maxOutput,
       })
       } catch (failure) {
         /*

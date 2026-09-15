@@ -85,7 +85,8 @@ export function usageFrom(usage: Anthropic.Usage | undefined, entry?: { input: n
   return { input, output, reasoning: 0, cacheRead, cacheWrite, cost }
 }
 
-const MAX_TOKENS = 64_000
+/** What a request asks for when the caller named no cap. */
+const MAX_TOKENS = 32_000
 
 /**
  * The levels Anthropic's `output_config.effort` will take.
@@ -108,19 +109,13 @@ export interface AnthropicReasoning {
 }
 
 /**
- * `Math.min(16e3, Math.floor(model.limit.output / 2 - 1))` @22216297, and
- * `Math.min(31999, model.limit.output - 1)` beside it.
- *
- * The reference divides the model's own output limit; this app sends a fixed
- * `max_tokens` on every Anthropic request and the API requires the budget to
- * be smaller than it, so `max_tokens` is the limit that matters here. At the
- * 64k this app sends, the arithmetic lands on the reference's own 16000 and
- * 31999 - it is written out rather than hardcoded so the two stay in step if
- * that constant ever moves.
+ * MiMo's thinking budgets, cut from the model's own output limit: high is
+ * min(16000, limit / 2 - 1) and max is min(31999, limit - 1). The API also
+ * wants the budget under `max_tokens`, so it is kept below that too.
  */
-function budget(level: "high" | "max", maxTokens: number): number {
-  if (level === "max") return Math.min(31_999, maxTokens - 1)
-  return Math.min(16_000, Math.floor(maxTokens / 2 - 1))
+function budget(level: "high" | "max", outputLimit: number, maxTokens: number): number {
+  const wanted = level === "max" ? Math.min(31_999, outputLimit - 1) : Math.min(16_000, Math.floor(outputLimit / 2 - 1))
+  return Math.max(1_024, Math.min(wanted, maxTokens - 1))
 }
 
 /**
@@ -155,6 +150,7 @@ export function reasoningRequest(
   variants: readonly string[] | undefined,
   showReasoning: boolean,
   maxTokens: number,
+  outputLimit = maxTokens,
 ): AnthropicReasoning {
   if (variants && !variants.includes(effort)) return {}
   const id = model.toLowerCase()
@@ -179,7 +175,7 @@ export function reasoningRequest(
   if (anthropicOpus45(id)) {
     const level = OUTPUT_EFFORTS.find((entry) => entry === effort)
     return {
-      thinking: { type: "enabled", budget_tokens: budget("high", maxTokens), display },
+      thinking: { type: "enabled", budget_tokens: budget("high", outputLimit, maxTokens), display },
       ...(level ? { output_config: { effort: level } } : {}),
     }
   }
@@ -187,7 +183,7 @@ export function reasoningRequest(
   return {
     thinking: {
       type: "enabled",
-      budget_tokens: budget(effort === "max" ? "max" : "high", maxTokens),
+      budget_tokens: budget(effort === "max" ? "max" : "high", outputLimit, maxTokens),
       display,
     },
   }
@@ -197,11 +193,13 @@ export const AnthropicAdapter: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const client = createClient(request.apiKey, request.retries)
     /*
-     * The reference's maxOutputTokens applies to every provider: the model's
-     * own ceiling when known and smaller, else 32k. The thinking budgets below
-     * are cut from the same number, so they stay under it.
+     * MiMo's cap, held to the model's own ceiling when the catalog knows it -
+     * what MiMo's Anthropic SDK does for a model it recognises. The thinking
+     * budgets are cut from that ceiling.
      */
-    const maxTokens = Math.min(MAX_TOKENS, request.maxOutput ?? MAX_TOKENS)
+    const limit = request.outputLimit && request.outputLimit > 0 ? request.outputLimit : undefined
+    const wanted = request.maxOutput ?? MAX_TOKENS
+    const maxTokens = limit ? Math.min(wanted, limit) : wanted
 
     const stream = client.messages.stream(
       {
@@ -216,6 +214,7 @@ export const AnthropicAdapter: ProviderAdapter = {
           request.variants,
           request.showReasoning,
           maxTokens,
+          limit ?? wanted,
         ),
       },
       { signal: request.signal },

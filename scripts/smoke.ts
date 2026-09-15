@@ -197,6 +197,8 @@ import { CHAT_HOPS, replyIn, withChatHeaders } from "../src/server/session/chat"
 import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/lib/convo-card"
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
+import { roundFiveChecks } from "./smoke-round5"
+
 let passed = 0
 let failed = 0
 
@@ -5089,6 +5091,8 @@ async function main() {
   await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
+  // round 5: the turn loop, providers, context and prompt, in their own file.
+  await roundFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
