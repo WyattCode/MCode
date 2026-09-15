@@ -1096,8 +1096,8 @@ const isPlugins = computed(() => view.value === "plugins")
 const isHome = computed(
   () => !isArtifacts.value && !isPlugins.value && (view.value === "home" || !app.current),
 )
-/** Empty transcript shows the hero instead of a blank scroller. */
-const empty = computed(() => app.messages.length === 0)
+/** Empty transcript shows the hero instead of a blank scroller; one still loading shows its loading line instead. */
+const empty = computed(() => app.messages.length === 0 && app.loadingID !== app.currentID)
 
 /*
  * The terminal docks along the foot of the main column. Not during onboarding

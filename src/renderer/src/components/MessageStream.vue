@@ -79,6 +79,8 @@ const shownStreaming = computed(() => (props.side ? app.sideStreamingOf(sideKey.
 const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) : app.error))
 /* round3-panel (P5-12/13): MiMo's side chat and floating card draw a reply with showActions false. */
 const bare = computed(() => Boolean(props.side || props.latest))
+/* The open conversation was just switched to and its messages are still on their way. */
+const loadingHere = computed(() => !props.side && !props.latest && !props.subagent && Boolean(app.loadingID) && app.loadingID === app.currentID)
 /* MiMo's present_files and pdf_locate: the main stream opens what a completing call names in the right panel. */
 followDeliveries({
   enabled: () => !props.side && !props.latest && !props.subagent,
@@ -905,8 +907,10 @@ defineExpose({ stepMessage, scroller })
 </script>
 
 <template>
-  <div ref="scroller" class="stream" @scroll="onScroll">
+  <div ref="scroller" class="stream" :aria-busy="loadingHere || undefined" @scroll="onScroll">
     <div ref="inner" class="inner">
+      <!-- MiMo's line while a conversation just switched to has not brought its messages. -->
+      <div v-if="loadingHere" class="thread-loading" data-thread-loading>{{ t("stream.loadingConvo") }}</div>
       <!--
         MiMo's marker at the top of a branched conversation: a hairline either
         side of a link back to the conversation it came from.
@@ -1867,6 +1871,14 @@ defineExpose({ stepMessage, scroller })
    line as the composer under it instead of half a scrollbar to one side. */
 .stream {
   scrollbar-gutter: stable both-edges;
+}
+
+/* MiMo's 正在加载对话…: centred, 13px and muted, 80 above and below. */
+.thread-loading {
+  padding-block: 80px;
+  color: var(--text-weak);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-align: center;
 }
 
 /* subagents: 初始任务 over a subagent's first message, 12px dim, on the bubble's side. */

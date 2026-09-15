@@ -40,6 +40,8 @@ export const useApp = defineStore("app", () => {
   const sessions = ref<SessionInfo[]>([])
   const currentID = ref<string>()
   const messages = ref<Message[]>([])
+  /** The conversation switched to whose messages have not arrived; MiMo shows 正在加载对话… meanwhile. */
+  const loadingID = ref<string>()
   /**
    * Sessions with a turn in flight.
    *
@@ -958,8 +960,23 @@ export const useApp = defineStore("app", () => {
      */
     history.value = { undo: 0, redo: 0 }
     void refreshHistory(sessionID)
+    /*
+     * MiMo switches at once: the conversation clicked is the one on screen,
+     * saying 正在加载对话… until its messages arrive, and nothing of the one left
+     * stays to be clicked. Opening the one already on screen again (a resync)
+     * keeps what it shows. A failed read leaves the line up, as MiMo's does.
+     */
+    if (currentID.value !== sessionID) {
+      currentID.value = sessionID
+      loadingID.value = sessionID
+      messages.value = []
+      partIndex.clear()
+      error.value = undefined
+    }
     const result = await api().request({ type: "session.get", sessionID })
-    currentID.value = sessionID
+    // Left for another conversation while this one was read: its answer is not shown.
+    if (currentID.value !== sessionID) return
+    loadingID.value = undefined
     if (unseen.value.has(sessionID)) {
       const next = new Set(unseen.value)
       next.delete(sessionID)
@@ -1011,6 +1028,10 @@ export const useApp = defineStore("app", () => {
     if (!sessions.value.some((session) => session.id === result.session.id)) {
       sessions.value.unshift(result.session)
     }
+    // Known to be empty, so it opens straight onto its hero rather than a loading line.
+    currentID.value = result.session.id
+    messages.value = []
+    partIndex.clear()
     await open(result.session.id)
     return result.session
   }
@@ -1870,6 +1891,7 @@ export const useApp = defineStore("app", () => {
     closeTab,
     moveTab,
     messages,
+    loadingID,
     busy,
     replacing,
     markReplacing,
