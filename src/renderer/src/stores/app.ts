@@ -18,6 +18,8 @@ import type { Attachment, AgentName,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
 import { t } from "../lib/i18n"
+import { projectName } from "../lib/project"
+import { projectsByRecency } from "@shared/projects"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
@@ -955,8 +957,7 @@ export const useApp = defineStore("app", () => {
     result.messages.forEach(reindex)
   }
 
-  /** `open: false` makes the conversation without switching to it, for MiMo's add-project that stays put. */
-  async function create(directory?: string, options: { scratch?: boolean; open?: boolean } = {}) {
+  async function create(directory?: string, options: { scratch?: boolean } = {}) {
     const result = await api().request({
       type: "session.create",
       directory,
@@ -967,7 +968,7 @@ export const useApp = defineStore("app", () => {
     if (!sessions.value.some((session) => session.id === result.session.id)) {
       sessions.value.unshift(result.session)
     }
-    if (options.open !== false) await open(result.session.id)
+    await open(result.session.id)
     return result.session
   }
 
@@ -1411,6 +1412,30 @@ export const useApp = defineStore("app", () => {
     config.value = (await api().request({ type: "config.set", patch })).config
   }
 
+  /* The project list the side column, the home picker and move-to-project read, most recent first. */
+  const projects = computed(() => projectsByRecency(config.value, sessions.value))
+
+  /**
+   * MiMo's project add: onto the list with no conversation. `used` makes it the
+   * latest pick, so it heads the list; `switched` says the caller makes it the
+   * current project, which is the only time MiMo's "already exists, switched to
+   * it" is true here. `silent` says nothing at all.
+   */
+  async function addProject(directory: string, options: { used?: boolean; switched?: boolean; silent?: boolean } = {}) {
+    const result = await api().request({ type: "project.add", directory, ...(options.used ? { used: true } : {}) })
+    config.value = result.config
+    if (options.silent || (result.existed && !options.switched)) return
+    const name = projectName(directory, result.config.projectNames)
+    notify(t(result.existed ? "side.projectExists" : "side.projectAdded", { name }))
+  }
+
+  /** MiMo's remove: off the list, conversations kept. */
+  async function removeProjects(directories: string[]) {
+    if (!directories.length) return
+    config.value = (await api().request({ type: "project.remove", directories })).config
+    notify(directories.length > 1 ? t("side.projectsRemoved", { count: directories.length }) : t("side.projectRemoved"))
+  }
+
   /**
    * Remembers which saved server to connect to at launch.
    *
@@ -1821,6 +1846,9 @@ export const useApp = defineStore("app", () => {
     setAgent,
     setStaged,
     patchConfig,
+    projects,
+    addProject,
+    removeProjects,
     setDefaultServer,
     setProviderEndpoint,
     setApiKey,

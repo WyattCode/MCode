@@ -43,8 +43,10 @@ import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
 import { ago, t } from "../src/renderer/src/lib/i18n"
-import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, parseVoiceEdit, voiceDraftOf, voiceEditMessages } from "../src/server/handlers"
-import { customModelOf } from "../src/server/config"
+import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, handle, parseVoiceEdit, voiceDraftOf, voiceEditMessages } from "../src/server/handlers"
+import { PROJECT_LIST_MIGRATION, customModelOf } from "../src/server/config"
+import { listedProjects, projectsByRecency, reconciledProjects } from "../src/shared/projects"
+import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
 import { addressToURL, safeURL } from "../src/shared/web-address"
 import {
@@ -4766,6 +4768,7 @@ async function main() {
   check("a scrollbar stays coloured 500ms after the last scroll", SCROLLBAR_LINGER === 500, SCROLLBAR_LINGER)
 
   await subagentChecks(root, project)
+  await projectListChecks()
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -4780,6 +4783,145 @@ async function main() {
  * x, `SLOW` streams until it is stopped, `PERM` runs a command that has to be
  * approved. A parent asks for whatever calls `parentCalls` holds, then replies.
  */
+/*
+ * MiMo's project list: filled once from the folders conversations live in,
+ * then kept on its own - a folder can be a project with no conversation, and
+ * removing one keeps its conversations.
+ */
+async function projectListChecks() {
+  section("Project list")
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-projects-"))
+  const data = path.join(root, "data")
+  const folder = (name: string) => path.join(root, name)
+  for (const name of ["older", "newer", "archived", "closed", "fresh", "made"]) await fs.mkdir(folder(name), { recursive: true })
+  const model = { provider: "anthropic", model: "claude-opus-5" }
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 15))
+  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
+  const ask = async <T extends keyof ResponseMap>(runtime: Parameters<typeof handle>[0], request: Parameters<typeof handle>[1] & { type: T }) =>
+    (await handle(runtime, request)) as ResponseMap[T]
+
+  // A profile written before the list existed: conversations, a name, a pin, a removed folder, a dragged order.
+  const first = await startBackend(data)
+  const older = await first.runtime.sessions.create({ directory: folder("older"), model })
+  await tick()
+  const newer = await first.runtime.sessions.create({ directory: folder("newer"), model })
+  await tick()
+  const archived = await first.runtime.sessions.create({ directory: folder("archived"), model })
+  await first.runtime.sessions.update(archived.id, { archived: true })
+  await first.runtime.sessions.create({ directory: folder("closed"), model })
+  await ask(first.runtime, { type: "session.create", scratch: true })
+  const legacy: Partial<AppConfig> = {
+    ...first.runtime.config.get(),
+    projectNames: { [folder("older")]: "Old one" },
+    projectIcons: { [folder("older")]: "data:image/png;base64,AA==" },
+    projectColors: { [folder("newer")]: "120" },
+    pinnedProjects: [folder("older")],
+    closedProjects: [folder("closed")],
+    projectOrder: [folder("older"), folder("newer")],
+  }
+  delete legacy.projects
+  legacy.migrations = (legacy.migrations ?? []).filter((name) => name !== PROJECT_LIST_MIGRATION)
+  await first.runtime.storage.write("config", legacy)
+  await first.close()
+
+  const second = await startBackend(data)
+  const runtime = second.runtime
+  const migrated = runtime.config.get()
+  check(
+    "migration makes every folder with live conversations a project, newest first",
+    same(migrated.projects, [folder("newer"), folder("older")]),
+    migrated.projects,
+  )
+  check(
+    "migration leaves names, icons, colours, pins, removed folders and the dragged order as they were",
+    migrated.projectNames[folder("older")] === "Old one" &&
+      migrated.projectIcons[folder("older")] === "data:image/png;base64,AA==" &&
+      migrated.projectColors[folder("newer")] === "120" &&
+      same(migrated.pinnedProjects, [folder("older")]) &&
+      same(migrated.closedProjects, [folder("closed")]) &&
+      same(migrated.projectOrder, [folder("older"), folder("newer")]),
+    migrated,
+  )
+  check("migration is recorded so it runs once", (migrated.migrations ?? []).includes(PROJECT_LIST_MIGRATION), migrated.migrations)
+
+  // Adding a folder lists it and makes no conversation.
+  const before = (await runtime.sessions.list()).length
+  const added = await ask(runtime, { type: "project.add", directory: folder("fresh") })
+  check(
+    "adding a folder puts it first on the list with no conversation made",
+    added.existed === false && added.config.projects[0] === folder("fresh") && (await runtime.sessions.list()).length === before,
+    { projects: added.config.projects, existed: added.existed },
+  )
+  const again = await ask(runtime, { type: "project.add", directory: folder("fresh") })
+  check("adding a listed folder again says it existed and changes nothing", again.existed === true && same(again.config.projects, added.config.projects), again.config.projects)
+  const sessions = await runtime.sessions.list()
+  const recency = projectsByRecency(again.config, sessions)
+  check("an empty project that was never picked sits after projects with activity", recency[recency.length - 1] === folder("fresh"), recency)
+  const picked = await ask(runtime, { type: "project.add", directory: folder("fresh"), used: true })
+  check("a folder added as the pick heads the recency order", projectsByRecency(picked.config, sessions)[0] === folder("fresh"), projectsByRecency(picked.config, sessions))
+
+  // Removing: off the list, hidden, unpinned, out of the order; its conversations stay.
+  const removed = await ask(runtime, { type: "project.remove", directories: [folder("older")] })
+  check(
+    "removing takes the folder off the list, hides it, unpins it and drops it from the dragged order",
+    !removed.config.projects.includes(folder("older")) &&
+      removed.config.closedProjects.includes(folder("older")) &&
+      !removed.config.pinnedProjects.includes(folder("older")) &&
+      !removed.config.projectOrder.includes(folder("older")),
+    removed.config,
+  )
+  check("removing a project keeps its conversations", Boolean(await runtime.sessions.get(older.id)))
+  await ask(runtime, { type: "session.create", directory: folder("older") })
+  check("a conversation in a removed folder does not list it again", !listedProjects(runtime.config.get()).includes(folder("older")), runtime.config.get().projects)
+  const back = await ask(runtime, { type: "project.add", directory: folder("older") })
+  check("adding a removed folder brings it back", back.existed === false && back.config.projects[0] === folder("older") && !back.config.closedProjects.includes(folder("older")), back.config.projects)
+
+  // A conversation in a folder the list does not know makes it a project, listed before the session exists.
+  const order: string[] = []
+  const unsubscribe = runtime.bus.subscribe((event) => {
+    if (event.type === "config.updated" && event.config.projects.includes(folder("made"))) order.push("config")
+    if (event.type === "session.updated" && event.session.directory === folder("made")) order.push("session")
+  })
+  const made = await ask(runtime, { type: "session.create", directory: folder("made") })
+  unsubscribe?.()
+  check("a conversation in an unknown folder adds its project", runtime.config.get().projects.includes(folder("made")) && made.session.directory === folder("made"), runtime.config.get().projects)
+  check("the project is announced before its first conversation", order[0] === "config", order)
+  const listedBefore = runtime.config.get().projects
+  await ask(runtime, { type: "session.create", scratch: true })
+  check("a task with no project adds nothing", same(runtime.config.get().projects, listedBefore), runtime.config.get().projects)
+
+  // A write that only takes a folder out of the removed set, as older callers make, lists it again.
+  await runtime.config.set({ closedProjects: [...runtime.config.get().closedProjects, folder("newer")] })
+  check("putting a folder in the removed set takes it off the list", !runtime.config.get().projects.includes(folder("newer")), runtime.config.get().projects)
+  await runtime.config.set({ closedProjects: runtime.config.get().closedProjects.filter((entry) => entry !== folder("newer")) })
+  check("taking a folder out of the removed set lists it first", runtime.config.get().projects[0] === folder("newer"), runtime.config.get().projects)
+
+  // The list and the dragged order survive a restart, and the migration does not run again.
+  await runtime.config.set({ projectOrder: [folder("made"), folder("fresh")] })
+  const kept = runtime.config.get()
+  await second.close()
+  const third = await startBackend(data)
+  const reloaded = third.runtime.config.get()
+  check(
+    "the project list and its dragged order survive a restart",
+    same(reloaded.projects, kept.projects) && same(reloaded.projectOrder, [folder("made"), folder("fresh")]),
+    { before: kept.projects, after: reloaded.projects, order: reloaded.projectOrder },
+  )
+  await third.close()
+  await fs.rm(root, { recursive: true, force: true })
+
+  // Pure pieces.
+  check(
+    "reconciling keeps the list and the removed set apart",
+    same(reconciledProjects({ projects: ["a", "b"], closedProjects: ["c"] }, { projects: ["a", "b"], closedProjects: ["c", "b"] }), ["a"]) &&
+      same(reconciledProjects({ projects: ["a"], closedProjects: ["c"] }, { projects: ["a"], closedProjects: [] }), ["c", "a"]),
+  )
+  check(
+    "recency ties keep the stored order",
+    same(projectsByRecency({ projects: ["x", "y", "z"], closedProjects: ["y"], projectUsed: {} }, []), ["x", "z"]),
+  )
+}
+
 async function subagentChecks(root: string, project: string) {
   section("Subagents (task tool)")
 

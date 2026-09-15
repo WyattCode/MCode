@@ -48,20 +48,11 @@ const name = (directory: string) =>
   app.config?.projectNames?.[directory] || directory.split(/[\\/]/).filter(Boolean).pop() || directory
 
 /*
- * Most recent first, where "recent" is the later of the project's newest task
- * and when it was last picked here - MiMo's picker lists by the pick, so a
- * project just chosen comes first next time even before it has a task.
+ * The stored project list, most recent first, where "recent" is the later of
+ * the project's newest task and when it was last picked here - MiMo's picker
+ * lists by the pick, so a project just chosen comes first even before it has a task.
  */
-const projects = computed(() => {
-  const closed = new Set(app.config?.closedProjects ?? [])
-  const latest = new Map<string, number>()
-  const note = (directory: string, at: number) => {
-    if (!closed.has(directory)) latest.set(directory, Math.max(latest.get(directory) ?? 0, at))
-  }
-  for (const session of app.sessions) if (!session.scratch) note(session.directory, session.updated)
-  for (const [directory, at] of Object.entries(app.config?.projectUsed ?? {})) note(directory, at)
-  return [...latest.entries()].sort((a, b) => b[1] - a[1]).map(([directory]) => directory)
-})
+const projects = computed(() => app.projects)
 
 const picked = ref<string>()
 
@@ -72,7 +63,7 @@ const picked = ref<string>()
  */
 const NO_PROJECT = "mcode:no-project"
 
-/** A folder brought in or made from here, listed until it has a task of its own. */
+/** A folder picked here that may not be on the project list, such as another worktree of a project. */
 const added = ref<string>()
 
 /*
@@ -183,9 +174,7 @@ function take(directory: string) {
 async function createBlank(title: string, source?: string) {
   naming.value = false
   if (source) {
-    const config = app.config
-    const closed = config?.closedProjects ?? []
-    if (closed.includes(source)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== source) })
+    await app.addProject(source, { switched: true })
     const folderName = source.split(/[\\/]/).filter(Boolean).pop()
     if (title !== folderName) await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [source]: title } })
     take(source)
@@ -194,6 +183,7 @@ async function createBlank(title: string, source?: string) {
   try {
     const made = await app.client?.request({ type: "project.createBlank", name: title })
     if (!made) return
+    await app.addProject(made.directory, { switched: true })
     take(made.directory)
   } catch (err) {
     // DL13: MiMo's one line, 「创建失败：{error}」.
@@ -204,11 +194,8 @@ async function createBlank(title: string, source?: string) {
 async function existing() {
   const [directory] = await window.mcode.pickDirectory(t("home.useExisting"), false)
   if (!directory) return
-  // Bringing back a folder that was closed opens it again, as opening it does.
-  const closed = app.config?.closedProjects ?? []
-  if (closed.includes(directory)) {
-    await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
-  }
+  // Onto the project list, or back onto it if it was removed, with no conversation made.
+  await app.addProject(directory, { switched: true })
   take(directory)
 }
 

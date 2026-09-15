@@ -133,24 +133,23 @@ function openProjectMenu(directory: string, event: MouseEvent) {
 /* Pinned from that menu: a pinned project moves up into the 置顶 section. */
 const pinnedProject = (directory: string) => (app.config?.pinnedProjects ?? []).includes(directory)
 
+/*
+ * The stored project list, in the store's order. A project with no
+ * conversation is listed all the same, as MiMo lists one: its row, and nothing
+ * under it when it is opened.
+ */
 const projects = computed(() => {
-  const closed = new Set(app.config?.closedProjects ?? [])
-  const byDirectory = new Map<string, { directory: string; updated: number; sessions: typeof app.sessions }>()
+  const byDirectory = new Map(app.projects.map((directory) => [directory, [] as typeof app.sessions]))
   for (const session of app.sessions) {
     // A folder made for a task with no project is not a project; Recent has it.
-    if (session.archived || session.scratch || closed.has(session.directory)) continue
-    const entry = byDirectory.get(session.directory) ?? { directory: session.directory, updated: 0, sessions: [] }
-    entry.updated = Math.max(entry.updated, session.updated)
-    entry.sessions.push(session)
-    byDirectory.set(session.directory, entry)
+    if (session.archived || session.scratch) continue
+    byDirectory.get(session.directory)?.push(session)
   }
-  return [...byDirectory.values()]
-    .map((entry) => {
-      const sessions = [...entry.sessions].sort((a, b) => b.updated - a.updated)
-      // A pinned conversation is listed in 置顶 rather than under its project, as MiMo lists it.
-      return { ...entry, sessions, children: sessions.filter((session) => !app.isPinned(session.id)) }
-    })
-    .sort((a, b) => b.updated - a.updated)
+  return app.projects.map((directory) => {
+    const sessions = [...(byDirectory.get(directory) ?? [])].sort((a, b) => b.updated - a.updated)
+    // A pinned conversation is listed in 置顶 rather than under its project, as MiMo lists it.
+    return { directory, sessions, children: sessions.filter((session) => !app.isPinned(session.id)) }
+  })
 })
 
 type ProjectRow = (typeof projects.value)[number]
@@ -443,7 +442,7 @@ const pinnedMore = ref(false)
 
 interface ColumnBlock {
   key: string
-  kind: "pinned-head" | "pinned-more" | "projects-head" | "projects-pages" | "session" | "project"
+  kind: "pinned-head" | "pinned-more" | "projects-head" | "projects-empty" | "projects-pages" | "session" | "project"
   session?: SessionInfo
   project?: ProjectRow
 }
@@ -479,6 +478,8 @@ const columnBlocks = computed<ColumnBlock[]>(() => {
     ...(projectsOpen.value
       ? shownProjects.value.map((project): ColumnBlock => ({ key: `project:${project.directory}`, kind: "project", project }))
       : []),
+    // MiMo's 暂无项目 when nothing is left below 置顶.
+    ...(projectsOpen.value && !normalProjects.value.length ? [{ key: "projects-empty", kind: "projects-empty" } as ColumnBlock] : []),
     ...(projectsOpen.value && !picking.value && !pickingProjects.value && (projectsLeft.value > 0 || projectsPaged.value)
       ? [{ key: "projects-pages", kind: "projects-pages" } as ColumnBlock]
       : []),
@@ -1279,6 +1280,7 @@ function pickNewProject(key: string) {
           </template>
           </template>
         </template>
+        <div v-else-if="block.kind === 'projects-empty'" class="empty" data-projects-empty data-project-zone>{{ t("side.noProjects") }}</div>
         <div v-else-if="block.kind === 'projects-pages'" class="projects-pages" data-projects-pagination data-project-zone>
           <button v-if="projectsLeft > 0" class="pages-more" data-projects-show-more :aria-expanded="projectsPaged" @click="moreProjects">
             {{ projectsPaged ? t("side.moreProjectsLeft", { count: projectsLeft }) : t("side.moreProjects") }}
