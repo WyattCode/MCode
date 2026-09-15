@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { computed } from "vue"
+import RpDiffTab from "./RpDiffTab.vue"
 
 /**
- * MiMo's diff viewer, shared by the review tab and the diff tab: a framed box of
- * rows, each with the line's number before and after, its sign and its text.
- * Added and removed rows are tinted with a 3px bar down their start; a hunk's
- * header is a row of its own. File headers carry nothing a reader needs here.
+ * MiMo's review diff: a framed box of rows, each with the line's number before
+ * and after, its sign and its text. Added and removed rows are tinted with a
+ * 3px bar down their start; a hunk's header is a row of its own that keeps the
+ * two empty number cells.
+ *
+ * Without `review` this is the diff tab, which the panel still mounts by this
+ * name: that view is RpDiffTab, drawn to reach past the panel pane's padding.
  */
-const props = defineProps<{ diff: string }>()
+const props = defineProps<{ diff: string; review?: boolean }>()
 
 interface Row {
   kind: "add" | "del" | "ctx" | "hunk"
@@ -18,6 +22,7 @@ interface Row {
 }
 
 const rows = computed<Row[]>(() => {
+  if (!props.review) return []
   const out: Row[] = []
   let oldLine = 0
   let newLine = 0
@@ -34,7 +39,7 @@ const rows = computed<Row[]>(() => {
     if (line.startsWith("+")) out.push({ kind: "add", new: newLine++, sign: "+", text: line.slice(1) })
     else if (line.startsWith("-")) out.push({ kind: "del", old: oldLine++, sign: "-", text: line.slice(1) })
     else if (line.startsWith("diff --git")) continue
-    else out.push({ kind: "ctx", old: oldLine++, new: newLine++, sign: "", text: line.slice(1) })
+    else out.push({ kind: "ctx", old: oldLine++, new: newLine++, sign: " ", text: line.slice(1) })
   }
   // A trailing empty line is the patch's own last newline, not a line of the file.
   if (out.length && out[out.length - 1].kind === "ctx" && out[out.length - 1].text === "") out.pop()
@@ -43,28 +48,32 @@ const rows = computed<Row[]>(() => {
 </script>
 
 <template>
-  <div class="rp-diff" data-rp-diff>
+  <div v-if="review" class="rp-diff" data-rp-diff>
     <div v-for="(row, index) in rows" :key="index" class="row" :class="row.kind">
-      <template v-if="row.kind === 'hunk'">
-        <span class="hunk-text">{{ row.text }}</span>
-      </template>
-      <template v-else>
-        <span class="num">{{ row.old ?? "" }}</span>
-        <span class="num">{{ row.new ?? "" }}</span>
-        <span class="sign">{{ row.sign }}</span>
-        <span class="text">{{ row.text }}</span>
-      </template>
+      <span class="num">{{ row.old ?? "" }}</span>
+      <span class="num">{{ row.new ?? "" }}</span>
+      <span v-if="row.kind !== 'hunk'" class="sign">{{ row.sign }}</span>
+      <span class="text">{{ row.text }}</span>
     </div>
   </div>
+  <RpDiffTab v-else :diff="diff" bleed />
 </template>
 
 <style scoped>
-/* MiMo's diff box: a 1px line on a 10px corner, 12px mono on a 1.55 line. */
+/*
+ * MiMo's diff box: a 1px line on a 10px corner, 12px mono on a 1.55 line, in
+ * its own diff colours - fixed bars and signs, backgrounds that darken with the
+ * theme.
+ */
 .rp-diff {
+  --rv-bg: #fffefd;
+  --rv-add-bg: #e6ffec;
+  --rv-del-bg: #ffebe9;
+  --rv-hunk-bg: #f6f8fa;
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background: var(--surface-base);
+  background: var(--rv-bg);
   border: 1px solid var(--border-weak);
   border-radius: 10px;
   font-family: var(--font-mono);
@@ -72,22 +81,47 @@ const rows = computed<Row[]>(() => {
   line-height: 1.55;
 }
 
+:global(:root[data-theme="dark"]) .rp-diff {
+  --rv-bg: #1e1e1e;
+  --rv-add-bg: #2ea04726;
+  --rv-del-bg: #cf222e26;
+  --rv-hunk-bg: #1c2128;
+}
+
+@media (prefers-color-scheme: dark) {
+  :global(:root:not([data-theme="light"])) .rp-diff {
+    --rv-bg: #1e1e1e;
+    --rv-add-bg: #2ea04726;
+    --rv-del-bg: #cf222e26;
+    --rv-hunk-bg: #1c2128;
+  }
+}
+
 .row {
   display: grid;
   grid-template-columns: 34px 34px 14px minmax(0, 1fr);
+  align-items: start;
   border-inline-start: 3px solid transparent;
 }
 
+/* A hunk header's text starts where a line's sign would. */
+.row.hunk {
+  grid-template-columns: 34px 34px minmax(0, 1fr);
+  color: #8250df;
+  background: var(--rv-hunk-bg);
+}
+
 .num {
-  padding-inline-end: 6px;
-  color: var(--text-weaker);
+  box-sizing: border-box;
+  padding: 0 6px;
+  color: #bbb;
   font-size: calc(11px * var(--code-font-scale, 1));
   text-align: end;
   user-select: none;
 }
 
 .sign {
-  color: var(--text-weak);
+  color: #999;
   text-align: center;
   user-select: none;
 }
@@ -99,25 +133,35 @@ const rows = computed<Row[]>(() => {
   overflow-wrap: anywhere;
 }
 
+.row.hunk .text {
+  color: #8250df;
+}
+
 .row.add {
-  background: var(--surface-diff-add);
-  border-inline-start-color: var(--diff-add);
+  background: var(--rv-add-bg);
+  border-inline-start-color: #2da44e;
+}
+
+.row.add .sign {
+  color: #2da44e;
 }
 
 .row.del {
-  background: var(--surface-diff-delete);
-  border-inline-start-color: var(--diff-delete);
+  background: var(--rv-del-bg);
+  border-inline-start-color: #cf222e;
 }
 
-.row.hunk {
-  display: block;
-  padding: 2px 10px;
-  color: var(--text-interactive);
-  background: var(--surface-sunken);
+.row.del .sign {
+  color: #cf222e;
 }
 
-.hunk-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+/* The diff-marks setting: colour alone blanks the sign but keeps its column; signs alone drop the tint. */
+:global(html[data-diff-marks="color"]) .sign {
+  visibility: hidden;
+}
+
+:global(html[data-diff-marks="signs"]) .row.add,
+:global(html[data-diff-marks="signs"]) .row.del {
+  background: transparent;
 }
 </style>

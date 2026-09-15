@@ -15,7 +15,7 @@ const run = promisify(execFile)
  */
 
 /** How one file differs from HEAD, in the vocabulary the review speaks. */
-export type GitChangeKind = "added" | "deleted" | "modified"
+export type GitChangeKind = "added" | "deleted" | "modified" | "renamed"
 
 export interface GitChange {
   path: string
@@ -183,13 +183,13 @@ export async function status(directory: string, scope: StatusScope = "worktree")
  * The two status columns, reduced to the one word the review shows.
  *
  * "??" is an untracked file, which to someone reading a turn is an addition
- * however git files it. Anything with a D in either column is a deletion; a
- * rename lands as modified, since what is on screen is the file at its new
- * path with its old content beside it.
+ * however git files it. Anything with a D in either column is a deletion. A
+ * rename or copy is its own word, as MiMo draws it: a purple R.
  */
-function classify(codes: string): GitChangeKind {
+export function classify(codes: string): GitChangeKind {
   if (codes === "??" || codes.includes("A")) return "added"
   if (codes.includes("D")) return "deleted"
+  if (codes.includes("R") || codes.includes("C")) return "renamed"
   return "modified"
 }
 
@@ -227,13 +227,29 @@ export async function diff(
    */
   const base = scope === "branch" ? await branchBase(root) : undefined
 
-  const patch = tracked
-    ? await git(root, base ? ["diff", unified, base, "--", inRepo] : ["diff", unified, "--", inRepo]).catch(
-        () => "",
-      )
-    : await git(root, ["diff", "--no-index", unified, "--", "/dev/null", inRepo]).catch(
-        (error: { stdout?: string }) => error.stdout ?? "",
-      )
+  const untracked = () =>
+    git(root, ["diff", "--no-index", unified, "--", "/dev/null", inRepo]).catch(
+      (error: { stdout?: string }) => error.stdout ?? "",
+    )
+
+  /*
+   * The working tree against HEAD, as MiMo's gitDiff asks, so a change that is
+   * only staged still shows: index against worktree drew it as no diff at all.
+   * A repository with no commit yet has no HEAD, and falls back to the plain
+   * diff; a file staged into such a repository is still new against nothing.
+   */
+  let patch: string
+  if (!tracked) patch = await untracked()
+  else if (base) patch = await git(root, ["diff", unified, base, "--", inRepo]).catch(() => "")
+  else {
+    patch = await git(root, ["diff", unified, "HEAD", "--", inRepo]).catch(() =>
+      git(root, ["diff", unified, "--", inRepo]).catch(() => ""),
+    )
+    if (!patch.trim()) {
+      const hasHead = await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]).then(() => true, () => false)
+      if (!hasHead) patch = await untracked()
+    }
+  }
 
   /*
    * Handed back whole.

@@ -389,7 +389,7 @@ export type Message = UserMessage | AssistantMessage
 // ---------------------------------------------------------------------------
 
 /** How one file differs from HEAD, in the vocabulary the review speaks. */
-export type GitChangeKind = "added" | "deleted" | "modified"
+export type GitChangeKind = "added" | "deleted" | "modified" | "renamed"
 
 /** One shell the backend is holding, as the drawer needs to know it. */
 export interface ShellSummary {
@@ -1588,14 +1588,26 @@ export type Request =
   | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
   | { type: "file.list"; directory: string; query?: string }
   /* One folder level of a project for the @ menu; `sub` is relative to `directory`, empty for its root. */
-  | { type: "file.listDir"; directory: string; sub?: string }
-  /* Files under `sub` whose path holds the query, for the @ menu's search. */
-  | { type: "file.search"; directory: string; query: string; sub?: string; limit?: number }
+  /* `all`: the files tab's tree, which shows dot entries and skips only MiMo's ignored folders. */
+  | { type: "file.listDir"; directory: string; sub?: string; all?: boolean }
+  /*
+   * Files under `sub` whose path holds the query, for the @ menu's search.
+   * `nameOnly`: the files tab's search, matching the file name alone, MiMo's
+   * breadth-first walk capped at 50 results, depth 16 and 4000 entries.
+   */
+  | { type: "file.search"; directory: string; query: string; sub?: string; limit?: number; nameOnly?: boolean }
+  /* Where the files tab browses with no project: the default project location. */
+  | { type: "file.defaultDir" }
   /* Carries on the conversation's interrupted last turn, with no new message from the user. */
   | { type: "session.resume"; sessionID: string }
   /* Three example tasks for a project on the home screen, from the default model; empty when it cannot answer. */
   | { type: "home.suggest"; directory: string; language?: string }
-  | { type: "file.read"; path: string }
+  /*
+   * `preview`: the files tab's reading, as MiMo's readFileText has it - text over
+   * 512 KiB or holding a NUL byte is refused, a video is named as one, and media
+   * carries no bytes because the tab plays it from a local address.
+   */
+  | { type: "file.read"; path: string; preview?: boolean }
   /* A text file saved from the right panel's files tab. */
   | { type: "file.write"; path: string; content: string }
   /*
@@ -1754,6 +1766,7 @@ export interface ResponseMap {
   "file.listDir": { entries: DirEntry[] }
   /* `truncated` when more matched than `limit` allowed. */
   "file.search": { entries: FileHit[]; truncated: boolean }
+  "file.defaultDir": { directory: string }
   /* The user message whose turn is being carried on. */
   "session.resume": { messageID: string }
   /* `generated` is false when no model answered, and the list is then empty. */
@@ -1777,6 +1790,10 @@ export interface ResponseMap {
     truncated: boolean
     mime?: string
     data?: string
+    /* A preview read of text past 512 KiB: nothing is carried, MiMo's toobig. */
+    tooBig?: boolean
+    /* A preview read of a video, which the files tab plays from disk; its kind stays binary for everyone else. */
+    video?: boolean
   }
   "file.write": { path: string }
   "shell.open": { shellID: string; cwd: string }
