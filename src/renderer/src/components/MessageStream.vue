@@ -11,7 +11,7 @@ import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentNotice } from "@shared/protocol"
-import { buildRows, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
+import { buildRows, retryReason, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { preview, videoUrl } from "../lib/attach"
 import { openImagePreview, openVideoPreview, type ImagePreviewMeta } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
@@ -114,7 +114,7 @@ type Row =
   | { kind: "group"; id: string; items: StepItem[]; open: boolean }
   | { kind: "steer"; id: string; steer: Steer }
   /** MiMo's 正在重新连接 N, while the provider request is being tried again. */
-  | { kind: "retry"; id: string; attempt: number }
+  | { kind: "retry"; id: string; attempt: number; reason?: string }
 
 /** The rows for the parts between two points of the turn, with the errors that fell there. */
 function rows(turn: Turn, start: number, end: number, live: boolean): Row[] {
@@ -462,7 +462,7 @@ function shown(turn: Turn, at: number): Row[] {
   if (!live) return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "group" && row.kind !== "error")
 
   const retry = turn.last?.retry
-  if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt })
+  if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message) })
   // The last group with nothing said after it is the one being worked in.
   for (let index = all.length - 1; index >= 0; index--) {
     const row = all[index]!
@@ -1189,7 +1189,7 @@ defineExpose({ stepMessage, scroller })
             <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" />
             <QuestionCard v-else-if="row.kind === 'question'" :part="row.part" />
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
-            <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" />
+            <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" />
             <TextPart v-else-if="row.part.type === 'text'" :part="row.part" />
           </div>
 

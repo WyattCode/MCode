@@ -501,8 +501,10 @@ html[data-motion="on"] .hs-collapse {
 }
 
 /* Reconnecting, and an error the turn carried on past. */
+/* The span grows, as MiMo's does, so a reason after the count has a width to truncate in. */
 .hs-retry-label {
   display: inline-flex;
+  flex: 1;
   align-items: center;
   gap: 6px;
   min-width: 0;
@@ -511,9 +513,27 @@ html[data-motion="on"] .hs-collapse {
   font-weight: 500;
 }
 
+.hs-retry-label > span:not(.hs-retry-reason) {
+  flex: none;
+}
+
 .hs-retry-count {
   color: #919191;
   font-variant-numeric: tabular-nums;
+}
+
+/* MiMo's why: a dim dot, then the reason on one line at regular weight, cut where the row ends. */
+.hs-retry-dot,
+.hs-retry-reason {
+  color: #919191;
+}
+
+.hs-retry-reason {
+  overflow: hidden;
+  min-width: 0;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hs-error {

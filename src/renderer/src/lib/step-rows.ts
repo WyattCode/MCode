@@ -32,6 +32,15 @@ export type StepRow =
   | { kind: "group"; id: string; items: StepItem[] }
   | { kind: "error"; id: string; error: InlineError }
 
+/**
+ * Why the reconnecting row is retrying, as one line: MiMo draws the reason the
+ * retry carries after the attempt, and nothing when there is none.
+ */
+export function retryReason(message: string | undefined): string | undefined {
+  const line = (message ?? "").replace(/\s+/g, " ").trim()
+  return line || undefined
+}
+
 /*
  * An approved command is already on screen as its own step, so MiMo leaves its
  * permission row out; every other decision - a refusal, a cancel, an approved

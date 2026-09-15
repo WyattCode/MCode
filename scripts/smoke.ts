@@ -117,6 +117,7 @@ import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
 import { sessionArtifacts, sessionReferences } from "../src/shared/session-files"
 import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
+import { retryReason } from "../src/renderer/src/lib/step-rows"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
 import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -437,6 +438,10 @@ async function main() {
   const none = filterMenu(moveRows, "zzz")
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
+
+  // The reconnecting row's reason: one line, or nothing at all.
+  check("a retry's reason is drawn on one line", retryReason("  overloaded\n  try later ") === "overloaded try later")
+  check("a retry without a reason draws none", retryReason("") === undefined && retryReason(undefined) === undefined && retryReason(" \n ") === undefined)
 
   // The right panel's tool hints follow the shortcuts page, and MiMo's narrow-window rule.
   const panelCommands = [
