@@ -4995,10 +4995,24 @@ async function deliveredToolChecks(root: string) {
   check("nothing to present completes with no files", empty.output.startsWith("No files") && ((empty.metadata?.files ?? []) as PresentedFile[]).length === 0)
   check("present_files needs files, cwd and explanation, as MiMo's does", argumentProblems(presentTool.parameters, { files: ["a"] }).length === 2)
   const linked = path.join(project, "link")
+  // The link points only at `outside`, a fresh temp folder holding one file made above - never the repo or a real project.
   const madeLink = await fs.symlink(outside, linked, "junction").then(() => true, () => false)
   if (madeLink) {
-    const through = await presentTool.execute({ files: ["link/elsewhere.pdf"], cwd: project, explanation: "x" }, context("p4"))
-    check("a link inside the project that leads out is judged by where it leads", ((through.metadata?.skipped ?? []) as PresentSkip[])[0]?.reason === "outside", through.metadata)
+    try {
+      const through = await presentTool.execute({ files: ["link/elsewhere.pdf"], cwd: project, explanation: "x" }, context("p4"))
+      check("a link inside the project that leads out is judged by where it leads", ((through.metadata?.skipped ?? []) as PresentSkip[])[0]?.reason === "outside", through.metadata)
+    } finally {
+      /*
+       * Only the link entry is removed, never what it points at: unlink, or a
+       * non-recursive rmdir, both delete a junction itself. Then it is checked
+       * gone, and the run stops here if not, before any recursive delete below
+       * could walk through it.
+       */
+      await fs.unlink(linked).catch(() => fs.rmdir(linked)).catch(() => undefined)
+      const left = await fs.lstat(linked).then(() => true, () => false)
+      if (left) throw new Error(`smoke could not remove the junction ${linked}; stopping before any recursive delete`)
+    }
+    check("removing the link left what it pointed at alone", await exists(path.join(outside, "elsewhere.pdf")))
   }
 
   // The window's side: the cards' entries, sizes, kinds, the relative path the main process opens, the step row.
@@ -5079,8 +5093,11 @@ async function deliveredToolChecks(root: string) {
   check("a change is saved, as the settings page saves it", reread.get().theme === "dark" && reread.get().uiFontSize === 24)
   check("the tool's languages are the interface's", LANGUAGE_IDS.join(",") === INTERFACE_LANGUAGES.map((entry) => entry.id).join(","))
   bindDesktopSettings(undefined)
+  // Plain temp folders this section made; the one link inside `project` was removed and checked gone above.
   await fs.rm(outside, { recursive: true, force: true })
   await fs.rm(downloads, { recursive: true, force: true })
+  await fs.rm(project, { recursive: true, force: true })
+  await fs.rm(data, { recursive: true, force: true })
 }
 
 async function subagentChecks(root: string, project: string) {
