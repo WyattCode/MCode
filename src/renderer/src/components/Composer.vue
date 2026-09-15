@@ -37,6 +37,15 @@ import ConfirmDialog from "./ConfirmDialog.vue"
 import ContextRing from "./ContextRing.vue"
 import { readContext } from "./session-context"
 import { t, language } from "../lib/i18n"
+import type { Component } from "vue"
+
+/*
+ * MiMo's own full-access confirm (FullAccessDialog.vue, from the settings
+ * branch; r3-handoff-composer-from-settings.md). Found by an eager glob so the
+ * box still builds before that file is merged, with the generic confirm until then.
+ */
+const fullAccessModules = import.meta.glob<{ default: Component }>("./FullAccessDialog.vue", { eager: true })
+const FullAccessDialog = fullAccessModules["./FullAccessDialog.vue"]?.default
 
 const emit = defineEmits<{
   terminal: []
@@ -3143,8 +3152,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
     </p>
 
     <Teleport to="body">
+      <!-- MiMo's own full-access dialog once the settings branch has brought it; the generic confirm until then. -->
+      <component
+        :is="FullAccessDialog"
+        v-if="confirmingFull && FullAccessDialog"
+        @confirm="confirmFull"
+        @close="confirmingFull = false"
+      />
       <ConfirmDialog
-        v-if="confirmingFull"
+        v-else-if="confirmingFull"
         :title="t('composer.access.confirmTitle')"
         :body="t('composer.access.confirmBody')"
         :confirm-label="t('composer.access.confirmOk')"
