@@ -326,6 +326,11 @@ onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHe
  */
 const dismissed = ref(false)
 
+/* MiMo's: leaving the box closes the @ and slash menus. Typing again brings them back. */
+function onInputBlur() {
+  dismissed.value = true
+}
+
 /**
  * Paths that were chosen from the @ menu rather than merely typed.
  *
@@ -2626,6 +2631,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           :aria-busy="compactingHere || undefined"
           @keydown.escape="mode === 'shell' && setMode('normal')"
           @keydown="onKeydown"
+          @blur="onInputBlur"
           @keyup="syncCaret"
           @click="onBoxClick"
           @select="syncCaret"
