@@ -41,6 +41,7 @@ import { PowerHold } from "../src/main/power"
 import { RecoverySchedule, RendererHealth, recoveryVisibility } from "../src/main/renderer-health"
 import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boot-prefs"
 import { createUpdater, parseFeed, type FeedEntry } from "../src/main/updater"
+import { deliveryOf, waitForDelivery } from "../src/main/install-notice"
 import { boundsOnShow, clampToWorkAreas, sameBounds } from "../src/main/work-area"
 import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
 import { builtinSuggestions } from "../src/renderer/src/lib/home-suggestions"
@@ -2747,6 +2748,55 @@ async function main() {
     check("a cached file that does not match is downloaded again", downloads.at(-1) === "refetch 0.3.0")
     updater.stop()
     check("stopping clears the schedule", timers.length === 0)
+  }
+
+  section("Installing notice (MiMo's wait for delivery before quitting)")
+  {
+    const fake = () => {
+      const pending: { run: () => void; ms: number; id: number }[] = []
+      let id = 0
+      return {
+        pending,
+        timers: {
+          setTimeout: (run: () => void, ms: number) => (pending.push({ run, ms, id: ++id }), id),
+          clearTimeout: (handle: unknown) => void pending.splice(pending.findIndex((entry) => entry.id === handle), 1),
+        },
+      }
+    }
+    let settled = false
+    const none = fake()
+    await waitForDelivery(undefined, 1500, none.timers)
+    check("with no notice there is nothing to wait for", none.pending.length === 0)
+
+    const shown = fake()
+    let show: () => void = () => {}
+    const delivered = new Promise<void>((resolve) => (show = resolve))
+    const waiting = waitForDelivery(delivered, 1500, shown.timers).then(() => (settled = true))
+    check("the wait is bounded at 1.5 s", shown.pending.length === 1 && shown.pending[0]?.ms === 1500)
+    show()
+    await waiting
+    check("a notice shown ends the wait at once and clears the bound", settled && shown.pending.length === 0)
+
+    const lost = fake()
+    settled = false
+    const never = waitForDelivery(new Promise<void>(() => {}), 1500, lost.timers).then(() => (settled = true))
+    lost.pending[0]?.run()
+    await never
+    check("a notice never delivered lets the quit go on after the bound", settled)
+
+    const failed = fake()
+    settled = false
+    const rejected = waitForDelivery(Promise.reject(new Error("no toast")), 1500, failed.timers).then(() => (settled = true))
+    await rejected
+    check("a delivery that fails ends the wait too", settled && failed.pending.length === 0)
+
+    const listeners = new Map<string, () => void>()
+    const notice = { once: (event: "show" | "failed", listener: () => void) => void listeners.set(event, listener) }
+    let fired = false
+    const ofShow = deliveryOf(notice).then(() => (fired = true))
+    listeners.get("failed")?.()
+    await ofShow
+    check("delivery settles on show or on failed", fired && listeners.has("show"))
   }
 
   section("Pre-ready choices (theme and hardware acceleration)")

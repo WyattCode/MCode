@@ -63,6 +63,7 @@ import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { restore, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { createUpdater, parseFeed, type FeedEntry, type UpdateState } from "./updater"
+import { deliveryOf, waitForDelivery } from "./install-notice"
 import pkg from "../../package.json"
 
 /*
@@ -851,8 +852,33 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:install-update", async () => {
     const file = updater.readyFile()
     if (!file) throw new Error("no update has been downloaded")
+    /*
+     * MiMo's installing notice: shown before the app goes, and given up to 1.5 s
+     * to be delivered so it is on screen as the window disappears. Worded in the
+     * window's language through the published labels.
+     */
+    let notice: Notification | undefined
+    try {
+      if (Notification.isSupported()) {
+        notice = new Notification({
+          title: label("update.installingTitle", "Installing the MCode update"),
+          body: label(
+            "update.installingBody",
+            "MCode closes so the installer can put the new version in place. When it finishes, the installer can open MCode again.",
+          ),
+        })
+        const delivered = deliveryOf(notice)
+        notice.show()
+        await waitForDelivery(delivered)
+      }
+    } catch {
+      // No notice is no reason not to install.
+    }
     const failure = await shell.openPath(file)
-    if (failure) throw new Error(failure)
+    if (failure) {
+      notice?.close()
+      throw new Error(failure)
+    }
     beginIntentionalQuit()
     app.quit()
     return true
