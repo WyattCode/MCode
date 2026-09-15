@@ -1629,6 +1629,7 @@ export class SessionRunner {
       part.metadata = { ...(part.metadata ?? {}), permissions: [...decisions] }
       publish()
     })
+    let refusedByUser = false
 
     try {
       /*
@@ -1638,7 +1639,7 @@ export class SessionRunner {
        * switch reading off and watch files carry on being read. This is the only
        * point that every call passes through, so it is where those buckets are
        * consulted. Inside the try, so a refusal is caught below and written onto
-       * the part as an error the model reads back, rather than ending the turn.
+       * the part as an error; one a person gave then ends the turn once saved.
        */
       await this.permissions.check({
         sessionID: input.session.id,
@@ -1677,6 +1678,7 @@ export class SessionRunner {
         part.errorCode = err.code
         part.errorParams = err.params
       }
+      if (err instanceof PermissionDenied && err.byUser) refusedByUser = true
     } finally {
       stopListening()
       // A finished tool hands back metadata of its own, which would otherwise replace the record.
@@ -1685,6 +1687,13 @@ export class SessionRunner {
       publish()
       await this.store.saveMessage(assistant, true)
     }
+    /*
+     * MiMo stops the conversation when a person rejects, rather than handing
+     * the refusal back for the model to work around. Stopped the way Stop does
+     * it, so calls still running or asking are cancelled with it. The refusal
+     * and its reason are already saved on the part for the next message.
+     */
+    if (refusedByUser) this.abort(input.session.id)
   }
 }
 

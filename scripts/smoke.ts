@@ -713,6 +713,29 @@ async function main() {
     await decide("c-rec-stop", () => permissions.rejectAll("s-record"))
     check("a question closed by Stop is recorded as cancelled", heard[3]?.decided === "cancelled", heard[3])
 
+    // Who said no decides whether the turn ends: a person does; a setting or a Stop does not.
+    const refusalOf = async (gate: Permissions, callID: string, settle: (id: string) => void) => {
+      const asked = gate
+        .ask({ sessionID: "s-byuser", messageID: "m-byuser", callID, kind: "write", title: "t", subject: `${callID}.md` })
+        .then(() => undefined, (err: unknown) => err)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const request = gate.outstanding().find((entry) => entry.callID === callID)
+      if (request) settle(request.id)
+      return asked
+    }
+    const plainRefusal = await refusalOf(permissions, "c-by-plain", (id) => permissions.respond(id, "reject"))
+    const reasonedRefusal = await refusalOf(permissions, "c-by-reason", (id) => permissions.respond(id, "reject", "not here"))
+    const stoppedRefusal = await refusalOf(permissions, "c-by-stop", () => permissions.rejectAll("s-byuser"))
+    check(
+      "a person's refusal is marked as theirs, with or without a reason",
+      plainRefusal instanceof PermissionDenied && plainRefusal.byUser && reasonedRefusal instanceof PermissionDenied && reasonedRefusal.byUser,
+      [plainRefusal, reasonedRefusal],
+    )
+    check("a Stop is not", stoppedRefusal instanceof PermissionDenied && !stoppedRefusal.byUser, stoppedRefusal)
+    const denyingGate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, write: "deny" } }) } as never)
+    const settingRefusal = await refusalOf(denyingGate, "c-by-setting", () => {})
+    check("nor is a bucket set to Deny", settingRefusal instanceof PermissionDenied && !settingRefusal.byUser, settingRefusal)
+
     const before = heard.length
     const unheard = permissions
       .ask({ sessionID: "s-record", messageID: "m-record", callID: "c-rec-none", kind: "write", title: "t", subject: "x.md" })
@@ -2018,30 +2041,57 @@ async function main() {
     found = await toolPart("call_cutoff")
     check("arguments cut off mid-object are refused the same way", found.part?.metadata?.recoverable === true && String(found.part?.error).includes("not valid JSON"), found.part)
 
-    // A refusal with a reason: kept on the part, and still fed back rather than ending the turn.
+    // A refusal with a reason: kept on the part, and the turn ends there, as MiMo stops on a rejection.
+    const askedFor = (callID: string, since: number) =>
+      new Promise<string | undefined>((resolve) => {
+        const started = Date.now()
+        const poll = setInterval(() => {
+          const event = events.slice(since).find((entry) => entry.type === "permission.requested" && entry.request.callID === callID)
+          if (event?.type === "permission.requested" || Date.now() - started > 10_000) {
+            clearInterval(poll)
+            resolve(event?.type === "permission.requested" ? event.request.id : undefined)
+          }
+        }, 50)
+      })
     replies.push(toolCall("call_perm", "write", '{"path": "steps-denied.md", "content": "no"}'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "write a note" })
-    const asked = await new Promise<string | undefined>((resolve) => {
-      const started = Date.now()
-      const poll = setInterval(() => {
-        const event = events.slice(from).find((entry) => entry.type === "permission.requested" && entry.request.callID === "call_perm")
-        if (event?.type === "permission.requested" || Date.now() - started > 10_000) {
-          clearInterval(poll)
-          resolve(event?.type === "permission.requested" ? event.request.id : undefined)
-        }
-      }, 50)
-    })
+    const asked = await askedFor("call_perm", from)
     check("the write asked", asked !== undefined)
+    const requestsBeforeRefusal = bodies.length
     if (asked) await call({ type: "permission.respond", requestID: asked, response: "reject", reason: "keep notes elsewhere" })
     check("the refused turn finished", await idle(from))
     found = await toolPart("call_perm")
     const kept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
     check("the decision is kept on the part", kept.length === 1 && kept[0]?.decided === "reject-with-reason" && kept[0]?.reason === "keep notes elsewhere", kept)
     check("with the question it answered", kept[0]?.kind === "write" && typeof kept[0]?.requestID === "string", kept[0])
-    check("the refused call is still an ordinary error for the model", found.part?.status === "error" && String(found.part?.error).includes("keep notes elsewhere"), found.part?.error)
-    check("and a refusal does not stop the turn", found.last?.finish === "end_turn", found.last?.finish)
+    check("the refusal and its reason stay on the call", found.part?.status === "error" && String(found.part?.error).includes("keep notes elsewhere"), found.part?.error)
+    check("a refusal ends the turn", found.last?.finish === "aborted", found.last?.finish)
+    check("without handing the refusal back to the model", bodies.length === requestsBeforeRefusal, bodies.length - requestsBeforeRefusal)
     check("nothing was written", !(await exists(path.join(project, "steps-denied.md"))))
+
+    // The next message takes the refusal, and its reason, to the model as context.
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "then put it in docs" })
+    check("the next turn finished", await idle(from))
+    check(
+      "the model reads the reason with the next message",
+      JSON.stringify(bodies.at(-1) ?? {}).includes("keep notes elsewhere"),
+      JSON.stringify(bodies.at(-1) ?? {}).slice(0, 600),
+    )
+
+    // A refusal without a reason ends the turn the same way.
+    replies.push(toolCall("call_perm_bare", "write", '{"path": "steps-bare.md", "content": "no"}'))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "write another note" })
+    const bareAsk = await askedFor("call_perm_bare", from)
+    const requestsBeforeBare = bodies.length
+    if (bareAsk) await call({ type: "permission.respond", requestID: bareAsk, response: "reject" })
+    check("the bare refusal finished", await idle(from))
+    found = await toolPart("call_perm_bare")
+    const bareKept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
+    check("a refusal without a reason ends the turn too", found.last?.finish === "aborted" && bodies.length === requestsBeforeBare, [found.last?.finish, bodies.length - requestsBeforeBare])
+    check("recorded as a plain reject", bareKept[0]?.decided === "reject" && bareKept[0]?.reason === undefined, bareKept)
 
     // A transient failure: retried in the open, then the turn completes.
     replies.push((response) => {
