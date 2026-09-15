@@ -66,5 +66,6 @@ export function addressToURL(input: string): string | undefined {
     /^localhost(:\d+)?(\/|$)/i.test(raw) ||
     /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(raw)
   if (looksLikeHost) return safeURL(raw)
-  return `https://duckduckgo.com/?q=${encodeURIComponent(raw)}`
+  // MiMo's search engine.
+  return `https://www.google.com/search?q=${encodeURIComponent(raw)}`
 }
