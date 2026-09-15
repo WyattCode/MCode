@@ -106,11 +106,10 @@ function editRows(params: TextMenuParams): TextMenuItem[] {
   const editable = Boolean(params.isEditable)
   const selected = typeof params.selectionText === "string" && params.selectionText.trim().length > 0
   const rows: TextMenuItem[] = []
+  // MiMo's order: a field reads 剪切, 复制, 粘贴; plain text only 复制.
+  if (editable && (flags.canCut ?? selected)) rows.push("cut")
   if (flags.canCopy ?? selected) rows.push("copy")
-  if (editable) {
-    if (flags.canCut ?? selected) rows.push("cut")
-    if (flags.canPaste ?? true) rows.push("paste")
-  }
+  if (editable && (flags.canPaste ?? true)) rows.push("paste")
   // A field always offers select all, as MiMo does; Chromium reports canSelectAll false for an empty one.
   if (editable || selected) rows.push("selectAll")
   return rows

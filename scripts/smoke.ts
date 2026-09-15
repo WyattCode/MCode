@@ -4731,6 +4731,8 @@ async function main() {
   check("selected text offers copy and select all", plainSelection.join(",") === "copy,selectAll", plainSelection)
   const emptyField = textMenuItems({ isEditable: true, selectionText: "", editFlags: flags(false, false, true, false) })
   check("an empty field hides cut and copy rather than greying them", emptyField.join(",") === "paste,selectAll", emptyField)
+  const filledField = textMenuItems({ isEditable: true, selectionText: "hello", editFlags: flags(true, true, true, true) })
+  check("a field with a selection reads cut, copy, paste, select all, in MiMo's order", filledField.join(",") === "cut,copy,paste,selectAll", filledField)
   const nothing = textMenuItems({ isEditable: false, selectionText: "", editFlags: flags(false, false, false, false) })
   check("plain text or a link with nothing selected gets no menu", nothing.length === 0, nothing)
   const picture = textMenuItems({ mediaType: "image", srcURL: "https://example.com/a.png", selectionText: "", editFlags: flags(true, false, false, true) })
