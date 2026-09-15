@@ -5161,7 +5161,9 @@ async function deliveredToolChecks(root: string) {
   const names = ["pdf_locate", "present_files", "get_desktop_settings", "set_desktop_setting"]
 
   // The registry: appended after the task tool, no permission bucket, nothing to record in undo.
-  check("the four window tools are appended after task, keeping the cached prefix", TOOLS.slice(-5).map((tool) => tool.name).join(",") === ["task", ...names].join(","), TOOLS.map((tool) => tool.name))
+  // Read from task rather than from the end: tools appended after these (session chat's) leave the prefix as it was.
+  const taskAt = TOOLS.findIndex((tool) => tool.name === "task")
+  check("the four window tools are appended after task, keeping the cached prefix", taskAt >= 0 && TOOLS.slice(taskAt, taskAt + 5).map((tool) => tool.name).join(",") === ["task", ...names].join(","), TOOLS.map((tool) => tool.name))
   check("none of them asks for permission, as MiMo asks none", names.every((name) => findTool(name)?.permission === undefined))
   check("none of them counts as touching the project", names.every((name) => reachOf(name) === "reads"))
 
