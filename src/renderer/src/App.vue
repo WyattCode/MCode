@@ -1716,7 +1716,9 @@ function menuRow(entry: MenuRow): MenuItem | undefined {
     // A key with no string of its own falls back to the command's sentence
     // rather than showing the key, which is what `t` returns when it misses.
     label: short === entry.label ? command.title : short,
-    enabled: command.enabled && Boolean(target),
+    // A row's menu acts on its own conversation (runSessionMenu opens it first where it must), so whether one
+    // is open now says nothing about it; only the header's menu, which names the open one, keeps the command's rule.
+    enabled: Boolean(target) && (!sessionMenu.value?.header || command.enabled !== false),
   }
 }
 
@@ -1922,6 +1924,15 @@ async function runSessionMenu(key: string) {
   const own = ROW_ACTIONS[key]
   if (own) {
     await own(target, header)
+    return
+  }
+  // Archiving and deleting need nothing on screen, so the row's conversation is not opened just to go away.
+  if (key === "session.archive") {
+    await archiveSessions([target])
+    return
+  }
+  if (key === "session.delete") {
+    deletingSession.value = target
     return
   }
   if (app.currentID !== target) {
