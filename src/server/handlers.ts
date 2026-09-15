@@ -32,6 +32,7 @@ import { listCommands } from "./command"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { revertTurnFiles } from "./session/turn-revert"
+import { turnFileDiffs } from "./session/turn-diff"
 import { suggestTasks } from "./home-suggest"
 import type { ShellOwner } from "./shell"
 
@@ -299,6 +300,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "session.revert": {
+      /* MiMo's edit and retry: the messages go and the files stay. */
+      if (request.files === false) {
+        if (!request.messageID) throw new Error("Name the message to delete from")
+        return {
+          session: await runtime.runner.truncate(request.sessionID, request.messageID),
+          files: 0,
+          history: await runtime.sessions.historyDepth(request.sessionID),
+        } satisfies Handled<"session.revert">
+      }
       const { session, files } = await runtime.runner.revert(request.sessionID, request.messageID)
       return {
         session,
@@ -349,7 +359,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      */
     case "session.fork":
       return {
-        session: await runtime.sessions.fork(request.sessionID, request.messageID),
+        session: await runtime.sessions.fork(request.sessionID, request.messageID, request.titleSuffix === true),
       } satisfies Handled<"session.fork">
 
     case "session.model":
@@ -1053,6 +1063,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {
         patch: await git.diff(request.directory, request.file, request.context, request.scope),
       } satisfies Handled<"git.diff">
+
+    case "git.diffFiles":
+      return (await turnFileDiffs(request.directory, request.files)) satisfies Handled<"git.diffFiles">
 
     case "git.revert": {
       await git.revert(request.directory, request.file)

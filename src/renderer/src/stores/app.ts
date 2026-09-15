@@ -908,16 +908,30 @@ export const useApp = defineStore("app", () => {
    * twenty turns in arrived in the fork with none of what made it worth asking,
    * and the model answered it cold.
    */
-  async function forkFrom(messageID: string) {
+  /*
+   * MiMo names a branch off a reply 「{title} (分支)」 and keeps the title for
+   * 在新对话中继续; `here` is the reply's own toast, 已从此处创建分支, where the
+   * others say they branched the current conversation. A failure says so.
+   */
+  async function forkFrom(messageID: string, how: { titleSuffix?: boolean; here?: boolean } = {}) {
     if (!currentID.value) return undefined
-    const { session } = await api().request({
-      type: "session.fork",
-      sessionID: currentID.value,
-      messageID,
-    })
+    const result = await api()
+      .request({
+        type: "session.fork",
+        sessionID: currentID.value,
+        messageID,
+        ...(how.titleSuffix ? { titleSuffix: true } : {}),
+      })
+      .catch(() => undefined)
+    if (!result) {
+      notifyFailure(t("stream.branchFailed"))
+      return undefined
+    }
+    const { session } = result
     // Same guard as create(): the session.updated event usually lands first.
     if (!sessions.value.some((entry) => entry.id === session.id)) sessions.value.unshift(session)
     await open(session.id)
+    notify(how.here ? t("stream.branchedFromHere") : t("stream.branchedFromCurrent"))
     return session
   }
 
@@ -982,19 +996,68 @@ export const useApp = defineStore("app", () => {
   })
 
   /**
-   * Rolls the conversation back to a message, or puts back what was rolled
-   * back when given none.
+   * MiMo's edit and retry: the messages from this one on are deleted, and no
+   * file moves.
    *
-   * The server decides where the boundary actually lands, because the project
-   * can only be returned to points a turn was recorded at - so the answer is
-   * read back from the session it returns rather than assumed here.
+   * Taken off the list here as well as on the server. No event says messages
+   * left, and a reread racing the resend that follows could come back without
+   * the question just sent.
    */
-  async function revert(sessionID: string, messageID?: string) {
-    const result = await api().request({ type: "session.revert", sessionID, messageID })
+  async function truncate(sessionID: string, messageID: string) {
+    const result = await api().request({ type: "session.revert", sessionID, messageID, files: false })
     const at = sessions.value.findIndex((entry) => entry.id === result.session.id)
     if (at >= 0) sessions.value[at] = result.session
-    history.value = result.history
-    return result.files
+    if (sessionID === currentID.value) {
+      const cut = messages.value.findIndex((message) => message.id === messageID)
+      if (cut >= 0) {
+        messages.value = messages.value.slice(0, cut)
+        partIndex.clear()
+        messages.value.forEach(reindex)
+      }
+      history.value = result.history
+    }
+    // A side chat keeps its transcript by id, loaded whether or not its tab is the one on show.
+    const sideList = sideTranscripts.value[sessionID]
+    if (sideList) {
+      const cut = sideList.findIndex((message) => message.id === messageID)
+      if (cut >= 0) {
+        const kept = sideList.slice(0, cut)
+        sideTranscripts.value = { ...sideTranscripts.value, [sessionID]: kept }
+        sidePartIndexes.delete(sessionID)
+        kept.forEach((message) => sideReindex(sessionID, message))
+      }
+    }
+  }
+
+  /*
+   * MiMo's search result: go to a message in the open conversation and flash
+   * it. The stream carries it out; this records the ask with when it was made,
+   * so asking for the same message twice still reads as a change.
+   */
+  const revealRequest = ref<{ id: string; at: number }>()
+  function revealMessage(id: string) {
+    revealRequest.value = { id, at: Date.now() }
+  }
+
+  /*
+   * The edited-files card's current diff, one patch per file. Kept per set of
+   * paths, as MiMo keeps its figures, so a transcript of many cards asks once
+   * for each; 审阅 asks afresh.
+   */
+  function askTurnDiff(directory: string, files: string[]) {
+    return api().request({ type: "git.diffFiles", directory, files })
+  }
+  const turnDiffs = new Map<string, ReturnType<typeof askTurnDiff>>()
+  function turnDiff(directory: string, files: string[], fresh = false) {
+    const key = [directory, ...[...files].sort()].join("\n")
+    const kept = fresh ? undefined : turnDiffs.get(key)
+    if (kept) return kept
+    const asked = askTurnDiff(directory, files)
+    turnDiffs.delete(key)
+    turnDiffs.set(key, asked)
+    if (turnDiffs.size > 64) turnDiffs.delete(turnDiffs.keys().next().value as string)
+    asked.catch(() => turnDiffs.delete(key))
+    return asked
   }
 
   async function redo(sessionID: string) {
@@ -1592,7 +1655,10 @@ export const useApp = defineStore("app", () => {
     refreshHistory,
     undo,
     redo,
-    revert,
+    truncate,
+    turnDiff,
+    revealRequest,
+    revealMessage,
     revertedAt,
     rolledBack,
     visible,

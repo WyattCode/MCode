@@ -1452,8 +1452,11 @@ export type Request =
    * `messageID` is the first message to roll back; leaving it out restores
    * everything that was rolled back. Both directions move the project's files
    * as well as the transcript, so this is one request rather than two.
+   *
+   * `files: false` is MiMo's edit and retry instead: the messages from
+   * `messageID` on are deleted and no file is touched.
    */
-  | { type: "session.revert"; sessionID: string; messageID?: string }
+  | { type: "session.revert"; sessionID: string; messageID?: string; files?: false }
   | { type: "session.delete"; sessionID: string }
   | { type: "session.compact"; sessionID: string }
   | { type: "session.undo"; sessionID: string }
@@ -1469,7 +1472,8 @@ export type Request =
   | { type: "session.move"; sessionID: string; directory: string }
   /* Out of its project, into a fresh folder of its own, as a task with no project works. */
   | { type: "session.moveOut"; sessionID: string }
-  | { type: "session.fork"; sessionID: string; messageID: string }
+  /* `titleSuffix` names the branch MiMo's way, 「{title} (分支)」, instead of copying the title. */
+  | { type: "session.fork"; sessionID: string; messageID: string; titleSuffix?: boolean }
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
@@ -1584,6 +1588,8 @@ export type Request =
       context?: number
       scope?: "worktree" | "branch"
     }
+  /* The edited-files card: each of a turn's files diffed as it stands now, one patch per file. */
+  | { type: "git.diffFiles"; directory: string; files: string[] }
   | { type: "git.revert"; directory: string; file: string }
   /* The info card's 环境信息 and its commit or push card. */
   | { type: "git.summary"; directory: string }
@@ -1761,6 +1767,8 @@ export interface ResponseMap {
   "git.branches": BranchState
   "git.checkout": CheckoutResult
   "git.diff": { patch: string }
+  /* `repo` false means the project is not in a repository and there is nothing to compare with. */
+  "git.diffFiles": { repo: boolean; files: { path: string; patch: string }[] }
   "git.revert": GitStatus
   "git.summary": GitSummary
   "git.commitState": CommitState

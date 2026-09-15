@@ -12,13 +12,11 @@ import AppMenu from "./components/AppMenu.vue"
 import MessageStream from "./components/MessageStream.vue"
 import SessionSpine from "./components/SessionSpine.vue"
 import Composer from "./components/Composer.vue"
-import TodoDock from "./components/TodoDock.vue"
 import InfoPanel from "./components/InfoPanel.vue"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import ArtifactsView from "./components/ArtifactsView.vue"
 import PluginsView from "./components/PluginsView.vue"
 import RightPanel from "./components/RightPanel.vue"
-import RevertDock from "./components/RevertDock.vue"
 import CommandPalette, { type PaletteMode } from "./components/CommandPalette.vue"
 import QuestionDock from "./components/QuestionDock.vue"
 import { useQuestions } from "./stores/questions"
@@ -4191,19 +4189,6 @@ onBeforeUnmount(() => {
           -->
           <!-- MiMo's confirm dock: the first undecided permission or question, in arrival order. -->
           <QuestionDock />
-          <!--
-            The plan, above the box it is being carried out from. Drawn only
-            when a turn has recorded one, so an ordinary conversation is not
-            given a strip of empty chrome.
-          -->
-          <TodoDock v-if="!infoShowing" />
-          <!--
-            What a rollback took out, and the way back. Drawn only while a
-            rollback stands, because otherwise there is nothing on screen at all
-            to say that the end of the conversation was set aside rather than
-            lost - and no way to ask for it back.
-          -->
-          <RevertDock />
           <!--
             While the session is empty the box belongs inside the hero, between
             the wordmark and the project row, which is where opencode puts it.

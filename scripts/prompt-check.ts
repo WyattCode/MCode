@@ -211,27 +211,8 @@ check(
 
 const stream = read(`${components}/MessageStream.vue`)
 check(
-  "reverting from the transcript puts the message back in the box",
-  /await app\.revert\(sessionID, turn\.id\)[\s\S]{0,200}restoreDraft\(message\)/.test(stream),
-  true,
-)
-
-const dock = read(`${components}/RevertDock.vue`)
-check(
-  "restoring from the dock follows the boundary",
-  /const next = app\.rolledBack\[at \+ 1\][\s\S]{0,200}restoreDraft\(next\)/.test(dock),
-  true,
-)
-check("and the dock names attachments the reference's way", dock.includes("draftLine("), true)
-/*
- * `draftLine` is free of the string table on purpose, so the dock is the only
- * place the empty-message word can come from. Dropping the argument leaves a
- * blank row that compiles and that no locale check can see, since the key would
- * still be defined in all eighteen tables.
- */
-check(
-  "and hands it the word for a message that flattens to nothing",
-  /draftLine\(message, t\("common\.attachment"\)\)/.test(dock),
+  "a retry that is not accepted puts the question back in the box",
+  /await app\.truncate\(sessionID, turn\.id\)[\s\S]{0,300}restoreDraft\(message\)/.test(stream),
   true,
 )
 

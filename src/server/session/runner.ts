@@ -32,7 +32,7 @@ import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
 import type { AuthManager } from "../auth/manager"
 import type { ProviderAdapter, TurnEvent, TurnOutcome } from "../provider/types"
-import { ProviderError } from "../provider/types"
+import { failureCode, failureDetail } from "./error-map"
 import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
@@ -652,6 +652,31 @@ export class SessionRunner {
     const updated = await this.store.update(session.id, { revert: undefined })
     this.bus.publish({ type: "session.reverted", sessionID: session.id })
     return updated
+  }
+
+  /**
+   * MiMo's edit and retry: the messages from one on are deleted and nothing
+   * else moves. Files the later turns changed stay as they are - each turn's
+   * card still offers its own 撤销 - which is why no snapshot is consulted and
+   * the rollback's history floor does not apply.
+   *
+   * A rollback still standing from before is made permanent first, so the
+   * transcript has one boundary and not two. A summary whose mark was among
+   * the deleted messages summarised them, so it goes with them.
+   */
+  async truncate(sessionID: string, messageID: string): Promise<SessionInfo> {
+    if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
+    let session = await this.store.require(sessionID)
+    if (session.revert) session = await this.commitRevert(session)
+    const stored = await this.store.messages(sessionID)
+    const at = stored.findIndex((message) => message.id === messageID)
+    if (at < 0) throw new Error("That message is no longer in this conversation")
+    const kept = new Set(stored.slice(0, at).map((message) => message.id))
+    for (const message of stored.slice(at)) await this.store.deleteMessage(sessionID, message.id)
+    if (session.compacted && !kept.has(session.compacted.messageID)) {
+      session = await this.store.update(sessionID, { compacted: undefined })
+    }
+    return session
   }
 
   /** Puts back what undo took away. */
@@ -1302,7 +1327,8 @@ export class SessionRunner {
             : history,
         tools: lastStep ? [] : this.tools(session.agent, session.model.model),
         effort,
-        showReasoning: config.showReasoning,
+        // MiMo draws no reasoning, so none is asked for.
+        showReasoning: false,
         signal: controller.signal,
         baseURL: definition.baseURL,
         /*
@@ -1569,9 +1595,14 @@ export class SessionRunner {
       if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) return undefined
       assistant.finish = "error"
       assistant.error = describe(err)
-      if (err instanceof ProviderError && err.code) {
-        assistant.errorCode = err.code
-        assistant.errorParams = err.params
+      /*
+       * MiMo's card shows a short sentence and keeps the raw text aside; the
+       * code names the sentence and `detail` keeps what the provider said.
+       */
+      const failure = failureCode(err)
+      if (failure) {
+        assistant.errorCode = failure.code
+        assistant.errorParams = failure.params ?? { detail: failureDetail(err) }
       }
       assistant.time.completed = Date.now()
       await this.store.saveMessage(assistant)
@@ -1731,6 +1762,11 @@ export class SessionRunner {
         part.errorCode = err.code
         part.errorParams = err.params
       }
+      /*
+       * Cut off by Stop rather than failing on its own. The model still reads
+       * the error; the transcript settles the step quietly, as MiMo does.
+       */
+      if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true }
       if (err instanceof PermissionDenied && err.byUser) refusedByUser = true
     } finally {
       stopListening()
