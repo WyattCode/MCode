@@ -210,6 +210,9 @@ import { CronScheduler, KEEPALIVE_DELAY_SECONDS, bindScheduler } from "../src/se
 import { resolvePath as resolveToolPath } from "../src/server/tool/fs-util"
 import type { Message as HistoryMessage, SessionInfo as HistorySession } from "../src/shared/protocol"
 import type { ToolContext as HistoryToolContext } from "../src/server/tool/types"
+import { nextOccurrence, parseRRule, scheduleLabel } from "../src/server/automation/rrule"
+import { AutomationService, notifies } from "../src/server/automation/service"
+import { AUTOMATION_RUN_NOTE, withAutomationNotes } from "../src/server/automation/framing"
 import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/lib/convo-card"
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
@@ -5106,6 +5109,7 @@ async function main() {
   await projectListChecks()
   await deliveredToolChecks(root)
   await historyMemoryCronChecks(root, project)
+  await automationChecks(root, project)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -6564,6 +6568,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
 
   // The runner over a fake provider: what subagents are offered, a scheduled prompt's turn, and history from the model.
   const seenTools: Record<string, string[]> = {}
+  let sawRunNote = false
   let callCount = 0
   const provider = createServer((request, response) => {
     let body = ""
@@ -6575,6 +6580,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
       const lastUser = JSON.stringify(messages[lastUserAt]?.content ?? "")
       const replied = messages.slice(lastUserAt + 1).some((message) => message.role === "tool")
       for (const marker of ["EXPLORE-CHILD", "GENERAL-CHILD", "TOP-LEVEL"]) if (lastUser.includes(marker)) seenTools[marker] = (sent.tools ?? []).map((tool) => tool.function?.name ?? "")
+      if (lastUser.includes("[Scheduled task run]") && lastUser.includes("AUTOMATION-SAYS-HI")) sawRunNote = true
       response.writeHead(200, { "content-type": "text/event-stream" })
       const frame = (payload: unknown) => response.write(`data: ${JSON.stringify(payload)}\n\n`)
       const end = (reason: string) => {
@@ -6650,6 +6656,10 @@ async function historyMemoryCronChecks(root: string, project: string) {
   await quiet()
   check("an explore subagent is offered none of the three", Boolean(seenTools["EXPLORE-CHILD"]) && !["history", "memory", "cron"].some((name) => seenTools["EXPLORE-CHILD"]?.includes(name)), seenTools["EXPLORE-CHILD"])
   check("a general subagent keeps them, as MiMo's general agent does", ["history", "memory", "cron"].every((name) => seenTools["GENERAL-CHILD"]?.includes(name)), seenTools["GENERAL-CHILD"])
+  check(
+    "automation_update is offered to a conversation and to no subagent",
+    Boolean(seenTools["TOP-LEVEL"]?.includes("automation_update")) && !seenTools["GENERAL-CHILD"]?.includes("automation_update") && !seenTools["EXPLORE-CHILD"]?.includes("automation_update"),
+  )
   const child = (await runnerStore.list()).find((session) => session.parentID === parent.id && session.subagent?.type === "general")
   if (child) {
     const scheduledByChild = await CronTool.execute({ operation: { action: "schedule", cron: "0 0 1 1 *", prompt: "child job" } }, context(child.id))
@@ -6673,6 +6683,50 @@ async function historyMemoryCronChecks(root: string, project: string) {
   check("and that turn's write still asks for permission", await until(() => asks.includes(parent.id)), asks)
   runner.abort(parent.id)
   await quiet()
+
+  // automation: a scheduled task's run through the real runner.
+  const automationEvents: { type: string; phase?: string; notify?: boolean }[] = []
+  let automationClock = Date.UTC(2026, 3, 1, 8, 0)
+  const automations = new AutomationService({
+    file: path.join(runnerData, "automations.json"),
+    now: () => automationClock,
+    sessions: runnerStore,
+    prompt: (input) => runner.prompt(input),
+    busy: (sessionID) => runner.isRunning(sessionID),
+    models: () => [{ provider: "fake", id: "m", name: "Fake M" }],
+    agent: () => "build",
+    scratch: async () => project,
+    publish: (event) => runnerBus.publish(event),
+  })
+  await automations.start({ interval: false })
+  runnerBus.subscribe((event) => {
+    if (event.type === "automation.run") automationEvents.push(event)
+    if (event.type === "session.idle") void automations.turnEnded(event.sessionID)
+  })
+  // A folder of its own: earlier sections move the shared project, and a run whose project is gone is skipped.
+  const automationProject = path.join(root, "hmc-automation-project")
+  await fs.mkdir(automationProject, { recursive: true })
+  const automationHome = await runnerStore.create({ directory: automationProject, model, title: "Automation home" })
+  const made = JSON.parse(await automations.handle({ mode: "create", title: "Morning note", prompt: "AUTOMATION-SAYS-HI", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" }, { sessionID: automationHome.id })) as { automation: { id: string } }
+  const automationDue = automations.dueAt(made.automation.id)
+  automationClock = (automationDue ?? 0) + 1000
+  const tickFailure = await automations.tick().then(
+    () => undefined,
+    (failure) => String(failure),
+  )
+  await until(async () => (await runnerStore.list()).some((session) => session.title === "Morning note"))
+  await quiet()
+  const runConversation = (await runnerStore.list()).find((session) => session.title === "Morning note")
+  const runAsk = runConversation ? (await runnerStore.messages(runConversation.id)).find((message) => message.role === "user") : undefined
+  check(
+    "a due task opens a conversation named for it and runs its prompt there, marked as the task's",
+    runAsk?.role === "user" && runAsk.text === "AUTOMATION-SAYS-HI" && runAsk.inbox?.automationID === made.automation.id && runConversation?.directory === automationProject,
+    { runAsk, made, automationDue, automationClock, tickFailure, titles: (await runnerStore.list()).map((session) => session.title), automationEvents },
+  )
+  check("the model reads the run note, which the transcript does not keep", sawRunNote && !runAsk?.text.includes("[Scheduled task run]"))
+  check("the run's end is announced under MiMo's rule for all-runs", await until(() => automationEvents.some((event) => event.phase === "finished" && event.notify === true)), automationEvents)
+  await automations.stop()
+
   await live.stop()
   bindScheduler(undefined)
   runnerIndex.close()
@@ -6680,6 +6734,184 @@ async function historyMemoryCronChecks(root: string, project: string) {
   database.close()
   bindHistory(undefined)
   await new Promise<void>((resolve) => provider.close(() => resolve()))
+}
+
+/* automation: MiMo desktop's scheduled tasks - the recurrence rules, the tool's modes and the runs, on a fake clock. */
+async function automationChecks(root: string, project: string) {
+  section("Scheduled tasks (MiMo's automation_update)")
+
+  // Recurrence rules, on this machine's wall clock.
+  const valid = [
+    "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0",
+    "RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0",
+    "RRULE:FREQ=MONTHLY;BYMONTHDAY=1,15",
+    "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29",
+    "RRULE:FREQ=HOURLY;BYMINUTE=30",
+    "DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2",
+  ]
+  check("MiMo's subset of rules is accepted", valid.every((rule) => parseRRule(rule) !== undefined), valid.filter((rule) => !parseRRule(rule)))
+  const refused = [
+    "FREQ=DAILY;BYHOUR=9",
+    "RRULE:FREQ=MINUTELY",
+    "RRULE:FREQ=WEEKLY;BYHOUR=9",
+    "RRULE:FREQ=MONTHLY",
+    "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30",
+    "RRULE:FREQ=DAILY;COUNT=3",
+    "DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=3;UNTIL=20260301",
+    "RRULE:FREQ=DAILY;BYSECOND=5",
+    "RRULE:FREQ=DAILY;FREQ=DAILY",
+    "RRULE:FREQ=WEEKLY;BYDAY=XX",
+    "RRULE:FREQ=DAILY\nRRULE:FREQ=HOURLY",
+  ]
+  check("and everything outside it is refused", refused.every((rule) => parseRRule(rule) === undefined), refused.filter((rule) => parseRRule(rule)))
+  const friday = new Date(2026, 0, 2, 10, 0).getTime()
+  const next = (rule: string, after = friday, anchor = friday) => nextOccurrence(parseRRule(rule)!, after, anchor)
+  check("every day at 09:00, after 10:00, is tomorrow at 09:00", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 3, 9, 0).getTime())
+  check("weekdays after a Friday morning is Monday", next("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
+  check("an interval counts from the anchor", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
+  check("hourly at half past is the next half hour", next("RRULE:FREQ=HOURLY;BYMINUTE=30") === new Date(2026, 0, 2, 10, 30).getTime())
+  check("COUNT stops after that many runs", next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2") === undefined && next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=3") === new Date(2026, 0, 3, 8, 0).getTime())
+  check("UNTIL stops at its date", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102") === undefined)
+  check(
+    "schedules read the way MiMo names them",
+    scheduleLabel("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=5") === "Every day 09:05" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === "Weekdays 09:00" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0") === "Monday (time: 09:00)" &&
+      scheduleLabel("RRULE:FREQ=HOURLY;BYMINUTE=0") === "Hourly" &&
+      scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2") === "Every 2 days" &&
+      scheduleLabel("RRULE:FREQ=MONTHLY;BYMONTHDAY=1", "First of the month") === "First of the month",
+  )
+  check(
+    "MiMo's notification rule: all runs; failed or skipped only; replies in an existing conversation only",
+    notifies("all-runs", "new-task", "succeeded", false) &&
+      !notifies("failed-runs", "new-task", "succeeded", true) &&
+      notifies("failed-runs", "existing-task", "skipped", false) &&
+      !notifies("important-updates", "new-task", "succeeded", true) &&
+      notifies("important-updates", "existing-task", "succeeded", true) &&
+      !notifies("important-updates", "existing-task", "succeeded", false),
+  )
+  const noted = withAutomationNotes([
+    { id: "u1", sessionID: "s", role: "user", text: "remind me", attachments: [], inbox: { from: "Morning", automationID: "auto-1" }, time: { created: 1 } },
+    { id: "u2", sessionID: "s", role: "user", text: "plain", attachments: [], time: { created: 2 } },
+  ])
+  check("a run's message carries the run note in the request, other messages do not", noted[0]?.role === "user" && noted[0].text === `${AUTOMATION_RUN_NOTE}\n\nremind me` && noted[1]?.role === "user" && noted[1].text === "plain")
+
+  // The service on a fake clock.
+  const data = path.join(root, "automation-data")
+  const storage = new SubagentStorage(path.join(data, "storage"))
+  const bus = new Bus()
+  const store = new SubagentStore(storage, bus)
+  const model = { provider: "fake", model: "m" }
+  const home = await store.create({ directory: project, model, title: "Automation home", effort: "high" })
+  const child = await store.create({ directory: project, model, title: "general-1", parentID: home.id, subagent: { type: "general", id: "general-1" } })
+  let clock = new Date(2026, 0, 2, 10, 0).getTime()
+  const prompts: { sessionID: string; text: string; inbox: unknown }[] = []
+  const events: { type: string; sessionID?: string; phase?: string; notify?: boolean }[] = []
+  const busy = new Set<string>()
+  const file = path.join(data, "automations.json")
+  const deps = {
+    file,
+    now: () => clock,
+    sessions: store,
+    prompt: async (input: { sessionID: string; text: string; inbox: unknown }) => {
+      prompts.push(input)
+    },
+    busy: (sessionID: string) => busy.has(sessionID),
+    models: () => [
+      { provider: "fake", id: "m", name: "Fake M" },
+      { provider: "fake", id: "big", name: "Fake Big" },
+    ],
+    agent: () => "build" as const,
+    scratch: async () => path.join(root, "automation-scratch"),
+    publish: (event: { type: string }) => {
+      events.push(event)
+    },
+  }
+  const service = new AutomationService(deps)
+  await service.start({ interval: false })
+  const call = async (input: Record<string, unknown>, sessionID = home.id) => JSON.parse(await service.handle(input, { sessionID })) as Record<string, any>
+  const fails = (input: Record<string, unknown>, pattern: RegExp, sessionID = home.id) =>
+    service.handle(input, { sessionID }).then(
+      () => false,
+      (failure) => failure instanceof ToolError && pattern.test(failure.message),
+    )
+  check("a subagent cannot manage scheduled tasks", await fails({ mode: "list" }, /subagent/, child.id))
+  check("create names what it is missing", await fails({ mode: "create", title: "x" }, /prompt, rrule/))
+  check("a rule outside the subset is refused with the format", await fails({ mode: "create", title: "x", prompt: "p", rrule: "FREQ=DAILY" }, /RRULE:FREQ=DAILY;BYHOUR=9/))
+  const created = await call({ mode: "create", title: "Daily digest", prompt: "Summarise the day", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", operationId: "op-1" })
+  check(
+    "create keeps the task with MiMo's defaults: active, a new conversation per run, every run notified, this conversation's model, reasoning and project",
+    created.ok === true &&
+      created.automation.id === "auto-1" &&
+      created.automation.status === "active" &&
+      created.automation.runMode === "new-task" &&
+      created.automation.notification === "all-runs" &&
+      created.automation.model.id === "fake/m" &&
+      created.automation.model.name === "Fake M" &&
+      created.automation.reasoning === "high" &&
+      created.automation.project === path.basename(project) &&
+      created.automation.schedule === "Every day 09:00",
+    created,
+  )
+  check("its first run is the next 09:00", service.dueAt("auto-1") === new Date(2026, 0, 3, 9, 0).getTime())
+  check("the same operationId answers a retry exactly as before", (await service.handle({ mode: "create", title: "Daily digest", prompt: "Summarise the day", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", operationId: "op-1" }, { sessionID: home.id })) === JSON.stringify(created))
+  check("and refuses a different change", await fails({ mode: "create", title: "Other", prompt: "p", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", operationId: "op-1" }, /operationId/))
+  const again = await call({ mode: "create", title: "Daily digest", prompt: "Summarise the day", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" })
+  check("the same task asked for again is kept once", again.deduplicated === true && again.created === false && (await call({ mode: "list" })).automations.length === 1)
+  check("a model nobody connected is refused", await fails({ mode: "create", title: "x", prompt: "p", rrule: "RRULE:FREQ=DAILY", model: "nope" }, /No connected model/))
+  const moved = await call({ mode: "update", id: "auto-1", runMode: "existing-task", model: "big" })
+  check(
+    "moving a task into an existing conversation targets this one and notifies only important updates",
+    moved.automation.runMode === "existing-task" && moved.automation.targetThreadId === home.id && moved.automation.notification === "important-updates" && moved.automation.model.id === "fake/big",
+    moved,
+  )
+  const paused = await call({ mode: "pause", id: "auto-1" })
+  check("pause stops its runs", paused.automation.status === "paused" && service.dueAt("auto-1") === undefined)
+  await call({ mode: "resume", id: "auto-1" })
+  check("resume plans the next one", service.dueAt("auto-1") === new Date(2026, 0, 3, 9, 0).getTime())
+  check("view shows one task and an unknown id is refused", (await call({ mode: "view", id: "auto-1" })).automation.title === "Daily digest" && (await fails({ mode: "view", id: "auto-9" }, /no scheduled task/i)))
+
+  // Runs: in the existing conversation, waiting while it is busy; a new conversation; a missing target skipped.
+  clock = new Date(2026, 0, 3, 9, 0, 1).getTime()
+  busy.add(home.id)
+  await service.tick()
+  check("a run waits while its conversation is busy", prompts.length === 0 && (service.dueAt("auto-1") ?? Infinity) <= clock)
+  busy.delete(home.id)
+  await service.tick()
+  check(
+    "then runs its prompt there, marked as the task's, and plans the next day",
+    prompts.length === 1 && prompts[0]?.sessionID === home.id && prompts[0]?.text === "Summarise the day" && JSON.stringify(prompts[0]?.inbox) === JSON.stringify({ from: "Daily digest", automationID: "auto-1" }) && service.dueAt("auto-1") === new Date(2026, 0, 4, 9, 0).getTime(),
+    prompts,
+  )
+  check("its start is announced", events.some((event) => event.type === "automation.run" && event.phase === "started" && event.sessionID === home.id))
+  await store.saveMessage({ id: "msg_0a01", sessionID: home.id, role: "assistant", model, agent: "build", parts: [{ type: "text", id: "prt_0a01", text: "Here is the digest." }], finish: "end_turn", time: { created: clock } })
+  await service.turnEnded(home.id)
+  check("a reply in an existing conversation is an important update", events.at(-1)?.phase === "finished" && events.at(-1)?.notify === true, events.at(-1))
+  await call({ mode: "update", id: "auto-1", runMode: "new-task", project: "none" })
+  clock = new Date(2026, 0, 4, 9, 0, 1).getTime()
+  await service.tick()
+  const opened = (await store.list()).find((session) => session.title === "Daily digest")
+  check(
+    "a new-task run opens a conversation named for the task with its model and reasoning, in a folder of its own when it has no project",
+    Boolean(opened) && opened?.model.model === "big" && opened?.effort === "high" && opened?.scratch === true && opened?.directory === path.join(root, "automation-scratch") && prompts.at(-1)?.sessionID === opened?.id,
+    opened,
+  )
+  await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: "ses_gone" })
+  const before = prompts.length
+  clock = new Date(2026, 0, 5, 9, 0, 1).getTime()
+  await service.tick()
+  check("a run whose conversation is gone is skipped and the schedule moves on", prompts.length === before && service.dueAt("auto-1") === new Date(2026, 0, 6, 9, 0).getTime())
+
+  // Kept in the data folder; a run missed while closed happens once at start.
+  await service.stop()
+  const saved = JSON.parse(await fs.readFile(file, "utf8")) as { automations: { id: string; lastFiredAt?: number }[] }
+  check("tasks are kept in automations.json with their last run", saved.automations.length === 1 && saved.automations[0]?.lastFiredAt === new Date(2026, 0, 5, 9, 0, 1).getTime())
+  clock = new Date(2026, 0, 9, 12, 0).getTime()
+  const reopened = new AutomationService(deps)
+  await reopened.start({ interval: false })
+  check("after a restart the next run is counted from the last one, so a missed run is due at once", (reopened.dueAt("auto-1") ?? Infinity) <= clock && reopened.list()[0]?.targetThreadId === "ses_gone")
+  check("delete removes the task", (await JSON.parse(await reopened.handle({ mode: "delete", id: "auto-1" }, { sessionID: home.id }))).ok === true && reopened.list().length === 0)
+  await reopened.stop()
 }
 
 async function exists(file: string) {

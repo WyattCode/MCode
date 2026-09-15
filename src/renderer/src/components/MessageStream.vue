@@ -931,7 +931,8 @@ defineExpose({ stepMessage, scroller })
         <!-- subagents: what a subagent was handed, labelled as MiMo labels it. -->
         <div v-if="subagent && at === 0 && turn.text !== undefined && !turn.inbox" class="subagent-initial" data-subagent-initial>{{ t("subagentDetail.initialTask") }}</div>
         <!-- session chat: the same row names another conversation, over the question it sent. -->
-        <MessageSourceRow v-else-if="turn.inbox && (subagent || (!latest && turn.inbox.sessionID))" :source="turn.inbox" />
+        <!-- automation: and a scheduled task's run, as MiMo marks one. -->
+        <MessageSourceRow v-else-if="turn.inbox && (subagent || (!latest && (turn.inbox.sessionID || turn.inbox.automationID)))" :source="turn.inbox" />
         <div
           v-if="!latest && (turn.text !== undefined || turn.attachments?.length)"
           class="msg user"
@@ -1181,7 +1182,7 @@ defineExpose({ stepMessage, scroller })
                   </span>
                 </template>
               </div>
-              <MessageSourceRow v-if="row.steer.inbox && (subagent || row.steer.inbox.sessionID)" :source="row.steer.inbox" />
+              <MessageSourceRow v-if="row.steer.inbox && (subagent || row.steer.inbox.sessionID || row.steer.inbox.automationID)" :source="row.steer.inbox" />
               <div v-if="row.steer.text" class="user-bubble steer-bubble">{{ row.steer.text }}</div>
               <span v-if="steerWaiting(turn, at, row.steer)" class="steer-note">{{ t("stream.steerWaiting") }}</span>
             </div>

@@ -50,6 +50,7 @@ import {
 import { buildSummaryPrompt, isSummary, selectForSummary } from "./summary"
 import { systemPrompt, titleFrom } from "./prompt"
 import { memoryFilesFor } from "../history/service"
+import { withAutomationNotes } from "../automation/framing"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -1415,7 +1416,8 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only.
-      const history = withChatHeaders(this.contextFor(session, stored))
+      // automation: a scheduled task's run says so too, in the request only.
+      const history = withAutomationNotes(withChatHeaders(this.contextFor(session, stored)))
 
       const effort = session.effort ?? config.effort
 

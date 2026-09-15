@@ -14,6 +14,7 @@ import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool }
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { CronTool } from "./cron"
+import { AutomationUpdateTool } from "./automation"
 
 /**
  * The tool surface offered to the model.
@@ -59,6 +60,8 @@ export const TOOLS: ToolDefinition[] = [
   MemoryTool,
   // cron: appended after those for the same reason.
   CronTool,
+  // automation: MiMo desktop's scheduled tasks, appended after those for the same reason.
+  AutomationUpdateTool,
 ]
 
 /**
@@ -150,6 +153,8 @@ const READS = new Set([
   "memory",
   // cron: scheduling changes no file but the task list, and a fired prompt's turn records its own.
   "cron",
+  // automation: its runs are turns of their own, which record their own changes.
+  "automation_update",
 ])
 
 /**

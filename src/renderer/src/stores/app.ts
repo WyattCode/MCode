@@ -59,6 +59,9 @@ export const useApp = defineStore("app", () => {
    */
   const turnStarted = new Map<string, number>()
   const finished = ref<{ sessionID: string; elapsed: number }>()
+  /* automation: conversations whose running turn is a scheduled task's run, and the last run the user should be told about. */
+  const automationRuns = ref(new Set<string>())
+  const automationNotice = ref<{ sessionID: string; at: number }>()
 
   /** Starts the clock on turns not seen beginning, and forgets the ones no longer running. */
   function clockTurns(ids: Iterable<string>) {
@@ -592,6 +595,16 @@ export const useApp = defineStore("app", () => {
         if (message?.role !== "assistant") break
         const part = message.parts[location.index]
         if (part?.type === "text" || part?.type === "reasoning") part.text += event.text
+        break
+      }
+      case "automation.run": {
+        const runs = new Set(automationRuns.value)
+        if (event.phase === "started") runs.add(event.sessionID)
+        else {
+          runs.delete(event.sessionID)
+          if (event.notify) automationNotice.value = { sessionID: event.sessionID, at: Date.now() }
+        }
+        automationRuns.value = runs
         break
       }
       case "session.compacting": {
@@ -1893,6 +1906,8 @@ export const useApp = defineStore("app", () => {
     chatLinks,
     chatLinksOf,
     finished,
+    automationRuns,
+    automationNotice,
     clearPermission,
     reopenTab,
     recent,

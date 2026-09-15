@@ -233,6 +233,8 @@ export interface MessageSource {
   sessionID?: string
   /** session chat: a message to handle, or the reply to one this conversation sent. */
   direction?: "request" | "reply"
+  /** automation: sent by this scheduled task's run; `from` is the task's title. */
+  automationID?: string
 }
 
 /* session chat: the task statuses a conversation's record can hold, as MiMo's update_session takes them. */
@@ -2011,6 +2013,8 @@ export type ServerEvent =
    * transcript a window is holding is longer than the one on disk.
    */
   | { type: "session.reverted"; sessionID: string }
+  /** automation: a scheduled task's run started in a conversation, or its turn ended and whether the user is told. */
+  | { type: "automation.run"; sessionID: string; phase: "started" | "finished"; notify?: boolean }
   /** session chat: every conversation's messages in flight, whole, whenever one changes. */
   | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
   /** Incremental append to a part already announced via message.updated. */
