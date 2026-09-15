@@ -4,6 +4,7 @@ import type { BranchState, CheckoutResult } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { notify, notifyFailure } from "../lib/toast"
 import { t } from "../lib/i18n"
+import { readBranches, switchBranch } from "../lib/branch-switch"
 
 /**
  * The home screen's branch chip and its menu, laid out from MiMo's.
@@ -43,7 +44,7 @@ async function refresh() {
     return
   }
   try {
-    const next = await app.client?.request({ type: "git.branches", directory })
+    const next = await readBranches(directory)
     if (props.directory === directory) state.value = next
   } catch {
     if (props.directory === directory) state.value = undefined
@@ -78,32 +79,26 @@ async function checkout(branch: string, force = false) {
   open.value = false
   pending.value = undefined
   const directory = props.directory
-  if (!directory || (!force && branch === state.value?.branch)) return
-  let result: CheckoutResult | undefined
-  try {
-    result = await app.client?.request({ type: "git.checkout", directory, branch, force })
-  } catch (err) {
-    notifyFailure(t("home.branchSwitchFailed", { error: err instanceof Error ? err.message : String(err) }))
-    return
-  }
-  if (!result) return
-  if (result.ok) {
-    const now = result.branch ?? branch
-    if (result.conflicts) notifyFailure(t("home.branchSwitchedConflicts", { branch: now }))
-    else notify(t("home.branchSwitched", { branch: now }))
+  if (!directory) return
+  const outcome = await switchBranch(directory, branch, state.value?.branch, force)
+  if (outcome.kind === "unchanged") return
+  if (outcome.kind === "switched") {
+    if (outcome.conflicts) notifyFailure(t("home.branchSwitchedConflicts", { branch: outcome.branch }))
+    else notify(t("home.branchSwitched", { branch: outcome.branch }))
     await refresh()
     return
   }
-  if (result.worktree) {
-    emit("worktree", result.worktree.directory)
-    notify(t("home.branchToWorktree", { branch, name: result.worktree.name }))
+  if (outcome.kind === "worktree") {
+    emit("worktree", outcome.directory)
+    notify(t("home.branchToWorktree", { branch, name: outcome.name }))
     return
   }
-  if (result.dirty) {
+  if (outcome.kind === "dirty") {
     pending.value = branch
     return
   }
-  report(result, branch)
+  if (outcome.result) report(outcome.result, branch)
+  else notifyFailure(t("home.branchSwitchFailed", { error: outcome.error }))
 }
 
 async function create() {
