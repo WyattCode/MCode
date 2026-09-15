@@ -1700,6 +1700,11 @@ defineExpose({ stepMessage, scroller })
   bottom: 48px;
 }
 
+/* And the transcript's end kept clear of it, as MiMo pads its scroller by 66. */
+:global(.main:has([data-live-edit-pill])) .inner {
+  padding-bottom: 66px;
+}
+
 /*
  * 2.0: MiMo's reading column - 764 wide with 28 each side, so its text runs
  * 708 wide, and it keeps that width on a large screen rather than growing.

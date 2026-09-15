@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from "vue"
-import type { AssistantPart } from "@shared/protocol"
+import { computed, ref, watch } from "vue"
+import type { AssistantPart, ToolPart } from "@shared/protocol"
+import { parseUnifiedDiff } from "@shared/unified-diff"
 import { useApp } from "../stores/app"
+import { useRightPanel } from "../stores/right-panel"
 import { editedFiles } from "../lib/edited-files"
-import { requestFile, requestReview } from "../lib/review-request"
+import { requestFile } from "../lib/review-request"
 import { notify, notifyFailure } from "../lib/toast"
+import type { MenuItem } from "../lib/menu"
 import { t } from "../lib/i18n"
+import ContextMenu from "./ContextMenu.vue"
 
 /*
  * MiMo's card at the end of a turn that changed files: "已编辑 N 个文件" with
@@ -25,16 +29,58 @@ const props = defineProps<{
 }>()
 
 const app = useApp()
+const rp = useRightPanel()
 const edited = computed(() => editedFiles(props.parts, props.directory))
 const files = computed(() => edited.value.files)
 const single = computed(() => (files.value.length === 1 ? files.value[0] : undefined))
 
 const expanded = ref(false)
-const shownFiles = computed(() => (expanded.value ? files.value : files.value.slice(0, 3)))
-const hiddenCount = computed(() => Math.max(0, files.value.length - shownFiles.value.length))
-
 const confirming = ref(false)
 const reverting = ref(false)
+
+/*
+ * MiMo counts the files as they stand now, so an edit made later or a revert
+ * outside the turn moves the figures. Asked once the card is shown and not
+ * reverted; the counts the turn's tools recorded stand where there is no
+ * repository, the ask fails, or a file has no answer.
+ */
+const current = ref<Map<string, { add: number; del: number }>>()
+
+function counts(patch: string) {
+  let add = 0
+  let del = 0
+  for (const section of parseUnifiedDiff(patch)) {
+    for (const hunk of section.hunks) {
+      add += hunk.added
+      del += hunk.removed
+    }
+  }
+  return { add, del }
+}
+
+function keep(answer: { repo: boolean; files: { path: string; patch: string }[] } | undefined) {
+  if (answer?.repo) current.value = new Map(answer.files.map((entry) => [entry.path, counts(entry.patch)]))
+}
+
+let asking = ""
+watch(
+  () => (props.reverted || !props.directory ? "" : [props.directory, ...files.value.map((file) => file.path)].join("\n")),
+  async (key) => {
+    asking = key
+    current.value = undefined
+    if (!key || !props.directory) return
+    const answer = await app.turnDiff(props.directory, files.value.map((file) => file.path)).catch(() => undefined)
+    if (asking === key) keep(answer)
+  },
+  { immediate: true },
+)
+
+const rows = computed(() => files.value.map((file) => ({ ...file, ...(current.value?.get(file.path) ?? {}) })))
+const shownRows = computed(() => (expanded.value ? rows.value : rows.value.slice(0, 3)))
+const hiddenCount = computed(() => Math.max(0, rows.value.length - shownRows.value.length))
+const total = computed(() =>
+  rows.value.reduce((sum, file) => ({ add: sum.add + file.add, del: sum.del + file.del }), { add: 0, del: 0 }),
+)
 
 function baseName(file: string) {
   return file.split(/[\\/]/).pop() || file
@@ -66,17 +112,96 @@ async function revert() {
     reverting.value = false
   }
 }
+
+/* The diffs the turn's own edit, write and patch calls recorded. */
+function toolPatch(): string {
+  const diffs: string[] = []
+  for (const part of props.parts) {
+    if (part.type !== "tool" || !["edit", "write", "patch"].includes(part.name) || part.status === "error") continue
+    const diff = (part as ToolPart).metadata?.diff
+    if (typeof diff === "string" && diff) diffs.push(diff)
+  }
+  return diffs.join("\n")
+}
+
+/*
+ * MiMo's 审阅: a 审阅 diff tab of just this card's files as they stand now,
+ * else the turn's recorded diffs, else a note that there is nothing to show.
+ */
+const reviewing = ref(false)
+async function review() {
+  if (reviewing.value) return
+  reviewing.value = true
+  try {
+    let patch = ""
+    if (props.directory) {
+      const answer = await app.turnDiff(props.directory, files.value.map((file) => file.path), true).catch(() => undefined)
+      keep(answer)
+      if (answer?.repo) patch = answer.files.map((entry) => entry.patch).filter((entry) => entry.trim()).join("\n")
+    }
+    if (!patch.trim()) patch = toolPatch()
+    if (!patch.trim()) {
+      notify(t("stream.noDiff"))
+      return
+    }
+    rp.openDiff(t("stream.reviewFiles"), patch)
+  } finally {
+    reviewing.value = false
+  }
+}
+
+/* MiMo's file menu on a row, or on the whole card when it names one file. */
+const menu = ref<{ x: number; y: number; path: string }>()
+const menuItems = computed<MenuItem[]>(() => [
+  { key: "open", label: t("rp.files.open") },
+  { key: "reveal", label: t("files.reveal") },
+  { key: "copyPath", label: t("rp.files.copyPath") },
+  { key: "copyRelPath", label: t("rp.files.copyRelPath") },
+])
+
+function openMenu(event: MouseEvent, file: string) {
+  event.preventDefault()
+  menu.value = { x: event.clientX, y: event.clientY, path: file }
+}
+
+const root = computed(() => props.directory?.replace(/[\\/]+$/, "") ?? "")
+
+function absolute(file: string) {
+  return /^([a-zA-Z]:)?[\\/]/.test(file) || !root.value ? file : `${root.value}/${file}`
+}
+
+function relative(file: string) {
+  const base = root.value
+  const inside = base && file.toLowerCase().startsWith(base.toLowerCase()) && /[\\/]/.test(file.charAt(base.length))
+  return inside ? file.slice(base.length + 1) : file
+}
+
+async function pickMenu(key: string) {
+  const file = menu.value?.path
+  menu.value = undefined
+  if (!file) return
+  if (key === "open") requestFile(file)
+  else if (key === "reveal") {
+    const result = await window.mcode.revealPath(absolute(file)).catch((error: unknown) => ({ ok: false, error: String(error) }))
+    if (result.ok) return
+    if (!result.error || /ENOENT|not exist|no such file|cannot find/i.test(result.error)) notifyFailure(t("harnessRow.pathNotExist"))
+    else notifyFailure(t("harnessRow.revealFailed", { error: result.error }))
+  } else if (key === "copyPath" || key === "copyRelPath") {
+    window.mcode.setClipboardText(key === "copyPath" ? absolute(file) : relative(file))
+    notify(t("rp.files.pathCopied"))
+  }
+}
 </script>
 
 <template>
   <div v-if="reverted" class="file-card reverted" data-fc-reverted>
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
-      <path d="M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+      <path d="M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
     {{ t("stream.revertedCard", { n: files.length }) }}
   </div>
   <template v-else>
-    <div class="file-card" data-edited-card>
+    <div class="file-card" data-edited-card @contextmenu="single ? openMenu($event, single.path) : undefined">
       <div class="fc-head" data-fc-header>
         <span class="fc-icon" :data-fc-icon="files.length > 1 ? 'multiple' : single?.created ? 'new' : 'edited'">
           <svg v-if="files.length > 1" width="19" height="19" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -102,9 +227,9 @@ async function revert() {
             </template>
             <span v-else class="fc-truncate">{{ t("stream.editedCard", { n: files.length }) }}</span>
           </span>
-          <span class="fc-stat" data-fc-diffstat>
-            <span class="fc-add">+{{ edited.add }}</span>
-            <span class="fc-del">-{{ edited.del }}</span>
+          <span class="fc-stat" data-fc-diffstat :data-fc-source="current ? 'current' : 'tools'">
+            <span class="fc-add">+{{ total.add }}</span>
+            <span class="fc-del">-{{ total.del }}</span>
           </span>
         </span>
         <span v-if="actions" class="fc-actions">
@@ -115,20 +240,21 @@ async function revert() {
               <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
           </button>
-          <button type="button" class="fc-review" data-fc-action="review" @click="requestReview()">
+          <button type="button" class="fc-review" data-fc-action="review" :disabled="reviewing" @click="review">
             {{ t("stream.reviewFiles") }}
           </button>
         </span>
       </div>
       <div v-if="files.length > 1" class="fc-files" data-fc-files>
         <button
-          v-for="(file, index) in shownFiles"
+          v-for="(file, index) in shownRows"
           :key="file.path"
           type="button"
           class="fc-row"
           :data-fc-file-row="index"
           v-tip="{ label: file.path, placement: 'bottom' }"
           @click="requestFile(file.path)"
+          @contextmenu="openMenu($event, file.path)"
         >
           <span class="fc-name">{{ file.path }}</span>
           <span class="fc-stat" data-fc-file-stats>
@@ -164,27 +290,32 @@ async function revert() {
         <button type="button" class="fc-confirm-btn" data-fc-confirm-no @click="confirming = false">{{ t("common.cancel") }}</button>
       </div>
     </div>
+    <ContextMenu v-if="menu" :x="menu.x" :y="menu.y" :items="menuItems" @pick="pickMenu" @close="menu = undefined" />
   </template>
 </template>
 
 <style scoped>
+/* MiMo's card: its page fill and warm line, #fffefd / #f0ebe5, and #181818 / #2e2e2e in the dark. */
 .file-card {
   width: 100%;
   margin-top: 12px;
   overflow: hidden;
   font-weight: 400;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
+  background: #fffefd;
+  border: 1px solid #f0ebe5;
   border-radius: 10px;
 }
 
+/* Taken back: the code-block fill, a little faded, in the muted colour. */
 .file-card.reverted {
   display: flex;
   align-items: center;
   gap: 9px;
   padding: 11px 14px;
-  color: var(--text-weak);
+  color: #151c1399;
   font-size: calc(14px * var(--ui-font-scale, 1));
+  background: #f0f0f2;
+  opacity: 0.85;
 }
 
 .fc-head {
@@ -203,7 +334,7 @@ async function revert() {
   width: 40px;
   height: 40px;
   color: var(--text-weak);
-  background: var(--surface-sunken);
+  background: #f0f0f2;
   border-radius: 10px;
 }
 
@@ -261,12 +392,13 @@ async function revert() {
   line-height: 18px;
 }
 
+/* MiMo writes the card's counts in these two colours whatever the theme. */
 .fc-add {
-  color: var(--diff-add);
+  color: #1a7f37;
 }
 
 .fc-del {
-  color: var(--diff-delete);
+  color: #e5484d;
 }
 
 .fc-actions {
@@ -304,7 +436,10 @@ async function revert() {
   border: 1px solid var(--border-weak);
 }
 
-.fc-revert:hover,
+.fc-revert:hover {
+  background: #f1f0ec;
+}
+
 .fc-review:hover {
   background: var(--surface-hover);
 }
@@ -316,7 +451,7 @@ async function revert() {
 
 .fc-files {
   padding: 2px 12px;
-  border-top: 1px solid var(--border-weak);
+  border-top: 1px solid #f0ebe5;
 }
 
 .fc-row {
@@ -337,7 +472,7 @@ async function revert() {
 
 .fc-row:hover,
 .fc-row:focus-visible {
-  background: var(--surface-sunken);
+  background: #f0f0f2;
   outline: none;
 }
 
@@ -345,7 +480,7 @@ async function revert() {
   flex: 1;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-weak);
+  color: #151c1399;
   font-size: calc(14px * var(--ui-font-scale, 1));
   line-height: 20px;
   white-space: nowrap;
@@ -375,14 +510,15 @@ async function revert() {
 }
 
 /*
- * The question before taking a turn back: a warm tint and edge, since what it
- * asks cannot be undone, with the two answers under it.
+ * The question before taking a turn back, on MiMo's permission card: an orange
+ * tint and edge in both themes, since what it asks cannot be undone, with the
+ * two answers under it.
  */
 .fc-confirm {
   margin-top: 10px;
   padding: 14px 16px;
-  background: color-mix(in srgb, var(--warning) 6%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent);
+  background: #ff6a2b0f;
+  border: 1px solid #ff6a2b59;
   border-radius: 12px;
 }
 
@@ -398,7 +534,7 @@ async function revert() {
 .fc-question svg {
   flex: none;
   margin-top: 1px;
-  color: var(--warning);
+  color: #ff6a2b;
 }
 
 .fc-confirm-actions {
@@ -418,13 +554,85 @@ async function revert() {
   cursor: pointer;
 }
 
+.fc-confirm-btn:hover {
+  background: var(--surface-hover);
+}
+
+/* MiMo's send colours: near-black with white, and near-white with near-black in the dark. */
 .fc-confirm-btn.allow {
-  color: var(--button-primary-text);
-  background: var(--button-primary);
-  border-color: var(--button-primary);
+  color: #ffffff;
+  background: #151c13;
+  border-color: #151c13;
 }
 
 .fc-confirm-btn.allow:hover {
+  background: #151c13;
   opacity: 0.9;
+}
+
+:root[data-theme="dark"] .file-card {
+  background: #181818;
+  border-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .file-card.reverted,
+:root[data-theme="dark"] .fc-icon,
+:root[data-theme="dark"] .fc-row:hover,
+:root[data-theme="dark"] .fc-row:focus-visible {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .file-card.reverted,
+:root[data-theme="dark"] .fc-name {
+  color: #b8b8b8;
+}
+
+:root[data-theme="dark"] .fc-revert:hover {
+  background: #ffffff0f;
+}
+
+:root[data-theme="dark"] .fc-files {
+  border-top-color: #2e2e2e;
+}
+
+:root[data-theme="dark"] .fc-confirm-btn.allow,
+:root[data-theme="dark"] .fc-confirm-btn.allow:hover {
+  color: #151c13;
+  background: #ececec;
+  border-color: #ececec;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .file-card {
+    background: #181818;
+    border-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .file-card.reverted,
+  :root:not([data-theme="light"]) .fc-icon,
+  :root:not([data-theme="light"]) .fc-row:hover,
+  :root:not([data-theme="light"]) .fc-row:focus-visible {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .file-card.reverted,
+  :root:not([data-theme="light"]) .fc-name {
+    color: #b8b8b8;
+  }
+
+  :root:not([data-theme="light"]) .fc-revert:hover {
+    background: #ffffff0f;
+  }
+
+  :root:not([data-theme="light"]) .fc-files {
+    border-top-color: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .fc-confirm-btn.allow,
+  :root:not([data-theme="light"]) .fc-confirm-btn.allow:hover {
+    color: #151c13;
+    background: #ececec;
+    border-color: #ececec;
+  }
 }
 </style>
