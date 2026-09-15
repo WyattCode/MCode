@@ -118,7 +118,7 @@ function onReasonKey(event: KeyboardEvent) {
         type="button"
         class="cmd-toggle"
         data-perm-cmd-toggle
-        :title="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
+        v-tip="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
         :aria-label="t(showFull ? 'perm.hideCmd' : 'perm.viewCmd')"
         :aria-expanded="showFull"
         @click="showFull = !showFull"
