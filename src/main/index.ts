@@ -4,7 +4,7 @@ import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { PowerHold } from "./power"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
@@ -62,6 +62,7 @@ import {
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { restore, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
+import { boundsOnShow, sameBounds } from "./work-area"
 import { createUpdater, parseFeed, type FeedEntry, type UpdateState } from "./updater"
 import { deliveryOf, waitForDelivery } from "./install-notice"
 import pkg from "../../package.json"
@@ -463,6 +464,29 @@ function createWindow(show = true): BrowserWindow {
    * other window still open, closes as usual. window-state's own close listener
    * has already saved the bounds, and a hidden window keeps them for its next show.
    */
+  /*
+   * MiMo's hidden bounds: a window hidden to the tray records exactly where it
+   * was and gets that back when it is shown again - pulled onto a screen if
+   * that one has gone, and applied once more after 150 ms if the show moved it.
+   */
+  let hiddenBounds: Rectangle | undefined
+  let confirmBounds: ReturnType<typeof setTimeout> | undefined
+  window.on("show", () => {
+    const recorded = hiddenBounds
+    hiddenBounds = undefined
+    if (confirmBounds) clearTimeout(confirmBounds)
+    confirmBounds = undefined
+    const target = boundsOnShow(recorded, window.isFullScreen(), screen.getAllDisplays().map((display) => display.workArea))
+    if (!target) return
+    window.setBounds(target)
+    confirmBounds = setTimeout(() => {
+      confirmBounds = undefined
+      if (window.isDestroyed() || window.isFullScreen() || sameBounds(window.getBounds(), target)) return
+      console.info("[hidden-bounds] the window drifted after show; bounds applied again")
+      window.setBounds(target)
+    }, 150)
+  })
+
   window.on("close", (event) => {
     const others = [...windows].filter((entry) => entry !== window && !entry.isDestroyed()).length
     const hide = closeHidesToTray({
@@ -477,6 +501,7 @@ function createWindow(show = true): BrowserWindow {
       return
     }
     event.preventDefault()
+    hiddenBounds = window.isFullScreen() ? undefined : window.getBounds()
     if (process.platform === "darwin" && window.isFullScreen()) {
       window.once("leave-full-screen", () => window.hide())
       window.setFullScreen(false)
