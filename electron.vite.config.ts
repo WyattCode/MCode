@@ -1,4 +1,4 @@
-import { cpSync, createReadStream, existsSync, statSync } from "node:fs"
+import { copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, statSync } from "node:fs"
 import { resolve, sep } from "node:path"
 import { defineConfig, externalizeDepsPlugin } from "electron-vite"
 import vue from "@vitejs/plugin-vue"
@@ -35,6 +35,39 @@ function pdfjsAssets(): Plugin {
   }
 }
 
+/*
+ * FluidSynth's WebAssembly build (LGPL-2.1), which plays a reply's ABC score.
+ * It must stay a separate, replaceable file, so it is never imported: it is
+ * served from js-synthesizer's package while developing and copied, unmodified
+ * and with its licence, to `vendor/` beside the page in a build, where
+ * electron-builder keeps it outside the asar. lib/abc-fluidsynth.ts loads it
+ * with a script tag.
+ */
+const FLUIDSYNTH_SOURCE = resolve("node_modules/js-synthesizer/externals")
+const FLUIDSYNTH_FILES = ["libfluidsynth-2.4.6-with-libsndfile.js", "LICENSE.fluidsynth.txt"]
+
+function fluidsynthVendor(): Plugin {
+  let outDir = ""
+  return {
+    name: "mcode-fluidsynth-vendor",
+    configResolved(config) {
+      outDir = resolve(config.root, config.build.outDir)
+    },
+    configureServer(server) {
+      server.middlewares.use("/vendor", (req, res, next) => {
+        const name = decodeURIComponent((req.url ?? "").split("?")[0]).replace(/^\/+/, "")
+        if (!FLUIDSYNTH_FILES.includes(name)) return next()
+        res.setHeader("Content-Type", name.endsWith(".js") ? "text/javascript" : "text/plain; charset=utf-8")
+        createReadStream(resolve(FLUIDSYNTH_SOURCE, name)).pipe(res)
+      })
+    },
+    writeBundle() {
+      mkdirSync(resolve(outDir, "vendor"), { recursive: true })
+      for (const name of FLUIDSYNTH_FILES) copyFileSync(resolve(FLUIDSYNTH_SOURCE, name), resolve(outDir, "vendor", name))
+    },
+  }
+}
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
@@ -57,7 +90,7 @@ export default defineConfig({
   },
   renderer: {
     root: resolve("src/renderer"),
-    plugins: [vue(), pdfjsAssets()],
+    plugins: [vue(), pdfjsAssets(), fluidsynthVendor()],
     resolve: {
       alias: {
         "@": resolve("src/renderer/src"),
