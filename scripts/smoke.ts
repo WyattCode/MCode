@@ -59,6 +59,11 @@ import type { PermissionRequest, QuestionRequest } from "../src/shared/protocol"
 import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
 import { annotationsBlock } from "../src/shared/annotations"
 import { revertTurnFiles } from "../src/server/session/turn-revert"
+import { branchTitle } from "../src/server/session/store"
+import { failureCode, failureDetail } from "../src/server/session/error-map"
+import { turnFileDiffs } from "../src/server/session/turn-diff"
+import { cardCut, latestTurnParts, stepPart, stickState, stoppedEmpty } from "../src/renderer/src/components/parts/turn-end"
+import type { AssistantPart, ToolPart } from "../src/shared/protocol"
 import { Bus } from "../src/server/bus"
 import { unifiedDiff } from "../src/server/diff"
 import { globToRegExp } from "../src/server/tool/search"
@@ -2761,6 +2766,146 @@ async function main() {
     await backend.runtime.runner.undo(undoSession.id)
     await fs.writeFile(existing, before, "utf8")
     await fs.rm(created, { force: true })
+  }
+
+  section("Round 3: edit and retry, branch names, failure sentences, per-file diffs, turn ends")
+  {
+    const store = backend.runtime.sessions
+    const model = { provider: "anthropic", model: "claude-opus-5" }
+    const talk = await store.create({ directory: project, model })
+    const now = Date.now()
+    // Ids that sort in the order they were written, as real ones do.
+    const asked = (id: string, at: number) =>
+      ({ id, sessionID: talk.id, role: "user", text: id, attachments: [], time: { created: now + at } }) as Message
+    const answered = (id: string, at: number) =>
+      ({
+        id,
+        sessionID: talk.id,
+        role: "assistant",
+        model,
+        agent: "build",
+        parts: [],
+        finish: "end_turn",
+        time: { created: now + at, completed: now + at + 1 },
+      }) as Message
+    for (const message of [asked("msg_r3_1", 0), answered("msg_r3_2", 10), asked("msg_r3_3", 20), answered("msg_r3_4", 30)]) {
+      await store.saveMessage(message, true)
+    }
+    await store.update(talk.id, { title: "Plan", compacted: { messageID: "msg_r3_4", summary: "summary", at: now } })
+    const later = path.join(project, "r3-later.txt")
+    await fs.writeFile(later, "written by a later turn", "utf8")
+
+    // P3-5: MiMo's edit and retry delete messages and leave the files.
+    const cut = await call({ type: "session.revert", sessionID: talk.id, messageID: "msg_r3_3", files: false })
+    const left = (await store.messages(talk.id)).map((message) => message.id)
+    check("an edit or retry deletes the message and everything after it", left.join() === "msg_r3_1,msg_r3_2", left)
+    check("and moves no file", (await fs.readFile(later, "utf8")) === "written by a later turn")
+    check("and says none was written", cut.files === 0, cut.files)
+    check("a summary over the deleted messages goes with them", (await store.require(talk.id)).compacted === undefined)
+    const gone = await call({ type: "session.revert", sessionID: talk.id, messageID: "msg_r3_3", files: false }).then(
+      () => "accepted",
+      (err: Error) => err.message,
+    )
+    check("deleting from a message that is gone is refused", gone !== "accepted", gone)
+    await fs.rm(later, { force: true })
+
+    // P5-15: MiMo's branch names.
+    const kept = await call({ type: "session.fork", sessionID: talk.id, messageID: "msg_r3_2" })
+    check("continuing in a new conversation keeps the title", kept.session.title === "Plan", kept.session.title)
+    const branched = await call({ type: "session.fork", sessionID: talk.id, messageID: "msg_r3_2", titleSuffix: true })
+    check("a branch off a reply is named 「(分支)」", branched.session.title === "Plan (分支)", branched.session.title)
+    const again = await call({ type: "session.fork", sessionID: branched.session.id, messageID: "msg_r3_2", titleSuffix: true })
+    check("and a branch of a branch counts on", again.session.title === "Plan (分支 2)", again.session.title)
+    check("then to 3", branchTitle("Plan (分支 2)") === "Plan (分支 3)", branchTitle("Plan (分支 2)"))
+    check("a title that only mentions the word is not a branch yet", branchTitle("分支 notes") === "分支 notes (分支)", branchTitle("分支 notes"))
+
+    // P5-1: MiMo's short failure sentences.
+    const code = (err: unknown) => failureCode(err)?.code
+    check("an unreachable host reads as the network", code(new Error("getaddrinfo ENOTFOUND api.example.com")) === "error.network")
+    const dropped = new Error("request failed", { cause: Object.assign(new Error("other side closed"), { code: "ECONNRESET" }) })
+    check("so does a dropped socket hiding in a cause", code(dropped) === "error.network", failureDetail(dropped))
+    check("and the detail keeps the cause", failureDetail(dropped).includes("ECONNRESET"), failureDetail(dropped))
+    check("a rate limit", code(new Error("Rate limited by the provider. Wait a moment and try again.")) === "error.rateLimited")
+    check("too many requests", code(new Error("429 Too Many Requests")) === "error.rateLimited")
+    check("a refused key", code(new Error("Authentication failed - check the API key in Settings.")) === "error.authInvalid")
+    check("a key the provider calls wrong", code(new Error("Incorrect API key provided.")) === "error.authInvalid")
+    check("a status written into the sentence", code(new Error("ChatGPT request failed (401) denied")) === "error.authInvalid")
+    check(
+      "a conversation too long for the model",
+      code(new Error("request (22530 tokens) exceeds the available context size (8192 tokens)")) === "error.contextExceeded",
+    )
+    check("a model the provider does not have", code(new Error("The provider does not recognise this model (404). nope")) === "error.modelUnavailable")
+    check("a server error that outlasted the retries", code(new Error("The provider returned 503. This is usually transient.")) === "error.serverError")
+    check("a code the provider set is kept", code(new ProviderError("closed", "error.noReply")) === "error.noReply")
+    const odd = code(new Error("The model refused the tool schema"))
+    check("anything else keeps the provider's words", odd === undefined, odd)
+
+    // P3-11/P3-12: each of a turn's files as it stands now.
+    const git3 = (cwd: string, ...args: string[]) => promisify(execFile)("git", args, { cwd })
+    const parent = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r3-diff-"))
+    const repo3 = path.join(parent, "repo")
+    await fs.mkdir(repo3)
+    await git3(repo3, "init", "-q")
+    await fs.writeFile(path.join(repo3, "tracked.txt"), "one\n")
+    await git3(repo3, "add", "tracked.txt")
+    await git3(repo3, "-c", "user.email=smoke@example.com", "-c", "user.name=smoke", "commit", "-q", "-m", "start")
+    await fs.writeFile(path.join(repo3, "tracked.txt"), "one\ntwo\n")
+    await fs.writeFile(path.join(repo3, "fresh.txt"), "new\n")
+    await fs.writeFile(path.join(parent, "outside.txt"), "not the project's\n")
+    const diffs = await turnFileDiffs(repo3, ["tracked.txt", "fresh.txt", "../outside.txt"])
+    const patchOf = (file: string) => diffs.files.find((entry) => entry.path === file)?.patch ?? ""
+    check("in a repository each file is diffed as it stands", diffs.repo && patchOf("tracked.txt").includes("+two"), patchOf("tracked.txt"))
+    check("a file the turn created is diffed whole", patchOf("fresh.txt").includes("+new"), patchOf("fresh.txt"))
+    check("a path that leaves the project gets nothing", patchOf("../outside.txt") === "", patchOf("../outside.txt"))
+    const asks = await call({ type: "git.diffFiles", directory: repo3, files: ["tracked.txt"] })
+    check("and the window can ask for it", asks.repo === true && String(asks.files[0]?.patch).includes("+two"), asks)
+    const plain = path.join(parent, "plain")
+    await fs.mkdir(plain)
+    check("outside a repository there is nothing to compare with", (await turnFileDiffs(plain, ["a.txt"])).repo === false)
+    await fs.rm(parent, { recursive: true, force: true }).catch(() => undefined)
+
+    // P5-4, P5-8, P5-10, P5-18, P3-14, P4-1: how a turn ends on screen.
+    const tool = (status: ToolPart["status"], extra: Partial<ToolPart> = {}): ToolPart => ({
+      type: "tool",
+      id: "prt_r3",
+      callID: "call_r3",
+      name: "bash",
+      status,
+      input: {},
+      time: { created: 1 },
+      ...extra,
+    })
+    const stateOf = (part: AssistantPart) => (part.type === "tool" ? part.status : part.type)
+    check(
+      "a tool Stop cut off settles as done",
+      stateOf(stepPart(tool("error", { error: "Command was aborted", metadata: { aborted: true } }), false)) === "completed",
+    )
+    check("a tool that failed on its own stays failed", stateOf(stepPart(tool("error", { error: "exit 1" }), false)) === "error")
+    check("a finished turn's running tool settles", stateOf(stepPart(tool("running"), false)) === "completed")
+    check("a live turn's running tool keeps running", stateOf(stepPart(tool("running"), true)) === "running")
+    const thought = stepPart({ type: "reasoning", id: "prt_think", text: "hmm", time: { created: 1 } }, false)
+    check("reasoning is drawn as nothing", thought.type === "reasoning" && thought.text === "")
+    check("a stop that got nothing out keeps its stopped line", stoppedEmpty({ finish: "aborted", parts: [] }))
+    check("a stop after text does not", !stoppedEmpty({ finish: "aborted", parts: [{ type: "text", id: "prt_t", text: "hi" }] }))
+    check("nor a stop after a tool", !stoppedEmpty({ finish: "aborted", parts: [tool("completed")] }))
+    const long = cardCut("x".repeat(700))
+    check("a long failure is cut at 600 with an ellipsis", long?.text.length === 601 && long.text.endsWith("…") && long.clamped, long?.text.length)
+    check("seven lines are cut as well", cardCut("1\n2\n3\n4\n5\n6\n7")?.clamped === true)
+    check("six are not", cardCut("1\n2\n3\n4\n5\n6")?.clamped === false)
+    check("text from 原始错误 on is dropped", cardCut("短句\n\n原始错误：boom")?.text === "短句")
+    check("nothing to say is left to the fallback", cardCut("  ") === undefined)
+    check("64px from the end still counts as the end", stickState(1000, 436, 500).atEnd && !stickState(1000, 436, 500).jump)
+    check("65px away offers the jump", !stickState(1000, 435, 500).atEnd && stickState(1000, 435, 500).jump)
+    check("nothing to scroll offers no jump", !stickState(400, 0, 500).jump)
+    const said = (id: string) => ({ type: "text", id, text: id }) as AssistantPart
+    const reply = (id: string, part: string) =>
+      ({ id, sessionID: "s", role: "assistant", model, agent: "build", parts: [said(part)], time: { created: 1 } }) as Message
+    const question = (id: string, steered = false) =>
+      ({ id, sessionID: "s", role: "user", text: id, attachments: [], time: { created: 1 }, ...(steered ? { steered: true } : {}) }) as Message
+    const thread = [question("q1"), reply("a1", "x"), question("q2"), reply("a2", "y"), question("s1", true), reply("a3", "z")]
+    const latest = latestTurnParts(thread).map((part) => part.id)
+    check("the pill counts the latest turn only, steers included", latest.join() === "y,z", latest)
+    check("and a new question empties it", latestTurnParts([...thread, question("q3")]).length === 0)
   }
 
   section("Steering")
