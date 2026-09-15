@@ -29,6 +29,8 @@ const chosen = ref(
  * before anything was checked.
  */
 const installed = ref<string[]>()
+/* MiMo's picker shows each installed app's own icon; an app without one gets its first letter. */
+const icons = ref<Record<string, string>>({})
 let askedInstalled = false
 
 function askInstalled() {
@@ -37,6 +39,10 @@ function askInstalled() {
   void window.mcode
     .installedApps?.()
     .then((ids) => (installed.value = ids))
+    .catch(() => undefined)
+  void window.mcode
+    .installedAppIcons?.()
+    .then((found) => (icons.value = found))
     .catch(() => undefined)
 }
 
@@ -88,8 +94,8 @@ export function useOpenWith(platform: () => string) {
 
   /* The same list for the settings row: the file manager, then what is installed. */
   const options = computed(() => [
-    { value: FILE_MANAGER_ID, label: managerLabel.value },
-    ...apps.value.map((entry) => ({ value: entry.id, label: t(entry.label) })),
+    { value: FILE_MANAGER_ID, label: managerLabel.value, icon: icons.value[FILE_MANAGER_ID] ?? "" },
+    ...apps.value.map((entry) => ({ value: entry.id, label: t(entry.label), icon: icons.value[entry.id] ?? "" })),
   ])
 
   return { label, items, open, pick, choice, choose, options }

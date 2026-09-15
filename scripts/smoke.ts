@@ -34,6 +34,11 @@ import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { systemPrompt } from "../src/server/session/prompt"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
 import { applyVoiceResult, splitSendWord } from "../src/renderer/src/lib/voice"
+import { chordOf, formatChord, isBindable } from "../src/renderer/src/lib/keys"
+import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
+import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
+import { mergeMcpSecrets } from "../src/server/mcp-save"
+import { ago, t } from "../src/renderer/src/lib/i18n"
 import { VOICE_EDIT_MAX, VOICE_EDIT_PROMPT, parseVoiceEdit, voiceDraftOf, voiceEditMessages } from "../src/server/handlers"
 import { customModelOf } from "../src/server/config"
 import { closeHidesToTray } from "../src/shared/protocol"
@@ -3845,6 +3850,65 @@ async function main() {
   check("with room on neither side, the side overflowing less wins", cramped.side === "top", cramped)
   const limited = fitTip(tipBox(-50, 400, 20, 20), tipSelf, "top", tipView)
   check("the shift never detaches the tip from its control", limited.left === -30, limited)
+
+  section("round 3 settings: shortcuts page, chords and relative time")
+  const keyEvent = (init: Partial<KeyboardEvent>) =>
+    ({ ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, isComposing: false, keyCode: 0, key: "", code: "", ...init }) as KeyboardEvent
+  check(
+    "a shifted bracket records by its physical key",
+    chordOf(keyEvent({ ctrlKey: true, shiftKey: true, key: "{", code: "BracketLeft" })) === "Ctrl+Shift+[",
+  )
+  check("Ctrl+Shift+/ records as the slash", chordOf(keyEvent({ ctrlKey: true, shiftKey: true, key: "?", code: "Slash" })) === "Ctrl+Shift+/")
+  check("a composing key records nothing", chordOf(keyEvent({ ctrlKey: true, isComposing: true, key: "a", code: "KeyA" })) === "")
+  check("a bare modifier records nothing", chordOf(keyEvent({ ctrlKey: true, key: "Control", code: "ControlLeft" })) === "")
+  check("Shift plus a key is bindable, as in MiMo", isBindable("Shift+A"))
+  check("a bare F-key is not bindable", !isBindable("F5"))
+  check("a bare letter is not bindable", !isBindable("A"))
+  check("Windows writes Tab as its glyph", formatChord("Ctrl+Shift+Tab", "win32") === "Ctrl+Shift+⇥")
+  check("Linux writes Meta as Super", formatChord("Meta+Alt+K", "linux") === "Alt+Super+K")
+  check("macOS writes glyphs with Ctrl as the command key", formatChord("Ctrl+Shift+[", "darwin") === "⇧⌘[")
+  const pageCommands = [
+    { id: "session.archive", title: "Archive this session", hint: "Ctrl+Alt+A" },
+    { id: "tab.close", title: "Close tab", hint: "Ctrl+W" },
+    { id: "session.new", title: "New session", hint: "Ctrl+N" },
+    { id: "tab.goto.3", title: "Go to tab 3", hint: "Ctrl+3" },
+    { id: "theme.dark", title: "Theme: Dark" },
+  ]
+  const shownRows = pageRows(pageCommands, (key, params) => (params ? `${key}:${params.n}` : key))
+  check(
+    "the page follows MiMo's order and leaves off commands MiMo's list lacks",
+    shownRows.map((row) => row.id).join(",") === "session.archive,session.new,tab.close,tab.goto.3",
+    shownRows,
+  )
+  check("a MiMo row takes MiMo's label and description", shownRows[0].title === "key.label.conv-archive" && shownRows[0].desc === "key.desc.conv-archive")
+  check("new task carries no description that would be untrue", shownRows[1].desc === "")
+  check("a stand-in command keeps its own title and no description", shownRows[2].title === "Close tab" && shownRows[2].desc === "")
+  check("go to chat carries its number", shownRows[3].title === "key.label.goto-chat:3")
+  check("no page row is left without a command list", PAGE_ROWS.every((row) => row.commands.length > 0))
+  check("just now under a minute", ago(Date.now() - 59_000) === t("time.justNow"))
+  check("minutes are floored", ago(Date.now() - 119_000) === t("time.minutesAgo", { n: 1 }))
+  check("days up to 29", ago(Date.now() - 29 * 86_400_000 - 1000) === t("time.daysAgo", { n: 29 }))
+  check("30 days on is a date, not a relative phrase", !/ago|前/.test(ago(Date.now() - 30 * 86_400_000 - 1000)))
+
+  section("round 3 settings: MCP secrets and the model form")
+  const storedMcp = { type: "local" as const, command: ["node"], environment: { TOKEN: "old", KEEP: "k" }, headers: { A: "1" } }
+  const mergedMcp = mergeMcpSecrets(
+    storedMcp,
+    { type: "local", command: ["node"], environment: { TOKEN: "", KEEP: "", NEW: "n" } },
+    { env: ["TOKEN", "KEEP"] },
+  )
+  check(
+    "a blank saved env row keeps the stored value; a new row is written",
+    JSON.stringify(mergedMcp.environment) === JSON.stringify({ TOKEN: "old", KEEP: "k", NEW: "n" }),
+    mergedMcp,
+  )
+  const clearedMcp = mergeMcpSecrets(storedMcp, { type: "local", command: ["node"], environment: { TOKEN: "" } })
+  check("a blank row not marked kept is written blank", clearedMcp.environment?.TOKEN === "", clearedMcp)
+  const droppedMcp = mergeMcpSecrets(storedMcp, { type: "remote", url: "https://x", headers: { B: "" } }, { headers: ["B"] })
+  check("a kept header with nothing stored is dropped", droppedMcp.headers === undefined, droppedMcp)
+  check("limits take digits only", limitOf("32768").value === 32768 && !limitOf("32K").ok && limitOf("").ok)
+  check("the 128K pill writes 131072 tokens", LIMIT_PRESETS.context.find((entry) => entry.label === "128K")?.value === 131072)
+  check("an endpoint needs http(s) and a host", validEndpoint("https://api.example.com/v1") && !validEndpoint("ftp://x") && !validEndpoint("http://"))
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)

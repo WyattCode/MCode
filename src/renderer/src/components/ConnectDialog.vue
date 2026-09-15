@@ -27,6 +27,8 @@ const app = useApp()
 const target = ref<Group | undefined>(props.group)
 const query = ref("")
 const key = ref("")
+/* MiMo's eye on the key field; hidden by default. */
+const keyShown = ref(false)
 /** The endpoint typed for a local runtime; unset means "wherever it lives now". */
 const endpoint = ref<string>()
 const busy = ref(false)
@@ -360,18 +362,38 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         <template v-if="way?.method === 'api-key'">
           <p class="lead">{{ t("connect.keyLead", { name: provider?.name ?? "" }) }}</p>
-          <label class="label" for="connect-key">{{ t("connect.keyLabel", { name: provider?.name ?? "" }) }}</label>
-          <input
-            id="connect-key"
-            v-model="key"
-            class="field"
-            type="password"
-            :placeholder="t('auth.apiKey')"
-            spellcheck="false"
-            @keydown.enter="submitKey"
-          />
+          <!-- MiMo's key field: the literal label, a password box with a 28px eye at its end. -->
+          <label class="label" for="connect-key">API Key</label>
+          <div class="secret">
+            <input
+              id="connect-key"
+              v-model="key"
+              class="field"
+              :type="keyShown ? 'text' : 'password'"
+              :placeholder="t('model.apiKeyPlaceholder')"
+              spellcheck="false"
+              data-connect-key
+              @keydown.enter="submitKey"
+            />
+            <button
+              type="button"
+              class="eye"
+              :title="t(keyShown ? 'model.hideKey' : 'model.showKey')"
+              :aria-label="t(keyShown ? 'model.hideKey' : 'model.showKey')"
+              data-connect-key-toggle
+              @click="keyShown = !keyShown"
+            >
+              <svg v-if="keyShown" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M10.7 5.1A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13 13 0 0 1-1.7 2.7M6.6 6.6C3.5 8.7 2 12 2 12s3 7 10 7a9.7 9.7 0 0 0 5.4-1.6M2 2l20 20M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+              </svg>
+              <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
           <div class="actions">
-            <button class="go" :disabled="!key.trim() || busy" @click="submitKey">{{ t("connect.submit") }}</button>
+            <button class="go" :disabled="!key.trim() || busy" @click="submitKey">{{ t("common.save") }}</button>
             <button v-if="provider?.keyURL" class="link" @click="openKeyPage">
               {{ t("onboard.getKey") }}
             </button>
@@ -723,6 +745,35 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
 .field:focus {
   background: var(--surface-layer);
+}
+
+/* MiMo's key field: 40 tall at 14px with room at the end for the eye. */
+.secret {
+  position: relative;
+}
+
+.secret .field {
+  height: 40px;
+  padding-inline-end: 36px;
+  font-family: var(--font-sans);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.eye {
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  color: var(--text-weak);
+  border-radius: 6px;
+  transform: translateY(-50%);
+}
+
+.eye:hover {
+  color: var(--text-strong);
 }
 
 .actions {

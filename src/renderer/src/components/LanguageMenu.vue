@@ -28,7 +28,8 @@ const label = computed(() =>
   props.modelValue ? (LANGUAGES.find((entry) => entry.id === props.modelValue)?.label ?? props.modelValue) : t("set.langSystem"),
 )
 
-const sorted = computed(() => [...LANGUAGES].sort((a, b) => a.label.localeCompare(b.label)))
+// MiMo orders by language code, not by the label, and filtering keeps that order.
+const sorted = computed(() => [...LANGUAGES].sort((a, b) => a.id.localeCompare(b.id, "en-US")))
 const matches = computed(() => {
   const needle = query.value.trim().toLocaleLowerCase()
   return needle ? sorted.value.filter((entry) => entry.label.toLocaleLowerCase().includes(needle)) : sorted.value
@@ -151,14 +152,14 @@ onBeforeUnmount(() => {
             @keydown="onSearchKey"
           />
         </div>
+        <!-- MiMo pins 自动检测 above the scrolling list, with no rule after it. -->
+        <button class="lang-item" type="button" role="option" data-language-option="" :aria-selected="!modelValue" @click="choose('')">
+          <span>{{ t("set.langSystem") }}</span>
+          <svg v-if="!modelValue" class="lang-check" width="16" height="16" viewBox="0 0 12 12" aria-hidden="true">
+            <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" />
+          </svg>
+        </button>
         <div class="lang-list">
-          <button class="lang-item" type="button" role="option" data-language-option="" :aria-selected="!modelValue" @click="choose('')">
-            <span>{{ t("set.langSystem") }}</span>
-            <svg v-if="!modelValue" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
-            </svg>
-          </button>
-          <div class="lang-rule" role="separator" />
           <button
             v-for="entry in matches"
             :key="entry.id"
@@ -170,8 +171,8 @@ onBeforeUnmount(() => {
             @click="choose(entry.id)"
           >
             <span>{{ entry.label }}</span>
-            <svg v-if="entry.id === modelValue" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" />
+            <svg v-if="entry.id === modelValue" class="lang-check" width="16" height="16" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M2.5 6.4 4.7 8.6 9.5 3.8" stroke="currentColor" stroke-width="1.2" fill="none" stroke-linecap="round" />
             </svg>
           </button>
           <div v-if="!matches.length" class="lang-empty" data-language-empty>{{ t("set.langNoMatch") }}</div>
@@ -186,34 +187,60 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 
-/* MiMo's trigger: 26 tall, 8 round, the input border, 12px of side padding, 14px text. */
+/* MiMo's select override for the language row: 28 tall, 8 round, the input border, 14/500. */
 .lang-trigger {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 26px;
+  gap: 8px;
+  height: 28px;
   padding: 0 8px 0 12px;
   color: var(--text-strong);
   background: transparent;
-  border: 1px solid var(--border-weak);
+  border: 1px solid #e3e3e0;
   border-radius: 8px;
+  box-shadow: 0 1px 2px #0000000d;
   font-size: calc(14px * var(--ui-font-scale, 1));
   white-space: nowrap;
 }
 
-.lang-trigger:hover {
-  background: var(--surface-hover);
+.lang-label {
+  font-weight: 500;
 }
 
 .lang-caret {
   flex-shrink: 0;
   opacity: 0.5;
 }
+
+:root[data-theme="dark"] .lang-trigger {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+:root[data-theme="dark"] .lang-trigger:hover {
+  background: rgb(58 58 58 / 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .lang-trigger {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .lang-trigger:hover {
+    background: rgb(58 58 58 / 0.5);
+  }
+}
 </style>
 
 <style>
-/* Unscoped: the list is teleported out of the component. */
+/*
+ * Unscoped: the list is teleported out of the component. MiMo's lang-menu:
+ * 16 round on a half-pixel input border with the menu glass, 5px of padding,
+ * a rule-less search row, the pinned 自动检测 row, then 14px rows 1px apart
+ * whose picked one carries only a 16px check in the send colour.
+ */
 .lang-pop {
   position: fixed;
   z-index: 200;
@@ -221,10 +248,14 @@ onBeforeUnmount(() => {
   flex-direction: column;
   box-sizing: border-box;
   width: 240px;
-  padding: 4px;
+  max-height: 380px;
+  padding: 5px;
   background: var(--surface-menu);
-  border-radius: 8px;
+  border: 0.5px solid var(--border-weak);
+  border-radius: 16px;
   box-shadow: var(--shadow-lg);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
 }
 
 .lang-pop.flip {
@@ -235,11 +266,15 @@ onBeforeUnmount(() => {
   display: flex;
   flex-shrink: 0;
   align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 8px;
+  gap: 8px;
+  margin: -5px -5px 4px;
+  padding: 11px 15px 6px;
   color: var(--text-weak);
-  border-bottom: 1px solid var(--border-weak);
+}
+
+.lang-pop .lang-search svg {
+  width: 15px;
+  height: 15px;
 }
 
 .lang-pop .lang-search-input {
@@ -253,26 +288,29 @@ onBeforeUnmount(() => {
 }
 
 .lang-pop .lang-list {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: 1px;
   min-height: 0;
-  padding-block-start: 4px;
   overflow-y: auto;
 }
 
 .lang-pop .lang-item {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  height: 28px;
-  padding: 0 10px;
+  padding: 6px 10px;
   color: var(--text-strong);
   text-align: start;
   background: transparent;
   border: 0;
-  border-radius: 4px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  line-height: 20px;
   white-space: nowrap;
 }
 
@@ -280,15 +318,15 @@ onBeforeUnmount(() => {
   background: var(--surface-hover);
 }
 
-.lang-pop .lang-rule {
-  height: 1px;
-  margin: 4px 6px;
-  background: var(--border-weak);
+.lang-pop .lang-check {
+  flex-shrink: 0;
+  color: var(--button-primary);
 }
 
 .lang-pop .lang-empty {
-  padding: 8px 10px;
+  padding: 14px 10px;
   color: var(--text-weak);
   font-size: calc(13px * var(--ui-font-scale, 1));
+  text-align: center;
 }
 </style>

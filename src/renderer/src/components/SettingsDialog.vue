@@ -29,9 +29,16 @@ import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
-import { chordOf, isBindable } from "../lib/keys"
+import { chordOf, formatChord, isBindable } from "../lib/keys"
+import { pageRows } from "../lib/shortcut-page"
 import { notifyFailure, notify } from "../lib/toast"
 import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
+import { installUpdate, updateState } from "./UpdatePill.vue"
+
+/* MiMo's 当前版本 button reads the update capsule's phase; a download announced by the app counts as ready. */
+const updatePhase = computed(() =>
+  updateState.phase === "idle" && props.updateReady ? "ready" : updateState.phase,
+)
 
 const emit = defineEmits<{ close: []; "check-updates": []; "install-update": [] }>()
 const app = useApp()
@@ -209,14 +216,21 @@ async function removeAgents() {
  * page edits that map through patchConfig and the backend reconnects to match;
  * each server's status comes from the store, which follows the backend's events.
  */
+/* `saved` marks a row whose value is stored but not sent back; blank keeps it, as MiMo's form does. */
+interface McpPair {
+  key: string
+  value: string
+  saved?: boolean
+}
+
 interface McpForm {
   name: string
   type: "stdio" | "http"
   command: string
   url: string
   args: string[]
-  env: { key: string; value: string }[]
-  headers: { key: string; value: string }[]
+  env: McpPair[]
+  headers: McpPair[]
 }
 
 const MCP_KINDS = ["stdio", "http"] as const
@@ -255,17 +269,29 @@ function blankMcpForm(): McpForm {
   return { name: "", type: "stdio", command: "", url: "", args: [], env: [], headers: [] }
 }
 
+/*
+ * MiMo's pills: 已禁用 when off; 检测中… while an enabled server has no answer
+ * yet; its known states by name; anything else 未知.
+ */
 const mcpRows = computed(() =>
   Object.entries(app.config?.mcpServers ?? {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([name, entry]) => {
       const state = app.mcpServers.find((server) => server.name === name)
       const enabled = entry.enabled !== false
+      const status: McpStatus | "checking" | "unknown" = !enabled
+        ? "disabled"
+        : !state
+          ? "checking"
+          : state.status in MCP_TONE
+            ? state.status
+            : "unknown"
       return {
         name,
         remote: entry.type === "remote",
         enabled,
-        status: (enabled ? (state?.status ?? "pending") : "disabled") as McpStatus,
+        status,
+        tone: status in MCP_TONE ? MCP_TONE[status as McpStatus] : "muted",
         error: state?.error,
       }
     }),
@@ -284,14 +310,20 @@ function splitCommand(line: string): string[] {
   return parts
 }
 
-function recordOf(rows: { key: string; value: string }[]): Record<string, string> | undefined {
+function recordOf(rows: McpPair[]): Record<string, string> | undefined {
   const out: Record<string, string> = {}
   for (const row of rows) if (row.key.trim()) out[row.key.trim()] = row.value
   return Object.keys(out).length ? out : undefined
 }
 
-function rowsOf(record?: Record<string, string>) {
-  return Object.entries(record ?? {}).map(([key, value]) => ({ key, value }))
+/* As MiMo's edit does, stored values come back blank and flagged as saved rather than readable. */
+function rowsOf(record?: Record<string, string>): McpPair[] {
+  return Object.keys(record ?? {}).map((key) => ({ key, value: "", saved: true }))
+}
+
+/* The saved rows left blank, whose stored values the server keeps. */
+function keptOf(rows: McpPair[]): string[] {
+  return rows.filter((row) => row.saved && row.key.trim() && row.value === "").map((row) => row.key.trim())
 }
 
 function httpURL(value: string): boolean {
@@ -358,7 +390,11 @@ async function saveMcp() {
   // An edit keeps the server as switched on or off as it was.
   if (app.config?.mcpServers?.[name]?.enabled === false) entry.enabled = false
   try {
-    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: entry } })
+    // Saved rows left blank keep their stored values; the server fills them in, as the window never had them.
+    const keep = { env: keptOf(form.env), headers: keptOf(form.headers) }
+    const result = await app.client?.request({ type: "mcp.save", name, entry, keep })
+    if (!result) throw new Error("not connected")
+    app.config = result.config
   } catch {
     notifyFailure(t("set.mcpForm.saveFailed"))
     return
@@ -554,9 +590,12 @@ async function addProject() {
   if (!directory) return
   const closed = app.config?.closedProjects ?? []
   if (closed.includes(directory)) await app.patchConfig({ closedProjects: closed.filter((entry) => entry !== directory) })
-  // A folder with no conversation is not yet a project here; one is started so it can be.
+  /*
+   * A folder with no conversation is not yet a project here, so one is made -
+   * but, as MiMo's add stays on this page, it is not opened behind the dialog.
+   */
   if (!app.sessions.some((session) => session.directory === directory && !session.archived && !session.scratch)) {
-    await app.create(directory)
+    await app.create(directory, { open: false })
   }
   void loadTrees()
 }
@@ -575,15 +614,29 @@ function configure(directory: string) {
   envName.value = app.config?.projectNames?.[directory] ?? ""
 }
 
-/** The name is the project's display name, the same one renaming it in the side column sets. */
+/*
+ * The name is the project's display name, the same one renaming it in the side
+ * column sets. MiMo's rules: a blank name, or the current one, renames nothing;
+ * a name another project already shows is refused with a warning.
+ */
 async function saveEnv() {
   const directory = configuring.value
   if (!directory) return
-  const names = { ...(app.config?.projectNames ?? {}) }
   const name = envName.value.trim()
-  if (name) names[directory] = name
-  else delete names[directory]
-  await app.patchConfig({ projectNames: names })
+  const current = projectName(directory, app.config?.projectNames)
+  if (!name || name === current) {
+    envName.value = app.config?.projectNames?.[directory] ?? ""
+    notify(t("set.envSaved"))
+    return
+  }
+  const taken = envProjects.value.some(
+    (other) => other !== directory && projectName(other, app.config?.projectNames) === name,
+  )
+  if (taken) {
+    notifyFailure(t("set.envSavedNameTaken", { name }))
+    return
+  }
+  await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [directory]: name } })
   notify(t("set.envSaved"))
 }
 
@@ -718,10 +771,8 @@ const DIFF_MARKS = ["color", "signs"] as const
 
 /*
  * The column's search, after MiMo's: narrows the entries to those whose name
- * matches, and Enter opens the first of them. Being the first text field in
- * the dialog it is also where focus lands on opening - before it, that was the
- * first text box on the General page, the UI font, and opening settings
- * scrolled the page halfway down to show it.
+ * matches, and Enter opens the first of them. Focus no longer lands here on
+ * opening: MiMo focuses the dialog itself (see dialogEl below).
  */
 const navQuery = ref("")
 const NAV_LABELS: Record<Section, string> = {
@@ -840,9 +891,39 @@ function leaveEnvironment() {
   })
 }
 
-function requestClose() {
-  requestLeave(() => emit("close"))
+/*
+ * MiMo's close: the overlay keeps rendering for its .12s fade before it goes.
+ * Reduced motion has no fade to wait for.
+ */
+const closing = ref(false)
+
+function reducedMotion(): boolean {
+  const motion = document.documentElement.getAttribute("data-motion")
+  return motion === "on" || (motion !== "off" && window.matchMedia("(prefers-reduced-motion: reduce)").matches)
 }
+
+function requestClose() {
+  requestLeave(() => {
+    if (closing.value) return
+    if (reducedMotion()) {
+      emit("close")
+      return
+    }
+    closing.value = true
+    window.setTimeout(() => emit("close"), 120)
+  })
+}
+
+/*
+ * MiMo focuses the dialog itself on open rather than a field, so a typed
+ * character does not land in the search and the search shows no focus ring.
+ * This reverses MCode's earlier choice of focusing the nav search.
+ */
+const dialogEl = ref<HTMLElement>()
+/* MiMo lights a hovered nav row only after the pointer has moved in the column. */
+const pointerMoved = ref(false)
+
+onMounted(() => dialogEl.value?.focus())
 
 const saved = ref<string>()
 
@@ -897,18 +978,27 @@ function bucketTitle(bucket: PermissionKind): string {
  * reaches the app underneath - otherwise pressing Ctrl+W to record it would
  * close the tab while recording.
  */
+/* MiMo's ranges for the two size rows: UI 10-24, code 9-24. */
+const SIZE_RANGE = { uiFontSize: [10, 24], codeFontSize: [9, 24] } as const
+
+/* As MiMo does, every keystroke that makes a whole in-range number resizes the interface live. */
+function typeSize(field: "uiFontSize" | "codeFontSize", event: Event) {
+  const text = (event.target as HTMLInputElement).value.trim()
+  const value = Number(text)
+  const [min, max] = SIZE_RANGE[field]
+  if (!/^\d+$/.test(text) || value < min || value > max) return
+  if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
+}
+
 /*
- * A size typed into one of the two rows: a whole number in the range the
- * interface can still be laid out at, else the row goes back to what it was.
+ * MiMo's normalisation when the field is left: not a number or not above zero
+ * goes back to the base size; anything else is rounded and clamped.
  */
-function setSize(field: "uiFontSize" | "codeFontSize", event: Event, fallback: number) {
+function setSize(field: "uiFontSize" | "codeFontSize", event: Event, base: number) {
   const input = event.target as HTMLInputElement
-  const value = Math.round(Number(input.value))
-  const [min, max] = field === "uiFontSize" ? [10, 24] : [8, 24]
-  if (!input.value.trim() || !Number.isFinite(value) || value < min || value > max) {
-    input.value = String(app.config?.[field] ?? fallback)
-    return
-  }
+  const typed = Number(input.value.trim())
+  const [min, max] = SIZE_RANGE[field]
+  const value = !input.value.trim() || !Number.isFinite(typed) || typed <= 0 ? base : Math.round(Math.min(max, Math.max(min, typed)))
   input.value = String(value)
   if (value !== app.config?.[field]) void app.patchConfig({ [field]: value })
 }
@@ -943,6 +1033,11 @@ const recordConflict = computed(() => {
   return props.commands.find((entry) => entry.id !== recording.value && boundKeys(entry) === chord)
 })
 
+/* A conflicting command is named the way the page names it, or by its own title off the page. */
+function commandLabel(command: { id: string; title: string }): string {
+  return shortcutPage.value.find((row) => row.id === command.id)?.title ?? command.title
+}
+
 function onRecordKey(event: KeyboardEvent) {
   event.preventDefault()
   event.stopImmediatePropagation()
@@ -950,8 +1045,17 @@ function onRecordKey(event: KeyboardEvent) {
     cancelRecord()
     return
   }
+  // Read by physical key, skipping composition; MiMo needs a modifier plus a key.
   const chord = chordOf(event)
   if (isBindable(chord)) recordChord.value = chord
+}
+
+/* MiMo's one line for any shortcut write that fails. */
+function saveKeybinds(next: Record<string, string>): Promise<void> {
+  return app.patchConfig({ keybinds: next }).catch(() => {
+    notifyFailure(t("set.keys.saveFailed"))
+    throw new Error("keybinds not saved")
+  })
 }
 
 function onRecordPress(event: MouseEvent) {
@@ -974,28 +1078,37 @@ function cancelRecord() {
   recordChord.value = undefined
 }
 
-function confirmRecord() {
+/* As MiMo does, a failed save keeps the recording open so the chord can be tried again. */
+async function confirmRecord() {
   const command = recording.value
   const chord = recordChord.value
   if (!command || !chord || recordConflict.value) return
-  void app.patchConfig({ keybinds: { ...(app.config?.keybinds ?? {}), [command]: chord } })
-  cancelRecord()
+  try {
+    await saveKeybinds({ ...(app.config?.keybinds ?? {}), [command]: chord })
+    cancelRecord()
+  } catch {
+    /* already said */
+  }
 }
 
 /* Deleting a built-in chord saves an empty one, so the default stops answering too. */
 function deleteBinding(command: string) {
-  void app.patchConfig({ keybinds: { ...(app.config?.keybinds ?? {}), [command]: "" } })
+  void saveKeybinds({ ...(app.config?.keybinds ?? {}), [command]: "" }).catch(() => undefined)
 }
 
 function resetBinding(command: string) {
   const next = { ...(app.config?.keybinds ?? {}) }
   delete next[command]
-  void app.patchConfig({ keybinds: next })
+  void saveKeybinds(next).catch(() => undefined)
 }
 
 async function resetAllBindings() {
-  await app.patchConfig({ keybinds: {} })
-  notify(t("set.keys.resetAllDone"))
+  try {
+    await saveKeybinds({})
+    notify(t("set.keys.resetAllDone"))
+  } catch {
+    /* already said */
+  }
 }
 
 /* MiMo's key search: while on, the next chord pressed is what the table is narrowed to; Escape clears it. */
@@ -1072,8 +1185,11 @@ async function reopenProject(directory: string) {
   })
 }
 
+/* MiMo lists the newest-archived first; a session archived before the stamp existed falls back to its last update. */
 const archived = computed(() =>
-  app.sessions.filter((session) => session.archived).sort((a, b) => b.updated - a.updated),
+  app.sessions
+    .filter((session) => session.archived)
+    .sort((a, b) => (b.archivedAt ?? b.updated) - (a.archivedAt ?? a.updated)),
 )
 
 /* MiMo's row line: 已归档 · 项目「name」 · time, or without the project for a scratch task. */
@@ -1110,9 +1226,18 @@ function toggleAllPicked() {
   picked.value = allPicked.value ? [] : archived.value.map((session) => session.id)
 }
 
+/* MiMo confirms a restore with one toast, and a batch with one counted toast rather than one each. */
+async function restoreOne(sessionID: string) {
+  await app.archive(sessionID, false)
+  notify(t("toast.convoRestored"))
+}
+
 async function restorePicked() {
-  for (const sessionID of pickedLive.value) await app.archive(sessionID, false)
+  const ids = [...pickedLive.value]
+  for (const sessionID of ids) await app.archive(sessionID, false)
   stopSelecting()
+  if (ids.length === 1) notify(t("toast.convoRestored"))
+  else if (ids.length) notify(t("toast.convosRestored", { n: ids.length }))
 }
 
 /** What the delete dialog is about: one named conversation, or the selection. */
@@ -1124,6 +1249,8 @@ async function confirmRemove() {
   if (!target) return
   for (const sessionID of target.ids) await app.remove(sessionID)
   if (target.title === undefined) stopSelecting()
+  if (target.ids.length === 1) notify(t("toast.convoDeleted"))
+  else if (target.ids.length) notify(t("toast.convosDeleted", { n: target.ids.length }))
 }
 
 // Nothing left to manage ends the selection, as the toggle disappears with the list.
@@ -1177,61 +1304,35 @@ async function resetEverything() {
   emit("close")
 }
 
-/*
- * Grouped the way opencode groups them, and in its order, so the two pages can
- * be read side by side. Only bindings this app actually honours are listed - a
- * shortcuts page that lies is worse than a short one.
- */
-/*
- * The page is derived from the commands themselves rather than listed here.
- *
- * A hand-written table has to be kept in step with the command list by hand,
- * and it was not: rows named chords nothing implemented, and commands added
- * elsewhere never appeared. Deriving it means a command is bindable the moment
- * it exists, and the thirty-seven themes and eighteen languages get their rows
- * for free - which is what the reference's own page shows.
- */
-const SECTIONS = [
-  "key.groupGeneral",
-  "key.groupSession",
-  "key.groupNavigation",
-  "key.groupModels",
-  "key.groupTerminal",
-  "key.groupPrompt",
-  "key.groupDisplay",
-] as const
-
-/**
- * What the shortcuts page is narrowed to.
- *
- * The page carries every command, which now includes thirty-seven themes and
- * eighteen languages - the reference's own page is long for the same reason,
- * and ships a search box for the same reason. Matched against the name and the
- * chord, so both "terminal" and "ctrl+b" find their row.
- */
+/** What the shortcuts page is narrowed to by typing. */
 const keyFilter = ref("")
 
 /*
- * MiMo's shortcut list: one table rather than groups, narrowed either by what
- * is typed (a command's name or its chord) or, in key search, by the chord
- * pressed. Ordered by group and then name, so related commands still sit
- * together. A hidden command - one the palette does not offer - stays off it.
+ * MiMo's fixed shortcut list, in its order, each row a label over a
+ * description (see lib/shortcut-page). The per-theme, per-language and other
+ * picker commands stay bindable from the palette but are off this page, as
+ * the user chose.
+ */
+const shortcutPage = computed(() => pageRows(props.commands, t))
+
+/** A chord as MiMo prints it on the key cap. */
+function shownChord(chord: string): string {
+  return formatChord(chord, app.platform)
+}
+
+/*
+ * Narrowed by what is typed - matched against the label, the description and
+ * the chord as printed - or, in key search, by the chord pressed.
  */
 const shortcutRows = computed(() => {
   const needle = keyFilter.value.trim().toLowerCase()
   const chord = keySearchChord.value?.toLowerCase()
-  const rows = props.commands.filter((command) => {
-    if (command.hidden) return false
-    if (keySearch.value) return !chord || boundKeys(command).toLowerCase() === chord
-    return !needle || `${command.title} ${boundKeys(command)}`.toLowerCase().includes(needle)
+  return shortcutPage.value.filter((row) => {
+    if (keySearch.value) return !chord || boundKeys(row).toLowerCase() === chord
+    if (!needle) return true
+    const bound = boundKeys(row)
+    return [row.title, row.desc, shownChord(bound), bound].some((text) => text.toLowerCase().includes(needle))
   })
-  const rank = (group?: string) => {
-    const at = (SECTIONS as readonly string[]).indexOf(group ?? "key.groupGeneral")
-    return at < 0 ? SECTIONS.length : at
-  }
-  return rows
-    .map((command) => ({ id: command.id, title: command.title, hint: command.hint, group: command.group }))
-    .sort((a, b) => rank(a.group) - rank(b.group) || a.title.localeCompare(b.title))
 })
 
 
@@ -1626,16 +1727,16 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 </script>
 
 <template>
-  <div class="overlay" @mousedown.self="requestClose">
-    <div v-modal class="dialog">
+  <div class="overlay" :class="{ closing }" data-settings-overlay data-modal-no-exit @mousedown.self="requestClose">
+    <div ref="dialogEl" v-modal class="dialog" data-modal-keep-focus>
       <!-- 2.0: MiMo's dialog closes from its own corner as well as from Escape
            and the scrim, which a pointer-only reader otherwise has to find. -->
-      <button class="close" :aria-label="t('common.close')" @click="requestClose">
+      <button class="close" :aria-label="t('common.close')" data-settings-close @click="requestClose">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M3.5 3.5l9 9M12.5 3.5l-9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
         </svg>
       </button>
-      <nav class="nav">
+      <nav class="nav" :class="{ 'mouse-active': pointerMoved }" @pointermove="pointerMoved = true">
         <div class="nav-title">{{ t("rail.settings") }}</div>
         <input
           v-model="navQuery"
@@ -2413,6 +2514,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   inputmode="numeric"
                   spellcheck="false"
                   :aria-label="t('set.uiFontSize')"
+                  data-size-input="ui"
+                  @input="typeSize('uiFontSize', $event)"
                   @change="setSize('uiFontSize', $event, 14)"
                   @keydown.enter="($event.target as HTMLInputElement).blur()"
                 />
@@ -2432,6 +2535,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   inputmode="numeric"
                   spellcheck="false"
                   :aria-label="t('set.codeFontSize')"
+                  data-size-input="code"
+                  @input="typeSize('codeFontSize', $event)"
                   @change="setSize('codeFontSize', $event, 12)"
                   @keydown.enter="($event.target as HTMLInputElement).blur()"
                 />
@@ -2546,11 +2651,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <h2>{{ t("set.personal") }}</h2>
           <p class="page-sub">{{ t("set.personalSub") }}</p>
           <h3>{{ t("set.instructions") }}</h3>
+          <!-- MiMo's 了解更多 follows the sentence with no space between. -->
           <p class="page-sub ci-sub">
-            {{ t("set.instructionsSub") }}
-            <button type="button" class="ci-link" :aria-expanded="ciHelpOpen" @click="ciHelpOpen = !ciHelpOpen">
-              {{ t("set.learnMore") }}
-            </button>
+            {{ t("set.instructionsSub") }}<button type="button" class="ci-link" data-ci-link :aria-expanded="ciHelpOpen" @click="ciHelpOpen = !ciHelpOpen">{{ t("set.learnMore") }}</button>
           </p>
           <div v-if="ciHelpOpen" class="ci-help" data-ci-help>
             <span>{{ t("set.ciHelp1") }}</span>
@@ -2565,7 +2668,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             :aria-label="t('set.instructions')"
           />
           <div class="ci-actions">
-            <button class="ctl-btn" :disabled="!dirty" @click="saveInstructions">
+            <!-- MiMo's save turns into the primary button once there is something to save. -->
+            <button class="ctl-btn ci-save" :class="{ 'update-install': dirty }" data-ci-save :disabled="!dirty" @click="saveInstructions">
               {{ t("common.save") }}
             </button>
           </div>
@@ -2984,7 +3088,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
           </div>
           <template v-else>
-            <p class="page-sub wt-count">{{ t("set.worktreeCount", { n: String(trees.length) }) }}</p>
+            <p class="page-sub wt-count">{{ t("set.worktreeCount", { count: trees.length }) }}</p>
             <div class="card wt-list">
               <div v-for="tree in trees" :key="tree.directory" class="line wt-row">
                 <span class="wt-name" :title="tree.name">{{ tree.name }}</span>
@@ -3081,11 +3185,19 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <div class="line-title">{{ t("set.version") }}</div>
                 <div class="line-sub">
                   MCode {{ app.version }}
-                  <span v-if="updateReady" class="update-hint" data-update-install-hint>{{ t("set.updateInstallHint") }}</span>
+                  <span v-if="updatePhase === 'ready'" class="update-hint" data-update-install-hint>{{ t("set.updateInstallHint") }}</span>
                 </div>
               </div>
-              <button v-if="updateReady" class="ctl-btn update-install" data-update-install @click="emit('install-update')">
-                {{ t("set.restartUpdate") }}
+              <!-- MiMo's button follows the capsule's phase: 重启更新, 更新中… (disabled), or 重试. -->
+              <button
+                v-if="updatePhase !== 'idle'"
+                class="ctl-btn update-install"
+                data-update-install
+                :data-update-phase="updatePhase"
+                :disabled="updatePhase === 'installing'"
+                @click="installUpdate()"
+              >
+                {{ t(updatePhase === "installing" ? "update.pillInstalling" : updatePhase === "failed" ? "update.pillRetry" : "set.restartUpdate") }}
               </button>
               <button v-else class="ctl-btn" data-check-update :disabled="updateChecking" @click="emit('check-updates')">
                 {{ t(updateChecking ? "set.checking" : "update.check") }}
@@ -3109,7 +3221,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 
         </template>
 
-        <template v-else-if="section === 'keys'">
+        <div v-else-if="section === 'keys'" class="keys-page" data-shortcuts-page>
           <h2>{{ t("set.shortcuts") }}</h2>
           <!--
             MiMo's shortcut page: a search bar that searches by words or, with
@@ -3118,7 +3230,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           -->
           <div class="keys-search" data-shortcuts-searchbar>
             <div v-if="keySearch" class="keys-search-capture" data-key-search-capture>
-              <span v-if="keySearchChord" class="keys-search-chord">{{ keySearchChord }}</span>
+              <span v-if="keySearchChord" class="keys-search-chord">{{ shownChord(keySearchChord) }}</span>
               <template v-else>{{ t("set.keys.pressToSearch") }}</template>
             </div>
             <input
@@ -3164,12 +3276,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <span>{{ t("set.keys.colBinding") }}</span>
             </div>
             <div v-for="shortcut in shortcutRows" :key="shortcut.id" class="keys-row" :data-shortcut-id="shortcut.id">
-              <div class="keys-command">{{ shortcut.title }}</div>
+              <div class="keys-command">
+                <div class="keys-label">{{ shortcut.title }}</div>
+                <div v-if="shortcut.desc" class="keys-desc" data-shortcut-desc>{{ shortcut.desc }}</div>
+              </div>
               <div class="keys-binding">
                 <div v-if="recording === shortcut.id" class="keys-record">
                   <div class="keys-record-line">
                     <span class="keys-record-box" :class="{ conflict: recordConflict }" data-record-box>
-                      {{ recordChord || t("set.keys.pressKey") }}
+                      {{ recordChord ? shownChord(recordChord) : t("set.keys.pressKey") }}
                     </span>
                     <button
                       v-if="recordChord && !recordConflict"
@@ -3185,11 +3300,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     </button>
                   </div>
                   <span v-if="recordConflict" class="keys-record-conflict" data-record-conflict>
-                    {{ t("set.keys.conflict", { label: recordConflict.title }) }}
+                    {{ t("set.keys.conflict", { label: commandLabel(recordConflict) }) }}
                   </span>
                 </div>
                 <template v-else>
-                  <kbd v-if="boundKeys(shortcut)" class="keys-kbd" data-binding>{{ boundKeys(shortcut) }}</kbd>
+                  <kbd v-if="boundKeys(shortcut)" class="keys-kbd" data-binding>{{ shownChord(boundKeys(shortcut)) }}</kbd>
                   <span v-else class="keys-unassigned" data-binding-unassigned>{{ t("set.keys.unassigned") }}</span>
                   <button
                     type="button"
@@ -3236,11 +3351,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
             <div v-if="!shortcutRows.length" class="keys-empty" data-shortcuts-empty>{{ t("set.keys.noMatch") }}</div>
           </div>
+          </div>
 
           <div class="keys-foot">
             <button class="ctl-btn" data-reset-all-shortcuts @click="resetAllBindings">{{ t("set.keys.resetAll") }}</button>
           </div>
-        </template>
+        </div>
 
         <!-- Archive -->
         <template v-else-if="section === 'archive'">
@@ -3309,7 +3425,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   <div class="line-sub">{{ archivedDescription(session) }}</div>
                 </div>
                 <div v-if="!selecting" class="confirm">
-                  <button class="ctl-btn" data-archived-restore @click="app.archive(session.id, false)">{{ t("set.unarchive") }}</button>
+                  <button class="ctl-btn" data-archived-restore @click="restoreOne(session.id)">{{ t("set.unarchive") }}</button>
                   <button
                     class="archived-delete"
                     data-archived-delete
@@ -3588,18 +3704,37 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
   gap: 6px;
 }
 
+/* MiMo's th-numin: 64 by 26, a 1px line border, 9 round, right-aligned 14px on the input fill. */
 .size-input {
+  box-sizing: border-box;
   width: 64px;
+  height: 26px;
+  padding: 0 10px;
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background: #ffffff;
+  border: 1px solid #f3efeb;
+  border-radius: 9px;
   box-shadow: none;
-  text-align: center;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 
 .unit {
-  color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
+  color: var(--text-weaker);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .size-input {
+  background: #181818;
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .size-input {
+    background: #181818;
+    border-color: #3d3d3d;
+  }
 }
 
 .font-field {
@@ -3739,12 +3874,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
 }
 
 .nav-item:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
-}
-
-.nav-item:hover .nav-ico,
-.nav-item.on .nav-ico {
   color: var(--text-strong);
 }
 
@@ -4237,17 +4366,70 @@ h3 {
   min-width: 0;
 }
 
+/* MiMo's shortcuts page: title and search pinned, only the list scrolls, reset-all pinned at the foot. */
+.content:has(> .keys-page) {
+  overflow: hidden;
+}
+
+.keys-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.keys-page > h2,
+.keys-page > .keys-search {
+  flex: none;
+}
+
+.keys-list {
+  flex: 1;
+  min-height: 0;
+  margin-inline-end: -10px;
+  padding-inline-end: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.keys-page > .keys-foot {
+  flex: none;
+  margin-top: 0;
+  padding-top: 16px;
+}
+
+.keys-label {
+  color: var(--text-strong);
+  font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.keys-desc {
+  margin-top: 2px;
+  color: var(--text-weaker);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+/* MiMo's key cap sits on the code background: #f0f0f2 light, #2e2e2e dark. */
 .keys-kbd {
   display: inline-flex;
   align-items: center;
   padding: 2px 8px;
   color: var(--text-strong);
-  background: var(--surface-raised);
+  background: #f0f0f2;
   border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
   border-radius: 6px;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
   font-family: var(--font-sans);
   font-size: calc(13px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .keys-kbd {
+  background: #2e2e2e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .keys-kbd {
+    background: #2e2e2e;
+  }
 }
 
 .keys-unassigned {
@@ -4758,6 +4940,45 @@ h3 {
   border-color: var(--border-strong);
 }
 
+/* MiMo's ci-input: the input fill (#fff / #181818) on a 1px line, the dim colour on focus. */
+.ci-input,
+.ci-help {
+  background: #ffffff;
+  border-color: #f3efeb;
+}
+
+.ci-input:focus {
+  border-color: var(--text-weaker);
+}
+
+/* Clean, MiMo's save is the secondary button at full opacity, its text not greyed. */
+.ci-save:disabled {
+  color: #151c13;
+  opacity: 1;
+}
+
+:root[data-theme="dark"] .ci-input,
+:root[data-theme="dark"] .ci-help {
+  background: #181818;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .ci-save:disabled {
+  color: var(--text-strong);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ci-input,
+  :root:not([data-theme="light"]) .ci-help {
+    background: #181818;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .ci-save:disabled {
+    color: var(--text-strong);
+  }
+}
+
 .ci-actions {
   display: flex;
   justify-content: flex-end;
@@ -4826,48 +5047,51 @@ h3 {
   font-weight: 500;
 }
 
+/*
+ * MiMo's th-seg: 26 tall including a 1px line border, 9 round, no dividers;
+ * segments on the page ground at 12px muted, the picked one solid
+ * selection-strong under white text (MiMo does not redefine it for dark).
+ */
 .choice {
   display: inline-flex;
   flex-shrink: 0;
+  box-sizing: border-box;
+  height: 26px;
   overflow: hidden;
-  background: var(--surface-base);
-  border: 1px solid var(--border-weak);
-  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  border: 1px solid #f3efeb;
+  border-radius: 9px;
 }
 
 .choice-btn {
-  min-width: 54px;
-  height: 26px;
-  padding: 0 10px;
+  height: 100%;
+  min-width: 0;
+  padding: 0 12px;
   color: var(--text-weak);
-  background: transparent;
+  background: var(--surface-raised);
   border: 0;
   font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 400;
   cursor: pointer;
 }
 
-.choice-btn + .choice-btn {
-  border-inline-start: 1px solid var(--border-weak);
-}
-
 .choice-btn:hover {
-  color: var(--text-base);
-  background: var(--surface-hover);
+  color: var(--text-strong);
 }
 
-/*
- * Mixed against the ground this control actually has.
- *
- * `.choice` fills itself with --surface-base, and this was
- * --surface-raised-hover, which is the same #fafafa in the light scheme: the
- * selected segment of every permission control measured 250 on a 250 ground,
- * step 0, so which one was chosen was invisible. Found by sweeping the live
- * interface for fills that match what is behind them - the fourth of these
- * today, all the same shape.
- */
 .choice-btn.on {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-base));
+  color: #ffffff;
+  background: #151c13;
+}
+
+:root[data-theme="dark"] .choice {
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .choice {
+    border-color: #3d3d3d;
+  }
 }
 
 /* The one answer that stops something happening says so in the warning hue. */
@@ -5211,29 +5435,68 @@ h3 {
  * labels, and cards a step lighter again with a 16px corner. Rows are a 14/500
  * name over a 12/500 line in the base text colour, 16 above and below.
  */
+/* MiMo's light scrim, its settings-full rule and the warm nav fill; dark values follow below. */
 .overlay {
-  background: rgb(0 0 0 / 0.24);
+  background: #0000001a;
+  animation: settings-overlay-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* MiMo fades the whole overlay in from .99 and out over .12s while it keeps rendering. */
+.overlay .dialog {
+  animation: none;
+}
+
+.overlay.closing {
+  animation: settings-overlay-out 0.12s ease-in forwards;
+}
+
+@keyframes settings-overlay-in {
+  from {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+@keyframes settings-overlay-out {
+  to {
+    opacity: 0;
+    transform: scale(0.99);
+  }
+}
+
+:root[data-motion="on"] .overlay,
+:root[data-motion="on"] .overlay.closing {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-motion="system"] .overlay,
+  :root[data-motion="system"] .overlay.closing {
+    animation: none;
+  }
 }
 
 .dialog {
   position: relative;
   width: min(960px, 92vw);
   height: min(660px, 86vh);
-  background: var(--surface-raised);
-  border: 1px solid color-mix(in srgb, var(--text-strong) 16%, var(--surface-raised));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 20px;
+  outline: none;
 }
 
+/* MiMo's u-modal-close: 14 from the corner, 28 square, muted, a ring on keyboard focus. */
 .close {
   position: absolute;
-  top: 18px;
-  inset-inline-end: 18px;
+  top: 14px;
+  inset-inline-end: 14px;
   z-index: 1;
   display: grid;
   place-items: center;
   width: 28px;
   height: 28px;
-  color: var(--text-base);
+  color: var(--text-weak);
   border-radius: 8px;
 }
 
@@ -5242,13 +5505,52 @@ h3 {
   background: var(--surface-hover);
 }
 
+.close:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
+}
+
+.close:active {
+  scale: 0.96;
+}
+
 .nav {
   gap: 2px;
   width: 241px;
   min-width: 241px;
   padding: 19px 11px 12px;
-  background: var(--surface-raised);
-  border-inline-end: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-raised));
+  background: #f8f7f5;
+  border-inline-end: 1px solid #f3efeb;
+}
+
+:root[data-theme="dark"] .overlay {
+  background: #0000003d;
+}
+
+:root[data-theme="dark"] .dialog {
+  background: #1f1f1f;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .nav {
+  background: #141414;
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .overlay {
+    background: #0000003d;
+  }
+
+  :root:not([data-theme="light"]) .dialog {
+    background: #1f1f1f;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .nav {
+    background: #141414;
+    border-color: #3d3d3d;
+  }
 }
 
 .nav-title {
@@ -5289,23 +5591,40 @@ h3 {
   line-height: 20px;
 }
 
+/* MiMo's nav icons are 17 square in the label's own strong colour, on every row. */
 .nav-ico {
-  width: 18px;
-  height: 18px;
-  color: var(--text-base);
+  width: 17px;
+  height: 17px;
+  color: currentColor;
 }
 
+/* Hover shows only once the pointer has moved in the column, so a resting pointer under a fresh dialog lights nothing. */
 .nav-item:hover {
-  background: color-mix(in srgb, var(--text-strong) 5%, var(--surface-raised));
+  background: transparent;
 }
 
-.nav-item.on {
-  background: color-mix(in srgb, var(--text-strong) 8%, var(--surface-raised));
+.nav.mouse-active .nav-item:hover {
+  background: color-mix(in srgb, var(--text-strong) 5%, transparent);
+}
+
+.nav-item.on,
+.nav.mouse-active .nav-item.on:hover {
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
 }
 
 .content {
   padding: 44px 40px;
-  background: var(--surface-menu);
+  background: #ffffff;
+}
+
+:root[data-theme="dark"] .content {
+  background: #1f1f1f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .content {
+    background: #1f1f1f;
+  }
 }
 
 h2 {
@@ -5322,10 +5641,11 @@ h3 {
   line-height: 22.4px;
 }
 
+/* MiMo's set-card: white on the white page in light, a faint warm rule between; #282828 on #1f1f1f in dark. */
 .card {
   padding: 0 17px;
-  background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-menu));
-  border: 1px solid color-mix(in srgb, var(--text-strong) 13.4%, var(--surface-menu));
+  background: #ffffff;
+  border: 1px solid #f3efeb;
   border-radius: 16px;
   box-shadow: none;
 }
@@ -5336,7 +5656,29 @@ h3 {
 
 .line {
   padding: 16px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  border-bottom: 1px solid #f3efeb;
+}
+
+:root[data-theme="dark"] .card {
+  background: #282828;
+  border-color: #3d3d3d;
+}
+
+:root[data-theme="dark"] .line,
+:root[data-theme="dark"] .nav-search {
+  border-color: #3d3d3d;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .card {
+    background: #282828;
+    border-color: #3d3d3d;
+  }
+
+  :root:not([data-theme="light"]) .line,
+  :root:not([data-theme="light"]) .nav-search {
+    border-color: #3d3d3d;
+  }
 }
 
 .line-text {
@@ -5357,22 +5699,25 @@ h3 {
   line-height: 18.6px;
 }
 
-/* A round 32 by 20 switch: light track with a dark knob when on. */
+/*
+ * MiMo's settings switch: 32 by 20 with a 16px thumb travelling 14. Off is the
+ * neutral track under a white thumb; on is the primary track under the
+ * primary-foreground thumb. No hover change, as MiMo has none.
+ */
 .switch {
   width: 32px;
   height: 20px;
-  background: color-mix(in srgb, var(--text-strong) 22%, var(--surface-menu));
+  background: #e3e3e0;
   border-radius: 999px;
 }
 
-/* Hover changes the fill only; the shape is the switch's, not the pointer's. */
 .switch:hover {
-  background: color-mix(in srgb, var(--text-strong) 28%, var(--surface-menu));
+  background: #e3e3e0;
 }
 
 .switch.on,
 .switch.on:hover {
-  background: var(--icon-base);
+  background: #151c13;
 }
 
 .knob,
@@ -5380,39 +5725,123 @@ h3 {
   top: 2px;
   width: 16px;
   height: 16px;
-  /* Always the opposite of the track it sits on, in either scheme. */
-  background: var(--icon-base);
+  background: #ffffff;
   border-radius: 50%;
 }
 
 .switch.on .knob {
-  background: var(--surface-raised);
   inset-inline-start: 14px;
 }
 
+/* MiMo's secondary sm button: 28 tall, 8 round, 0 12, the secondary fill. */
 .ctl-btn {
   height: 28px;
-  padding: 0 10px;
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  padding: 0 12px;
+  color: #151c13;
+  background: #f1f1f1;
   border: 0;
   border-radius: 8px;
   font-size: calc(14px * var(--ui-font-scale, 1));
   font-weight: 500;
 }
 
-/* The pickers in a row: a filled 28px chip, the way MiMo's language picker is. */
+.ctl-btn:hover:not(:disabled) {
+  background: #f1f0ec;
+}
+
+/* MiMo's select trigger in a settings row: 28 tall, a 1px input border, transparent in light. */
 .content :deep(.trigger) {
+  gap: 8px;
   height: 28px;
-  padding: 0 8px 0 10px;
-  background: color-mix(in srgb, var(--text-strong) 10%, var(--surface-menu));
+  padding: 0 8px 0 12px;
+  background: transparent;
+  border: 1px solid #e3e3e0;
   border-radius: 8px;
+  box-shadow: 0 1px 2px #0000000d;
   font-size: calc(14px * var(--ui-font-scale, 1));
+}
+
+.content :deep(.trigger:hover),
+.content :deep(.trigger.open) {
+  background: transparent;
 }
 
 .content :deep(.trigger .label) {
   font-weight: 500;
   line-height: 20px;
+}
+
+.content :deep(.trigger .caret) {
+  color: currentColor;
+  opacity: 0.5;
+}
+
+:root[data-theme="dark"] .switch,
+:root[data-theme="dark"] .switch:hover {
+  background: #4a4a4a;
+}
+
+:root[data-theme="dark"] .switch.on,
+:root[data-theme="dark"] .switch.on:hover {
+  background: #ececec;
+}
+
+:root[data-theme="dark"] .switch.on .knob {
+  background: #0d0d0d;
+}
+
+:root[data-theme="dark"] .ctl-btn {
+  color: var(--text-strong);
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .ctl-btn:hover:not(:disabled) {
+  background: #ffffff1a;
+}
+
+:root[data-theme="dark"] .content :deep(.trigger) {
+  background: rgb(58 58 58 / 0.3);
+  border-color: #3a3a3a;
+}
+
+:root[data-theme="dark"] .content :deep(.trigger:hover),
+:root[data-theme="dark"] .content :deep(.trigger.open) {
+  background: rgb(58 58 58 / 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .switch,
+  :root:not([data-theme="light"]) .switch:hover {
+    background: #4a4a4a;
+  }
+
+  :root:not([data-theme="light"]) .switch.on,
+  :root:not([data-theme="light"]) .switch.on:hover {
+    background: #ececec;
+  }
+
+  :root:not([data-theme="light"]) .switch.on .knob {
+    background: #0d0d0d;
+  }
+
+  :root:not([data-theme="light"]) .ctl-btn {
+    color: var(--text-strong);
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .ctl-btn:hover:not(:disabled) {
+    background: #ffffff1a;
+  }
+
+  :root:not([data-theme="light"]) .content :deep(.trigger) {
+    background: rgb(58 58 58 / 0.3);
+    border-color: #3a3a3a;
+  }
+
+  :root:not([data-theme="light"]) .content :deep(.trigger:hover),
+  :root:not([data-theme="light"]) .content :deep(.trigger.open) {
+    background: rgb(58 58 58 / 0.5);
+  }
 }
 
 /* The column's search field: MiMo's 36 tall with an 8px corner and a quiet rule. */
@@ -5728,19 +6157,26 @@ h3 {
 
 /* MiMo's 用法详情: a link-styled span inside the description, underlined 2px below. */
 .usage-link {
-  color: #0077fa;
+  color: #2f6fed;
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
 }
 
-:root[data-theme="dark"] .usage-link {
-  color: #6ea8fe;
+/* MiMo's text-blue, shared by 用法详情 and 了解更多. */
+.ci-link {
+  color: #2f6fed;
+}
+
+:root[data-theme="dark"] .usage-link,
+:root[data-theme="dark"] .ci-link {
+  color: #5a9cff;
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .usage-link {
-    color: #6ea8fe;
+  :root:not([data-theme="light"]) .usage-link,
+  :root:not([data-theme="light"]) .ci-link {
+    color: #5a9cff;
   }
 }
 

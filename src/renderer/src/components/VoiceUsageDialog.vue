@@ -5,8 +5,9 @@ import { t } from "../lib/i18n"
 /**
  * MiMo's 智能编辑用法示例: what the smart voice mode understands, with examples.
  *
- * 480 wide on a 16px corner with the standard close button. Nothing takes focus
- * when it opens, as MiMo's special dialogs do not; Escape or a press outside closes it.
+ * 480 wide on a 16px corner with MiMo's standard close button in the corner.
+ * Nothing takes focus when it opens, as MiMo's special dialogs do not; Escape or
+ * a press outside closes it.
  */
 const emit = defineEmits<{ close: [] }>()
 
@@ -32,14 +33,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
 <template>
   <div class="scrim" @mousedown.self="emit('close')">
     <div v-modal class="dialog" data-voice-usage data-modal-keep-focus role="dialog" aria-labelledby="voice-usage-title">
-      <div class="head">
-        <h2 id="voice-usage-title">{{ t("voice.usage.title") }}</h2>
-        <button class="close" type="button" :aria-label="t('common.close')" @click="emit('close')">
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-          </svg>
-        </button>
-      </div>
+      <h2 id="voice-usage-title">{{ t("voice.usage.title") }}</h2>
+      <button class="close" type="button" :aria-label="t('common.close')" data-voice-usage-close @click="emit('close')">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+        </svg>
+      </button>
       <div class="entries">
         <section v-for="entry in ENTRIES" :key="entry.id" class="entry" :data-voice-usage-entry="entry.id">
           <div class="entry-title">{{ t(`voice.usage.${entry.id}`) }}</div>
@@ -61,7 +60,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
   background: var(--scrim);
 }
 
+/* The max height is MCode's safety net for short windows; MiMo's dialog has none. */
 .dialog {
+  position: relative;
   box-sizing: border-box;
   width: min(480px, 90vw);
   max-height: 86vh;
@@ -73,36 +74,36 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown, true))
   box-shadow: var(--shadow-overlay);
 }
 
-.head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-block-end: 16px;
-}
-
 h2 {
-  margin: 0;
+  margin: 0 0 16px;
   color: var(--text-strong);
   font-size: calc(16px * var(--ui-font-scale, 1));
   font-weight: 400;
 }
 
+/* MiMo's u-modal-close: absolute 14/14, 28 square, radius 8, muted. */
 .close {
+  position: absolute;
+  top: 14px;
+  inset-inline-end: 14px;
   display: grid;
-  flex-shrink: 0;
   place-items: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   color: var(--text-weak);
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
 }
 
 .close:hover {
   color: var(--text-strong);
   background: var(--surface-hover);
+}
+
+.close:focus-visible {
+  outline: 2px solid var(--text-strong);
+  outline-offset: -2px;
 }
 
 .entries {
@@ -112,12 +113,15 @@ h2 {
 }
 
 .entry {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   font-size: calc(13px * var(--ui-font-scale, 1));
   line-height: 1.55;
 }
 
 .entry-title {
-  color: var(--text-strong);
+  color: #151c13cc;
   font-weight: 500;
 }
 
@@ -125,13 +129,30 @@ h2 {
   color: var(--text-weak);
 }
 
-/* Examples sit on a 2px rule in the link blue at 35%. */
+/* Examples sit on a 2px rule in MiMo's blue at 35%. */
 .entry-examples {
-  margin-block-start: 6px;
   padding-inline-start: 10px;
   color: var(--text-weak);
-  border-inline-start: 2px solid color-mix(in srgb, #0077fa 35%, transparent);
+  border-inline-start: 2px solid color-mix(in srgb, #2f6fed 35%, transparent);
   font-size: calc(12px * var(--ui-font-scale, 1));
   white-space: pre-line;
+}
+
+:root[data-theme="dark"] .entry-title {
+  color: #f4f4f5;
+}
+
+:root[data-theme="dark"] .entry-examples {
+  border-color: color-mix(in srgb, #5a9cff 35%, transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .entry-title {
+    color: #f4f4f5;
+  }
+
+  :root:not([data-theme="light"]) .entry-examples {
+    border-color: color-mix(in srgb, #5a9cff 35%, transparent);
+  }
 }
 </style>

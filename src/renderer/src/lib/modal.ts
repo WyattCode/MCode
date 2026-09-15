@@ -9,6 +9,11 @@ import type { App } from "vue"
  * the rest of the page had stopped being available. This adds the three parts
  * that were missing - the role, the focus, and the boundary - in one place, so
  * every dialog gets the same behaviour instead of four near-copies.
+ *
+ * It also plays MiMo's closing animation for every dialog at once: the card
+ * fades out while shrinking to .95 over .2s and the scrim fades over .15s. A
+ * dialog is removed by `v-if` the moment it closes, so the animation runs on a
+ * copy left in its place for those 200ms, which takes no input.
  */
 
 const FOCUSABLE = [
@@ -28,6 +33,59 @@ function reachable(el: HTMLElement): HTMLElement[] {
 }
 
 const cleanups = new WeakMap<HTMLElement, () => void>()
+
+/* MiMo's motion-slow and its overlay fade. */
+export const DIALOG_EXIT_MS = 200
+const SCRIM_EXIT_MS = 150
+
+function reducedMotion(): boolean {
+  const motion = document.documentElement.getAttribute("data-motion")
+  if (motion === "on") return true
+  if (motion === "off") return false
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+}
+
+/*
+ * Leaves a copy of the closing dialog's scrim where it was and animates that
+ * out. Only a dialog inside a fixed scrim gets one: a copy of anything in the
+ * normal flow would push the page about while it faded. A layer that plays its
+ * own closing (the settings overlay) opts out with data-modal-no-exit.
+ */
+export function playDialogExit(el: HTMLElement): void {
+  if (reducedMotion() || typeof el.animate !== "function") return
+  const root = el.closest<HTMLElement>(".scrim, .overlay, .vs-scrim")
+  if (!root?.parentNode || root.hasAttribute("data-modal-no-exit") || el.hasAttribute("data-modal-no-exit")) return
+  const ghost = root.cloneNode(true) as HTMLElement
+  ghost.setAttribute("aria-hidden", "true")
+  ghost.setAttribute("data-modal-exit", "")
+  ghost.removeAttribute("id")
+  for (const node of ghost.querySelectorAll("[id]")) node.removeAttribute("id")
+  ghost.style.pointerEvents = "none"
+  // No entry animation on the copy: it starts where the real one stood.
+  ghost.style.animation = "none"
+  root.parentNode.insertBefore(ghost, root.nextSibling)
+  const path: number[] = []
+  for (let node: Node | null = el; node && node !== root; node = node.parentNode) {
+    const parent: Node | null = node.parentNode
+    if (!parent) break
+    path.unshift([...parent.childNodes].indexOf(node as ChildNode))
+  }
+  const card = path.reduce<Node | undefined>((node, at) => node?.childNodes[at], ghost) as HTMLElement | undefined
+  if (card && card !== ghost) {
+    card.style.animation = "none"
+    card.animate(
+      [
+        { opacity: 1, transform: "scale(1)" },
+        { opacity: 0, transform: "scale(0.95)" },
+      ],
+      { duration: DIALOG_EXIT_MS, easing: "ease", fill: "forwards" },
+    )
+  }
+  ghost
+    .animate([{ opacity: 1 }, { opacity: 0 }], { duration: SCRIM_EXIT_MS, delay: DIALOG_EXIT_MS - SCRIM_EXIT_MS, easing: "ease", fill: "forwards" })
+    .finished.catch(() => undefined)
+    .finally(() => ghost.remove())
+}
 
 export const modal = {
   mounted(el: HTMLElement) {
@@ -92,6 +150,11 @@ export const modal = {
       // the top of the page.
       if (opener?.isConnected) opener.focus()
     })
+  },
+
+  // Still in the document here, so its scrim can be copied for the closing animation.
+  beforeUnmount(el: HTMLElement) {
+    playDialogExit(el)
   },
 
   unmounted(el: HTMLElement) {

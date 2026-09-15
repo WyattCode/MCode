@@ -594,9 +594,10 @@ kbd {
   animation: dialog-overlay-in 0.15s ease-out;
 }
 
+/* MiMo's shared dialog: the card fades in from .95 over its motion-slow .2s; closing is lib/modal.ts. */
 .scrim [role="dialog"],
 .overlay [role="dialog"] {
-  animation: dialog-content-in 0.15s ease-out;
+  animation: dialog-content-in 0.2s ease;
 }
 
 @keyframes dialog-overlay-in {
@@ -611,7 +612,7 @@ kbd {
 @keyframes dialog-content-in {
   from {
     opacity: 0;
-    transform: scale(0.98);
+    transform: scale(0.95);
   }
   to {
     opacity: 1;

@@ -181,13 +181,26 @@ h2 {
   font-size: calc(14px * var(--ui-font-scale, 1));
 }
 
+/* MiMo's np-card field on focus: the dim colour, #151c1366 light and #777 dark. */
+.field:focus {
+  border-color: #151c1366;
+}
+
 :root[data-theme="dark"] .field {
   background: var(--surface-base);
+}
+
+:root[data-theme="dark"] .field:focus {
+  border-color: #777777;
 }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .field {
     background: var(--surface-base);
+  }
+
+  :root:not([data-theme="light"]) .field:focus {
+    border-color: #777777;
   }
 }
 
@@ -207,15 +220,34 @@ footer {
   cursor: pointer;
 }
 
+/* MiMo's np-btn: the page ground under a line, menu-hover on hover. */
 .ghost {
   color: var(--text-base);
-  background: var(--surface-base);
+  background: #fffefd;
   border-color: var(--border-weak);
 }
 
 .ghost:hover {
   color: var(--text-strong);
-  background: var(--surface-hover);
+  background: #f1f0ec;
+}
+
+:root[data-theme="dark"] .ghost {
+  background: #1a1a1a;
+}
+
+:root[data-theme="dark"] .ghost:hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ghost {
+    background: #1a1a1a;
+  }
+
+  :root:not([data-theme="light"]) .ghost:hover {
+    background: #ffffff0f;
+  }
 }
 
 /* The primary pair, the same one the confirm dialog's non-destructive button uses. */

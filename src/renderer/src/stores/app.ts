@@ -844,7 +844,8 @@ export const useApp = defineStore("app", () => {
     result.messages.forEach(reindex)
   }
 
-  async function create(directory?: string, options: { scratch?: boolean } = {}) {
+  /** `open: false` makes the conversation without switching to it, for MiMo's add-project that stays put. */
+  async function create(directory?: string, options: { scratch?: boolean; open?: boolean } = {}) {
     const result = await api().request({
       type: "session.create",
       directory,
@@ -855,7 +856,7 @@ export const useApp = defineStore("app", () => {
     if (!sessions.value.some((session) => session.id === result.session.id)) {
       sessions.value.unshift(result.session)
     }
-    await open(result.session.id)
+    if (options.open !== false) await open(result.session.id)
     return result.session
   }
 
