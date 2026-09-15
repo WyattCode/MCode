@@ -1302,7 +1302,8 @@ export class SessionRunner {
             : history,
         tools: lastStep ? [] : this.tools(session.agent, session.model.model),
         effort,
-        showReasoning: config.showReasoning,
+        // MiMo draws no reasoning, so none is asked for.
+        showReasoning: false,
         signal: controller.signal,
         baseURL: definition.baseURL,
         /*

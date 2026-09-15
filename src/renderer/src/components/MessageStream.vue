@@ -2,7 +2,6 @@
 import { computed, nextTick, onMounted, ref, watch, onBeforeUnmount } from "vue"
 import { useApp } from "../stores/app"
 import TextPart from "./parts/TextPart.vue"
-import ReasoningPart from "./parts/ReasoningPart.vue"
 import ToolGroup from "./parts/ToolGroup.vue"
 import QuestionCard from "./parts/QuestionCard.vue"
 import ErrorStep from "./parts/ErrorStep.vue"
@@ -92,7 +91,16 @@ function rows(turn: Turn, start: number, end: number): Row[] {
   const errors = turn.errors
     .filter((error) => error.at <= end && (start === 0 ? error.at >= 0 : error.at > start))
     .map((error) => ({ ...error, at: error.at - start }))
-  return buildRows(turn.parts.slice(start, end), errors).map((row) => (row.kind === "group" ? { ...row, open: false } : row))
+  return buildRows(turn.parts.slice(start, end).map(stepPart), errors).map((row) => (row.kind === "group" ? { ...row, open: false } : row))
+}
+
+/*
+ * MiMo draws no reasoning and skips it when it builds steps, so a reasoning
+ * part is emptied here: nothing is drawn for it and a run of tools either side
+ * of it stays one group.
+ */
+function stepPart(part: AssistantPart): AssistantPart {
+  return part.type === "reasoning" && part.text ? { ...part, text: "" } : part
 }
 
 interface Turn {
@@ -225,19 +233,6 @@ function thinking(turn: Turn, at: number): boolean {
   if (shownCompacting.value) return true
   const waiting = shownID.value ? app.pendingPermissions.has(shownID.value) : false
   return shownBusy.value && !turn.error && !waiting
-}
-
-/**
- * Whether the model's context begins after this turn.
- *
- * The transcript keeps everything; the line just says where the summary took
- * over, so a reply that seems not to remember something earlier has a visible
- * reason.
- */
-function compactedAfter(turn: Turn): boolean {
-  const mark = shownSession.value?.compacted?.messageID
-  if (!mark) return false
-  return turn.last?.id === mark || turn.id === mark
 }
 
 // MiMo's fold for a long question: past fourteen lines, or past 1200 characters
@@ -1055,8 +1050,7 @@ defineExpose({ stepMessage, scroller })
             <QuestionCard v-else-if="row.kind === 'question'" :part="row.part" />
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
             <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" />
-            <ReasoningPart v-else-if="row.part.type === 'reasoning'" :part="row.part" />
-            <TextPart v-else :part="row.part" />
+            <TextPart v-else-if="row.part.type === 'text'" :part="row.part" />
           </div>
 
           <!--
@@ -1167,12 +1161,6 @@ defineExpose({ stepMessage, scroller })
           <svg viewBox="0 0 34 7" width="34" height="7" aria-hidden="true" focusable="false">
             <circle v-for="x in [3.5, 12.5, 21.5, 30.5]" :key="x" :cx="x" cy="3.5" r="3" fill="currentColor" />
           </svg>
-        </div>
-
-        <div v-if="compactedAfter(turn)" class="compacted">
-          <span class="compacted-line" />
-          <span class="compacted-text">{{ t("stream.compacted") }}</span>
-          <span class="compacted-line" />
         </div>
       </div>
 
@@ -1380,30 +1368,6 @@ defineExpose({ stepMessage, scroller })
   }
 }
 
-.compacted {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  width: 100%;
-  /* Its own breathing room rather than a margin, so two of them in a row do
-     not collapse into one gap. */
-  padding: 10px 0;
-}
-
-.compacted-line {
-  flex: auto;
-  height: 1px;
-  background: var(--border-weak);
-}
-
-.compacted-text {
-  flex: none;
-  color: var(--text-weaker);
-  font-size: calc(12px * var(--ui-font-scale, 1));
-  white-space: nowrap;
-  text-align: center;
-}
-
 .stream {
   position: relative;
   flex: 1;
@@ -1442,28 +1406,12 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * The reference's timeline is a flat list of rows with `gap: 24px` between
- * them - the question, each part of the answer, the lot - and it drops a
- * 24px-tall spacer row (`data-timeline-row=TurnGap`, `class=h-6`) between one
- * turn and the next, so consecutive turns stand 72px apart while the rows
- * inside a turn stand 24 apart. This was a flat 18 for both, which made a
- * conversation read as one long column rather than as a series of exchanges.
+ * MiMo's rows: the question and the answer each keep 26px below them, with no
+ * spacer between turns, so a question stands 26 from its answer and an answer
+ * 26 from the next question.
  */
 .msg {
-  margin-bottom: 24px;
-}
-
-/*
- * The spacer itself rather than a margin, because a margin does not stack: the
- * previous turn's 24 and a 48 here collapsed to 48, which is the larger of the
- * two and not their sum. A box with height carries its own space, the way the
- * reference's own spacer row does.
- */
-.turn + .turn::before {
-  content: "";
-  display: block;
-  height: 24px;
-  margin-bottom: 24px;
+  margin-bottom: 26px;
 }
 
 .msg.user {
