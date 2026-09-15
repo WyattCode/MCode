@@ -203,7 +203,7 @@ onMounted(() => {
           <p class="lead">{{ t("srv.description") }}</p>
         </div>
         <span class="gap" />
-        <button class="icon" v-tip="{ label: t('common.close'), placement: 'bottom' }" @click="emit('close')">
+        <button class="icon" v-tip="t('common.close')" @click="emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>

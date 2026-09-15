@@ -102,7 +102,7 @@ async function save() {
     <div v-modal class="dialog">
       <header>
         <h2>{{ t("proj.editTitle") }}</h2>
-        <button class="x" v-tip="{ label: t('common.close'), placement: 'bottom' }" @click="emit('close')">
+        <button class="x" v-tip="t('common.close')" @click="emit('close')">
           <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
             <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
