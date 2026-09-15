@@ -730,7 +730,8 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
           </button>
         </div>
 
-        <div ref="viewer" class="fv-view" :class="{ editing }" tabindex="-1">
+        <!-- MiMo's file viewer is content: its code, documents and previews can be selected. -->
+        <div ref="viewer" class="fv-view" :class="{ editing }" tabindex="-1" data-selectable="content">
           <div v-if="!root" class="fv-empty">
             <svg class="fv-empty-ic" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -774,12 +775,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
               <audio :key="mediaVersion" class="fv-audio" :src="mediaUrl" controls preload="metadata" @error="mediaFailed = true" />
             </div>
             <div v-else-if="opened.kind === 'binary'" class="fv-empty"><div class="fv-empty-desc">{{ t("rp.files.errBinary") }}</div></div>
-            <div v-else-if="isMarkdown" class="fv-doc text" data-selectable="content" v-html="renderMarkdown(opened.content)" />
+            <div v-else-if="isMarkdown" class="fv-doc text" v-html="renderMarkdown(opened.content)" />
             <div
               v-else
               class="fv-code"
               :class="{ shiki: Boolean(colouredLines) }"
-              data-selectable="content"
               data-annotate="code"
               :data-annotate-path="absolute(viewFile)"
             >

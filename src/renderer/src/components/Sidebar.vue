@@ -2451,7 +2451,8 @@ function pickNewProject(key: string) {
   inset-inline: 0;
   z-index: 2;
   border-radius: 8px;
-  outline: 2px dashed var(--interactive);
+  /* MiMo's accent, orange in both themes. */
+  outline: 2px dashed #ff6a2b;
   outline-offset: -2px;
   pointer-events: none;
 }
