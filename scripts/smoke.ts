@@ -271,6 +271,8 @@ import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/li
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
 import { roundFiveChecks } from "./smoke-round5"
+// round 6: the eight differences the user decided on 2026-09-16 to close.
+import { roundSixChecks } from "./smoke-round6"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -6821,6 +6823,7 @@ async function main() {
   // round 5: the turn loop, providers, context and prompt, in their own file; its provider answers title requests apart.
   delete process.env.MCODE_GENERATE_TITLES
   await roundFiveChecks(check, section)
+  await roundSixChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
@@ -7097,8 +7100,8 @@ async function skillChecks(root: string) {
     "skill and skill_search are offered, appended, and change nothing",
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
-      // Only tools added since (history, memory, cron, scheduled tasks and plan_exit) come after them.
-      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit"].includes(tool.name)) &&
+      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name)) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
     TOOLS.map((tool) => tool.name),
@@ -8260,8 +8263,8 @@ async function sessionChatChecks(root: string, project: string) {
         // notebook_edit sits between the window tools and them.
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks and plan_exit) come after them.
-        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit"].includes(tool.name))
+        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name))
       )
     })(),
     TOOLS.map((tool) => tool.name),
@@ -8965,6 +8968,8 @@ async function historyMemoryCronChecks(root: string, project: string) {
     },
     busy: (sessionID: string) => busy.has(sessionID),
     session: (sessionID: string) => store.get(sessionID),
+    // cron: a durable task whose conversation is gone is adopted by a new one in the project.
+    create: (directory: string) => store.create({ directory, model, title: "Scheduled tasks" }),
     directories: async () => [schedDir],
   }
   const scheduler = new CronScheduler(host)
