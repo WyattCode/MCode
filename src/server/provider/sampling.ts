@@ -50,11 +50,62 @@ export function samplingFor(modelID: string, takesTemperature: boolean): Samplin
 }
 
 /**
- * Body fields MiMo adds for two OpenAI-compatible providers: Zhipu's thinking
- * switch, and Alibaba's for a model that reasons.
+ * Body fields MiMo adds per provider, beside the ones every request carries
+ * (its `transform.options`).
+ *
+ * The one with a visible consequence is OpenRouter's extended usage. MCode
+ * already reads `cache_write_tokens` and `reasoning_tokens` back from an
+ * OpenRouter frame (`usageOf`), but never asked for them - and OpenRouter only
+ * sends them when the request says `usage: {include: true}`. So both read as
+ * zero and every cached write and every reasoning token was billed at nothing:
+ * the cost shown for an OpenRouter conversation was simply wrong.
+ *
+ * `prompt_cache_key` is what lets a provider hold a cached prefix for one
+ * conversation rather than matching on content alone, and `store: false` keeps
+ * xAI from retaining the request, which is MiMo's default there.
+ *
+ * Not ported: MiMo's `thinkingConfig` for Google. MiMo reaches Gemini through
+ * the native Google SDK, where that field exists; MCode reaches it through
+ * Google's OpenAI-compatible endpoint, which has no such field and would ignore
+ * it. Sending it would be cargo-cult parity rather than the real thing.
+ *
+ * @param sessionID the conversation, which is what the cache key is keyed on;
+ *   omitted for a request that belongs to no conversation.
  */
-export function providerExtras(provider: string, reasoning: boolean): Record<string, unknown> {
-  if (provider === "zhipu") return { thinking: { type: "enabled", clear_thinking: false } }
-  if (provider === "dashscope" && reasoning) return { enable_thinking: true }
-  return {}
+/**
+ * MiMo's `transform.smallOptions`: the cheap profile every out-of-band request
+ * runs under.
+ *
+ * Naming a conversation, routing one message or reviewing a command is not work
+ * a reasoning budget should be spent on, but MCode asked for these at the same
+ * effort as a real turn - so on a reasoning model, titling a conversation could
+ * think for as long as answering it. This turns the thinking off where the
+ * provider has a way of being told to, and asks for the cheapest level
+ * otherwise.
+ *
+ * @returns the effort to ask for, and any body fields that go with it.
+ */
+export function smallRequest(provider: string, modelID: string): { effort: string; extra: Record<string, unknown> } {
+  const id = modelID.toLowerCase()
+  // Reached over a gateway, a Google model takes a switch rather than a level.
+  if ((provider === "openrouter" || provider === "llmgateway") && id.includes("google")) {
+    return { effort: "minimal", extra: { reasoning: { enabled: false } } }
+  }
+  if (provider === "openrouter" || provider === "llmgateway") return { effort: "minimal", extra: {} }
+  // MiMo asks GPT-5 for its lowest level and keeps the request unstored.
+  if (id.includes("gpt-5")) {
+    return { effort: id.includes("5.") || id.includes("5-mini") ? "low" : "minimal", extra: { store: false } }
+  }
+  return { effort: "low", extra: {} }
+}
+
+export function providerExtras(provider: string, reasoning: boolean, sessionID?: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (provider === "zhipu") out.thinking = { type: "enabled", clear_thinking: false }
+  if (provider === "dashscope" && reasoning) out.enable_thinking = true
+  // MiMo asks openrouter and llmgateway for the usage figures MCode already reads.
+  if (provider === "openrouter" || provider === "llmgateway") out.usage = { include: true }
+  if (provider === "xai") out.store = false
+  if (sessionID && (provider === "openai" || provider === "xai" || provider === "openrouter")) out.prompt_cache_key = sessionID
+  return out
 }

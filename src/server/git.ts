@@ -183,6 +183,35 @@ export async function recentCommits(directory: string, count = 5): Promise<strin
     .filter(Boolean)
 }
 
+/**
+ * The branch a pull request would usually target, by name.
+ *
+ * `branchBase` answers with a merge-base commit, which is what a diff needs;
+ * this answers with the trunk's own name, which is what the model needs to be
+ * told before it opens a pull request against the wrong branch. The remote's
+ * HEAD wins where it is set, that being what the host itself calls default;
+ * failing that, the first conventional name the repository actually has.
+ */
+export async function defaultBranch(directory: string): Promise<string | undefined> {
+  const remote = (await tryGit(directory, ["rev-parse", "--abbrev-ref", "origin/HEAD"])).out.trim()
+  if (remote && remote !== "origin/HEAD") return remote.replace(/^origin\//, "")
+  for (const name of ["main", "master", "develop", "trunk"]) {
+    if ((await tryGit(directory, ["rev-parse", "--verify", "--quiet", name])).out.trim()) return name
+  }
+  return undefined
+}
+
+/**
+ * Who git will attribute a commit to here.
+ *
+ * The name only. Git also knows the address, and MiMo prints what its own
+ * helper returns, but an email in every request is more of the user than the
+ * model needs to write a commit.
+ */
+export async function gitUser(directory: string): Promise<string | undefined> {
+  return (await tryGit(directory, ["config", "user.name"])).out.trim() || undefined
+}
+
 export type StatusScope = "worktree" | "branch"
 
 export async function status(directory: string, scope: StatusScope = "worktree"): Promise<GitStatus> {

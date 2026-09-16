@@ -69,6 +69,17 @@ export const ActorTool: ToolDefinition = {
     "A new subagent knows nothing of this conversation: the prompt is all it has, so say what to do, where to look, what is already known and what to report back. The user does not see its answer until you pass on what matters.",
     'Use "explore" for work that only reads - finding code, tracing a behaviour, answering a question about the project - and "general" for work that may change files or run commands. Do not use this for a single quick lookup you can do yourself.',
     "actor_id values (explore-1, general-2) are subagents; they are not the T1, T1.2 ids of the task tool.",
+    "",
+    /*
+     * The agent types, and what each may do. MiMo composes this list at request
+     * time because its agent types are configurable; MCode's are these two and
+     * nothing else, so naming them here says the same thing without making the
+     * tool list depend on the turn.
+     */
+    "Available agent types and what each one may do:",
+    "- explore: reads only. It has read, glob, grep, list, webfetch and bash, and every tool that changes a file is refused to it. Use it to find where something lives, trace how a behaviour works, or answer a question about the project. Because it cannot change anything, it needs no permission from the user and is the cheaper of the two.",
+    "- general: the same reading tools plus edit, write and the rest, so it can change files and run commands that do. Use it when the task is to make a change, not to find something out. Its writes and commands are put to the user under the same permission rules as your own.",
+    "Neither can start subagents of its own, and neither can message another conversation.",
   ].join("\n"),
   parameters: {
     type: "object",

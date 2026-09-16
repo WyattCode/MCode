@@ -45,7 +45,9 @@ import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
 import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
-import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
+// MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
+import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
+import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
@@ -54,7 +56,7 @@ import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
-import { providerExtras, samplingFor } from "../provider/sampling"
+import { providerExtras, samplingFor, smallRequest } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
@@ -459,7 +461,8 @@ export class SessionRunner {
             },
           ],
           tools: [VERDICT_TOOL],
-          effort: "",
+          // Out of band; the empty variants list already withholds the level, so this is for the body fields.
+          ...smallRequest(session.model.provider, session.model.model),
           variants: [],
           showReasoning: false,
           signal: controller.signal,
@@ -1225,6 +1228,12 @@ export class SessionRunner {
             globalAgentsFile: this.globalAgents,
             instructionFiles: config.instructionFiles,
             skills,
+            // MiMo names the model in its environment block; the prefix key already turns on it.
+            model: {
+              ...(this.config.modelEntry(session.model)?.name ? { name: this.config.modelEntry(session.model)!.name } : {}),
+              provider: session.model.provider,
+              id: session.model.model,
+            },
           })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
@@ -1266,8 +1275,14 @@ export class SessionRunner {
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(session.model)
-    const replay =
-      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map())
+    /*
+     * MiMo's shrink: the summary request is sent exactly when the conversation
+     * has outgrown its model, so replaying every large tool result in full made
+     * the request most likely to be refused for length the largest one sent.
+     */
+    const replay = shrinkLargeToolResults(
+      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map()),
+    )
     const instruction: UserMessage = {
       id: `${session.id}:compaction`,
       sessionID: session.id,
@@ -1289,8 +1304,8 @@ export class SessionRunner {
           ...(await this.systemFor(session)),
           history: [...replay, instruction],
           tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
-          // MiMo's effort is one app-wide value, not a conversation's own.
-          effort: this.config.get().effort,
+          // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
+          ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
           showReasoning: false,
           signal,
@@ -1303,7 +1318,8 @@ export class SessionRunner {
           cacheTTL: entry?.cacheTTL,
           inputs: modelInputs(entry),
           sampling: samplingFor(session.model.model, entry?.temperature === true),
-          extra: providerExtras(session.model.provider, entry?.reasoning === true),
+          // The provider's own fields, then the cheap profile's on top - the spread above set `extra` and this replaces it.
+          extra: { ...providerExtras(session.model.provider, entry?.reasoning === true, session.id), ...smallRequest(session.model.provider, session.model.model).extra },
         },
         (event) => {
           if (event.type === "text.delta") summary += event.text
@@ -1597,7 +1613,8 @@ export class SessionRunner {
               },
             ],
             tools: [],
-            effort: "low",
+            // Out of band: routing one message is not work a reasoning budget should be spent on.
+            ...smallRequest(main.provider, main.model),
             showReasoning: false,
             signal: controller.signal,
             baseURL: definition.baseURL,
@@ -1793,7 +1810,8 @@ export class SessionRunner {
               },
             ],
             tools: [],
-            effort: "low",
+            // Out of band: MiMo's cheap profile, so naming a conversation does not think for as long as answering it.
+            ...smallRequest(model.provider, model.model),
             variants: this.config.variants(model),
             showReasoning: false,
             signal: controller.signal,
@@ -2022,6 +2040,16 @@ export class SessionRunner {
     if (!lead) session = await this.compactIfCrossed(session, controller.signal)
 
     /*
+     * MiMo's pruning, decided once for the whole turn rather than per step.
+     *
+     * Per step it would flip: trimming rewrites the prefix, which is only free
+     * while the provider's cache is already cold, and the first request of a
+     * turn warms that cache again - so step 2 would send the untrimmed history
+     * back and undo the saving. One decision per turn keeps the request stable.
+     */
+    const pruneLevel = await this.pruneLevelFor(session)
+
+    /*
      * The step that was last rescued by a compaction. A request the provider
      * refuses as too long is retried once against the compacted transcript,
      * as MiMo does; refused again, the error stands.
@@ -2058,7 +2086,8 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
-      const chatted = withAutomationNotes(withChatHeaders(this.contextFor(session, stored)))
+      // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
+      const chatted = withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel)))
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
@@ -2183,7 +2212,7 @@ export class SessionRunner {
         interleaved: interleavedField(definition.kind, session.model, this.config.modelEntry(session.model)),
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
-        extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true),
+        extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true, sessionID),
       })
       } catch (failure) {
         /*
@@ -2316,6 +2345,28 @@ export class SessionRunner {
       // MiMo compacts a step that crossed the line mid-turn as an overflow, before the model is asked again.
       if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
     }
+  }
+
+  /**
+   * How much this turn trims off its own older tool output, read from the last
+   * finished reply: what that step reported, and when it landed.
+   *
+   * MiMo runs the same check after every finished turn and rewrites its stored
+   * parts; MCode decides here and rewrites only the request (session/prune.ts),
+   * so the transcript the user reads keeps every result whole.
+   */
+  private async pruneLevelFor(session: SessionInfo): Promise<PruneLevel> {
+    const live = this.liveMessages(session, await this.store.messages(session.id))
+    const last = [...live]
+      .reverse()
+      .find((message): message is AssistantMessage => message.role === "assistant" && message.usage !== undefined)
+    const entry = this.config.modelEntry(session.model)
+    return pruneLevelFor({
+      tokens: last?.usage,
+      entry,
+      lastAssistantAt: last?.time.completed ?? last?.time.created,
+      ...(entry?.cacheTTL ? { cacheTTL: entry.cacheTTL } : {}),
+    })
   }
 
   /**
