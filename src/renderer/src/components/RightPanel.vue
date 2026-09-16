@@ -18,7 +18,7 @@ import PaneBoundary from "./right/PaneBoundary.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
 import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf } from "../lib/right-tools"
 import { useApp } from "../stores/app"
-import { t } from "../lib/i18n"
+import { language, t } from "../lib/i18n"
 
 /**
  * MiMo's right panel.
@@ -74,6 +74,16 @@ function title(tab: RightTab): string {
   if (tab.type === "files") return t("rp.files.openFileTitle")
   const name = t(TOOL_INFO[tab.type].label)
   return tab.ord > 1 ? `${name} ${tab.ord}` : name
+}
+
+/*
+ * Whether the tab shows one of the app's own tool names. MCode localizes those
+ * (MiMo keeps a short fixed set), so a compact pill may widen to fit one; a
+ * page title or a name the reader chose is cut at the compact width as MiMo cuts it.
+ */
+function isToolName(tab: RightTab): boolean {
+  if (tab.type === "browser" && tab.pageTitle) return false
+  return !tab.name && title(tab) !== ""
 }
 
 /*
@@ -179,7 +189,8 @@ function onWheel(event: WheelEvent) {
   event.preventDefault()
 }
 
-watch(() => [rp.active, rp.tabs.length] as const, async () => {
+// A new language can widen the pills (localized tool names), so the active one is brought back into view then too.
+watch(() => [rp.active, rp.tabs.length, language.value] as const, async () => {
   measure()
   await nextTick()
   strip.value?.querySelector<HTMLElement>(".rp-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" })
@@ -241,6 +252,40 @@ function pickTabMenu(key: string) {
     const at = rp.tabs.findIndex((tab) => tab.id === id)
     requestClose(rp.tabs.slice(at + 1).map((tab) => tab.id))
   }
+}
+
+/*
+ * The tabs from the keyboard, beyond MiMo, whose tabs cannot take focus: the
+ * shown tab is the strip's one Tab stop, arrows, Home and End walk the strip,
+ * Enter or Space shows the tab, and the Menu key or Shift+F10 opens its menu.
+ */
+const tabEls = new Map<string, HTMLElement>()
+
+function onTabKey(event: KeyboardEvent, id: string) {
+  if (event.target !== event.currentTarget) return
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault()
+    rp.activate(id)
+    return
+  }
+  if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+    event.preventDefault()
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    rp.activate(id)
+    tabMenu.value = { x: rect.left + rect.width / 2, y: rect.bottom, id }
+    return
+  }
+  const ids = rp.tabs.map((tab) => tab.id)
+  const at = ids.indexOf(id)
+  const rtl = strip.value ? getComputedStyle(strip.value).direction === "rtl" : false
+  const step = { ArrowRight: rtl ? -1 : 1, ArrowLeft: rtl ? 1 : -1 }[event.key]
+  let next: number | undefined
+  if (step !== undefined) next = (at + step + ids.length) % ids.length
+  else if (event.key === "Home") next = 0
+  else if (event.key === "End") next = ids.length - 1
+  if (next === undefined) return
+  event.preventDefault()
+  tabEls.get(ids[next]!)?.focus()
 }
 
 function onTabMouseDown(event: MouseEvent, id: string) {
@@ -320,11 +365,14 @@ defineExpose({
           v-for="tab in rp.tabs"
           :key="tab.id"
           class="rp-tab"
-          :class="{ active: tab.id === rp.active }"
+          :class="{ active: tab.id === rp.active, 'tool-name': isToolName(tab) }"
           role="tab"
           :aria-selected="tab.id === rp.active"
+          :tabindex="tab.id === rp.active ? 0 : -1"
           :data-rp-tab="tab.type"
+          :ref="(el) => (el ? tabEls.set(tab.id, el as HTMLElement) : tabEls.delete(tab.id))"
           @click="rp.activate(tab.id)"
+          @keydown="onTabKey($event, tab.id)"
           @mousedown="onTabMouseDown($event, tab.id)"
           @contextmenu.prevent="openTabMenu($event, tab.id)"
         >
@@ -586,6 +634,21 @@ body.resizing .right-panel {
   width: 120px;
   min-width: min(120px, 100%);
   max-width: min(120px, 100%);
+}
+
+/*
+ * A localized tool name keeps its whole word when the pills turn compact: the
+ * pill grows from 120 toward the full 160 instead of cutting Überprüfung or
+ * الوكلاء الفرعيون mid-word. A short name still sits in exactly 120.
+ */
+.rp-tabs.compact .rp-tab.tool-name {
+  flex-basis: auto;
+  width: auto;
+  max-width: min(160px, 100%);
+}
+
+.rp-tabs.compact .rp-tab.tool-name .rpt-name {
+  flex: 1 1 auto;
 }
 
 .rp-tab.active {

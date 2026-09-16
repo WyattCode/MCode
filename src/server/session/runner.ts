@@ -65,7 +65,7 @@ import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, continuationFor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
+import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
@@ -243,7 +243,7 @@ const MAX_STEPS_PROMPT = [
 const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
-const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
+const PLAN_AWARE = new Set(["write", "edit", "multiedit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -1801,7 +1801,16 @@ export class SessionRunner {
     await this.rememberMcpServers(session)
     this.tools(session.agent, session.id)
     const names = [...(this.mcpServersAt.get(session.id) ?? [])]
-    return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
+    return [
+      sessionNote({
+        mcpServers: names,
+        globalAgentsFile: this.globalAgents,
+        // Where the MCP servers actually live, so a bulk import can be done by editing the file.
+        configFile: path.join(this.dataRoot, "config.json"),
+        dataRoot: this.dataRoot,
+      }),
+      runtime,
+    ]
   }
 
   /**
@@ -2165,6 +2174,12 @@ export class SessionRunner {
       }
       await this.store.saveMessage(assistant)
 
+      /*
+       * MiMo's mid-stream loop check: the reply is watched as it is written and
+       * cut where it starts repeating itself, rather than being read after the
+       * fact.
+       */
+      const monitor = createLoopMonitor()
       let outcome: Awaited<ReturnType<SessionRunner["stream"]>>
       try {
         outcome = await this.stream(adapter, assistant, {
@@ -2262,7 +2277,7 @@ export class SessionRunner {
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
         extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true, sessionID),
-      })
+      }, monitor)
       } catch (failure) {
         /*
          * A provider that refuses the request as too long is answered the way
@@ -2336,10 +2351,29 @@ export class SessionRunner {
        * that called tools carries on regardless.
        */
       const replied = assistant.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+      /* The stream was cut mid-reply for repeating itself, as MiMo cuts its own. */
+      const looped = outcome.finishReason === LOOP_FINISH
+      if (looped) {
+        // A call announced while the stream was cut never ran and has no settled arguments to run with.
+        assistant.parts = assistant.parts.filter((part) => part.type !== "tool")
+      }
       const repeatNote = repeatNoteFor(replied, repeated)
       if (repeatNote) {
         repeated += 1
         notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), repeatNote])
+      } else if (looped) {
+        /*
+         * Both recovery prompts are spent and it is still repeating. MiMo ends
+         * the session here ("max recovery exceeded, terminating"); this ends
+         * the turn with the failure on the message instead, which is as far as
+         * a conversation the user can keep typing into should go.
+         */
+        assistant.finish = "error"
+        assistant.error = LOOP_ENDED
+        assistant.errorCode = LOOP_ENDED_CODE
+        assistant.time.completed = Date.now()
+        await this.store.saveMessage(assistant)
+        return
       }
 
       const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
@@ -2426,7 +2460,18 @@ export class SessionRunner {
     adapter: ProviderAdapter,
     assistant: AssistantMessage,
     request: Parameters<ProviderAdapter["stream"]>[0],
+    monitor?: { append(text: string): boolean },
   ): Promise<TurnOutcome | undefined> {
+    /*
+     * MiMo cuts a repeating reply where it is, with a `takeUntil` over its own
+     * stream. The adapters here take one signal, so the cut is a controller of
+     * this app's own that follows the turn's: aborting it ends the request
+     * without ending the turn, and what was written up to that point stays.
+     */
+    const inner = new AbortController()
+    const follow = () => inner.abort()
+    request.signal.addEventListener("abort", follow, { once: true })
+    let cut = false
     // Text and reasoning blocks are keyed by the index the adapter reports;
     // tools are keyed by call id, since only the provider knows how those
     // interleave with the rest of the turn.
@@ -2472,6 +2517,11 @@ export class SessionRunner {
       } else if (event.type === "text.delta" || event.type === "reasoning.delta") {
         const part = blocks.get(event.index)
         if (part) append(part, event.text)
+        // The reply itself is watched, never the reasoning: a model may think in circles and still answer.
+        if (event.type === "text.delta" && !cut && monitor?.append(event.text)) {
+          cut = true
+          inner.abort()
+        }
       } else if (event.type === "block.end") {
         const part = blocks.get(event.index)
         if (part?.type === "reasoning") {
@@ -2505,8 +2555,18 @@ export class SessionRunner {
       for (let attempt = 1; outcome === undefined; attempt++) {
         try {
           // The SDK's own quiet retries are off here: this loop retries in the open.
-          outcome = await adapter.stream({ ...request, retries: 0 }, emit)
+          outcome = await adapter.stream({ ...request, retries: 0, signal: inner.signal }, emit)
         } catch (err) {
+          /*
+           * The stream was cut for repeating itself rather than by the user or
+           * by a fault: the step ends here, with whatever was written, and the
+           * turn decides what to say about it. Retrying would replay the loop.
+           */
+          if (cut && !request.signal.aborted) {
+            // The loop's own condition ends it; nothing of this step is retried.
+            outcome = { stop: "end_turn", toolCalls: [], usage: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, finishReason: LOOP_FINISH }
+            continue
+          }
           if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) throw err
           /*
            * MiMo retries a step while replaying it is safe, and a tool call
@@ -2544,6 +2604,14 @@ export class SessionRunner {
           if (!(await waitFor(decision.wait, request.signal))) throw new DOMException("Aborted", "AbortError")
         }
       }
+
+      /*
+       * An adapter that sees its signal fall may simply stop reading and hand
+       * back what it had rather than throwing, as the chat-completions one
+       * does. A cut stream is a cut stream either way, and whatever it half
+       * assembled is not a reply to act on.
+       */
+      if (cut && !request.signal.aborted) outcome = { stop: "end_turn", toolCalls: [], usage: outcome.usage, finishReason: LOOP_FINISH }
 
       // Tool arguments stream as partial JSON, so they are only trustworthy
       // once the turn closes - fill them in from the settled outcome.
@@ -2589,6 +2657,7 @@ export class SessionRunner {
       throw new Shown(err)
     } finally {
       clearInterval(flush)
+      request.signal.removeEventListener("abort", follow)
     }
   }
 
@@ -2849,7 +2918,7 @@ export class SessionRunner {
    * that failed changed nothing worth a notice.
    */
   private async changedMainWorktree(part: ToolPart, directory: string): Promise<string | undefined> {
-    if (["write", "edit", "notebook_edit"].includes(part.name)) {
+    if (["write", "edit", "multiedit", "notebook_edit"].includes(part.name)) {
       const named = part.input?.file_path ?? part.input?.notebook_path
       if (typeof named !== "string") return undefined
       const top = await worktreeTop(path.dirname(path.resolve(directory, named)))

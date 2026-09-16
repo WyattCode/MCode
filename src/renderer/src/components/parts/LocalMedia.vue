@@ -163,6 +163,19 @@ function seek(event: MouseEvent) {
   position.value = element.currentTime
 }
 
+/* The track from the keyboard: the arrows on the focused bubble step five seconds, Home and End go to the ends. */
+function nudge(event: KeyboardEvent) {
+  const element = audio.value
+  if (!element || duration.value <= 0) return
+  const rtl = getComputedStyle(event.currentTarget as HTMLElement).direction === "rtl"
+  const steps: Record<string, number> = { ArrowLeft: rtl ? 5 : -5, ArrowRight: rtl ? -5 : 5, Home: -Infinity, End: Infinity }
+  const step = steps[event.key]
+  if (step === undefined) return
+  event.preventDefault()
+  element.currentTime = Math.min(duration.value, Math.max(0, element.currentTime + step))
+  position.value = element.currentTime
+}
+
 /* The "…" opens the reply's path menu where MiMo puts it: 80px before the button, 4px under it. */
 function openMore(event: MouseEvent) {
   const button = event.currentTarget as HTMLElement
@@ -267,6 +280,7 @@ onBeforeUnmount(() => {
         @click="togglePlay"
         @keydown.enter.self.prevent="togglePlay"
         @keydown.space.self.prevent="togglePlay"
+        @keydown.self="nudge"
       >
         <span class="md-voice-play" :data-playing="playing" aria-hidden="true">
           <svg v-if="playing" width="12" height="12" viewBox="0 0 24 24" fill="currentColor">

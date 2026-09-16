@@ -15,6 +15,12 @@ export const MemoryTool: ToolDefinition = {
   name: "memory",
   description: [
     "Search the memory files kept across conversations: project memory, global memory and per-conversation notes, as markdown under the app's memory folder (<memory>/<scope>/<scope id>/<key>.md).",
+    "",
+    "What is in them: project memory holds what a project is, the rules the user set for it and decisions worth keeping; global memory holds preferences that hold everywhere; a conversation's notes hold what one conversation worked out. They are ordinary files - read and edit them with the read and edit tools once this has told you where they are.",
+    "",
+    "When to search: before asking the user something they may already have told you, before deciding a convention this project has probably already settled, and when a task sounds like one that has been done here before. A search costs one call; asking the user again costs their patience.",
+    "",
+    "How to search:",
     "Words are matched separately and a file matching any of them counts, ranked by how many and how rare; weak matches on common words are dropped. One to three distinctive words - a function name, an id, a rare term - work better than a sentence. Punctuation is ignored, so search the parts of a URL or path rather than the whole.",
     "A result is reliable even when another phrasing found nothing. Snippets are cut short: read the file at the given path for the whole text.",
     "When nothing is found, try fewer or rarer words, widen the scope, search the memory folder with grep for literal strings, or use the history tool for exact past wording.",

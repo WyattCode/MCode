@@ -131,7 +131,7 @@ const annotationScope = computed(() => sessionID.value ?? (props.side ? SIDE_SCO
 const waiting = computed(() => annotations.list(annotationScope.value))
 
 /* MiMo's attachment click: a picture or a video opens its preview, a document its tab. */
-function onTileClick(item: Attachment, event?: MouseEvent) {
+function onTileClick(item: Attachment, event?: Event) {
   const url = videoUrl(item)
   const picture = preview(item)
   if (url) openVideoPreview(url, { name: item.path })
@@ -2567,8 +2567,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 :src="preview(item)"
                 class="att-thumb"
                 alt=""
+                role="button"
+                tabindex="0"
                 v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
                 @click="onTileClick(item, $event)"
+                @keydown.enter.space.prevent="onTileClick(item, $event)"
               />
               <video
                 v-else
@@ -2578,8 +2581,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 muted
                 playsinline
                 preload="metadata"
+                role="button"
+                tabindex="0"
                 v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
                 @click="onTileClick(item, $event)"
+                @keydown.enter.space.prevent="onTileClick(item, $event)"
               />
               <button
                 class="att-x"
@@ -2598,8 +2604,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               v-else
               class="att-file"
               :class="{ openable: Boolean(item.path) }"
+              :role="item.path ? 'button' : undefined"
+              :tabindex="item.path ? 0 : undefined"
               data-attachment-tile
               @click="onTileClick(item, $event)"
+              @keydown.enter.space.self.prevent="onTileClick(item, $event)"
             >
               <span class="badge att-badge" :style="badgeStyle(fileBadge(fileName(item.path)))">
                 {{ fileBadge(fileName(item.path)).label }}
@@ -4808,6 +4817,16 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 0.5px var(--border-strong);
 }
 
+/* The keyboard's ring (base.css) goes round the card rather than the bare writing area inside it. */
+:root[data-focus-key] .box:has(.input:focus) {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+
+:root[data-focus-key] .input:focus {
+  outline: none;
+}
+
 .box.dropping {
   box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }
@@ -4973,6 +4992,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   width: 30px;
   height: 30px;
   border-radius: 50%;
+}
+
+/* High contrast drops the fill, so the send button keeps a system outline there; nothing changes outside that mode. */
+@media (forced-colors: active) {
+  .send {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
 }
 
 .send:hover:not(:disabled) {

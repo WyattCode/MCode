@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { notifyFailure } from "../lib/toast"
 import { groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
 import ProviderIcon from "./ProviderIcon.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
@@ -222,7 +223,13 @@ function openVerification() {
 
 async function copyCode() {
   if (!auth.value?.userCode) return
-  await navigator.clipboard.writeText(auth.value.userCode)
+  // A refused clipboard is a notice, never the error page.
+  try {
+    await navigator.clipboard.writeText(auth.value.userCode)
+  } catch {
+    notifyFailure(t("code.copyFailed"))
+    return
+  }
   copied.value = true
   setTimeout(() => (copied.value = false), 1600)
 }

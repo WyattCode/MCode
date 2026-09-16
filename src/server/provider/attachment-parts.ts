@@ -141,6 +141,11 @@ function decoded(data: string, limit: number): Uint8Array {
   return Uint8Array.from(Buffer.from(data.slice(0, limit), "base64"))
 }
 
+/** The line that says an attached file arrives as a read the app already made for the model. */
+export function readFraming(target: string): string {
+  return `The read tool was called for you with {"file_path": "${target}"}, and returned:`
+}
+
 export function attachmentParts(attachments: readonly Attachment[], inputs: Partial<ModelModalities> | undefined, wire: Wire): WirePart[] {
   const parts: WirePart[] = []
   for (const file of attachments as readonly LoadedAttachment[]) {
@@ -150,7 +155,14 @@ export function attachmentParts(attachments: readonly Attachment[], inputs: Part
       continue
     }
     if (TEXT_TYPES.test(file.mime)) {
-      parts.push({ kind: "text", text: `<file path="${file.path}">\n${file.data}\n</file>` })
+      /*
+       * Framed as a read the app already made, as MiMo's engine frames one: it
+       * runs the read tool for an attached text file and injects the call and
+       * its output rather than pasting the text in. The difference is not
+       * cosmetic - a model that reads an inline block does not believe it has
+       * read the file, so it reads it again before editing, at full cost.
+       */
+      parts.push({ kind: "text", text: `${readFraming(file.path)}\n<file path="${file.path}">\n${file.data}\n</file>` })
       continue
     }
     const modality = modalityOf(file.mime)

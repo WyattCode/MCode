@@ -6,6 +6,7 @@ import SubagentAvatar from "./parts/SubagentAvatar.vue"
 import { useQuestions } from "../stores/questions"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { announce, textOf } from "../lib/announce"
 
 /**
  * MiMo's confirm dock, above the composer: the first undecided permission or
@@ -57,6 +58,8 @@ function engage() {
 }
 
 function onDockKey(event: KeyboardEvent) {
+  // A control inside the card that answered the key itself - a diff's file row or header - keeps it.
+  if (event.defaultPrevented) return
   const target = event.target as HTMLElement
   if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") return
   const el = root.value
@@ -99,11 +102,26 @@ function onDockKey(event: KeyboardEvent) {
   }
 }
 
+/*
+ * What the dock is called and what it describes, by the ids its cards give
+ * their drawn title and subject. Only one card is drawn at a time.
+ */
+const LABELLED_BY = ["confirm-dock-asker", "confirm-dock-title", "confirm-dock-chip"]
+const DESCRIBED_BY = ["confirm-dock-desc"]
+
 // A new request, or the guide giving way to its card, is taken up the same way.
 watch(
   () => [first.value?.id, questions.guide] as const,
   ([id]) => {
-    if (id) void nextTick(takeFocus)
+    if (!id) return
+    void nextTick(() => {
+      takeFocus()
+      /*
+       * Beyond MiMo, whose dock is silent: the turn has stopped to wait, and
+       * focus alone is not enough - it stays in a composer that holds a draft.
+       */
+      announce(textOf([...LABELLED_BY, ...DESCRIBED_BY]), "assertive")
+    })
   },
   { immediate: true },
 )
@@ -121,21 +139,24 @@ watch(
       class="confirm-dock"
       data-confirm-dock
       tabindex="-1"
+      role="alertdialog"
+      :aria-labelledby="LABELLED_BY.join(' ')"
+      :aria-describedby="DESCRIBED_BY.join(' ')"
       @keydown="onDockKey"
       @pointerdown="engage"
     >
       <!-- subagents: which subagent is asking, when it is not the conversation itself. -->
       <div v-if="asker && !questions.guide" class="dock-subagent" data-dock-subagent>
         <SubagentAvatar :seed="asker.seed" compact />
-        <span class="dock-subagent-name">{{ asker.name }}</span>
+        <span id="confirm-dock-asker" class="dock-subagent-name">{{ asker.name }}</span>
       </div>
       <!-- MiMo's guide, over a permission card after enough approvals by hand. No primary: Enter answers nothing here. -->
       <div v-if="questions.guide" :key="`guide-${first.id}`" class="perm-guide" data-perm-guide>
         <div class="guide-head">
-          <span class="guide-title" data-perm-guide-title>{{ t("perm.guide.title") }}</span>
+          <span id="confirm-dock-title" class="guide-title" data-perm-guide-title>{{ t("perm.guide.title") }}</span>
           <span class="guide-count" data-perm-guide-count>{{ t("perm.guide.count", { n: questions.guideCount }) }}</span>
         </div>
-        <p class="guide-body" data-perm-guide-body>{{ t("perm.guide.body") }}</p>
+        <p id="confirm-dock-desc" class="guide-body" data-perm-guide-body>{{ t("perm.guide.body") }}</p>
         <div class="guide-actions">
           <button type="button" class="guide-btn" data-cnav data-perm-guide-keep @click="questions.dismissGuide()">
             {{ t("perm.guide.keepManual") }}

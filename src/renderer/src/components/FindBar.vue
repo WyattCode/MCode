@@ -112,12 +112,18 @@ watch(input, (element) => props.find.setInput(element))
 </template>
 
 <style scoped>
+/*
+ * The card never grows past the width MiMo draws it at with a 42px count:
+ * a longer count ("1/12 (3 masqués)") takes its room from the field instead,
+ * so a translated count cannot push the card across the reading column.
+ */
 .find {
   position: fixed;
   z-index: 170;
   display: flex;
   align-items: center;
   gap: 6px;
+  max-inline-size: calc(2 * 10px + 2 * 1px + 15px + 180px + 42px + 3 * 22px + 5 * 6px);
   padding: 6px 10px;
   background: var(--surface-base);
   border: 1px solid var(--border-weak);
@@ -133,7 +139,9 @@ watch(input, (element) => props.find.setInput(element))
 }
 
 .needle {
+  flex: 0 1 180px;
   width: 180px;
+  min-inline-size: 72px;
   color: var(--text-base);
   font-size: calc(13px * var(--ui-font-scale, 1));
   background: transparent;
@@ -152,6 +160,7 @@ watch(input, (element) => props.find.setInput(element))
   font-size: calc(11px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
   text-align: center;
+  white-space: nowrap;
 }
 
 .step {

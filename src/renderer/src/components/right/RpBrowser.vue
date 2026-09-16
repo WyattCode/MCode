@@ -335,14 +335,14 @@ defineExpose({
       <div v-if="menuOpen" ref="menu" class="rb-menu" role="menu" data-rb-menu>
         <button type="button" role="menuitem" class="rb-item" :disabled="!showingPage" @click="forceReload">{{ t("rp.browser.dotMenu.forceReload") }}</button>
         <button type="button" role="menuitem" class="rb-item" data-rb-device-toolbar :disabled="!showingPage" @click="deviceToolbar">{{ t("rp.browser.dotMenu.deviceToolbar") }}</button>
-        <div class="rb-zoom" role="group" aria-label="Zoom" data-rb-zoom>
+        <div class="rb-zoom" role="group" :aria-label="t('rp.browser.dotMenu.zoom')" data-rb-zoom>
           <span class="rb-zoom-label">{{ t("rp.browser.dotMenu.zoom") }}</span>
           <span class="rb-zoom-pill">
-            <button type="button" class="rb-step" :disabled="!showingPage || state.zoom <= zoomFloor" aria-label="Zoom out" @click="act('zoomOut')">−</button>
+            <button type="button" class="rb-step" :disabled="!showingPage || state.zoom <= zoomFloor" :aria-label="t('key.zoomOut')" @click="act('zoomOut')">−</button>
             <span class="rb-zoom-value">{{ state.zoom }}%</span>
-            <button type="button" class="rb-step" :disabled="!showingPage || state.zoom >= zoomCeiling" aria-label="Zoom in" @click="act('zoomIn')">+</button>
+            <button type="button" class="rb-step" :disabled="!showingPage || state.zoom >= zoomCeiling" :aria-label="t('key.zoomIn')" @click="act('zoomIn')">+</button>
           </span>
-          <button type="button" class="rb-zoom-reset" :disabled="!showingPage" aria-label="Reset zoom" @click="act('zoomReset')">↻</button>
+          <button type="button" class="rb-zoom-reset" :disabled="!showingPage" :aria-label="t('key.zoomReset')" @click="act('zoomReset')">↻</button>
         </div>
         <div class="rb-rule" />
         <button type="button" role="menuitem" class="rb-item danger" :disabled="!showingPage" @click="clearSite('cookies')">{{ t("rp.browser.dotMenu.clearCookies") }}</button>

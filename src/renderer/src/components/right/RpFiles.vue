@@ -777,8 +777,11 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
                 class="fv-img"
                 :src="mediaUrl"
                 :alt="baseName(viewFile)"
+                role="button"
+                tabindex="0"
                 @error="mediaFailed = true"
                 @click="openImagePreview(mediaUrl, { name: baseName(viewFile), path: absolute(viewFile) })"
+                @keydown.enter.space.prevent="openImagePreview(mediaUrl, { name: baseName(viewFile), path: absolute(viewFile) })"
               />
             </div>
             <div v-else-if="opened.video && mediaUrl" class="fv-media">

@@ -187,7 +187,7 @@ const Actions: FunctionalComponent = () => {
   <div class="confirm-question" data-confirm-question>
     <div class="q-head">
       <span class="q-icon" aria-hidden="true"><StepIcon name="question" :size="15" /></span>
-      <span class="q-title" data-confirm-qtitle>{{ title }}</span>
+      <span id="confirm-dock-title" class="q-title" data-confirm-qtitle>{{ title }}</span>
       <template v-if="current.header">
         <span class="q-dim">·</span>
         <span class="q-header" data-confirm-qheader :title="planHeader(current)">{{ planHeader(current) }}</span>
@@ -243,7 +243,7 @@ const Actions: FunctionalComponent = () => {
     </div>
 
     <div :key="page" class="confirm-q-body" data-confirm-qbody>
-      <div class="q-text" data-confirm-qtext>{{ questionText }}</div>
+      <div id="confirm-dock-desc" class="q-text" data-confirm-qtext>{{ questionText }}</div>
       <!-- plan: MiMo's 查看方案, which opens the plan file beside the conversation. -->
       <button v-if="plan" type="button" class="q-plan" data-confirm-plan :title="plan" @click="openPlan(plan, app.current?.directory)">
         {{ t("question.viewPlan") }}

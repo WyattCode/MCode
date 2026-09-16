@@ -86,7 +86,7 @@ export function relativeTo(root: string, file: string): string {
   return inside ? target.slice(base.length + 1) : target.replace(/^\.\//, "")
 }
 
-const EDITING = new Set(["edit", "write", "patch"])
+const EDITING = new Set(["edit", "multiedit", "write", "patch"])
 
 /* Every file one edit, write or patch call names, by its input and by the diff it recorded. */
 export function editTargets(part: ToolPart): string[] {

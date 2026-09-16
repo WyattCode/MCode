@@ -1018,7 +1018,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
 </script>
 
 <template>
-  <aside class="side" :class="{ rail: collapsed, dragging }" :style="collapsed ? undefined : { width: `${RAIL_WIDTH + width}px` }">
+  <aside class="side" :class="{ rail: collapsed, dragging }" :style="collapsed ? undefined : { width: `${RAIL_WIDTH + width}px` }" :aria-label="t('a11y.sidebar')">
     <div v-if="!collapsed" class="resizer" data-side-resizer @mousedown.prevent="beginResize" />
     <!--
       Folded, MiMo keeps the column's controls just past the rail: the toggle
@@ -1095,7 +1095,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
       <span class="badge">2.0</span>
     </div>
 
-    <nav class="nav">
+    <nav class="nav" :aria-label="t('key.groupNavigation')">
       <button
         class="row"
         data-new-task
@@ -1114,6 +1114,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
       <button
         class="row"
         :class="{ on: page === 'artifacts' }"
+        :aria-label="collapsed ? t('side.railArtifacts') : undefined"
         v-tip="collapsed ? { label: t('side.railArtifacts'), placement: 'right' } : ''"
         @click="emit('artifacts')"
       >
@@ -1690,6 +1691,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         class="row foot-menu"
         :aria-expanded="Boolean(footMenu)"
         aria-haspopup="menu"
+        :aria-label="collapsed ? t('rail.settings') : undefined"
         v-tip="collapsed ? { label: t('rail.settings'), placement: 'right' } : ''"
         @click="openFootMenu"
       >
@@ -2017,6 +2019,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   background: var(--surface-selected);
 }
 
+/*
+ * Windows high contrast paints every row as Canvas, which hid the open one:
+ * there it keeps a system-highlight outline. Nothing changes outside that mode.
+ */
+@media (forced-colors: active) {
+  .row.on,
+  .quick-convo.on {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
 .row-ico {
   flex-shrink: 0;
 }
@@ -2148,6 +2162,12 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   font-weight: 500;
   /* Normal, as MiMo's heading is: 15 tall, where the inherited 24 made it 24. */
   line-height: normal;
+}
+
+/* MiMo's section toggle keyboard ring: 1px in its muted text colour, 2px out. */
+button.section-head:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--text-strong) 60%, transparent);
+  outline-offset: 2px;
 }
 
 .chev {

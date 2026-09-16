@@ -21,6 +21,7 @@ import { clampEffort, cycleVariant, isLatest, withoutLatest } from "../src/rende
 import { createPinia, setActivePinia } from "pinia"
 import { useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { locateOffset } from "../src/renderer/src/lib/find"
+import { FAMILY_PROMPTS, promptFamily } from "../src/server/session/prompts"
 
 let passed = 0
 const problems: string[] = []
@@ -275,6 +276,71 @@ console.log("\nfind-in-view maps an offset back onto a node")
   // One node is the common case and must not regress.
   check("a single node, first character", `${locateOffset([9], 0).index}:${locateOffset([9], 0).offset}`, "0:0")
   check("a single node, last character", `${locateOffset([9], 8).index}:${locateOffset([9], 8).offset}`, "0:8")
+}
+
+/*
+ * The three agent prompts, section by section.
+ *
+ * MiMo keeps ten prompt files and picks one by model id; MCode keeps three and
+ * this is what says so. The sections are listed here by hand rather than read
+ * off the prompt, so cutting one out of `session/prompts.ts` fails here instead
+ * of quietly agreeing with itself. Add to this list deliberately when a prompt
+ * gains a section that later work must not lose.
+ */
+console.log("\nThe agent prompt each model family reads")
+{
+  check("a Claude model reads the Anthropic prompt", promptFamily({ provider: "anthropic", id: "claude-sonnet-5" }), "anthropic")
+  check("a GPT or o-series model reads the GPT one", [promptFamily({ id: "gpt-5.1" }), promptFamily({ id: "o3-mini" })], ["gpt", "gpt"])
+  check("every other family reads the general one", [promptFamily({ id: "qwen3" }), promptFamily(undefined)], ["general", "general"])
+
+  const sections: Record<keyof typeof FAMILY_PROMPTS, string[]> = {
+    anthropic: ["# Harness", "# Session-specific guidance", "# Context management", "# Delivering work", "# Corrections"],
+    gpt: [
+      "# Personality",
+      "## Writing style",
+      "## Technical communication",
+      "# Working with the user",
+      "## Intermediate commentary",
+      "## Final answer",
+      "### Formatting rules",
+      "### Visualisations",
+      "# Rules for getting work done",
+      "## File editing constraints",
+      "## Autonomy and persistence",
+      "# Destructive actions",
+      "# Using skills",
+      "# MCode runtime",
+    ],
+    general: [
+      "## How this works",
+      "## Doing tasks",
+      "## Executing actions with care",
+      "## Agents and modes",
+      "## Permissions",
+      "## Using your tools",
+      "## Skills",
+      "## Notes kept between conversations",
+      "## Where instructions come from",
+      "## Tone and style",
+    ],
+  }
+  for (const [family, headings] of Object.entries(sections) as [keyof typeof FAMILY_PROMPTS, string[]][]) {
+    const prompt = FAMILY_PROMPTS[family]
+    const missing = headings.filter((heading) => !prompt.includes(`\n${heading}\n`))
+    check(`the ${family} prompt keeps every section it covers`, missing, [])
+  }
+
+  check(
+    "each is in the length class of the MiMo file it answers",
+    [FAMILY_PROMPTS.anthropic.length > 3_000, FAMILY_PROMPTS.gpt.length > 7_000, FAMILY_PROMPTS.general.length > 5_000],
+    [true, true, true],
+  )
+  check("and the three are genuinely three texts", new Set(Object.values(FAMILY_PROMPTS)).size, 3)
+  check(
+    "every one of them names this app rather than the reference",
+    Object.values(FAMILY_PROMPTS).map((prompt) => prompt.startsWith("You are MCode") && !/MiMo/i.test(prompt)),
+    [true, true, true],
+  )
 }
 
 if (problems.length) {

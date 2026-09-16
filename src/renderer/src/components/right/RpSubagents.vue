@@ -45,8 +45,8 @@ const statusOf = (item: SubagentItem) => t(`subagents.status.${item.status}`)
 /* MiMo leaves the summary out when it only repeats the name or the status. */
 const summaryOf = (item: SubagentItem) => (item.summary && item.summary !== nameOf(item) && item.summary !== statusOf(item) ? item.summary : "")
 function timeOf(item: SubagentItem): string {
-  const { key, count } = subagentTime(item, now.value)
-  return count === undefined ? t(key) : t(key, { count })
+  const { key, n } = subagentTime(item, now.value)
+  return n === undefined ? t(key) : t(key, { n })
 }
 
 /**
