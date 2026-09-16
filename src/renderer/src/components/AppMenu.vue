@@ -39,7 +39,7 @@ const groups = computed<Group[]>(() => [
     key: "file",
     label: t("menu.file"),
     items: [
-      { key: "new-session", label: t("menu.newSession"), hint: "Ctrl+N" },
+      { key: "new-session", label: t("side.newTask"), hint: "Ctrl+N" },
       { key: "open-project", label: t("menu.openProject"), hint: "Ctrl+O" },
       { key: "settings", label: t("menu.settings"), hint: "Ctrl+," },
       { key: "close", label: t("menu.close"), divided: true },
@@ -75,11 +75,11 @@ const groups = computed<Group[]>(() => [
   },
   {
     key: "session",
-    label: t("menu.session"),
+    label: t("key.groupConversation"),
     items: [
       { key: "abort", label: t("menu.stop"), hint: "Ctrl+." },
       { key: "model", label: t("menu.switchModel"), hint: "Ctrl+Shift+M" },
-      { key: "delete-session", label: t("menu.deleteSession"), divided: true },
+      { key: "delete-session", label: t("menu.delete"), divided: true },
     ],
   },
   {
@@ -88,8 +88,8 @@ const groups = computed<Group[]>(() => [
     items: [
       { key: "back", label: t("menu.back"), hint: "Ctrl+[" },
       { key: "forward", label: t("menu.forward"), hint: "Ctrl+]" },
-      { key: "prev-session", label: t("menu.prevSession"), hint: "Alt+Up", divided: true },
-      { key: "next-session", label: t("menu.nextSession"), hint: "Alt+Down" },
+      { key: "prev-session", label: t("conv.prev"), hint: "Alt+Up", divided: true },
+      { key: "next-session", label: t("conv.next"), hint: "Alt+Down" },
       { key: "prev-project", label: t("menu.prevProject"), hint: "Ctrl+Alt+Up", divided: true },
       { key: "next-project", label: t("menu.nextProject"), hint: "Ctrl+Alt+Down" },
     ],
