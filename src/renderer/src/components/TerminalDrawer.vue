@@ -285,18 +285,24 @@ function startResize(event: PointerEvent) {
 
     <div class="drawer-body" :style="{ height: `${height}px` }">
       <div class="head" role="tablist">
-        <button
+        <!--
+          The tab is not a <button>: its close is a real button of its own,
+          which a button cannot hold and still let it take focus.
+        -->
+        <div
           v-for="term in terms"
           :key="term.id"
           class="tab"
           :class="{ on: term.id === activeID }"
           role="tab"
+          tabindex="0"
           :aria-selected="term.id === activeID"
           @click="select(term.id)"
+          @keydown.enter.space.self.prevent="select(term.id)"
         >
           <span class="tab-label">{{ terminalLabel(term.num, t("term.title")) }}</span>
-          <span class="tab-close" role="button" :aria-label="t('term.close')" @click.stop="requestClose(term.id)">×</span>
-        </button>
+          <button type="button" class="tab-close" :aria-label="t('term.close')" @click.stop="requestClose(term.id)">×</button>
+        </div>
 
         <!-- MiMo's: a bare plus in the muted colour, named by the platform's own tooltip. -->
         <button class="add" :title="t('term.new')" :aria-label="t('term.new')" @click="add()">+</button>
@@ -426,6 +432,8 @@ function startResize(event: PointerEvent) {
   font-size: calc(12px * var(--ui-font-scale, 1));
   font-weight: 400;
   line-height: 18px;
+  /* What the button it used to be gave it. */
+  cursor: pointer;
 }
 
 /* MiMo's .bp-tab.active: the page fill inside a warm hairline (#2e2e2e in dark). */

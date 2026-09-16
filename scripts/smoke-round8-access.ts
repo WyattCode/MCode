@@ -95,6 +95,8 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     check("a file header is a Tab stop that folds, and says whether it is open", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"[\s\S]{0,80}@keydown\.enter\.space\.self\.prevent="toggle/.test(diff))
     const panel = read("components/RightPanel.vue")
     check("the shown right-panel tab is the strip's Tab stop", /:tabindex="tab\.id === rp\.active \? 0 : -1"/.test(panel))
+    const drawer = read("components/TerminalDrawer.vue")
+    check("a terminal tab's close is a button beside its label, not inside another button (A6)", /<div[^>]*class="tab"[^>]*role="tab"[^>]*tabindex="0"[\s\S]{0,300}<button type="button" class="tab-close"[\s\S]{0,120}<\/div>/.test(drawer) && !/<span class="tab-close"/.test(drawer))
     check("arrows, Home and End walk the tabs; Enter, Space and the Menu key act", /function onTabKey[\s\S]*"Enter"[\s\S]*"ContextMenu"[\s\S]*ArrowRight[\s\S]*"Home"[\s\S]*"End"/.test(panel) && /@keydown="onTabKey\(\$event, tab\.id\)"/.test(panel))
   }
 }
