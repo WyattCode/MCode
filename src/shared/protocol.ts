@@ -1308,8 +1308,6 @@ export interface AppConfig {
    */
   videoCardDetails?: boolean
   theme: "dark" | "light" | "system"
-  /* Which named palette the colours are generated from. */
-  themeID: string
   /**
    * Shortcuts the user has changed, as command id to chord.
    *

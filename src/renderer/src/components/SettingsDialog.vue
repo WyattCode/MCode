@@ -27,7 +27,6 @@ import { chordOf, formatChord, isBindable } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
-import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
 import { installUpdate, updateState } from "./UpdatePill.vue"
 
 /* MiMo's 当前版本 button reads the update capsule's phase; a download announced by the app counts as ready. */
@@ -1126,7 +1125,6 @@ const themeOptions = computed(() => [
   { value: "light", label: t("set.appearance.themeLight") },
   { value: "dark", label: t("set.appearance.themeDark") },
 ])
-const paletteOptions = THEMES.map((entry) => ({ value: entry.id, label: entry.name }))
 const languageOptions = computed(() => LANGUAGES.map((entry) => ({ value: entry.id, label: entry.label })))
 
 /**
@@ -2140,7 +2138,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <!-- Appearance: a page of its own, as MiMo keeps it, rather than a group under General. -->
         <template v-else-if="section === 'appearance'">
           <h2>{{ t("set.appearance") }}</h2>
-          <!-- MiMo's first card: 主题, then MCode's own palette row under a name of its own. -->
+          <!-- MiMo's first card: 主题 alone - there is no palette to choose. -->
           <div class="card" data-appearance-theme>
             <div class="line">
               <div class="line-text">
@@ -2151,18 +2149,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :model-value="app.config?.theme ?? 'system'"
                 :options="themeOptions"
                 @update:model-value="app.patchConfig({ theme: $event as 'dark' })"
-              />
-            </div>
-
-            <div class="line" data-palette-row>
-              <div class="line-text">
-                <div class="line-title">{{ t("set.paletteName") }}</div>
-                <div class="line-sub">{{ t("set.themePaletteSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.themeID ?? DEFAULT_THEME"
-                :options="paletteOptions"
-                @update:model-value="app.patchConfig({ themeID: $event })"
               />
             </div>
           </div>

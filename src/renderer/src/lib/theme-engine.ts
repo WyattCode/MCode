@@ -6,9 +6,9 @@
  * the interface actually draws with is derived here: twelve-step ramps per hue
  * in OKLCH, then the semantic names mapped onto steps of those ramps.
  *
- * The arithmetic is the reference implementation's, kept step for step. The
- * check that it is faithful is that the built-in OC-2 theme regenerates the
- * app's own default tokens exactly, in both schemes - see theme.spec.
+ * The arithmetic is the reference implementation's, kept step for step. It no
+ * longer runs in the window: tokens.css holds what it derives from MCode's one
+ * palette, and `npm run themecheck` fails on any token the two disagree about.
  */
 
 export interface ThemePalette {
@@ -29,9 +29,8 @@ export interface ThemeVariant {
   palette: ThemePalette
   overrides?: Record<string, string>
   /*
-   * Colours a theme pins outright, bypassing the generator. Two of the shipped
-   * themes use it: OC-2, whose values the stylesheet was written from, and
-   * Matrix, which wants a flat green ramp no seed would produce.
+   * Colours a theme pins outright, bypassing the generator. MCode 2.0 uses it
+   * for the surfaces and text steps measured on MiMo.
    */
   v2Overrides?: Record<string, string>
 }
@@ -445,9 +444,9 @@ function foreground(variant: ThemeVariant, isDark: boolean, grey: string[]) {
  *
  * The layers go on in the order the reference stacks them: ramps, then the
  * names that read from them, then the foreground taken from the ink, then
- * whatever the theme pins by hand. A theme that pins its own values - OC-2 and
- * Matrix both do - overrides everything the generator worked out, which is why
- * the pinned layer has to go on last.
+ * whatever the theme pins by hand. A theme that pins its own values - MCode 2.0
+ * does - overrides everything the generator worked out, which is why the pinned
+ * layer has to go on last.
  */
 function v2Tokens(theme: Theme, isDark: boolean): Record<string, string> {
   const variant = isDark ? theme.dark : theme.light

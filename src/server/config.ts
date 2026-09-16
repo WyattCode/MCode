@@ -96,7 +96,6 @@ function defaults(): AppConfig {
   return {
     model: DEFAULT_MODEL,
     theme: "system",
-    themeID: "mcode-2",
     mcpServers: {},
     pinnedTabs: [],
     pinnedProjects: [],
@@ -193,6 +192,8 @@ export const RETIRED_FIELDS: readonly string[] = [
   "uiFont",
   "codeFont",
   "terminalFont",
+  // S9-6: the palette choice; MiMo has only the scheme, and MCode draws with its one palette.
+  "themeID",
 ]
 
 /** Takes the retired fields out of a document; answers whether any was there. */
@@ -397,18 +398,6 @@ export class Config {
       done.add(name)
       moved = true
     }
-
-    /*
-     * 2.0 draws with its own theme, MCode 2.0. Changing the default only
-     * reaches new documents, and every document already carries a themeID -
-     * the default is written in with the rest - so anyone who never chose a
-     * theme would open 2.0 looking exactly like 0.x. Only the untouched
-     * default moves; a theme that was picked on purpose stays, and picking
-     * OC-2 again afterwards sticks, because the name is recorded either way.
-     */
-    once("theme-mcode-2", () => {
-      if (this.current.themeID === "oc-2") this.current.themeID = "mcode-2"
-    })
 
     /*
      * Round three renamed several commands to MiMo's ids. A chord someone bound

@@ -79,8 +79,6 @@ import { chime } from "./lib/sound"
 import { stepTarget } from "./lib/visible-chats"
 import { announce } from "./lib/announce"
 import { chimeOf, longTask } from "@shared/chime"
-import { themeTokens } from "./lib/theme-engine"
-import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
 
 const app = useApp()
 // The confirm dock's queue: permissions and questions for the session on screen.
@@ -645,7 +643,7 @@ async function exportLog() {
     `MCode log`,
     `exported ${new Date().toISOString()}`,
     `platform ${navigator.userAgent}`,
-    `theme ${app.config?.themeID ?? "oc-2"} / ${app.config?.theme ?? "system"}`,
+    `theme ${app.config?.theme ?? "system"}`,
     `language ${language.value}`,
     "",
   ]
@@ -932,7 +930,6 @@ function addSelection() {
 /** Which rail badge has its panel open, and where to anchor it. */
 
 const theme = computed(() => app.config?.theme ?? "system")
-const themeID = computed(() => app.config?.themeID ?? DEFAULT_THEME)
 
 // The palette is defined against :root, so the override has to land on <html>.
 // Setting it on a wrapper element silently does nothing - "system" would still
@@ -947,9 +944,9 @@ watch(
 )
 
 /*
- * Which scheme is actually showing. "System" is the default, so the palette
- * below cannot be chosen from the setting alone - it has to follow the OS, and
- * follow it while the window is open rather than only at startup.
+ * Which scheme is actually showing. "System" is the default, so it cannot be
+ * read from the setting alone - it has to follow the OS, and follow it while
+ * the window is open rather than only at startup.
  */
 const schemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
 const systemDark = ref(schemeQuery.matches)
@@ -958,27 +955,13 @@ const darkScheme = computed(() =>
   theme.value === "system" ? systemDark.value : theme.value === "dark",
 )
 
-/**
- * Paints the chosen palette onto the document.
- *
- * The stylesheet already carries a full set of colours - they are OC-2, run
- * through this same generator - so this writes over them rather than filling a
- * blank. Setting the properties inline is what lets one theme override all
- * three of the stylesheet's blocks at once, media query included.
+/*
+ * The colours are the stylesheet's, as MiMo's are: tokens.css carries MCode's
+ * one palette for both schemes, and `data-theme` above picks between them.
+ * The caption buttons are the OS's, drawn over a transparent fill. It knows the
+ * system theme but not this app's, so it has to be told which one won.
  */
-watch(
-  [themeID, darkScheme],
-  ([id, dark]) => {
-    const tokens = themeTokens(themeByID(id), dark)
-    for (const [name, value] of Object.entries(tokens)) {
-      document.documentElement.style.setProperty(name, value)
-    }
-    // The caption buttons are the OS's, drawn over a transparent fill. It knows
-    // the system theme but not this app's, so it has to be told which one won.
-    window.mcode.titlebarMode(dark ? "dark" : "light")
-  },
-  { immediate: true },
-)
+watch(darkScheme, (dark) => window.mcode.titlebarMode(dark ? "dark" : "light"), { immediate: true })
 
 /*
  * MiMo's native theme: main sets the OS-drawn surfaces (context menus, the
@@ -2862,12 +2845,6 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("cmd.cycleLanguage"),
       run: () => void cycleLanguage(),
     },
-    ...THEMES.map((entry) => ({
-      id: `theme.${entry.id}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useTheme", { name: entry.name }),
-      run: () => void setTheme(entry.id, entry.name),
-    })),
     // App
     {
       /*
@@ -3080,13 +3057,6 @@ const bindableCommands = computed((): AppCommand[] => {
       group: "key.groupGeneral",
       title: t("key.nextProject"),
       run: () => void stepProject(1),
-    },
-    {
-      id: "theme.cycle",
-      group: "key.groupGeneral",
-      // No chord: Ctrl+Shift+T is reopening a tab, and one chord holds one command.
-      title: t("cmd.cycleTheme"),
-      run: () => void cycleTheme(),
     },
     {
       id: "theme.scheme.cycle",
@@ -3344,18 +3314,6 @@ async function cycleLanguage() {
   const current = language.value
   const index = LANGUAGES.findIndex((entry) => entry.id === current)
   await setLanguage(LANGUAGES[(index + 1) % LANGUAGES.length].id)
-}
-
-/** Steps to the next palette, naming it - there are thirty-seven to walk. */
-async function setTheme(id: string, name: string) {
-  await app.patchConfig({ themeID: id })
-  notify(t("toast.switchedTo", { name }))
-}
-
-async function cycleTheme() {
-  const index = THEMES.findIndex((entry) => entry.id === themeID.value)
-  const next = THEMES[(index + 1) % THEMES.length]
-  await setTheme(next.id, next.name)
 }
 
 /** Stops the browser opening a file the user let go of by accident. */

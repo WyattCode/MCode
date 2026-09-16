@@ -163,4 +163,20 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     check("while the sizes, which MiMo has, stay", old.config.get().uiFontSize === 16)
     check("and the protocol no longer declares them", faces.every((field) => !new RegExp(`^\\s*${field}\\??:`, "m").test(read("src/shared/protocol.ts"))))
   }
+
+  section("Round 9 (S9-6): only MiMo's scheme choice - no palettes, no palette commands")
+  {
+    const app = read("src/renderer/src/App.vue")
+    const dialog = read("src/renderer/src/components/SettingsDialog.vue")
+    check("the appearance page has no palette row", !/data-palette-row|paletteOptions|set\.paletteName/.test(dialog))
+    check("the theme row offers exactly follow system, light and dark", /themeFollow[\s\S]{0,120}themeLight[\s\S]{0,120}themeDark/.test(dialog))
+    check("the window paints no palette over the stylesheet", !/themeTokens|THEMES|setProperty\(name, value\)/.test(app))
+    check("and has no palette commands", !/theme\.cycle"|`theme\.\$\{|cycleTheme|setTheme\(/.test(app))
+    check("while the caption buttons still follow the scheme", /watch\(darkScheme, \(dark\) => window\.mcode\.titlebarMode/.test(app))
+    const palettes = read("src/renderer/src/lib/theme-palettes.ts")
+    check("one palette is left, MCode 2.0", (palettes.match(/"id":/g) ?? []).length === 1 && palettes.includes('"id": "mcode-2"'))
+    const old = await loaded({ themeID: "dracula", theme: "light" })
+    check("a stored palette is dropped and the scheme kept", !("themeID" in (old.config.get() as object)) && !("themeID" in (await old.disk())) && old.config.get().theme === "light")
+    check("and no migration moves palettes any more", !read("src/server/config.ts").includes("theme-mcode-2"))
+  }
 }
