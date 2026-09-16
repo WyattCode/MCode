@@ -70,17 +70,24 @@ const added = ref<string>()
  * What the next task will be created in: whatever the reader last picked here,
  * else what the window asked for, else the project used most recently.
  */
-const chosen = computed(
-  () => picked.value ?? props.directory ?? projects.value[0] ?? app.config?.directory ?? undefined,
-)
+const chosen = computed(() => picked.value ?? props.directory ?? projects.value[0] ?? undefined)
 
 /* A fresh request from the window replaces a stale pick from a previous visit. */
 watch(
   () => props.directory,
   () => (picked.value = undefined),
 )
-/* Whether the task this screen starts works in a folder of its own. */
-const scratch = computed(() => chosen.value === NO_PROJECT)
+/*
+ * Whether the task this screen starts works in a folder of its own.
+ *
+ * Picking 不使用项目 is one way in; having no project at all is the other. A
+ * fresh profile used to fall back to `config.directory`, which is the folder
+ * the app happened to be launched from: the first message went to work there
+ * and that folder was adopted as a project, while the chip still read 进入项目
+ * 工作. MiMo has no such fallback - with no project it simply starts a task
+ * that has none - so neither does this.
+ */
+const scratch = computed(() => chosen.value === NO_PROJECT || !chosen.value)
 
 /* Told to the window, so its bottom panel can open a terminal in that folder before any task exists. */
 watch(chosen, (value) => emit("directory", value === NO_PROJECT ? undefined : value), { immediate: true })
