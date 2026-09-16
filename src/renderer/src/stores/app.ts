@@ -356,13 +356,6 @@ export const useApp = defineStore("app", () => {
     return false
   }
 
-  /** The same list as rows to draw, with ids no longer on disk left out. */
-  const tabSessions = computed(() =>
-    tabs.value
-      .map((id) => sessions.value.find((session) => session.id === id))
-      .filter((session): session is SessionInfo => Boolean(session)),
-  )
-
   /**
    * Written back to config so the set survives a restart.
    *
@@ -400,23 +393,6 @@ export const useApp = defineStore("app", () => {
     const next = tabs.value[at] ?? tabs.value[at - 1]
     if (next) void open(next)
     else currentID.value = undefined
-  }
-
-  /**
-   * Moves a tab to a new place in the row.
-   *
-   * The order is the user's, not the sessions' - which is why it is stored
-   * rather than derived, and why dragging one tab past another has to be
-   * written back the same way opening one is.
-   */
-  function moveTab(sessionID: string, to: number) {
-    const from = tabs.value.indexOf(sessionID)
-    if (from === -1) return
-    const target = Math.max(0, Math.min(tabs.value.length - 1, to))
-    if (from === target) return
-    tabs.value.splice(from, 1)
-    tabs.value.splice(target, 0, sessionID)
-    rememberTabs()
   }
 
   /** Drops tabs for sessions that are gone, wherever they went. */
@@ -2054,9 +2030,7 @@ export const useApp = defineStore("app", () => {
     currentID,
     current,
     tabs,
-    tabSessions,
     closeTab,
-    moveTab,
     messages,
     loadingID,
     busy,

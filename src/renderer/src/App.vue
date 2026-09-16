@@ -1473,8 +1473,8 @@ async function browse() {
 }
 
 /**
- * A tab from the strip. Sets the view as well as the session, because the tab
- * that is already current opens nothing and would otherwise leave the click
+ * A numbered slot's conversation. Sets the view as well as the session, because
+ * the one already current opens nothing and would otherwise leave the shortcut
  * with no effect at all while the launcher is up.
  */
 async function selectTab(id: string) {
