@@ -11,6 +11,7 @@ import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackgro
 import { startBackend, type Backend } from "../server/index"
 import { rendererOrigins } from "../server/socket-guard"
 import { workingRoots } from "../server/file-access"
+import { insideReal } from "../server/tool/fs-util"
 import { setImageShrinker } from "../server/provider/attachment-parts"
 import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
@@ -737,11 +738,13 @@ app.whenReady().then(async () => {
    * containment check means a crafted `../..` cannot walk out of the project
    * through a channel that hands paths to the shell.
    */
-  const inside = (directory: string, relative: string): string | undefined => {
+  /* A file inside the folder by spelling and by where it really leads: a junction in the folder does not pass. */
+  const inside = async (directory: unknown, relative: unknown): Promise<string | undefined> => {
+    if (typeof directory !== "string" || typeof relative !== "string" || !path.isAbsolute(directory)) return undefined
     const root = path.resolve(directory)
     const target = path.resolve(root, relative)
     const within = target === root || target.startsWith(root + path.sep)
-    return within ? target : undefined
+    return within && (await insideReal(root, target)) ? target : undefined
   }
 
   ipcMain.on("mcode:menu-labels", (_event, next: Record<string, string>) => {
@@ -1041,8 +1044,8 @@ app.whenReady().then(async () => {
   })
 
   /* Says why nothing was shown, so the artifacts page can tell a moved file from a refusal (MiMo's toasts). */
-  ipcMain.handle("mcode:reveal-file", (_event, directory: string, relative: string) => {
-    const target = inside(directory, relative)
+  ipcMain.handle("mcode:reveal-file", async (_event, directory: string, relative: string) => {
+    const target = await inside(directory, relative)
     if (!target) return { ok: false, error: "outside the project" }
     if (!existsSync(target)) return { ok: false, missing: true }
     shell.showItemInFolder(target)
@@ -1067,7 +1070,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:save-copy", (_event, file: unknown) => saveCopy(file, app.getPath("downloads")))
 
   ipcMain.handle("mcode:open-file", async (_event, directory: string, relative: string, openWith?: unknown) => {
-    const target = inside(directory, relative)
+    const target = await inside(directory, relative)
     if (!target) return "outside the project"
     // No app named: hand it to the desktop, which is the default choice.
     if (openWith === undefined || openWith === null) {

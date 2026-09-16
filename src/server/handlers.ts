@@ -21,7 +21,7 @@ import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { customModelOf } from "./config"
-import { IGNORED, resolveInside } from "./tool/fs-util"
+import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { readableFile, writableFile } from "./file-access"
 import { restoreHeaders, restoreMasked, restoreServer } from "./config-view"
 import { discoverModels } from "./provider/discover"
@@ -1391,7 +1391,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "shell.open": {
       const group = await shellGroup(runtime, request)
-      const cwd = request.cwd ? resolveInside(group.directory, request.cwd) : group.directory
+      const cwd = request.cwd ? await resolveInsideReal(group.directory, request.cwd) : group.directory
       return {
         /*
          * The size travels with the open so the shell prints its first prompt
@@ -1526,11 +1526,12 @@ const MAX_FILES = 500
  * not push thousands of paths across the socket on every keystroke.
  */
 /* Where a request's `sub` lands, refused when it climbs out of the project. */
-function insideProject(directory: string, sub?: string): { root: string; target: string } {
+/* A folder inside the listed root, by spelling and by where it really leads (a junction does not pass). */
+async function insideProject(directory: string, sub?: string): Promise<{ root: string; target: string }> {
   const root = path.resolve(directory)
   const target = path.resolve(root, sub ?? "")
   const relative = path.relative(root, target)
-  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Outside the project: ${sub}`)
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !(await insideReal(root, target))) throw new Error(`Outside the project: ${sub}`)
   return { root, target }
 }
 
@@ -1584,7 +1585,7 @@ export async function readPreview(resolved: string): Promise<Handled<"file.read"
 
 /* One folder level: folders first, then files, each by name. An unreadable folder throws. */
 async function listDirectory(directory: string, sub?: string, all?: boolean): Promise<Handled<"file.listDir">["entries"]> {
-  const { target } = insideProject(directory, sub)
+  const { target } = await insideProject(directory, sub)
   const listed = await fs.readdir(target, { withFileTypes: true })
   const out: Handled<"file.listDir">["entries"] = []
   for (const entry of listed) {
@@ -1614,7 +1615,7 @@ const TREE_SEARCH_NODES = 4000
  * query. It stops at 50 results or 4000 entries seen, and says so.
  */
 export async function searchTree(directory: string, query: string): Promise<Handled<"file.search">> {
-  const { target } = insideProject(directory)
+  const { target } = await insideProject(directory)
   const needle = query.toLowerCase()
   const entries: Handled<"file.search">["entries"] = []
   if (!needle) return { entries, truncated: false }
@@ -1660,7 +1661,7 @@ const SEARCH_DEPTH = 16
  * paths first.
  */
 export async function searchFolder(directory: string, query: string, sub?: string, limit?: number): Promise<Handled<"file.search">> {
-  const { root, target } = insideProject(directory, sub)
+  const { root, target } = await insideProject(directory, sub)
   const needle = query.trim().toLowerCase()
   const cap = Math.max(1, Math.min(200, limit ?? SEARCH_LIMIT))
   const hits: Handled<"file.search">["entries"] = []

@@ -94,6 +94,22 @@ export async function insideReal(root: string, target: string): Promise<boolean>
   return !relative.startsWith("..") && !path.isAbsolute(relative)
 }
 
+/**
+ * `resolveInside`, judged by where the path really leads as well as by how it
+ * is spelled: a junction inside the project (which Windows lets anyone make)
+ * no longer passes for a folder inside it.
+ */
+export async function resolveInsideReal(directory: string, target: string): Promise<string> {
+  const resolved = resolveInside(directory, target)
+  if (!(await insideReal(directory, resolved))) {
+    throw new ToolError(`Path leads outside the project directory (${path.resolve(directory)}): ${target}`, "tool.err.outsideProject", {
+      path: target,
+      root: path.resolve(directory),
+    })
+  }
+  return resolved
+}
+
 export async function resolvePath(context: ToolContext, target: string, access: "read" | "write" = "read"): Promise<string> {
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)

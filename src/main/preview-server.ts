@@ -236,6 +236,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   // A relative path, not a prefix test: a folder at a drive root ends in its separator already.
   const relative = path.relative(dir, target)
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return fail(403, "forbidden")
+  // And by where it really leads: a junction in the served folder is not a way out of it.
+  const realDir = await fs.realpath(dir).catch(() => dir)
+  const realTarget = await fs.realpath(target).catch(() => undefined)
+  if (realTarget) {
+    const real = path.relative(realDir, realTarget)
+    if (real === ".." || real.startsWith(`..${path.sep}`) || path.isAbsolute(real)) return fail(403, "forbidden")
+  }
   const extension = path.extname(target).toLowerCase()
   const type = TYPES[extension] ?? "application/octet-stream"
   const nonce = url.searchParams.get("__mcodeedit")
