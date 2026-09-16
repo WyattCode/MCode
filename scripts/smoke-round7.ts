@@ -7,7 +7,13 @@
  * fake provider's own request bodies - a trimmed result is only trimmed if the
  * provider saw it trimmed.
  */
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { execFileSync } from "node:child_process"
 import { Identifier } from "../src/shared/id"
+// M2: the environment block, and what it now names.
+import { systemPrompt } from "../src/server/session/prompt"
 import type { AssistantMessage, Message, ToolPart, UserMessage } from "../src/shared/protocol"
 import type { Check } from "./smoke-round5"
 import { engine, say } from "./smoke-round5"
@@ -354,6 +360,54 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
       check("and the prompt cache key travels with it", body.prompt_cache_key === "ses_wire", body.prompt_cache_key)
     } finally {
       await p.close()
+    }
+  }
+
+  // ------------------------------------------------------------------ M2
+  section("Round 7 (M2): the environment block names the model and the repository")
+  {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r7-env-"))
+    const plain = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r7-plain-"))
+    try {
+      const as = (args: string[]) => execFileSync("git", args, { cwd: root, stdio: "ignore" })
+      as(["init", "-q"])
+      as(["config", "user.email", "r7@example.com"])
+      as(["config", "user.name", "Round Seven"])
+      await fs.writeFile(path.join(root, "a.txt"), "one\n")
+      as(["add", "-A"])
+      as(["commit", "-q", "-m", "first"])
+
+      const model = { name: "M Two", provider: "fake", id: "m-2" }
+      const built = await systemPrompt({ directory: root, agent: "build", model })
+      check("it names the model and its exact id, which MCode never told the model before", built.includes("Model: M Two, fake/m-2"), built.slice(-500))
+      check("it says whether the folder is a repository", built.includes("Is a git repository: true"))
+      check("it names the branch a pull request should target", /Default branch: (main|master)\./.test(built), built.slice(-500))
+      check("and who a commit would be credited to", built.includes("Git user: Round Seven"))
+      /*
+       * The volatile half deliberately stays out, as round 5 (E10) decided: it
+       * rides on each prompt instead, so the cached prefix is stable while the
+       * model still reads a current working tree.
+       */
+      check("the volatile repository state stays out of the cached block", !built.includes("## Repository") && !built.includes("Today:"))
+
+      /*
+       * MiMo memoises this per directory, day, provider and model id. Changing
+       * the git user and asking again must return the cached block; asking for
+       * a different model must not.
+       */
+      execFileSync("git", ["config", "user.name", "Someone Else"], { cwd: root, stdio: "ignore" })
+      const again = await systemPrompt({ directory: root, agent: "build", model })
+      check("the block is cached for the day rather than rebuilt per turn", again === built)
+      const other = await systemPrompt({ directory: root, agent: "build", model: { name: "M Three", provider: "fake", id: "m-3" } })
+      check("but a different model gets its own block", other.includes("Model: M Three, fake/m-3"), other.slice(-400))
+      check("which is built fresh, so it reads the new git user", other.includes("Git user: Someone Else"), other.slice(-400))
+
+      const bare = await systemPrompt({ directory: plain, agent: "build" })
+      check("a plain folder says so and names no branch or user", bare.includes("Is a git repository: false") && !bare.includes("Default branch:") && !bare.includes("Git user:"), bare.slice(-400))
+      check("and with no model chosen it names none", !bare.includes("Model: "), bare.slice(-300))
+    } finally {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => {})
+      await fs.rm(plain, { recursive: true, force: true }).catch(() => {})
     }
   }
 }

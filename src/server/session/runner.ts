@@ -1196,6 +1196,12 @@ export class SessionRunner {
             globalAgentsFile: this.globalAgents,
             instructionFiles: config.instructionFiles,
             skills,
+            // MiMo names the model in its environment block; the prefix key already turns on it.
+            model: {
+              ...(this.config.modelEntry(session.model)?.name ? { name: this.config.modelEntry(session.model)!.name } : {}),
+              provider: session.model.provider,
+              id: session.model.model,
+            },
           })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.
