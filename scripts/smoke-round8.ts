@@ -187,6 +187,7 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
     check("it forbids running a server's own executable as a fallback", configured.includes("not a shell fallback"))
     check("it says configured and loaded are different questions", configured.includes("configured but not loaded in this conversation"))
     check("it gives the config file and the entry shape, so several can be added at once", configured.includes("/home/u/.mcode/config.json") && configured.includes('"type":"local"') && configured.includes('"type":"remote"'))
+    check("but only to be edited when the user asks for it", configured.includes("Edit that file only when the user asks"))
     check("it says where a project skill and a global skill go", configured.includes(".mcode/skills/<name>/SKILL.md") && configured.includes(path.join("/home/u/.mcode", "skills")))
     check("and it still says how to ask the user to choose", configured.includes("question tool") && configured.includes("set multiple"))
 
