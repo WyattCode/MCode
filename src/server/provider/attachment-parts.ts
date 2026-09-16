@@ -25,6 +25,15 @@ export type Wire = "anthropic" | "chat" | "responses"
 /** An attachment as the loader hands it over: with its data, or with a note saying why it has none. */
 export type LoadedAttachment = Attachment & { note?: string }
 
+/**
+ * What the message carrying a tool's media says.
+ *
+ * Anthropic takes pictures inside a `tool_result`; the chat-completions and
+ * Responses wires take only text there, so what the model can read follows the
+ * result as a message of its own and this line says where it came from.
+ */
+export const TOOL_MEDIA_NOTE = "The file or files in this message are what the tool call just above returned."
+
 /** MiMo's image cap for Anthropic routes: 4.5 MB and 2000 px on the longest side. */
 export const ANTHROPIC_IMAGE_BYTES = 4_500_000
 export const ANTHROPIC_IMAGE_PIXELS = 2000

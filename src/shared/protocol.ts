@@ -179,6 +179,14 @@ export interface ToolPart {
   /** i18n key for `error`, when the failure was one the tool anticipated. */
   errorCode?: string
   errorParams?: Record<string, string>
+  /**
+   * Media the call is handing to the model, as MiMo hands a tool result's
+   * attachments over: a picture `read` was pointed at, what an MCP server
+   * answered with, a file `history` found. One attached by path is read from
+   * disk each time a request is built, exactly as a user's attachment is, so
+   * the transcript never carries its bytes.
+   */
+  attachments?: Attachment[]
   time: { created: number; started?: number; completed?: number }
 }
 

@@ -181,16 +181,23 @@ export const ReadTool: ToolDefinition = {
     }
 
     /*
-     * MiMo attaches images, PDFs, audio and video for a model that takes them.
-     * This app has no way to hand a tool's attachment to the model, so the file
-     * is named and left unread, which is what MiMo says to a model without
-     * that input.
+     * MiMo attaches images, PDFs, audio and video for a model that takes them,
+     * and this does the same: the file rides on the result by its path and is
+     * read when the request is built. A model that cannot read that kind of
+     * file gets the line below instead, which is what MiMo says to one without
+     * the input.
      */
     const media = MEDIA[path.extname(target).toLowerCase()]
     if (media) {
-      const how = media === "PDF" ? "To work with its text, extract it with a command-line tool first." : "Inspect it with a command-line tool if its details matter."
-      const note = `"${path.basename(target)}" is ${media === "image" || media === "audio" ? "an" : "a"} ${media} file, and this app cannot attach it to the model from the read tool, so it was not read. ${how}`
-      return { output: note, title: display, metadata: { path: display, preview: note, truncated: false, loaded: [] } }
+      const how = media === "PDF" ? "If its text is what matters and it did not come through, extract it with a command-line tool." : "Inspect it with a command-line tool if it did not come through."
+      const note = `"${path.basename(target)}" is ${media === "image" || media === "audio" ? "an" : "a"} ${media} file, attached to this result. ${how}`
+      return {
+        output: note,
+        title: display,
+        metadata: { path: display, preview: note, truncated: false, loaded: [] },
+        // By path, as a user's attachment is: what it is and what it weighs are settled when the request is built.
+        attachments: [{ path: target, mime: "", data: "", byPath: true }],
+      }
     }
 
     if (isBinary(target, await sampleOf(target, stat.size))) throw new ToolError(`Cannot read binary file: ${display}`)

@@ -1,5 +1,5 @@
 import type { Message, ModelModalities, Usage } from "@shared/protocol"
-import { attachmentParts } from "./attachment-parts"
+import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
@@ -66,6 +66,17 @@ function toolSchemas(tools: ToolDefinition[]) {
   }))
 }
 
+/** One piece of media as this wire carries it, wherever it is placed; the text pieces are placed by the caller. */
+function chatMedia(part: Exclude<WirePart, { kind: "text" }>): Record<string, unknown> {
+  return part.kind === "image"
+    ? { type: "image_url", image_url: { url: `data:${part.mime};base64,${part.data}` } }
+    : part.kind === "pdf"
+      ? { type: "file", file: { filename: part.name, file_data: `data:application/pdf;base64,${part.data}` } }
+      : part.kind === "audio"
+        ? { type: "input_audio", input_audio: { data: part.data, format: part.format } }
+        : { type: "video_url", video_url: { url: `data:${part.kind === "video" ? part.mime : ""};base64,${part.data}` } }
+}
+
 /**
  * Flattens the stored transcript into chat messages. Tool results become
  * `role: "tool"` entries keyed by call id, which is what this format expects
@@ -91,15 +102,7 @@ export function toMessages(system: string, history: Message[], inputs?: Partial<
           role: "user",
           content: [
             ...(text ? [{ type: "text", text }] : []),
-            ...media.map((part) =>
-              part.kind === "image"
-                ? { type: "image_url", image_url: { url: `data:${part.mime};base64,${part.data}` } }
-                : part.kind === "pdf"
-                  ? { type: "file", file: { filename: part.name, file_data: `data:application/pdf;base64,${part.data}` } }
-                  : part.kind === "audio"
-                    ? { type: "input_audio", input_audio: { data: part.data, format: part.format } }
-                    : { type: "video_url", video_url: { url: `data:${part.kind === "video" ? part.mime : ""};base64,${part.data}` } },
-            ),
+            ...media.map(chatMedia),
           ],
         })
       } else if (text) {
@@ -150,11 +153,18 @@ export function toMessages(system: string, history: Message[], inputs?: Partial<
 
     for (const part of calls) {
       if (part.type !== "tool") continue
-      out.push({
-        role: "tool",
-        tool_call_id: part.callID,
-        content: part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? ""),
-      })
+      /*
+       * MiMo's tool media. A tool message on this wire takes text and nothing
+       * else, so the result keeps the words - the notes for anything the model
+       * cannot read among them - and what it can read follows as a message of
+       * its own, which is the only place this format has for a picture.
+       */
+      const pieces = part.status === "error" ? [] : attachmentParts(part.attachments ?? [], inputs, "chat")
+      const said = part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? "")
+      const notes = pieces.flatMap((piece) => (piece.kind === "text" ? [piece.text] : []))
+      out.push({ role: "tool", tool_call_id: part.callID, content: [said, ...notes].filter(Boolean).join("\n\n") })
+      const carried = pieces.filter((piece) => piece.kind !== "text")
+      if (carried.length) out.push({ role: "user", content: [{ type: "text", text: TOOL_MEDIA_NOTE }, ...carried.map(chatMedia)] })
     }
   }
 

@@ -13,6 +13,8 @@ import { DEFAULT_PERMISSIONS as PERMISSION_DEFAULTS } from "../src/shared/protoc
 import { discoverModels } from "../src/server/provider/discover"
 import { isSummary } from "../src/server/session/summary"
 import { OpenAICompatible, toMessages } from "../src/server/provider/openai"
+// round 6 (L2): a tool result's media on each wire.
+import { toProviderMessages } from "../src/server/provider/anthropic"
 import { modelVariants } from "../src/server/provider/variants"
 import { ProviderError } from "../src/server/provider/types"
 import { createHash } from "node:crypto"
@@ -515,6 +517,68 @@ async function main() {
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
 
+  /*
+   * L2: a tool result's media reaching the model. Anthropic takes a picture
+   * inside the tool_result; the chat wire takes only text there, so it follows
+   * as a message of its own. A model that reads no pictures gets the words.
+   */
+  {
+    const shot = [{ path: "a.png", mime: "image/png", data: "iVBORw0KGgo=" }]
+    const withMedia = (attachments: typeof shot): Parameters<typeof toMessages>[1] => [
+      { id: "msg_u", sessionID: "ses_l2", role: "user", text: "look at this", attachments: [], time: { created: 1 } },
+      {
+        id: "msg_a",
+        sessionID: "ses_l2",
+        role: "assistant",
+        model: { provider: "p", model: "m" },
+        agent: "build",
+        parts: [
+          {
+            type: "tool",
+            id: "p1",
+            callID: "call_1",
+            name: "read",
+            status: "completed",
+            input: { file_path: "a.png" },
+            output: '"a.png" is an image file, attached to this result.',
+            attachments,
+            time: { created: 2 },
+          },
+        ],
+        time: { created: 2 },
+      },
+    ]
+    const blocks = toProviderMessages(withMedia(shot), { image: true }, { provider: "p", model: "m" })
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .filter((block) => (block as { type?: string }).type === "tool_result")
+    const inside = (blocks[0] as { content?: unknown })?.content
+    check(
+      "on the Anthropic wire a tool result carries its picture inside the result",
+      Array.isArray(inside) && inside.some((block) => (block as { type?: string }).type === "image") && inside.some((block) => (block as { type?: string }).type === "text"),
+      inside,
+    )
+
+    const chat = toMessages("sys", withMedia(shot), { image: true })
+    const at = chat.findIndex((message) => message.role === "tool")
+    const following = chat[at + 1] as { role?: string; content?: unknown }
+    check(
+      "on the chat wire the result stays text and the picture follows as its own message",
+      typeof chat[at]?.content === "string" &&
+        following?.role === "user" &&
+        Array.isArray(following.content) &&
+        following.content.some((piece) => (piece as { type?: string }).type === "image_url"),
+      { tool: chat[at]?.content, following },
+    )
+
+    const blind = toMessages("sys", withMedia(shot), { image: false })
+    check(
+      "a model that reads no pictures is told so in the result and is sent none",
+      String(blind.find((message) => message.role === "tool")?.content).includes("cannot read image input") &&
+        !blind.some((message) => message.role === "user" && Array.isArray(message.content) && message.content.some((piece) => (piece as { type?: string }).type === "image_url")),
+      blind.find((message) => message.role === "tool")?.content,
+    )
+  }
+
   // MiMo's settings search: every typed word begins a word, camelCase split, CJK anywhere.
   check("a settings query matches the start of a word, not its middle", wordMatch("Keyboard shortcuts", "short") && !wordMatch("Keyboard shortcuts", "cuts"))
   check("every typed word has to begin some word", wordMatch("Keyboard shortcuts", "key sho") && !wordMatch("Keyboard shortcuts", "key zoom"))
@@ -986,6 +1050,14 @@ async function main() {
     await put("src/lib/b.ts", "beta\n")
     const listing = await run("read", { file_path: "src" }, "r-dir")
     check("reading a folder lists it, folders marked, with a count", listing.output.includes("<type>directory</type>") && listing.output.includes("a.ts\nlib/") && listing.output.includes("(2 entries)"), listing.output)
+    /* L2: MiMo attaches a picture from read; the words still describe it for a model that cannot read one. */
+    await put("shot.png", Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"))
+    const attachedShot = await findTool("read")!.execute({ file_path: "shot.png" }, inE24("r-png"))
+    check(
+      "read hands a picture to the model as an attachment on its result",
+      attachedShot.attachments?.length === 1 && attachedShot.attachments[0].byPath === true && attachedShot.output.includes("attached to this result"),
+      { attachments: attachedShot.attachments, output: attachedShot.output },
+    )
     await put("wide.txt", "z".repeat(2500))
     check("a line past 2,000 characters is cut with a note", (await run("read", { file_path: "wide.txt" }, "r-wide")).output.includes("(line cut at 2000 characters)"))
     await put("big.txt", Array.from({ length: 1000 }, (_, i) => `${i + 1} ${"y".repeat(96)}`).join("\n"))
@@ -997,7 +1069,7 @@ async function main() {
     check("a file with a NUL in it is binary", (await run("read", { file_path: "blob.txt" }, "r-bin")).output.startsWith("ERROR Cannot read binary file"))
     await put("pic.png", "not really")
     const picture = await run("read", { file_path: "pic.png" }, "r-png")
-    check("an image is named and left unread, not an error", !picture.output.startsWith("ERROR") && picture.output.includes("cannot attach it"), picture.output)
+    check("an image is described and handed over, not an error", !picture.output.startsWith("ERROR") && picture.output.includes("attached to this result"), picture.output)
     await put("pkg/AGENTS.md", "Pkg rule: tabs.\n")
     await put("pkg/deep/code.ts", "code\n")
     const nestedRead = await run("read", { file_path: "pkg/deep/code.ts" }, "r-agents1")
@@ -8693,11 +8765,19 @@ async function mcpChecks(project: string) {
   // E48
   const shape = await run("my_server_shape")
   check(
-    "a result keeps text and resource text, names what it leaves out, lists a link and appends structured content",
-    shape ===
-      ["alpha", "[image/png image left out: this app cannot pass it to the model]", "resource body", "doc: https://example.com/doc"].join("\n\n") +
-        '\n\nStructured content:\n{"answer":42}',
+    "a result keeps text and resource text, lists a link and appends structured content",
+    shape === ["alpha", "resource body", "doc: https://example.com/doc"].join("\n\n") + '\n\nStructured content:\n{"answer":42}',
     shape,
+  )
+  /* L2: a server's picture is handed to the model rather than named in a line saying it was left out. */
+  const shapeResult = await named("my_server_shape")!.execute({}, mcpContext("m-shape-media"))
+  check(
+    "a server's picture rides on the result as an attachment, and no line says it was left out",
+    shapeResult.attachments?.length === 1 &&
+      shapeResult.attachments[0].mime === "image/png" &&
+      shapeResult.attachments[0].data.length > 0 &&
+      !shapeResult.output.includes("left out"),
+    shapeResult.attachments?.map((file) => ({ path: file.path, mime: file.mime, bytes: file.data.length })),
   )
   check("structured content the text already carries is not repeated", mcpToolOutput({ content: [{ type: "text", text: '{"a":1}' }], structuredContent: { a: 1 } }).output === '{"a":1}')
   check("structured content alone is the whole output", mcpToolOutput({ content: [], structuredContent: { a: 1 } }).output === '{"a":1}')

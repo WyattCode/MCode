@@ -2512,6 +2512,8 @@ export class SessionRunner {
       part.output = capped?.text ?? result.output
       part.title = result.title ?? part.title
       part.metadata = capped?.truncated ? { ...result.metadata, truncated: true, outputPath: capped.file } : result.metadata
+      // MiMo's tool results carry media to the model; one attached by path is read when the request is built.
+      if (result.attachments?.length) part.attachments = result.attachments
       // MiMo's auto-worktree notice: the first change a conversation makes to a repository's main worktree is noted.
       await this.noteWorktreeChange(owner, part, input.session.directory)
     } catch (err) {

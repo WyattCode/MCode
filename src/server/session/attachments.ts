@@ -1,6 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import type { Attachment, Message } from "@shared/protocol"
+import type { AssistantPart, Attachment, Message } from "@shared/protocol"
 import { kindFor, mimeFor } from "../media"
 import type { LoadedAttachment } from "../provider/attachment-parts"
 
@@ -96,21 +96,21 @@ async function load(file: Attachment, directory: string): Promise<LoadedAttachme
 }
 
 /**
- * The history with every file attached by path read in. Within one turn a file
- * is read once; the stored messages are not changed.
+ * The history with every file attached by path read in - what the user
+ * attached, and what a tool's result carries. Within one turn a file is read
+ * once; the stored messages are not changed.
  */
 export async function withAttachmentData(history: Message[], directory: string, cache: AttachmentCache): Promise<Message[]> {
-  if (!history.some((message) => message.role === "user" && message.attachments?.some((file) => file.byPath))) return history
-  const out: Message[] = []
-  for (const message of history) {
-    if (message.role !== "user" || !message.attachments?.some((file) => file.byPath)) {
-      out.push(message)
-      continue
-    }
-    const attachments: Attachment[] = []
-    for (const file of message.attachments) {
+  const byPath = (list: readonly Attachment[] | undefined) => Boolean(list?.some((file) => file.byPath))
+  const carries = (message: Message) =>
+    message.role === "user" ? byPath(message.attachments) : message.parts.some((part) => part.type === "tool" && byPath(part.attachments))
+  if (!history.some(carries)) return history
+
+  const read = async (list: readonly Attachment[]): Promise<Attachment[]> => {
+    const out: Attachment[] = []
+    for (const file of list) {
       if (!file.byPath) {
-        attachments.push(file)
+        out.push(file)
         continue
       }
       const key = resolved(file, directory)
@@ -119,9 +119,26 @@ export async function withAttachmentData(history: Message[], directory: string, 
         loaded = await load(file, directory)
         cache.set(key, loaded)
       }
-      attachments.push({ ...loaded, path: file.path })
+      out.push({ ...loaded, path: file.path })
     }
-    out.push({ ...message, attachments })
+    return out
+  }
+
+  const out: Message[] = []
+  for (const message of history) {
+    if (!carries(message)) {
+      out.push(message)
+      continue
+    }
+    if (message.role === "user") {
+      out.push({ ...message, attachments: await read(message.attachments ?? []) })
+      continue
+    }
+    const parts: AssistantPart[] = []
+    for (const part of message.parts) {
+      parts.push(part.type === "tool" && byPath(part.attachments) ? { ...part, attachments: await read(part.attachments ?? []) } : part)
+    }
+    out.push({ ...message, parts })
   }
   return out
 }
