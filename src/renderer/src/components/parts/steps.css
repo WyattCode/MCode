@@ -433,6 +433,25 @@ html[data-motion="on"] .hs-collapse {
   font-weight: 500;
 }
 
+/* plan: MiMo's 查看方案 under a plan question, which opens the plan file. */
+.hs-q-plan {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 0;
+  color: var(--text-weak);
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.hs-q-plan:hover {
+  color: var(--primary);
+}
+
 .hs-q-head {
   display: flex;
   align-items: center;

@@ -5,6 +5,8 @@ import StepIcon from "./StepIcon.vue"
 import { t } from "../../lib/i18n"
 import { useQuestions } from "../../stores/questions"
 import { isAnswered, mergeCustom, nextStop, toggleChoice } from "../../lib/confirm-queue"
+import { openPlan, planHeader, planOf, planOptionDescription, planOptionLabel, planQuestionText } from "../../lib/plan-question"
+import { useApp } from "../../stores/app"
 
 /**
  * A question put by the model, in the dock above the composer, as MiMo draws it.
@@ -17,6 +19,7 @@ const props = defineProps<{ request: QuestionRequest; queueTotal: number }>()
 const emit = defineEmits<{ page: [] }>()
 
 const questions = useQuestions()
+const app = useApp()
 
 const prompts = computed(() => props.request.questions)
 const total = computed(() => prompts.value.length)
@@ -50,11 +53,18 @@ const title = computed(() => {
  * answers stay the keys the runner reads, and the permission card's words name them.
  */
 const LOOP_LABELS: Record<string, string> = { once: "perm.once", always: "perm.alwaysShort", reject: "perm.reject" }
-const questionText = computed(() => (props.request.loop ? t("loop.question", { tool: props.request.loop.tool }) : current.value.question))
+const questionText = computed(() => (props.request.loop ? t("loop.question", { tool: props.request.loop.tool }) : planQuestionText(current.value)))
+
+/* plan: the plan file this card is about, which is what puts 查看方案 under the question. */
+const plan = computed(() => planOf(current.value))
 
 function optionLabel(label: string): string {
   const key = props.request.loop ? LOOP_LABELS[label] : undefined
-  return key ? t(key) : label
+  return key ? t(key) : planOptionLabel(current.value, label)
+}
+
+function optionDescription(option: { label: string; description?: string }): string {
+  return props.request.loop ? (option.description ?? "") : planOptionDescription(current.value, option)
 }
 
 function picked(label: string): boolean {
@@ -180,7 +190,7 @@ const Actions: FunctionalComponent = () => {
       <span class="q-title" data-confirm-qtitle>{{ title }}</span>
       <template v-if="current.header">
         <span class="q-dim">·</span>
-        <span class="q-header" data-confirm-qheader :title="current.header">{{ current.header }}</span>
+        <span class="q-header" data-confirm-qheader :title="planHeader(current)">{{ planHeader(current) }}</span>
       </template>
       <span class="q-right">
         <span v-if="queueTotal > 1" class="q-queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
@@ -234,6 +244,10 @@ const Actions: FunctionalComponent = () => {
 
     <div :key="page" class="confirm-q-body" data-confirm-qbody>
       <div class="q-text" data-confirm-qtext>{{ questionText }}</div>
+      <!-- plan: MiMo's 查看方案, which opens the plan file beside the conversation. -->
+      <button v-if="plan" type="button" class="q-plan" data-confirm-plan :title="plan" @click="openPlan(plan, app.current?.directory)">
+        {{ t("question.viewPlan") }}
+      </button>
       <div class="q-opts" data-confirm-opts :role="multiple ? 'group' : 'radiogroup'" :aria-label="questionText">
         <template v-for="(option, index) in current.options" :key="index">
           <div v-if="index > 0" class="q-sep" aria-hidden="true" />
@@ -257,7 +271,7 @@ const Actions: FunctionalComponent = () => {
             <span v-else class="q-num" :class="{ on: picked(option.label) }" aria-hidden="true">{{ index + 1 }}</span>
             <span class="q-label-col">
               <span class="q-label">{{ optionLabel(option.label) }}</span>
-              <span v-if="option.description" class="q-desc" data-confirm-optdesc>{{ option.description }}</span>
+              <span v-if="optionDescription(option)" class="q-desc" data-confirm-optdesc>{{ optionDescription(option) }}</span>
             </span>
             <span class="q-end" aria-hidden="true">
               <template v-if="!multiple">
@@ -443,6 +457,25 @@ const Actions: FunctionalComponent = () => {
   line-height: 1.5;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+/* plan: MiMo's 查看方案 - a dotted underline under the question, in the muted colour. */
+.q-plan {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 0;
+  color: #909091;
+  font-family: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-decoration: underline dotted;
+  text-underline-offset: 4px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.q-plan:hover {
+  color: var(--primary);
 }
 
 .q-opts {
@@ -709,7 +742,7 @@ const Actions: FunctionalComponent = () => {
   pointer-events: none;
 }
 
-:root[data-theme="dark"] .q-icon, :root[data-theme="dark"] .q-desc {
+:root[data-theme="dark"] .q-icon, :root[data-theme="dark"] .q-desc, :root[data-theme="dark"] .q-plan {
   color: #b8b8b8;
 }
 
@@ -757,7 +790,7 @@ const Actions: FunctionalComponent = () => {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .q-icon, :root:not([data-theme="light"]) .q-desc {
+  :root:not([data-theme="light"]) .q-icon, :root:not([data-theme="light"]) .q-desc, :root:not([data-theme="light"]) .q-plan {
     color: #b8b8b8;
   }
 

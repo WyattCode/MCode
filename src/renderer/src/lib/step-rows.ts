@@ -85,7 +85,8 @@ export function buildRows(parts: AssistantPart[], errors: InlineError[] = []): S
     }
     // tasks: MiMo draws no step for the task tool; the info card's 任务清单 shows what it did.
     if (part.name === "task") return
-    if (part.name === "question") {
+    // plan: plan_exit's approval card is drawn as the question it is, on its own row.
+    if (part.name === "question" || part.name === "plan_exit") {
       group = undefined
       out.push({ kind: "question", id: part.id, part })
       return
