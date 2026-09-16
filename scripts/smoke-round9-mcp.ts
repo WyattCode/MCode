@@ -407,7 +407,9 @@ async function noApprovalByDefault(check: Check, section: Section): Promise<void
     check("the MCP bucket's default is allow", DEFAULT_PERMISSIONS.mcp === "allow")
     const fresh = await open("fresh")
     check("on a first install (帮我审批) a call runs without a question", fresh.config.get().accessLevel === "auto" && (await call(fresh.permissions)) === "ran" && !fresh.questions.length)
-    const plain = await open("plain", { permissions: { mcp: "ask", bash: "ask" }, accessLevel: "ask" })
+    // A document the settings round already reset to the level's map, under the old MCP default.
+    const reset = ["orphans-r9"]
+    const plain = await open("plain", { permissions: { mcp: "ask", bash: "ask" }, accessLevel: "ask", migrations: reset })
     check("a stored config written with the old default is moved to allow once", plain.config.get().permissions.mcp === "allow" && plain.config.get().permissions.bash === "ask", plain.config.get().permissions)
     check("so at the ask-first level a call runs without a question too", (await call(plain.permissions)) === "ran" && !plain.questions.length)
     await plain.config.set({ permissions: { ...plain.config.get().permissions, mcp: "ask" } })
@@ -415,8 +417,10 @@ async function noApprovalByDefault(check: Check, section: Section): Promise<void
     check("choosing ask again afterwards sticks", reopened.config.get().permissions.mcp === "ask", reopened.config.get().permissions)
     check("and then a call asks", (await call(reopened.permissions)) === "asked" && reopened.questions.length === 1)
     reopened.permissions.rejectAll("ses_m3")
-    const refused = await open("refused", { permissions: { mcp: "deny" } })
-    check("a refusal is never turned into allow", refused.config.get().permissions.mcp === "deny")
+    const refused = await open("refused", { permissions: { mcp: "deny" }, migrations: reset })
+    check("a refusal is never turned into allow", refused.config.get().permissions.mcp === "deny", refused.config.get().permissions)
+    const untouched = await open("untouched", { permissions: { mcp: "ask" }, accessLevel: "ask" })
+    check("a document never reset is reset to the level's map, whose MCP answer is now allow", untouched.config.get().permissions.mcp === "allow", untouched.config.get().permissions)
   } finally {
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
   }
