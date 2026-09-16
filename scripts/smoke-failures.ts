@@ -17,7 +17,7 @@ import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
 import { isContextOverflow, isOverflowError } from "../src/server/session/overflow"
-import { retryDecision } from "../src/server/session/retry"
+import { retryDecision, retryKind } from "../src/server/session/retry"
 import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
 import type { Check } from "./smoke-round5"
 
@@ -261,6 +261,29 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     const plain = retryDecision(lookalike, 1, 0)
     check("a failure that only mentions the words keeps the full server budget", plain?.max === 8, plain)
     check("and waits rather than retrying at once", (plain?.wait ?? 0) > 0, plain)
+  }
+
+  // -------------------------------------------------------------- F12, F13
+  section("Round 6 (F12, F13): a gateway's 404 and 409 are waited out, not fatal")
+  {
+    /* A gateway rotating models answers 404 in passing; MiMo retries those on the unknown budget. */
+    const missing = new ProviderHttpError("model not found", 404, {}, undefined)
+    check("an OpenAI-compatible 404 is retried rather than ending the turn", retryKind(missing) === "unknown", retryKind(missing))
+    check("it gets eight attempts", retryDecision(missing, 8, 0) !== undefined && retryDecision(missing, 9, 0) === undefined)
+    check("over a quarter of an hour", retryDecision(missing, 1, 15 * 60_000) === undefined)
+    /* A 404 that did not come from that family of adapters still means the model is absent. */
+    const absent = new ProviderError("no such model", undefined, undefined, undefined)
+    check("a 404 from anywhere else stays final", retryKind(absent) === undefined)
+
+    /* Some gateways answer 409 when their concurrency limit is reached. */
+    const busy = new ProviderHttpError("too many concurrent requests", 409, {}, undefined)
+    check("a 409 is waited out instead of failing at once", retryKind(busy) === "unknown", retryKind(busy))
+    check("and takes the same eight attempts", retryDecision(busy, 8, 0) !== undefined && retryDecision(busy, 9, 0) === undefined)
+
+    /* The kinds that were already right are unchanged. */
+    check("a refused key is still final", retryKind(new ProviderHttpError("no", 401, {})) === undefined)
+    check("a 500 is still a server error", retryKind(new ProviderHttpError("no", 500, {})) === "server")
+    check("a 429 is still a rate limit", retryKind(new ProviderHttpError("no", 429, {})) === "rate_limit")
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

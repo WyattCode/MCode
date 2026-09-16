@@ -15,7 +15,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { isOverflowError } from "./overflow"
 import { ProviderError, ProviderHttpError } from "../provider/types"
 
-export type RetryKind = "stream" | "network" | "rate_limit" | "server"
+export type RetryKind = "stream" | "network" | "rate_limit" | "server" | "unknown"
 
 export interface RetryBudget {
   /** Attempts after the first; Infinity waits for as long as it takes. */
@@ -33,6 +33,13 @@ export const RETRY_BUDGETS: Record<RetryKind, RetryBudget> = {
   server: { retries: 8, deadline: 15 * 60_000, initial: 2_000, max: 30_000, jitter: true },
   rate_limit: { retries: 5, deadline: 15 * 60_000, initial: 2_000, max: 5 * 60_000, jitter: true },
   network: { retries: Infinity, deadline: Infinity, initial: 5_000, max: 60_000, jitter: false },
+  /*
+   * MiMo's last resort, for a failure it could not sort but the SDK marks
+   * retryable: eight attempts over a quarter of an hour, the same shape as a
+   * server error. Without it a status nobody recognised failed the turn at
+   * once, however plainly temporary the provider said it was.
+   */
+  unknown: { retries: 8, deadline: 15 * 60_000, initial: 2_000, max: 30_000, jitter: true },
 }
 
 /** No wait is shorter than this. */
@@ -112,7 +119,16 @@ export function retryKind(err: unknown): RetryKind | undefined {
   if (aborted(err) || isOverflowError(err, text)) return undefined
   const status = statusOf(err)
   const wire = wireOf(err)
-  if (status === 401 || status === 403 || status === 402 || status === 404 || status === 501 || status === 505) return undefined
+  if (status === 401 || status === 403 || status === 402 || status === 501 || status === 505) return undefined
+  /*
+   * A 404 is terminal only where the model really is absent. MiMo sets
+   * allow404Retry for its MODEL_NOT_FOUND_RETRY_ADAPTERS - the
+   * OpenAI-compatible family, Azure, Groq, Together, OpenRouter and the
+   * gateways - because a gateway rotating models answers 404 in passing, and
+   * those retries go on the unknown budget. Here that family is exactly the
+   * adapters that raise ProviderHttpError; anything else keeps 404 final.
+   */
+  if (status === 404) return err instanceof ProviderHttpError ? "unknown" : undefined
   if (/usage[_ ]?limit/i.test(wire.code ?? "")) return undefined
   if (wire.code === "stream_read_error" || wire.type === "upstream_error") return "stream"
   if (NETWORK.test(text)) return "network"
@@ -123,6 +139,13 @@ export function retryKind(err: unknown): RetryKind | undefined {
   if (SERVER_CODE.test(wire.code ?? "")) return "server"
   if (status === 429) return "rate_limit"
   if (status !== undefined && (status === 408 || status === 425 || status >= 500)) return "server"
+  /*
+   * MiMo's final branch: an API error the SDK marks retryable takes the unknown
+   * budget. That flag is status 408, 409, 429 or 5xx, so 409 - which some
+   * gateways answer when their concurrency limit is reached - was the one case
+   * MCode failed outright where MiMo waits it out.
+   */
+  if (status === 409) return "unknown"
   return undefined
 }
 

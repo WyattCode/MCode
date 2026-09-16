@@ -247,7 +247,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("a server error first waits two seconds, give or take a tenth", first?.wait === 2000 && retryDecision(server, 1, 0, 1)?.wait === 2200 && retryDecision(server, 1, 0, 0)?.wait === 1800, [first, retryDecision(server, 1, 0, 1), retryDecision(server, 1, 0, 0)])
     check("nothing is retried past a kind's deadline", retryDecision(server, 2, RETRY_BUDGETS.server.deadline) === undefined)
     check("a rate limit gives up after five attempts", retryDecision(limited, 5, 0) !== undefined && retryDecision(limited, 6, 0) === undefined)
-    check("a refused key, a missing model and a 400 are never retried", [401, 404, 400, 422, 402, 501].every((status) => retryDecision(new ProviderHttpError("no", status, {}), 1, 0) === undefined))
+    check("a refused key and a 400 are never retried", [401, 400, 422, 402, 501].every((status) => retryDecision(new ProviderHttpError("no", status, {}), 1, 0) === undefined))
     check("an upstream stream failure is a stream kind", retryKind(new ProviderError("boom", undefined, undefined, { type: "upstream_error" })) === "stream")
     // MiMo reads both fields of the parsed body, not the wording: a service_unavailable_error that is server_is_overloaded.
     const overloaded = new ProviderHttpError("overloaded", 503, {}, { type: "service_unavailable_error", code: "server_is_overloaded" })
