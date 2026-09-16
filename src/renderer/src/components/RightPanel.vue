@@ -169,7 +169,9 @@ function measure() {
     if (!box || !aside || !rp.open) return
     // MiMo skips mid-slide: below its width less one the pills would turn compact and snap back.
     const width = aside.getBoundingClientRect().width
-    if (rp.fullscreen ? width <= 0 : width < shownWidth.value - 1) return
+    // Settled is the width shown, or less where heavy zoom has the panel give way (its max-width below).
+    const settled = Math.min(shownWidth.value, (aside.parentElement?.clientWidth ?? Infinity) - RAIL_WIDTH - 1)
+    if (rp.fullscreen ? width <= 0 : width < settled - 1) return
     const style = getComputedStyle(box)
     // MiMo's sum: the head's inner width less the plus, the spacer's floor of 0, and two gaps.
     const room = box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 26 - 8
