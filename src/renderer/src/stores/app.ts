@@ -77,6 +77,16 @@ export const useApp = defineStore("app", () => {
    */
   const fsNonce = ref(0)
   const bumpFsNonce = () => (fsNonce.value += 1)
+  /**
+   * What the home screen's next task works in, when the reader has said.
+   *
+   * MiMo's 不使用项目 and its project pick are navigation state, so they outlive
+   * the home screen: opening a conversation and coming back finds the same
+   * answer. Held here rather than in HomeHero, which is unmounted the moment a
+   * conversation opens - which is how an explicit 不使用项目 used to be
+   * forgotten, and the next message fell back into the last project.
+   */
+  const homeProject = ref<string>()
 
   /** Starts the clock on turns not seen beginning, and forgets the ones no longer running. */
   function clockTurns(ids: Iterable<string>) {
@@ -2014,6 +2024,7 @@ export const useApp = defineStore("app", () => {
     patchConfig,
     fsNonce,
     bumpFsNonce,
+    homeProject,
     modelPick,
     announceModel,
     announceAccess,
