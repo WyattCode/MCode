@@ -286,5 +286,22 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     check("a 429 is still a rate limit", retryKind(new ProviderHttpError("no", 429, {})) === "rate_limit")
   }
 
+  // ------------------------------------------------------------------ F28
+  section("Round 6 (F28): a dropped socket says so in the reader's language")
+  {
+    /*
+     * These rejections are shown as the body of a notice, so a sentence written
+     * in the client surfaced as English in an otherwise translated interface.
+     * MiMo answers this case from its error table; the wording MCode already
+     * carries for it is error.network, so no new key was needed.
+     */
+    const client = (await readOrNothing(path.join(process.cwd(), "src/renderer/src/lib/client.ts"))) ?? ""
+    check("the lost-connection sentence is no longer written in English in the client", !client.includes("Lost connection to the backend"))
+    check("it is phrased through the language tables instead", client.includes('t("error.network")'))
+    const tables = (await readOrNothing(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"))) ?? ""
+    const defined = (tables.match(/"error\.network":/g) ?? []).length
+    check("and that key is defined in all eighteen tables", defined === 18, defined)
+  }
+
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
 }

@@ -1,4 +1,5 @@
 import type { ClientFrame, Request, RequestOf, RequestType, ResponseMap, ServerEvent, ServerFrame } from "@shared/protocol"
+import { t } from "./i18n"
 
 type EventHandler = (event: ServerEvent) => void
 
@@ -91,10 +92,19 @@ export class Client {
       this.state.connected = false
       this.onState?.(false)
       if (this.closed) return
-      // In-flight requests will never be answered by a socket that is gone.
+      /*
+       * In-flight requests will never be answered by a socket that is gone.
+       *
+       * The sentence is phrased from the language tables rather than written
+       * here: these rejections are shown to the reader as the body of a notice
+       * (`notifyFailure(t("common.requestFailed"), err.message)`), so an
+       * English phrase written at this line surfaced verbatim in an otherwise
+       * translated interface. MiMo answers the same case from its error table,
+       * with the wording this key already carries.
+       */
       for (const [id, waiter] of this.waiters) {
         this.waiters.delete(id)
-        waiter.reject(new Error("Lost connection to the backend"))
+        waiter.reject(new Error(t("error.network")))
       }
       this.retry = Math.min(this.retry + 1, 5)
       setTimeout(() => this.connect(), this.retry * 250)
