@@ -123,10 +123,9 @@ export interface ExpandedCommand {
  * its engine process was started. They run in the conversation's folder here,
  * which is where a template's relative paths are written from.
  *
- * Only commands from the config document and command folders get here. MCP
- * prompts and skills are filled in by the window and never run anything: the
- * user's decision covers templates the user's own projects carry, not text a
- * server sends.
+ * Only commands from the config document and command folders get here. An MCP
+ * prompt and a skill line are filled in by the window and run their commands
+ * through `runShellPlaceholders` below, which is the same substitution.
  */
 export async function expandCommand(
   deps: Folders,
@@ -156,6 +155,24 @@ function runPlaceholder(script: string, cwd: string, chosen?: string): Promise<s
       resolve("")
     }
   })
+}
+
+/**
+ * The ``!`cmd` `` placeholders of a template the window filled in itself.
+ *
+ * MiMo runs a template's backtick commands whatever the template came from, so
+ * an MCP server's prompt and the arguments typed after a skill run theirs as a
+ * project command's do - the user's 2026-09-16 decision. Same shell, same
+ * folder, same silence about a command that fails, because it is the same
+ * substitution; text with no placeholder in it is handed straight back and
+ * nothing is started.
+ */
+export async function runShellPlaceholders(deps: Pick<Deps, "config">, input: { directory: string; text: string }): Promise<string> {
+  const scripts = shellPlaceholders(input.text)
+  if (!scripts.length) return input.text
+  const chosen = deps.config.get().shell
+  const outputs = await Promise.all(scripts.map((script) => runPlaceholder(script, input.directory, chosen)))
+  return substituteShell(input.text, outputs)
 }
 
 /**

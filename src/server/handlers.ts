@@ -30,7 +30,7 @@ import { AnthropicAdapter } from "./provider/anthropic"
 import { OpenAICompatible } from "./provider/openai"
 import { ChatGPTSubscription } from "./provider/chatgpt"
 import type { ProviderAdapter } from "./provider/types"
-import { expandCommand, listCommands } from "./command"
+import { expandCommand, listCommands, runShellPlaceholders } from "./command"
 import { discoverSkills } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { mergeMcpSecrets } from "./mcp-save"
@@ -519,6 +519,16 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         name: request.name,
         arguments: request.arguments,
       })) satisfies Handled<"command.expand">
+
+    /*
+     * An MCP server's prompt, or the line typed after a skill, whose backtick
+     * placeholders run here for the reason a command's do: the shell the reader
+     * chose and the conversation's folder are both the backend's to know.
+     */
+    case "command.shell":
+      return {
+        text: await runShellPlaceholders(runtime, { directory: request.directory, text: request.text }),
+      } satisfies Handled<"command.shell">
 
     /*
      * Replayed for exactly the reason `session.list` replays permissions:

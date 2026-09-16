@@ -1073,6 +1073,26 @@ async function compactFromBox(line: string) {
 }
 
 /**
+ * The ``!`cmd` `` placeholders of a template the window filled in itself, run by
+ * the backend in the conversation's folder.
+ *
+ * MiMo runs a template's backtick commands whatever the template came from, so
+ * an MCP server's prompt and the arguments typed after a skill run theirs as a
+ * project command's do - the user's 2026-09-16 decision. Text with no
+ * placeholder in it never leaves the window, and a backend that could not run
+ * them leaves the text as it was rather than losing what was typed.
+ */
+async function withShell(value: string, root?: string): Promise<string> {
+  if (!root || !app.client || !value.includes("!`")) return value
+  try {
+    const done = await app.client.request({ type: "command.shell", directory: root, text: value })
+    return done.text
+  } catch {
+    return value
+  }
+}
+
+/**
  * What actually goes to the model when the draft is a command line.
  *
  * MiMo sends `session.command` and its engine fills the template in. Here a
@@ -1094,8 +1114,11 @@ async function compactFromBox(line: string) {
 async function fillCommand(value: string, to?: string): Promise<{ text: string; attachments: Attachment[]; command?: CommandInfo } | undefined> {
   const line = splitCommandLine(value)
   const command = line && serverCommand(line.name)
-  if (!line || !command || command.source === "skill") return { text: value, attachments: [] }
   const root = commandRoot(to)
+  // Not a command at all: an ordinary message is text, and nothing in it runs.
+  if (!line || !command) return { text: value, attachments: [] }
+  // A skill's line goes as typed for the server to load it; the backticks in its arguments run, as MiMo runs a template's.
+  if (command.source === "skill") return { text: await withShell(value, root), attachments: [] }
   if (command.source === "mcp" || !root || !app.client) {
     const expanded = expandTemplate(command.template, line.args)
     // An MCP prompt whose fetch failed has no template. Sending nothing would be

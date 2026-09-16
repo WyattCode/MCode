@@ -1778,6 +1778,13 @@ export type Request =
    * and the files it names with `@` returned for the window to attach.
    */
   | { type: "command.expand"; directory: string; name: string; arguments: string }
+  /*
+   * A template the window filled in itself - an MCP server's prompt, or the
+   * line typed after a skill - with its ``!`cmd` `` placeholders run in
+   * `directory`, as MiMo runs a template's commands whatever its source (the
+   * user's 2026-09-16 decision).
+   */
+  | { type: "command.shell"; directory: string; text: string }
   | { type: "config.get" }
   | { type: "config.set"; patch: Partial<AppConfig> }
   | { type: "provider.list" }
@@ -2021,6 +2028,7 @@ export interface ResponseMap {
   "command.list": { commands: CommandInfo[] }
   /* `files` are the existing files the prompt names with `@`: `name` as written, `path` absolute. */
   "command.expand": { prompt: string; files: { name: string; path: string }[] }
+  "command.shell": { text: string }
   "config.get": { config: AppConfig }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }
