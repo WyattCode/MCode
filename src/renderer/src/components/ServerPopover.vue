@@ -124,13 +124,16 @@ onBeforeUnmount(() => {
         v-for="entry in mcp"
         :key="entry.name"
         class="row mcp-row"
+        role="switch"
+        :aria-checked="entry.status === 'connected'"
         :disabled="busy === entry.name || entry.status === 'pending'"
         @click="toggleMcp(entry.name)"
       >
         <span class="dot" :class="mcpTone(entry.status)" />
         <span class="name">{{ entry.name }}</span>
         <span class="meta">{{ t(`mcp.status.${entry.status}`) }}</span>
-        <span class="switch" :class="{ on: entry.status === 'connected' }" role="switch" :aria-checked="entry.status === 'connected'">
+        <!-- Drawn only: the row is the switch, so nothing interactive sits inside a button. -->
+        <span class="switch" :class="{ on: entry.status === 'connected' }" aria-hidden="true">
           <span class="knob" />
         </span>
       </button>

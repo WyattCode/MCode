@@ -1980,6 +1980,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :class="{ on: app.config?.browserEnabled !== false }"
                 role="switch"
                 :aria-checked="app.config?.browserEnabled !== false"
+                :aria-label="t('set.browserPlugin')"
                 @click="app.patchConfig({ browserEnabled: app.config?.browserEnabled === false })"
               >
                 <span class="knob" />
@@ -2129,6 +2130,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <button
                 class="switch"
                 :class="{ on: app.config?.spineSound !== false }"
+                role="switch"
+                :aria-checked="app.config?.spineSound !== false"
+                :aria-label="t('set.spineSound')"
                 @click="app.patchConfig({ spineSound: app.config?.spineSound === false })"
               >
                 <span class="knob" />
@@ -2148,7 +2152,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <button
                 class="switch"
                 :class="{ on: hardwareAcceleration }"
-                :aria-pressed="hardwareAcceleration"
+                role="switch"
+                :aria-checked="hardwareAcceleration"
+                :aria-label="t('set.hwAccel')"
                 data-hw-accel-switch
                 @click="toggleHardwareAcceleration"
               >
