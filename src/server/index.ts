@@ -100,6 +100,11 @@ export async function startBackend(dataDirectory: string, options: BackendOption
    */
   // Produced files, kept in a store of their own so they outlive their conversations.
   const artifacts = ArtifactStore.open(path.join(dataDirectory, "storage", "artifacts.db"))
+  // A written or removed message may change what its conversation produced; the next listing reads it again.
+  const unwatchArtifacts = sessions.watch((change) => {
+    if (change.type === "message") artifacts?.touched(change.message.sessionID)
+    else if (change.type === "message.removed") artifacts?.touched(change.sessionID)
+  })
   void (async () => {
     try {
       /*
@@ -236,6 +241,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await scheduler.stop()
       await automations.stop()
       stopHistory(history)
+      unwatchArtifacts()
       artifacts?.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))
