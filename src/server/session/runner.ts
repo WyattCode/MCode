@@ -47,7 +47,7 @@ import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflo
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
-import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf } from "./plan"
+import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
@@ -2613,8 +2613,8 @@ export class SessionRunner {
     this.numbering.set(counted, number)
     const name = `${type}-${number}`
 
-    // An explore subagent only reads, and nothing started from Plan may change anything either.
-    const agent: AgentName = type === "explore" || parent.agent === "plan" ? "plan" : "build"
+    // plan: an explore subagent only reads; anything else builds, even started from a planning turn (see subagentAgent).
+    const agent: AgentName = subagentAgent(type)
     const child = await this.store.create({
       directory: parent.directory,
       model,
