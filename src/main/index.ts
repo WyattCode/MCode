@@ -69,7 +69,7 @@ import {
   type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
-import { restore, track } from "./window-state"
+import { restore, saveWindowState, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
 import { createUpdater, parseFeed, type FeedEntry, type UpdateState } from "./updater"
@@ -472,9 +472,9 @@ function createWindow(show = true): BrowserWindow {
   // Maximise before the first paint, so the window does not appear at its
   // restored size and then jump.
   if (saved.maximized) window.maximize()
-  if (saved.fullScreen) window.setFullScreen(true)
-  // getNormalBounds covers the first run, where the OS picked the position.
-  track(window, saved.x !== undefined && saved.y !== undefined ? (saved as Rectangle) : window.getNormalBounds())
+  // getNormalBounds covers the first run, where the OS picked the position. MiMo saves as the last window goes.
+  const requested = saved.x !== undefined && saved.y !== undefined ? ({ x: saved.x, y: saved.y, width: saved.width, height: saved.height } as Rectangle) : window.getNormalBounds()
+  track(window, requested, () => ![...windows].some((entry) => entry !== window && !entry.isDestroyed()))
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
   // the band has to follow that as well as the menu and keyboard paths.
@@ -1400,6 +1400,8 @@ app.on("before-quit", (event) => {
   if (quitting || !backend) return
   event.preventDefault()
   quitting = true
+  // MiMo saves every window's state as the app quits, while they are still where the person left them.
+  for (const window of windows) saveWindowState(window)
   /*
    * Out of sight while the backend closes. Ending the terminals takes about
    * three seconds on Windows, and a window left standing through that looks

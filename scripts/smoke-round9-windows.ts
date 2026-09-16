@@ -8,7 +8,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import { APP_NAME, noticeTitle, pinnedProfile } from "../src/main/desktop-rules"
+import { APP_NAME, noticeTitle, pinnedProfile, readSavedWindow, windowStateToSave } from "../src/main/desktop-rules"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
 async function sources(root: string): Promise<Map<string, string>> {
@@ -106,6 +106,38 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     check(
       "and the pin runs before anything else in the main module reads the profile",
       pinAt > 0 && main.indexOf("app.getPath(\"userData\")") === pinAt + "pinnedProfile(".length && firstRead > pinAt && /if \(pinned\) app\.setPath\("userData", pinned\)/.test(main),
+    )
+  }
+
+  section("Round 9 (Windows): window state is MiMo's - saved as the last window goes, never full screen")
+  {
+    const normal = { x: 100, y: 80, width: 1200, height: 800 }
+    const baseline = { x: 100, y: 80, width: 1200, height: 800 }
+    check(
+      "a minimised window writes nothing, so a maximised window minimised and quit from the tray reopens maximised",
+      windowStateToSave({ minimized: true, fullScreen: false, maximized: false, normalBounds: normal }, baseline) === undefined,
+    )
+    check("a full-screen window writes nothing either", windowStateToSave({ minimized: false, fullScreen: true, maximized: false, normalBounds: normal }, baseline) === undefined)
+    const maximized = windowStateToSave({ minimized: false, fullScreen: false, maximized: true, normalBounds: { ...normal, x: 101 } }, baseline)
+    check(
+      "a maximised window saves its normal bounds and the flag, and nothing about full screen",
+      JSON.stringify(maximized) === JSON.stringify({ bounds: baseline, maximized: true }),
+      maximized,
+    )
+    const moved = windowStateToSave({ minimized: false, fullScreen: false, maximized: false, normalBounds: { x: 300, y: 80, width: 1000, height: 800 } }, baseline)
+    check("a real move or resize is taken as measured; scaling noise within 4 px is not", moved?.bounds.x === 300 && moved.bounds.width === 1000 && maximized?.bounds.x === 100)
+    const old = readSavedWindow({ bounds: normal, maximized: true, fullScreen: true })
+    check("a window.json an earlier release wrote with fullScreen reads back without it", JSON.stringify(old) === JSON.stringify({ bounds: normal, maximized: true }), old)
+    check("a file without whole bounds is no state at all", readSavedWindow({ bounds: { x: 1, y: 2, width: 3 } }) === undefined && readSavedWindow(null) === undefined)
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    const state = await fs.readFile(path.join(root, "src/main/window-state.ts"), "utf8")
+    const restoreBody = /export function restore\(\)[\s\S]*?\n\}/.exec(state)?.[0] ?? "fullScreen"
+    check("the window is never put back into full screen at launch", !/setFullScreen\(true\)/.test(main) && !/fullScreen/i.test(restoreBody) && !/saved\.fullScreen/.test(main))
+    check(
+      "saving happens on close (for the last window) and for every window at quit, not on each move or resize",
+      !/\.on\("(resize|move|maximize|unmaximize|enter-full-screen|leave-full-screen)"/.test(state) &&
+        /if \(isLast\(\)\) saveWindowState\(window\)/.test(state) &&
+        /before-quit[\s\S]{0,400}for \(const window of windows\) saveWindowState\(window\)/.test(main),
     )
   }
 }
