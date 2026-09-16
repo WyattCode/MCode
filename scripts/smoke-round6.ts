@@ -34,6 +34,11 @@ import { Bus } from "../src/server/bus"
 import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
 import { runImport, scanImports, worthAsking } from "../src/server/import"
+// J5: which model writes a conversation's title. J14: what a drop turns into an @mention.
+import { titleModelRef } from "../src/server/session/title"
+import { MENTION_MAX, mentionable } from "../src/renderer/src/lib/attach"
+// J15, J16: where a pasted picture and a large paste are written.
+import { savePastedImage, savePastedText } from "../src/main/paste-files"
 
 /**
  * A conversation as the scheduler needs to see one.
@@ -390,6 +395,64 @@ export async function roundSixChecks(check: Check, section: (name: string) => vo
 
     if (before === undefined) delete process.env.MCODE_IMPORT_HOME
     else process.env.MCODE_IMPORT_HOME = before
+  }
+
+  // ------------------------------------------------------------- J5, J14, J15, J16
+  section("Round 6 (J5, J14, J15, J16): the title model, what becomes a mention, and what a paste writes")
+  {
+    // ---------------------------------------------------------------- J5
+    const working = { provider: "anthropic", model: "claude-opus-5" }
+    const cheap = { provider: "openai", model: "gpt-5-mini" }
+    check("with nothing chosen, the conversation's own model writes its title", titleModelRef(undefined, working, () => true) === working)
+    check("a chosen title model is the one used", titleModelRef(cheap, working, () => true) === cheap)
+    check("a chosen model this install cannot reach falls back to the working one", titleModelRef(cheap, working, () => false) === working)
+    let asked: { provider: string; model: string } | undefined
+    titleModelRef(cheap, working, (ref) => {
+      asked = ref
+      return true
+    })
+    check("only the chosen model is asked about", asked === cheap)
+
+    // --------------------------------------------------------------- J14
+    const file = (name: string, type: string, size: number) =>
+      new File([new Uint8Array(size)], name, { type })
+    check("a text file inside the project is named rather than sent", mentionable(file("notes.md", "text/markdown", 20)))
+    check("a source file the system has no opinion about is too", mentionable(file("main.rs", "", 20)))
+    check("a PDF is attached, not mentioned", !mentionable(file("spec.pdf", "application/pdf", 20)))
+    check("a spreadsheet is attached", !mentionable(file("book.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", 20)))
+    check("a picture is attached", !mentionable(file("shot.png", "image/png", 20)))
+    check("a huge log is attached rather than mentioned", !mentionable(file("run.log", "text/plain", MENTION_MAX + 1)))
+    check("a folder, which arrives with no type and no bytes, is attached", !mentionable(file("src", "", 0)))
+
+    // ------------------------------------------------------------ J15, J16
+    const userData = path.join(root, "paste-userdata")
+    const png = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+      "base64",
+    )
+    const written = await savePastedImage(userData, `data:image/png;base64,${png.toString("base64")}`)
+    check("a pasted picture lands under attachments/images", written.ok && written.path.startsWith(path.join(userData, "attachments", "images")))
+    if (written.ok) {
+      check("named for a paste, with the picture's own extension", /mcode-paste-\d+-[0-9a-f]+\.png$/.test(written.path))
+      const stat = await fs.stat(written.path)
+      check("and the bytes are there to open", stat.size === png.length)
+      if (process.platform !== "win32") {
+        check("the file is owner-only", (stat.mode & 0o077) === 0)
+        const folder = await fs.stat(path.dirname(written.path))
+        check("and so is the folder", (folder.mode & 0o077) === 0)
+      }
+    }
+    check("a data URL that is not a picture is refused", !(await savePastedImage(userData, "data:text/plain;base64,aGk=")).ok)
+    check("something that is not a data URL at all is refused", !(await savePastedImage(userData, "../../etc/passwd")).ok)
+
+    const big = "x".repeat(300_000)
+    const text = await savePastedText(big)
+    check("a large paste becomes a .txt file", text.ok && text.path.endsWith(".txt"))
+    if (text.ok) {
+      check("holding the whole paste, with no cap applied", (await fs.readFile(text.path, "utf8")).length === big.length)
+      await fs.rm(text.path, { force: true }).catch(() => undefined)
+    }
+    check("an empty paste writes nothing", !(await savePastedText("")).ok)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
