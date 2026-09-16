@@ -23,6 +23,8 @@ import { attachmentNote, sessionNote } from "../src/server/session/context"
 import { firstPlanNote } from "../src/server/session/plan"
 import { createLoopMonitor } from "../src/server/session/reminders"
 import { findTool, reachOf, toolsFor } from "../src/server/tool/registry"
+import { AutomationService } from "../src/server/automation/service"
+import { readFileSync } from "node:fs"
 
 /** The system text of a request, as the chat-completions wire carries it. */
 function systemOf(body: Record<string, any> | undefined): string {
@@ -356,5 +358,85 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
     } finally {
       await e.close()
     }
+  }
+
+  // ------------------------------------------------------------------ S16
+  section("Round 8 (S16): a run's end is journaled first, and replayed when the app died before settling it")
+  {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r8-s16-"))
+    const file = path.join(directory, "automations.json")
+    // Written out by hand, not taken from the service, so a renamed journal fails here.
+    const journal = path.join(directory, "automation-terminal-reports.json")
+    const caller = { id: "ses_s16", directory, model: { provider: "p", model: "m" } }
+    const day = 24 * 60 * 60 * 1000
+    const opened = Date.UTC(2026, 0, 1, 8, 0)
+    let clock = opened
+    const published: { type: string; sessionID?: string; phase?: string; notify?: boolean }[] = []
+    const journalAtPublish: string[] = []
+    const answered = [
+      { id: "m_s16", sessionID: caller.id, role: "assistant", model: caller.model, agent: "build", parts: [{ type: "text", id: "p_s16", text: "digest written" }], finish: "end_turn", time: { created: 1, completed: 2 } },
+    ]
+    const deps = () =>
+      ({
+        file,
+        now: () => clock,
+        sessions: { get: async () => caller, create: async () => caller, messages: async () => answered },
+        prompt: async () => undefined,
+        busy: () => false,
+        models: () => [],
+        agent: () => "build",
+        effort: () => undefined,
+        scratch: async () => directory,
+        publish: (event: { type: string; phase?: string }) => {
+          published.push(event)
+          if (event.phase === "finished") {
+            try {
+              journalAtPublish.push(readFileSync(journal, "utf8"))
+            } catch {
+              journalAtPublish.push("")
+            }
+          }
+        },
+      }) as unknown as ConstructorParameters<typeof AutomationService>[0]
+    const history = async () => {
+      const saved = JSON.parse(await fs.readFile(file, "utf8").catch(() => "{}")) as { automations?: { runHistory?: { runId: string; status: string; error?: string; hasNonEmptyReply?: boolean }[] }[] }
+      return saved.automations?.[0]?.runHistory ?? []
+    }
+    const reportsIn = async () => (JSON.parse(await fs.readFile(journal, "utf8").catch(() => "{}")) as { reports?: unknown[] }).reports
+
+    const first = new AutomationService(deps())
+    await first.start({ interval: false })
+    await first.handle({ mode: "create", title: "Digest", prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0", notification: "all-runs" }, { sessionID: caller.id })
+    clock = opened + 2 * day
+    await first.tick()
+    await first.turnEnded(caller.id)
+    check("a run's end is in the journal by the time the window is told", (journalAtPublish[0] ?? "").includes('"status": "succeeded"') && (journalAtPublish[0] ?? "").includes(caller.id), journalAtPublish[0])
+    check("and out of it once the run is settled", (await reportsIn())?.length === 0, await reportsIn())
+    check("the run is recorded as it ended", (await history())[0]?.status === "succeeded", await history())
+
+    /* The next run ends, the journal is written - and the app is killed before the record is saved. */
+    clock = opened + 3 * day
+    await first.tick()
+    const open = (await history())[1]
+    check("the second run was left open", open?.status === "running", open)
+    const task = (JSON.parse(await fs.readFile(file, "utf8")) as { automations: { id: string }[] }).automations[0]!.id
+    await fs.writeFile(
+      journal,
+      JSON.stringify({ schemaVersion: 1, reports: [{ automationID: task, runId: open?.runId, sessionID: caller.id, status: "succeeded", finishedAt: clock, hasNonEmptyReply: true, notify: true }] }),
+    )
+
+    published.length = 0
+    const second = new AutomationService(deps())
+    await second.start({ interval: false })
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    const replayed = (await history())[1]
+    check("the next start settles it from the journal, as it really ended", replayed?.status === "succeeded" && replayed?.hasNonEmptyReply === true, replayed)
+    check("rather than as a run the app closed on", !(replayed?.error ?? "").includes("closed before the run finished"), replayed?.error)
+    check("one report was replayed", second.replayed === 1, second.replayed)
+    await second.tick()
+    check("and the window is told about it once the backend is listening", published.filter((event) => event.phase === "finished" && event.notify === true).length === 1, published)
+    check("the journal is emptied after the replay", (await reportsIn())?.length === 0, await reportsIn())
+    await second.stop()
+    await fs.rm(directory, { recursive: true, force: true }).catch(() => undefined)
   }
 }
