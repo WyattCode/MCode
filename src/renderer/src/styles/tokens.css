@@ -37,11 +37,16 @@
  *
  * Light is defined on bare :root so it is the fallback everywhere; dark layers
  * on top for both the explicit choice and the system preference.
+ *
+ * The colours the theme engine makes are MCode 2.0's, written here rather than
+ * painted at runtime: like MiMo, the only colour choice is the scheme. `npm run
+ * themecheck` regenerates them from lib/theme-palettes.ts and fails on any that
+ * differ, in all three blocks.
  */
 
 :root {
   /* Surfaces */
-  --surface-base: #fafafa;
+  --surface-base: #fffefd;
   --surface-raised: #ffffff;
   --surface-raised-hover: #fafafa;
   --surface-sunken: #f2f2f2;
@@ -54,33 +59,33 @@
   /* background/bg-layer-02: the fill behind a badge inside a menu. */
   --surface-layer-02: #f2f2f2;
   /* overlay/simple-overlay-* */
-  --surface-hover: #0000000a;
-  --surface-selected: #00000014;
+  --surface-hover: #f1f1f2;
+  --surface-selected: #f1f1f2;
   --surface-success: #e7f9ea;
   --surface-critical: #fceceb;
 
   /* border/border-*, which are alphas so they hold over any layer. */
   --border-weaker: #00000014;
-  --border-weak: #0000001a;
+  --border-weak: #ececed;
   --border-muted: #00000014;
   --border-strong: #00000033;
   --border-selected: #00000040;
 
-  --text-strong: #161616;
-  --text-base: #5c5c5c;
-  --text-weak: #808080;
+  --text-strong: #151c13;
+  --text-base: #151c1399;
+  --text-weak: #151c1366;
   --text-weaker: #dbdbdb;
-  --text-accent: #3b5cf6;
-  --text-interactive: #3b5cf6;
+  --text-accent: #3295fb;
+  --text-interactive: #3295fb;
   --text-on-primary: #111111;
 
   --icon-base: #3a3a3a;
   /* icon/icon-muted, which is the same grey in both themes. */
   --icon-weak: #808080;
 
-  --primary: #3b5cf6;
+  --primary: #2f6fed;
   --accent: #9e99f7;
-  --interactive: #7698fd;
+  --interactive: #2f6fed;
   --success: #198b43;
   --warning: #cb9f34;
   --error: #b82d35;
@@ -201,13 +206,13 @@
   :root:not([data-theme="light"]) {
     --wordmark: url("../assets/wordmark-dark.png");
     /* background/bg-* */
-    --surface-base: #080808;
-    --surface-raised: #161616;
-    --surface-raised-hover: #242424;
-    --surface-sunken: #050505;
+    --surface-base: #141414;
+    --surface-raised: #181818;
+    --surface-raised-hover: #1f1f1f;
+    --surface-sunken: #0d0d0d;
     --surface-layer: #2e2e2e;
     /* background/bg-layer-01 */
-    --surface-menu: #242424;
+    --surface-menu: #1f1f1f;
     --avatar-gray: #5c5c5c;
     --surface-key: #3a3a3a;
     /* background/bg-layer-02: the fill behind a badge inside a menu. */
@@ -226,21 +231,21 @@
     --border-selected: #ffffff40;
 
     /* text/text-* */
-    --text-strong: #fafafa;
-    --text-base: #aeaeae;
-    --text-weak: #808080;
+    --text-strong: #ffffff;
+    --text-base: #b8b8b8;
+    --text-weak: #777777;
     --text-weaker: #5c5c5c;
-    --text-accent: #a2bcff;
-    --text-interactive: #a2bcff;
+    --text-accent: #5a9cff;
+    --text-interactive: #5a9cff;
     --text-on-primary: #161616;
 
     /* icon/icon-* */
     --icon-base: #dbdbdb;
     --icon-weak: #808080;
 
-    --primary: #3b5cf6;
+    --primary: #5a9cff;
     --accent: #9e99f7;
-    --interactive: #7698fd;
+    --interactive: #5a9cff;
     --success: #6bd586;
     --warning: #f2cf76;
     --error: #f17471;
@@ -254,8 +259,8 @@
     --diff-add: #a3da9f;
     --diff-delete: #ffb3a4;
     /* surface/diff-add-base and surface/diff-delete-base */
-    --surface-diff-add: #2f392f;
-    --surface-diff-delete: #403230;
+    --surface-diff-add: #313b30;
+    --surface-diff-delete: #423431;
 
     --button-primary: #fafafa;
     --button-primary-text: #161616;
@@ -282,13 +287,13 @@
 :root[data-theme="dark"] {
   --wordmark: url("../assets/wordmark-dark.png");
   /* background/bg-* */
-  --surface-base: #080808;
-  --surface-raised: #161616;
-  --surface-raised-hover: #242424;
-  --surface-sunken: #050505;
+  --surface-base: #141414;
+  --surface-raised: #181818;
+  --surface-raised-hover: #1f1f1f;
+  --surface-sunken: #0d0d0d;
   --surface-layer: #2e2e2e;
   /* background/bg-layer-01 */
-  --surface-menu: #242424;
+  --surface-menu: #1f1f1f;
   --avatar-gray: #5c5c5c;
   --surface-key: #3a3a3a;
   /* background/bg-layer-02: the fill behind a badge inside a menu. */
@@ -307,21 +312,21 @@
   --border-selected: #ffffff40;
 
   /* text/text-* */
-  --text-strong: #fafafa;
-  --text-base: #aeaeae;
-  --text-weak: #808080;
+  --text-strong: #ffffff;
+  --text-base: #b8b8b8;
+  --text-weak: #777777;
   --text-weaker: #5c5c5c;
-  --text-accent: #a2bcff;
-  --text-interactive: #a2bcff;
+  --text-accent: #5a9cff;
+  --text-interactive: #5a9cff;
   --text-on-primary: #161616;
 
   /* icon/icon-* */
   --icon-base: #dbdbdb;
   --icon-weak: #808080;
 
-  --primary: #3b5cf6;
+  --primary: #5a9cff;
   --accent: #9e99f7;
-  --interactive: #7698fd;
+  --interactive: #5a9cff;
   --success: #6bd586;
   --warning: #f2cf76;
   --error: #f17471;
@@ -335,8 +340,8 @@
   --diff-add: #a3da9f;
   --diff-delete: #ffb3a4;
   /* surface/diff-add-base and surface/diff-delete-base */
-  --surface-diff-add: #2f392f;
-  --surface-diff-delete: #403230;
+  --surface-diff-add: #313b30;
+  --surface-diff-delete: #423431;
 
   --button-primary: #fafafa;
   --button-primary-text: #161616;

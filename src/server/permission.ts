@@ -5,7 +5,6 @@ import type {
   PermissionRecord,
   PermissionRequest,
   PermissionResponse,
-  SavedRule,
 } from "@shared/protocol"
 import { PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
 import { accessAction, defaultAccess, sessionAccess, type Access } from "@shared/access"
@@ -237,9 +236,8 @@ function decisionOf(response: PermissionResponse, reason?: string): PermissionDe
  * in its engine's database, and `permByConvo` in its desktop preferences - while
  * this app kept them in memory only, so every "always" was forgotten at quit and
  * the same question came back the next morning. They are written to
- * `storage/permissions.json`, the settings page lists them, and any one of them
- * can be taken back: an approval that cannot be withdrawn is the reason not to
- * persist one, so it is withdrawable.
+ * `storage/permissions.json`. Like MiMo's, no page lists them; the ones a
+ * conversation was given go with it when it is deleted.
  */
 export class Permissions {
   private readonly pending = new Map<string, Pending>()
@@ -702,38 +700,9 @@ export class Permissions {
     return this.writing
   }
 
-  /** Every remembered allowance, for the settings page that lists and withdraws them. */
-  savedRules(): SavedRule[] {
-    const out: SavedRule[] = []
-    for (const [key, rules] of this.rules) {
-      const sessionID = key.startsWith("session:") ? key.slice("session:".length) : ""
-      for (const rule of rules) out.push({ directory: sessionID ? "" : key, sessionID, kind: rule.kind, pattern: rule.pattern })
-    }
-    return out.sort((a, b) => a.directory.localeCompare(b.directory) || a.kind.localeCompare(b.kind) || a.pattern.localeCompare(b.pattern))
-  }
-
-  /**
-   * Takes a remembered allowance back: one rule, everything granted in one
-   * place, or the lot.
-   *
-   * This is the half that makes persisting them defensible. An approval that
-   * outlives the app and cannot be withdrawn is worse than one that is
-   * forgotten at quit, because nothing in the interface would ever say what the
-   * app had been told it may do.
-   */
-  async forget(input: { directory?: string; sessionID?: string; kind?: string; pattern?: string } = {}): Promise<void> {
-    const key = input.sessionID
-      ? `session:${input.sessionID}`
-      : input.directory
-        ? projectKey({ directory: input.directory, sessionID: "" })
-        : undefined
-    if (!key) this.rules.clear()
-    else if (input.kind === undefined || input.pattern === undefined) this.rules.delete(key)
-    else {
-      const left = (this.rules.get(key) ?? []).filter((rule) => rule.kind !== input.kind || rule.pattern !== input.pattern)
-      if (left.length) this.rules.set(key, left)
-      else this.rules.delete(key)
-    }
+  /** Drops what one conversation was allowed "always", as its conversation is deleted. */
+  async forgetSession(sessionID: string): Promise<void> {
+    if (!this.rules.delete(`session:${sessionID}`)) return
     await this.persist()
   }
 

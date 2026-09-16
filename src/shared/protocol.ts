@@ -251,24 +251,6 @@ export interface ArtifactFile {
   role?: "deliverable" | "intermediate"
 }
 
-/**
- * One "always" this profile has remembered, as the settings page lists it.
- *
- * Granted for a project when the call named one - which is how MiMo keeps them,
- * `permission(project_id)` - and otherwise for the single conversation it was
- * answered in.
- */
-export interface SavedRule {
-  /** The project it was granted for, or empty when it belongs to one conversation. */
-  directory: string
-  /** The conversation it belongs to, when it is not a project's. */
-  sessionID: string
-  /** The bucket it was given for: bash, edit, write, outside, read. */
-  kind: string
-  /** What it covers: a command prefix (`git status *`), a folder (`dir/*`), or the whole kind (`*`). */
-  pattern: string
-}
-
 /** Where a search found its words inside one conversation, as the overlay draws it. */
 export interface MessageHit {
   sessionID: string
@@ -1266,21 +1248,6 @@ export interface McpToolInfo {
   description?: string
 }
 
-/**
- * A server the user has saved, so it can be returned to by name.
- *
- * The address is the identity as far as connecting goes, but the id is what the
- * list is keyed by: an address can be edited, and a row that changed identity
- * when its address changed would lose its place and its default flag.
- */
-export interface ServerEntry {
-  id: string
-  /** What to call it in the list. Empty means show the address instead. */
-  name: string
-  /** A ws:// or wss:// address. */
-  url: string
-}
-
 export interface AppConfig {
   /**
    * Which build's idea of this document it is.
@@ -1308,8 +1275,6 @@ export interface AppConfig {
    */
   videoCardDetails?: boolean
   theme: "dark" | "light" | "system"
-  /* Which named palette the colours are generated from. */
-  themeID: string
   /**
    * Shortcuts the user has changed, as command id to chord.
    *
@@ -1330,28 +1295,6 @@ export interface AppConfig {
    * reason its setting is described as "before forcing text-only response".
    */
   maxSteps?: number
-  /**
-   * A server to talk to instead of the one this app started.
-   *
-   * Empty means the local backend. The protocol is identical, so a remote
-   * server is simply a different address for the same conversation.
-   */
-  serverURL: string
-  /**
-   * Saved servers, in the order they were added.
-   *
-   * Separate from serverURL, which is whichever one is connected now: a server
-   * can be saved without being in use, and the one in use can be an address
-   * typed once and never kept.
-   */
-  servers: ServerEntry[]
-  /**
-   * The saved server to connect to at launch, by id.
-   *
-   * Empty means start the local backend, which is what an app with no servers
-   * saved has always done.
-   */
-  defaultServer: string
   /** Where to look for a newer release, if anywhere. */
   updateFeed: string
   /** The chime a task that ran past a minute makes when it ends. */
@@ -1363,9 +1306,6 @@ export interface AppConfig {
    * in the home directory.
    */
   projectRoot: string
-  /** Whether a permission request or a failure also makes a sound. Off by default. */
-  soundPermission: boolean
-  soundError: boolean
   /** Sessions whose tabs survive a close-others and sort to the front. */
   pinnedTabs: string[]
   /** Project folders pinned to the top of the side column's project list. */
@@ -1449,22 +1389,16 @@ export interface AppConfig {
   /** Whether new sessions start in staged mode; each may then differ. */
   staged: boolean
   /**
-   * Sessions with a tab in the title bar, in the order they are drawn.
-   *
-   * Kept in config rather than in the window, so closing the app and
-   * reopening it leaves the same set of conversations to hand.
-   */
-  openTabs: string[]
-  /**
    * 导入: set once the first run has asked about conversations in other AI
    * apps, whether or not anything was taken. MiMo asks a machine once; so does
    * this, and a profile that predates the question is marked as already asked.
    */
   importOnboarded: boolean
   /**
-   * MiMo's 标题生成模型: which model names a conversation after its first
-   * message. Absent - and MiMo's 跟随当前模型 - is the conversation's own model,
-   * which is also where an unusable choice falls back to.
+   * Which model names a conversation after its first message - MiMo's engine
+   * `small_model`, and like it set only in the config file: MiMo's settings
+   * have no row for it. Absent is the conversation's own model, which is also
+   * where an unusable choice falls back to.
    */
   titleModel?: ModelRef
   /** OpenAI-compatible providers the user added by base URL. */
@@ -1500,23 +1434,7 @@ export interface AppConfig {
    * instead of in the document.
    */
   commands: Record<string, CommandDefinition>
-  /**
-   * "provider/model" keys shown in the composer picker. Empty means the user
-   * has not curated the list yet, and every connected model is offered.
-   */
-  enabledModels: string[]
-  /** Start shell tool calls expanded in the transcript. */
-  expandShell: boolean
-  /** Start edit, write and patch tool calls expanded in the transcript. */
-  expandEdits: boolean
 
-  /*
-   * Type. Empty means the built-in stack, which is what almost everyone wants;
-   * the override exists because a person who has chosen a face to read code in
-   * has usually chosen it for a reason.
-   */
-  uiFont: string
-  codeFont: string
   /**
    * The base size, in px, of the interface's text and of code in the
    * transcript and diffs. MiMo's defaults, 14 and 12; each becomes a scale on
@@ -1524,7 +1442,6 @@ export interface AppConfig {
    */
   uiFontSize: number
   codeFontSize: number
-  terminalFont: string
 
   /**
    * Standing instructions from the user, added to every session's prompt.
@@ -1602,21 +1519,6 @@ export interface AppConfig {
    */
   diffMarks: "color" | "signs"
 
-  /** Desktop notifications, by occasion. */
-  notifyAgent: boolean
-  notifyPermission: boolean
-
-  /** Whether pinch and Ctrl+wheel resize the interface. */
-  pinchZoom: boolean
-
-  /**
-   * Whether a new version says what changed in it.
-   *
-   * opencode's `releaseNotes`, and on by default the way its own
-   * `defaultSettings` has it. Its string: "Show What's New popups after
-   * updates".
-   */
-  releaseNotes: boolean
   /**
    * One-time migrations already applied to this document, by name.
    *
@@ -1626,16 +1528,6 @@ export interface AppConfig {
    * first time it runs and the migration never looks at that field again.
    */
   migrations: string[]
-
-  /**
-   * The bottom-panel toggle in the bar, on to begin with.
-   *
-   * The reference this app follows for 2.0 keeps a bottom-panel toggle in the
-   * bar at all times, and the drawer is otherwise reachable only by a chord
-   * nobody is told about. The setting stays, so a reader who wants the bar
-   * emptier can have that.
-   */
-  showTerminal: boolean
 
   /**
    * The shell the terminal opens and the bash tool runs in.
@@ -1666,9 +1558,9 @@ export interface CustomProvider {
    * Chosen by the user, not derived from the name.
    *
    * The reference asks for this outright and validates it against
-   * /^[a-z0-9][a-z0-9-_]*$/. It matters because `provider/model` refs, the
-   * enabled-model list and the stored credential are all keyed by it, so an id
-   * that moves when the display name is edited takes all three with it.
+   * /^[a-z0-9][a-z0-9-_]*$/. It matters because `provider/model` refs and the
+   * stored credential are both keyed by it, so an id that moves when the
+   * display name is edited takes both with it.
    */
   id: string
   name: string
@@ -1812,10 +1704,6 @@ export type Request =
    */
   | { type: "session.exportFile"; sessionID: string }
   | { type: "session.importFile"; text: string }
-  /* The "always" approvals this profile has remembered, and where each one is kept. */
-  | { type: "permission.rules" }
-  /* Takes one remembered approval back, everything remembered for one place, or the lot. */
-  | { type: "permission.forget"; directory?: string; sessionID?: string; kind?: string; pattern?: string }
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
   /* An empty folder for a new project, named by the user. `location` is where it goes, as MiMo's dialog lets it be changed; without one it is the default project location. */
   | { type: "project.createBlank"; name: string; location?: string }
@@ -2146,9 +2034,6 @@ export interface ResponseMap {
    * written by a newer build - and the window has its own sentence for each.
    */
   "session.importFile": { session?: SessionInfo; problem?: "notJson" | "notMCode" | "fromNewer" | "noMessages" }
-  "permission.rules": { rules: SavedRule[] }
-  /* The list as it now stands, so the page redraws from the answer rather than guessing. */
-  "permission.forget": { rules: SavedRule[] }
   "session.create": { session: SessionInfo }
   "project.createBlank": { directory: string }
   /* `existed` is true when the folder was already listed. */
