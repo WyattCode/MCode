@@ -1,6 +1,7 @@
 import type { ChatLink } from "@shared/protocol"
 import { language, sessionTitle, t } from "./i18n"
 import { projectName } from "./project"
+import { sessionGroup } from "@shared/session-group"
 import type { TipLine } from "./tip"
 
 /**
@@ -51,15 +52,17 @@ export function chatLinkText(link: ChatLink): string {
  * conversation; given `jump`, a line whose other side still exists opens it.
  */
 export function convoCard(
-  session: { title: string; directory: string; updated: number; scratch?: boolean },
+  session: { title: string; directory: string; updated: number; scratch?: boolean; group?: string },
   names?: Record<string, string>,
   links: readonly ChatLink[] = [],
   jump?: (sessionID: string) => void,
 ): { title: string; lines: (string | TipLine | undefined)[] } {
+  // The project it is filed under, which 移动至项目 may have moved; the folder line below still says where it works.
+  const group = sessionGroup(session)
   return {
     title: sessionTitle(session.title),
     lines: [
-      session.scratch ? undefined : t("convoTip.project", { name: projectName(session.directory, names) }),
+      group ? t("convoTip.project", { name: projectName(group, names) }) : undefined,
       session.directory || undefined,
       session.updated ? t("convoTip.updatedAt", { time: cardTime(session.updated) }) : undefined,
       ...sortedChatLinks(links).map((link): TipLine => {

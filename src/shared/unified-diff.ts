@@ -110,6 +110,76 @@ export function reverseSection(content: string, section: DiffSection): string | 
   return lines.join("\n")
 }
 
+/** One section written back out as a patch git can be handed, `a/`-`b/` headers and all. */
+export function sectionPatch(section: DiffSection): string {
+  const out = [`--- a/${section.file}`, `+++ b/${section.file}`]
+  for (const raw of section.hunks) {
+    /*
+     * Splitting a file that ends in a newline leaves an empty last element, so
+     * a hunk reaching the end of the file carries an empty context line on both
+     * sides. Written out, that line asks git to match one line past the end of
+     * the file and `git apply` refuses the whole hunk - measured: the same
+     * patch without it applies cleanly. The empty line is still wanted for
+     * locating the hunk, so it is dropped here rather than when parsing.
+     */
+    const tail = raw.oldLines.length > 0 && raw.newLines.length > 0 && raw.oldLines.at(-1) === "" && raw.newLines.at(-1) === ""
+    const hunk = tail ? { ...raw, oldLines: raw.oldLines.slice(0, -1), newLines: raw.newLines.slice(0, -1) } : raw
+    out.push(`@@ -${hunk.oldStart},${hunk.oldLines.length} +${hunk.newStart},${hunk.newLines.length} @@`)
+    /*
+     * The bodies are rebuilt from the two sides rather than kept verbatim:
+     * a line in both is context, a line only on the old side was removed, and
+     * one only on the new side was added - which is exactly how they parsed.
+     */
+    let old = 0
+    let fresh = 0
+    while (old < hunk.oldLines.length || fresh < hunk.newLines.length) {
+      const before = hunk.oldLines[old]
+      const after = hunk.newLines[fresh]
+      if (old < hunk.oldLines.length && fresh < hunk.newLines.length && before === after) {
+        out.push(` ${before}`)
+        old++
+        fresh++
+        continue
+      }
+      if (old < hunk.oldLines.length && (fresh >= hunk.newLines.length || !hunk.newLines.includes(before!))) {
+        out.push(`-${before}`)
+        old++
+        continue
+      }
+      if (fresh < hunk.newLines.length) {
+        out.push(`+${after}`)
+        fresh++
+        continue
+      }
+      out.push(`-${before}`)
+      old++
+    }
+  }
+  return `${out.join("\n")}\n`
+}
+
+/**
+ * The same section, with each hunk moved to where its lines actually stand now.
+ *
+ * MiMo recomputes a patch against the file on disk and tries `git apply` a
+ * second time with it, which is what rescues a hunk that later edits have
+ * pushed up or down the file. A hunk whose lines are gone altogether answers
+ * undefined, and the caller falls back the way MiMo does.
+ */
+export function recountedSection(content: string, section: DiffSection): DiffSection | undefined {
+  const lines = content === "" ? [] : content.split("\n")
+  const hunks: DiffHunk[] = []
+  /* How far the old side has drifted from the new one, so `oldStart` stays consistent across hunks. */
+  let drift = 0
+  for (const hunk of section.hunks) {
+    const at = locate(lines, hunk.newLines, hunk.newStart - 1)
+    if (at < 0) return undefined
+    hunks.push({ ...hunk, newStart: at + 1, oldStart: at + 1 + drift })
+    drift += hunk.oldLines.length - hunk.newLines.length
+  }
+  return { file: section.file, hunks }
+}
+
 function locate(lines: string[], block: string[], expected: number): number {
   if (block.length === 0) return Math.min(Math.max(expected, 0), lines.length)
   const fits = (start: number) => block.every((line, offset) => lines[start + offset] === line)

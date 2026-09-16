@@ -1,4 +1,5 @@
 import type { AppConfig, SessionInfo } from "./protocol"
+import { sessionGroup } from "./session-group"
 
 /**
  * MiMo's project list, kept as a list rather than read off conversations.
@@ -13,7 +14,7 @@ export type ProjectConfig = Pick<
   "projects" | "closedProjects" | "pinnedProjects" | "projectOrder" | "projectUsed" | "projectNames"
 >
 
-type ProjectSession = Pick<SessionInfo, "directory" | "updated" | "archived" | "scratch" | "sideOf" | "parentID">
+type ProjectSession = Pick<SessionInfo, "directory" | "updated" | "archived" | "scratch" | "sideOf" | "parentID" | "group">
 
 /**
  * The folders conversations make projects of, newest conversation first.
@@ -130,9 +131,11 @@ export function projectsByRecency(config: Partial<ProjectConfig> | undefined, se
   const listed = listedProjects(config)
   const at = new Map(listed.map((directory) => [directory, config?.projectUsed?.[directory] ?? 0]))
   for (const session of sessions) {
-    if (session.archived || session.scratch) continue
-    const seen = at.get(session.directory)
-    if (seen !== undefined && session.updated > seen) at.set(session.directory, session.updated)
+    if (session.archived) continue
+    // A conversation counts towards the project it is filed under, which its label may have moved.
+    const group = sessionGroup(session)
+    const seen = group ? at.get(group) : undefined
+    if (group && seen !== undefined && session.updated > seen) at.set(group, session.updated)
   }
   return listed
     .map((directory, index) => ({ directory, index, at: at.get(directory) ?? 0 }))

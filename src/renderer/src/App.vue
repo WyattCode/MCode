@@ -68,6 +68,7 @@ import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, schedule
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
+import { sessionGroup } from "@shared/session-group"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
@@ -1747,7 +1748,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
  * kept below whatever the search leaves.
  */
 function moveMenu(target?: (typeof app.sessions)[number]): Pick<MenuItem, "children" | "search" | "footer" | "childWidth"> {
-  const current = target && !target.scratch ? target.directory : undefined
+  const current = target ? sessionGroup(target) : undefined
   const rows: MenuItem[] = app.projects.map((directory) => ({
       key: `move:${directory}`,
       label: projectName(directory, app.config?.projectNames),
@@ -1999,7 +2000,8 @@ async function runSessionMenu(key: string) {
   // A project chosen in the move submenu.
   if (key.startsWith("move:")) {
     const directory = key.slice("move:".length)
-    if (app.sessions.find((entry) => entry.id === target)?.directory !== directory) await app.move(target, directory)
+    const moving = app.sessions.find((entry) => entry.id === target)
+    if (moving && sessionGroup(moving) !== directory) await app.move(target, directory)
     return
   }
   const own = ROW_ACTIONS[key]
@@ -3766,7 +3768,7 @@ function noticeAbout(sessionID: string) {
   return {
     sessionID,
     title: session ? sessionTitle(session.title) : undefined,
-    project: session && !session.scratch ? projectName(session.directory, app.config?.projectNames) : undefined,
+    project: session && sessionGroup(session) ? projectName(sessionGroup(session)!, app.config?.projectNames) : undefined,
   }
 }
 
@@ -4287,11 +4289,20 @@ onBeforeUnmount(() => {
           has it: the full width of this column, under the composer, with its
           own edge to drag. Not in the right-hand column, which is the review's.
         -->
-        <!-- The drawer styles bp-enter/leave itself; out-in so a new home folder closes one drawer before opening the next. -->
-        <Transition name="bp" mode="out-in">
+        <!--
+          The drawer styles bp-enter/leave itself. Deliberately unkeyed: MiMo
+          keeps one bottom panel whose tabs outlive the view, so stepping from
+          the home screen into a conversation must not remount it. It used to
+          be keyed by view and folder, which threw the tab list away - a dev
+          server started at home vanished from the drawer the moment a
+          conversation opened, still running with nothing attached to it. The
+          drawer already answers a change of folder by itself: an untouched
+          terminal is restarted in the new one and a used one gets MiMo's
+          notice above it.
+        -->
+        <Transition name="bp">
           <TerminalDrawer
             v-if="terminalUp"
-            :key="isHome ? `home:${homeShellDirectory}` : 'session'"
             ref="drawer"
             :sessionID="isHome ? undefined : app.currentID"
             :directory="isHome ? homeShellDirectory : undefined"

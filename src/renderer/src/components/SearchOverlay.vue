@@ -4,6 +4,7 @@ import type { MessageHit, SessionArtifacts } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
 import { projectName } from "../lib/project"
+import { sessionGroup } from "@shared/session-group"
 
 /**
  * MiMo's search: one field over conversations, projects and what they made.
@@ -79,8 +80,11 @@ const visible = computed(() => {
   return app.sessions.filter((session) => !session.archived && !session.sideOf && !closed.has(session.directory))
 })
 
-const owner = (session: { scratch?: boolean; directory: string }) =>
-  session.scratch ? "" : projectName(session.directory, app.config?.projectNames)
+/* The project a hit says it belongs to, which 移动至项目 may have moved; one filed under none says nothing. */
+const owner = (session: { scratch?: boolean; directory: string; group?: string }) => {
+  const group = sessionGroup(session)
+  return group ? projectName(group, app.config?.projectNames) : ""
+}
 
 const items = computed<Item[]>(() => {
   const needle = query.value.trim().toLowerCase()
@@ -124,8 +128,9 @@ const items = computed<Item[]>(() => {
 
   const latest = new Map<string, number>()
   for (const session of visible.value) {
-    if (session.scratch) continue
-    latest.set(session.directory, Math.max(latest.get(session.directory) ?? 0, session.updated))
+    const group = sessionGroup(session)
+    if (!group) continue
+    latest.set(group, Math.max(latest.get(group) ?? 0, session.updated))
   }
   for (const [directory, time] of latest) {
     const name = projectName(directory, app.config?.projectNames)

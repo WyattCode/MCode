@@ -1276,10 +1276,13 @@ export const useApp = defineStore("app", () => {
     await api().request({ type: "session.rename", sessionID, title })
   }
 
-  /** Which project a conversation belongs to. The transcript does not move. */
+  /**
+   * Which project the side column files a conversation under, as MiMo's
+   * `moveToProject` does. Nothing else moves - not the transcript, and not the
+   * folder it works in - so the project's commands are still the right ones.
+   */
   async function move(sessionID: string, directory: string) {
     await api().request({ type: "session.move", sessionID, directory })
-    if (directory !== commandsFor && currentID.value === sessionID) void refreshCommands(directory)
   }
 
   /*

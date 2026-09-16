@@ -11,6 +11,7 @@ import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib
 import { wordMatch } from "../lib/word-match"
 import { folderName, projectName } from "../lib/project"
 import { listedProjects } from "@shared/projects"
+import { sessionGroup } from "@shared/session-group"
 import SelectMenu from "./SelectMenu.vue"
 import { chime } from "../lib/sound"
 import { CHIMES, chimeOf, type Chime } from "@shared/chime"
@@ -1153,10 +1154,11 @@ const archived = computed(() =>
 )
 
 /* MiMo's row line: 已归档 · 项目「name」 · time, or without the project for a scratch task. */
-function archivedDescription(session: { directory: string; updated: number; scratch?: boolean }): string {
-  const head = session.scratch
-    ? t("set.archivedPlain")
-    : t("set.archivedIn", { project: projectName(session.directory, app.config?.projectNames) })
+function archivedDescription(session: { directory: string; updated: number; scratch?: boolean; group?: string }): string {
+  const group = sessionGroup(session)
+  const head = group
+    ? t("set.archivedIn", { project: projectName(group, app.config?.projectNames) })
+    : t("set.archivedPlain")
   return `${head} · ${ago(session.updated)}`
 }
 
