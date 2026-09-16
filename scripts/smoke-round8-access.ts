@@ -166,7 +166,20 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
         /@media \(forced-colors: active\) \{\s+:focus-visible \{\s+outline-color: Highlight/.test(read("styles/base.css")))
     const browser = read("components/right/RpBrowser.vue")
     check("the browser's zoom controls are named in the interface's language (A15)", !/aria-label="(Zoom|Zoom out|Zoom in|Reset zoom)"/.test(browser) && /:aria-label="t\('key\.zoomReset'\)"/.test(browser))
-    check("the terminal's input is named in the interface's language (A15)", /Terminal\.strings\.promptLabel = t\("term\.inputLabel"\)\s+terminal = new Terminal\(/.test(read("components/TerminalPane.vue")))
+    const terminalPane = read("components/TerminalPane.vue")
+    const mainIndex = read("../../main/index.ts")
+    check(
+      "the terminal's input, and round 9's too-much-output line, are named in the interface's language (A15)",
+      /Terminal\.strings\.promptLabel = t\("term\.inputLabel"\)\s+Terminal\.strings\.tooMuchOutput = t\("term\.tooMuchOutput"\)\s+terminal = new Terminal\(/.test(terminalPane),
+    )
+    check(
+      "round 9: the terminal's reading view is built only while assistive technology is there, and follows it live",
+      /terminal = new Terminal\(\{[\s\S]*?screenReaderMode: screenReader\.value,/.test(terminalPane) &&
+        /watch\(screenReader, \(enabled\) => \{\s+if \(terminal\) terminal\.options\.screenReaderMode = enabled/.test(terminalPane) &&
+        /const screenReader = screenReaderActive\(\)/.test(terminalPane) &&
+        /ipcMain\.handle\("mcode:screen-reader", \(\) => app\.accessibilitySupportEnabled\)/.test(mainIndex) &&
+        /app\.on\("accessibility-support-changed"[\s\S]{0,200}webContents\.send\("mcode:screen-reader", enabled\)/.test(mainIndex),
+    )
     check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="openImagePreview/))
   }
 }

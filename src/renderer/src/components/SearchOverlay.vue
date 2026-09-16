@@ -24,11 +24,13 @@ const field = ref<HTMLInputElement>()
 const hits = ref<MessageHit[]>([])
 const artifacts = ref<SessionArtifacts[]>([])
 /*
- * The artifact list is the one part of this search that can fail, and MiMo
+ * The artifact search is the one part of this search that can fail, and MiMo
  * drives 正在搜索产物… and 产物搜索暂不可用 from it: conversations and projects
- * are matched here, out of what the window already holds.
+ * are matched here, out of what the window already holds. As MiMo's, it asks
+ * the server with the typed words a moment after typing stops, and nothing is
+ * asked while the box is empty.
  */
-const artifactStatus = ref<"loading" | "ready" | "error">("loading")
+const artifactStatus = ref<"loading" | "ready" | "error">("ready")
 /* MiMo keeps the overlay up for its 180ms exit before it goes. */
 const closing = ref(false)
 const CLOSE_MS = 180
@@ -203,42 +205,50 @@ let generation = 0
 
 function runSearch(needle: string) {
   const run = ++generation
-  timer = setTimeout(async () => {
-    try {
-      const result = await app.client?.request({ type: "search.messages", query: needle, limit: RECENT })
-      if (run !== generation) return
-      hits.value = result?.hits ?? []
-    } catch {
-      // What was said is one source among three; losing it leaves the titles and the files.
-      if (run !== generation) return
-      hits.value = []
-    }
+  artifactStatus.value = "loading"
+  timer = setTimeout(() => {
+    void (async () => {
+      try {
+        const result = await app.client?.request({ type: "search.messages", query: needle, limit: RECENT })
+        if (run !== generation) return
+        hits.value = result?.hits ?? []
+      } catch {
+        // What was said is one source among three; losing it leaves the titles and the files.
+        if (run !== generation) return
+        hits.value = []
+      }
+    })()
+    void (async () => {
+      // The files conversations wrote whose names match, and MiMo's 重试 when that cannot be had.
+      try {
+        const result = await app.client?.request({ type: "artifact.list", query: needle })
+        if (!result) throw new Error("not connected")
+        if (run !== generation) return
+        artifacts.value = result.artifacts
+        artifactStatus.value = "ready"
+      } catch {
+        if (run !== generation) return
+        artifacts.value = []
+        artifactStatus.value = "error"
+      }
+    })()
   }, 150)
 }
 
-watch(query, (value) => {
+function search() {
   if (timer) clearTimeout(timer)
-  const needle = value.trim()
+  const needle = query.value.trim()
   if (!needle) {
     generation += 1
     hits.value = []
+    artifacts.value = []
+    artifactStatus.value = "ready"
     return
   }
   runSearch(needle)
-})
-
-/* The files conversations wrote, and MiMo's 重试 when that list cannot be had. */
-async function loadArtifacts() {
-  artifactStatus.value = "loading"
-  try {
-    const result = await app.client?.request({ type: "artifact.list" })
-    artifacts.value = result?.artifacts ?? []
-    artifactStatus.value = "ready"
-  } catch {
-    artifacts.value = []
-    artifactStatus.value = "error"
-  }
 }
+
+watch(query, search)
 
 /** Plays MiMo's exit, then tells the owner to unmount. */
 function close() {
@@ -263,7 +273,6 @@ function onKeydown(event: KeyboardEvent) {
 
 onMounted(() => {
   field.value?.focus()
-  void loadArtifacts()
 })
 
 onBeforeUnmount(() => {
@@ -293,7 +302,7 @@ defineExpose({ close })
       <div class="search-results">
         <div v-if="artifactStatus === 'error'" class="sr-artifact-error" data-search-error>
           <span>{{ t("searchOverlay.error") }}</span>
-          <button type="button" @click="loadArtifacts">{{ t("searchOverlay.retry") }}</button>
+          <button type="button" @click="search">{{ t("searchOverlay.retry") }}</button>
         </div>
         <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" data-search-loading>{{ t("searchOverlay.loading") }}</div>
         <div v-else-if="!flat.length && artifactStatus !== 'error'" class="sr-empty">{{ t("searchOverlay.empty") }}</div>

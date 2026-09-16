@@ -66,16 +66,12 @@ const rows = computed<Row[]>(() => {
   return out.sort((a, b) => b.at - a.at)
 })
 
-/** What the search leaves, before the bucket is chosen - the counts are of this. */
-const found = computed(() => {
-  const words = needle.value.trim().toLocaleLowerCase()
-  if (!words) return rows.value
-  return rows.value.filter(
-    (row) => row.path.toLocaleLowerCase().includes(words) || row.session.title.toLocaleLowerCase().includes(words),
-  )
-})
-
-const shown = computed(() => (kind.value === "all" ? found.value : found.value.filter((row) => row.kind === kind.value)))
+/*
+ * The rows are already what the search leaves, before the bucket is chosen -
+ * the counts are of them. The server does the matching (MiMo's: the file's
+ * name, through the store's trigram index).
+ */
+const shown = computed(() => (kind.value === "all" ? rows.value : rows.value.filter((row) => row.kind === kind.value)))
 
 /* MiMo's 加载更多: fifty at a time, back to fifty when the tab or the search changes. */
 const limit = ref(ARTIFACT_PAGE)
@@ -95,10 +91,10 @@ async function loadMore() {
 }
 
 const counts = computed(() => ({
-  all: found.value.length,
-  doc: found.value.filter((row) => row.kind === "doc").length,
-  app: found.value.filter((row) => row.kind === "app").length,
-  other: found.value.filter((row) => row.kind === "other").length,
+  all: rows.value.length,
+  doc: rows.value.filter((row) => row.kind === "doc").length,
+  app: rows.value.filter((row) => row.kind === "app").length,
+  other: rows.value.filter((row) => row.kind === "other").length,
 }))
 
 /*
@@ -131,19 +127,28 @@ const FILTERS = [
 ] as const
 
 /* A load that fails says so and offers 重试, rather than claiming there is nothing. */
+let generation = 0
+/** The search the shown rows answer - the typed one may be ahead of it. */
+const answered = ref("")
 async function load() {
+  const run = ++generation
+  const asked = needle.value
   failed.value = false
   try {
-    const result = await app.client?.request({ type: "artifact.list" })
+    const result = await app.client?.request({ type: "artifact.list", query: asked })
     if (!result) throw new Error("not connected")
+    // An older answer never replaces a newer search's.
+    if (run !== generation) return
     groups.value = result.artifacts
+    answered.value = asked
     loaded.value = true
   } catch {
-    failed.value = true
+    if (run === generation) failed.value = true
   }
 }
 
 onMounted(load)
+watch(needle, () => void load())
 
 /* The time is read against a clock that moves, so "just now" does not stay just now. */
 const now = ref(Date.now())
@@ -362,7 +367,7 @@ const badgeStyle = (badge: BadgeStyle) => ({ color: badge.fg, background: `color
       </div>
 
       <!-- A search that found nothing says so, rather than claiming there is nothing at all. -->
-      <p v-else-if="loaded && needle.trim()" class="notice" data-empty="no-match">{{ t("art.noMatch") }}</p>
+      <p v-else-if="loaded && answered.trim()" class="notice" data-empty="no-match">{{ t("art.noMatch") }}</p>
 
       <div v-else-if="loaded" class="none" data-empty="none">
         <!-- MCode's own drawing: two sheets, the front one with a folded corner and a spark. -->

@@ -1799,8 +1799,12 @@ export interface ModelInfo {
 
 export type Request =
   | { type: "session.list" }
-  /* Every file every stored session has written, for the artifacts page. */
-  | { type: "artifact.list" }
+  /*
+   * Every file every stored session has written, for the artifacts page and
+   * the search overlay. `query` narrows it to files whose name matches, as
+   * MiMo's artifact search does.
+   */
+  | { type: "artifact.list"; query?: string }
   /*
    * A conversation as a file, and back again - MiMo's `mimo export` / `mimo
    * import` pair, over this app's own documents. The Markdown export is a

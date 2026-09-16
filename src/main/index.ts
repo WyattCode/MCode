@@ -1343,6 +1343,17 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:is-fullscreen", (event) => BrowserWindow.fromWebContents(event.sender)?.isFullScreen() ?? false)
   ipcMain.on("mcode:exit-fullscreen", (event) => BrowserWindow.fromWebContents(event.sender)?.setFullScreen(false))
 
+  /*
+   * Whether Chromium has found assistive technology (a screen reader, or
+   * another client of the accessibility tree) - the terminal only builds its
+   * row-by-row reading view while one is there. Beyond MiMo, whose terminal
+   * never builds it.
+   */
+  ipcMain.handle("mcode:screen-reader", () => app.accessibilitySupportEnabled)
+  app.on("accessibility-support-changed", (_event, enabled) => {
+    for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("mcode:screen-reader", enabled)
+  })
+
   ipcMain.on("mcode:window", (event, action: "minimize" | "maximize" | "close") => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return

@@ -11,6 +11,7 @@ import { typedInput } from "@shared/terminal-input"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { isPasteKey, terminalPalette } from "../lib/terminal"
+import { screenReaderActive } from "../lib/screen-reader"
 
 /**
  * One shell, and the xterm showing it.
@@ -107,6 +108,12 @@ function palette() {
   return terminalPalette(background || "#ffffff")
 }
 
+const screenReader = screenReaderActive()
+// A screen reader started or stopped while the terminal is open: the reading view follows it.
+watch(screenReader, (enabled) => {
+  if (terminal) terminal.options.screenReaderMode = enabled
+})
+
 function reason(err: unknown) {
   return err instanceof Error ? err.message : String(err)
 }
@@ -126,9 +133,18 @@ onMounted(async () => {
     return
   }
 
-  // The input's spoken name, xterm's one localisable string that is read without screen reader mode.
+  // The input's spoken name, and what screen reader mode says when output comes faster than it can be read.
   Terminal.strings.promptLabel = t("term.inputLabel")
+  Terminal.strings.tooMuchOutput = t("term.tooMuchOutput")
   terminal = new Terminal({
+    /*
+     * The row-per-line reading view and the live region, only while assistive
+     * technology is there (see lib/screen-reader.ts). Measured: the view is
+     * transparent, takes no pointer events and leaves the drawn terminal
+     * pixel-for-pixel the same, so turning it on changes nothing a mouse user
+     * sees.
+     */
+    screenReaderMode: screenReader.value,
     // Its own variable, so a terminal face can differ from the code face.
     fontFamily:
       getComputedStyle(document.documentElement).getPropertyValue("--font-terminal").trim() ||

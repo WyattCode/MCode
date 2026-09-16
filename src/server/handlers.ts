@@ -23,7 +23,7 @@ import type { Runtime } from "./index"
 import { customModelOf } from "./config"
 import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { readableFile, workingRoots, writableFile } from "./file-access"
-import { restoreHeaders, restoreMasked, restoreServer } from "./config-view"
+import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./config-view"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
@@ -340,15 +340,26 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * which walking the transcripts can do. The walk below stays as the
        * fallback for a profile whose store could not be opened.
        */
-      const kept = runtime.artifacts?.list()
-      if (kept?.length) return { artifacts: kept } satisfies Handled<"artifact.list">
+      const query = typeof request.query === "string" ? request.query : ""
       const sessions = await runtime.sessions.list()
+      if (runtime.artifacts) {
+        try {
+          // Conversations that changed since the last pass are read again first, so a file written since launch is there.
+          await runtime.artifacts.reconcile(sessions, (id) => runtime.sessions.messages(id))
+          return { artifacts: runtime.artifacts.list(query) } satisfies Handled<"artifact.list">
+        } catch {
+          // A store that cannot answer (a newer build's shape, a failed write) leaves the walk below.
+        }
+      }
+      // The same test the store makes: the file's name, trimmed, NFC-normalised and lower-cased.
+      const words = query.trim().normalize("NFC").toLowerCase()
+      const named = (file: string) => !words || (file.split(/[\\/]/).pop() ?? file).normalize("NFC").toLowerCase().includes(words)
       const artifacts: SessionArtifacts[] = []
       for (const session of sessions) {
         // subagents: a subagent is part of its parent's work, not a conversation of its own to list.
         if (session.parentID) continue
         const messages = await runtime.sessions.messages(session.id)
-        const produced = sessionFiles(messages, session.directory).written
+        const produced = sessionFiles(messages, session.directory).written.filter((touch) => named(touch.path))
         if (!produced.length) continue
         const files: ArtifactFile[] = []
         for (const touch of produced) {
@@ -486,7 +497,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * artifact store was built to stop; the rows keep the title this
        * conversation had.
        */
-      runtime.artifacts?.orphan(request.sessionID)
+      runtime.artifacts?.detach(request.sessionID)
       if (worked) {
         const place = (directory: string) => {
           const resolved = path.resolve(directory)
@@ -1072,7 +1083,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ? {
                 id: entry.id,
                 name: request.name.trim(),
-                baseURL: request.baseURL.trim(),
+                // An address shown with its secret parts masked, left as shown, keeps what is stored.
+                baseURL: restoreUrl(request.baseURL.trim(), existing.baseURL),
                 ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
