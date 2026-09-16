@@ -1410,8 +1410,9 @@ export interface AppConfig {
   /**
    * MiMo's `instructions` setting: more instruction files to read into every
    * conversation, as paths or globs (`docs/*.md`, `~/notes/rules.md`), each
-   * looked for from the working folder up to the repository's top. Web
-   * addresses are not fetched. Set in the config file; the settings have no row for it.
+   * looked for from the working folder up to the repository's top, or as web
+   * addresses, which are fetched as MiMo fetches them - five seconds each, and
+   * left out when that fails. Set in the config file; the settings have no row for it.
    */
   instructionFiles?: string[]
   /** How spoken input is written down. */
