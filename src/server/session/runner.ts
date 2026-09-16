@@ -35,7 +35,7 @@ import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
 import { retryDecision, waitFor, withRequestRetry } from "./retry"
-import { CodedError } from "@shared/errors"
+import { CodedError, codeOf, paramsOf } from "@shared/errors"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
@@ -2006,7 +2006,8 @@ export class SessionRunner {
       .catch((err) => {
         // A failure recorded on the message is already in front of the user.
         if (err instanceof Shown) return
-        this.bus.publish({ type: "session.error", sessionID, error: describe(err) })
+        const code = codeOf(err)
+        this.bus.publish({ type: "session.error", sessionID, error: describe(err), ...(code ? { errorCode: code, errorParams: paramsOf(err) } : {}) })
       })
       .finally(async () => {
         /*
@@ -2068,6 +2069,7 @@ export class SessionRunner {
           : OpenAICompatible
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    if (definition.kind === "chatgpt" && !tokens) throw new CodedError(`The ${definition.name} sign-in has expired`, "auth.expired", { name: definition.name })
     const config = this.config.get()
     // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
     const { system, systemTail } = await this.systemFor(session)

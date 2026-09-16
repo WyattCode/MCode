@@ -39,6 +39,7 @@ import ConfirmDialog from "./components/ConfirmDialog.vue"
 import NewProjectDialog from "./components/NewProjectDialog.vue"
 import type { MenuItem } from "./lib/menu"
 import ConnectDialog from "./components/ConnectDialog.vue"
+import { connectableProviders, groupProviders, type Group } from "./lib/connect"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import ErrorBoundary from "./components/ErrorBoundary.vue"
 import ImportDialog from "./components/ImportDialog.vue"
@@ -1532,6 +1533,18 @@ async function focusComposer() {
 
 /** Reachable from the model menu, so an empty list has somewhere to go. */
 const connectOpen = ref(false)
+/** The vendor a request named (an expired sign-in's "sign in again"), or none to browse. */
+const connectGroup = ref<Group>()
+watch(
+  () => app.connectRequest,
+  (request) => {
+    if (!request) return
+    connectGroup.value = request.provider
+      ? groupProviders(connectableProviders(app.providers)).find((group) => group.entries.some((entry) => entry.id === request.provider))
+      : undefined
+    connectOpen.value = true
+  },
+)
 
 /**
  * 导入: the first run's one question about conversations in other AI apps.
@@ -4501,7 +4514,7 @@ onBeforeUnmount(() => {
     />
 
   </div>
-  <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
+  <ConnectDialog v-if="connectOpen" :group="connectGroup" @close="(connectOpen = false), (connectGroup = undefined)" />
   <ImportDialog v-if="importOpen" @close="importOpen = false" />
   <ImagePreview />
   <VideoPreview />

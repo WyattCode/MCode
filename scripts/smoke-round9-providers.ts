@@ -24,6 +24,9 @@ import type { Request } from "../src/shared/protocol"
 import { connectableProviders, providerLabel, quickAddGroups } from "../src/renderer/src/lib/connect"
 import { language } from "../src/renderer/src/lib/i18n"
 import { readFileSync, statSync } from "node:fs"
+import { AuthManager } from "../src/server/auth/manager"
+import { OAUTH_PROVIDERS } from "../src/server/auth/oauth"
+import { t } from "../src/renderer/src/lib/i18n"
 import { createServer } from "node:http"
 import { imageInputOf, overlayCatalog, trimCatalog, type Catalog } from "../src/shared/models-dev"
 import { CATALOG_FRESH_MS, CATALOG_REFRESH_MS, CATALOG_SOURCE, CATALOG_TIMEOUT_MS, ModelCatalog, shippedCatalog } from "../src/server/provider/models-dev"
@@ -467,6 +470,50 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       if (saved.url === undefined) delete process.env.MCODE_MODELS_URL
       else process.env.MCODE_MODELS_URL = saved.url
       await fs.rm(data, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+
+  section("Round 9 (P9-12): an expired ChatGPT sign-in says so and offers to sign in again")
+  {
+    const refused = createServer((_request, response) => {
+      response.writeHead(401, { "content-type": "application/json" })
+      response.end("{}")
+    })
+    await new Promise<void>((resolve) => refused.listen(0, "127.0.0.1", () => resolve()))
+    const chatgpt = OAUTH_PROVIDERS.chatgpt as { tokenURL: string }
+    const tokenURL = chatgpt.tokenURL
+    chatgpt.tokenURL = `http://127.0.0.1:${(refused.address() as { port: number }).port}/oauth/token`
+    const e = await engine({})
+    try {
+      await e.config.setTokens("chatgpt", { access: "a", refresh: "r", expires: Date.now() - 1_000 })
+      const manager = new AuthManager(e.config, e.bus)
+      const token = await manager.accessToken("chatgpt")
+      const expired = e.events.find((event) => event.type === "auth.expired")
+      check("a refused renewal clears the sign-in", token === undefined && e.config.tokens("chatgpt") === undefined)
+      check("and tells the window which sign-in expired", expired?.type === "auth.expired" && expired.provider === "chatgpt" && expired.name === "ChatGPT Pro/Plus", expired)
+      check("with the providers as they now stand", expired?.type === "auth.expired" && expired.providers.find((entry) => entry.id === "chatgpt")?.configured === false)
+
+      /* A turn that finds the sign-in gone is refused in words the window can say. */
+      await e.config.setTokens("chatgpt", { access: "a", refresh: "r", expires: Date.now() + 3_600_000 })
+      const session = await e.store.create({ directory: e.project, model: { provider: "chatgpt", model: "gpt-5.5" } })
+      await e.runner.prompt({ sessionID: session.id, text: "hello" })
+      await e.idle(session.id)
+      const failed = e.events.filter((event) => event.type === "session.error" && event.sessionID === session.id).at(-1)
+      check(
+        "a turn on an expired sign-in fails as auth.expired, naming the provider",
+        failed?.type === "session.error" && failed.errorCode === "auth.expired" && failed.errorParams?.name === "ChatGPT Pro/Plus",
+        failed,
+      )
+      check("which the window says in its own words", t("auth.expired", { name: "ChatGPT Pro/Plus" }).includes("ChatGPT Pro/Plus") && !t("auth.expired").startsWith("auth."))
+      const store = readFileSync("src/renderer/src/stores/app.ts", "utf8")
+      const app = readFileSync("src/renderer/src/App.vue", "utf8")
+      check("the window keeps the notice up with a sign-in-again link", /case "auth\.expired":[\s\S]{0,400}duration: 0,[\s\S]{0,120}t\("auth\.signInAgain"\), run: \(\) => requestConnect\(event\.provider\)/.test(store))
+      check("which opens the connect dialog on that provider", /\(\) => app\.connectRequest,[\s\S]{0,400}entries\.some\(\(entry\) => entry\.id === request\.provider\)/.test(app) && /<ConnectDialog v-if="connectOpen" :group="connectGroup"/.test(app))
+      check("and a named turn failure is shown in the reader's language", /const said = event\.errorCode \? t\(event\.errorCode, event\.errorParams\) : event\.error/.test(store))
+    } finally {
+      chatgpt.tokenURL = tokenURL
+      await e.close()
+      await new Promise<void>((resolve) => refused.close(() => resolve()))
     }
   }
 

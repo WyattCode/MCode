@@ -698,23 +698,26 @@ export const useApp = defineStore("app", () => {
         }
         break
       }
-      case "session.error":
+      case "session.error": {
+        // A failure the backend named is said in the reader's language.
+        const said = event.errorCode ? t(event.errorCode, event.errorParams) : event.error
         // subagents: shown in its own transcript in the 子智能体 tab, nowhere else.
         if (isSubagent(event.sessionID)) {
           if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
-          setSideError(event.sessionID, event.error)
+          setSideError(event.sessionID, said)
           break
         }
         noteRunEnded(event.sessionID)
         endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
         turnStarted.delete(event.sessionID)
-        noteError(event.sessionID, event.error)
+        noteError(event.sessionID, said)
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
-        if (event.sessionID === currentID.value) error.value = event.error
-        if (isSide(event.sessionID)) setSideError(event.sessionID, event.error)
+        if (event.sessionID === currentID.value) error.value = said
+        if (isSide(event.sessionID)) setSideError(event.sessionID, said)
         break
+      }
       case "permission.requested": {
         // subagents: filed under the conversation a subagent works for, so its dock and its row show it.
         const key = rootOf(event.request.sessionID)
@@ -791,6 +794,14 @@ export const useApp = defineStore("app", () => {
         providers.value = event.providers
         authState.value = { provider: event.provider, stage: "done" }
         void ensureUsableModel(event.provider)
+        break
+      case "auth.expired":
+        providers.value = event.providers
+        notifyFailure(t("auth.expired", { name: event.name }), {
+          id: `auth.expired:${event.provider}`,
+          duration: 0,
+          action: { label: t("auth.signInAgain"), run: () => requestConnect(event.provider) },
+        })
         break
       case "providers.updated":
         providers.value = event.providers
@@ -1831,6 +1842,12 @@ export const useApp = defineStore("app", () => {
     await ensureUsableModel()
   }
 
+  /** Asks the window to open the connect dialog, on one provider when named. */
+  const connectRequest = ref<{ provider?: string; at: number }>()
+  function requestConnect(provider?: string) {
+    connectRequest.value = { provider, at: Date.now() }
+  }
+
   /** Re-reads the provider list, which carries config-derived fields. */
   async function refreshProviders() {
     providers.value = (await api().request({ type: "provider.list" })).providers
@@ -2158,6 +2175,8 @@ export const useApp = defineStore("app", () => {
     cancelAuth,
     signOut,
     ensureUsableModel,
+    connectRequest,
+    requestConnect,
     shownModel,
     discoverModels,
     addCustomProvider,

@@ -2311,7 +2311,8 @@ export type ServerEvent =
    * up, which is how the first working version of the rescue was read.
    */
   | { type: "session.compacting"; sessionID: string; active: boolean }
-  | { type: "session.error"; sessionID: string; error: string }
+  /** `errorCode`, when present, names the sentence the window shows instead of `error`. */
+  | { type: "session.error"; sessionID: string; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
   | { type: "message.updated"; message: Message }
   /**
    * Messages have left the transcript for good.
@@ -2356,6 +2357,8 @@ export type ServerEvent =
   /** What the providers offer changed without anyone asking - a newer models.dev catalog arrived. */
   | { type: "providers.updated"; providers: ProviderStatus[] }
   | { type: "auth.failed"; provider: string; message: string }
+  /** A subscription's sign-in was refused on renewal and has been cleared; the window asks for a new one. */
+  | { type: "auth.expired"; provider: string; name: string; providers: ProviderStatus[] }
 
 // ---------------------------------------------------------------------------
 // Envelopes
