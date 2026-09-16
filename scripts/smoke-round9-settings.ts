@@ -15,6 +15,7 @@ import type { Check } from "./smoke-round5"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
+import { startBackend } from "../src/server/index"
 import { belowFullMap, defaultAccess } from "../src/shared/access"
 import { stepTarget, visibleChatOrder } from "../src/renderer/src/lib/visible-chats"
 import { fontScale } from "../src/renderer/src/lib/font-scale"
@@ -302,5 +303,56 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
 
     check("the window's scale is clamped the way MiMo's is", fontScale(100, 14, 10, 24) === 24 / 14 && fontScale("abc", 12, 9, 24) === 1 && fontScale(-4, 14, 10, 24) === 1 && fontScale("16", 14, 10, 24) === 16 / 14)
     check("and the window works its scale out through that", /fontScale\(ui, 14, 10, 24\)/.test(read("src/renderer/src/App.vue")) && /fontScale\(code, 12, 9, 24\)/.test(read("src/renderer/src/App.vue")))
+  }
+
+  section("Round 9 (S9-11): a hand edit to config.json is taken in under load's and set's rules")
+  {
+    const dir = await fsp.mkdtemp(path.join(os.tmpdir(), "mcode-r9s-reload-"))
+    scratch.push(dir)
+    const backend = await startBackend(dir)
+    try {
+      const { config, sessions, storage } = backend.runtime
+      await config.set({
+        allowFullAccess: true,
+        customProviders: [
+          { id: "keepme", name: "Keep", baseURL: "http://127.0.0.1:1/v1", models: [{ id: "m", name: "M" }] },
+          { id: "dropme", name: "Drop", baseURL: "http://127.0.0.1:2/v1", models: [{ id: "m", name: "M" }] },
+        ],
+      })
+      const project = path.join(dir, "project")
+      await fsp.mkdir(project, { recursive: true })
+      const full = await sessions.create({ directory: project, model: { provider: "anthropic", model: "claude-opus-5" } })
+      await sessions.setAccess(full.id, "full")
+      const edit = async (change: (doc: Record<string, unknown>) => void) => {
+        const doc = JSON.parse(await fsp.readFile(storage.fileOf("config"), "utf8")) as Record<string, unknown>
+        change(doc)
+        await storage.write("config", doc)
+        await config.reloadFromDisk()
+      }
+
+      await edit((doc) => {
+        doc.allowFullAccess = false
+        doc.customProviders = (doc.customProviders as { id: string }[]).filter((entry) => entry.id !== "dropme")
+        doc.theme = "neon"
+      })
+      check("full access turned off by hand takes a conversation off it at once", (await sessions.get(full.id))?.access === undefined, (await sessions.get(full.id))?.access)
+      check("a custom provider taken out of the file is disabled, not lost", config.get().disabledProviders.includes("dropme") && config.get().customProviders.some((entry) => entry.id === "dropme") && !config.definition("dropme"))
+      check("and the one left in is untouched", Boolean(config.definition("keepme")) && !config.get().disabledProviders.includes("keepme"))
+      check("the edit's values are checked as a launch checks them", config.get().theme === "system")
+
+      await edit((doc) => {
+        doc.schemaVersion = 99
+        doc.theme = "dark"
+      })
+      check("a document marked by a later build is still read", config.get().theme === "dark" && config.fromNewerVersion)
+      const refused = await config.set({ theme: "light" }).then(
+        () => "",
+        (error: Error) => error.message,
+      )
+      const onDisk = JSON.parse(await fsp.readFile(storage.fileOf("config"), "utf8")) as Record<string, unknown>
+      check("but the next change is refused rather than written over it", refused.includes("newer version") && onDisk.schemaVersion === 99 && onDisk.theme === "dark", { refused, onDisk })
+    } finally {
+      await backend.close()
+    }
   }
 }

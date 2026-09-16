@@ -633,15 +633,41 @@ export class Config {
     }
   }
 
-  private async reloadFromDisk(): Promise<void> {
+  /** Told after a hand edit has been taken in, with the settings before and after it. */
+  private reloadListeners: ((before: AppConfig, after: AppConfig) => void | Promise<void>)[] = []
+
+  onReload(listener: (before: AppConfig, after: AppConfig) => void | Promise<void>): void {
+    this.reloadListeners.push(listener)
+  }
+
+  /**
+   * A hand edit, taken in under the same rules as a launch and a change made in
+   * the window.
+   *
+   * It used to be spread over the defaults and nothing else: a document marked
+   * as written by a later build was then written over by the next change, a
+   * custom provider deleted from the file was simply gone rather than disabled,
+   * and turning full access off left every conversation already at full access
+   * there until its next question.
+   */
+  async reloadFromDisk(): Promise<void> {
     const stored = await this.storage.read<Partial<AppConfig>>("config").catch(() => undefined)
     if (!stored || typeof stored !== "object") return
     if (JSON.stringify(stored) === JSON.stringify(this.current)) return
-    this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
-    dropRetired(this.current)
-    sanitizeConfig(this.current, defaults())
-    this.current.autoApprove = allowed(this.current.permissions)
+    const before = this.current
+    // As load reads it: a later build's document is taken in but never written back over.
+    this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
+    let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    dropRetired(next)
+    sanitizeConfig(next, defaults())
+    // As set keeps it: a custom provider taken out of the file is disabled, not lost.
+    if (JSON.stringify(next.customProviders) !== JSON.stringify(before.customProviders)) {
+      next = { ...next, ...customProviderWrite(before.customProviders, next) }
+    }
+    next.autoApprove = allowed(next.permissions)
+    this.current = next
     this.bus.publish({ type: "config.updated", config: this.current })
+    for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
   }
 
   async set(patch: Partial<AppConfig>): Promise<AppConfig> {
