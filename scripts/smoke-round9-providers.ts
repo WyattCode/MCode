@@ -9,9 +9,17 @@
  */
 import type { Check } from "./smoke-round5"
 import { engine, say } from "./smoke-round5"
+import fs from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
 import { messagesRequest } from "../src/server/provider/anthropic"
 import { OpenAICompatible } from "../src/server/provider/openai"
 import { menuEfforts } from "../src/shared/effort-menu"
+import { normalizeBaseURL } from "../src/shared/custom-endpoint"
+import { customModelOf } from "../src/server/config"
+import { startBackend } from "../src/server/index"
+import { handle } from "../src/server/handlers"
+import type { Request } from "../src/shared/protocol"
 
 export async function roundNineProviderChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 9 (P9-1): the effort submenu appears only where MiMo's desktop shows it")
@@ -87,6 +95,65 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       check("and a level its menu lacks falls to medium", e.bodies.at(-1)?.reasoning_effort === "medium", e.bodies.at(-1)?.reasoning_effort)
     } finally {
       await e.close()
+    }
+  }
+
+  section("Round 9 (P9-2): a custom provider's address and model ids are tidied as MiMo tidies them")
+  {
+    const cases: [string, string][] = [
+      ["https://x.example/v1", "https://x.example/v1"],
+      ["  https://x.example/v1/  ", "https://x.example/v1"],
+      ["https://x.example/v1/chat/completions", "https://x.example/v1"],
+      ["https://x.example/v1/Chat/Completions/", "https://x.example/v1"],
+      ["https://x.example/v1/completions", "https://x.example/v1"],
+      ["https://x.example/openai//", "https://x.example/openai"],
+    ]
+    const off = cases.filter(([raw, want]) => normalizeBaseURL(raw) !== want)
+    check("the address loses trailing slashes and a pasted completions path", off.length === 0, off.map(([raw]) => `${raw} -> ${normalizeBaseURL(raw)}`))
+    check("a model id loses every blank, inside ones too", customModelOf({ id: " qwen3 coder\t30b ", name: " Q " }).id === "qwen3coder30b" && customModelOf({ id: "a", name: " Q " }).name === "Q")
+
+    /* An address stored before the rule still reaches the right path. */
+    const e = await engine({})
+    try {
+      const stored = e.config.get().customProviders[0]!
+      await e.config.set({ customProviders: [{ ...stored, baseURL: `${stored.baseURL}/chat/completions/` }] })
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: session.id, text: "hello" })
+      await e.idle(session.id)
+      check("a stored full completions URL is requested once, not twice", e.paths.at(-1) === "/v1/chat/completions", e.paths.at(-1))
+      check("and the stored text itself is left as it was", e.config.get().customProviders[0]!.baseURL.endsWith("/chat/completions/"))
+    } finally {
+      await e.close()
+    }
+
+    const data = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r9p-"))
+    const backend = await startBackend(data)
+    try {
+      await handle(backend.runtime, {
+        type: "provider.addCustom",
+        id: "gw",
+        name: "Gateway",
+        baseURL: " https://gw.example/v1/chat/completions ",
+        apiKey: "k",
+        models: [{ id: "gpt 5", name: "G" }],
+      } as unknown as Request)
+      const saved = backend.runtime.config.get().customProviders.find((entry) => entry.id === "gw")
+      check("adding one saves the tidied address and id", saved?.baseURL === "https://gw.example/v1" && saved?.models?.[0]?.id === "gpt5", saved)
+      await handle(backend.runtime, {
+        type: "provider.updateCustom",
+        id: "gw",
+        name: "Gateway",
+        baseURL: "https://gw.example/v2/completions/",
+        apiKey: "",
+        models: [{ id: " gpt-5 ", name: "G" }],
+      } as unknown as Request)
+      const edited = backend.runtime.config.get().customProviders.find((entry) => entry.id === "gw")
+      check("and so does editing it", edited?.baseURL === "https://gw.example/v2" && edited?.models?.[0]?.id === "gpt-5", edited)
+
+    } finally {
+      await backend.close()
+      await fs.rm(data, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 

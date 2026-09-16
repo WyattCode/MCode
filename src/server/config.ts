@@ -36,6 +36,7 @@ import { CodedError } from "@shared/errors"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
 import { menuEfforts } from "@shared/effort-menu"
+import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
 
 export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-opus-5" }
@@ -319,14 +320,15 @@ function customProviderWrite(
 type CustomModelEntry = NonNullable<CustomProvider["models"]>[number]
 
 /**
- * A custom model as it may be stored: its id and name trimmed, and MiMo's
+ * A custom model as it may be stored: its id stripped of every blank and its
+ * name trimmed, as MiMo saves them, and MiMo's
  * 高级配置 checked. The image switch has three states (absent is the default),
  * and each limit is a positive whole number of tokens, with an output limit
  * allowed only beside an input limit. A limit that breaks those rules is
  * refused rather than quietly dropped, so a mistyped cap never passes as set.
  */
 export function customModelOf(model: CustomModelEntry): CustomModelEntry {
-  const out: CustomModelEntry = { id: String(model.id ?? "").trim(), name: String(model.name ?? "").trim() }
+  const out: CustomModelEntry = { id: normalizeModelId(String(model.id ?? "")), name: String(model.name ?? "").trim() }
   if (typeof model.attachment === "boolean") out.attachment = model.attachment
   const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0
   const context = model.limit?.context
@@ -761,7 +763,8 @@ export class Config {
         // MiMo lets a custom provider name its SDK; here that is the protocol it speaks.
         kind: entry.protocol === "anthropic" ? "anthropic" : "openai-compatible",
         description: "provider.desc.custom",
-        baseURL: entry.baseURL,
+        // Tidied as a save would be, so an address stored before that rule still reaches the right path.
+        baseURL: normalizeBaseURL(entry.baseURL),
         headers: entry.headers,
         /*
          * The typed-in list becomes the provider's catalog, and `handEntered`

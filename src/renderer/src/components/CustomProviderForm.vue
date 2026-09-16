@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { CustomModel, CustomProvider } from "@shared/protocol"
+import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notice } from "../lib/toast"
@@ -176,7 +177,7 @@ interface Resolved {
 function validate(): Resolved | undefined {
   const providerID = form.value.providerID.trim()
   const name = form.value.name.trim()
-  const baseURL = form.value.baseURL.trim()
+  const baseURL = normalizeBaseURL(form.value.baseURL)
   /*
    * Every provider's id, not only the custom ones: taking a built-in's id
    * would shadow it with no way back.
@@ -198,7 +199,7 @@ function validate(): Resolved | undefined {
   const models: CustomModel[] = []
   const seenModels = new Set<string>()
   for (const row of form.value.models) {
-    const id = row.id.trim()
+    const id = normalizeModelId(row.id)
     const label = row.name.trim()
     const context = limitOf(row.context)
     const output = limitOf(row.output)
@@ -335,6 +336,7 @@ defineExpose({ submit, canSave, busy })
         autocomplete="off"
         data-custom-endpoint
         @input="setField('baseURL', ($event.target as HTMLInputElement).value)"
+        @blur="setField('baseURL', normalizeBaseURL(form.baseURL))"
       />
       <div v-if="endpointBad" class="cperror" data-endpoint-invalid>{{ t("model.endpointInvalid") }}</div>
       <div v-else class="cphelp" data-endpoint-hint>{{ t("model.endpointHint") }}</div>
@@ -398,6 +400,7 @@ defineExpose({ submit, canSave, busy })
               spellcheck="false"
               autocomplete="off"
               @input="(row.id = ($event.target as HTMLInputElement).value), (row.err.id = undefined)"
+              @blur="row.id = normalizeModelId(row.id)"
             />
             <div v-if="row.err.id" class="cperror">{{ row.err.id }}</div>
           </div>

@@ -14,6 +14,7 @@ import type {
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
 import { Identifier } from "@shared/id"
+import { normalizeBaseURL } from "@shared/custom-endpoint"
 // A conversation as a file this app can read back, both halves of the pair.
 import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
 import { addedProject, removedProjects } from "@shared/projects"
@@ -1033,7 +1034,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           {
             id,
             name: request.name.trim(),
-            baseURL: request.baseURL.trim(),
+            baseURL: normalizeBaseURL(request.baseURL),
             ...(Object.keys(headers).length ? { headers } : {}),
             models,
             ...(environment ? { environment } : {}),
@@ -1084,7 +1085,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 id: entry.id,
                 name: request.name.trim(),
                 // An address shown with its secret parts masked, left as shown, keeps what is stored.
-                baseURL: restoreUrl(request.baseURL.trim(), existing.baseURL),
+                baseURL: normalizeBaseURL(restoreUrl(request.baseURL.trim(), existing.baseURL)),
                 ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
