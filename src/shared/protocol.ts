@@ -72,6 +72,14 @@ export interface SessionInfo {
    */
   group?: string
   /**
+   * 导入: taken from another AI app, and what it is called there.
+   *
+   * Only the importer reads it: it is how a conversation already taken is
+   * recognised when the same source is scanned again, so re-running an import
+   * writes the same conversation rather than a second copy of it.
+   */
+  imported?: { source: ImportSource; key: string }
+  /**
    * A side chat, and the conversation it was opened beside.
    *
    * A side chat is a conversation of its own, in the same project, that no
@@ -1177,6 +1185,37 @@ export interface McpImportItem {
   exists: boolean
 }
 
+/**
+ * 导入: the AI apps whose conversations this one can take in, as MiMo names
+ * them - Claude Code, Codex and OpenCode.
+ */
+export const IMPORT_SOURCES = ["cc", "codex", "opencode"] as const
+
+export type ImportSource = (typeof IMPORT_SOURCES)[number]
+
+/** What one source holds, and how much of it this app has taken before. */
+export interface ImportSourceScan {
+  /** The app keeps its data where this one looks; it may still hold nothing. */
+  available: boolean
+  sessions: number
+  /** Conversations taken from it to date, which may outnumber what it still has. */
+  imported: number
+}
+
+export type ImportScan = Record<ImportSource, ImportSourceScan>
+
+/** What one source's import did. `errors` names files, never a line of what was in them. */
+export interface ImportSourceResult {
+  scanned: number
+  imported: number
+  /** Changed since it was taken, so its copy here was written again rather than doubled. */
+  resynced: number
+  skipped: number
+  errors: string[]
+}
+
+export type ImportRun = Record<ImportSource, ImportSourceResult>
+
 /** One tool a server offers, as the MCP settings page lists it. */
 export interface McpToolInfo {
   name: string
@@ -1358,6 +1397,12 @@ export interface AppConfig {
   openTabs: string[]
   /** Set once the first-run setup has been completed or skipped. */
   onboarded: boolean
+  /**
+   * 导入: set once the first run has asked about conversations in other AI
+   * apps, whether or not anything was taken. MiMo asks a machine once; so does
+   * this, and a profile that predates the question is marked as already asked.
+   */
+  importOnboarded: boolean
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**
@@ -1940,6 +1985,9 @@ export type Request =
   | { type: "mcp.authenticate"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
+  /* 导入: what other AI apps on this machine hold, and taking the chosen ones in. Read-only towards them. */
+  | { type: "import.scan" }
+  | { type: "import.run"; sources: ImportSource[] }
   /**
    * Saves one MCP server from the settings form. Environment and header rows
    * named in `keep` that come back blank keep the values already stored.
@@ -2138,6 +2186,9 @@ export interface ResponseMap {
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }
+  /** 导入: counts only - no title, no path, nothing that was written in another app. */
+  "import.scan": { scan: ImportScan; asked: boolean }
+  "import.run": { result: ImportRun }
   "mcp.save": { config: AppConfig }
   "agents.state": { path: string; state: AgentsFileState }
   /** Writes a starting file when there is none. */

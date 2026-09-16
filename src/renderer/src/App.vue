@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { AGENT_NAMES, DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "@shared/protocol"
+import { AGENT_NAMES, DEFAULT_PERMISSIONS, IMPORT_SOURCES, PERMISSION_KINDS } from "@shared/protocol"
 import type { Worktree } from "@shared/protocol"
 import { useApp } from "./stores/app"
 import Sidebar from "./components/Sidebar.vue"
@@ -42,6 +42,7 @@ import ConnectDialog from "./components/ConnectDialog.vue"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import ErrorBoundary from "./components/ErrorBoundary.vue"
 import Onboarding from "./components/Onboarding.vue"
+import ImportDialog from "./components/ImportDialog.vue"
 import {
   LANGUAGES,
   RTL_LANGUAGES,
@@ -1497,6 +1498,23 @@ async function focusComposer() {
 
 /** Reachable from the model menu, so an empty list has somewhere to go. */
 const connectOpen = ref(false)
+
+/**
+ * 导入: the first run's one question about conversations in other AI apps.
+ *
+ * Opened only when a source actually holds something, and the profile is marked
+ * as asked either way - so a machine is asked once, as MiMo asks once.
+ */
+const importOpen = ref(false)
+
+async function askAboutImport() {
+  if (!app.config || app.config.importOnboarded) return
+  const answer = await app.client?.request({ type: "import.scan" }).catch(() => undefined)
+  if (!answer || answer.asked) return
+  await app.patchConfig({ importOnboarded: true }, { quiet: true }).catch(() => undefined)
+  const scan = answer.scan
+  importOpen.value = IMPORT_SOURCES.some((source) => scan[source].available && scan[source].sessions > 0)
+}
 
 /** The session waiting on an answer before it is removed for good. */
 const deletingSession = ref<string>()
@@ -3987,6 +4005,8 @@ async function boot() {
   if (app.config && !app.config.onboarded && app.providers.some((entry) => entry.configured)) {
     await app.patchConfig({ onboarded: true })
   }
+  // 导入: asked once, on a first run, and only when another AI app has something.
+  void askAboutImport()
   if (app.currentID) view.value = "session"
 
   // MiMo opens again on the conversation whose draft was on screen when the app closed.
@@ -4440,6 +4460,7 @@ onBeforeUnmount(() => {
 
   </div>
   <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
+  <ImportDialog v-if="importOpen" @close="importOpen = false" />
   <ImagePreview />
   <VideoPreview />
 
