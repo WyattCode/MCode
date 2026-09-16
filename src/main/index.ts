@@ -10,6 +10,7 @@ import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
 import { rendererOrigins } from "../server/socket-guard"
+import { workingRoots } from "../server/file-access"
 import { setImageShrinker } from "../server/provider/attachment-parts"
 import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
@@ -1050,7 +1051,8 @@ app.whenReady().then(async () => {
   })
 
   // MiMo's Office tab: document bytes, watching, versions, legacy conversion.
-  registerOffice(ipcMain, app.getPath("userData"))
+  // A document is written back only inside a folder the app works in.
+  registerOffice(ipcMain, app.getPath("userData"), async () => (backend ? workingRoots(backend.runtime) : []))
   registerComposerInput(ipcMain, app.getPath("userData"))
   // MiMo's pasted pictures and large pastes: written to disk, then attached by path.
   registerPasteFiles(ipcMain, app.getPath("userData"))

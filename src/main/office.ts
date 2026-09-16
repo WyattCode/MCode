@@ -5,8 +5,9 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { shell, type IpcMain, type WebContents } from "electron"
+import { shell, type IpcMain, type IpcMainInvokeEvent, type WebContents } from "electron"
 import { servePreview } from "./preview-server"
+import { OFFICE_BYTES_LIMIT, officeRefusal, type WorkingRoots } from "./office-guard"
 import { registerPaths } from "./paths"
 import { registerImageClipboard } from "./image-clipboard"
 
@@ -19,7 +20,7 @@ import { registerImageClipboard } from "./image-clipboard"
 
 const READ_EXTENSIONS = new Set([".xlsx", ".xls", ".xlsm", ".pptx", ".docx", ".pdf", ".html", ".htm"])
 const RESTORE_EXTENSIONS = new Set([".xlsx", ".xls", ".xlsm", ".pptx", ".pptm", ".docx", ".docm", ".pdf", ".html", ".htm"])
-const READ_LIMIT = 25 * 1024 * 1024
+const READ_LIMIT = OFFICE_BYTES_LIMIT
 const MAX_VERSIONS = 50
 const WATCH_SETTLE_MS = 400
 const CONVERT_TIMEOUT_MS = 60_000
@@ -457,39 +458,50 @@ async function convertLegacy(userData: string, input: string) {
 
 /* ------------------------------------------------------------ wiring */
 
-export function registerOffice(ipcMain: IpcMain, userData: string) {
+export function registerOffice(ipcMain: IpcMain, userData: string, roots: WorkingRoots) {
   const versions = new VersionStore(path.join(userData, "office-versions"))
   registerPaths(ipcMain)
   registerImageClipboard(ipcMain)
 
-  ipcMain.handle("mcode:read-file-bytes", (_event, root: string, rel?: string, ifUnchanged?: { size: number; mtimeMs: number }) =>
-    readFileBytes(root, rel, ifUnchanged),
+  /*
+   * Every channel here passes its declared checks (office-guard.ts) before its
+   * handler runs; a call that does not gets the answer the channel gives for a
+   * file it cannot use, so the tab shows its ordinary failure.
+   */
+  const checked = <A extends unknown[]>(channel: string, refused: unknown, handler: (event: IpcMainInvokeEvent, ...args: A) => unknown) => {
+    ipcMain.handle(channel, async (event, ...args: unknown[]) => ((await officeRefusal(channel, args, roots)) ? refused : handler(event, ...(args as A))))
+  }
+
+  checked("mcode:read-file-bytes", { ok: false, reason: "denied" }, (_event, root: string, rel?: string, ifUnchanged?: { size: number; mtimeMs: number }) =>
+    readFileBytes(root, rel ?? undefined, ifUnchanged ?? undefined),
   )
-  ipcMain.handle("mcode:write-file-bytes", (_event, root: string, rel: string | undefined, base64: string) => writeFileBytes(root, rel, base64))
-  ipcMain.handle("mcode:file-size", async (_event, file: string) => {
-    const stat = typeof file === "string" && path.isAbsolute(file) ? await fs.stat(file).catch(() => undefined) : undefined
+  checked("mcode:write-file-bytes", { ok: false, reason: "denied" }, (_event, root: string, rel: string | undefined, base64: string) =>
+    writeFileBytes(root, rel ?? undefined, base64),
+  )
+  checked("mcode:file-size", 0, async (_event, file: string) => {
+    const stat = await fs.stat(file).catch(() => undefined)
     return stat?.isFile() ? stat.size : 0
   })
-  ipcMain.handle("mcode:watch-file", (event, file: string) => watchFile(event.sender, file))
-  ipcMain.handle("mcode:unwatch-file", (event, file: string) => unwatchFile(event.sender, file))
-  ipcMain.handle("mcode:office-version-init", async (_event, file: string, base64: string, assumeAi: boolean, note: string) => {
+  checked("mcode:watch-file", false, (event, file: string) => watchFile(event.sender, file))
+  checked("mcode:unwatch-file", undefined, (event, file: string) => unwatchFile(event.sender, file))
+  checked("mcode:office-version-init", { ok: false, reason: "invalid" }, async (_event, file: string, base64: string, assumeAi: boolean, note?: string) => {
     try {
-      return { ok: true, state: await versions.init(file, base64, Boolean(assumeAi), String(note ?? "")) }
+      return { ok: true, state: await versions.init(file, base64, assumeAi, note ?? "") }
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle("mcode:office-version-record", async (_event, file: string, base64: string, source: VersionSource, note: string) => {
+  checked("mcode:office-version-record", { ok: false, reason: "invalid" }, async (_event, file: string, base64: string, source: VersionSource, note?: string) => {
     try {
-      return { ok: true, state: await versions.record(file, base64, source, String(note ?? "")) }
+      return { ok: true, state: await versions.record(file, base64, source, note ?? "") }
     } catch (err) {
       return { ok: false, reason: err instanceof Error ? err.message : String(err) }
     }
   })
-  ipcMain.handle("mcode:office-version-restore", (_event, file: string, id: string) => versions.restore(file, id))
-  ipcMain.handle("mcode:office-convert-legacy", (_event, file: string) => convertLegacy(userData, file))
-  ipcMain.handle("mcode:office-serve", (_event, file: string) => servePreview(file))
-  ipcMain.handle("mcode:reveal-path", async (_event, file: string) => {
+  checked("mcode:office-version-restore", { ok: false, reason: "invalid" }, (_event, file: string, id: string) => versions.restore(file, id))
+  checked("mcode:office-convert-legacy", { ok: false, error: "invalid" }, (_event, file: string) => convertLegacy(userData, file))
+  checked("mcode:office-serve", { ok: false, error: "missing" }, (_event, file: string) => servePreview(file))
+  checked("mcode:reveal-path", { ok: false, error: "not found" }, async (_event, file: string) => {
     if (typeof file !== "string" || !path.isAbsolute(file) || !existsSync(file)) return { ok: false, error: "not found" }
     shell.showItemInFolder(file)
     return { ok: true }

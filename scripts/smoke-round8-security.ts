@@ -24,6 +24,8 @@ import { NotebookEditTool } from "../src/server/tool/notebook"
 import { appDataRefusal } from "../src/server/tool/app-data"
 import { handle } from "../src/server/handlers"
 import type { Request } from "../src/shared/protocol"
+import { OFFICE_BYTES_LIMIT, OFFICE_SCHEMAS, officeRefusal } from "../src/main/office-guard"
+import { protectAppData } from "../src/server/tool/app-data"
 
 type Section = (name: string) => void
 
@@ -65,6 +67,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
     await socketChecks(check, section, root)
     await appDataChecks(check, section, root)
     await fileRequestChecks(check, section, root)
+    await officeChannelChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -330,4 +333,56 @@ async function fileRequestChecks(check: Check, section: Section, root: string): 
   } finally {
     await backend.close()
   }
+}
+
+// ------------------------------------------------------------------- X5
+async function officeChannelChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 8 (X5): every Office channel checks its arguments before it runs")
+  const project = path.join(root, "x5-project")
+  const elsewhere = path.join(root, "x5-elsewhere")
+  const data = path.join(root, "x5-data")
+  for (const folder of [project, elsewhere, path.join(data, "storage")]) await fs.mkdir(folder, { recursive: true })
+  protectAppData(data)
+  const roots = async () => [project]
+  const refused = (channel: string, ...args: unknown[]) => officeRefusal(channel, args, roots)
+  const docx = path.join(project, "report.docx")
+  const small = Buffer.from("PK").toString("base64")
+
+  const source = await fs.readFile(path.join(process.cwd(), "src/main/office.ts"), "utf8").catch(() => "")
+  const registered = [...source.matchAll(/checked\("(mcode:[\w-]+)"/g)].map((match) => match[1]!)
+  check("office.ts registers no channel around the checks", !/ipcMain\.handle\("mcode:/.test(source), source.match(/ipcMain\.handle\("mcode:[\w-]+/g))
+  check("every channel it registers has a declared schema", registered.length === 11 && registered.every((channel) => OFFICE_SCHEMAS[channel]), registered)
+
+  // Shapes: wrong types, missing arguments, oversize values, extra arguments.
+  check("a restore with no file is refused", (await refused("mcode:office-version-restore", undefined, "v1")) === "shape")
+  check("a restore of a relative file is refused", (await refused("mcode:office-version-restore", "report.docx", "v1")) === "shape")
+  check("a version id that climbs is refused", (await refused("mcode:office-version-restore", docx, "../../x")) === "shape")
+  check("a record with an unknown source is refused", (await refused("mcode:office-version-record", docx, small, "admin", "")) === "shape")
+  check("a record whose bytes are an object is refused", (await refused("mcode:office-version-record", docx, { length: 1 }, "user", "")) === "shape")
+  check("bytes that are not base64 are refused", (await refused("mcode:office-version-init", docx, "<script>", false, "")) === "shape")
+  check("bytes past the document limit are refused", (await refused("mcode:write-file-bytes", project, "a.xlsx", "A".repeat(Math.ceil(OFFICE_BYTES_LIMIT / 3) * 4 + 4))) === "shape")
+  check("a note of megabytes is refused", (await refused("mcode:office-version-init", docx, small, false, "x".repeat(100_000))) === "shape")
+  check("assumeAi that is not a boolean is refused", (await refused("mcode:office-version-init", docx, small, "yes", "")) === "shape")
+  check("an extra argument is refused", (await refused("mcode:file-size", docx, "extra")) === "shape")
+  check("a path with a NUL byte is refused", (await refused("mcode:reveal-path", `${docx}\0.txt`)) === "shape")
+  check("a watch on a number is refused", (await refused("mcode:watch-file", 42)) === "shape")
+  check("an absolute relative part is refused", (await refused("mcode:read-file-bytes", project, docx)) === "shape")
+  check("an ifUnchanged that is not a size and time is refused", (await refused("mcode:read-file-bytes", docx, undefined, { size: "1" })) === "shape")
+  check("a channel with no schema is refused", (await refused("mcode:not-a-channel", docx)) === "shape")
+
+  // Places: writes outside the working folders, reads of the app's own data.
+  check("a restore over a file outside the projects is refused", (await refused("mcode:office-version-restore", path.join(elsewhere, "x.html"), "v1")) === "place")
+  check("writing a spreadsheet outside the projects is refused", (await refused("mcode:write-file-bytes", elsewhere, "book.xlsx", small)) === "place")
+  check("writing through a root of C:\\ style is refused", (await refused("mcode:write-file-bytes", path.parse(project).root, path.relative(path.parse(project).root, path.join(elsewhere, "book.xlsx")), small)) === "place")
+  check("a relative part climbing out of a project root is refused", (await refused("mcode:write-file-bytes", project, "../x5-elsewhere/book.xlsx", small)) === "place")
+  check("serving the app's data folder is refused", (await refused("mcode:office-serve", path.join(data, "storage", "page.html"))) === "place")
+  check("reading the saved credentials through the tab is refused", (await refused("mcode:read-file-bytes", data, "credentials.json")) === "place")
+  check("recording versions of the app's config is refused", (await refused("mcode:office-version-record", path.join(data, "storage", "config.json"), small, "user", "")) === "place")
+
+  // What the tab does every day still passes.
+  check("reading a document anywhere passes (attachments open from the desktop)", (await refused("mcode:read-file-bytes", elsewhere, "doc.docx", { size: 1, mtimeMs: 2 })) === undefined)
+  check("reading with only a root passes", (await refused("mcode:read-file-bytes", docx, undefined, undefined)) === undefined)
+  check("writing a spreadsheet in the project passes", (await refused("mcode:write-file-bytes", project, "book.xlsx", small)) === undefined)
+  check("recording and restoring a project document passes", (await refused("mcode:office-version-record", docx, small, "ai", "note")) === undefined && (await refused("mcode:office-version-restore", docx, "vlk2x9ab12")) === undefined)
+  check("an init with no note passes", (await refused("mcode:office-version-init", docx, small, true)) === undefined)
 }
