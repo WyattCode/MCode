@@ -15,7 +15,7 @@ import Anthropic from "@anthropic-ai/sdk"
 import { isOverflowError } from "./overflow"
 import { ProviderError, ProviderHttpError } from "../provider/types"
 
-export type RetryKind = "stream" | "network" | "rate_limit" | "server" | "unknown"
+export type RetryKind = "stream" | "network" | "rate_limit" | "server" | "unknown" | "request"
 
 export interface RetryBudget {
   /** Attempts after the first; Infinity waits for as long as it takes. */
@@ -40,6 +40,40 @@ export const RETRY_BUDGETS: Record<RetryKind, RetryBudget> = {
    * once, however plainly temporary the provider said it was.
    */
   unknown: { retries: 8, deadline: 15 * 60_000, initial: 2_000, max: 30_000, jitter: true },
+  /*
+   * MiMo's `DEFAULT_RETRY_CONFIG.request`, chosen by the phase of a call
+   * rather than by the kind of its failure: four tries inside half a minute,
+   * starting at 200ms. It is for the calls that are not a turn - naming a
+   * conversation, writing a commit message - which had no budget of their own
+   * here and were left to whatever the adapter happened to do.
+   */
+  request: { retries: 4, deadline: 30_000, initial: 200, max: 30_000, jitter: true },
+}
+
+/**
+ * One call that is not a turn, tried again on MiMo's request budget.
+ *
+ * MiMo picks this budget by the phase of the call rather than by the kind of
+ * its failure (`budgetFor` takes `decision.phase === "request"` before it looks
+ * at anything else), so a title or a commit message gets four quick tries
+ * where the turn loop would get eight slow ones. Only failures worth repeating
+ * are repeated: `retryKind` decides that, and anything terminal - a refused
+ * key, a model the provider does not have - fails at once as it should.
+ */
+export async function withRequestRetry<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const budget = RETRY_BUDGETS.request
+  const started = Date.now()
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await work()
+    } catch (err) {
+      if (signal?.aborted) throw err
+      const elapsed = Date.now() - started
+      if (attempt >= budget.retries || elapsed >= budget.deadline || !retryKind(err)) throw err
+      const wait = Math.min(budget.max, budget.initial * 2 ** attempt)
+      await new Promise((resolve) => setTimeout(resolve, Math.max(FLOOR, wait)))
+    }
+  }
 }
 
 /** No wait is shorter than this. */

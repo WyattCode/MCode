@@ -22,6 +22,16 @@ const BAD_KEY =
 const NO_MODEL = /model[\s_-]*not[\s_-]*found|does not recognise this model|no such model|unknown model/i
 /** A status the adapters write into their own sentences: "returned 503", "request failed (429)". */
 const STATUS_IN_TEXT = /\b(?:returned|request failed)\s*\(?(\d{3})\)?/i
+/**
+ * The stall guard's own failures, which MiMo codes as a timeout.
+ *
+ * It ends a request that went quiet with "The provider sent no response for
+ * 300s: stream timeout" or one of its siblings. That fell through to the raw
+ * English sentence on the card, where MiMo says 模型超时无响应.
+ */
+const TIMED_OUT = /\bstream timeout\b|The provider (?:sent nothing|sent no response|stopped sending)/i
+/** A gateway that answered with a web page, which the adapters now say in so many words. */
+const GATEWAY_PAGE = /gateway or proxy (?:blocked this request|answered)/i
 
 /** Everything an error says about itself, its causes included: a dropped socket hides in `cause`. */
 export function failureDetail(err: unknown): string {
@@ -52,6 +62,9 @@ export function failureCode(err: unknown): { code: string; params?: Record<strin
   const text = failureDetail(err)
   if (!text) return undefined
   const status = statusOf(err, text)
+  // Checked before the statuses: a proxy's own 401 page is not the user's key being wrong.
+  if (GATEWAY_PAGE.test(text)) return { code: "error.gatewayBlocked" }
+  if (TIMED_OUT.test(text)) return { code: "error.modelTimeout" }
   if (status === 429) return { code: "error.rateLimited" }
   if (status === 401 || status === 403) return { code: "error.authInvalid" }
   if (status === 404) return { code: "error.modelUnavailable" }

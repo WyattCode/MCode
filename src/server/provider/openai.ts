@@ -3,7 +3,7 @@ import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-pa
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError, ProviderHttpError, headersOf, systemText, wireOfBody } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, isHtmlBody, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 import { guarded, stallGuard } from "./stall"
 
@@ -450,12 +450,16 @@ function describeStreamError(error: { message?: string; code?: unknown; type?: u
   return new ProviderError(message || "The provider reported an error but gave no detail.", undefined, undefined, wire)
 }
 
-function describeHttp(status: number, detail: string): string {
-  const trimmed = detail.slice(0, 300)
+export function describeHttp(status: number, detail: string): string {
+  const html = isHtmlBody(detail)
+  const trimmed = html ? "" : detail.slice(0, 300)
+  // MiMo's own answer for a page served in place of an answer on these two.
+  if (html && (status === 401 || status === 403)) return "A gateway or proxy blocked this request."
   if (status === 401 || status === 403) return "Authentication failed - check the API key in Settings."
-  if (status === 404) return `The provider does not recognise this model (404). ${trimmed}`
+  if (status === 404) return `The provider does not recognise this model (404).${trimmed ? ` ${trimmed}` : ""}`
   if (status === 429) return "Rate limited by the provider. Wait a moment and try again."
   if (status >= 500) return `The provider returned ${status}. This is usually transient.`
+  if (html) return `A gateway or proxy answered this request with a web page (${status}) rather than a reply.`
   return `Request failed (${status}). ${trimmed}`
 }
 
