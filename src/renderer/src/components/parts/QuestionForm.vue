@@ -727,7 +727,7 @@ const Actions: FunctionalComponent = () => {
 }
 
 .q-actions :deep(button:focus-visible) {
-  outline: 2px solid var(--border-selected);
+  outline: 2px solid var(--interactive);
   outline-offset: 1px;
 }
 

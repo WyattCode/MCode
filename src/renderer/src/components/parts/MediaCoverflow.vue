@@ -103,7 +103,7 @@ function coverFailed(url: string) {
 }
 
 .media-coverflow:focus-visible {
-  outline: 2px solid #3295fb;
+  outline: 2px solid var(--interactive);
   outline-offset: 3px;
 }
 

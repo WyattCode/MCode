@@ -258,7 +258,7 @@ onBeforeUnmount(() => {
 
 .rp-subagent-row:focus-visible,
 .rp-subagent-back:focus-visible {
-  outline: 2px solid var(--text-interactive);
+  outline: 2px solid var(--interactive);
   outline-offset: 1px;
 }
 
