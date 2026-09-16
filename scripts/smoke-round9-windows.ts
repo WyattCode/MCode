@@ -714,4 +714,40 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
       /^publish:\n {2}provider: generic\n {2}url: https:\/\/updates\.invalid\/mcode\/$/m.test(builder) && !/provider: github|WyattCode/.test(builder) && /"--publish", "never"/.test(packageScript),
     )
   }
+
+  section("Round 9 (Windows): a one-click, per-user installer whose uninstall cleans up after MCode")
+  {
+    const builder = await fs.readFile(path.join(root, "electron-builder.yml"), "utf8")
+    const nsis = /^nsis:\n((?: {2}.*\n|\s*#.*\n)+)/m.exec(builder)?.[1] ?? ""
+    check(
+      "N9-6: one click, current user only, no folder page, and MCode's own include",
+      /^ {2}oneClick: true$/m.test(nsis) && /^ {2}perMachine: false$/m.test(nsis) && !/allowToChangeInstallationDirectory|selectPerMachineByDefault/.test(nsis) && /^ {2}include: build\/installer\.nsh$/m.test(nsis),
+      nsis,
+    )
+    const script = await fs.readFile(path.join(root, "build", "installer.nsh"), "utf8").catch(() => "")
+    const init = /!macro customInit\n([\s\S]*?)!macroend/.exec(script)?.[1] ?? ""
+    check(
+      "a first install gets the product's folder name; an install the registry knows, or a /D= choice, is left where it is",
+      /ReadRegStr \$(\w+) HKCU "\$\{INSTALL_REGISTRY_KEY\}" InstallLocation/.test(init) &&
+        /GetDParameter/.test(init) &&
+        /\$\{if\} \$mcodeKnownFolder == ""\n\s*\$\{andIf\} \$mcodeChosenFolder == ""/.test(init) &&
+        /StrCpy \$INSTDIR "\$mcodeProgramsFolder\\\$\{PRODUCT_FILENAME\}"/.test(init),
+      init,
+    )
+    const uninstall = /!macro customUnInstall\n([\s\S]*?)!macroend/.exec(script)?.[1] ?? ""
+    check(
+      "N9-10: a real uninstall removes the mcode: handler only when it points into this installation, and the updater cache; an update's uninstall touches neither",
+      /^\s*\$\{ifNot\} \$\{isUpdated\}/.test(uninstall) &&
+        /ReadRegStr \$mcodeLinkCommand HKCU "Software\\Classes\\mcode\\shell\\open\\command" ""/.test(uninstall) &&
+        /\$\{if\} \$mcodeLinkHead == "\$INSTDIR\\"\n\s*DeleteRegKey HKCU "Software\\Classes\\mcode"/.test(uninstall) &&
+        (uninstall.match(/DeleteRegKey/g) ?? []).length === 1 &&
+        /RMDir \/r "\$LOCALAPPDATA\\\$\{APP_PACKAGE_NAME\}-updater"/.test(uninstall) &&
+        !/\$APPDATA|RMDir \/r "\$INSTDIR/.test(uninstall),
+      uninstall,
+    )
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    const scheme = /export const LINK_SCHEME = "([^"]+)"/.exec(await fs.readFile(path.join(root, "src/shared/session-link.ts"), "utf8"))?.[1]
+    check("the key it removes is the one the app registers", scheme === "mcode" && /app\.setAsDefaultProtocolClient\(LINK_SCHEME\)/.test(main), scheme)
+    check("the updater cache it removes is the one electron-updater uses (package name + -updater)", (pkg as unknown as { name: string }).name === "mcode" && main.includes("`${pkg.name}-updater`"))
+  }
 }

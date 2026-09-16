@@ -50,12 +50,18 @@ win:
         - "**/*"
         - "!.mcode-runtimes.json"
 
+# MiMo's installer: one click, for the current user, no pages. A first install
+# goes to %LOCALAPPDATA%\Programs\MCode; an existing per-user install (its folder
+# is in HKCU) is upgraded where it is. build/installer.nsh adds the folder name
+# and what an uninstall also removes (the mcode: link handler, the updater cache).
 nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+  oneClick: true
+  perMachine: false
+  include: build/installer.nsh
   installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
   # Shown in Add/Remove Programs.
+  uninstallerIcon: build/icon.ico
+  # Above the one-click progress bar.
   installerHeaderIcon: build/icon.ico
 
 # electron-updater (src/main/updater.ts) reads app-update.yml beside the asar
