@@ -83,6 +83,8 @@ import { normalizeToolInput, resolveToolName } from "../src/server/tool/repair"
 import { repairableNames } from "../src/server/tool/registry"
 import { STALL, stallGuard } from "../src/server/provider/stall"
 import { arityPrefix, collectMutationTargets, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
+// round 6 (L8): where a blank project's folder is made.
+import { blankProjectDirectory } from "../src/server/scratch"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
@@ -1429,6 +1431,18 @@ async function main() {
     check("cd decides where the command after it writes", wrote("cd sub && touch b.txt").includes(path.join(e23, "sub", "b.txt")), wrote("cd sub && touch b.txt"))
     check("git -C names the repository it is pointed at", wrote("git -C other commit -m x").includes(path.join(e23, "other")), wrote("git -C other commit -m x"))
     check("a command that writes nothing names nothing at all", collectMutationTargets("git status && ls -la", e23, false).paths.length === 0)
+
+    /* L8: MiMo's blank-project dialog can put the folder somewhere else; with no choice it is the default project location. */
+    const chosenRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-blank-"))
+    const madeThere = await blankProjectDirectory("Ideas", chosenRoot)
+    check(
+      "a blank project is made where the dialog said, under the name given",
+      path.dirname(madeThere) === path.resolve(chosenRoot) && path.basename(madeThere) === "Ideas",
+      madeThere,
+    )
+    const secondTry = await blankProjectDirectory("Ideas", chosenRoot)
+    check("a name already taken there is numbered rather than opening the folder that is already there", path.basename(secondTry) === "Ideas (2)", secondTry)
+    await fs.rm(chosenRoot, { recursive: true, force: true })
 
     const gate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS } }) } as never)
     const seen: PermissionRequest[] = []

@@ -1691,8 +1691,8 @@ export type Request =
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
-  /* An empty folder for a new project, named by the user, under the default project location. */
-  | { type: "project.createBlank"; name: string }
+  /* An empty folder for a new project, named by the user. `location` is where it goes, as MiMo's dialog lets it be changed; without one it is the default project location. */
+  | { type: "project.createBlank"; name: string; location?: string }
   /* A folder onto the project list, with no conversation; `used` also makes it the latest pick. */
   | { type: "project.add"; directory: string; used?: boolean }
   /* Folders off the project list; their conversations stay. */
