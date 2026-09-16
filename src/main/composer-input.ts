@@ -9,7 +9,13 @@ import type { IpcMain } from "electron"
  * file, and refuses anything that is not a JSON object of a sane size.
  */
 const FILE = "composer-input.json"
-const MAX_BYTES = 64 * 1024 * 1024
+/*
+ * A draft names the files it carries rather than copying them, as MiMo's does,
+ * so this no longer has to swallow a photograph per conversation. What is left
+ * is words, paths, and the bytes of anything pasted in that has no file of its
+ * own - each of those already capped where it is taken in.
+ */
+const MAX_BYTES = 16 * 1024 * 1024
 
 export function registerComposerInput(ipc: IpcMain, userData: string): void {
   const file = path.join(userData, "storage", FILE)

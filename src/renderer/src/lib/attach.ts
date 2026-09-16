@@ -30,6 +30,23 @@ function diskPath(file: File): string {
 /** Extensions worth reading as text even when the OS reports nothing useful. */
 const TEXTUAL = /\.(txt|md|markdown|json|ya?ml|toml|ini|cfg|conf|csv|tsv|log|xml|html?|css|scss|jsx?|tsx?|vue|svelte|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sh|bash|zsh|ps1|sql|env|gitignore|dockerfile|makefile)$/i
 
+/**
+ * The most a dropped file may weigh and still be named rather than sent.
+ *
+ * MiMo's main process fills in a dropped file's `text` only for text-like
+ * extensions under 256KB, and the drop then turns exactly those - inside the
+ * project - into `@path` mentions.
+ */
+export const MENTION_MAX = 256 * 1024
+
+/**
+ * Whether a dropped file is one MiMo would turn into an @mention rather than
+ * attach: a text file, with something in it, under the cap.
+ */
+export function mentionable(file: File): boolean {
+  return isTextual(file) && file.size > 0 && file.size < MENTION_MAX
+}
+
 export function isTextual(file: File): boolean {
   if (file.type.startsWith("text/")) return true
   if (/^application\/(json|xml|x-yaml|toml)$/.test(file.type)) return true
@@ -76,6 +93,25 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
       attachments.push({ path: absolute, mime: file.type, data: "", byPath: true })
       continue
     }
+    /*
+     * A picture with no file behind it - pasted from the clipboard - is written
+     * to disk first, as MiMo writes one, and then attached by path: it can be
+     * opened and located afterwards, it carries the name it was written under
+     * rather than a made-up one, and no cap applies to it. Its bytes are kept
+     * beside the path for the thumbnail.
+     */
+    if (!absolute && file.type.startsWith("image/")) {
+      try {
+        const data = await base64(file)
+        const saved = await window.mcode.savePastedImage(`data:${file.type};base64,${data}`)
+        if (saved.ok) {
+          attachments.push({ path: saved.path, mime: file.type, data, byPath: true })
+          continue
+        }
+      } catch {
+        // The in-memory attachment below is the fallback.
+      }
+    }
     if (file.size > MAX_BYTES) {
       rejected.push({ name: file.name, reason: "too-large" })
       continue
@@ -105,9 +141,9 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
  */
 const previews = new WeakMap<Attachment, string>()
 
-/** A data URL for playing a video attachment back in the video preview. */
+/** A data URL for playing a video attachment back in the video preview; one restored by path alone has no bytes to play. */
 export function videoUrl(attachment: Attachment): string | undefined {
-  if (!attachment.mime.startsWith("video/")) return undefined
+  if (!attachment.mime.startsWith("video/") || !attachment.data) return undefined
   const known = previews.get(attachment)
   if (known) return known
   const url = `data:${attachment.mime};base64,${attachment.data}`
@@ -115,9 +151,15 @@ export function videoUrl(attachment: Attachment): string | undefined {
   return url
 }
 
-/** A data URL for showing an image attachment back to the user. */
+/**
+ * A data URL for showing an image attachment back to the user.
+ *
+ * A draft restored from disk carries a file by its path and no bytes, as MiMo
+ * saves it; without them there is no thumbnail to draw, and the box shows the
+ * file as a capsule with its name instead of an empty picture.
+ */
 export function preview(attachment: Attachment): string | undefined {
-  if (!attachment.mime.startsWith("image/")) return undefined
+  if (!attachment.mime.startsWith("image/") || !attachment.data) return undefined
   const known = previews.get(attachment)
   if (known) return known
   const url = `data:${attachment.mime};base64,${attachment.data}`

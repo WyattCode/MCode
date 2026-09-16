@@ -3,7 +3,7 @@ import type { Questions } from "./question"
 import type { SessionChat } from "../session/chat"
 import type { ToolOutputs } from "./truncate"
 import type { SkillInfo } from "../skill"
-import type { TaskItem } from "@shared/protocol"
+import type { Attachment, TaskItem } from "@shared/protocol"
 
 export interface ToolContext {
   sessionID: string
@@ -121,6 +121,14 @@ export interface ToolResult {
   title?: string
   /** Structured payload the UI renders specially (diffs, match lists). */
   metadata?: Record<string, unknown>
+  /**
+   * Media this result hands to the model, as MiMo's tool results carry
+   * attachments: a file by path, which is read when a request is built, or one
+   * with its bytes for something that has no file (an MCP server's picture).
+   * A model that cannot read the kind of file gets a line saying so instead,
+   * so `output` still has to describe it.
+   */
+  attachments?: Attachment[]
 }
 
 export interface ToolDefinition {

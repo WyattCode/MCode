@@ -1,4 +1,4 @@
-import type { Message } from "@shared/protocol"
+import type { Attachment, Message } from "@shared/protocol"
 import { historyService, type HistoryService } from "../history/service"
 import { parsePartID, partTexts } from "../history/extract"
 import { SEARCH_HARD_CAP } from "../history/index"
@@ -133,7 +133,18 @@ async function get(input: Record<string, unknown>): Promise<ToolResult> {
     return reply("get", (failure as Error).message)
   }
   const next = page.has_more ? `More follows: get the same part_id with offset=${page.next_offset}.` : "This is the end of the part."
-  return reply("get", `offset=${page.offset} next_offset=${page.next_offset} total_length=${page.total_length} has_more=${page.has_more}\n${next}\n${page.text}`, 1)
+  const answer = reply("get", `offset=${page.offset} next_offset=${page.next_offset} total_length=${page.total_length} has_more=${page.has_more}\n${next}\n${page.text}`, 1)
+  // MiMo's history hands media over rather than describing it: the file this part names goes with the answer.
+  const media = mediaOf(message, located?.key)
+  return media ? { ...answer, attachments: [media] } : answer
+}
+
+/** The file a `file:<n>` part names, when it is media a model could be handed. */
+function mediaOf(message: Message | undefined, key: string | undefined): Attachment | undefined {
+  const at = /^file:(\d+)$/.exec(key ?? "")
+  if (!message || message.role !== "user" || !at) return undefined
+  const file = message.attachments[Number(at[1])]
+  return file && /^(image|audio|video)\/|^application\/pdf$/.test(file.mime) ? { ...file } : undefined
 }
 
 export const HistoryTool: ToolDefinition = {

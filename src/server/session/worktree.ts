@@ -48,6 +48,22 @@ export async function foldersUp(start: string): Promise<string[]> {
   }
 }
 
+/**
+ * The git main worktrees a set of paths falls in, each named once.
+ *
+ * MiMo's `mainWorktreeHits`: how a shell command reports what it changed, since
+ * a command names no paths of its own the way a write tool does. A path inside
+ * a linked worktree, or in no repository at all, is not one of these.
+ */
+export async function mainWorktreeRoots(targets: readonly string[]): Promise<string[]> {
+  const roots = new Set<string>()
+  for (const target of targets) {
+    const top = await worktreeTop(target)
+    if (top?.main) roots.add(top.root)
+  }
+  return [...roots]
+}
+
 /** MiMo's auto-worktree notice, in MCode's words: once per conversation, after a change to a repository's main worktree. */
 export function worktreeNotice(root: string, linked: boolean): string {
   return linked

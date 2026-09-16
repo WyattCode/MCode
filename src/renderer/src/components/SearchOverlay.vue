@@ -23,8 +23,12 @@ const query = ref("")
 const field = ref<HTMLInputElement>()
 const hits = ref<MessageHit[]>([])
 const artifacts = ref<SessionArtifacts[]>([])
-/* The server half of a search: waiting on it, answered, or failed. */
-const status = ref<"idle" | "loading" | "ready" | "error">("idle")
+/*
+ * The artifact list is the one part of this search that can fail, and MiMo
+ * drives 正在搜索产物… and 产物搜索暂不可用 from it: conversations and projects
+ * are matched here, out of what the window already holds.
+ */
+const artifactStatus = ref<"loading" | "ready" | "error">("loading")
 /* MiMo keeps the overlay up for its 180ms exit before it goes. */
 const closing = ref(false)
 const CLOSE_MS = 180
@@ -199,17 +203,15 @@ let generation = 0
 
 function runSearch(needle: string) {
   const run = ++generation
-  status.value = "loading"
   timer = setTimeout(async () => {
     try {
       const result = await app.client?.request({ type: "search.messages", query: needle, limit: RECENT })
       if (run !== generation) return
       hits.value = result?.hits ?? []
-      status.value = "ready"
     } catch {
+      // What was said is one source among three; losing it leaves the titles and the files.
       if (run !== generation) return
       hits.value = []
-      status.value = "error"
     }
   }, 150)
 }
@@ -220,18 +222,22 @@ watch(query, (value) => {
   if (!needle) {
     generation += 1
     hits.value = []
-    status.value = "idle"
     return
   }
   runSearch(needle)
 })
 
-/* MiMo's 重试: the same query asked again. */
-function retry() {
-  const needle = query.value.trim()
-  if (!needle) return
-  if (timer) clearTimeout(timer)
-  runSearch(needle)
+/* The files conversations wrote, and MiMo's 重试 when that list cannot be had. */
+async function loadArtifacts() {
+  artifactStatus.value = "loading"
+  try {
+    const result = await app.client?.request({ type: "artifact.list" })
+    artifacts.value = result?.artifacts ?? []
+    artifactStatus.value = "ready"
+  } catch {
+    artifacts.value = []
+    artifactStatus.value = "error"
+  }
 }
 
 /** Plays MiMo's exit, then tells the owner to unmount. */
@@ -255,10 +261,9 @@ function onKeydown(event: KeyboardEvent) {
   close()
 }
 
-onMounted(async () => {
+onMounted(() => {
   field.value?.focus()
-  const result = await app.client?.request({ type: "artifact.list" }).catch(() => undefined)
-  artifacts.value = result?.artifacts ?? []
+  void loadArtifacts()
 })
 
 onBeforeUnmount(() => {
@@ -286,12 +291,12 @@ defineExpose({ close })
         />
       </div>
       <div class="search-results">
-        <div v-if="status === 'error'" class="sr-artifact-error" data-search-error>
+        <div v-if="artifactStatus === 'error'" class="sr-artifact-error" data-search-error>
           <span>{{ t("searchOverlay.error") }}</span>
-          <button type="button" @click="retry">{{ t("searchOverlay.retry") }}</button>
+          <button type="button" @click="loadArtifacts">{{ t("searchOverlay.retry") }}</button>
         </div>
-        <div v-if="!flat.length && status === 'loading'" class="sr-empty" data-search-loading>{{ t("searchOverlay.loading") }}</div>
-        <div v-else-if="!flat.length && status !== 'error'" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
+        <div v-if="!flat.length && artifactStatus === 'loading'" class="sr-empty" data-search-loading>{{ t("searchOverlay.loading") }}</div>
+        <div v-else-if="!flat.length && artifactStatus !== 'error'" class="sr-empty">{{ t("searchOverlay.empty") }}</div>
         <div v-for="group in groups" :key="group.kind" class="sr-group">
           <div class="sr-head">{{ t(HEAD[group.kind]) }}</div>
           <button

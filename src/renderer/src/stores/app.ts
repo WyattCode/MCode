@@ -71,6 +71,26 @@ export const useApp = defineStore("app", () => {
   /* automation: conversations whose running turn is a scheduled task's run, and the last run the user should be told about. */
   const automationRuns = ref(new Set<string>())
   const automationNotice = ref<{ sessionID: string; at: number }>()
+  /**
+   * Bumped whenever the window comes back into focus, as MiMo's shell bumps its
+   * `fsNonce`.
+   *
+   * Anything reading the working tree - the review tab - takes it as part of
+   * what it reads on, so coming back from an editor re-reads the files rather
+   * than waiting for the conversation to move.
+   */
+  const fsNonce = ref(0)
+  const bumpFsNonce = () => (fsNonce.value += 1)
+  /**
+   * What the home screen's next task works in, when the reader has said.
+   *
+   * MiMo's 不使用项目 and its project pick are navigation state, so they outlive
+   * the home screen: opening a conversation and coming back finds the same
+   * answer. Held here rather than in HomeHero, which is unmounted the moment a
+   * conversation opens - which is how an explicit 不使用项目 used to be
+   * forgotten, and the next message fell back into the last project.
+   */
+  const homeProject = ref<string>()
 
   /** Starts the clock on turns not seen beginning, and forgets the ones no longer running. */
   function clockTurns(ids: Iterable<string>) {
@@ -1335,6 +1355,8 @@ export const useApp = defineStore("app", () => {
     attachments: Attachment[] = [],
     to?: string,
     annotations: import("@shared/protocol").Annotation[] = [],
+    /* What a slash command named, for the turn this starts only. */
+    command?: { agent?: import("@shared/protocol").AgentName; model?: import("@shared/protocol").ModelRef },
   ): Promise<boolean> {
     const target = to ?? currentID.value
     // An attachment, or a place pointed at, with no words is still something to answer.
@@ -1380,6 +1402,8 @@ export const useApp = defineStore("app", () => {
         attachments,
         ...(annotations.length ? { annotations } : {}),
         ...(fileNotices.length ? { fileNotices } : {}),
+        ...(command?.agent ? { agent: command.agent } : {}),
+        ...(command?.model ? { model: command.model } : {}),
       })
       return true
     } catch (err) {
@@ -2047,6 +2071,9 @@ export const useApp = defineStore("app", () => {
     setAgent,
     setStaged,
     patchConfig,
+    fsNonce,
+    bumpFsNonce,
+    homeProject,
     modelPick,
     announceModel,
     announceAccess,

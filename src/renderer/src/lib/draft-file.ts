@@ -38,6 +38,19 @@ export function isEmptyDraftFile(file: DraftFile): boolean {
   return !Object.keys(file.drafts).length && !Object.keys(file.annotations).length
 }
 
+/**
+ * One attachment as the file keeps it.
+ *
+ * MiMo writes down only where a file is and reads it again when the draft is
+ * sent, so a saved draft never carries a photograph's bytes. Only something
+ * with no file behind it - pasted into the box - has to keep them. A new object
+ * either way: the box goes on holding the bytes it already has, which is what
+ * its thumbnail is drawn from.
+ */
+function saved(file: Attachment): Attachment {
+  return file.byPath ? { ...file, data: "" } : { ...file }
+}
+
 export function draftFileOf(
   drafts: ReadonlyMap<string, SavedDraft>,
   annotations: Readonly<Record<string, readonly Annotation[]>>,
@@ -46,7 +59,12 @@ export function draftFileOf(
   const file = emptyDraftFile()
   for (const [key, draft] of drafts) {
     if (!draftHasContent(draft)) continue
-    file.drafts[key] = { text: draft.text, attachments: [...draft.attachments], mentioned: [...draft.mentioned], skills: [...draft.skills] }
+    file.drafts[key] = {
+      text: draft.text,
+      attachments: draft.attachments.map(saved),
+      mentioned: [...draft.mentioned],
+      skills: [...draft.skills],
+    }
   }
   for (const [scope, list] of Object.entries(annotations)) if (list.length) file.annotations[scope] = [...list]
   if (current) file.current = current

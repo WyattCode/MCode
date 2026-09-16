@@ -56,7 +56,25 @@ const GIT_DESTRUCTIVE = new Map<string, Set<string>>([
 export interface SimpleCommand {
   tokens: string[]
   source: string
+  /** Files a `>`-style redirection writes to; `<` only reads and names none. */
+  redirects: string[]
 }
+
+/** MiMo's write commands: the ones whose path arguments name a file they change. */
+const WRITE_COMMANDS = new Set([
+  "tee", "install", "touch", "mkdir", "cp", "mv", "ln", "truncate", "dd", "patch",
+  "set-content", "add-content", "new-item", "copy-item", "move-item", "rename-item",
+  "out-file", "tee-object", "set-item", "add-item", "new-volume", "clear-content",
+])
+/** Of these, only the last path is written: the ones before it are sources. */
+const COPY_DEST_ONLY = new Set(["cp", "ln", "install", "copy-item"])
+/** git subcommands that change a working tree or a repository. */
+const GIT_MUTATE_SUBS = new Set([
+  "add", "apply", "branch", "checkout", "cherry-pick", "clean", "commit", "merge", "mv",
+  "rebase", "reset", "restore", "revert", "rm", "stash", "switch", "tag", "worktree",
+])
+/** git's own flags before the subcommand; `-C` and `-c` take the word after them. */
+const GIT_PRE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix"])
 
 /** The index of the `)` closing the `(` at `open`, or the end of the text. */
 function closing(text: string, open: number): number {
@@ -73,6 +91,7 @@ export function simpleCommands(command: string, powershell: boolean): SimpleComm
   const out: SimpleCommand[] = []
   const nested: string[] = []
   let tokens: string[] = []
+  let redirects: string[] = []
   let word = ""
   let inWord = false
   let start = -1
@@ -86,8 +105,9 @@ export function simpleCommands(command: string, powershell: boolean): SimpleComm
     // `FOO=1 git status` runs git; assignments in front are not the command, and a line of only them runs nothing.
     const first = powershell ? 0 : tokens.findIndex((token) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(token))
     const words = first === -1 ? [] : tokens.slice(first)
-    if (words.length) out.push({ tokens: words, source: command.slice(start, end).trim() })
+    if (words.length) out.push({ tokens: words, source: command.slice(start, end).trim(), redirects })
     tokens = []
+    redirects = []
     start = -1
   }
 
@@ -160,9 +180,13 @@ export function simpleCommands(command: string, powershell: boolean): SimpleComm
       }
       endWord()
       let j = i + 1
-      while (command[j] === ">" || command[j] === "&") j++
+      while (command[j] === ">" || command[j] === "&" || command[j] === "|") j++
+      const operator = command.slice(i, j)
       while (command[j] === " " || command[j] === "\t") j++
+      const from = j
       while (j < command.length && !/[\s;&|]/.test(command[j])) j++
+      // A redirection that writes names a file the command changes; `<` only reads one.
+      if (operator.includes(">") && j > from) redirects.push(command.slice(from, j))
       i = j - 1
       continue
     }
@@ -292,6 +316,136 @@ function insideTemp(target: string): boolean {
   const real = realpathBestEffort(target)
   const roots = [os.tmpdir(), ...(process.platform === "win32" ? [] : ["/tmp"])].map(realpathBestEffort)
   return roots.some((root) => real !== root && real.startsWith(root + path.sep))
+}
+
+/** A token that could be a path: not a flag, and nothing only the shell could work out. */
+function plausiblePathArg(token: string): string | undefined {
+  if (!token || token.startsWith("-")) return undefined
+  const text = unquote(token)
+  if (!text || text.includes("*") || text.includes("$") || text.includes("(") || text.includes(" ")) return undefined
+  return text
+}
+
+function isGitFlag(token: string): boolean {
+  return GIT_PRE_FLAGS.has(token) || token.startsWith("--git-dir=") || token.startsWith("--work-tree=") || token.startsWith("--namespace=")
+}
+
+/** The subcommand a `git` line runs, past git's own flags. */
+function gitSubcommand(tokens: string[], powershell: boolean): string | undefined {
+  if (tokens.length < 2 || headOf(tokens, powershell) !== "git") return undefined
+  let at = 1
+  while (at < tokens.length) {
+    const token = tokens[at]
+    if (!isGitFlag(token)) break
+    at += token === "-C" || token === "-c" ? 2 : 1
+  }
+  if (at >= tokens.length) return undefined
+  return powershell ? tokens[at].toLowerCase() : tokens[at]
+}
+
+function isGitMutate(tokens: string[], powershell: boolean): boolean {
+  const sub = gitSubcommand(tokens, powershell)
+  if (!sub || !GIT_MUTATE_SUBS.has(sub)) return false
+  if (sub !== "worktree") return true
+  // `git worktree add` or `list` changes no existing tree; only these three do.
+  const at = tokens.findIndex((token, index) => index > 0 && (powershell ? token.toLowerCase() : token) === "worktree")
+  const verb = at >= 0 ? tokens[at + 1] : undefined
+  return verb === "remove" || verb === "repair" || verb === "move"
+}
+
+/** The folders a `git` line is pointed at with `-C`, `--work-tree` or `--git-dir`. */
+function gitTargetDirs(tokens: string[], powershell: boolean): string[] {
+  if (headOf(tokens, powershell) !== "git") return []
+  const out: string[] = []
+  for (let at = 1; at < tokens.length; at++) {
+    const token = tokens[at]
+    if (token === "-C" || token === "--work-tree") {
+      const arg = plausiblePathArg(tokens[at + 1] ?? "")
+      if (arg) out.push(arg)
+      at += 1
+      continue
+    }
+    if (token.startsWith("--git-dir=") || token.startsWith("--work-tree=")) {
+      const arg = plausiblePathArg(token.slice(token.indexOf("=") + 1))
+      if (arg) out.push(arg)
+    }
+    // Past the subcommand the words are its own arguments, not git's.
+    if (GIT_MUTATE_SUBS.has(powershell ? token.toLowerCase() : token) || token === "status" || token === "log") break
+  }
+  return out
+}
+
+function isSedInPlace(tokens: string[], powershell: boolean): boolean {
+  if (headOf(tokens, powershell) !== "sed") return false
+  return tokens.slice(1).some((token) => token === "-i" || token === "--in-place" || token.startsWith("--in-place=") || /^-[^-]*i/.test(token))
+}
+
+/** The paths a writing command names: all of them, or only the destination for a copy. */
+function mutationPathArgs(tokens: string[], head: string): string[] {
+  const paths = tokens.slice(1).map(plausiblePathArg).filter((value): value is string => Boolean(value))
+  if (COPY_DEST_ONLY.has(head)) return paths.length ? [paths[paths.length - 1]] : []
+  return paths
+}
+
+export interface MutationTargets {
+  /** Absolute paths the command would write to, the folders it writes from included. */
+  paths: string[]
+  /** Whether it runs a git subcommand that changes a repository. */
+  gitMutate: boolean
+}
+
+/**
+ * Where a command line would write, read the way MiMo's bash tool reads it.
+ *
+ * MiMo's own auto-worktree notice needs this because a shell command names no
+ * file the way a write tool does: it walks the simple commands, follows `cd`
+ * and `pushd`/`popd` so a later command is resolved from where it would
+ * actually run, and collects write redirections, the path arguments of its
+ * write commands, `sed -i`, and the folders a mutating `git` line is pointed
+ * at. When anything at all is written, the folder it ran in counts too, since
+ * that is the repository a bare `git commit` changes.
+ */
+export function collectMutationTargets(command: string, cwd: string, powershell: boolean): MutationTargets {
+  let effective = path.resolve(cwd)
+  const stack: string[] = []
+  const paths: string[] = []
+  let gitMutate = false
+  const add = (raw: string, base: string) => {
+    paths.push(path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw))
+  }
+  const moveTo = (raw: string | undefined) => {
+    if (raw) effective = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(effective, raw)
+  }
+  for (const { tokens, redirects } of simpleCommands(command, powershell)) {
+    const head = headOf(tokens, powershell)
+    if (!head) continue
+    if (head === "cd" || head === "set-location") {
+      moveTo(plausiblePathArg(tokens[1] ?? ""))
+      continue
+    }
+    if (head === "pushd" || head === "push-location") {
+      stack.push(effective)
+      moveTo(plausiblePathArg(tokens[1] ?? ""))
+      continue
+    }
+    if (head === "popd" || head === "pop-location") {
+      effective = stack.pop() ?? path.resolve(cwd)
+      continue
+    }
+    if (isGitMutate(tokens, powershell)) {
+      gitMutate = true
+      for (const dir of gitTargetDirs(tokens, powershell)) add(dir, effective)
+    }
+    for (const target of redirects) add(target, effective)
+    if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, powershell)) {
+      for (const arg of mutationPathArgs(tokens, head)) add(arg, effective)
+    }
+  }
+  if (paths.length > 0 || gitMutate) {
+    paths.push(effective)
+    paths.push(path.resolve(cwd))
+  }
+  return { paths: [...new Set(paths)], gitMutate }
 }
 
 export interface BashScan {

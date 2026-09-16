@@ -16,7 +16,7 @@ import {
   waitForCallback,
   wwwAuthenticateParams,
 } from "./mcp-oauth"
-import type { McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
+import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
 import { ToolError, type ToolDefinition } from "./tool/types"
 
 /**
@@ -144,11 +144,19 @@ const INTERNAL_ERROR = -32603
 interface McpContent {
   type?: string
   text?: string
+  /** base64, on an image or audio block. */
+  data?: string
   mimeType?: string
   uri?: string
   name?: string
   title?: string
   resource?: { uri?: string; mimeType?: string; text?: string; blob?: string }
+}
+
+/** A name for a picture or a sound a server answered with; it has no file of its own. */
+function mcpAttachmentName(kind: string, mime: string, at: number): string {
+  const extension = /\/([a-z0-9.+-]+)$/i.exec(mime)?.[1]?.replace(/^x-/, "") ?? "bin"
+  return `mcp-${kind}-${at}.${extension}`
 }
 
 interface McpToolResult {
@@ -168,16 +176,20 @@ function serializedIn(output: string, serialized: string): boolean {
  * as its name and address, and structured content appended as JSON unless the
  * text already carries it.
  *
- * MiMo attaches images, audio and binary resources to the result. This app has
- * no way to hand a tool's attachment to the model, so each is named in a line
- * saying it was left out rather than dropped without a word.
+ * MiMo attaches images, audio and binary resources to the result, and so does
+ * this: each rides on the result with its bytes, since a server's answer has no
+ * file behind it. One a model cannot read becomes a line saying so when the
+ * request is built, so nothing is dropped without a word.
  */
-export function mcpToolOutput(result: McpToolResult): { output: string; isError: boolean } {
+export function mcpToolOutput(result: McpToolResult): { output: string; isError: boolean; attachments: Attachment[] } {
   const text: string[] = []
+  const attachments: Attachment[] = []
   for (const item of result.content ?? []) {
     if (item.type === "text") text.push(item.text ?? "")
     else if (item.type === "image" || item.type === "audio") {
-      text.push(`[${item.mimeType ?? item.type} ${item.type} left out: this app cannot pass it to the model]`)
+      const mime = item.mimeType ?? (item.type === "image" ? "image/png" : "audio/wav")
+      if (item.data) attachments.push({ path: mcpAttachmentName(item.type, mime, attachments.length + 1), mime, data: item.data })
+      else text.push(`[${mime} ${item.type} left out: the server sent no data with it]`)
     } else if (item.type === "resource_link") {
       const name = item.title ?? item.name ?? ""
       const uri = (item.uri ?? "").trim()
@@ -188,18 +200,19 @@ export function mcpToolOutput(result: McpToolResult): { output: string; isError:
     } else if (item.type === "resource" && item.resource) {
       if (typeof item.resource.text === "string") text.push(item.resource.text)
       if (typeof item.resource.blob === "string") {
-        text.push(`[${item.resource.mimeType ?? "application/octet-stream"} resource ${item.resource.uri ?? ""} left out]`)
+        const mime = item.resource.mimeType ?? "application/octet-stream"
+        attachments.push({ path: item.resource.uri || mcpAttachmentName("resource", mime, attachments.length + 1), mime, data: item.resource.blob })
       }
     }
   }
   const textOutput = text.join("\n\n")
-  if (result.structuredContent === undefined) return { output: textOutput, isError: result.isError ?? false }
+  if (result.structuredContent === undefined) return { output: textOutput, isError: result.isError ?? false, attachments }
   const structured = JSON.stringify(result.structuredContent)
   const pretty = JSON.stringify(result.structuredContent, null, 2)
   const already = serializedIn(textOutput, structured) || serializedIn(textOutput, pretty)
   const visible = text.some((entry) => entry.trim().length > 0)
   const output = already ? textOutput : visible ? `${textOutput}\n\nStructured content:\n${structured}` : structured
-  return { output, isError: result.isError ?? false }
+  return { output, isError: result.isError ?? false, attachments }
 }
 
 /**
@@ -467,16 +480,16 @@ class Connection {
    * call with no answer inside the server's `timeout` - or a minute, without
    * one - is given up on.
    */
-  async call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<string> {
+  async call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ output: string; attachments: Attachment[] }> {
     // A call that timed out or lost its server is a failure the model reads, not a crash of the app.
     const result = (await this.request("tools/call", { name: tool, arguments: args }, { timeout: this.config.timeout ?? CALL_TIMEOUT, signal }).catch(
       (err: unknown) => {
         throw err instanceof ToolError ? err : new ToolError(err instanceof Error ? err.message : String(err))
       },
     )) as McpToolResult
-    const { output, isError } = mcpToolOutput(result ?? {})
+    const { output, isError, attachments } = mcpToolOutput(result ?? {})
     if (isError) throw new ToolError(output || "the MCP server reported an error")
-    return output || "(no output)"
+    return { output: output || "(no output)", attachments }
   }
 
   /** The prompts this server offers, or nothing if it never claimed to have any. */
@@ -1119,8 +1132,9 @@ export class McpServers {
               preview: JSON.stringify(input, null, 2),
               scope: `mcp:${name}`,
             })
-            const output = await connection.call(tool.name, input, context.signal)
-            return { output, title: `${name}: ${tool.name}` }
+            const { output, attachments } = await connection.call(tool.name, input, context.signal)
+            // MiMo hands a server's pictures and sounds to the model on the result itself.
+            return { output, title: `${name}: ${tool.name}`, ...(attachments.length ? { attachments } : {}) }
           },
         })
       }

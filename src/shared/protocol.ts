@@ -28,6 +28,16 @@ export interface SessionInfo {
   titleSource?: "fallback" | "generated" | "user"
   /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
   worktreeNotice?: boolean
+  /**
+   * The MCP servers this conversation was offered at its first turn.
+   *
+   * MiMo's MCP page says a saved change applies from the next conversation, so
+   * the list is kept with the conversation and read back on the next run: a
+   * server added or switched on later reaches new conversations only. Absent
+   * on conversations stored before this, which take whatever is configured at
+   * their next turn and keep that.
+   */
+  mcpServers?: string[]
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
@@ -71,6 +81,14 @@ export interface SessionInfo {
    * what those conversations have always done.
    */
   group?: string
+  /**
+   * 导入: taken from another AI app, and what it is called there.
+   *
+   * Only the importer reads it: it is how a conversation already taken is
+   * recognised when the same source is scanned again, so re-running an import
+   * writes the same conversation rather than a second copy of it.
+   */
+  imported?: { source: ImportSource; key: string }
   /**
    * A side chat, and the conversation it was opened beside.
    *
@@ -181,6 +199,14 @@ export interface ToolPart {
   /** i18n key for `error`, when the failure was one the tool anticipated. */
   errorCode?: string
   errorParams?: Record<string, string>
+  /**
+   * Media the call is handing to the model, as MiMo hands a tool result's
+   * attachments over: a picture `read` was pointed at, what an MCP server
+   * answered with, a file `history` found. One attached by path is read from
+   * disk each time a request is built, exactly as a user's attachment is, so
+   * the transcript never carries its bytes.
+   */
+  attachments?: Attachment[]
   time: { created: number; started?: number; completed?: number }
 }
 
@@ -1177,6 +1203,37 @@ export interface McpImportItem {
   exists: boolean
 }
 
+/**
+ * 导入: the AI apps whose conversations this one can take in, as MiMo names
+ * them - Claude Code, Codex and OpenCode.
+ */
+export const IMPORT_SOURCES = ["cc", "codex", "opencode"] as const
+
+export type ImportSource = (typeof IMPORT_SOURCES)[number]
+
+/** What one source holds, and how much of it this app has taken before. */
+export interface ImportSourceScan {
+  /** The app keeps its data where this one looks; it may still hold nothing. */
+  available: boolean
+  sessions: number
+  /** Conversations taken from it to date, which may outnumber what it still has. */
+  imported: number
+}
+
+export type ImportScan = Record<ImportSource, ImportSourceScan>
+
+/** What one source's import did. `errors` names files, never a line of what was in them. */
+export interface ImportSourceResult {
+  scanned: number
+  imported: number
+  /** Changed since it was taken, so its copy here was written again rather than doubled. */
+  resynced: number
+  skipped: number
+  errors: string[]
+}
+
+export type ImportRun = Record<ImportSource, ImportSourceResult>
+
 /** One tool a server offers, as the MCP settings page lists it. */
 export interface McpToolInfo {
   name: string
@@ -1356,8 +1413,18 @@ export interface AppConfig {
    * reopening it leaves the same set of conversations to hand.
    */
   openTabs: string[]
-  /** Set once the first-run setup has been completed or skipped. */
-  onboarded: boolean
+  /**
+   * 导入: set once the first run has asked about conversations in other AI
+   * apps, whether or not anything was taken. MiMo asks a machine once; so does
+   * this, and a profile that predates the question is marked as already asked.
+   */
+  importOnboarded: boolean
+  /**
+   * MiMo's 标题生成模型: which model names a conversation after its first
+   * message. Absent - and MiMo's 跟随当前模型 - is the conversation's own model,
+   * which is also where an unusable choice falls back to.
+   */
+  titleModel?: ModelRef
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**
@@ -1693,8 +1760,8 @@ export type Request =
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
-  /* An empty folder for a new project, named by the user, under the default project location. */
-  | { type: "project.createBlank"; name: string }
+  /* An empty folder for a new project, named by the user. `location` is where it goes, as MiMo's dialog lets it be changed; without one it is the default project location. */
+  | { type: "project.createBlank"; name: string; location?: string }
   /* A folder onto the project list, with no conversation; `used` also makes it the latest pick. */
   | { type: "project.add"; directory: string; used?: boolean }
   /* Folders off the project list; their conversations stay. */
@@ -1742,7 +1809,21 @@ export type Request =
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
-  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[]; fileNotices?: FileNotice[] }
+  /*
+   * `agent` and `model` are what a slash command named, and they hold for the
+   * turn this starts and no longer: MiMo runs a command's turn as the agent and
+   * model the command names and leaves the conversation's own settings alone.
+   */
+  | {
+      type: "session.prompt"
+      sessionID: string
+      text: string
+      attachments?: Attachment[]
+      annotations?: Annotation[]
+      fileNotices?: FileNotice[]
+      agent?: AgentName
+      model?: ModelRef
+    }
   | { type: "session.abort"; sessionID: string }
   /*
    * subagents: a slash command marked `subtask`. `text` is the line as typed,
@@ -1940,6 +2021,9 @@ export type Request =
   | { type: "mcp.authenticate"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
+  /* 导入: what other AI apps on this machine hold, and taking the chosen ones in. Read-only towards them. */
+  | { type: "import.scan" }
+  | { type: "import.run"; sources: ImportSource[] }
   /**
    * Saves one MCP server from the settings form. Environment and header rows
    * named in `keep` that come back blank keep the values already stored.
@@ -2138,6 +2222,9 @@ export interface ResponseMap {
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }
+  /** 导入: counts only - no title, no path, nothing that was written in another app. */
+  "import.scan": { scan: ImportScan; asked: boolean }
+  "import.run": { result: ImportRun }
   "mcp.save": { config: AppConfig }
   "agents.state": { path: string; state: AgentsFileState }
   /** Writes a starting file when there is none. */

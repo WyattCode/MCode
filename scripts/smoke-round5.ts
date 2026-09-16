@@ -25,7 +25,7 @@ import { messagesRequest } from "../src/server/provider/anthropic"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import { TOOLS } from "../src/server/tool/registry"
 import { execFileSync } from "node:child_process"
-import { attachmentParts, imageSize } from "../src/server/provider/attachment-parts"
+import { attachmentParts, fittedImage, imageFit, imageSize, setImageShrinker } from "../src/server/provider/attachment-parts"
 import { isSummary, touchedFiles } from "../src/server/session/summary"
 import { claudeCallID, forWire, mistralCallID } from "../src/server/provider/wire-ids"
 import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
@@ -1157,6 +1157,137 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.runner.prompt({ sessionID: reads.id, text: "WORKTREE only reads" })
       await e.idle(reads.id)
       check("reading alone brings no note", !wireText(e.bodies.at(-1)).includes("main worktree") && !(await e.store.get(reads.id))?.worktreeNotice)
+
+      /* L4: a change made through bash brings the same notice, and only once the command has actually run. */
+      await e.config.set({ permissions: { ...e.config.get().permissions, bash: "allow" } })
+      const shelled = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "bash", input: { command: "echo hi > shelled.txt", description: "write a file" } }]))
+      await e.runner.prompt({ sessionID: shelled.id, text: "WORKTREE bash write" })
+      await e.idle(shelled.id)
+      check(
+        "a change made through bash brings the note as a write tool's change does",
+        (await e.store.get(shelled.id))?.worktreeNotice === true && wireText(e.bodies.at(-1)).includes("main worktree of a git repository"),
+        wireText(e.bodies.at(-1)).slice(0, 400),
+      )
+
+      const looked = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "bash", input: { command: "git status", description: "look" } }]))
+      await e.runner.prompt({ sessionID: looked.id, text: "WORKTREE bash reads" })
+      await e.idle(looked.id)
+      check("a command that only looks brings none", !(await e.store.get(looked.id))?.worktreeNotice)
+
+      const failed = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "bash", input: { command: "echo x > failed.txt; exit 3", description: "write then fail" } }]))
+      await e.runner.prompt({ sessionID: failed.id, text: "WORKTREE bash failed" })
+      await e.idle(failed.id)
+      check("a command that ended badly brings none either", !(await e.store.get(failed.id))?.worktreeNotice)
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 6: an oversized picture is made smaller rather than dropped (L12)")
+  {
+    /* A PNG header is all this needs: the size is read from it, and the byte count from the payload. */
+    const pngOf = (width: number, height: number) => {
+      const bytes = Buffer.alloc(24)
+      bytes[0] = 0x89
+      bytes.write("PNG", 1, "latin1")
+      bytes.writeUInt32BE(width, 16)
+      bytes.writeUInt32BE(height, 20)
+      return bytes.toString("base64")
+    }
+    const roomy = { maxBytes: 1_000_000, maxPixels: 2000 }
+    check("a picture inside both caps needs nothing done to it", imageFit("image/png", pngOf(100, 100), roomy) === undefined)
+    check("one too wide has to be made smaller", Boolean(imageFit("image/png", pngOf(4000, 100), roomy)), imageFit("image/png", pngOf(4000, 100), roomy))
+    check("so does one too heavy", Boolean(imageFit("image/png", pngOf(100, 100), { maxBytes: 10, maxPixels: 2000 })))
+    check("anything that is not a picture, or has no bytes, is not measured", imageFit("text/plain", "abc") === undefined && imageFit("image/png", "") === undefined)
+    check("the caps it measures against by default are the Anthropic route's, the strictest it knows", Boolean(imageFit("image/png", pngOf(3000, 100))))
+
+    let asked: { maxBytes: number; maxPixels: number } | undefined
+    setImageShrinker(async ({ fit }) => {
+      asked = fit
+      return { data: "c2hydW5r", mime: "image/jpeg" }
+    })
+    const shrunk = await fittedImage({ mime: "image/png", data: pngOf(3000, 100) })
+    check(
+      "an oversized picture is handed to the decoder and comes back smaller",
+      shrunk?.mime === "image/jpeg" && shrunk.data === "c2hydW5r" && asked?.maxPixels === 2000,
+      { shrunk, asked },
+    )
+    check("one already within the caps is never re-encoded", (await fittedImage({ mime: "image/png", data: pngOf(100, 100) })) === undefined)
+    setImageShrinker(undefined)
+    check(
+      "with no decoder to hand it is left exactly as it was, and the wire's own note explains it",
+      (await fittedImage({ mime: "image/png", data: pngOf(3000, 100) })) === undefined,
+    )
+  }
+
+  section("Round 6: a command's agent and model run its turn (L3)")
+  {
+    const e = await engine()
+    try {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "COMMAND on another model", model: { provider: "fake", model: "other" } })
+      await e.idle(session.id)
+      check("the turn runs on the model the command named", e.bodies.at(-1)?.model === "other", e.bodies.at(-1)?.model)
+      check("and the conversation keeps its own", (await e.store.get(session.id))?.model.model === "m", (await e.store.get(session.id))?.model)
+
+      await e.runner.prompt({ sessionID: session.id, text: "COMMAND as another agent", agent: "plan" })
+      await e.idle(session.id)
+      check("the turn runs as the agent the command named", (await e.assistants(session.id)).at(-1)?.agent === "plan", (await e.assistants(session.id)).at(-1)?.agent)
+      check("and the conversation is still the agent it was", (await e.store.get(session.id))?.agent === "build", (await e.store.get(session.id))?.agent)
+
+      await e.runner.prompt({ sessionID: session.id, text: "COMMAND on a provider nobody configured", model: { provider: "nobody", model: "x" } })
+      await e.idle(session.id)
+      /* The request has to be the one this message made: a turn that threw instead would leave the turn before it as the last body. */
+      check(
+        "a model whose provider is not configured is ignored rather than failing the turn",
+        e.bodies.at(-1)?.model === "m" && wireText(e.bodies.at(-1)).includes("nobody configured"),
+        e.bodies.at(-1)?.model,
+      )
+
+      await e.runner.prompt({ sessionID: session.id, text: "PLAIN message naming nothing" })
+      await e.idle(session.id)
+      check(
+        "a message that names neither runs as the conversation is set",
+        e.bodies.at(-1)?.model === "m" && (await e.assistants(session.id)).at(-1)?.agent === "build",
+        { model: e.bodies.at(-1)?.model, agent: (await e.assistants(session.id)).at(-1)?.agent },
+      )
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 6: the MCP servers a conversation started with (L5)")
+  {
+    const e = await engine()
+    try {
+      const server = { type: "local" as const, command: ["node", "-e", ""] }
+      const names = async (sessionID: string) => ((await e.store.get(sessionID))?.mcpServers ?? []).slice().sort().join(",")
+      await e.config.set({ mcpServers: { alpha: server, beta: server } })
+      const first = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: first.id, text: "MCP one" })
+      await e.idle(first.id)
+      check("a conversation records the servers it was offered at its first turn", (await names(first.id)) === "alpha,beta", await names(first.id))
+
+      await e.config.set({ mcpServers: { alpha: server } })
+      await e.runner.prompt({ sessionID: first.id, text: "MCP two" })
+      await e.idle(first.id)
+      check("a server switched off later leaves that record as it was", (await names(first.id)) === "alpha,beta", await names(first.id))
+
+      const later = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: later.id, text: "MCP three" })
+      await e.idle(later.id)
+      check("a conversation started afterwards records what is configured by then", (await names(later.id)) === "alpha", await names(later.id))
+
+      /* The restart: a runner that has never seen these conversations reads each one's record rather than the config. */
+      const restarted = new SessionRunner(e.store, e.bus, e.config, e.permissions, { accessToken: async () => undefined } as never, e.storage)
+      await e.config.set({ mcpServers: { alpha: server, beta: server, gamma: server } })
+      const before = (await e.assistants(first.id)).length
+      await restarted.prompt({ sessionID: first.id, text: "MCP after a restart" })
+      await e.until(async () => (await e.assistants(first.id)).length > before)
+      check("after a restart the conversation keeps its own record instead of the config as it stands", (await names(first.id)) === "alpha,beta", await names(first.id))
     } finally {
       await e.close()
     }

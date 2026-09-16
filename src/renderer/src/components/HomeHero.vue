@@ -54,7 +54,19 @@ const name = (directory: string) =>
  */
 const projects = computed(() => app.projects)
 
-const picked = ref<string>()
+/*
+ * Held by the window rather than by this screen.
+ *
+ * MiMo's project pick - 不使用项目 included - is a navigation state, so opening
+ * a conversation and coming back finds the same answer. This screen is
+ * unmounted the moment a conversation opens, which is how an explicit
+ * 不使用项目 used to be forgotten and the next message fell back into the last
+ * project used.
+ */
+const picked = computed({
+  get: () => app.homeProject,
+  set: (value?: string) => (app.homeProject = value),
+})
 
 /*
  * "No project" is a pick of its own rather than the absence of one, so it
@@ -72,10 +84,16 @@ const added = ref<string>()
  */
 const chosen = computed(() => picked.value ?? props.directory ?? projects.value[0] ?? undefined)
 
-/* A fresh request from the window replaces a stale pick from a previous visit. */
+/*
+ * A project the window names - one opened from the side column - replaces the
+ * pick. Leaving the home screen and coming back does not: the window then says
+ * nothing new, and the reader's own answer stands.
+ */
 watch(
   () => props.directory,
-  () => (picked.value = undefined),
+  (next, before) => {
+    if (next && next !== before) picked.value = undefined
+  },
 )
 /*
  * Whether the task this screen starts works in a folder of its own.

@@ -41,6 +41,16 @@ const api = {
   saveText: (suggested: string, text: string): Promise<string | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
 
+  /** A pasted picture, written under userData so it can be attached by path as MiMo attaches one. */
+  savePastedImage: (dataUrl: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-pasted-image", dataUrl),
+  /** The clipboard's own bitmap, for a paste that hands the page no file at all. */
+  saveClipboardImage: (): Promise<{ ok: true; path: string; dataUrl?: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-clipboard-image"),
+  /** A paste too large for the box: a text file in the system temp folder, attached by path. */
+  savePastedText: (text: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke("mcode:save-pasted-text", text),
+
   /** MiMo's saved composer input: read once, synchronously, as the window starts. */
   composerInputLoad: (): { ok: boolean; text?: string } => ipcRenderer.sendSync("mcode:composer-input-load"),
   composerInputSave: (text: string): Promise<boolean> => ipcRenderer.invoke("mcode:composer-input-save", text),

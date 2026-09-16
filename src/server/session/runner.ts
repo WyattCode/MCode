@@ -51,7 +51,7 @@ import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNo
 import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
-import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
+import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
@@ -62,7 +62,7 @@ import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
+import { LOOP_ANSWERS, continuationFor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -124,6 +124,9 @@ type PromptInput = {
   fileNotices?: UserMessage["fileNotices"]
   /* session chat: sent by another conversation, marked the way a subagent's follow-up is. */
   inbox?: UserMessage["inbox"]
+  /* What a slash command named, for this turn only: MiMo runs the turn as the agent and model the command names. */
+  agent?: SessionInfo["agent"]
+  model?: SessionInfo["model"]
 }
 
 /**
@@ -334,6 +337,16 @@ export class SessionRunner {
    */
   private readonly turnAgents = new Map<string, string>()
 
+  /**
+   * What a slash command named for the turn it starts: the agent and model to
+   * run that turn as.
+   *
+   * MiMo runs a command's turn that way and leaves the conversation's own
+   * settings alone, so this is taken by the turn that was started for it and
+   * never written to the conversation.
+   */
+  private readonly turnOverrides = new Map<string, { agent?: SessionInfo["agent"]; model?: SessionInfo["model"] }>()
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -471,6 +484,57 @@ export class SessionRunner {
     }
     const kept = servers
     return [...own, ...(this.mcp?.tools() ?? []).filter((tool) => !tool.server || kept.has(tool.server))]
+  }
+
+  /**
+   * This turn's copy of the conversation, run as the agent and model a slash
+   * command named.
+   *
+   * Never written back, so the next message runs as the conversation is set
+   * again - which is what MiMo's command does. A model whose provider is not
+   * configured is ignored rather than failing the turn with it.
+   */
+  private withCommandTurn(session: SessionInfo, override: { agent?: SessionInfo["agent"]; model?: SessionInfo["model"] } | undefined): SessionInfo {
+    if (!override) return session
+    const named = override.model
+    const model = named && this.config.definition(named.provider) && this.config.usable(named.provider) ? named : undefined
+    if (!override.agent && !model) return session
+    return { ...session, ...(override.agent ? { agent: override.agent } : {}), ...(model ? { model } : {}) }
+  }
+
+  /**
+   * The MCP servers this conversation is offered, fixed at its first turn and
+   * kept with the conversation.
+   *
+   * MiMo's MCP page says a saved change applies from the next conversation.
+   * Holding that in memory alone meant a restart quietly read the config
+   * afresh, so a server switched on meanwhile reached an old conversation
+   * after all. A conversation with a stored list is seeded from it; one
+   * without records whatever is configured now.
+   */
+  private async rememberMcpServers(session: SessionInfo): Promise<void> {
+    // A subagent is offered its parent's servers, so the parent's record is the one that counts.
+    const conversation = session.parentID ?? session.id
+    const owner = conversation === session.id ? session : await this.store.get(conversation)
+    const stored = owner?.mcpServers
+    if (stored) {
+      // The record stands, whatever is configured now and whatever was worked out before it was read.
+      this.mcpServersAt.set(conversation, new Set(stored))
+      return
+    }
+    /*
+     * No record yet. `tools` fixes the set the first time a conversation asks
+     * for its tools, which can happen before this runs, so that set is what
+     * gets written down rather than a second reading of the config.
+     */
+    const known = this.mcpServersAt.get(conversation)
+    const names = known
+      ? [...known]
+      : Object.entries(this.config.get().mcpServers ?? {})
+          .filter(([, entry]) => entry.enabled !== false)
+          .map(([name]) => name)
+    if (!known) this.mcpServersAt.set(conversation, new Set(names))
+    await this.store.setMcpServers(conversation, names).catch(() => undefined)
   }
 
   /**
@@ -1297,6 +1361,10 @@ export class SessionRunner {
 
     if (this.running.has(input.sessionID)) throw new Error("This session is already working on something")
 
+    // A command's agent and model belong to the turn this starts, never to one already running.
+    if (input.agent || input.model) this.turnOverrides.set(input.sessionID, { agent: input.agent, model: input.model })
+    else this.turnOverrides.delete(input.sessionID)
+
     /*
      * Claimed here rather than after the setup below. Everything between the
      * question and the answer is a filesystem round trip, and two prompts
@@ -1621,7 +1689,8 @@ export class SessionRunner {
       ...(first ? { directory: session.directory } : {}),
     })
     if (!first) return [runtime]
-    // The conversation's MCP servers are fixed when it first asks for its tools.
+    // The conversation's MCP servers are fixed when it first asks for its tools; its own record comes first.
+    await this.rememberMcpServers(session)
     this.tools(session.agent, session.id)
     const names = [...(this.mcpServersAt.get(session.id) ?? [])]
     return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
@@ -1639,12 +1708,18 @@ export class SessionRunner {
     if (process.env.MCODE_GENERATE_TITLES === "0") return
     const session = await this.store.get(sessionID)
     if (!session || session.titleSource !== "fallback") return
-    const definition = this.config.definition(session.model.provider)
-    if (!definition || !this.config.usable(session.model.provider)) return
+    /* MiMo's 标题生成模型: the model named for titles when this install can still reach it, else the conversation's own. */
+    const model = titleModelRef(
+      this.config.get().titleModel,
+      session.model,
+      (ref) => Boolean(this.config.definition(ref.provider)) && this.config.usable(ref.provider) && Boolean(this.config.modelEntry(ref)),
+    )
+    const definition = this.config.definition(model.provider)
+    if (!definition || !this.config.usable(model.provider)) return
     const adapter: ProviderAdapter =
       definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
-    const entry = this.config.modelEntry(session.model)
+    const entry = this.config.modelEntry(model)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
     let answer = ""
@@ -1652,7 +1727,7 @@ export class SessionRunner {
       await adapter.stream(
         {
           apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
-          model: session.model,
+          model,
           system: TITLE_SYSTEM,
           history: [
             {
@@ -1666,16 +1741,16 @@ export class SessionRunner {
           ],
           tools: [],
           effort: "low",
-          variants: this.config.variants(session.model),
+          variants: this.config.variants(model),
           showReasoning: false,
           signal: controller.signal,
           baseURL: definition.baseURL,
           headers: definition.headers,
           accountId: tokens?.accountId,
-          maxOutput: maxOutputTokens(session.model, entry),
+          maxOutput: maxOutputTokens(model, entry),
           outputLimit: entry?.maxOutput,
           // MiMo's title agent runs at 0.5, where the model takes a temperature.
-          sampling: { ...samplingFor(session.model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
+          sampling: { ...samplingFor(model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
         },
         (event) => {
           if (event.type === "text.delta") answer += event.text
@@ -1830,8 +1905,13 @@ export class SessionRunner {
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
     let session = await this.store.require(sessionID)
+    // A slash command's own agent and model hold for this turn; the conversation keeps its own.
+    session = this.withCommandTurn(session, this.turnOverrides.get(sessionID))
+    this.turnOverrides.delete(sessionID)
     // plan: what this turn is judged by, however the conversation changes while it runs.
     this.turnAgents.set(sessionID, session.agent)
+    // MiMo's MCP rule: the servers this conversation started with, read back from disk after a restart.
+    await this.rememberMcpServers(session)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
     const adapter: ProviderAdapter =
@@ -1900,6 +1980,8 @@ export class SessionRunner {
     /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
     const notes = new Map<string, string[]>()
     const continued = { length: 0, textTool: 0, empty: 0 }
+    /* MiMo's n-gram check: how many times this turn has been told to stop repeating itself. */
+    let repeated = 0
     /* Files attached by path, read once for this turn. */
     const attachmentData: AttachmentCache = new Map()
     for (let step = 0; ; step++) {
@@ -2098,6 +2180,19 @@ export class SessionRunner {
         return
       }
 
+      /*
+       * MiMo's n-gram check: a reply that has fallen into repeating its own
+       * wording is told to change tack, twice at most. Request only, as the
+       * continuation notes are, and it never ends a turn by itself - a step
+       * that called tools carries on regardless.
+       */
+      const replied = assistant.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+      const repeatNote = repeatNoteFor(replied, repeated)
+      if (repeatNote) {
+        repeated += 1
+        notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), repeatNote])
+      }
+
       const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
         const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued)
@@ -2109,7 +2204,7 @@ export class SessionRunner {
         assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error ? "error" : "end_turn"
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
-        if (next.note && !lastStep) {
+        if ((next.note || repeatNote) && !lastStep) {
           if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
           continue
         }
@@ -2502,6 +2597,8 @@ export class SessionRunner {
       part.output = capped?.text ?? result.output
       part.title = result.title ?? part.title
       part.metadata = capped?.truncated ? { ...result.metadata, truncated: true, outputPath: capped.file } : result.metadata
+      // MiMo's tool results carry media to the model; one attached by path is read when the request is built.
+      if (result.attachments?.length) part.attachments = result.attachments
       // MiMo's auto-worktree notice: the first change a conversation makes to a repository's main worktree is noted.
       await this.noteWorktreeChange(owner, part, input.session.directory)
     } catch (err) {
@@ -2548,15 +2645,33 @@ export class SessionRunner {
    * MCode's shell tool reports no paths it changed.
    */
   private async noteWorktreeChange(sessionID: string, part: ToolPart, directory: string): Promise<void> {
-    if (this.worktreeHits.has(sessionID) || !["write", "edit", "notebook_edit"].includes(part.name)) return
-    const named = part.input?.file_path ?? part.input?.notebook_path
-    const target = typeof named === "string" ? named : undefined
-    if (!target) return
+    if (this.worktreeHits.has(sessionID)) return
     const session = await this.store.get(sessionID)
     if (!session || session.parentID || session.worktreeNotice) return
-    const top = await worktreeTop(path.dirname(path.resolve(directory, target)))
-    if (!top?.main) return
-    this.worktreeHits.set(sessionID, { root: top.root, linked: await hasLinkedWorktrees(top.root) })
+    const root = await this.changedMainWorktree(part, directory)
+    if (!root) return
+    this.worktreeHits.set(sessionID, { root, linked: await hasLinkedWorktrees(root) })
+  }
+
+  /**
+   * The repository main worktree this call changed, if it changed one.
+   *
+   * MiMo reads two kinds of call here. A write tool names the file it wrote, so
+   * the worktree is found from that path. A shell command names nothing, so its
+   * own scan records the main worktrees it would write to and the result
+   * carries them - and only a command that exited cleanly counts, since one
+   * that failed changed nothing worth a notice.
+   */
+  private async changedMainWorktree(part: ToolPart, directory: string): Promise<string | undefined> {
+    if (["write", "edit", "notebook_edit"].includes(part.name)) {
+      const named = part.input?.file_path ?? part.input?.notebook_path
+      if (typeof named !== "string") return undefined
+      const top = await worktreeTop(path.dirname(path.resolve(directory, named)))
+      return top?.main ? top.root : undefined
+    }
+    if (part.name !== "bash" || part.metadata?.exit !== 0) return undefined
+    const hits = part.metadata?.mainWorktreeHits
+    return Array.isArray(hits) ? hits.find((hit): hit is string => typeof hit === "string" && hit.length > 0) : undefined
   }
 
   /**

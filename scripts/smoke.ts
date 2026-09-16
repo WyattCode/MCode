@@ -13,6 +13,8 @@ import { DEFAULT_PERMISSIONS as PERMISSION_DEFAULTS } from "../src/shared/protoc
 import { discoverModels } from "../src/server/provider/discover"
 import { isSummary } from "../src/server/session/summary"
 import { OpenAICompatible, toMessages } from "../src/server/provider/openai"
+// round 6 (L2): a tool result's media on each wire.
+import { toProviderMessages } from "../src/server/provider/anthropic"
 import { modelVariants } from "../src/server/provider/variants"
 import { ProviderError } from "../src/server/provider/types"
 import { createHash } from "node:crypto"
@@ -70,6 +72,8 @@ import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/c
 import { mergeMcpSecrets } from "../src/server/mcp-save"
 // round 5: MCP names, folder, server messages, results, transports and sampling.
 import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../src/server/mcp"
+// round 6: MiMo's n-gram check on a reply that repeats its own wording.
+import { NGRAM_BLOCK, REPEAT_RECOVERIES, REPEAT_THRESHOLD, WINDOW_TOKENS, repeatNoteFor, repeatTokens, repeatsBlock, repeatsText } from "../src/server/session/reminders"
 import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
 import type { McpServerConfig } from "../src/shared/protocol"
 import { ToolOutputs } from "../src/server/tool/truncate"
@@ -78,7 +82,11 @@ import { dangerousCommand, readOnlyCommand } from "../src/server/command-risk"
 import { normalizeToolInput, resolveToolName } from "../src/server/tool/repair"
 import { repairableNames } from "../src/server/tool/registry"
 import { STALL, stallGuard } from "../src/server/provider/stall"
-import { arityPrefix, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
+import { arityPrefix, collectMutationTargets, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
+// round 6 (L8): where a blank project's folder is made.
+import { blankProjectDirectory } from "../src/server/scratch"
+// round 6 (L6): a thumbnail needs the attachment's bytes, which a saved draft no longer carries.
+import { preview } from "../src/renderer/src/lib/attach"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
@@ -157,7 +165,7 @@ import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
 import type { TaskItem } from "../src/shared/protocol"
 import { TASK_ARCHIVE_MS, applyTask, listedTasks, nextTaskID } from "../src/server/tool/task"
 import { buildRows, retryReason } from "../src/renderer/src/lib/step-rows"
-import { wordMatch } from "../src/renderer/src/lib/word-match"
+import { matchingNames, wordMatch } from "../src/renderer/src/lib/word-match"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
 import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -530,12 +538,115 @@ async function main() {
   check("a submenu search that matches nothing reports no matches but keeps sticky rows", none.matched === 0 && none.rows.length === 1, none)
   check("an empty submenu search lists everything", filterMenu(moveRows, "").rows.length === 3)
 
+  /*
+   * L2: a tool result's media reaching the model. Anthropic takes a picture
+   * inside the tool_result; the chat wire takes only text there, so it follows
+   * as a message of its own. A model that reads no pictures gets the words.
+   */
+  {
+    const shot = [{ path: "a.png", mime: "image/png", data: "iVBORw0KGgo=" }]
+    const withMedia = (attachments: typeof shot): Parameters<typeof toMessages>[1] => [
+      { id: "msg_u", sessionID: "ses_l2", role: "user", text: "look at this", attachments: [], time: { created: 1 } },
+      {
+        id: "msg_a",
+        sessionID: "ses_l2",
+        role: "assistant",
+        model: { provider: "p", model: "m" },
+        agent: "build",
+        parts: [
+          {
+            type: "tool",
+            id: "p1",
+            callID: "call_1",
+            name: "read",
+            status: "completed",
+            input: { file_path: "a.png" },
+            output: '"a.png" is an image file, attached to this result.',
+            attachments,
+            time: { created: 2 },
+          },
+        ],
+        time: { created: 2 },
+      },
+    ]
+    const blocks = toProviderMessages(withMedia(shot), { image: true }, { provider: "p", model: "m" })
+      .flatMap((message) => (Array.isArray(message.content) ? message.content : []))
+      .filter((block) => (block as { type?: string }).type === "tool_result")
+    const inside = (blocks[0] as { content?: unknown })?.content
+    check(
+      "on the Anthropic wire a tool result carries its picture inside the result",
+      Array.isArray(inside) && inside.some((block) => (block as { type?: string }).type === "image") && inside.some((block) => (block as { type?: string }).type === "text"),
+      inside,
+    )
+
+    const chat = toMessages("sys", withMedia(shot), { image: true })
+    const at = chat.findIndex((message) => message.role === "tool")
+    const following = chat[at + 1] as { role?: string; content?: unknown }
+    check(
+      "on the chat wire the result stays text and the picture follows as its own message",
+      typeof chat[at]?.content === "string" &&
+        following?.role === "user" &&
+        Array.isArray(following.content) &&
+        following.content.some((piece) => (piece as { type?: string }).type === "image_url"),
+      { tool: chat[at]?.content, following },
+    )
+
+    const blind = toMessages("sys", withMedia(shot), { image: false })
+    check(
+      "a model that reads no pictures is told so in the result and is sent none",
+      String(blind.find((message) => message.role === "tool")?.content).includes("cannot read image input") &&
+        !blind.some((message) => message.role === "user" && Array.isArray(message.content) && message.content.some((piece) => (piece as { type?: string }).type === "image_url")),
+      blind.find((message) => message.role === "tool")?.content,
+    )
+  }
+
   // MiMo's settings search: every typed word begins a word, camelCase split, CJK anywhere.
   check("a settings query matches the start of a word, not its middle", wordMatch("Keyboard shortcuts", "short") && !wordMatch("Keyboard shortcuts", "cuts"))
   check("every typed word has to begin some word", wordMatch("Keyboard shortcuts", "key sho") && !wordMatch("Keyboard shortcuts", "key zoom"))
   check("a camelCase word matches by its parts", wordMatch("hardwareAcceleration", "accel") && wordMatch("MCPServers", "servers") && wordMatch("MCPServers", "mcp"))
   check("a Chinese query matches anywhere", wordMatch("硬件加速 GPU", "加速") && !wordMatch("硬件加速", "减速"))
   check("a settings query ignores case and an empty one matches all", wordMatch("GPU rendering", "gpu") && wordMatch("anything", "  "))
+
+  /*
+   * L7: the @ menu narrows the folder it already listed, with that same
+   * matcher, instead of asking the backend again for every keystroke.
+   */
+  const folderRows = [{ name: "runner.ts" }, { name: "README.md" }, { name: "hardwareAcceleration.ts" }, { name: "笔记.md" }]
+  const namesOf = (query: string) => matchingNames(folderRows, query).map((entry) => entry.name).join(",")
+  check("an @ query keeps the entries whose name a typed word begins", namesOf("run") === "runner.ts", namesOf("run"))
+  check("it splits camelCase the way the settings search does", namesOf("accel") === "hardwareAcceleration.ts", namesOf("accel"))
+  check("a Chinese query matches anywhere in the name", namesOf("笔记") === "笔记.md", namesOf("笔记"))
+  check("an empty query keeps the whole folder, and one nothing answers keeps none", matchingNames(folderRows, "  ").length === folderRows.length && matchingNames(folderRows, "zzz").length === 0)
+
+  /*
+   * L1: MiMo's n-gram check on a reply that has fallen into repeating its own
+   * wording - a block of words repeated back to back inside the last window.
+   */
+  const looped = (times: number) => Array.from({ length: times }, () => "alpha beta gamma delta").join(" ")
+  check("a reply's words are folded to lower case and each CJK character is a word of its own", repeatTokens("Hi  There 你好").join("|") === "hi|there|你|好")
+  /* Written as the figures measured from MiMo, not as whatever the constants happen to say, so moving one is a failure rather than a new goalpost. */
+  check(
+    "the figures are the ones measured from MiMo: a block of 4 words, 20 repeats, a window of 500",
+    NGRAM_BLOCK === 4 && REPEAT_THRESHOLD === 20 && WINDOW_TOKENS === 500,
+    { NGRAM_BLOCK, REPEAT_THRESHOLD, WINDOW_TOKENS },
+  )
+  check("a block of 4 words repeated 20 times over is a repeat, and 19 times over is not", repeatsText(looped(20)) && !repeatsText(looped(19)))
+  check("the same word over and over is not, because the repeated block holds too few distinct words", !repeatsText("x ".repeat(REPEAT_THRESHOLD * NGRAM_BLOCK)))
+  check(
+    "how many distinct words the block must hold is what decides it",
+    repeatsBlock(repeatTokens(looped(REPEAT_THRESHOLD)), NGRAM_BLOCK, REPEAT_THRESHOLD, 4) &&
+      !repeatsBlock(repeatTokens(looped(REPEAT_THRESHOLD)), NGRAM_BLOCK, REPEAT_THRESHOLD, 5),
+  )
+  check(
+    `only the last ${WINDOW_TOKENS} words are looked at, so a repeat already left behind is not one`,
+    !repeatsText(`${looped(REPEAT_THRESHOLD)} ${Array.from({ length: WINDOW_TOKENS }, (_unused, at) => `w${at}`).join(" ")}`),
+  )
+  check(
+    "a repeating reply is told once, told again more firmly, and then left to finish",
+    repeatNoteFor(looped(REPEAT_THRESHOLD), 0) !== repeatNoteFor(looped(REPEAT_THRESHOLD), 1) &&
+      repeatNoteFor(looped(REPEAT_THRESHOLD), REPEAT_RECOVERIES) === undefined &&
+      repeatNoteFor("nothing repeats here at all", 0) === undefined,
+  )
 
   // The reconnecting row's reason: one line, or nothing at all.
   check("a retry's reason is drawn on one line", retryReason("  overloaded\n  try later ") === "overloaded try later")
@@ -664,6 +775,23 @@ async function main() {
         withLegacyHome(emptyDraftFile(), "").drafts.home === undefined,
     )
     check("an empty state is recognised, so a failed load is never written over with one", isEmptyDraftFile(draftFileOf(new Map(), {})) && !isEmptyDraftFile(file))
+
+    /* L6: MiMo writes down where a file is, not what is in it; only something pasted, with no file of its own, keeps its bytes. */
+    const onDisk = { path: "C:/photos/a.png", mime: "image/png", data: "QUJD", byPath: true }
+    const pastedIn = { path: "pasted-1.png", mime: "image/png", data: "QUJD" }
+    const written = draftFileOf(new Map([["main:s9", { text: "", attachments: [onDisk, pastedIn], mentioned: [], skills: [] }]]), {})
+    const keptFiles = written.drafts["main:s9"]?.attachments ?? []
+    check(
+      "a saved draft keeps only the path for a file on disk, and the bytes only for one with no file",
+      keptFiles[0]?.data === "" && keptFiles[0]?.byPath === true && keptFiles[0]?.path === "C:/photos/a.png" && keptFiles[1]?.data === "QUJD",
+      keptFiles,
+    )
+    check("the box goes on holding the bytes it had, so an open draft keeps its thumbnail", onDisk.data === "QUJD")
+    check(
+      "a thumbnail needs the bytes: one restored by its path alone is drawn as a file instead",
+      preview(onDisk) === "data:image/png;base64,QUJD" && preview({ ...onDisk, data: "" }) === undefined,
+      preview({ ...onDisk, data: "" }),
+    )
   }
 
   /*
@@ -971,6 +1099,14 @@ async function main() {
     await put("src/lib/b.ts", "beta\n")
     const listing = await run("read", { file_path: "src" }, "r-dir")
     check("reading a folder lists it, folders marked, with a count", listing.output.includes("<type>directory</type>") && listing.output.includes("a.ts\nlib/") && listing.output.includes("(2 entries)"), listing.output)
+    /* L2: MiMo attaches a picture from read; the words still describe it for a model that cannot read one. */
+    await put("shot.png", Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"))
+    const attachedShot = await findTool("read")!.execute({ file_path: "shot.png" }, inE24("r-png"))
+    check(
+      "read hands a picture to the model as an attachment on its result",
+      attachedShot.attachments?.length === 1 && attachedShot.attachments[0].byPath === true && attachedShot.output.includes("attached to this result"),
+      { attachments: attachedShot.attachments, output: attachedShot.output },
+    )
     await put("wide.txt", "z".repeat(2500))
     check("a line past 2,000 characters is cut with a note", (await run("read", { file_path: "wide.txt" }, "r-wide")).output.includes("(line cut at 2000 characters)"))
     await put("big.txt", Array.from({ length: 1000 }, (_, i) => `${i + 1} ${"y".repeat(96)}`).join("\n"))
@@ -982,7 +1118,7 @@ async function main() {
     check("a file with a NUL in it is binary", (await run("read", { file_path: "blob.txt" }, "r-bin")).output.startsWith("ERROR Cannot read binary file"))
     await put("pic.png", "not really")
     const picture = await run("read", { file_path: "pic.png" }, "r-png")
-    check("an image is named and left unread, not an error", !picture.output.startsWith("ERROR") && picture.output.includes("cannot attach it"), picture.output)
+    check("an image is described and handed over, not an error", !picture.output.startsWith("ERROR") && picture.output.includes("attached to this result"), picture.output)
     await put("pkg/AGENTS.md", "Pkg rule: tabs.\n")
     await put("pkg/deep/code.ts", "code\n")
     const nestedRead = await run("read", { file_path: "pkg/deep/code.ts" }, "r-agents1")
@@ -1315,6 +1451,45 @@ async function main() {
     check("a file argument outside the project names its folder", reaching.dirs.length === 1 && path.resolve(reaching.dirs[0]) === path.resolve(elsewhere), reaching)
     check("a delete only of files in the temp folder needs no question of its own", (await scanCommand(`rm "${path.join(scratch, "old.txt")}"`, e23, e23, false)).tempOnlyDeletes)
     check("but one inside the project does, and so does one whose target is not known", !(await scanCommand("rm notes.txt", e23, e23, false)).tempOnlyDeletes && !(await scanCommand("rm $TARGET", e23, e23, false)).tempOnlyDeletes)
+
+    /* L4: where a command would write, so a change made through bash raises the worktree notice too. */
+    const wrote = (line: string, ps = false) => collectMutationTargets(line, e23, ps).paths.map((entry) => path.resolve(entry))
+    check(
+      "a redirection names the file it writes, and one that only reads names nothing",
+      wrote("echo hi > out.txt").includes(path.join(e23, "out.txt")) && wrote("cat < in.txt").length === 0,
+      wrote("echo hi > out.txt"),
+    )
+    check(
+      "a write command names its paths, and a copy only its destination",
+      wrote("touch a.txt").includes(path.join(e23, "a.txt")) &&
+        wrote("cp src.txt dest.txt").includes(path.join(e23, "dest.txt")) &&
+        !wrote("cp src.txt dest.txt").includes(path.join(e23, "src.txt")),
+      wrote("cp src.txt dest.txt"),
+    )
+    check("sed in place counts as a write", wrote("sed -i s/a/b/ notes.txt").includes(path.join(e23, "notes.txt")))
+    check(
+      "a git subcommand that changes the repository counts, and looking does not",
+      collectMutationTargets("git commit -m x", e23, false).gitMutate && !collectMutationTargets("git status", e23, false).gitMutate,
+    )
+    check(
+      "git worktree counts only where it touches a tree that is already there",
+      collectMutationTargets("git worktree remove old", e23, false).gitMutate && !collectMutationTargets("git worktree add new", e23, false).gitMutate,
+    )
+    check("cd decides where the command after it writes", wrote("cd sub && touch b.txt").includes(path.join(e23, "sub", "b.txt")), wrote("cd sub && touch b.txt"))
+    check("git -C names the repository it is pointed at", wrote("git -C other commit -m x").includes(path.join(e23, "other")), wrote("git -C other commit -m x"))
+    check("a command that writes nothing names nothing at all", collectMutationTargets("git status && ls -la", e23, false).paths.length === 0)
+
+    /* L8: MiMo's blank-project dialog can put the folder somewhere else; with no choice it is the default project location. */
+    const chosenRoot = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-blank-"))
+    const madeThere = await blankProjectDirectory("Ideas", chosenRoot)
+    check(
+      "a blank project is made where the dialog said, under the name given",
+      path.dirname(madeThere) === path.resolve(chosenRoot) && path.basename(madeThere) === "Ideas",
+      madeThere,
+    )
+    const secondTry = await blankProjectDirectory("Ideas", chosenRoot)
+    check("a name already taken there is numbered rather than opening the folder that is already there", path.basename(secondTry) === "Ideas (2)", secondTry)
+    await fs.rm(chosenRoot, { recursive: true, force: true })
 
     const gate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS } }) } as never)
     const seen: PermissionRequest[] = []
@@ -8847,11 +9022,19 @@ async function mcpChecks(project: string) {
   // E48
   const shape = await run("my_server_shape")
   check(
-    "a result keeps text and resource text, names what it leaves out, lists a link and appends structured content",
-    shape ===
-      ["alpha", "[image/png image left out: this app cannot pass it to the model]", "resource body", "doc: https://example.com/doc"].join("\n\n") +
-        '\n\nStructured content:\n{"answer":42}',
+    "a result keeps text and resource text, lists a link and appends structured content",
+    shape === ["alpha", "resource body", "doc: https://example.com/doc"].join("\n\n") + '\n\nStructured content:\n{"answer":42}',
     shape,
+  )
+  /* L2: a server's picture is handed to the model rather than named in a line saying it was left out. */
+  const shapeResult = await named("my_server_shape")!.execute({}, mcpContext("m-shape-media"))
+  check(
+    "a server's picture rides on the result as an attachment, and no line says it was left out",
+    shapeResult.attachments?.length === 1 &&
+      shapeResult.attachments[0].mime === "image/png" &&
+      shapeResult.attachments[0].data.length > 0 &&
+      !shapeResult.output.includes("left out"),
+    shapeResult.attachments?.map((file) => ({ path: file.path, mime: file.mime, bytes: file.data.length })),
   )
   check("structured content the text already carries is not repeated", mcpToolOutput({ content: [{ type: "text", text: '{"a":1}' }], structuredContent: { a: 1 } }).output === '{"a":1}')
   check("structured content alone is the whole output", mcpToolOutput({ content: [], structuredContent: { a: 1 } }).output === '{"a":1}')

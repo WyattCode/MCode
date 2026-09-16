@@ -9,6 +9,8 @@ import { PowerHold } from "./power"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
+import { setImageShrinker } from "../server/provider/attachment-parts"
+import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
@@ -35,6 +37,7 @@ import { applyZoom } from "./zoom"
 import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { registerComposerInput } from "./composer-input"
+import { registerPasteFiles } from "./paste-files"
 import { saveCopy } from "./save-copy"
 import {
   DISPLAY_SERVER_FILE,
@@ -582,6 +585,9 @@ app.whenReady().then(async () => {
   // Packaged only: a development build would register the bare Electron binary.
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
 
+  // MiMo makes an oversized picture smaller rather than dropping it; the decoder lives here, so the backend is handed one.
+  setImageShrinker(shrinkImage)
+
   backend = await startBackend(app.getPath("userData"))
 
   /*
@@ -991,6 +997,8 @@ app.whenReady().then(async () => {
   // MiMo's Office tab: document bytes, watching, versions, legacy conversion.
   registerOffice(ipcMain, app.getPath("userData"))
   registerComposerInput(ipcMain, app.getPath("userData"))
+  // MiMo's pasted pictures and large pastes: written to disk, then attached by path.
+  registerPasteFiles(ipcMain, app.getPath("userData"))
 
   /* Which open-with apps are installed, for the settings row and the open-location menu. */
   ipcMain.handle("mcode:installed-apps", () => installedOpenApps(process.platform))
