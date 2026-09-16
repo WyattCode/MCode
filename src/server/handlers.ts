@@ -324,6 +324,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.forget">
 
     case "artifact.list": {
+      /*
+       * Answered from the store when there is one: it is de-duplicated by
+       * identity key, carries whether each file is something to hand over, and
+       * still holds the files whose conversations have been deleted - none of
+       * which walking the transcripts can do. The walk below stays as the
+       * fallback for a profile whose store could not be opened.
+       */
+      const kept = runtime.artifacts?.list()
+      if (kept?.length) return { artifacts: kept } satisfies Handled<"artifact.list">
       const sessions = await runtime.sessions.list()
       const artifacts: SessionArtifacts[] = []
       for (const session of sessions) {
@@ -462,6 +471,13 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        */
       // Anything remembered for this conversation alone goes with it; a project's rules stay.
       await runtime.permissions.forget({ sessionID: request.sessionID })
+      /*
+       * The files it produced are not deleted with it. They are still on disk,
+       * and losing the only record of where they came from was the thing the
+       * artifact store was built to stop; the rows keep the title this
+       * conversation had.
+       */
+      runtime.artifacts?.orphan(request.sessionID)
       if (worked) {
         const place = (directory: string) => {
           const resolved = path.resolve(directory)

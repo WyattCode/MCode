@@ -242,6 +242,13 @@ export interface ArtifactFile {
   exists: boolean
   size?: number
   modified?: number
+  /**
+   * Something to hand over, or a step on the way to it - MiMo's artifact `role`.
+   *
+   * Absent when the answer was worked out from the transcripts rather than read
+   * from the artifact store.
+   */
+  role?: "deliverable" | "intermediate"
 }
 
 /**

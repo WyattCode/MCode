@@ -20,6 +20,7 @@ import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
 import { Permissions, RULES_KEY } from "../src/server/permission"
 import { CONVO_FILE_FORMAT, conversationDocument, conversationFileName, parseConversationDocument } from "../src/shared/convo-file"
+import { ARTIFACT_SCHEMA_VERSION, ArtifactStore } from "../src/server/artifact/store"
 import { Snapshots, snapshotBytes } from "../src/server/session/snapshot"
 import { CHECKPOINT_MIGRATION, migrateCheckpoints } from "../src/server/session/checkpoint-migrate"
 
@@ -338,6 +339,107 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     const name = conversationFileName('a/title\\with:illegal*characters?', "conversation")
     check("the suggested file name carries nothing a file system refuses", !/[\\/:*?"<>|]/.test(name) && name.endsWith(".mcode.json"), name)
     check("and an untitled conversation still gets a name", conversationFileName("", "conversation") === "conversation.mcode.json", conversationFileName("", "conversation"))
+  }
+
+  // ------------------------------------------------------------------- S5
+  section("Round 7 (S5): produced files are kept, de-duplicated, and outlive their conversation")
+  {
+    const storage = new Storage(path.join(root, "art", "storage"))
+    const bus = new Bus()
+    const store = new SessionStore(storage, bus)
+    const directory = path.join(root, "art-project")
+    await fs.mkdir(directory, { recursive: true })
+    await fs.writeFile(path.join(directory, "report.md"), "# the report", "utf8")
+    await fs.writeFile(path.join(directory, "helper.ts"), "export const x = 1", "utf8")
+
+    /** An assistant turn that created one file, as the artifact rules read it. */
+    const wrote = async (sessionID: string, id: string, file: string, at: number) => {
+      await store.saveMessage(
+        {
+          id,
+          sessionID,
+          role: "assistant",
+          model: MODEL,
+          agent: "build",
+          parts: [
+            {
+              type: "tool",
+              id: `prt_${id}`,
+              callID: `call_${id}`,
+              name: "write",
+              status: "completed",
+              input: { file_path: file },
+              output: "",
+              title: file,
+              metadata: { created: true },
+              time: { created: at, completed: at },
+            },
+          ],
+          finish: "end_turn",
+          time: { created: at, completed: at },
+        } as never,
+        true,
+      )
+    }
+
+    const one = await store.create({ directory, model: MODEL, title: "First conversation" })
+    await wrote(one.id, "msg_w1", "report.md", 10)
+    await wrote(one.id, "msg_w2", "helper.ts", 11)
+    const two = await store.create({ directory, model: MODEL, title: "Second conversation" })
+    // The same file again, from another conversation: one row, not two.
+    await wrote(two.id, "msg_w3", "report.md", 12)
+
+    const artifacts = ArtifactStore.open(path.join(root, "art", "artifacts.db"))
+    check("the store opens", Boolean(artifacts) && artifacts?.writable === true)
+    await artifacts?.reconcile(await store.list(), (id) => store.messages(id))
+
+    check("the same file produced twice is one row, as its identity key says", artifacts?.count() === 2, artifacts?.count())
+    const listed = artifacts?.list() ?? []
+    const files = listed.flatMap((group) => group.files)
+    const report = files.find((file) => file.path === "report.md")
+    const helper = files.find((file) => file.path === "helper.ts")
+    check("a document is something to hand over", report?.role === "deliverable", report)
+    check("while a source file is a step on the way", helper?.role === "intermediate", helper)
+    check("and both are recorded as still being there, with their size", report?.exists === true && typeof report?.size === "number", report)
+
+    /* Availability is re-checked rather than believed: the record of writing a file says nothing about now. */
+    await fs.rm(path.join(directory, "helper.ts"), { force: true })
+    await artifacts?.recheck()
+    const gone = (artifacts?.list() ?? []).flatMap((group) => group.files).find((file) => file.path === "helper.ts")
+    check("a file deleted since is found missing on the next check", gone?.exists === false, gone)
+
+    /*
+     * The point of storing them at all: deleting the conversation that made a
+     * file must not take the file's record with it.
+     */
+    artifacts?.orphan(one.id)
+    await store.delete(one.id)
+    const after = artifacts?.list() ?? []
+    const survived = after.flatMap((group) => group.files).find((file) => file.path === "helper.ts")
+    check("a deleted conversation's files are still held", artifacts?.count() === 2 && Boolean(survived), artifacts?.count())
+    check("under the title that conversation had", after.some((group) => group.title === "First conversation" && group.sessionID === ""), after.map((group) => [group.title, group.sessionID]))
+
+    /* Searching what is kept, which walking the transcripts never offered. */
+    check("the store can be searched by file name", (artifacts?.list("report") ?? []).flatMap((group) => group.files).every((file) => file.path.includes("report")))
+    check("and by the conversation's title", (artifacts?.list("Second") ?? []).length === 1, artifacts?.list("Second").length)
+    artifacts?.close()
+
+    /*
+     * A store written by a newer build is read but never written over. Unlike
+     * the search index, this one cannot simply be rebuilt: it holds the only
+     * record of files whose conversations are gone.
+     */
+    const newerFile = path.join(root, "art", "artifacts-newer.db")
+    const seed = ArtifactStore.open(newerFile)
+    seed?.close()
+    const raw = new (await import("node:sqlite")).DatabaseSync(newerFile)
+    raw.prepare("INSERT OR REPLACE INTO schema_migrations (version, applied_at) VALUES (?, ?)").run(ARTIFACT_SCHEMA_VERSION + 1, Date.now())
+    raw.close()
+    const newer = ArtifactStore.open(newerFile)
+    check("a store from a newer build opens read-only rather than being rebuilt", newer?.writable === false, newer?.writable)
+    await newer?.reconcile(await store.list(), (id) => store.messages(id))
+    check("and nothing is written into it", newer?.count() === 0, newer?.count())
+    newer?.close()
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
