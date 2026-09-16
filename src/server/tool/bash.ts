@@ -189,6 +189,31 @@ export function shell(chosen?: string): { command: string; args: (script: string
  * Failures are swallowed on purpose: by the time this runs the process may have
  * exited on its own, and there is nothing useful to say about that.
  */
+/**
+ * The commands running right now, so quitting can end them.
+ *
+ * A command's children were registered nowhere: the only paths that ended one
+ * were the turn's abort listener and its own timeout, and quitting aborts no
+ * turn. So a build or a dev server the model started carried on after the app
+ * was gone, with no window left to stop it, and the next start found the port
+ * taken with no explanation. The pty terminals were already swept at quit;
+ * this is the same sweep for the other kind of child.
+ */
+const live = new Set<ChildProcess>()
+
+/** Ends every command still running, with the process tree under it. */
+export function stopBashCommands(): void {
+  for (const child of [...live]) {
+    live.delete(child)
+    stop(child)
+  }
+}
+
+/** How many are running, for the checks. */
+export function liveBashCommands(): number {
+  return live.size
+}
+
 function stop(child: ChildProcess): void {
   if (!child.pid) return
   if (process.platform === "win32") {
@@ -313,6 +338,10 @@ export const BashTool: ToolDefinition = {
          */
         detached: process.platform !== "win32",
       })
+
+      // Held only while it runs: quitting ends what is still in here.
+      live.add(child)
+      child.once("exit", () => live.delete(child))
 
       /*
        * MiMo's accounting, in bytes. The result shows `budget` bytes: the first

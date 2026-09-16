@@ -20,6 +20,10 @@ import { isContextOverflow, isOverflowError } from "../src/server/session/overfl
 import { retryDecision, retryKind } from "../src/server/session/retry"
 import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
 import { interruptedEnd } from "../src/renderer/src/components/parts/turn-end"
+import { BashTool, liveBashCommands, stopBashCommands } from "../src/server/tool/bash"
+import type { ToolContext } from "../src/server/tool/types"
+import { CronScheduler, type SchedulerHost } from "../src/server/cron/scheduler"
+import { writeCronTasks, type CronTask } from "../src/server/cron/tasks"
 import type { Check } from "./smoke-round5"
 
 const exists = (target: string) =>
@@ -363,6 +367,101 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     const stream = (await sourceOf("src/renderer/src/components/MessageStream.vue")) ?? ""
     check("the conversation draws the line for it", stream.includes("interrupted(turn, at)") && stream.includes("finishedNote(turn, at)"))
     check("its wording exists in all eighteen tables", definedIn("stream.interrupted") === 18, definedIn("stream.interrupted"))
+  }
+
+  // ------------------------------------------------------------------- F6
+  section("Round 6 (F6): a recurring task whose time passed while the app was closed")
+  {
+    const day = 24 * 60 * 60 * 1000
+    const nine = Date.UTC(2026, 0, 10, 9, 0)
+    const owner = { id: "ses_owner", title: "owner", directory: "", agent: "build", created: 0, updated: 0 } as unknown as SessionInfo
+
+    /** One project, one daily task, and a clock the check moves by hand. */
+    const daily = async (name: string, lastFiredAt: number, now: number) => {
+      const project = path.join(root, name)
+      await fs.mkdir(project, { recursive: true })
+      const task: CronTask = { id: "daily", cron: "0 9 * * *", prompt: "Morning digest", createdAt: lastFiredAt, recurring: true, lastFiredAt, createdBySessionId: owner.id }
+      await writeCronTasks(project, [task])
+      const fired: string[] = []
+      let clock = now
+      const host: SchedulerHost = {
+        now: () => clock,
+        fire: async (sessionID) => {
+          fired.push(sessionID)
+        },
+        busy: () => false,
+        session: async (id) => (id === owner.id ? { ...owner, directory: project } : undefined),
+        create: async () => ({ ...owner, directory: project }),
+        directories: async () => [project],
+      }
+      const scheduler = new CronScheduler(host)
+      await scheduler.start({ interval: false })
+      return { fired, scheduler, advance: (by: number) => (clock += by) }
+    }
+
+    /* Yesterday's run happened; today's 09:00 went by with the app closed. */
+    const missed = await daily("cron-missed", nine - day, nine + 5 * 60 * 60 * 1000)
+    await missed.scheduler.tick()
+    check("the occurrence missed while the app was closed is run", missed.fired.length === 1, missed.fired)
+    await missed.scheduler.tick()
+    check("and only the once - the schedule moves on from now", missed.fired.length === 1, missed.fired)
+    /* Tomorrow's 09:00 still comes. */
+    missed.advance(day)
+    await missed.scheduler.tick()
+    check("the next day's run still happens", missed.fired.length === 2, missed.fired)
+    await missed.scheduler.stop()
+
+    /* A fortnight away is still one run, not fourteen. */
+    const long = await daily("cron-fortnight", nine - 14 * day, nine + 5 * 60 * 60 * 1000)
+    await long.scheduler.tick()
+    await long.scheduler.tick()
+    await long.scheduler.tick()
+    check("a fortnight of missed occurrences fires once, not once each", long.fired.length === 1, long.fired)
+    await long.scheduler.stop()
+
+    /* And a task whose time has simply not come does not run early. */
+    const early = await daily("cron-early", nine, nine + 60 * 60 * 1000)
+    await early.scheduler.tick()
+    check("a task whose next time is still ahead does not run early", early.fired.length === 0, early.fired)
+    await early.scheduler.stop()
+  }
+
+  // ------------------------------------------------------------------- F7
+  section("Round 6 (F7): a command still running at quit is ended with it")
+  {
+    /*
+     * A real child, because the whole point is the process tree: the turn's
+     * abort listener and the command's own timeout were the only two things
+     * that ever ended one, and quitting reaches neither.
+     */
+    const context = {
+      sessionID: "ses_bash",
+      messageID: "msg_1",
+      callID: "call_1",
+      directory: root,
+      permissions: { ask: async () => undefined },
+      questions: { ask: async () => undefined },
+      signal: new AbortController().signal,
+      progress: () => {},
+      snapshot: async () => undefined,
+    } as unknown as ToolContext
+
+    const before = liveBashCommands()
+    const run = BashTool.execute({ command: 'node -e "setTimeout(() => {}, 60000)"', timeout: 60_000 }, context)
+    let settled = false
+    const done = run.then(
+      () => (settled = true),
+      () => (settled = true),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    check("a command is held while it runs", liveBashCommands() === before + 1, liveBashCommands())
+    check("and a minute-long one has not ended by itself", !settled)
+
+    const at = Date.now()
+    stopBashCommands()
+    await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 8000))])
+    check("quitting ends it rather than leaving it behind", settled, { settled, ms: Date.now() - at })
+    check("and nothing is left held afterwards", liveBashCommands() === before, liveBashCommands())
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
