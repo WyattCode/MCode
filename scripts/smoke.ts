@@ -164,7 +164,7 @@ import { artifactGroups, infoTasks } from "../src/renderer/src/lib/session-info"
 import type { TaskItem } from "../src/shared/protocol"
 import { TASK_ARCHIVE_MS, applyTask, listedTasks, nextTaskID } from "../src/server/tool/task"
 import { buildRows, retryReason } from "../src/renderer/src/lib/step-rows"
-import { wordMatch } from "../src/renderer/src/lib/word-match"
+import { matchingNames, wordMatch } from "../src/renderer/src/lib/word-match"
 import { ARTIFACT_PAGE, artifactAbsolute, artifactAge, artifactCategory, badgeOf } from "../src/renderer/src/lib/artifact-kind"
 import { conversationMarkdown, exportFileName } from "../src/renderer/src/lib/convo-markdown"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
@@ -589,6 +589,17 @@ async function main() {
   check("a camelCase word matches by its parts", wordMatch("hardwareAcceleration", "accel") && wordMatch("MCPServers", "servers") && wordMatch("MCPServers", "mcp"))
   check("a Chinese query matches anywhere", wordMatch("硬件加速 GPU", "加速") && !wordMatch("硬件加速", "减速"))
   check("a settings query ignores case and an empty one matches all", wordMatch("GPU rendering", "gpu") && wordMatch("anything", "  "))
+
+  /*
+   * L7: the @ menu narrows the folder it already listed, with that same
+   * matcher, instead of asking the backend again for every keystroke.
+   */
+  const folderRows = [{ name: "runner.ts" }, { name: "README.md" }, { name: "hardwareAcceleration.ts" }, { name: "笔记.md" }]
+  const namesOf = (query: string) => matchingNames(folderRows, query).map((entry) => entry.name).join(",")
+  check("an @ query keeps the entries whose name a typed word begins", namesOf("run") === "runner.ts", namesOf("run"))
+  check("it splits camelCase the way the settings search does", namesOf("accel") === "hardwareAcceleration.ts", namesOf("accel"))
+  check("a Chinese query matches anywhere in the name", namesOf("笔记") === "笔记.md", namesOf("笔记"))
+  check("an empty query keeps the whole folder, and one nothing answers keeps none", matchingNames(folderRows, "  ").length === folderRows.length && matchingNames(folderRows, "zzz").length === 0)
 
   /*
    * L1: MiMo's n-gram check on a reply that has fallen into repeating its own

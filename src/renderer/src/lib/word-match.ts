@@ -30,6 +30,17 @@ export function searchWords(text: string): string[] {
   return out
 }
 
+/**
+ * The entries an @ menu query keeps, by name.
+ *
+ * MiMo's @ menu and its settings search share one matcher, and the menu
+ * narrows what the folder already listed rather than asking the backend again
+ * for every keystroke. An empty query keeps everything, as the matcher does.
+ */
+export function matchingNames<T extends { name: string }>(entries: readonly T[], query: string): T[] {
+  return entries.filter((entry) => wordMatch(entry.name, query))
+}
+
 /** Whether the text answers the query. An empty query answers everything. */
 export function wordMatch(text: string, query: string): boolean {
   const needle = query.trim().toLowerCase()
