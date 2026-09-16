@@ -1236,7 +1236,8 @@ app.whenReady().then(async () => {
 
   session.defaultSession.setPermissionCheckHandler((_contents, permission) => permission === "media")
 
-  registerMediaEmbeds()
+  // The video card switch in settings; before the backend answers, the default (on).
+  registerMediaEmbeds(() => backend?.runtime.config.get().videoCardDetails !== false)
 
   ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
     refreshTray(Boolean(enabled))

@@ -1301,6 +1301,12 @@ export interface AppConfig {
   smartMain?: ModelRef
   /** Whether the in-app browser is offered at all; absent is on. */
   browserEnabled?: boolean
+  /**
+   * Whether a video card under a reply asks its platform for the title and
+   * cover (and the cover proxy fetches it); absent is on. Off, the cards still
+   * show, from the link alone, and nothing is fetched to draw them.
+   */
+  videoCardDetails?: boolean
   theme: "dark" | "light" | "system"
   /* Which named palette the colours are generated from. */
   themeID: string

@@ -1985,6 +1985,24 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <span class="knob" />
               </button>
             </div>
+            <!-- MCode's own switch (MiMo has none): whether a video card under a reply asks its platform for a title and cover. -->
+            <div class="line" data-video-card-details-row>
+              <div class="line-text">
+                <div class="line-title">{{ t("set.videoCardDetails") }}</div>
+                <div class="line-sub">{{ t("set.videoCardDetailsSub") }}</div>
+              </div>
+              <button
+                class="switch"
+                :class="{ on: app.config?.videoCardDetails !== false }"
+                role="switch"
+                :aria-checked="app.config?.videoCardDetails !== false"
+                :aria-label="t('set.videoCardDetails')"
+                data-video-card-details
+                @click="app.patchConfig({ videoCardDetails: app.config?.videoCardDetails === false })"
+              >
+                <span class="knob" />
+              </button>
+            </div>
             <div class="line">
               <div class="line-text">
                 <div class="line-title">{{ t("set.browsingData") }}</div>

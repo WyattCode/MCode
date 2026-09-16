@@ -1,4 +1,4 @@
-import { readMediaMeta, type MediaMeta } from "@shared/media-platform"
+import { linkOnlyCard, readMediaMeta, type MediaMeta } from "@shared/media-platform"
 
 /*
  * The window's half of MiMo's video cards: the cards the main process looked
@@ -9,8 +9,12 @@ const PER_CALL = 20
 const known = new Map<string, MediaMeta>()
 const asking = new Map<string, Promise<MediaMeta | undefined>>()
 
-/** The cards for these links, in order; a link the platform says nothing usable about has none. */
-export async function enrichMedia(urls: string[]): Promise<MediaMeta[]> {
+/**
+ * The cards for these links, in order; a link the platform says nothing usable about has none.
+ * With `details` off (the settings switch) nothing is asked: each card is its link alone.
+ */
+export async function enrichMedia(urls: string[], details = true): Promise<MediaMeta[]> {
+  if (!details) return urls.map(linkOnlyCard).filter((meta): meta is MediaMeta => Boolean(meta))
   const bridge = window.mcode
   const fresh = urls.filter((url) => !known.has(url) && !asking.has(url))
   if (fresh.length && bridge?.mediaEnrich) {

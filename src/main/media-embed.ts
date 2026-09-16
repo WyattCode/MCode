@@ -6,6 +6,7 @@ import {
   coverAddress,
   coverProxyAddress,
   evictions,
+  linkOnlyCard,
   oembedMeta,
   pageMeta,
   parseBilibili,
@@ -140,9 +141,11 @@ function cached(url: string): Promise<MediaMeta | null> {
   return job
 }
 
-export function registerMediaEmbeds(): void {
+/** `detailsOn` reads the video card switch in settings; off, nothing here reaches the web. */
+export function registerMediaEmbeds(detailsOn: () => boolean): void {
   ipcMain.handle("mcode:media-enrich", async (_event, urls: unknown) => {
     const list = Array.isArray(urls) ? urls.filter((url): url is string => typeof url === "string" && url.length <= 2048).slice(0, PER_CALL) : []
+    if (!detailsOn()) return list.map(linkOnlyCard)
     return Promise.all(list.map(cached))
   })
 
@@ -151,5 +154,7 @@ export function registerMediaEmbeds(): void {
    * partition has no such scheme, so a page there cannot use the app to fetch
    * with a platform's referer. The global fetch is looked up per request.
    */
-  session.defaultSession.protocol.handle(COVER_SCHEME, (request) => serveCover(request.url, request.method, (url, init) => fetch(url, init)))
+  session.defaultSession.protocol.handle(COVER_SCHEME, (request) =>
+    detailsOn() ? serveCover(request.url, request.method, (url, init) => fetch(url, init)) : new Response(null, { status: 404 }),
+  )
 }

@@ -169,6 +169,15 @@ export function parsePlatformLink(address: string): PlatformLink | undefined {
   return undefined
 }
 
+/**
+ * A card made from the link alone - its platform and nothing fetched - for
+ * when the reader has switched the lookups off in settings.
+ */
+export function linkOnlyCard(address: string): MediaMeta | null {
+  const link = parsePlatformLink(address)
+  return link ? { kind: "video", platform: link.platform, url: link.url, title: "", coverUrl: "", aspect: "16:9" } : null
+}
+
 const ADDRESS = /https?:\/\/[^\s<>()"']+/g
 
 /** A reply's platform links in order, once each, leaving out anything in a code fence or inline code. */
