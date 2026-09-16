@@ -17,6 +17,7 @@ import {
   wwwAuthenticateParams,
 } from "./mcp-oauth"
 import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
+import { redactString } from "@shared/mcp-redact"
 import { ToolError, type ToolDefinition } from "./tool/types"
 
 /**
@@ -1039,7 +1040,8 @@ export class McpServers {
         return {
           name,
           status: connection?.status ?? "disabled",
-          error: connection?.error,
+          // A failure may quote the address or the command it was started with; shown masked.
+          error: connection?.error === undefined ? undefined : redactString(connection.error),
           tools: connection?.tools.length ?? 0,
         }
       })
@@ -1053,7 +1055,7 @@ export class McpServers {
   toolsOf(name: string): { tools?: { name: string; description?: string }[]; error?: string } {
     const connection = this.connections.get(name)
     if (!connection || connection.status === "disabled") return { error: "disabled" }
-    if (connection.status !== "connected") return { error: connection.error ?? connection.status }
+    if (connection.status !== "connected") return { error: connection.error ? redactString(connection.error) : connection.status }
     return { tools: connection.tools.map((tool) => ({ name: tool.name, description: tool.description })) }
   }
 

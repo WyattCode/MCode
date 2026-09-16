@@ -135,7 +135,7 @@ export const WriteTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
-    const target = await resolvePath(context, String(input.file_path))
+    const target = await resolvePath(context, String(input.file_path), "write")
     const display = relative(context.directory, target)
     // plan: planning writes its plan file and nothing else.
     guardPlanWrite(context, target, display)
@@ -203,7 +203,7 @@ export const EditTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
-    const target = await resolvePath(context, String(input.file_path))
+    const target = await resolvePath(context, String(input.file_path), "write")
     const display = relative(context.directory, target)
     // plan: planning writes its plan file and nothing else.
     guardPlanWrite(context, target, display)
@@ -335,7 +335,7 @@ export const MultiEditTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
-    const target = await resolvePath(context, String(input.file_path))
+    const target = await resolvePath(context, String(input.file_path), "write")
     const display = relative(context.directory, target)
     // plan: planning writes its plan file and nothing else.
     guardPlanWrite(context, target, display)

@@ -1,5 +1,6 @@
 import type { ClientFrame, Request, RequestOf, RequestType, ResponseMap, ServerEvent, ServerFrame } from "@shared/protocol"
 import { t } from "./i18n"
+import { socketProtocols } from "@shared/socket-auth"
 
 type EventHandler = (event: ServerEvent) => void
 
@@ -43,13 +44,20 @@ export class Client {
    */
   private address: string
 
-  constructor(private readonly port: number) {
-    this.address = `ws://127.0.0.1:${port}`
+  /** This app's own backend, the only address the launch secret is ever offered to. */
+  private readonly own: string
+
+  constructor(
+    port: number,
+    private readonly secret: string,
+  ) {
+    this.own = `ws://127.0.0.1:${port}`
+    this.address = this.own
   }
 
   /** Points at another server, and reconnects there. */
   useServer(url?: string): void {
-    this.address = url?.trim() || `ws://127.0.0.1:${this.port}`
+    this.address = url?.trim() || this.own
     this.retry = 0
     this.socket?.close()
   }
@@ -60,7 +68,12 @@ export class Client {
 
   connect(): void {
     if (this.closed) return
-    const socket = new WebSocket(this.address)
+    /*
+     * The launch secret proves this window belongs to the app. It is offered to
+     * the app's own backend only: a server the user named elsewhere is a
+     * different program and has no business learning it.
+     */
+    const socket = this.address === this.own ? new WebSocket(this.address, socketProtocols(this.secret)) : new WebSocket(this.address)
     this.socket = socket
 
     socket.addEventListener("open", () => {

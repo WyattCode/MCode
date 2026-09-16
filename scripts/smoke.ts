@@ -186,7 +186,6 @@ import { filterMenu } from "../src/renderer/src/lib/menu"
 import { arbitratePanel, boundChord, clampSideWidth, sideFits, sideWidthMax, toolHints } from "../src/renderer/src/lib/right-tools"
 import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
 import { capDiff, normalizeLayout, parseDiffFiles, reviewRows, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
-import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
 import { interruptedTurn } from "../src/shared/resume"
 import { detectCodeLanguage, insertFence } from "../src/renderer/src/lib/paste-code"
 import {
@@ -283,6 +282,9 @@ import { roundFiveChecks } from "./smoke-round5"
 import { roundSixChecks } from "./smoke-round6"
 // Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
 import { roundSevenChecks } from "./smoke-round7"
+// Round 8: the attack surface - who may reach the backend, what the tools may touch.
+import { roundEightSecurityChecks } from "./smoke-round8-security"
+import { socketProtocols } from "../src/shared/socket-auth"
 // Round 8: the keyboard and assistive-technology barriers (A1-A15).
 import { roundEightAccessChecks } from "./smoke-round8-access"
 // Round 8: the wording rules the eighteen language tables keep.
@@ -340,7 +342,8 @@ async function main() {
   const backend = await startBackend(dataDirectory)
   check("backend picked a port", backend.port > 0, backend.port)
 
-  const socket = new WebSocket(`ws://127.0.0.1:${backend.port}`)
+  // round 8 (X1): the socket admits only a client holding this launch's secret.
+  const socket = new WebSocket(`ws://127.0.0.1:${backend.port}`, socketProtocols(backend.secret))
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve)
     socket.once("error", reject)
@@ -5097,57 +5100,6 @@ async function main() {
     flaky.close()
   }
 
-  section("Home suggestions")
-  {
-    const rows = parseSuggestions(
-      'Here you go:\n```json\n[{"title":"Fix the login bug","query":"Find why login fails","icon":"bug"},{"title":"Add tests","query":"Cover run()","icon":"rocket"},{"title":"Fix the login bug","query":"again"},{"title":"No request"},{"title":"Write docs","query":"Document the API","icon":"doc"},{"title":"Fourth","query":"one too many"}]\n```',
-    )
-    check("three rows are read out of a fenced answer", rows.map((row) => row.title).join("|") === "Fix the login bug|Add tests|Write docs", rows)
-    check("an icon outside the set becomes idea", rows[1]?.icon === "idea", rows[1])
-    check("prose is no rows", parseSuggestions("Sorry, I can't help with that.").length === 0)
-    check("a broken array is no rows", parseSuggestions('[{"title": "x",').length === 0)
-
-    forgetSuggestions()
-    const asked: string[] = []
-    const answer = JSON.stringify([
-      { title: "整理 hello.ts", query: "把 hello.ts 里的常量整理成一个对象导出", icon: "code" },
-      { title: "补测试", query: "为 src/app.ts 的 run 写单元测试", icon: "test" },
-      { title: "写说明", query: "根据 AGENTS.md 写一份 README", icon: "doc" },
-    ])
-    const stub = createServer((request, response) => {
-      if ((request.url ?? "").includes("/models")) {
-        response.writeHead(200, { "content-type": "application/json" })
-        response.end(JSON.stringify({ data: [{ id: "qwen/qwen3.8-27b" }] }))
-        return
-      }
-      let raw = ""
-      request.on("data", (chunk) => (raw += chunk))
-      request.on("end", () => {
-        asked.push(raw)
-        response.writeHead(200, { "content-type": "text/event-stream" })
-        response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: answer }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`)
-      })
-    })
-    await new Promise<void>((resolve) => stub.listen(8812, "127.0.0.1", resolve))
-    const modelBefore = (await call({ type: "config.get" })).config.model
-    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8812/v1" } } })
-    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
-    await call({ type: "config.set", patch: { model: { provider: "lmstudio", model: "qwen/qwen3.8-27b" } } })
-
-    const first = await call({ type: "home.suggest", directory: project, language: "zh-CN" })
-    check("the model's three tasks come back", first.generated === true && first.suggestions.length === 3 && first.suggestions[1]?.icon === "test", first)
-    check("the project listing and the language reach the model", asked.length === 1 && asked[0].includes("hello.ts") && asked[0].includes("zh-CN"), asked.length)
-    const second = await call({ type: "home.suggest", directory: project, language: "zh-CN" })
-    check("a second ask for the project is answered from memory", asked.length === 1 && second.suggestions.length === 3, asked.length)
-
-    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
-    const unusable = await call({ type: "home.suggest", directory: path.join(root, "another-project"), language: "en" })
-    check("with no usable model the area stays empty", unusable.generated === false && unusable.suggestions.length === 0, unusable)
-
-    await call({ type: "config.set", patch: { model: modelBefore, providerEndpoints: {} } })
-    stub.close()
-  }
-
   section("Files tab requests (MiMo's tree, name search and preview reads)")
   {
     const failureOf = (error: unknown) => String((error as { message?: string } | undefined)?.message ?? error)
@@ -5187,21 +5139,23 @@ async function main() {
     })
 
     await fs.writeFile(path.join(tree, "big.txt"), "x".repeat(512 * 1024 + 1))
-    const big = await call({ type: "file.read", path: path.join(tree, "big.txt"), preview: true })
+    const big = await call({ type: "file.read", root: tree, rel: "big.txt", preview: true })
     check("a preview refuses text past 512 KiB and carries none of it", big.tooBig === true && big.content === "", { tooBig: big.tooBig, length: big.content.length })
     await fs.writeFile(path.join(tree, "nul.txt"), Buffer.concat([Buffer.from("a".repeat(5000)), Buffer.from([0])]))
-    check("a NUL byte anywhere makes a preview binary", (await call({ type: "file.read", path: path.join(tree, "nul.txt"), preview: true })).kind === "binary")
+    check("a NUL byte anywhere makes a preview binary", (await call({ type: "file.read", root: tree, rel: "nul.txt", preview: true })).kind === "binary")
     await fs.writeFile(path.join(tree, "clip.mp4"), Buffer.from([0, 0, 0, 24]))
-    const clip = await call({ type: "file.read", path: path.join(tree, "clip.mp4"), preview: true })
+    const clip = await call({ type: "file.read", root: tree, rel: "clip.mp4", preview: true })
     check("a video preview is named as one and carries no bytes", clip.video === true && !clip.data, clip)
     await fs.writeFile(path.join(tree, "pic.png"), Buffer.alloc(16))
-    const pic = await call({ type: "file.read", path: path.join(tree, "pic.png"), preview: true })
+    const pic = await call({ type: "file.read", root: tree, rel: "pic.png", preview: true })
     check("a preview picture carries its type but no bytes", pic.kind === "image" && pic.mime === "image/png" && !pic.data, pic)
-    check("a plain read still carries a picture's bytes", Boolean((await call({ type: "file.read", path: path.join(tree, "pic.png") })).data))
+    check("a plain read still carries a picture's bytes", Boolean((await call({ type: "file.read", root: tree, rel: "pic.png" })).data))
 
-    const tooBigSave = await call({ type: "file.write", path: path.join(tree, ".env"), content: "x".repeat(512 * 1024 + 1) }).then(() => "saved", failureOf)
+    // round 8 (X4): a save has to land in a folder the app works in.
+    await call({ type: "project.add", directory: tree })
+    const tooBigSave = await call({ type: "file.write", root: tree, rel: ".env", content: "x".repeat(512 * 1024 + 1) }).then(() => "saved", failureOf)
     check("a save past 512 KiB is refused as toobig", tooBigSave.includes("toobig"), tooBigSave)
-    const binarySave = await call({ type: "file.write", path: path.join(tree, "nul.txt"), content: "text" }).then(() => "saved", failureOf)
+    const binarySave = await call({ type: "file.write", root: tree, rel: "nul.txt", content: "text" }).then(() => "saved", failureOf)
     check("a save over a binary file is refused", binarySave.includes("binary"), binarySave)
     const defaultDir = await call({ type: "file.defaultDir" })
     check("with no project the files tab has the default project location", defaultDir.directory.length > 0, defaultDir)
@@ -7089,6 +7043,7 @@ async function main() {
   await roundFiveChecks(check, section)
   await roundSixChecks(check, section)
   await roundSevenChecks(check, section)
+  await roundEightSecurityChecks(check, section)
   await roundEightAccessChecks(check, section)
   wordingChecks(check, section)
   await roundEightChecks(check, section)
@@ -9658,8 +9613,13 @@ async function historyMemoryCronChecks(root: string, project: string) {
   await live.start({ interval: false })
   bindScheduler(live)
   const asks: string[] = []
+  // round 8 (X10): the model's own scheduling call is asked about first; a person says yes to it here.
+  const scheduleAsks: string[] = []
   runnerBus.subscribe((event) => {
-    if (event.type === "permission.requested") asks.push(event.request.sessionID)
+    if (event.type === "permission.requested" && event.request.titleCode === "perm.schedule") {
+      scheduleAsks.push(event.request.sessionID)
+      queueMicrotask(() => permissions.respond(event.request.id, "once"))
+    } else if (event.type === "permission.requested") asks.push(event.request.sessionID)
     if (event.type === "session.idle") live.turnEnded(event.sessionID)
   })
   const until = async (test: () => boolean | Promise<boolean>, ms = 15_000) => {
@@ -9688,7 +9648,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
   )
   const child = (await runnerStore.list()).find((session) => session.parentID === parent.id && session.subagent?.type === "general")
   if (child) {
-    const scheduledByChild = await CronTool.execute({ operation: { action: "schedule", cron: "0 0 1 1 *", prompt: "child job" } }, context(child.id))
+    const scheduledByChild = await CronTool.execute({ operation: { action: "schedule", cron: "0 0 1 1 *", prompt: "child job" } }, context(child.id, { permissions: { ask: async () => undefined } }))
     check("a general subagent's job belongs to the conversation it works for", (await live.list({ ownerID: parent.id })).some((task) => task.id === scheduledByChild.metadata?.id))
     await live.remove(String(scheduledByChild.metadata?.id))
   }
@@ -9702,6 +9662,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
   await quiet()
   const jobs = await live.list({ ownerID: parent.id })
   check("the model's schedule call adds a job for this conversation", jobs.length === 1 && jobs[0]?.prompt === "CRON-WRITES", jobs)
+  check("...once the person has been asked about it", scheduleAsks.includes(parent.id), scheduleAsks)
   runnerClock = (live.dueAt(jobs[0]?.id ?? "") ?? Date.UTC(2026, 3, 1, 8, 5)) + 1000
   await live.tick()
   const firedTurn = await until(async () => (await runnerStore.messages(parent.id)).some((message) => message.role === "user" && message.text.startsWith(`[Scheduled cron ${jobs[0]?.id}`)))

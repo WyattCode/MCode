@@ -167,12 +167,12 @@ const draft = ref("")
 const saving = ref(false)
 let readSeq = 0
 
-async function mediaAddress(file: Read): Promise<string | undefined> {
+async function mediaAddress(file: Read, directory: string, rel: string): Promise<string | undefined> {
   const served = await window.mcode.officeServe(file.path).catch(() => undefined)
   if (served?.ok) return served.url
   if (file.video || !app.client) return undefined
   // A format the local server does not carry still shows from its bytes, up to the old cap.
-  const bytes = await app.client.request({ type: "file.read", path: file.path }).catch(() => undefined)
+  const bytes = await app.client.request({ type: "file.read", root: directory, rel }).catch(() => undefined)
   return bytes?.data && bytes.mime ? `data:${bytes.mime};base64,${bytes.data}` : undefined
 }
 
@@ -193,9 +193,9 @@ async function readFile(rel: string | undefined, quiet = false) {
     loadingFile.value = true
   }
   try {
-    const file = await app.client.request({ type: "file.read", path: absolute(rel), preview: true })
+    const file = await app.client.request({ type: "file.read", root: directory, rel, preview: true })
     const media = file.video || file.kind === "image" || file.kind === "audio"
-    const url = media ? await mediaAddress(file) : undefined
+    const url = media ? await mediaAddress(file, directory, rel) : undefined
     if (seq !== readSeq) return
     opened.value = file
     readError.value = undefined
@@ -274,7 +274,7 @@ async function save() {
   if (!rel || !root.value || !app.client || saving.value) return
   saving.value = true
   try {
-    await app.client.request({ type: "file.write", path: absolute(rel), content: draft.value })
+    await app.client.request({ type: "file.write", root: root.value, rel, content: draft.value })
     if (opened.value && props.viewFile === rel) opened.value = { ...opened.value, content: draft.value }
     editing.value = false
     notify(t("rp.files.saved"))

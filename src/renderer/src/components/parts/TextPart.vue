@@ -15,6 +15,7 @@ import AbcBlock from "./AbcBlock.vue"
 import DiagramBlock from "./DiagramBlock.vue"
 import LocalMedia from "./LocalMedia.vue"
 import { mediaPath } from "../../lib/delivered"
+import { allowRemoteImage, showAllowedRemoteImages } from "../../lib/remote-images"
 
 const props = defineProps<{ part: TextPart }>()
 const app = useApp()
@@ -84,7 +85,7 @@ const rendered = computed<ReplyBlock[]>(() => {
     tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
     videoCards: { tip: t("markdown.previewAnnotateTip"), fallback: t("markdown.videoFallbackLabel") },
     math: true,
-    links: { imageTip: t("markdown.previewAnnotateTip") },
+    links: { imageTip: t("markdown.previewAnnotateTip"), remoteImage: t("markdown.remoteImageLoad") },
     paths: { tip: t("markdown.openWithDefaultTip") },
     diagrams: { streaming: isLive },
     lineNumbers: true,
@@ -160,6 +161,8 @@ const mounted = new Set<HTMLElement>()
 function mountMedia() {
   const host = root.value
   if (!host) return
+  // A web picture the reader already asked for stays shown when its block is redrawn.
+  showAllowedRemoteImages(host, t("markdown.previewAnnotateTip"))
   for (const holder of [...mounted]) {
     if (holder.isConnected) continue
     render(null, holder)
@@ -323,6 +326,13 @@ async function onClick(event: MouseEvent) {
     event.preventDefault()
     const href = link.getAttribute("href") ?? ""
     if (/^https?:\/\//i.test(href)) window.mcode.openExternal(href)
+    return
+  }
+  const remote = target.closest<HTMLElement>("[data-remote-src]")
+  if (remote && root.value) {
+    // The reader asked for this web picture: it loads now, and wherever else this reply names it.
+    allowRemoteImage(remote.dataset.remoteSrc ?? "")
+    showAllowedRemoteImages(root.value, t("markdown.previewAnnotateTip"))
     return
   }
   const image = target.closest<HTMLImageElement>("img[data-preview-src]")
@@ -961,6 +971,67 @@ function onError(event: Event) {
 
 .text .md-img-link {
   max-height: 240px;
+}
+
+/* A web picture not yet asked for: the video card's shape, with where it would load from. */
+.text .md-img-remote {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  margin: 10px 0;
+  padding: 9px 12px;
+  color: var(--text-strong);
+  background: #f0f0f2;
+  border: 1px dashed var(--border-weak);
+  border-radius: 10px;
+  font: inherit;
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  text-align: start;
+  cursor: pointer;
+}
+
+.text .md-img-remote:hover {
+  background: #f1f0ec;
+}
+
+.text .md-img-remote-icon {
+  flex-shrink: 0;
+  color: var(--text-weak);
+}
+
+.text .md-img-remote-label,
+.text .md-img-remote-host {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text .md-img-remote-host {
+  flex-shrink: 1;
+  margin-inline-start: auto;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+}
+
+:root[data-theme="dark"] .text .md-img-remote {
+  background: #2e2e2e;
+}
+
+:root[data-theme="dark"] .text .md-img-remote:hover {
+  background: #ffffff0f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .text .md-img-remote {
+    background: #2e2e2e;
+  }
+
+  :root:not([data-theme="light"]) .text .md-img-remote:hover {
+    background: #ffffff0f;
+  }
 }
 
 .text del {

@@ -22,6 +22,9 @@ import { bindDesktopSettings } from "./tool/desktop-settings"
 import { startHistory, stopHistory } from "./history/service"
 import { startScheduler } from "./cron/start"
 import { startAutomations } from "./automation/start"
+import { protectAppData } from "./tool/app-data"
+import { frameForWindow } from "./config-view"
+import { newSocketSecret, refusalOf, SOCKET_PROTOCOL } from "./socket-guard"
 
 export interface Runtime {
   storage: Storage
@@ -40,7 +43,14 @@ export interface Runtime {
 export interface Backend {
   runtime: Runtime
   port: number
+  /** This launch's socket secret; handed only to the app's own window, never logged. */
+  secret: string
   close(): Promise<void>
+}
+
+export interface BackendOptions {
+  /** Browser origins allowed to connect: the renderer page's own. None means only non-browser clients. */
+  origins?: readonly string[]
 }
 
 /**
@@ -51,12 +61,14 @@ export interface Backend {
  * run side by side. The socket is bound to 127.0.0.1 only: this speaks for the
  * user's filesystem and must never be reachable from the network.
  */
-export async function startBackend(dataDirectory: string): Promise<Backend> {
+export async function startBackend(dataDirectory: string, options: BackendOptions = {}): Promise<Backend> {
   const storage = new Storage(path.join(dataDirectory, "storage"))
   const bus = new Bus()
   const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"))
   const auth = new AuthManager(config, bus)
   await config.load()
+  // The model's file tools never write here: config.json there decides what starts at launch.
+  protectAppData(dataDirectory)
   // Hand edits to config.json take effect without reopening the app, as MiMo's do.
   config.watch()
   // The desktop settings tools change settings through this config's own patch path.
@@ -125,11 +137,40 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
    */
   void mcp.sync()
 
-  const server = new WebSocketServer({ host: "127.0.0.1", port: 0 })
+  /*
+   * Bound to loopback, and still not open to whatever reaches loopback: every
+   * handshake has to name this port, come from the app's own page (or from no
+   * page at all) and carry this launch's secret. See socket-guard.ts.
+   */
+  const secret = newSocketSecret()
+  let port = 0
+  const server = new WebSocketServer({
+    host: "127.0.0.1",
+    port: 0,
+    verifyClient: ({ req }, done) => {
+      const origin = req.headers.origin
+      const protocols = req.headers["sec-websocket-protocol"]
+      const refusal = refusalOf(
+        {
+          host: req.headers.host,
+          origin: typeof origin === "string" ? origin : undefined,
+          protocols: typeof protocols === "string" ? protocols : undefined,
+        },
+        { port, secret, origins: options.origins ?? [] },
+      )
+      if (!refusal) return done(true)
+      // The reason and the origin only; the offered protocols may hold a guess at the secret.
+      console.warn(`[socket] refused a connection (${refusal}${refusal === "origin" ? `: ${String(origin)}` : ""})`)
+      done(false, refusal === "secret" ? 401 : 403)
+    },
+    // The plain name is chosen, so the one carrying the secret is never sent back.
+    handleProtocols: (protocols) => (protocols.has(SOCKET_PROTOCOL) ? SOCKET_PROTOCOL : false),
+  })
   const clients = new Set<WebSocket>()
 
   bus.subscribe((event) => {
-    const frame: ServerFrame = { kind: "event", event }
+    // Settings leave with their secrets masked (config-view.ts).
+    const frame = frameForWindow({ kind: "event", event })
     const payload = JSON.stringify(frame)
     for (const client of clients) {
       if (client.readyState === client.OPEN) client.send(payload)
@@ -159,7 +200,7 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
       if (frame.kind !== "request") return
 
       const reply = (response: ServerFrame) => {
-        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(response))
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(frameForWindow(response)))
       }
 
       try {
@@ -180,11 +221,12 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
 
   await new Promise<void>((resolve) => server.once("listening", resolve))
   const address = server.address()
-  const port = typeof address === "object" && address ? address.port : 0
+  port = typeof address === "object" && address ? address.port : 0
 
   return {
     runtime,
     port,
+    secret,
     async close() {
       // The model's own commands go with the terminals: both are children this
       // process started, and neither has a window left to stop it.

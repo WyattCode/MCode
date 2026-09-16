@@ -1301,6 +1301,12 @@ export interface AppConfig {
   smartMain?: ModelRef
   /** Whether the in-app browser is offered at all; absent is on. */
   browserEnabled?: boolean
+  /**
+   * Whether a video card under a reply asks its platform for the title and
+   * cover (and the cover proxy fetches it); absent is on. Off, the cards still
+   * show, from the link alone, and nothing is fetched to draw them.
+   */
+  videoCardDetails?: boolean
   theme: "dark" | "light" | "system"
   /* Which named palette the colours are generated from. */
   themeID: string
@@ -2033,16 +2039,14 @@ export type Request =
   | { type: "file.defaultDir" }
   /* Carries on the conversation's interrupted last turn, with no new message from the user. */
   | { type: "session.resume"; sessionID: string }
-  /* Three example tasks for a project on the home screen, from the default model; empty when it cannot answer. */
-  | { type: "home.suggest"; directory: string; language?: string }
   /*
    * `preview`: the files tab's reading, as MiMo's readFileText has it - text over
    * 512 KiB or holding a NUL byte is refused, a video is named as one, and media
    * carries no bytes because the tab plays it from a local address.
    */
-  | { type: "file.read"; path: string; preview?: boolean }
-  /* A text file saved from the right panel's files tab. */
-  | { type: "file.write"; path: string; content: string }
+  | { type: "file.read"; root: string; rel: string; preview?: boolean }
+  /* A text file saved from the right panel's files tab: `rel` inside `root`, which has to be a folder the app works in. */
+  | { type: "file.write"; root: string; rel: string; content: string }
   /*
    * A conversation's shells work in its folder. The home screen's bottom panel
    * has no conversation yet, so it names the project folder it has picked.
@@ -2105,17 +2109,6 @@ export interface FileHit {
   name: string
   rel: string
   dir: string
-}
-
-/* The marks a home suggestion can carry; anything else a model answers becomes "idea". */
-export const SUGGESTION_ICONS = ["code", "bug", "test", "doc", "chart", "idea"] as const
-export type SuggestionIcon = (typeof SUGGESTION_ICONS)[number]
-
-/* An example task on the home screen: its row title, and the request that goes into the box. */
-export interface HomeSuggestion {
-  title: string
-  query: string
-  icon: SuggestionIcon
 }
 
 export interface ResponseMap {
@@ -2238,8 +2231,6 @@ export interface ResponseMap {
   "file.defaultDir": { directory: string }
   /* The user message whose turn is being carried on. */
   "session.resume": { messageID: string }
-  /* `generated` is false when no model answered, and the list is then empty. */
-  "home.suggest": { suggestions: HomeSuggestion[]; generated: boolean }
   /**
    * One file, ready to show.
    *

@@ -480,13 +480,52 @@ async function discoverServerMetadata(authorizationServerUrl: string): Promise<S
   return undefined
 }
 
-async function discoverServerInfo(serverUrl: string, resourceMetadataUrl?: URL) {
+/* A host name or literal address on this machine or a private network. */
+function privateHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  if (host === "localhost" || host.endsWith(".localhost") || host === "0.0.0.0" || host === "::" || host === "::1") return true
+  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^169\.254\./.test(host)) return true
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)) return true
+  return /^(fc|fd|fe8|fe9|fea|feb)[0-9a-f]*:/.test(host) || /^::ffff:/.test(host)
+}
+
+/**
+ * An address the MCP server named for discovery, if it may be followed.
+ *
+ * The server's own 401 names where its metadata lives, and that metadata names
+ * the authorization server; left unchecked, a hostile server could point the
+ * app at anything on this machine or the local network. The server's own host
+ * is always fine; any other host has to be https and not a private or loopback
+ * address.
+ */
+export function trustedDiscoveryUrl(serverUrl: string, candidate: string | URL | undefined): URL | undefined {
+  if (!candidate) return undefined
+  let url: URL
+  let server: URL
+  try {
+    url = new URL(candidate)
+    server = new URL(serverUrl)
+  } catch {
+    return undefined
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return undefined
+  if (url.hostname.toLowerCase() === server.hostname.toLowerCase()) return url
+  if (url.protocol !== "https:" || privateHost(url.hostname)) return undefined
+  return url
+}
+
+async function discoverServerInfo(serverUrl: string, hintedMetadataUrl?: URL) {
   let resourceMetadata: ResourceMetadata | undefined
   let authorizationServerUrl: string | undefined
+  // A hint that may not be followed is dropped, and discovery goes on at the server's own well-known address.
+  const resourceMetadataUrl = trustedDiscoveryUrl(serverUrl, hintedMetadataUrl)
   try {
     resourceMetadata = await discoverResourceMetadata(serverUrl, resourceMetadataUrl)
-    authorizationServerUrl = resourceMetadata.authorization_servers?.[0]
-  } catch {
+    const named = resourceMetadata.authorization_servers?.[0]
+    if (named && !trustedDiscoveryUrl(serverUrl, named)) throw new Error(`The MCP server named an authorization server that may not be used: ${named}`)
+    authorizationServerUrl = named
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("The MCP server named an authorization server")) throw err
     // A server without resource metadata is its own authorization server.
   }
   authorizationServerUrl ??= String(new URL("/", serverUrl))
@@ -719,12 +758,17 @@ function parseRedirectUri(redirectUri?: string): { port: number; path: string } 
   }
 }
 
-/** Starts the callback listener on the redirect's port, unless something already answers there. */
+/**
+ * Starts the callback listener on the redirect's port.
+ *
+ * A port something else already answers on is refused rather than given way
+ * to: whatever holds it would be handed the authorization code.
+ */
 export async function ensureCallbackServer(redirectUri?: string): Promise<void> {
   const { port, path } = parseRedirectUri(redirectUri)
   if (callbackServer && (currentPort !== port || currentPath !== path)) await stopCallbackServer()
   if (callbackServer) return
-  if (await portInUse(port)) return
+  if (await portInUse(port)) throw new Error(`Another program is listening on port ${port}, where the sign-in answer would arrive; close it and try again.`)
   currentPort = port
   currentPath = path
   const server = createServer(handleCallback)

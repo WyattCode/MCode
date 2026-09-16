@@ -1,8 +1,11 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs/promises"
+import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
+import { guardAppData } from "./app-data"
+import { namesAskingFile } from "../permission"
 import { collectMutationTargets, scanCommand } from "./bash-scan"
 import { mainWorktreeRoots } from "../session/worktree"
 
@@ -338,7 +341,18 @@ export const BashTool: ToolDefinition = {
      * would write to, and the runner raises the notice for one that then
      * exited cleanly.
      */
-    const worktreeHits = await mainWorktreeRoots(collectMutationTargets(command, cwd, powershell).paths)
+    const mutations = collectMutationTargets(command, cwd, powershell)
+    // A command that would write into the app's own data folder is refused like a write tool's call.
+    for (const target of mutations.written) {
+      await guardAppData(target, "write")
+      // An alternate data stream (`> notes.txt:hidden`) is a place no listing or diff shows (round 8, X19).
+      if (process.platform === "win32" && target.slice(path.parse(target).root.length).includes(":")) {
+        throw new ToolError(`Refused: ${target} names an alternate data stream (a colon after the drive), which commands here may not write.`)
+      }
+    }
+    const worktreeHits = await mainWorktreeRoots(mutations.paths)
+    // The saved sign-ins are not read through a shell either.
+    for (const file of scan.files) await guardAppData(file, "read")
     for (const dir of scan.dirs) await resolvePath(context, dir)
     const question = {
       sessionID: context.sessionID,
@@ -349,6 +363,8 @@ export const BashTool: ToolDefinition = {
       title: description || "Run command",
       subject: command,
       preview: command,
+      // A `.env` named on the line asks where its bucket would allow it, as a read of one does.
+      patternAsks: namesAskingFile(command),
     }
     if (scan.deletes.length && !scan.tempOnlyDeletes) {
       await context.permissions.ask({ ...question, patterns: scan.deletes, always: [], forced: true })

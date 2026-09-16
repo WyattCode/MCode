@@ -15,8 +15,20 @@ export function stripSvgHazards(svg: string, keepForeignObject = false): string 
   // Addresses before handlers: a handler's text inside an address would otherwise cut the address's quotes apart.
   return out
     .replace(/\s+(?:xlink:)?href\s*=\s*(?:"\s*(?:javascript|data|vbscript):[^"]*"|'\s*(?:javascript|data|vbscript):[^']*'|(?:javascript|data|vbscript):[^\s>]+)/gi, "")
+    .replace(/<(?!a[\s/>])[a-zA-Z][\w:-]*\b[^>]*>/g, (tag) => tag.replace(REMOTE_HREF, ""))
+    .replace(REMOTE_URL, "none")
+    .replace(/@import\s+(?:url\([^)]*\)|"[^"]*"|'[^']*')[^;]*;?/gi, "")
     .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, "")
 }
+
+/*
+ * A drawing that fetches from the web would load the moment it is shown, which
+ * is the same silent channel a web picture in a reply is (those wait for a
+ * click). So a drawing's own pictures, patterns and styles never name a web
+ * address; a link (`<a>`) is left alone, since following it takes a click.
+ */
+const REMOTE_HREF = /\s+(?:xlink:)?href\s*=\s*(?:"\s*(?:https?:)?\/\/[^"]*"|'\s*(?:https?:)?\/\/[^']*'|(?:https?:)?\/\/[^\s>]+)/gi
+const REMOTE_URL = /url\(\s*(?:&quot;|["'])?\s*(?:https?:)?\/\/[^)]*\)/gi
 
 /** MiMo's test for a picture path that gets the SVG file card: .svg, before any query or fragment. */
 export function isSvgFile(path: string): boolean {

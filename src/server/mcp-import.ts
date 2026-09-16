@@ -2,6 +2,7 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { AppConfig, McpImportItem, McpImportSource, McpServerConfig } from "@shared/protocol"
+import { redactCommand, redactString } from "@shared/mcp-redact"
 
 /**
  * MCP servers other coding tools already have configured, offered for import
@@ -180,7 +181,8 @@ export async function scanMcpImports(existing: Record<string, McpServerConfig>):
         source,
         name,
         type: entry.type,
-        summary: entry.type === "remote" ? (entry.url ?? "") : (entry.command ?? []).join(" "),
+        // Shown in the import list, so a token in an address or after a flag is masked as MiMo masks it.
+        summary: entry.type === "remote" ? redactString(entry.url ?? "") : redactCommand(entry.command ?? []).join(" "),
         exists: name in existing,
         entry,
       })

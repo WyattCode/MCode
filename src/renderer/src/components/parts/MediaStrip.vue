@@ -5,6 +5,7 @@ import { enrichMedia } from "../../lib/media-embed"
 import { audioClock } from "../../lib/media-card"
 import { t } from "../../lib/i18n"
 import { useRightPanel } from "../../stores/right-panel"
+import { useApp } from "../../stores/app"
 import MediaCoverflow from "./MediaCoverflow.vue"
 
 /**
@@ -16,6 +17,7 @@ import MediaCoverflow from "./MediaCoverflow.vue"
  */
 const props = defineProps<{ text: string }>()
 const rp = useRightPanel()
+const app = useApp()
 
 /* MiMo shows at most thirty. */
 const MAX_CARDS = 30
@@ -25,16 +27,19 @@ const active = ref(0)
 const coverFailed = ref(false)
 let generation = 0
 
+/* The settings switch: off, a card is drawn from its link and nothing is fetched for it. */
+const details = computed(() => app.config?.videoCardDetails !== false)
+
 watch(
-  () => props.text,
-  async (text) => {
+  () => [props.text, details.value] as const,
+  async ([text, withDetails]) => {
     const mine = ++generation
     const urls = platformLinksIn(text)
     if (!urls.length) {
       metas.value = []
       return
     }
-    const found = await enrichMedia(urls)
+    const found = await enrichMedia(urls, withDetails)
     if (mine === generation) metas.value = found.slice(0, MAX_CARDS)
   },
   { immediate: true },

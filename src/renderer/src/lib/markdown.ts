@@ -46,8 +46,10 @@ export interface MarkdownOptions {
   /**
    * Live links: web links, bare addresses and footnotes, and pictures by address.
    * Without it a link is its text beside a dim address, as before.
+   * `remoteImage` labels the placeholder a picture on the web shows until it is
+   * clicked; without it no web picture is drawn at all.
    */
-  links?: { imageTip: string }
+  links?: { imageTip: string; remoteImage?: string }
   /** A path in inline code (or alone in a fence) becomes MiMo's clickable chip or media card. */
   paths?: { tip: string }
   /** Mermaid and SVG fences leave as diagram blocks - except while the reply is still streaming. */
@@ -331,6 +333,35 @@ function isLocalReference(url: string): boolean {
   return DRIVE.test(url) || (!/^[a-z][a-z0-9+.-]*:/i.test(url) && !url.startsWith("//"))
 }
 
+const IMAGE_ICON =
+  '<svg class="md-img-remote-icon" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><path d="M3.5 3h9A1.5 1.5 0 0 1 14 4.5v7a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5v-7A1.5 1.5 0 0 1 3.5 3z"/><path d="M6 5.3a1.2 1.2 0 1 1 0 2.4 1.2 1.2 0 0 1 0-2.4z"/><path d="m2.5 12 3.5-3.5 2.5 2.5 2-2 3 3"/></svg>'
+
+/*
+ * A picture on the web, as a placeholder until the reader asks for it.
+ *
+ * A picture loads the moment it is drawn, and its address can carry anything
+ * a model was steered into writing - so drawing it straight away sent that
+ * data to whoever named the address, with no click. The user chose to load
+ * such pictures only on a click (2026-09-16); the window swaps this for the
+ * real picture then (TextPart.vue). Pictures on this machine and inline data
+ * are unaffected. The address itself is shown, so the reader knows where the
+ * click will reach.
+ */
+function remoteImageHtml(url: string, label: string, link: boolean, loadLabel: string | undefined): string {
+  if (!loadLabel) return escapeHtml(label)
+  const address = escapeHtml(url)
+  let host = url
+  try {
+    host = new URL(url).host
+  } catch {
+    // An address the URL parser refuses still names itself.
+  }
+  return (
+    `<button type="button" class="md-img-remote${link ? " md-img-link" : ""}" data-remote-src="${address}" data-remote-alt="${escapeHtml(label)}"${link ? ` data-fallback-href="${address}"` : ""} title="${address}">` +
+    `${IMAGE_ICON}<span class="md-img-remote-label">${escapeHtml(label || loadLabel)}</span><span class="md-img-remote-host">${escapeHtml(loadLabel)} · ${escapeHtml(host)}</span></button>`
+  )
+}
+
 function linkHtml(image: boolean, label: string, url: string, whole: string, ctx: Context, stash: string[]): string {
   const { options } = ctx
   const cards = options.videoCards
@@ -350,7 +381,8 @@ function linkHtml(image: boolean, label: string, url: string, whole: string, ctx
   const web = /^https?:\/\//i.test(url)
   const tip = escapeHtml(options.links.imageTip)
   if (image) {
-    if (web || /^data:image\/(png|jpe?g|gif|webp|avif|bmp);/i.test(url)) {
+    if (web) return remoteImageHtml(url, label, false, options.links.remoteImage)
+    if (/^data:image\/(png|jpe?g|gif|webp|avif|bmp);/i.test(url)) {
       return `<img class="md-img" src="${address}" alt="${escapeHtml(label)}" title="${tip}" data-preview-src="${address}" loading="lazy" />`
     }
     if (options.paths && isLocalReference(url) && mediaOf(url) === "image") {
@@ -359,7 +391,9 @@ function linkHtml(image: boolean, label: string, url: string, whole: string, ctx
     return escapeHtml(label)
   }
   if (web && IMAGE_ADDRESS.test(url)) {
-    return `<img class="md-img md-img-link" src="${address}" alt="${escapeHtml(label)}" title="${tip}" data-preview-src="${address}" data-fallback-href="${address}" loading="lazy" />`
+    // No placeholder label to show: the picture link stays the link it is.
+    if (!options.links.remoteImage) return `<a class="md-link" href="${address}" rel="noreferrer">${label ? text() : address}</a>`
+    return remoteImageHtml(url, label, true, options.links.remoteImage)
   }
   if (web) return `<a class="md-link" href="${address}" rel="noreferrer">${label ? text() : address}</a>`
   // Any other scheme - javascript:, file:, a relative path - is never a link, only its words.

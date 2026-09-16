@@ -21,7 +21,9 @@ import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { customModelOf } from "./config"
-import { IGNORED, resolveInside } from "./tool/fs-util"
+import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
+import { readableFile, workingRoots, writableFile } from "./file-access"
+import { restoreHeaders, restoreMasked, restoreServer } from "./config-view"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
@@ -41,7 +43,6 @@ import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { revertTurnFiles } from "./session/turn-revert"
 import { turnFileDiffs } from "./session/turn-diff"
-import { suggestTasks } from "./home-suggest"
 import type { ShellOwner } from "./shell"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
@@ -287,9 +288,17 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (!read.file) return { problem: read.problem } satisfies Handled<"session.importFile">
       const document = read.file
       const config = runtime.config.get()
+      /*
+       * The folder it worked in, when that is a folder this profile already
+       * works in; otherwise this profile's own. The file is not the authority
+       * on where a conversation's tools may reach: a crafted one could name any
+       * folder on the disk and make it the conversation's project.
+       */
+      const spelling = (folder: string) => (process.platform === "linux" ? path.resolve(folder) : path.resolve(folder).toLowerCase())
+      const named = document.session.directory ? spelling(document.session.directory) : ""
+      const known = named ? (await workingRoots(runtime)).some((root) => spelling(root) === named) : false
       const session = await runtime.sessions.create({
-        // The folder it worked in, when that folder is named; otherwise this profile's own.
-        directory: document.session.directory || config.directory,
+        directory: known ? document.session.directory : config.directory,
         model: document.session.model ?? config.model,
         agent: document.session.agent,
         title: document.session.title || undefined,
@@ -658,7 +667,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       } satisfies Handled<"config.get">
 
     case "config.set": {
-      const config = await runtime.config.set(request.patch)
+      // The window was sent masked secrets; one it sends back unchanged keeps the stored value.
+      const config = await runtime.config.set(restoreMasked(runtime.config.get(), request.patch))
       if (request.patch.allowFullAccess === false) await runtime.sessions.dropFullAccess()
       return { config } satisfies Handled<"config.set">
     }
@@ -1052,6 +1062,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           .map(([key, value]) => [key.trim(), value.trim()])
           .filter(([key, value]) => key && value),
       )
+      // A credential header was shown masked; left as shown, it keeps what is stored.
+      const keptHeaders = restoreHeaders(headers, existing.headers) ?? {}
       const before = runtime.config.models(request.id).map((model) => model.id)
       const keptEnvironment = environment ?? (!typed ? existing.environment : undefined)
       await runtime.config.set({
@@ -1061,7 +1073,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 id: entry.id,
                 name: request.name.trim(),
                 baseURL: request.baseURL.trim(),
-                ...(Object.keys(headers).length ? { headers } : {}),
+                ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
                 ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
@@ -1318,11 +1330,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "session.resume":
       return { messageID: await runtime.runner.resumeTurn(request.sessionID) } satisfies Handled<"session.resume">
 
-    case "home.suggest":
-      return (await suggestTasks(runtime, request.directory, request.language)) satisfies Handled<"home.suggest">
-
     case "file.read": {
-      const resolved = path.resolve(request.path)
+      // MiMo's shape: a root and a path inside it. See file-access.ts for what may be read.
+      const resolved = await readableFile(request.root, request.rel)
       /*
        * Read as bytes and decide what they are, rather than as utf8 and hope.
        * `readFile(path, "utf8")` on a PNG succeeds - it just returns a string
@@ -1376,7 +1386,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "file.write": {
       // Only over a file that is already there: the files tab edits, it does not create.
-      const resolved = path.resolve(request.path)
+      if (typeof request.content !== "string") throw new Error("cannot write: no text given")
+      const resolved = await writableFile(runtime, request.root, request.rel)
       const existing = await fs.stat(resolved)
       if (!existing.isFile()) throw new Error(`Not a file: ${resolved}`)
       // MiMo's writeFileText refusals, by the words the tab turns them into.
@@ -1388,7 +1399,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "shell.open": {
       const group = await shellGroup(runtime, request)
-      const cwd = request.cwd ? resolveInside(group.directory, request.cwd) : group.directory
+      const cwd = request.cwd ? await resolveInsideReal(group.directory, request.cwd) : group.directory
       return {
         /*
          * The size travels with the open so the shell prints its first prompt
@@ -1487,7 +1498,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "mcp.save": {
       // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.
       const servers = runtime.config.get().mcpServers ?? {}
-      const entry = mergeMcpSecrets(servers[request.name], request.entry, request.keep)
+      const entry = mergeMcpSecrets(servers[request.name], restoreServer(request.entry, servers[request.name]), request.keep)
       const config = await runtime.config.set({ mcpServers: { ...servers, [request.name]: entry } })
       return { config } satisfies Handled<"mcp.save">
     }
@@ -1523,11 +1534,12 @@ const MAX_FILES = 500
  * not push thousands of paths across the socket on every keystroke.
  */
 /* Where a request's `sub` lands, refused when it climbs out of the project. */
-function insideProject(directory: string, sub?: string): { root: string; target: string } {
+/* A folder inside the listed root, by spelling and by where it really leads (a junction does not pass). */
+async function insideProject(directory: string, sub?: string): Promise<{ root: string; target: string }> {
   const root = path.resolve(directory)
   const target = path.resolve(root, sub ?? "")
   const relative = path.relative(root, target)
-  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error(`Outside the project: ${sub}`)
+  if (relative.startsWith("..") || path.isAbsolute(relative) || !(await insideReal(root, target))) throw new Error(`Outside the project: ${sub}`)
   return { root, target }
 }
 
@@ -1581,7 +1593,7 @@ export async function readPreview(resolved: string): Promise<Handled<"file.read"
 
 /* One folder level: folders first, then files, each by name. An unreadable folder throws. */
 async function listDirectory(directory: string, sub?: string, all?: boolean): Promise<Handled<"file.listDir">["entries"]> {
-  const { target } = insideProject(directory, sub)
+  const { target } = await insideProject(directory, sub)
   const listed = await fs.readdir(target, { withFileTypes: true })
   const out: Handled<"file.listDir">["entries"] = []
   for (const entry of listed) {
@@ -1611,7 +1623,7 @@ const TREE_SEARCH_NODES = 4000
  * query. It stops at 50 results or 4000 entries seen, and says so.
  */
 export async function searchTree(directory: string, query: string): Promise<Handled<"file.search">> {
-  const { target } = insideProject(directory)
+  const { target } = await insideProject(directory)
   const needle = query.toLowerCase()
   const entries: Handled<"file.search">["entries"] = []
   if (!needle) return { entries, truncated: false }
@@ -1657,7 +1669,7 @@ const SEARCH_DEPTH = 16
  * paths first.
  */
 export async function searchFolder(directory: string, query: string, sub?: string, limit?: number): Promise<Handled<"file.search">> {
-  const { root, target } = insideProject(directory, sub)
+  const { root, target } = await insideProject(directory, sub)
   const needle = query.trim().toLowerCase()
   const cap = Math.max(1, Math.min(200, limit ?? SEARCH_LIMIT))
   const hits: Handled<"file.search">["entries"] = []

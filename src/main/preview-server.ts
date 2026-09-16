@@ -236,6 +236,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   // A relative path, not a prefix test: a folder at a drive root ends in its separator already.
   const relative = path.relative(dir, target)
   if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return fail(403, "forbidden")
+  // And by where it really leads: a junction in the served folder is not a way out of it.
+  const realDir = await fs.realpath(dir).catch(() => dir)
+  const realTarget = await fs.realpath(target).catch(() => undefined)
+  if (realTarget) {
+    const real = path.relative(realDir, realTarget)
+    if (real === ".." || real.startsWith(`..${path.sep}`) || path.isAbsolute(real)) return fail(403, "forbidden")
+  }
   const extension = path.extname(target).toLowerCase()
   const type = TYPES[extension] ?? "application/octet-stream"
   const nonce = url.searchParams.get("__mcodeedit")
@@ -297,6 +304,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
 }
 
 function serve(request: http.IncomingMessage, response: http.ServerResponse) {
+  /*
+   * On every answer: a served page that loads anything from elsewhere must not
+   * hand over its own address - the token in it is the folder's origin - and
+   * no file is taken for a type other than the one it is served as.
+   */
+  response.setHeader("Referrer-Policy", "no-referrer")
+  response.setHeader("X-Content-Type-Options", "nosniff")
   handle(request, response).catch(() => {
     // A request that failed half way must still end, or the socket hangs open.
     if (!response.headersSent) {

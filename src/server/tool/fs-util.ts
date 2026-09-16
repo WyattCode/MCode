@@ -2,6 +2,7 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import { ToolError, type ToolContext } from "./types"
 import { isMemoryPath } from "../history/service"
+import { guardAppData } from "./app-data"
 
 /**
  * Resolves a model-supplied path against the session directory and refuses
@@ -69,7 +70,7 @@ export function truncate(text: string, limit: number): { text: string; truncated
  * stops at the deepest part that does exist and the remainder is appended: a new
  * file inside a linked directory is then judged by where that directory is.
  */
-async function truePath(target: string): Promise<string> {
+export async function truePath(target: string): Promise<string> {
   let head = target
   const tail: string[] = []
   for (;;) {
@@ -83,10 +84,45 @@ async function truePath(target: string): Promise<string> {
   }
 }
 
-export async function resolvePath(context: ToolContext, target: string): Promise<string> {
+/**
+ * `access` says what the caller will do with the path: the app's own data
+ * folder is never written by a tool, and its saved sign-ins never read.
+ */
+/** Whether `target` really lies inside `root` (or is it), links followed on both sides. */
+export async function insideReal(root: string, target: string): Promise<boolean> {
+  const relative = path.relative(await truePath(path.resolve(root)), await truePath(path.resolve(target)))
+  return !relative.startsWith("..") && !path.isAbsolute(relative)
+}
+
+/**
+ * `resolveInside`, judged by where the path really leads as well as by how it
+ * is spelled: a junction inside the project (which Windows lets anyone make)
+ * no longer passes for a folder inside it.
+ */
+export async function resolveInsideReal(directory: string, target: string): Promise<string> {
+  const resolved = resolveInside(directory, target)
+  if (!(await insideReal(directory, resolved))) {
+    throw new ToolError(`Path leads outside the project directory (${path.resolve(directory)}): ${target}`, "tool.err.outsideProject", {
+      path: target,
+      root: path.resolve(directory),
+    })
+  }
+  return resolved
+}
+
+export async function resolvePath(context: ToolContext, target: string, access: "read" | "write" = "read"): Promise<string> {
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
     : path.resolve(context.directory, target)
+  /*
+   * A colon past the drive names an alternate data stream on Windows
+   * (`notes.txt:hidden`): a place to keep bytes that no listing, diff or git
+   * status ever shows (round 8, X19).
+   */
+  if (process.platform === "win32" && resolved.slice(path.parse(resolved).root.length).includes(":")) {
+    throw new ToolError(`Refused: ${target} names an alternate data stream (a colon after the drive), which tools do not read or write.`)
+  }
+  await guardAppData(resolved, access, target)
   // A cut output's saved file is the model's to read, as MiMo allows its truncation folder outright.
   if (context.toolOutputs?.holds(resolved)) return resolved
   /*

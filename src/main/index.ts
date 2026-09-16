@@ -9,6 +9,9 @@ import { PowerHold } from "./power"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
+import { rendererOrigins } from "../server/socket-guard"
+import { workingRoots } from "../server/file-access"
+import { insideReal } from "../server/tool/fs-util"
 import { setImageShrinker } from "../server/provider/attachment-parts"
 import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
@@ -401,8 +404,9 @@ function createWindow(show = true): BrowserWindow {
     // bundle (.icns) or the executable resource (.ico). macOS ignores this.
     icon: windowIcon(),
     webPreferences: {
-      preload: path.join(here, "../preload/index.mjs"),
-      sandbox: false,
+      preload: path.join(here, "../preload/index.cjs"),
+      // Sandboxed, as MiMo's windows are: a compromised page is further from the main process.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -622,7 +626,8 @@ app.whenReady().then(async () => {
    * channel exists, and a slow disk or a long history now delays the content
    * inside the window rather than the window itself.
    */
-  const starting = startBackend(app.getPath("userData")).then((started) => {
+  // Only this app's own page may open the socket from a browser context.
+  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL) }).then((started) => {
     backend = started
     /*
      * MiMo keeps the machine from suspending while a turn runs. The runner's busy
@@ -641,15 +646,25 @@ app.whenReady().then(async () => {
    * The renderer has no Node access; this is how it learns where to connect.
    * It is the one channel that has to wait for the backend, and it waits with
    * the window already up and its connecting state on screen.
+   *
+   * The socket secret goes only to the top frame of one of the app's own
+   * windows. No other frame holds the preload, but the check costs nothing and
+   * keeps the secret from ever reaching a page that found a way to ask.
    */
-  ipcMain.handle("mcode:bootstrap", async () => ({
-    port: (await starting).port,
-    platform: process.platform,
-    home: app.getPath("home"),
-    // app.getVersion() reports Electron's version until the app is packaged,
-    // so take the real one from package.json - the bundler inlines it.
-    version: pkg.version,
-  }))
+  ipcMain.handle("mcode:bootstrap", async (event) => {
+    const started = await starting
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (!owner || !windows.has(owner) || event.senderFrame !== event.sender.mainFrame) throw new Error("not the app window")
+    return {
+      port: started.port,
+      secret: started.secret,
+      platform: process.platform,
+      home: app.getPath("home"),
+      // app.getVersion() reports Electron's version until the app is packaged,
+      // so take the real one from package.json - the bundler inlines it.
+      version: pkg.version,
+    }
+  })
 
   /*
    * The title arrives from the renderer because only the renderer knows the
@@ -724,11 +739,13 @@ app.whenReady().then(async () => {
    * containment check means a crafted `../..` cannot walk out of the project
    * through a channel that hands paths to the shell.
    */
-  const inside = (directory: string, relative: string): string | undefined => {
+  /* A file inside the folder by spelling and by where it really leads: a junction in the folder does not pass. */
+  const inside = async (directory: unknown, relative: unknown): Promise<string | undefined> => {
+    if (typeof directory !== "string" || typeof relative !== "string" || !path.isAbsolute(directory)) return undefined
     const root = path.resolve(directory)
     const target = path.resolve(root, relative)
     const within = target === root || target.startsWith(root + path.sep)
-    return within ? target : undefined
+    return within && (await insideReal(root, target)) ? target : undefined
   }
 
   ipcMain.on("mcode:menu-labels", (_event, next: Record<string, string>) => {
@@ -1028,8 +1045,8 @@ app.whenReady().then(async () => {
   })
 
   /* Says why nothing was shown, so the artifacts page can tell a moved file from a refusal (MiMo's toasts). */
-  ipcMain.handle("mcode:reveal-file", (_event, directory: string, relative: string) => {
-    const target = inside(directory, relative)
+  ipcMain.handle("mcode:reveal-file", async (_event, directory: string, relative: string) => {
+    const target = await inside(directory, relative)
     if (!target) return { ok: false, error: "outside the project" }
     if (!existsSync(target)) return { ok: false, missing: true }
     shell.showItemInFolder(target)
@@ -1037,7 +1054,8 @@ app.whenReady().then(async () => {
   })
 
   // MiMo's Office tab: document bytes, watching, versions, legacy conversion.
-  registerOffice(ipcMain, app.getPath("userData"))
+  // A document is written back only inside a folder the app works in.
+  registerOffice(ipcMain, app.getPath("userData"), async () => (backend ? workingRoots(backend.runtime) : []))
   registerComposerInput(ipcMain, app.getPath("userData"))
   // MiMo's pasted pictures and large pastes: written to disk, then attached by path.
   registerPasteFiles(ipcMain, app.getPath("userData"))
@@ -1053,7 +1071,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:save-copy", (_event, file: unknown) => saveCopy(file, app.getPath("downloads")))
 
   ipcMain.handle("mcode:open-file", async (_event, directory: string, relative: string, openWith?: unknown) => {
-    const target = inside(directory, relative)
+    const target = await inside(directory, relative)
     if (!target) return "outside the project"
     // No app named: hand it to the desktop, which is the default choice.
     if (openWith === undefined || openWith === null) {
@@ -1222,7 +1240,8 @@ app.whenReady().then(async () => {
 
   session.defaultSession.setPermissionCheckHandler((_contents, permission) => permission === "media")
 
-  registerMediaEmbeds()
+  // The video card switch in settings; before the backend answers, the default (on).
+  registerMediaEmbeds(() => backend?.runtime.config.get().videoCardDetails !== false)
 
   ipcMain.on("mcode:tray", (_event, enabled: boolean) => {
     refreshTray(Boolean(enabled))

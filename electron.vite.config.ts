@@ -85,6 +85,12 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: { index: resolve("src/preload/index.ts") },
+        /*
+         * CommonJS, because the main window is sandboxed (round 8, X15) and a
+         * sandboxed page runs no ES-module preload. The preload uses nothing
+         * but the parts of electron a sandboxed preload is given.
+         */
+        output: { format: "cjs", entryFileNames: "[name].cjs" },
       },
     },
   },
