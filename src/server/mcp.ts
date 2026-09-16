@@ -1,6 +1,7 @@
 import pkg from "../../package.json"
 import os from "node:os"
 import { existsSync } from "node:fs"
+import path from "node:path"
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
@@ -17,8 +18,12 @@ import {
   wwwAuthenticateParams,
 } from "./mcp-oauth"
 import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
-import { redactString } from "@shared/mcp-redact"
+import { redactCommand, redactString } from "@shared/mcp-redact"
 import { ToolError, type ToolDefinition } from "./tool/types"
+import { resolveServers, type ResolvedServer } from "./mcp-sources"
+import { terminate, windowsLaunch } from "./mcp-launch"
+import { probeTools, type ProbeResult } from "./mcp-probe"
+import { wildcardMatch } from "./permission"
 
 /**
  * Talks to Model Context Protocol servers, and offers their tools to the agent.
@@ -137,6 +142,12 @@ const CALL_TIMEOUT = 60_000
 
 /** The version MiMo's MCP SDK offers in the handshake; a server answers with the one it speaks. */
 const PROTOCOL_VERSION = "2025-11-25"
+
+/** How much of a local server's stderr is kept to explain a failure: MiMo's tail. */
+export const STDERR_TAIL = 4096
+
+/** What a failed connection says when the handshake worked but the tool list did not come. */
+export const TOOLS_UNAVAILABLE = "Could not get the server's tool list"
 
 /** JSON-RPC's codes for a method this client does not answer and a failure while answering. */
 const METHOD_NOT_FOUND = -32601
@@ -257,28 +268,41 @@ async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: str
   line("")
 }
 
-/**
- * How to start a command on this platform.
- *
- * Windows cannot exec a .cmd or .bat directly - npx and most published servers
- * are exactly that - so those go through cmd.exe. What it must not do is hand
- * the shell a concatenated string: this project lives under a path with a
- * space in it, and unquoted arguments would cut the path in half. Each part is
- * quoted here and passed verbatim, so the shell does no splitting of its own.
- */
-function windowsLaunch(command: string, args: string[]) {
-  if (process.platform !== "win32" || !/\.(cmd|bat)$/i.test(command)) {
-    return { command, args, verbatim: false }
+/** What a server's `tools` rules say about one of its tools: the last rule whose pattern matches. */
+export function toolRule(rules: McpServerConfig["tools"], tool: string): "allow" | "ask" | "deny" | undefined {
+  let found: "allow" | "ask" | "deny" | undefined
+  for (const [pattern, rule] of Object.entries(rules ?? {})) {
+    if (!wildcardMatch(tool, pattern)) continue
+    found = rule === true ? "allow" : rule === false ? "deny" : rule
   }
-  const quote = (value: string) => `"${value.replace(/"/g, '\\"')}"`
-  const line = [command, ...args].map(quote).join(" ")
-  return { command: "cmd.exe", args: ["/d", "/s", "/c", `"${line}"`], verbatim: true }
+  return found
+}
+
+/** A sign-in cannot go ahead because the authorization server will not register a client. */
+function registrationFailure(reason: string): boolean {
+  return reason.includes("registration") || reason.includes("client_id")
+}
+
+/**
+ * A failure that is about signing in, which is answered with 授权 rather than
+ * with a second transport: MiMo's test, plus a refused registration, which
+ * this app's own OAuth code reports without the word OAuth.
+ */
+function signInFailure(err: unknown): boolean {
+  const reason = err instanceof Error ? err.message : String(err)
+  return err instanceof UnauthorizedError || reason.includes("OAuth") || registrationFailure(reason)
 }
 
 /** What a connection asks of the servers' owner. */
 interface ConnectionHooks {
   /** Where a local server starts: the project, as MiMo's engine starts it in its instance directory. */
   cwd?: () => string | undefined
+  /** Set when the entry cannot be started at all; connecting reports it as the failure. */
+  invalid?: string
+  /** The app-wide time a tool call may take on a server without a `timeout` of its own. */
+  callTimeout?: () => number | undefined
+  /** The connection failed or recovered on its own, outside a connect the owner is waiting on. */
+  statusChanged?: () => void
   /** The server said its tools changed, and the new list is in. */
   toolsChanged?: () => void
   sample?: McpSampler
@@ -310,6 +334,8 @@ class Connection {
   private buffer = ""
   /** Whatever the server printed, kept apart from the reason it failed. */
   private stderr = ""
+  /** How the local server's process ended, once it has. */
+  private exit?: { code: number | null; signal: NodeJS.Signals | null }
   private nextID = 1
   private readonly pending = new Map<number, Pending>()
   private closed = false
@@ -335,7 +361,7 @@ class Connection {
 
   constructor(
     readonly name: string,
-    private readonly config: McpServerConfig,
+    readonly config: McpServerConfig,
     auth?: McpAuthStore,
     /** Where the authorization address goes when signing in needs the reader; a plain connect only notes it. */
     onRedirect?: (url: URL) => void,
@@ -364,10 +390,12 @@ class Connection {
     this.status = "pending"
     this.error = undefined
     this.stderr = ""
+    this.exit = undefined
     this.sessionID = undefined
     this.signedIn = false
     this.protocolVersion = undefined
     try {
+      if (this.hooks.invalid) throw new Error(`invalid config: ${this.hooks.invalid}`)
       if (this.config.type === "remote") {
         if (!this.config.url) throw new Error("no url configured")
         await this.connectRemote()
@@ -376,27 +404,72 @@ class Connection {
         this.spawn()
         await this.handshake()
       }
-      this.status = "connected"
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
-      const printed = this.stderr.trim()
       this.status = "failed"
-      this.error = printed ? `${reason}: ${printed}` : reason
+      this.error = this.explain(reason)
+      if (this.config.type !== "remote") {
+        // Set by the exit listener meanwhile, which the narrowing above cannot see.
+        const ended = this.exit as { code: number | null; signal: NodeJS.Signals | null } | undefined
+        // MiMo's startup log, with the command masked as it is everywhere else.
+        console.error(`[mcp] ${this.name}: local server failed to start`, {
+          command: redactCommand(this.config.command ?? []),
+          cwd: this.hooks.cwd?.(),
+          error: reason,
+          pid: this.child?.pid ?? null,
+          exitCode: ended?.code ?? null,
+          signal: ended?.signal ?? null,
+        })
+      }
       /*
        * As MiMo's engine sorts it: a server that wants a sign-in waits for
        * 授权, except one that cannot register a client, which needs a client
        * id written into its config first.
        */
-      if (this.provider && (err instanceof UnauthorizedError || reason.includes("OAuth"))) {
-        if (reason.includes("registration") || reason.includes("client_id")) {
-          this.error = "Server does not support dynamic client registration. Please provide clientId in config."
+      if (this.provider && signInFailure(err)) {
+        if (registrationFailure(reason)) {
+          this.status = "needs_client_registration"
+          this.error = "This server cannot register a client by itself: give its entry an oauth.clientId in the config file."
         } else {
           this.status = "needs_auth"
           this.error = undefined
         }
       }
-      this.stop()
+      void this.stop()
+      return
     }
+    /*
+     * The tool list comes after the handshake and apart from it, as MiMo's
+     * engine asks for it: a server that answered the handshake but not this is
+     * failed with one plain sentence, and the real reason goes to the log.
+     */
+    try {
+      this.tools = await this.listTools()
+    } catch (err) {
+      console.error(`[mcp] ${this.name}: tool list failed`, err instanceof Error ? err.message : String(err))
+      this.status = "failed"
+      this.error = TOOLS_UNAVAILABLE
+      void this.stop()
+      return
+    }
+    this.status = "connected"
+  }
+
+  /**
+   * A failure as MiMo words it for a local server, in this app's words: the
+   * reason, how the process ended, and the tail of what it printed, joined by
+   * semicolons.
+   */
+  private explain(reason: string): string {
+    const printed = this.stderr.trim()
+    return [
+      reason,
+      this.exit?.code !== null && this.exit?.code !== undefined ? `exit code ${this.exit.code}` : undefined,
+      this.exit?.signal ? `signal ${this.exit.signal}` : undefined,
+      printed || undefined,
+    ]
+      .filter(Boolean)
+      .join("; ")
   }
 
   /**
@@ -410,7 +483,7 @@ class Connection {
       return
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
-      if (err instanceof UnauthorizedError || (this.provider && reason.includes("OAuth"))) throw err
+      if (err instanceof UnauthorizedError || (this.provider && signInFailure(err))) throw err
       this.cut()
       this.sessionID = undefined
       this.protocolVersion = undefined
@@ -438,7 +511,6 @@ class Connection {
     // not answer anything else until they have seen it.
     this.notify("notifications/initialized")
     if (this.transport === "http") void this.openServerStream()
-    this.tools = await this.listTools(timeout)
   }
 
   private async listTools(timeout = this.config.timeout ?? CONNECT_TIMEOUT): Promise<McpTool[]> {
@@ -446,20 +518,27 @@ class Connection {
     return listed?.tools ?? []
   }
 
+  /** Whether a request is still going either way, which keeps an idle project's servers open. */
+  busy(): boolean {
+    return this.pending.size > 0 || this.serving.size > 0
+  }
+
   disable(): void {
-    this.stop()
+    void this.stop()
     this.status = "disabled"
     this.error = undefined
     this.tools = []
     this.capabilities = {}
   }
 
-  stop(): void {
+  /** Settles once a local server has exited; see `terminate` for how it is asked to. */
+  stop(): Promise<void> {
     this.closed = true
     this.cut()
-    this.child?.kill()
+    const child = this.child
     this.child = undefined
     this.buffer = ""
+    return child ? terminate(child) : Promise.resolve()
   }
 
   /** Settles everything waiting on this connection and closes its streams, without deciding its status. */
@@ -478,12 +557,13 @@ class Connection {
 
   /**
    * One tool call. The turn's Stop reaches the server as a cancellation, and a
-   * call with no answer inside the server's `timeout` - or a minute, without
-   * one - is given up on.
+   * call with no answer inside the server's `timeout` - or the app-wide
+   * `mcpTimeout`, or a minute, without one - is given up on.
    */
   async call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ output: string; attachments: Attachment[] }> {
     // A call that timed out or lost its server is a failure the model reads, not a crash of the app.
-    const result = (await this.request("tools/call", { name: tool, arguments: args }, { timeout: this.config.timeout ?? CALL_TIMEOUT, signal }).catch(
+    const timeout = this.config.timeout ?? this.hooks.callTimeout?.() ?? CALL_TIMEOUT
+    const result = (await this.request("tools/call", { name: tool, arguments: args }, { timeout, signal }).catch(
       (err: unknown) => {
         throw err instanceof ToolError ? err : new ToolError(err instanceof Error ? err.message : String(err))
       },
@@ -548,27 +628,37 @@ class Connection {
      */
     child.stderr.on("data", (chunk: Buffer) => {
       if (!mine()) return
-      this.stderr += chunk.toString("utf8")
-      if (this.stderr.length > 2000) this.stderr = this.stderr.slice(-2000)
+      const text = chunk.toString("utf8")
+      this.stderr = (this.stderr + text).slice(-STDERR_TAIL)
+      // Into the app's log, as MiMo logs it; the log masks anything shaped like a secret.
+      console.info(`[mcp] ${this.name} stderr: ${text.trimEnd()}`)
+    })
+    child.once("exit", (code, signal) => {
+      if (mine()) this.exit = { code, signal }
     })
     child.on("error", (err) => {
       if (mine()) this.fail(err.message)
     })
-    child.on("close", (code) => {
+    child.on("close", () => {
       if (this.closed || !mine()) return
-      this.fail(`process exited${code === null ? "" : ` with code ${code}`}`)
+      this.fail("the server exited")
     })
   }
 
   private fail(message: string) {
+    const wasConnected = this.status === "connected"
     this.status = "failed"
-    const printed = this.stderr.trim()
-    this.error = printed ? `${message}: ${printed}` : message
+    this.error = this.explain(message)
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer)
       entry.reject(new Error(message))
     }
     this.pending.clear()
+    // A server that dies while in use is reported at once, not at the next status request.
+    if (wasConnected) {
+      this.tools = []
+      this.hooks.statusChanged?.()
+    }
   }
 
   /** Frames are newline-delimited, and a chunk can hold any fraction of one. */
@@ -869,14 +959,48 @@ class Connection {
   }
 }
 
+/** A project directory's servers: MiMo's engine keeps one set per instance directory. */
+interface Group {
+  directory: string
+  /** Every server the directory is offered, in the order its config named them. */
+  entries: ResolvedServer[]
+  connections: Map<string, Connection>
+  /** What each connection was made from, so an edited entry is told from an untouched one. */
+  made: Map<string, string>
+  /** Settles once the first round of connections has been tried. */
+  ready: Promise<void>
+  lastUsed: number
+}
+
+/** A group nobody has asked for in this long is closed, except the one the settings page shows. */
+const IDLE_GROUP_MS = 30 * 60_000
+
+function directoryKey(directory: string): string {
+  const resolved = path.resolve(directory)
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved
+}
+
+function madeFrom(entry: ResolvedServer): string {
+  return JSON.stringify({ config: entry.config ?? null, invalid: entry.invalid ?? null })
+}
+
 export class McpServers {
-  private readonly connections = new Map<string, Connection>()
+  private readonly groups = new Map<string, Group>()
   /*
-   * What the configuration looked like at the last sync. Config changes arrive
+   * What the configuration looked like at the last look. Config changes arrive
    * for every setting there is - a theme, a font - and reconnecting servers
    * because someone picked a colour would be absurd.
    */
   private fingerprint = ""
+  /*
+   * MiMo's "next conversation" rule. A saved change only marks the servers
+   * out of date; starting a conversation turns that into a pending reload,
+   * which is carried out as soon as no turn is running anywhere - so a server
+   * removed or edited never disappears from under a turn that is using it.
+   */
+  private dirty = false
+  private pending = false
+  private busy: () => boolean = () => false
 
   private readonly oauth?: McpAuthStore
   /** Servers whose sign-in is under way, so a second press does not start another. */
@@ -886,14 +1010,72 @@ export class McpServers {
   constructor(
     private readonly bus: Bus,
     private readonly config: Config,
-    storage?: Storage,
+    private readonly storage?: Storage,
+    /** Where the project and Claude Code files are looked for; the home folder unless a check says otherwise. */
+    private readonly home?: string,
   ) {
     this.oauth = storage ? new McpAuthStore(storage) : undefined
+    this.fingerprint = JSON.stringify(this.config.get().mcpServers ?? {})
     this.bus.subscribe((event) => {
+      if (event.type === "session.idle") {
+        if (this.pending) void this.applyPending()
+        return
+      }
       if (event.type !== "config.updated") return
-      if (JSON.stringify(event.config.mcpServers ?? {}) === this.fingerprint) return
-      void this.sync()
+      const next = JSON.stringify(event.config.mcpServers ?? {})
+      if (next === this.fingerprint) return
+      this.fingerprint = next
+      this.dirty = true
     })
+  }
+
+  /** Whether any turn is running; a pending reload waits until none is. */
+  useBusy(busy: () => boolean): void {
+    this.busy = busy
+  }
+
+  /**
+   * A new conversation is starting: a configuration saved since the last one
+   * is applied to every project's servers, now if nothing is running, else as
+   * soon as the last running turn ends.
+   */
+  commitIfDirty(): Promise<void> {
+    if (!this.dirty) return Promise.resolve()
+    this.dirty = false
+    this.pending = true
+    return this.applyPending()
+  }
+
+  private async applyPending(): Promise<void> {
+    if (!this.pending || this.busy()) return
+    this.pending = false
+    await this.refresh()
+  }
+
+  /**
+   * The settings page's answer to a server it lists as on but the report does
+   * not know yet - one added since the servers were last read: it is
+   * connected now, in the directory the page reports on, as MiMo's page
+   * registers it with its engine.
+   */
+  async register(name: string): Promise<void> {
+    const stored = this.config.get().mcpServers?.[name]
+    if (!stored) throw new Error(`no MCP server named ${name} is configured`)
+    await this.ready(this.viewDirectory())
+    const group = this.group()
+    if (!group || group.connections.has(name)) return
+    const [entry] = await resolveServers({ servers: { [name]: stored }, configFile: this.configFile(), home: this.home })
+    if (!entry) throw new Error(`the MCP server ${name} has no type`)
+    if (group.connections.has(name)) return
+    group.entries = [...group.entries, entry]
+    const connection = this.connection(group, entry)
+    if (entry.config?.enabled === false) {
+      this.publish()
+      return
+    }
+    this.publish()
+    await connection.connect()
+    this.publish()
   }
 
   /** How a server's sampling requests are answered; the backend hands this over once the models are reachable. */
@@ -901,64 +1083,134 @@ export class McpServers {
     this.sampler = sampler
   }
 
-  private hooks(): ConnectionHooks {
+  /** The file MCode's own list lives in; `{file:…}` there counts from its folder. */
+  private configFile(): string {
+    return this.storage?.fileOf("config") ?? path.join(os.homedir(), "config.json")
+  }
+
+  /** The directory the settings page reports on: where a new conversation starts, as MiMo reports its default one. */
+  private viewDirectory(): string {
+    const directory = this.config.get().directory
+    return directory && existsSync(directory) ? directory : os.homedir()
+  }
+
+  private resolve(directory: string): Promise<ResolvedServer[]> {
+    return resolveServers({ servers: this.config.get().mcpServers ?? {}, configFile: this.configFile(), directory, home: this.home })
+  }
+
+  private hooks(group: Group, invalid?: string): ConnectionHooks {
     return {
-      cwd: () => {
-        const directory = this.config.get().directory
-        return directory && existsSync(directory) ? directory : os.homedir()
-      },
+      // In the project, so a server told `.` - server-filesystem, say - looks where the user works.
+      cwd: () => (existsSync(group.directory) ? group.directory : os.homedir()),
+      ...(invalid ? { invalid } : {}),
       toolsChanged: () => this.publish(),
+      statusChanged: () => this.publish(),
+      callTimeout: () => {
+        const timeout = this.config.get().mcpTimeout
+        return typeof timeout === "number" && Number.isInteger(timeout) && timeout > 0 ? timeout : undefined
+      },
       sample: (input) => (this.sampler ? this.sampler(input) : Promise.reject(new McpRequestError(METHOD_NOT_FOUND, "Method not found"))),
     }
   }
 
-  /**
-   * Brings connections in line with the configuration.
-   *
-   * Servers already connected are left alone: reconnecting on every config
-   * change would drop a working session because an unrelated server was
-   * renamed.
-   */
-  async sync(): Promise<void> {
-    const configured = this.config.get().mcpServers ?? {}
-    this.fingerprint = JSON.stringify(configured)
+  private connection(group: Group, entry: ResolvedServer): Connection {
+    const config = entry.config ?? ({ type: "local" } as McpServerConfig)
+    const connection = new Connection(entry.name, config, this.oauth, undefined, this.hooks(group, entry.invalid))
+    group.connections.set(entry.name, connection)
+    group.made.set(entry.name, madeFrom(entry))
+    return connection
+  }
 
-    for (const [name, connection] of [...this.connections]) {
-      if (!configured[name]) {
-        connection.stop()
-        this.connections.delete(name)
-      }
+  /** Brings a group's connections in line with `entries`: a changed entry is connected again with what it says now. */
+  private async reconcile(group: Group, entries: ResolvedServer[]): Promise<void> {
+    const wanted = new Set(entries.map((entry) => entry.name))
+    for (const [name, connection] of [...group.connections]) {
+      if (wanted.has(name)) continue
+      void connection.stop()
+      group.connections.delete(name)
+      group.made.delete(name)
     }
-
+    group.entries = entries
     const work: Promise<void>[] = []
-    for (const [name, entry] of Object.entries(configured)) {
-      const wanted = entry.enabled !== false
-      let connection = this.connections.get(name)
-      if (!connection) {
-        connection = new Connection(name, entry, this.oauth, undefined, this.hooks())
-        this.connections.set(name, connection)
+    for (const entry of entries) {
+      const enabled = entry.config?.enabled !== false
+      let connection = group.connections.get(entry.name)
+      if (connection && group.made.get(entry.name) !== madeFrom(entry)) {
+        void connection.stop()
+        connection = undefined
       }
-      if (!wanted) {
+      connection ??= this.connection(group, entry)
+      if (!enabled) {
         if (connection.status !== "disabled") connection.disable()
         continue
       }
       if (connection.status === "connected" || connection.status === "pending") continue
       work.push(connection.connect())
     }
-
     this.publish()
     await Promise.all(work)
     this.publish()
   }
 
-  /** Flips one server on or off, and reconnects or drops it to match. */
+  /** A directory's servers, connected (or tried) before this settles. */
+  async ready(directory: string): Promise<void> {
+    this.sweep()
+    const key = directoryKey(directory)
+    let group = this.groups.get(key)
+    if (!group) {
+      const created: Group = { directory, entries: [], connections: new Map(), made: new Map(), ready: Promise.resolve(), lastUsed: Date.now() }
+      created.ready = this.resolve(directory).then((entries) => this.reconcile(created, entries))
+      this.groups.set(key, created)
+      group = created
+    }
+    group.lastUsed = Date.now()
+    await group.ready
+  }
+
+  /** At launch: the servers of the directory the settings page reports on. */
+  start(): Promise<void> {
+    return this.ready(this.viewDirectory())
+  }
+
+  /** Every group reads the configuration again: what changed or failed is connected again, what went is closed. */
+  private async refresh(): Promise<void> {
+    // Each group's `ready` is replaced at once, so a turn that starts meanwhile waits for the new set.
+    await Promise.all(
+      [...this.groups.values()].map((group) => {
+        group.ready = group.ready
+          .catch(() => {})
+          .then(() => this.resolve(group.directory))
+          .then((entries) => this.reconcile(group, entries))
+        return group.ready
+      }),
+    )
+  }
+
+  /** Closes project groups nobody has used for a while; a call still running keeps its group. */
+  private sweep(): void {
+    const view = directoryKey(this.viewDirectory())
+    const cutoff = Date.now() - IDLE_GROUP_MS
+    for (const [key, group] of [...this.groups]) {
+      if (key === view || group.lastUsed > cutoff) continue
+      if ([...group.connections.values()].some((connection) => connection.busy())) continue
+      for (const connection of group.connections.values()) void connection.stop()
+      this.groups.delete(key)
+    }
+  }
+
+  private group(directory?: string): Group | undefined {
+    const group = this.groups.get(directoryKey(directory ?? this.viewDirectory()))
+    if (group) group.lastUsed = Date.now()
+    return group
+  }
+
+  /** Flips one server on or off in the configuration. */
   async toggle(name: string): Promise<void> {
     const servers = { ...(this.config.get().mcpServers ?? {}) }
     const entry = servers[name]
     if (!entry) return
     servers[name] = { ...entry, enabled: entry.enabled === false }
     await this.config.set({ mcpServers: servers })
-    await this.sync()
   }
 
   /**
@@ -969,8 +1221,11 @@ export class McpServers {
    * sign-in is simply connected. Rejects with why when it cannot finish.
    */
   async authenticate(name: string): Promise<void> {
-    const entry = this.config.get().mcpServers?.[name]
-    if (!entry || entry.enabled === false) throw new Error(`MCP server ${name} not found or disabled`)
+    const stored = this.config.get().mcpServers?.[name]
+    if (!stored || stored.enabled === false) throw new Error(`MCP server ${name} not found or disabled`)
+    const [resolved] = await resolveServers({ servers: { [name]: stored }, configFile: this.configFile(), home: this.home })
+    const entry = resolved?.config
+    if (!entry) throw new Error(resolved?.invalid ?? `MCP server ${name} not found or disabled`)
     if (entry.type !== "remote" || !entry.url) throw new Error(`MCP server ${name} is not a remote server`)
     if (entry.oauth === false) throw new Error(`MCP server ${name} has OAuth explicitly disabled`)
     if (!this.oauth) throw new Error("sign-in is not available")
@@ -997,66 +1252,71 @@ export class McpServers {
       (url) => {
         address = url
       },
-      this.hooks(),
+      {},
     )
     await attempt.connect()
-    if (attempt.status === "connected") {
+    void attempt.stop()
+    if (attempt.status !== "connected") {
+      if (attempt.status !== "needs_auth" || !address) {
+        throw new Error(attempt.error ?? "the server did not ask for a sign-in")
+      }
+      const callback = waitForCallback(state, name)
+      openInBrowser(address.toString())
+      const code = await callback
+      const kept = (await store.get(name))?.oauthState
       await store.clear(name, "oauthState")
-      this.connections.get(name)?.stop()
-      this.connections.set(name, attempt)
-      this.publish()
-      return
-    }
-    if (attempt.status !== "needs_auth" || !address) {
-      throw new Error(attempt.error ?? "the server did not ask for a sign-in")
-    }
-
-    const callback = waitForCallback(state, name)
-    openInBrowser(address.toString())
-    const code = await callback
-    const stored = (await store.get(name))?.oauthState
-    await store.clear(name, "oauthState")
-    if (stored !== state) throw new Error("OAuth state mismatch - potential CSRF attack")
-    await attempt.finishAuth(code)
-    await store.clear(name, "codeVerifier")
-
-    const connection = this.connections.get(name)
-    if (connection) {
-      connection.stop()
-      this.publish()
-      await connection.connect()
-      this.publish()
+      if (kept !== state) throw new Error("OAuth state mismatch - potential CSRF attack")
+      await attempt.finishAuth(code)
+      await store.clear(name, "codeVerifier")
     } else {
-      await this.sync()
+      await store.clear(name, "oauthState")
     }
+    // Signed in: every project that has this server waiting on a sign-in connects again.
+    await Promise.all(
+      [...this.groups.values()].map(async (group) => {
+        const connection = group.connections.get(name)
+        if (!connection || connection.status === "connected" || connection.status === "disabled") return
+        await connection.stop()
+        this.publish()
+        await connection.connect()
+        this.publish()
+      }),
+    )
   }
 
   list(): McpServerState[] {
-    const configured = this.config.get().mcpServers ?? {}
-    return Object.keys(configured)
-      .sort((a, b) => a.localeCompare(b))
-      .map((name) => {
-        const connection = this.connections.get(name)
-        return {
-          name,
-          status: connection?.status ?? "disabled",
-          // A failure may quote the address or the command it was started with; shown masked.
-          error: connection?.error === undefined ? undefined : redactString(connection.error),
-          tools: connection?.tools.length ?? 0,
-        }
-      })
+    const group = this.group()
+    if (!group) return []
+    return group.entries.map((entry) => {
+      const connection = group.connections.get(entry.name)
+      return {
+        name: entry.name,
+        status: connection?.status ?? "disabled",
+        // A failure may quote the address or the command it was started with; shown masked.
+        error: connection?.error === undefined ? undefined : redactString(connection.error),
+        tools: connection?.tools.length ?? 0,
+      }
+    })
+  }
+
+  /** The servers a directory's conversations are offered, by name. */
+  names(directory: string): string[] {
+    return (this.group(directory)?.entries ?? []).filter((entry) => entry.config?.enabled !== false).map((entry) => entry.name)
   }
 
   /**
-   * One server's tools, for the settings page. Only a connected server has any
-   * to show; otherwise the answer is its status name, or its error when it
-   * failed with one, which the page words for the reader.
+   * One server's tools for the settings page, from a connection of their own
+   * (see mcp-probe.ts) - so a server switched off or failed still answers.
    */
-  toolsOf(name: string): { tools?: { name: string; description?: string }[]; error?: string } {
-    const connection = this.connections.get(name)
-    if (!connection || connection.status === "disabled") return { error: "disabled" }
-    if (connection.status !== "connected") return { error: connection.error ? redactString(connection.error) : connection.status }
-    return { tools: connection.tools.map((tool) => ({ name: tool.name, description: tool.description })) }
+  async probe(name: string, timeoutMs?: number): Promise<ProbeResult> {
+    const stored = this.config.get().mcpServers?.[name]
+    if (!stored) return { error: "server not found" }
+    const [entry] = await resolveServers({ servers: { [name]: stored }, configFile: this.configFile(), home: this.home })
+    if (!entry) return { error: "unsupported server config" }
+    if (!entry.config) return { error: redactString(`invalid config: ${entry.invalid}`) }
+    const result = await probeTools(entry.config, { cwd: this.viewDirectory(), timeoutMs })
+    // An error may quote the address or the command; shown masked, as the status is.
+    return "error" in result ? { error: redactString(result.error) } : result
   }
 
   private publish(): void {
@@ -1064,7 +1324,8 @@ export class McpServers {
   }
 
   /**
-   * Every connected server's prompts, keyed the way a slash command names one.
+   * Every connected server's prompts in a directory, keyed the way a slash
+   * command names one.
    *
    * The reference builds exactly this map - `sanitize(client) + ":" +
    * sanitize(prompt.name)` against `{...prompt, client}` (@22770881) - and its
@@ -1072,9 +1333,10 @@ export class McpServers {
    * cannot be asked is skipped rather than failing the whole list: one broken
    * server must not empty the slash menu.
    */
-  async prompts(): Promise<Record<string, McpPromptRef>> {
+  async prompts(directory?: string): Promise<Record<string, McpPromptRef>> {
+    if (directory) await this.ready(directory)
     const out: Record<string, McpPromptRef> = {}
-    for (const [name, connection] of this.connections) {
+    for (const [name, connection] of this.group(directory)?.connections ?? []) {
       let listed: McpPrompt[] = []
       try {
         listed = await connection.prompts()
@@ -1089,23 +1351,26 @@ export class McpServers {
   }
 
   /** One prompt's text, with `$1`, `$2` … standing in for its arguments. */
-  async getPrompt(client: string, name: string, args: Record<string, string>): Promise<string> {
-    const connection = this.connections.get(client)
+  async getPrompt(client: string, name: string, args: Record<string, string>, directory?: string): Promise<string> {
+    const connection = this.group(directory)?.connections.get(client)
     if (!connection) return ""
     return connection.getPrompt(name, args)
   }
 
   /**
-   * The tools every connected server offers, named for the agent.
+   * The tools every connected server of a directory offers, named for the agent.
    *
    * The server name is part of the tool name because two servers may well both
    * offer "search", and the model has to be able to tell them apart.
    */
-  tools(): ToolDefinition[] {
+  tools(directory?: string): ToolDefinition[] {
     const out: ToolDefinition[] = []
-    for (const [name, connection] of this.connections) {
+    for (const [name, connection] of this.group(directory)?.connections ?? []) {
       if (connection.status !== "connected") continue
       for (const tool of connection.tools) {
+        const rule = toolRule(connection.config.tools, tool.name)
+        // A tool its server's rules refuse is never offered, as MiMo leaves a denied tool out.
+        if (rule === "deny") continue
         out.push({
           name: mcpToolName(name, tool.name),
           description: tool.description ?? "",
@@ -1116,24 +1381,22 @@ export class McpServers {
           server: name,
           execute: async (input, context) => {
             connection.activeSession = context.sessionID
-            /*
-             * An MCP server is code this app did not write, reached over a
-             * pipe or a socket, and a call hands it whatever the model chose
-             * to pass. That is worth asking about - and the approval is
-             * remembered per server, because trusting one is the decision a
-             * user is actually making.
-             */
-            await context.permissions.ask({
-              sessionID: context.sessionID,
-              messageID: context.messageID,
-              callID: context.callID,
-              kind: "mcp",
-              directory: context.directory,
-              title: `${name}: ${tool.name}`,
-              subject: JSON.stringify(input),
-              preview: JSON.stringify(input, null, 2),
-              scope: `mcp:${name}`,
-            })
+            // A tool its rules allow is not asked about, unless MCP calls are refused altogether.
+            if (rule !== "allow" || context.permissions.action("mcp") === "deny") {
+              await context.permissions.ask({
+                sessionID: context.sessionID,
+                messageID: context.messageID,
+                callID: context.callID,
+                kind: "mcp",
+                directory: context.directory,
+                title: `${name}: ${tool.name}`,
+                subject: JSON.stringify(input),
+                preview: JSON.stringify(input, null, 2),
+                scope: `mcp:${name}`,
+                // A tool its rules ask about asks even where MCP calls run without asking.
+                ...(rule === "ask" ? { patternAsks: true } : {}),
+              })
+            }
             const { output, attachments } = await connection.call(tool.name, input, context.signal)
             // MiMo hands a server's pictures and sounds to the model on the result itself.
             return { output, title: `${name}: ${tool.name}`, ...(attachments.length ? { attachments } : {}) }
@@ -1144,8 +1407,10 @@ export class McpServers {
     return out
   }
 
-  close(): void {
-    for (const [, connection] of this.connections) connection.stop()
-    this.connections.clear()
+  /** Every server stopped; settles once the local ones have exited. */
+  async close(): Promise<void> {
+    const stopping = [...this.groups.values()].flatMap((group) => [...group.connections.values()].map((connection) => connection.stop()))
+    this.groups.clear()
+    await Promise.all(stopping)
   }
 }

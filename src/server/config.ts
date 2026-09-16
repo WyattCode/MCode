@@ -43,6 +43,7 @@ import { modelVariants } from "./provider/variants"
 import { menuEfforts } from "@shared/effort-menu"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
+import { parseJsonc, renderJsonc } from "./jsonc"
 
 export const DEFAULT_MODEL: ModelRef = { provider: "", model: "" }
 
@@ -529,6 +530,20 @@ export class Config {
       delete this.current.accessBefore
     })
 
+    /*
+     * Round nine: MCP tool calls stop asking by default, as in MiMo (the
+     * user's decision of 2026-09-17). A document that went through the reset
+     * above before the default changed still says "ask" for MCP, which
+     * cannot be told from a choice, so it moves to the new default once; a
+     * refusal stays.
+     */
+    once("mcp-allow-r9", () => {
+      const map = this.current.permissions
+      if (map?.mcp === "ask") this.current.permissions = { ...map, mcp: "allow" }
+      const kept = this.current.accessBefore
+      if (kept?.mcp === "ask") this.current.accessBefore = { ...kept, mcp: "allow" }
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
@@ -547,7 +562,7 @@ export class Config {
      * The damaged file is kept rather than written over, under a name of its
      * own, so the settings in it can still be got back by hand.
      */
-    const read = await this.storage.readOrCorrupt<Partial<AppConfig>>("config")
+    const read = await this.readStored()
     const stored = read.value
     if (read.corrupt) {
       const aside = await this.storage.quarantine("config")
@@ -574,9 +589,9 @@ export class Config {
      * first-install permissions would quietly change what this machine allows.
      */
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
-    this.current.autoApprove = allowed(this.current.permissions)
     const migrated = this.migrate()
-    if ((migrated || retired || cleaned) && !this.fromNewerVersion) await this.storage.write("config", this.current)
+    this.current.autoApprove = allowed(this.current.permissions)
+    if ((migrated || retired || cleaned) && !this.fromNewerVersion) await this.persist()
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
@@ -606,6 +621,47 @@ export class Config {
    * opening it once cannot strip the fields the newer one had added.
    */
   fromNewerVersion = false
+
+  /**
+   * config.json as stored: JSONC, so a hand edit may carry comments and
+   * trailing commas. A file that does not parse is reported with where it broke.
+   */
+  private async readStored(): Promise<{ value?: Partial<AppConfig>; corrupt?: string; text?: string }> {
+    let text: string | undefined
+    try {
+      text = await this.storage.readText("config")
+    } catch (err) {
+      return { corrupt: err instanceof Error ? err.message : String(err) }
+    }
+    if (text === undefined) return {}
+    const read = parseJsonc(text)
+    if (read.problem) {
+      return { corrupt: `config.json is not valid JSON near line ${read.problem.line}, column ${read.problem.column} (${read.problem.reason})`, text }
+    }
+    if (read.value === undefined) return { text }
+    if (!read.value || typeof read.value !== "object" || Array.isArray(read.value)) return { corrupt: "config.json does not hold an object", text }
+    return { value: read.value as Partial<AppConfig>, text }
+  }
+
+  /*
+   * What this process itself wrote lately. A key-by-key save leaves the keys
+   * in the file's own order, so the file no longer reads back identical to the
+   * settings in memory, and the folder watcher would take every save of ours
+   * - including one already overtaken by the next - for a hand edit.
+   */
+  private readonly written: string[] = []
+
+  /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
+  private persist(): Promise<void> {
+    const file = this.storage.fileOf("config")
+    const value = this.current
+    return this.storage.writeText("config", (current) => {
+      const text = renderJsonc(file, current, value)
+      this.written.push(text)
+      if (this.written.length > 16) this.written.shift()
+      return text
+    })
+  }
 
   /** The last credential write, so two of them cannot interleave. */
   private persisting: Promise<void> = Promise.resolve()
@@ -692,8 +748,10 @@ export class Config {
    * there until its next question.
    */
   async reloadFromDisk(): Promise<void> {
-    const stored = await this.storage.read<Partial<AppConfig>>("config").catch(() => undefined)
-    if (!stored || typeof stored !== "object") return
+    // A file that stopped parsing is left alone: the next save refuses and says where it broke.
+    const read = await this.readStored()
+    const stored = read.value
+    if (!stored || (read.text !== undefined && this.written.includes(read.text))) return
     if (JSON.stringify(stored) === JSON.stringify(this.current)) return
     const before = this.current
     // As load reads it: a later build's document is taken in but never written back over.
@@ -712,6 +770,17 @@ export class Config {
   }
 
   async set(patch: Partial<AppConfig>): Promise<AppConfig> {
+    const previous = this.current
+    try {
+      return await this.apply(patch)
+    } catch (err) {
+      // A save that could not be written leaves the settings as they were, so memory never runs ahead of the file.
+      this.current = previous
+      throw err
+    }
+  }
+
+  private async apply(patch: Partial<AppConfig>): Promise<AppConfig> {
     const before = this.current.permissions
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
@@ -750,8 +819,8 @@ export class Config {
     if (this.fromNewerVersion) {
       throw new CodedError("The stored settings were written by a newer version of this app", "error.configNewer")
     }
-    this.current.schemaVersion = CONFIG_SCHEMA_VERSION
-    await this.storage.write("config", this.current)
+    this.current = { ...this.current, schemaVersion: CONFIG_SCHEMA_VERSION }
+    await this.persist()
     this.bus.publish({ type: "config.updated", config: this.current })
     return this.current
   }

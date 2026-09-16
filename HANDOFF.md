@@ -281,8 +281,15 @@
   - P9-12 ChatGPT 续期被拒时发 `auth.expired`，窗口常驻提示「{name} 登录已过期，请重新登录」并带「重新登录」（打开该服务商的连接弹窗）；回合遇到同样情况报同一句。
   - P9-13 使用情况页三块统一为最近 14 天、按本机时区分日；没有价格的用量显示「—」，部分有价时注明；标题、Smart 路由、上下文压缩、命令审查这些后台请求的用量记入 `storage/usage-background.json`，算花费不算回合。
   - 新文案 12 个键进 18 张表。验证（合并 v2.0 的 Electron 41.7.2 与设置一路之后）：十三项检查全过，build 通过，smoke **3075 全过**（`smoke-round9-providers.ts` 115 条；另把 round9-settings 里「坏模型回到默认 claude-opus-5」的预期改为空默认）；每条新检查都在改坏代码后确认会失败。探针 `mcode-round9-providers.cjs` 7 项全过（截图 home-empty / quick-add / custom-form / model-menu / expired-notice / expired-connect / connect-browse / usage），改坏构建后 6 项失败、单改「重新登录」链接后 V6 失败；回归 round8-model 9、round3-settings 38、round9-settings 13 全过。`mcode-round3-composer.cjs` 仍读已在第八轮删除的 `SessionTabs.vue`，中途报错，属探针过期。
-  - 未做（归另一路）：P9-14 … P9-18 与 MCP 各行。
-- 进行中：MCP 一路构建（服务商与提示词、Windows 发行已合并）。
+  - P9-14 … P9-18 与 MCP 各行见下一条。
+- **MCP 生命周期这一路已完成**（M-1 … M-16，即 `round9-providers.md` 的 P9-14 … P9-18 与审计各项，worktree 分支 0dc683d … d7788e7）：
+  - **按项目分组**（M-7）：`server/mcp.ts` 按项目目录各有一组连接，本地服务器在该目录启动；回合开始前等本项目的服务器连上（或失败）再给工具；设置页报告的是新对话默认目录那一组。空闲 30 分钟的其他项目组关闭。
+  - **来源**（M-6、M-5、M-16，`server/mcp-sources.ts`）：MCode 自己的 `mcpServers`，再按 MiMo 规则合并项目里的 `mcode.json(c)`（从目录向上到仓库根，外层先、近处覆盖）与各级 `.mcode/mcode.json(c)`、`~/.mcode`，最后是 `~/.claude.json` 与 `<目录>/.claude.json` 的 `mcpServers`（跳过 SSE，不覆盖 MCode 自己的同名项，**只读 `mcpServers` 这一个键**）；这些不出现在设置列表里。`{env:名}` / `{file:路径}` 按所在文件的目录替换。没有 type 的条目忽略；未知 type、字符串 command 等报「invalid config: …」失败。检查与探针用 `MCODE_IMPORT_HOME` 指向临时目录，从不读用户真实的 `~/.claude.json`。
+  - **下一个对话生效**（M-2、M-1）：保存 / 启停 / 删除只写配置并标记过期；新建对话时（`session.create`）若没有回合在跑就立即重读所有项目组，否则等最后一个回合结束；配置变了的条目（命令、地址、请求头…）断开重连，失败的重试，删掉的关闭，没变的保持。删除了每个对话固定的服务器列表（`SessionInfo.mcpServers`、`store.setMcpServers`）。设置页每次刷新状态时对「已启用但报告里没有」的服务器调 `mcp.register` 立即连接（MiMo 的 mcpRegister），期间整列显示「检测中…」，报告仍没有的显示「未知」。
+  - **MCP 调用默认不询问**（M-3）：`mcp` 桶默认 allow，帮我审批同样；一次性迁移 `mcp-allow-r9` 把已走过 S9-1 重置、仍存着旧默认 ask 的文档改为 allow（deny 保留）。MCP 采样（sampling）未设置时仍询问（`patternAsks`，与 MiMo 只看用户规则一致）。
+  - **config.json 是 JSONC**（M-4，`server/jsonc.ts`）：注释、尾逗号可读；保存按键修改、保留注释与顺序；磁盘文件解析失败时拒绝写入，报 `error.configUnparseable`（文件名、行、列，18 张表），内存回滚。`CodedError` 带参数到窗口；MCP 表单 / 启停 / 删除的失败提示带原因。文件监视记住本进程最近写出的文本，不把自己的保存当成手改（否则按键写入后键序不同，会把刚加的自定义服务商读回成禁用）。
+  - 其余：M-8「工具」按钮独立探测（`server/mcp-probe.ts`，15 秒、无 OAuth、无 SSE 回退、翻页，已关闭 / 失败的服务器也能列）；M-9 `needs_client_registration`（黄色「待授权」+「授权」，`lib/mcp-status.ts` 统一各处状态）；M-10 表单命令不拆分、参数与请求头值去空白；M-11 停止本地服务器：关 stdin → 2 秒 → SIGTERM → 2 秒 → SIGKILL（非 Windows 先按 pgrep 结束子进程），退出时等待；M-12 运行中死掉立即推送状态并撤工具；M-13 stderr 尾部 4096、逐行写日志、启动失败日志（命令打码、退出码、信号），错误形如「原因; exit code N; signal S; stderr」，列工具失败统一一句；M-14 `mcpTimeout`（全局调用超时，服务器自己的 `timeout` 优先）与条目里的 `tools` 规则（按工具名、`*`/`?`、后者优先：false/deny 不提供、ask 每次询问、true/allow 不询问但 MCP 被拒时仍拒）；M-15 列表按配置顺序、配置路径显示为 `~`、导入提示注明下一个对话生效。Windows 上 `.cmd` 仍走 cmd.exe（`server/mcp-launch.ts`）。
+  - 验证（合并 v2.0 providers / Windows 之后，4b866ae）：十三项检查全过，build 通过，smoke **3258 全过**（新 `scripts/smoke-round9-mcp.ts` 约 100 条、夹具 `scripts/fixtures/mcp-lifecycle-server.cjs`；删去第六轮 L5「对话固定服务器」一节，mcpcheck 的启停改为下一个对话生效，round9-settings 的默认表改为 mcp allow）；每组新检查都在改坏代码后确认会失败。探针 `mcode-round9-mcp.cjs`（临时 userData、临时 HOME、临时项目，配置从零写出）15 项全过、0 报错，两次改坏构建后对应 8 项失败。一次全量 smoke 里第八轮 M14「首条消息带说明」三条偶发失败，重跑两次都过，属时序偶发。
 
 用户决定不做（不要再主动提）：
 

@@ -292,6 +292,7 @@ import { roundEightChecks } from "./smoke-round8"
 // Round 9: providers and models - request shaping per family, endpoints, fallbacks, the model catalog.
 import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
+import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
@@ -329,6 +330,11 @@ async function main() {
   // round 9: every backend a check starts stays off the network; the models.dev checks use a local server.
   process.env.MCODE_DISABLE_MODELS_FETCH = "1"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-"))
+  /*
+   * Never the reader's own home: MCP servers are also read from ~/.claude.json
+   * and ~/.mcode, and a check must not start the servers configured there.
+   */
+  process.env.MCODE_IMPORT_HOME ??= path.join(root, "home")
   const dataDirectory = path.join(root, "data")
   const project = path.join(root, "project")
   await fs.mkdir(project, { recursive: true })
@@ -3374,6 +3380,8 @@ async function main() {
      * and the whole of it saved. read, glob, grep and bash cap themselves, as MiMo's do, so an MCP tool carries it.
      */
     await call({ type: "config.set", patch: { mcpServers: { rich: { type: "local", command: ["node", path.join(process.cwd(), "scripts/fixtures/mcp-rich-server.cjs")] } } } })
+    // A saved server reaches the conversations once a new one starts, this one included (MiMo's rule).
+    await call({ type: "session.create", directory: project })
     const richUp = await (async () => {
       const end = Date.now() + 20_000
       while (Date.now() < end) {
@@ -6930,6 +6938,7 @@ async function main() {
   await roundEightChecks(check, section)
   await roundNineProviderChecks(check, section)
   await roundNineWindowsChecks(check, section)
+  await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
@@ -8966,7 +8975,7 @@ async function mcpChecks(project: string) {
     sampled.push({ server: input.server, sessionID: input.sessionID })
     return { role: "assistant", content: { type: "text", text: "sampled" }, model: "fake/m", stopReason: "endTurn" }
   })
-  await mcp.sync()
+  await mcp.start()
   const mcpContext = (callID: string, signal = new AbortController().signal) =>
     ({ sessionID: "ses_mcp", messageID: "msg_mcp", callID, directory: project, permissions: { ask: async () => {} }, signal, progress: () => {}, snapshot: async () => {} }) as never
   const named = (name: string) => mcp.tools().find((tool) => tool.name === name)

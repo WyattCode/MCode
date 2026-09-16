@@ -28,16 +28,6 @@ export interface SessionInfo {
   titleSource?: "fallback" | "generated" | "user"
   /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
   worktreeNotice?: boolean
-  /**
-   * The MCP servers this conversation was offered at its first turn.
-   *
-   * MiMo's MCP page says a saved change applies from the next conversation, so
-   * the list is kept with the conversation and read back on the next run: a
-   * server added or switched on later reaches new conversations only. Absent
-   * on conversations stored before this, which take whatever is configured at
-   * their next turn and keep that.
-   */
-  mcpServers?: string[]
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
@@ -992,6 +982,11 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
  * project happened without asking, and everything that changed a file, ran a
  * command or reached the network asked first. Naming them here rather than leaving them
  * implicit is what lets a stored setting be told apart from an untouched one.
+ *
+ * An MCP tool call runs without asking, as in MiMo, whose engine allows every
+ * tool by default and whose desktop only makes edits and commands ask. The
+ * user chose that (2026-09-17); the bucket can still be set to ask or deny, and
+ * a server's own `tools` rules can make single tools ask.
  */
 export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   read: "allow",
@@ -1003,7 +998,7 @@ export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   bash: "ask",
   webfetch: "ask",
   outside: "ask",
-  mcp: "ask",
+  mcp: "allow",
 }
 
 /**
@@ -1074,6 +1069,13 @@ export interface McpServerConfig {
   timeout?: number
   /** MiMo's per-server `sampling`: whether the server may have a model write for it. Unset asks. */
   sampling?: "deny" | "ask" | "allow"
+  /**
+   * Per-tool rules, by the server's own tool name (`*` and `?` match as in
+   * permission rules; the last matching rule wins): false or "deny" keeps the
+   * tool from the model, "ask" asks before each call even where MCP calls are
+   * allowed, true or "allow" never asks. Written by hand into the config file.
+   */
+  tools?: Record<string, boolean | "allow" | "ask" | "deny">
 }
 
 export interface McpOAuthConfig {
@@ -1179,6 +1181,8 @@ export interface AppPath {
 export interface AppPaths {
   /** The folder everything the app stores lives under. */
   storage: string
+  /** The user's home folder, which a path inside it is shown relative to (`~`). */
+  home: string
   files: AppPath[]
 }
 
@@ -1191,7 +1195,8 @@ export interface Worktree {
   main: boolean
 }
 
-export type McpStatus = "connected" | "pending" | "failed" | "needs_auth" | "disabled"
+/** `needs_client_registration`: the server wants a sign-in but cannot register a client, so its config needs a client id. */
+export type McpStatus = "connected" | "pending" | "failed" | "needs_auth" | "needs_client_registration" | "disabled"
 
 export interface McpServerState {
   name: string
@@ -1321,6 +1326,12 @@ export interface AppConfig {
   taskOrder: Record<string, string[]>
   /** Model Context Protocol servers, by the name they are shown under. */
   mcpServers: Record<string, McpServerConfig>
+  /**
+   * MiMo's `experimental.mcp_timeout`: how long, in milliseconds, a tool call
+   * may take on a server that sets no `timeout` of its own (a minute when
+   * unset). Written by hand into the config file.
+   */
+  mcpTimeout?: number
   /** UI display language. Simplified Chinese is the default. */
   /*
    * A language code the renderer offers. Kept as a plain string here so
@@ -1967,6 +1978,8 @@ export type Request =
   | { type: "mcp.tools"; name: string }
   /* 授权: the browser sign-in for a remote server that answered 401; resolves when it has finished. */
   | { type: "mcp.authenticate"; name: string }
+  /** An enabled server the status report does not know yet: connect it now, as MiMo's page registers one. */
+  | { type: "mcp.register"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
   /* 导入: what other AI apps on this machine hold, and taking the chosen ones in. Read-only towards them. */
@@ -2169,6 +2182,7 @@ export interface ResponseMap {
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }
   "mcp.authenticate": { servers: McpServerState[] }
+  "mcp.register": { servers: McpServerState[] }
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }

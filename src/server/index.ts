@@ -163,6 +163,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   const mcp = new McpServers(bus, config, storage)
   mcp.useSampling(createSampler({ config, auth, permissions }))
   runner.useMcp(mcp)
+  mcp.useBusy(() => runner.busySessions().length > 0)
 
   const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp, artifacts }
 
@@ -171,7 +172,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
    * hold the whole backend, and the window has nothing to show until the
    * socket is up anyway. Status arrives on the bus as each one answers.
    */
-  void mcp.sync()
+  void mcp.start()
 
   /*
    * Bound to loopback, and still not open to whatever reaches loopback: every
@@ -271,7 +272,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       catalogClosed = true
       catalog.stop()
       await shells.closeAll()
-      mcp.close()
+      await mcp.close()
       await scheduler.stop()
       await automations.stop()
       stopHistory(history)

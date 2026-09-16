@@ -18,6 +18,7 @@ import type { Attachment, AgentName,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
 import { language, sessionTitle, t } from "../lib/i18n"
+import { mcpNeedsSignIn } from "../lib/mcp-status"
 import { visibleChatOrder } from "../lib/visible-chats"
 import { projectName } from "../lib/project"
 import { projectsByRecency } from "@shared/projects"
@@ -913,7 +914,7 @@ export const useApp = defineStore("app", () => {
    */
   const runtimeStatus = computed<"down" | "attention" | "warning" | "ok">(() => {
     if (!connected.value) return "down"
-    if (mcpServers.value.some((entry) => entry.status === "needs_auth")) return "attention"
+    if (mcpServers.value.some((entry) => mcpNeedsSignIn(entry.status))) return "attention"
     if (mcpServers.value.some((entry) => entry.status === "failed")) return "warning"
     return "ok"
   })
@@ -1628,7 +1629,9 @@ export const useApp = defineStore("app", () => {
         failure = err
       }
     }
-    if (!options.quiet) notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }))
+    // A failure the backend named (a config file that no longer parses says where) is said under the title.
+    const named = failure instanceof Error && "code" in failure ? failure.message : undefined
+    if (!options.quiet) notifyFailure(t("toast.prefSaveFailed", { key: Object.keys(patch).join(", ") }), named)
     throw failure
   }
 

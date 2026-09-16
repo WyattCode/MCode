@@ -31,5 +31,7 @@ export function mergeMcpSecrets(
   // Written by hand into config.json, never shown by the form: kept rather than lost on the next save.
   if (merged.timeout === undefined && stored?.timeout !== undefined) merged.timeout = stored.timeout
   if (merged.sampling === undefined && stored?.sampling !== undefined) merged.sampling = stored.sampling
+  if (merged.tools === undefined && stored?.tools !== undefined) merged.tools = stored.tools
+  if (merged.type === "remote" && merged.oauth === undefined && stored?.oauth !== undefined) merged.oauth = stored.oauth
   return merged
 }

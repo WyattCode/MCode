@@ -22,6 +22,8 @@ import ThirdPartyDialog from "./ThirdPartyDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
+import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
+import { homePath } from "../lib/home-path"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
@@ -194,13 +196,6 @@ interface McpForm {
 }
 
 const MCP_KINDS = ["stdio", "http"] as const
-const MCP_TONE: Record<McpStatus, string> = {
-  connected: "ok",
-  failed: "err",
-  needs_auth: "warn",
-  pending: "muted",
-  disabled: "muted",
-}
 const MCP_EXAMPLE = `{
   "mcpServers": {
     "filesystem": {
@@ -230,49 +225,64 @@ function blankMcpForm(): McpForm {
 }
 
 /*
- * MiMo's pills: 已禁用 when off; 检测中… while an enabled server has no answer
- * yet; its known states by name; anything else 未知.
+ * MiMo's status pass: read the report, and connect now any server switched on
+ * in the config that the report does not know yet - one added since the
+ * servers were last read. Every other saved change waits for the next
+ * conversation. Counted, so overlapping passes keep 检测中… until the last ends.
+ */
+const mcpChecking = ref(0)
+
+async function refreshMcp() {
+  const client = app.client
+  if (!client) return
+  mcpChecking.value++
+  try {
+    let servers = (await client.request({ type: "mcp.list" }).catch(() => undefined))?.servers
+    if (!servers) return
+    const known = new Set(servers.map((server) => server.name))
+    const missing = Object.entries(app.config?.mcpServers ?? {})
+      .filter(([name, entry]) => entry.enabled !== false && !known.has(name))
+      .map(([name]) => name)
+    const registered = await Promise.all(missing.map((name) => client.request({ type: "mcp.register", name }).catch(() => undefined)))
+    for (const result of registered) if (result) servers = result.servers
+    app.mcpServers = servers
+  } finally {
+    mcpChecking.value--
+  }
+}
+
+/*
+ * MiMo's pills: 已禁用 when off; 检测中… on every enabled server while a status
+ * pass runs; its known states by name; anything the report does not know 未知.
  */
 const mcpRows = computed(() =>
-  Object.entries(app.config?.mcpServers ?? {})
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, entry]) => {
-      const state = app.mcpServers.find((server) => server.name === name)
-      const enabled = entry.enabled !== false
-      const status: McpStatus | "checking" | "unknown" = !enabled
-        ? "disabled"
-        : !state
-          ? "checking"
-          : state.status in MCP_TONE
-            ? state.status
-            : "unknown"
-      return {
-        name,
-        remote: entry.type === "remote",
-        enabled,
-        status,
-        tone: status in MCP_TONE ? MCP_TONE[status as McpStatus] : "muted",
-        error: state?.error,
-      }
-    }),
+  // In the config's own order, as MiMo lists them.
+  Object.entries(app.config?.mcpServers ?? {}).map(([name, entry]) => {
+    const state = app.mcpServers.find((server) => server.name === name)
+    const enabled = entry.enabled !== false
+    const status: McpStatus | "checking" | "unknown" = !enabled
+      ? "disabled"
+      : mcpChecking.value
+        ? "checking"
+        : state && isMcpStatus(state.status)
+          ? state.status
+          : "unknown"
+    return {
+      name,
+      remote: entry.type === "remote",
+      enabled,
+      status,
+      tone: isMcpStatus(status) ? MCP_STATUS_TONE[status] : "muted",
+      label: isMcpStatus(status) ? mcpStatusLabel(status) : status,
+      error: state?.error,
+    }
+  }),
 )
 
-/* The config keeps a command already split; the form shows its first word as a line, quoted when it has a space. */
-function joinCommand(parts: string[]): string {
-  return parts.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ")
-}
-
-function splitCommand(line: string): string[] {
-  const parts: string[] = []
-  const pattern = /"([^"]*)"|(\S+)/g
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(line))) parts.push(match[1] ?? match[2])
-  return parts
-}
-
-function recordOf(rows: McpPair[]): Record<string, string> | undefined {
+/* Keys are trimmed; a header's value is too, an environment variable's is kept as typed - as MiMo's form saves them. */
+function recordOf(rows: McpPair[], trimValues = false): Record<string, string> | undefined {
   const out: Record<string, string> = {}
-  for (const row of rows) if (row.key.trim()) out[row.key.trim()] = row.value
+  for (const row of rows) if (row.key.trim()) out[row.key.trim()] = trimValues ? row.value.trim() : row.value
   return Object.keys(out).length ? out : undefined
 }
 
@@ -321,7 +331,8 @@ function editMcp(name: string) {
   mcpForm.value = {
     name,
     type: entry.type === "remote" ? "http" : "stdio",
-    command: command ? joinCommand([command]) : "",
+    // The program alone, as stored: the field is never split into words.
+    command: command ?? "",
     url: entry.url ?? "",
     args,
     env: rowsOf(entry.environment),
@@ -341,10 +352,10 @@ async function saveMcp() {
   const name = form.name.trim()
   const entry: McpServerConfig =
     form.type === "http"
-      ? { type: "remote", url: form.url.trim(), headers: recordOf(form.headers) }
+      ? { type: "remote", url: form.url.trim(), headers: recordOf(form.headers, true) }
       : {
           type: "local",
-          command: [...splitCommand(form.command), ...form.args.filter((arg) => arg.trim())],
+          command: [form.command.trim(), ...form.args.map((arg) => arg.trim()).filter(Boolean)],
           environment: recordOf(form.env),
         }
   // An edit keeps the server as switched on or off as it was.
@@ -355,24 +366,27 @@ async function saveMcp() {
     const result = await app.client?.request({ type: "mcp.save", name, entry, keep })
     if (!result) throw new Error("not connected")
     app.config = result.config
-  } catch {
-    notifyFailure(t("set.mcpForm.saveFailed"))
+  } catch (err) {
+    // As MiMo's form: the reason when there is one (a config file that no longer parses says where), else the plain failure.
+    notifyFailure(err instanceof Error && err.message ? err.message : t("set.mcpForm.saveFailed"))
     return
   }
   delete mcpTools.value[name]
   notify(t("set.mcpForm.saved", { name }))
   mcpView.value = "list"
+  void refreshMcp()
 }
 
 async function setMcpEnabled(name: string, enabled: boolean) {
   const entry = app.config?.mcpServers?.[name]
   if (!entry) return
   try {
-    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: { ...entry, enabled } } })
-  } catch {
-    notifyFailure(t("set.mcp.toggleFailed"))
+    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: { ...entry, enabled } } }, { quiet: true })
+  } catch (err) {
+    notifyFailure(t("set.mcp.toggleFailed"), reasonText(err))
   }
   delete mcpTools.value[name]
+  void refreshMcp()
 }
 
 /* MiMo's 授权 on a remote server that answered 401: the browser sign-in, then the row reconnects. */
@@ -388,6 +402,7 @@ async function authorizeMcp(name: string) {
   } finally {
     mcpAuthorizing.value = undefined
     delete mcpTools.value[name]
+    void refreshMcp()
   }
 }
 
@@ -395,10 +410,16 @@ async function authorizeMcp(name: string) {
 async function removeMcp(name: string) {
   const servers = { ...(app.config?.mcpServers ?? {}) }
   delete servers[name]
-  await app.patchConfig({ mcpServers: servers })
+  try {
+    await app.patchConfig({ mcpServers: servers }, { quiet: true })
+  } catch (err) {
+    notifyFailure(reasonText(err))
+    return
+  }
   if (mcpToolsOpen.value === name) mcpToolsOpen.value = undefined
   delete mcpTools.value[name]
   notify(t("set.mcp.removed") + name)
+  void refreshMcp()
 }
 
 async function loadMcpTools(name: string) {
@@ -468,6 +489,7 @@ async function finishMcpImport() {
     const result = await app.client?.request({ type: "mcp.importApply", items })
     notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }))
     mcpView.value = "list"
+    void refreshMcp()
   } catch (err) {
     notifyFailure(t("set.mcp.importFailed") + (err instanceof Error ? err.message : String(err)))
   } finally {
@@ -479,10 +501,8 @@ async function finishMcpImport() {
 function mcpToolsView(name: string) {
   const entry = mcpTools.value[name]
   if (!entry || entry === "loading") return { kind: "loading", tools: [] as McpToolInfo[], error: "" }
-  if (entry.error !== undefined) {
-    const error = entry.error in MCP_TONE ? t(`set.mcp.status.${entry.error}`) : entry.error
-    return { kind: "error", tools: [] as McpToolInfo[], error }
-  }
+  // The server's own reason, from the page's own probe, as MiMo shows it.
+  if (entry.error !== undefined) return { kind: "error", tools: [] as McpToolInfo[], error: entry.error }
   const tools = entry.tools ?? []
   return { kind: tools.length ? "list" : "empty", tools, error: "" }
 }
@@ -638,6 +658,7 @@ watch(
     if (next === "files" || next === "models" || next === "mcp") void loadPaths()
     if (next === "files") void loadAgents()
     if (next !== "mcp") mcpView.value = "list"
+    else void refreshMcp()
     if (next === "environment") void loadTrees()
     else configuring.value = undefined
     if (next === "usage") void loadUsage()
@@ -2464,7 +2485,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     <span>{{ t(row.remote ? "set.mcp.remote" : "set.mcp.local") }}</span>
                     <span class="mcp-status" :class="row.tone" :data-mcp-status="row.status" :title="row.error">
                       <span class="mcp-status-dot" />
-                      {{ t(`set.mcp.status.${row.status}`) }}
+                      {{ t(`set.mcp.status.${row.label}`) }}
                     </span>
                   </div>
                 </div>
@@ -2481,7 +2502,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     <span class="knob" />
                   </button>
                   <button
-                    v-if="row.enabled && row.status === 'needs_auth'"
+                    v-if="row.enabled && mcpNeedsSignIn(row.status)"
                     class="ctl-btn"
                     :data-mcp-auth="row.name"
                     :disabled="mcpAuthorizing === row.name"
@@ -2539,7 +2560,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <div class="line-text">
                 <div class="line-title">{{ t("set.mcp.configFile") }}</div>
                 <div class="line-sub mcp-path" data-config-path :title="configFile?.path">
-                  {{ configFile?.path ?? t("set.mcp.configResolving") }}
+                  {{ configFile ? homePath(configFile.path, paths?.home) : t("set.mcp.configResolving") }}
                 </div>
               </div>
             </div>
