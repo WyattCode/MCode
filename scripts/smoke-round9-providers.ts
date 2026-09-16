@@ -21,6 +21,9 @@ import { customModelOf } from "../src/server/config"
 import { startBackend } from "../src/server/index"
 import { handle } from "../src/server/handlers"
 import type { Request } from "../src/shared/protocol"
+import { connectableProviders, providerLabel, quickAddGroups } from "../src/renderer/src/lib/connect"
+import { language } from "../src/renderer/src/lib/i18n"
+import { readFileSync } from "node:fs"
 
 /** How a handler call failed: its code and the values its sentence fills in. */
 async function refusal(run: () => Promise<unknown>): Promise<{ code?: string; params?: Record<string, unknown> }> {
@@ -225,6 +228,48 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       await e.runner.prompt({ sessionID: own.id, text: "hello" })
       await e.idle(own.id)
       check("(P9-3) a conversation whose model is still there keeps it", e.bodies.at(-1)?.model === "other" && (await e.store.get(own.id))?.model.model === "other")
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 9 (P9-5): quick add offers MiMo's seven vendors, named as MiMo names them")
+  {
+    const e = await engine({})
+    try {
+      const providers = e.config.providers()
+      const chips = quickAddGroups(providers)
+      check(
+        "seven chips, in MiMo's order, each opening one provider",
+        chips.map((chip) => chip.id).join() === "xiaomi,xiaomi-plan,deepseek,moonshot,zhipu,dashscope,minimax" && chips.every((chip) => chip.entries.length === 1),
+        chips.map((chip) => chip.id),
+      )
+      const before = language.value
+      try {
+        language.value = "en"
+        check("named as MiMo names them", quickAddGroups(providers).map((chip) => chip.name).join("|") === "Xiaomi MiMo API|MiMo Token Plan|DeepSeek|Kimi / Moonshot|Zhipu GLM|Qwen|MiniMax", chips.map((chip) => chip.name))
+        language.value = "zh-CN"
+        check("with GLM and Qwen in Chinese where MiMo translates them", quickAddGroups(providers).map((chip) => chip.name).slice(4, 6).join("|") === "智谱 GLM|千问")
+        language.value = "zh-TW"
+        check("in both Chinese tables", providerLabel({ id: "zhipu", name: "Zhipu GLM" }) === "智譜 GLM" && providerLabel({ id: "dashscope", name: "Qwen" }) === "千問")
+        language.value = "de"
+        check("and in their own names elsewhere", providerLabel({ id: "dashscope", name: "Qwen" }) === "Qwen" && providerLabel({ id: "openai", name: "OpenAI" }) === "OpenAI")
+      } finally {
+        language.value = before
+      }
+      const offered = connectableProviders(providers).map((entry) => entry.id)
+      check("the connect dialog offers the same seven and the ChatGPT sign-in, nothing else", offered.sort().join() === "chatgpt,dashscope,deepseek,minimax,moonshot,xiaomi,xiaomi-plan,zhipu", offered)
+      check("MiniMax is reached at its current domain", providers.find((entry) => entry.id === "minimax")?.baseURL === "https://api.minimaxi.com/v1")
+      const settings = readFileSync("src/renderer/src/components/SettingsDialog.vue", "utf8")
+      const connect = readFileSync("src/renderer/src/components/ConnectDialog.vue", "utf8")
+      check("the settings page draws its chips from that list", /const presetGroups = computed\(\(\) => quickAddGroups\(app\.providers\)\)/.test(settings))
+      check("and the connect dialog lists only what it offers", /groupProviders\(connectableProviders\(app\.providers\)\)/.test(connect))
+      /* A provider connected before still shows as added, and a moved address the user set stays theirs. */
+      await e.config.set({ providerEndpoints: { minimax: "https://my-proxy.example/v1" } })
+      await e.config.setApiKey("groq", "k")
+      const after = e.config.providers()
+      check("an override of the MiniMax address is kept", after.find((entry) => entry.id === "minimax")?.baseURL === "https://my-proxy.example/v1")
+      check("a connected provider off the list is still connected", after.find((entry) => entry.id === "groq")?.configured === true)
     } finally {
       await e.close()
     }

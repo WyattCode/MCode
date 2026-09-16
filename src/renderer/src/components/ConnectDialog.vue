@@ -4,7 +4,7 @@ import type { ProviderStatus } from "@shared/protocol"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
 import { notifyFailure } from "../lib/toast"
-import { groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
+import { connectableProviders, groupConnected, groupProviders, waysFor, type Group, type Way } from "../lib/connect"
 import ProviderIcon from "./ProviderIcon.vue"
 import CustomProviderForm from "./CustomProviderForm.vue"
 
@@ -61,7 +61,8 @@ const customMatches = computed(() => {
   return !needle || customLabel.value.toLowerCase().includes(needle)
 })
 
-const groups = computed(() => groupProviders(app.providers))
+/* MiMo's quick-add vendors (and MCode's ChatGPT sign-in); anything else goes through the custom form. */
+const groups = computed(() => groupProviders(connectableProviders(app.providers)))
 
 const results = computed(() => {
   const needle = query.value.trim().toLowerCase()

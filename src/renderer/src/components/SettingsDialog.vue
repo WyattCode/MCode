@@ -5,7 +5,7 @@ import { useOpenWith } from "../lib/open-with"
 import ConnectDialog from "./ConnectDialog.vue"
 import CustomModelDialog from "./CustomModelDialog.vue"
 import ProviderIcon from "./ProviderIcon.vue"
-import { groupProviders, waysFor, type Group } from "../lib/connect"
+import { providerLabel, quickAddGroups, waysFor, type Group } from "../lib/connect"
 import type { ProviderStatus } from "@shared/protocol"
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { wordMatch } from "../lib/word-match"
@@ -1460,10 +1460,11 @@ function groupDescription(group: Group): string {
 }
 
 /*
- * MiMo lists every preset whether or not one is added, since several models per
- * vendor can be; a connected vendor's chip opens its connect screen on 已连接.
+ * MiMo's seven presets, listed whether or not one is added, since several
+ * models per vendor can be; a connected vendor's chip opens its connect screen
+ * on 已连接. Everything else is added through 自定义.
  */
-const presetGroups = computed(() => groupProviders(app.providers))
+const presetGroups = computed(() => quickAddGroups(app.providers))
 const busy = ref<string>()
 /**
  * The last thing that went wrong, and which row it belongs to.
@@ -3325,7 +3326,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <ProviderIcon :id="provider.id" :name="provider.name" />
               <div class="ptext">
                 <div class="pname">
-                  {{ provider.name }}
+                  {{ providerLabel(provider) }}
                   <span v-if="provider.custom" class="tag">{{ t("settings.providers.tag.custom") }}</span>
                   <span v-else-if="fromEnvironment(provider)" class="tag">
                     {{ t("provider.environment") }}
@@ -3373,7 +3374,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   <button
                     class="ctl-btn danger-hover"
                     :data-provider-remove="provider.id"
-                    @click="removing = { id: provider.id, name: provider.name, custom: Boolean(provider.custom) }"
+                    @click="removing = { id: provider.id, name: providerLabel(provider), custom: Boolean(provider.custom) }"
                   >
                     {{ provider.custom ? t("set.models.remove") : t("set.disconnect") }}
                   </button>
