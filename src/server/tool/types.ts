@@ -66,8 +66,15 @@ export interface ToolContext {
 
 /** plan: the conversation's planning state, as the runner knows it. */
 export interface PlanControl {
-  /** The agent it runs as; planning is read-only, building is not. */
+  /** The agent this turn began as; planning is read-only, building is not. */
   agent: string
+  /**
+   * The plan was approved while this turn was running, so the conversation is
+   * already a building one and this turn is the last planning one. What is
+   * refused here is refused only until the turn ends, and saying so is what
+   * keeps a model from spending the rest of the turn retrying.
+   */
+  switched: boolean
   /** Where this conversation's plan is written, absolute. */
   file: string
   /** Whether planning may write this path: the plan folders, and nothing else. */

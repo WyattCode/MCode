@@ -320,6 +320,20 @@ export class SessionRunner {
   /** plan: whether a project is under version control - asked once per folder, since it decides where its plans live. */
   private readonly repos = new Map<string, boolean>()
 
+  /**
+   * plan: the agent each conversation's running turn began as.
+   *
+   * A turn is judged by the mode it started in, as MiMo judges its own by the
+   * agent the turn was built from. It matters at exactly one moment: the user
+   * approves the plan half way through a turn, and the conversation becomes a
+   * building one. That turn was promised to be read-only, and its system
+   * prompt and tool list still say so, so it stays read-only to the end and
+   * the building starts on the next turn - which is what plan_exit tells the
+   * model to wait for. Overwritten whenever a turn starts, so a stale entry
+   * cannot outlive the conversation's next turn.
+   */
+  private readonly turnAgents = new Map<string, string>()
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -479,8 +493,12 @@ export class SessionRunner {
   /** plan: what a tool is told about planning - the mode it is in, its plan file, and how to leave. */
   private async planControl(session: SessionInfo): Promise<PlanControl> {
     const { file, folders } = await this.planFor(session)
+    const began = this.turnAgents.get(session.id) ?? session.agent
     return {
-      agent: session.agent,
+      // The turn's own mode, not the conversation's: approval mid-turn does not lift that turn's promise.
+      agent: began,
+      // Approved while this turn was running: what it refuses, it refuses only until the turn ends.
+      switched: began === "plan" && session.agent !== "plan",
       file,
       writable: (target) => planWritable(target, folders),
       approve: () => this.approvePlan(session.id, file),
@@ -1747,6 +1765,8 @@ export class SessionRunner {
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
     let session = await this.store.require(sessionID)
+    // plan: what this turn is judged by, however the conversation changes while it runs.
+    this.turnAgents.set(sessionID, session.agent)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
     const adapter: ProviderAdapter =

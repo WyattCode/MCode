@@ -364,12 +364,47 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       // Yes switches the conversation and leaves the approval where the user's next message would be.
       const second = asked().length
       e.replies.push(calls([{ name: "plan_exit", input: {} }]))
+      // The same turn tries to build the moment it is approved; that turn was promised read-only.
+      e.replies.push(calls([{ name: "write", input: { file_path: "src/eager.ts", content: "export const eager = 1\n" } }]))
+      // And, refused, asks to leave plan mode a second time - which the user has already answered.
+      e.replies.push(calls([{ name: "plan_exit", input: {} }]))
       void e.runner.prompt({ sessionID: session.id, text: "now is it ready" })
       check("plan_exit asks again", await e.until(() => asked().length > second))
       const approving = asked().at(-1)!
       e.runner.questions.reply(approving.id, [["Yes"]])
       await e.idle(session.id)
       check("Yes switches the conversation to build", (await e.store.require(session.id)).agent === "build")
+      /*
+       * A turn is judged by the mode it began in, as MiMo judges its own: the
+       * turn that was approved keeps the promise it was given - and its frozen
+       * prompt and tool list still describe planning - so the building starts
+       * on the next turn, which is what plan_exit tells the model to wait for.
+       */
+      const eager = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.name === "write").at(-1)
+      check(
+        "a write in the approving turn itself is still refused",
+        eager?.type === "tool" && eager.status === "error" && eager.errorCode === "tool.err.planApproved",
+        eager,
+      )
+      check("and nothing of it is on disk", await fs.stat(path.join(e.project, "src", "eager.ts")).then(() => false, () => true))
+      /*
+       * What the refusal says matters as much as that it refuses: a real model
+       * told "plan mode is on" a moment after being told the plan was approved
+       * reads the switch as broken and spends the turn retrying. It is told
+       * instead that this turn is the wrong side of a switch that did happen.
+       */
+      check(
+        "and says the switch happened and takes effect next turn, rather than that planning is still on",
+        eager?.type === "tool" && String(eager.error).includes("takes effect from the next turn") && !String(eager.error).includes("plan mode is on"),
+        eager?.type === "tool" ? eager.error : undefined,
+      )
+      const asking = asked().length
+      const again = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.name === "plan_exit").at(-1)
+      check(
+        "plan_exit called again in that turn answers itself instead of asking the user twice",
+        asking === second + 1 && again?.type === "tool" && again.status === "completed" && String(again.output).includes("already approved"),
+        { asked: asking - second, output: again?.type === "tool" ? again.output : undefined },
+      )
       const approval = (await e.store.messages(session.id)).filter((message) => message.role === "user").at(-1)
       check(
         "and adds the word that the plan was approved, marked as the app's rather than the user's",
@@ -377,16 +412,18 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
         approval,
       )
 
-      // The turn after the switch is told it may build again, and which plan to carry out.
-      e.replies.push(say("building now"))
-      await e.runner.prompt({ sessionID: session.id, text: "go on" })
+      // The turn after the switch is told it may build again, and which plan to carry out - and may write.
+      e.replies.push(calls([{ name: "write", input: { file_path: "src/eager.ts", content: "export const eager = 1\n" } }]))
+      await e.runner.prompt({ sessionID: session.id, text: "now build it" })
       await e.idle(session.id)
+      check("the next turn may write anywhere", await fs.stat(path.join(e.project, "src", "eager.ts")).then(() => true, () => false))
       const afterSwitch = await told()
       check(
-        "the first turn after the switch is told the mode changed and which plan to carry out",
+        "that turn is told the mode changed and which plan to carry out",
         afterSwitch.includes("plan mode to build mode") && afterSwitch.includes(planName) && !afterSwitch.includes("Plan mode is still on"),
         afterSwitch.slice(0, 300),
       )
+
       e.replies.push(say("still building"))
       await e.runner.prompt({ sessionID: session.id, text: "carry on" })
       await e.idle(session.id)

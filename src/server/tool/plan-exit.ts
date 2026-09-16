@@ -35,6 +35,21 @@ export const PlanExitTool: ToolDefinition = {
       }
     }
 
+    /*
+     * Already approved, in this very turn: asking again would put a second
+     * card in front of the user for a question they have answered. The model
+     * asks because its writes are still refused until the turn ends, so this
+     * says so rather than raising anything.
+     */
+    if (plan.switched) {
+      return {
+        title: "Already approved",
+        output:
+          "The user has already approved the plan and this conversation is in build mode. The switch takes effect from the next turn, so do not ask again and do not retry any write: end your turn now, and carry the plan out when the user speaks next.",
+        metadata: { switched: true, alreadyApproved: true },
+      }
+    }
+
     const display = planDisplay(context.directory, plan.file)
     const questions = [
       {
