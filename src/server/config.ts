@@ -35,6 +35,7 @@ import { nameFromId } from "./provider/model-name"
 import { CodedError } from "@shared/errors"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
+import { menuEfforts } from "@shared/effort-menu"
 import type { OAuthTokens } from "./auth/oauth"
 
 export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-opus-5" }
@@ -71,7 +72,7 @@ export function modelKey(ref: ModelRef): string {
  * a catalog edit cannot leave a model advertising levels its family has never
  * accepted.
  */
-function modelInfo(kind: ProviderKind, model: ModelEntry, provider: string): ModelInfo {
+function modelInfo(model: ModelEntry): ModelInfo {
   const inputs = model.inputs ?? {}
   return {
     id: model.id,
@@ -92,7 +93,8 @@ function modelInfo(kind: ProviderKind, model: ModelEntry, provider: string): Mod
       pdf: inputs.pdf ?? false,
     },
     cost: { input: model.input, output: model.output },
-    variants: modelVariants(kind, model, provider),
+    // The levels the menu offers, by MiMo's desktop rule; what each becomes on the wire is `variants()` below.
+    variants: menuEfforts(model.id, model.name),
   }
 }
 
@@ -921,7 +923,7 @@ export class Config {
       authenticated: Boolean(this.oauth[entry.id]),
       environment: this.environmentKey(entry.id),
       authMethods: entry.authMethods ?? [],
-      models: this.models(entry.id).map((model) => modelInfo(entry.kind, model, entry.id)),
+      models: this.models(entry.id).map((model) => modelInfo(model)),
     }))
   }
 

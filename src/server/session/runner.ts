@@ -17,6 +17,7 @@ import type {
 import { access, mkdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
+import { effortToSend, menuEfforts } from "@shared/effort-menu"
 import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
@@ -2159,8 +2160,11 @@ export class SessionRunner {
         session.model,
       )
 
-      // MiMo's effort is one app-wide value, not a conversation's own.
-      const effort = config.effort
+      /*
+       * MiMo's effort is one app-wide value, not a conversation's own, and it
+       * is sent only for a model whose menu offers levels - clamped to them.
+       */
+      const effort = effortToSend(menuEfforts(session.model.model, this.config.modelEntry(session.model)?.name), config.effort)
 
       const assistant: AssistantMessage = {
         id: Identifier.message(),
@@ -2245,7 +2249,7 @@ export class SessionRunner {
               ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
-        effort,
+        effort: effort ?? "",
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,
         signal: controller.signal,
@@ -2261,9 +2265,10 @@ export class SessionRunner {
          * adapter sends `reasoning_effort` for every model, including the ones
          * whose variants list is empty, so hiding the composer's effort pill
          * would only stop the user choosing a level - the wire would still
-         * carry one the provider rejects.
+         * carry one the provider rejects. With no level to send, the list is
+         * empty, which withholds the field everywhere.
          */
-        variants: this.config.variants(session.model),
+        variants: effort ? this.config.variants(session.model) : [],
         accountId: tokens?.accountId,
         maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
         outputLimit: this.config.modelEntry(session.model)?.maxOutput,

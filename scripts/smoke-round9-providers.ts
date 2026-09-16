@@ -11,8 +11,85 @@ import type { Check } from "./smoke-round5"
 import { engine, say } from "./smoke-round5"
 import { messagesRequest } from "../src/server/provider/anthropic"
 import { OpenAICompatible } from "../src/server/provider/openai"
+import { menuEfforts } from "../src/shared/effort-menu"
 
 export async function roundNineProviderChecks(check: Check, section: (name: string) => void): Promise<void> {
+  section("Round 9 (P9-1): the effort submenu appears only where MiMo's desktop shows it")
+  {
+    /* Written out by hand from MiMo's rule, id and display name together. */
+    const table: [string, string, string][] = [
+      ["claude-opus-4-7", "", "low,medium,high,xhigh,max"],
+      ["claude-opus-4.8", "", "low,medium,high,xhigh,max"],
+      ["claude-sonnet-5", "", "low,medium,high,xhigh,max"],
+      ["claude-fable-5", "", "low,medium,high,xhigh,max"],
+      ["claude-opus-4-6", "", "low,medium,high,max"],
+      ["claude-sonnet-4.6", "", "low,medium,high,max"],
+      ["claude-mythos-preview", "", "low,medium,high,max"],
+      ["claude-sonnet-4-5", "", "low,medium,high"],
+      ["claude-haiku-4-5", "", "low,medium,high"],
+      ["claude-3-7-sonnet", "", "low,medium,high"],
+      ["claude-3-5-sonnet", "", ""],
+      ["gpt-5", "", "low,medium,high"],
+      ["gpt-5.1-codex", "", "low,medium,high"],
+      ["gpt-5.2", "", "low,medium,high,xhigh"],
+      ["gpt-5.6-sol", "", "low,medium,high,xhigh,max"],
+      ["gpt-5-chat-latest", "", ""],
+      ["gpt-5-pro", "", ""],
+      ["gpt-4o", "", ""],
+      ["gpt-oss-120b", "", ""],
+      ["codex-mini", "", ""],
+      ["mimo-v2.5-pro", "MiMo-V2.5-Pro", ""],
+      ["deepseek-reasoner", "", ""],
+      ["gemini-3-pro", "", ""],
+      ["kimi-k2.5", "", ""],
+      ["glm-4.6", "", ""],
+      ["my-gateway-model", "Claude Opus 4-7 via gateway", ""],
+      ["my-gateway-model", "claude-opus-4-7", "low,medium,high,xhigh,max"],
+      ["relay", "GPT_5 relay", ""],
+      ["relay", "GPT-5 Codex relay", "low,medium,high"],
+    ]
+    const wrong = table.filter(([id, name, want]) => menuEfforts(id, name).join() !== want)
+    check(`all ${table.length} ids offer MiMo's levels`, wrong.length === 0, wrong.map(([id, name]) => `${id}|${name} -> ${menuEfforts(id, name).join()}`))
+    check("none or minimal is never offered", table.every(([id, name]) => !menuEfforts(id, name).some((level) => level === "none" || level === "minimal")))
+
+    const e = await engine({ custom: { models: [{ id: "claude-opus-4-7", name: "C" }, { id: "mimo-v2.5-pro", name: "MiMo" }, { id: "gpt-5.6-sol", name: "G" }] } })
+    try {
+      const listed = e.config.providers().find((entry) => entry.id === "fake")?.models ?? []
+      const levels = (id: string) => listed.find((model) => model.id === id)?.variants.join()
+      check("the window is sent the menu's levels, even for a hand-entered model", levels("claude-opus-4-7") === "low,medium,high,xhigh,max" && levels("gpt-5.6-sol") === "low,medium,high,xhigh,max", listed.map((model) => model.variants))
+      check("and none for a MiMo model", levels("mimo-v2.5-pro") === "", levels("mimo-v2.5-pro"))
+      const xiaomiMenu = e.config.providers().find((entry) => entry.id === "xiaomi")?.models.map((model) => model.variants.length)
+      check("the built-in MiMo models offer no submenu either", Boolean(xiaomiMenu?.length) && xiaomiMenu!.every((count) => count === 0), xiaomiMenu)
+
+      /* A built-in MiMo model reasons, but the menu offers nothing, so no level goes out. */
+      await e.config.set({ providerEndpoints: { xiaomi: `http://127.0.0.1:${e.port}/v1`, openai: `http://127.0.0.1:${e.port}/v1` }, effort: "high" })
+      await e.config.setApiKey("xiaomi", "k")
+      const mimo = await e.store.create({ directory: e.project, model: { provider: "xiaomi", model: "mimo-v2.5-pro" } })
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: mimo.id, text: "hello" })
+      await e.idle(mimo.id)
+      check("a MiMo model is sent no reasoning level", e.bodies.at(-1)?.model === "mimo-v2.5-pro" && !("reasoning_effort" in (e.bodies.at(-1) ?? {})), e.bodies.at(-1)?.reasoning_effort)
+      const saved = (await e.assistants(mimo.id)).at(-1)
+      check("and its reply records no level", saved?.effort === undefined, saved?.effort)
+
+      /* A GPT-5 model does get one, clamped to its menu. */
+      await e.config.setApiKey("openai", "k")
+      await e.config.setDiscovered("openai", [{ id: "gpt-5", name: "GPT-5", contextWindow: 400_000, input: 0, output: 0, reasoning: true }])
+      const gpt = await e.store.create({ directory: e.project, model: { provider: "openai", model: "gpt-5" } })
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: gpt.id, text: "hello" })
+      await e.idle(gpt.id)
+      check("a GPT-5 model is sent the chosen level", e.bodies.at(-1)?.reasoning_effort === "high", e.bodies.at(-1)?.reasoning_effort)
+      await e.config.set({ effort: "max" })
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: gpt.id, text: "again" })
+      await e.idle(gpt.id)
+      check("and a level its menu lacks falls to medium", e.bodies.at(-1)?.reasoning_effort === "medium", e.bodies.at(-1)?.reasoning_effort)
+    } finally {
+      await e.close()
+    }
+  }
+
   section("Round 9: the family request shaping - tool schemas and Kimi's thinking")
   {
     /* An MCP-style schema with every shape the two families refuse. */
