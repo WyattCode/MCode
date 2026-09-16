@@ -1,7 +1,6 @@
 import { AUTOMATION_MODES, NOTIFICATIONS, REASONING, RUN_MODES, automationService } from "../automation/service"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
-import { askToSchedule } from "./schedule-ask"
 
 /**
  * automation: MiMo desktop's `automation_update`, the model's way to manage
@@ -46,12 +45,6 @@ export const AutomationUpdateTool: ToolDefinition = {
   async execute(input, context) {
     const service = automationService()
     if (!service) throw new ToolError("Scheduled tasks are not available in this session.")
-    // round 8 (X10): making or changing what runs later, unattended, is asked about like a command.
-    const mode = typeof input.mode === "string" ? input.mode : ""
-    if (mode === "create" || mode === "update" || mode === "resume") {
-      const named = (key: string) => (typeof input[key] === "string" && input[key] ? ` ${key}=${String(input[key])}` : "")
-      await askToSchedule(context, `automation ${mode}${named("id")}${named("title")}${named("rrule")}${named("runMode")}${named("targetThreadId")}${named("prompt")}`)
-    }
     const output = await service.handle(input, { sessionID: context.sessionID })
     return { output, title: `Scheduled tasks: ${String(input.mode)}` }
   },
