@@ -3377,8 +3377,8 @@ async function main() {
      * and the whole of it saved. read, glob, grep and bash cap themselves, as MiMo's do, so an MCP tool carries it.
      */
     await call({ type: "config.set", patch: { mcpServers: { rich: { type: "local", command: ["node", path.join(process.cwd(), "scripts/fixtures/mcp-rich-server.cjs")] } } } })
-    // As the settings page does for a server the report does not know yet: connected now rather than at the next conversation.
-    await call({ type: "mcp.register", name: "rich" })
+    // A saved server reaches the conversations once a new one starts, this one included (MiMo's rule).
+    await call({ type: "session.create", directory: project })
     const richUp = await (async () => {
       const end = Date.now() + 20_000
       while (Date.now() < end) {

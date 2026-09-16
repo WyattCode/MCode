@@ -585,7 +585,7 @@ export class Config {
    * config.json as stored: JSONC, so a hand edit may carry comments and
    * trailing commas. A file that does not parse is reported with where it broke.
    */
-  private async readStored(): Promise<{ value?: Partial<AppConfig>; corrupt?: string }> {
+  private async readStored(): Promise<{ value?: Partial<AppConfig>; corrupt?: string; text?: string }> {
     let text: string | undefined
     try {
       text = await this.storage.readText("config")
@@ -595,18 +595,31 @@ export class Config {
     if (text === undefined) return {}
     const read = parseJsonc(text)
     if (read.problem) {
-      return { corrupt: `config.json is not valid JSON near line ${read.problem.line}, column ${read.problem.column} (${read.problem.reason})` }
+      return { corrupt: `config.json is not valid JSON near line ${read.problem.line}, column ${read.problem.column} (${read.problem.reason})`, text }
     }
-    if (read.value === undefined) return {}
-    if (!read.value || typeof read.value !== "object" || Array.isArray(read.value)) return { corrupt: "config.json does not hold an object" }
-    return { value: read.value as Partial<AppConfig> }
+    if (read.value === undefined) return { text }
+    if (!read.value || typeof read.value !== "object" || Array.isArray(read.value)) return { corrupt: "config.json does not hold an object", text }
+    return { value: read.value as Partial<AppConfig>, text }
   }
+
+  /*
+   * What this process itself wrote lately. A key-by-key save leaves the keys
+   * in the file's own order, so the file no longer reads back identical to the
+   * settings in memory, and the folder watcher would take every save of ours
+   * - including one already overtaken by the next - for a hand edit.
+   */
+  private readonly written: string[] = []
 
   /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
   private persist(): Promise<void> {
     const file = this.storage.fileOf("config")
     const value = this.current
-    return this.storage.writeText("config", (current) => renderJsonc(file, current, value))
+    return this.storage.writeText("config", (current) => {
+      const text = renderJsonc(file, current, value)
+      this.written.push(text)
+      if (this.written.length > 16) this.written.shift()
+      return text
+    })
   }
 
   /** The last credential write, so two of them cannot interleave. */
@@ -695,8 +708,9 @@ export class Config {
    */
   async reloadFromDisk(): Promise<void> {
     // A file that stopped parsing is left alone: the next save refuses and says where it broke.
-    const stored = (await this.readStored()).value
-    if (!stored) return
+    const read = await this.readStored()
+    const stored = read.value
+    if (!stored || (read.text !== undefined && this.written.includes(read.text))) return
     if (JSON.stringify(stored) === JSON.stringify(this.current)) return
     const before = this.current
     // As load reads it: a later build's document is taken in but never written back over.

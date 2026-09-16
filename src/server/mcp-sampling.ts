@@ -107,6 +107,12 @@ export function createSampler(deps: { config: Config; auth: AuthManager; permiss
           title: "mcp_sampling",
           subject: server,
           scope: `mcp-sampling:${server}`,
+          /*
+           * MiMo decides this question on the user's own rules alone, not on
+           * the allow-by-default its tools run under, so an unset policy asks
+           * even though MCP tool calls no longer do (except at full access).
+           */
+          patternAsks: true,
         })
       } catch {
         throw new McpRequestError(SAMPLING_REFUSED, `The user declined sampling for the MCP server "${server}"`)

@@ -57,14 +57,39 @@ async function jsoncConfig(check: Check, section: Section): Promise<void> {
     await fs.mkdir(path.dirname(file), { recursive: true })
     const handWritten = '{\n  // my servers\n  "theme": "dark",\n  "mcpServers": {\n    "one": { "type": "local", "command": ["node"], }, // trailing comma\n  },\n}\n'
     await fs.writeFile(file, handWritten)
-    const config = new Config(storage, new Bus(), path.join(dir, "credentials.json"))
+    const configBus = new Bus()
+    const config = new Config(storage, configBus, path.join(dir, "credentials.json"))
     await config.load()
     check("a config file with comments loads rather than being set aside", !config.unreadable && config.get().theme === "dark" && Boolean(config.get().mcpServers.one), config.unreadable)
     await config.set({ theme: "light" })
     const after = await fs.readFile(file, "utf8")
     check("a setting saved from the window keeps the file's comments", after.includes("// my servers") && after.includes("// trailing comma") && /"theme": "light"/.test(after), after)
 
-    const bad = after.replace('"theme": "light",', '"theme": "light"')
+    // The file keeps its own key order, so it no longer reads back identical to memory; the watcher must still know its own writes.
+    let reloads = 0
+    const stop = configBus.subscribe((event) => {
+      if (event.type === "config.updated") reloads++
+    })
+    await config.reloadFromDisk()
+    const firstSave = await fs.readFile(file, "utf8")
+    await config.set({ pinnedTabs: ["later"] })
+    const current = await fs.readFile(file, "utf8")
+    await fs.writeFile(file, firstSave)
+    await config.reloadFromDisk()
+    await fs.writeFile(file, current)
+    stop()
+    check(
+      "the watcher never takes one of this app's own saves for a hand edit, even one already overtaken",
+      reloads === 1 && JSON.stringify(config.get().pinnedTabs) === '["later"]',
+      { reloads, pinned: config.get().pinnedTabs },
+    )
+    await fs.writeFile(file, current.replace('"theme": "light"', '"theme": "system"'))
+    await config.reloadFromDisk()
+    check("while a real hand edit is still taken in", config.get().theme === "system", config.get().theme)
+    await config.set({ theme: "light" })
+    const afterEdit = await fs.readFile(file, "utf8")
+
+    const bad = afterEdit.replace('"theme": "light",', '"theme": "light"')
     await fs.writeFile(file, bad)
     const refused = await config.set({ theme: "dark" }).then(
       () => undefined,

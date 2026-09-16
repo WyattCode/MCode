@@ -37,7 +37,8 @@ async function loaded(stored: Record<string, unknown> | undefined): Promise<{ co
 }
 
 const ALL_ALLOW = { read: "allow", edit: "allow", write: "allow", glob: "allow", grep: "allow", list: "allow", bash: "allow", webfetch: "allow", outside: "allow", mcp: "allow" }
-const DEFAULTS = { read: "allow", edit: "ask", write: "ask", glob: "allow", grep: "allow", list: "allow", bash: "ask", webfetch: "ask", outside: "ask", mcp: "ask" }
+// MCP calls run without asking by default since round nine (M-3, the user's decision of 2026-09-17).
+const DEFAULTS = { read: "allow", edit: "ask", write: "ask", glob: "allow", grep: "allow", list: "allow", bash: "ask", webfetch: "ask", outside: "ask", mcp: "allow" }
 
 export async function roundNineSettingsChecks(check: Check, section: (name: string) => void): Promise<void> {
   try {
