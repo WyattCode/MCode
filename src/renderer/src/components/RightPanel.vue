@@ -18,7 +18,7 @@ import PaneBoundary from "./right/PaneBoundary.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
 import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf } from "../lib/right-tools"
 import { useApp } from "../stores/app"
-import { t } from "../lib/i18n"
+import { language, t } from "../lib/i18n"
 
 /**
  * MiMo's right panel.
@@ -189,7 +189,8 @@ function onWheel(event: WheelEvent) {
   event.preventDefault()
 }
 
-watch(() => [rp.active, rp.tabs.length] as const, async () => {
+// A new language can widen the pills (localized tool names), so the active one is brought back into view then too.
+watch(() => [rp.active, rp.tabs.length, language.value] as const, async () => {
   measure()
   await nextTick()
   strip.value?.querySelector<HTMLElement>(".rp-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" })
