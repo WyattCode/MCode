@@ -85,6 +85,8 @@ import { STALL, stallGuard } from "../src/server/provider/stall"
 import { arityPrefix, collectMutationTargets, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
 // round 6 (L8): where a blank project's folder is made.
 import { blankProjectDirectory } from "../src/server/scratch"
+// round 6 (L6): a thumbnail needs the attachment's bytes, which a saved draft no longer carries.
+import { preview } from "../src/renderer/src/lib/attach"
 import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
@@ -745,6 +747,23 @@ async function main() {
         withLegacyHome(emptyDraftFile(), "").drafts.home === undefined,
     )
     check("an empty state is recognised, so a failed load is never written over with one", isEmptyDraftFile(draftFileOf(new Map(), {})) && !isEmptyDraftFile(file))
+
+    /* L6: MiMo writes down where a file is, not what is in it; only something pasted, with no file of its own, keeps its bytes. */
+    const onDisk = { path: "C:/photos/a.png", mime: "image/png", data: "QUJD", byPath: true }
+    const pastedIn = { path: "pasted-1.png", mime: "image/png", data: "QUJD" }
+    const written = draftFileOf(new Map([["main:s9", { text: "", attachments: [onDisk, pastedIn], mentioned: [], skills: [] }]]), {})
+    const keptFiles = written.drafts["main:s9"]?.attachments ?? []
+    check(
+      "a saved draft keeps only the path for a file on disk, and the bytes only for one with no file",
+      keptFiles[0]?.data === "" && keptFiles[0]?.byPath === true && keptFiles[0]?.path === "C:/photos/a.png" && keptFiles[1]?.data === "QUJD",
+      keptFiles,
+    )
+    check("the box goes on holding the bytes it had, so an open draft keeps its thumbnail", onDisk.data === "QUJD")
+    check(
+      "a thumbnail needs the bytes: one restored by its path alone is drawn as a file instead",
+      preview(onDisk) === "data:image/png;base64,QUJD" && preview({ ...onDisk, data: "" }) === undefined,
+      preview({ ...onDisk, data: "" }),
+    )
   }
 
   /*
