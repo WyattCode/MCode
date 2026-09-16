@@ -23,6 +23,7 @@ import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, SavedRule, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
+import { homePath } from "../lib/home-path"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
@@ -279,46 +280,33 @@ async function refreshMcp() {
  * pass runs; its known states by name; anything the report does not know 未知.
  */
 const mcpRows = computed(() =>
-  Object.entries(app.config?.mcpServers ?? {})
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, entry]) => {
-      const state = app.mcpServers.find((server) => server.name === name)
-      const enabled = entry.enabled !== false
-      const status: McpStatus | "checking" | "unknown" = !enabled
-        ? "disabled"
-        : mcpChecking.value
-          ? "checking"
-          : state && isMcpStatus(state.status)
-            ? state.status
-            : "unknown"
-      return {
-        name,
-        remote: entry.type === "remote",
-        enabled,
-        status,
-        tone: isMcpStatus(status) ? MCP_STATUS_TONE[status] : "muted",
-        label: isMcpStatus(status) ? mcpStatusLabel(status) : status,
-        error: state?.error,
-      }
-    }),
+  // In the config's own order, as MiMo lists them.
+  Object.entries(app.config?.mcpServers ?? {}).map(([name, entry]) => {
+    const state = app.mcpServers.find((server) => server.name === name)
+    const enabled = entry.enabled !== false
+    const status: McpStatus | "checking" | "unknown" = !enabled
+      ? "disabled"
+      : mcpChecking.value
+        ? "checking"
+        : state && isMcpStatus(state.status)
+          ? state.status
+          : "unknown"
+    return {
+      name,
+      remote: entry.type === "remote",
+      enabled,
+      status,
+      tone: isMcpStatus(status) ? MCP_STATUS_TONE[status] : "muted",
+      label: isMcpStatus(status) ? mcpStatusLabel(status) : status,
+      error: state?.error,
+    }
+  }),
 )
 
-/* The config keeps a command already split; the form shows its first word as a line, quoted when it has a space. */
-function joinCommand(parts: string[]): string {
-  return parts.map((part) => (/\s/.test(part) ? `"${part}"` : part)).join(" ")
-}
-
-function splitCommand(line: string): string[] {
-  const parts: string[] = []
-  const pattern = /"([^"]*)"|(\S+)/g
-  let match: RegExpExecArray | null
-  while ((match = pattern.exec(line))) parts.push(match[1] ?? match[2])
-  return parts
-}
-
-function recordOf(rows: McpPair[]): Record<string, string> | undefined {
+/* Keys are trimmed; a header's value is too, an environment variable's is kept as typed - as MiMo's form saves them. */
+function recordOf(rows: McpPair[], trimValues = false): Record<string, string> | undefined {
   const out: Record<string, string> = {}
-  for (const row of rows) if (row.key.trim()) out[row.key.trim()] = row.value
+  for (const row of rows) if (row.key.trim()) out[row.key.trim()] = trimValues ? row.value.trim() : row.value
   return Object.keys(out).length ? out : undefined
 }
 
@@ -367,7 +355,8 @@ function editMcp(name: string) {
   mcpForm.value = {
     name,
     type: entry.type === "remote" ? "http" : "stdio",
-    command: command ? joinCommand([command]) : "",
+    // The program alone, as stored: the field is never split into words.
+    command: command ?? "",
     url: entry.url ?? "",
     args,
     env: rowsOf(entry.environment),
@@ -387,10 +376,10 @@ async function saveMcp() {
   const name = form.name.trim()
   const entry: McpServerConfig =
     form.type === "http"
-      ? { type: "remote", url: form.url.trim(), headers: recordOf(form.headers) }
+      ? { type: "remote", url: form.url.trim(), headers: recordOf(form.headers, true) }
       : {
           type: "local",
-          command: [...splitCommand(form.command), ...form.args.filter((arg) => arg.trim())],
+          command: [form.command.trim(), ...form.args.map((arg) => arg.trim()).filter(Boolean)],
           environment: recordOf(form.env),
         }
   // An edit keeps the server as switched on or off as it was.
@@ -2757,7 +2746,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <div class="line-text">
                 <div class="line-title">{{ t("set.mcp.configFile") }}</div>
                 <div class="line-sub mcp-path" data-config-path :title="configFile?.path">
-                  {{ configFile?.path ?? t("set.mcp.configResolving") }}
+                  {{ configFile ? homePath(configFile.path, paths?.home) : t("set.mcp.configResolving") }}
                 </div>
               </div>
             </div>

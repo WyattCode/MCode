@@ -12,6 +12,7 @@
  *   --tag TEXT       answers `tag` with TEXT, so a check can tell two starts apart
  *   --noise N        with --fail, prints N characters to stderr first
  *   --no-tools       answers tools/list with an error
+ *   --slow-start MS  answers the handshake that much later
  *
  * Every tool answers with text: `where` the working directory, `argv` the
  * arguments as JSON, `env` the variable named by its `name` argument, `tag`
@@ -75,7 +76,8 @@ process.stdin.on("data", (chunk) => {
     if (message.id === undefined || !message.method) continue
     const { id, method, params = {} } = message
     if (method === "initialize") {
-      send({ jsonrpc: "2.0", id, result: { protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "lifecycle", version: "1" } } })
+      const greet = () => send({ jsonrpc: "2.0", id, result: { protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "lifecycle", version: "1" } } })
+      setTimeout(greet, Number(option("--slow-start") ?? 0))
     } else if (method === "tools/list") {
       if (flag("--no-tools")) send({ jsonrpc: "2.0", id, error: { code: -32603, message: "tool list unavailable on purpose" } })
       else send({ jsonrpc: "2.0", id, result: page(params.cursor) })

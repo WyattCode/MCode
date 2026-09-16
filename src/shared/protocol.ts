@@ -1194,6 +1194,8 @@ export interface AppPath {
 export interface AppPaths {
   /** The folder everything the app stores lives under. */
   storage: string
+  /** The user's home folder, which a path inside it is shown relative to (`~`). */
+  home: string
   files: AppPath[]
 }
 

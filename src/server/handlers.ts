@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import os from "node:os"
 import { kindFor, mimeFor } from "./media"
 import type {
   AppPath,
@@ -711,7 +712,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           .then(() => true)
           .catch(() => false)
       }
-      return { paths: { storage, files } } satisfies Handled<"app.paths">
+      return { paths: { storage, home: os.homedir(), files } } satisfies Handled<"app.paths">
     }
 
     case "usage.summary": {

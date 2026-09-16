@@ -25,6 +25,7 @@ import { handle } from "../src/server/handlers"
 import { Permissions } from "../src/server/permission"
 import { DEFAULT_PERMISSIONS } from "../src/shared/protocol"
 import { MCP_STATUS_TONE, mcpNeedsSignIn, mcpStatusLabel } from "../src/renderer/src/lib/mcp-status"
+import { homePath } from "../src/renderer/src/lib/home-path"
 
 type Section = (name: string) => void
 
@@ -759,6 +760,19 @@ async function timeoutsAndToolRules(check: Check, section: Section): Promise<voi
   }
 }
 
+/** M-15: small things the MCP page shows as MiMo does. */
+async function pageDetails(check: Check, section: Section): Promise<void> {
+  section("Round 9: MCP page details (M-15)")
+  check(
+    "a path inside the home folder is shown from ~",
+    homePath("C:\\Users\\me\\AppData\\MCode\\config.json", "C:\\Users\\me") === "~\\AppData\\MCode\\config.json" && homePath("/home/me/.mcode/config.json", "/home/me") === "~/.mcode/config.json",
+  )
+  check(
+    "one merely sharing the home folder's prefix, or outside it, is shown whole",
+    homePath("/home/meadow/config.json", "/home/me") === "/home/meadow/config.json" && homePath("/etc/mcode.json", "/home/me") === "/etc/mcode.json" && homePath("/x", undefined) === "/x",
+  )
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
   // Never the reader's own ~/.claude.json or ~/.mcode: the backend reads servers from both.
   process.env.MCODE_IMPORT_HOME ??= await temporary("mcode-r9-home-")
@@ -774,6 +788,7 @@ export async function roundNineMcpChecks(check: Check, section: Section): Promis
     ["M-11", gracefulStop],
     ["M-12/M-13", failureReports],
     ["M-14", timeoutsAndToolRules],
+    ["M-15", pageDetails],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))
