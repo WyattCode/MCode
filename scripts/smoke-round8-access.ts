@@ -148,6 +148,9 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     const shell = read("App.vue")
     check("a turn that ends is announced, with the conversation's name when it is not on screen (A11)", /if \(app\.currentID === turn\.sessionID\) announce\(done\)\s+else if \(about\.title !== undefined\) announce\(`\$\{about\.title\} · \$\{done\}`\)/.test(shell))
     check("a background subagent of the conversation on screen is announced when it finishes (A11)", /!session\.subagent\?\.background \|\| !outcome\) continue\s+if \(app\.rootOf\(session\.id\) !== app\.currentID\) continue\s+announce\(/.test(shell))
+    const side = read("components/Sidebar.vue")
+    check("the side column and its navigation are named regions (A13)", /<aside class="side"[^>]*:aria-label="t\('a11y\.sidebar'\)"/.test(side) && /<nav class="nav" :aria-label="t\('key\.groupNavigation'\)"/.test(side))
+    check("each turn has a heading that is never drawn, found or selected (A13)", /<h2 v-if="!latest" class="a11y-only" data-turn-heading data-find-skip data-selectable="none">\{\{ t\("a11y\.turnHeading"/.test(read("components/MessageStream.vue")))
     check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="openImagePreview/))
   }
 }

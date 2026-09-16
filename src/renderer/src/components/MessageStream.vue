@@ -983,6 +983,8 @@ defineExpose({ stepMessage, scroller })
       <template v-for="(turn, at) in turns" :key="turn.id">
       <!-- round3-panel: the floating card draws the latest turn only, without its question. -->
       <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id">
+        <!-- Beyond MiMo: a heading per turn that is never drawn, for a screen reader's heading keys; find and selection pass it by. -->
+        <h2 v-if="!latest" class="a11y-only" data-turn-heading data-find-skip data-selectable="none">{{ t("a11y.turnHeading", { n: at + 1 }) }}</h2>
         <!-- subagents: what a subagent was handed, labelled as MiMo labels it. -->
         <div v-if="subagent && at === 0 && turn.text !== undefined && !turn.inbox" class="subagent-initial" data-subagent-initial>{{ t("subagentDetail.initialTask") }}</div>
         <!-- session chat: the same row names another conversation, over the question it sent. -->

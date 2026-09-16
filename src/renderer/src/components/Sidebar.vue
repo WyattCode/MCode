@@ -1018,7 +1018,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
 </script>
 
 <template>
-  <aside class="side" :class="{ rail: collapsed, dragging }" :style="collapsed ? undefined : { width: `${RAIL_WIDTH + width}px` }">
+  <aside class="side" :class="{ rail: collapsed, dragging }" :style="collapsed ? undefined : { width: `${RAIL_WIDTH + width}px` }" :aria-label="t('a11y.sidebar')">
     <div v-if="!collapsed" class="resizer" data-side-resizer @mousedown.prevent="beginResize" />
     <!--
       Folded, MiMo keeps the column's controls just past the rail: the toggle
@@ -1095,7 +1095,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
       <span class="badge">2.0</span>
     </div>
 
-    <nav class="nav">
+    <nav class="nav" :aria-label="t('key.groupNavigation')">
       <button
         class="row"
         data-new-task
