@@ -16,6 +16,7 @@ import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
 import { belowFullMap, defaultAccess } from "../src/shared/access"
+import { stepTarget, visibleChatOrder } from "../src/renderer/src/lib/visible-chats"
 
 const ROOT = process.cwd()
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), "utf8")
@@ -105,5 +106,38 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const still = readers.filter((file) => read(file).replace(/"enabledModels",/, "").includes("enabledModels"))
     check("the picker, the tray list and the provider handlers no longer read or write it", still.length === 0, still)
     check("and nothing keeps a list of selectable models up to date", !read("src/server/handlers.ts").includes("keepModelsSelectable"))
+  }
+
+  section("Round 9 (S9-3): Ctrl+1-9 and Ctrl+Shift+[ / ] count along the side column, pinned first")
+  {
+    const rows = [
+      { id: "old", updated: 1, title: "Zeta" },
+      { id: "new", updated: 5, title: "Alpha" },
+      { id: "mid", updated: 3, title: "Mu" },
+      { id: "gone", updated: 9, title: "Beta", archived: true },
+      { id: "pin2", updated: 2, title: "Pinned two" },
+      { id: "pin1", updated: 0, title: "Pinned one" },
+    ]
+    const name = (row: { title: string }) => row.title
+    const recent = visibleChatOrder(rows, ["pin1", "missing", "pin2", "pin1"], "recent", name, "en")
+    check("pinned in pin order, then the rest newest first, archived left out", recent.join() === "pin1,pin2,new,mid,old", recent)
+    const byName = visibleChatOrder(rows, ["pin2"], "name", name, "en")
+    check("sorted by name, the rest follow the names", byName.join() === "pin2,new,mid,pin1,old", byName)
+    check("an archived pin is not a slot", visibleChatOrder(rows, ["gone"], "recent", name, "en")[0] === "new")
+
+    check("next from the middle moves one along", stepTarget(["a", "b", "c"], "b", 1) === "c")
+    check("and wraps at both ends", stepTarget(["a", "b", "c"], "c", 1) === "a" && stepTarget(["a", "b", "c"], "a", -1) === "c")
+    check("from outside the list, next is the first and previous the last", stepTarget(["a", "b"], "x", 1) === "a" && stepTarget(["a", "b"], undefined, -1) === "b")
+    check("a list of one goes nowhere, an empty one neither", stepTarget(["a"], "a", 1) === undefined && stepTarget([], undefined, 1) === undefined)
+
+    const app = read("src/renderer/src/App.vue")
+    const store = read("src/renderer/src/stores/app.ts")
+    check("the digits read the visible order", /app\.visibleChats\[Number\(event\.key\) - 1\]/.test(app) && /app\.visibleChats\[index\]/.test(app))
+    check("and so do the brackets and the unread steps", /stepTarget\(app\.visibleChats/.test(app) && /const chats = app\.visibleChats/.test(app))
+    check("the store orders them with the side column's own sort", /visibleChatOrder\(\s*sessions\.value,\s*config\.value\?\.pinnedTabs/.test(store) && /recentSort\.value/.test(store))
+    check("and the side column's sort menu writes that same order", /app\.recentSort = mode/.test(read("src/renderer/src/components/Sidebar.vue")))
+    check("the hidden tab list, its config writes and reopen-tab are gone", !/\btabs = ref|openTabs|closedTabs|reopenTab|function track\(/.test(store) && !/app\.tabs\b|session\.reopenTab/.test(app))
+    const old = await loaded({ openTabs: ["a", "b"] })
+    check("a stored tab list is dropped on load", !("openTabs" in (old.config.get() as object)) && !("openTabs" in (await old.disk())))
   }
 }

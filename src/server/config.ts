@@ -134,7 +134,6 @@ function defaults(): AppConfig {
     effort: "medium",
     agent: "build",
     staged: false,
-    openTabs: [],
     importOnboarded: false,
     uiFont: "",
     codeFont: "",
@@ -191,6 +190,8 @@ export const RETIRED_FIELDS: readonly string[] = [
   "expandEdits",
   // S9-2: the picker's curation list, whose switches round three removed; every model shows.
   "enabledModels",
+  // S9-3: the hidden tab list; the numbered shortcuts count along the side column now.
+  "openTabs",
 ]
 
 /** Takes the retired fields out of a document; answers whether any was there. */

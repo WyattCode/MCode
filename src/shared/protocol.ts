@@ -1446,13 +1446,6 @@ export interface AppConfig {
   /** Whether new sessions start in staged mode; each may then differ. */
   staged: boolean
   /**
-   * Sessions with a tab in the title bar, in the order they are drawn.
-   *
-   * Kept in config rather than in the window, so closing the app and
-   * reopening it leaves the same set of conversations to hand.
-   */
-  openTabs: string[]
-  /**
    * 导入: set once the first run has asked about conversations in other AI
    * apps, whether or not anything was taken. MiMo asks a machine once; so does
    * this, and a profile that predates the question is marked as already asked.

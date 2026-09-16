@@ -76,6 +76,7 @@ import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind } from "./lib/find"
 import { chime } from "./lib/sound"
+import { stepTarget } from "./lib/visible-chats"
 import { announce } from "./lib/announce"
 import { chimeOf, longTask } from "@shared/chime"
 import { themeTokens } from "./lib/theme-engine"
@@ -2422,24 +2423,18 @@ function goHome() {
 }
 
 /**
- * Steps through the open tabs.
- *
- * Wraps at both ends: with three conversations open, going back from the first
- * should reach the last rather than stop, which is what makes the pair of
- * shortcuts usable without looking at the row.
- */
-/**
- * Steps to the next session with something waiting.
+ * Steps to the next conversation with something waiting, along the side
+ * column's visible order.
  *
  * Wraps around and stops where it started, so pressing it with nothing unread
- * leaves the screen alone rather than walking the whole strip.
+ * leaves the screen alone rather than walking the whole list.
  */
 async function stepUnread(by: 1 | -1) {
-  const tabs = app.tabs
-  if (!tabs.length) return
-  const at = app.currentID ? tabs.indexOf(app.currentID) : -1
-  for (let step = 1; step <= tabs.length; step += 1) {
-    const candidate = tabs[(at + by * step + tabs.length * step) % tabs.length]
+  const chats = app.visibleChats
+  if (!chats.length) return
+  const at = app.currentID ? chats.indexOf(app.currentID) : -1
+  for (let step = 1; step <= chats.length; step += 1) {
+    const candidate = chats[(at + by * step + chats.length * step) % chats.length]
     if (candidate && app.unread(candidate)) {
       await app.open(candidate)
       return
@@ -2508,12 +2503,10 @@ function endRecentWalk(event?: KeyboardEvent) {
 }
 const forgetRecentWalk = () => endRecentWalk()
 
+/* MiMo's previous / next conversation, along the side column's visible order. */
 async function stepSession(by: 1 | -1) {
-  const tabs = app.tabs
-  if (tabs.length < 2) return
-  const at = app.currentID ? tabs.indexOf(app.currentID) : -1
-  const next = tabs[(at + by + tabs.length) % tabs.length]
-  if (next) await app.open(next)
+  const next = stepTarget(app.visibleChats, app.currentID, by)
+  if (next) await selectTab(next)
 }
 
 /**
@@ -3035,12 +3028,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => stream.value?.stepMessage(1),
     },
     {
-      id: "session.reopenTab",
-      group: "key.groupGeneral",
-      title: t("cmd.reopenTab"),
-      run: () => void app.reopenTab(),
-    },
-    {
       id: "app.mcp",
       group: "key.groupModels",
       title: t("cmd.mcp"),
@@ -3157,19 +3144,18 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => window.mcode.window("close"),
     },
     /*
-     * The numbered slots. The strip is what they count along - not the sidebar
-     * and not the recency order - because the number a reader is aiming at is
-     * the position they can see.
+     * The numbered slots, counted along the side column as MiMo counts them:
+     * pinned conversations first, then the rest in the order they are listed.
      */
     ...Array.from({ length: 9 }, (_, index) => ({
       id: `tab.goto.${index + 1}`,
       group: "key.groupConversation",
       title: t("key.gotoTab", { n: index + 1 }),
       hint: `Ctrl+${index + 1}`,
-      enabled: () => app.tabs.length > index,
+      enabled: () => app.visibleChats.length > index,
       run: () => {
-        const target = app.tabs[index]
-        if (target) void app.open(target)
+        const target = app.visibleChats[index]
+        if (target) void selectTab(target)
       },
     })),
     {
@@ -3581,12 +3567,12 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
-   * Ctrl and a digit opens the conversation in that slot of the strip, the way
-   * MiMo and a browser both do. The project in that position is Ctrl+Alt and
-   * the digit.
+   * Ctrl and a digit opens the conversation in that slot of the side column's
+   * visible order, the way MiMo does. The project in that position is Ctrl+Alt
+   * and the digit.
    */
   if (/^[1-9]$/.test(event.key)) {
-    const target = app.tabs[Number(event.key) - 1]
+    const target = app.visibleChats[Number(event.key) - 1]
     if (!target) return
     event.preventDefault()
     void selectTab(target)
