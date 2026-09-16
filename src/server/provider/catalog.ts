@@ -686,6 +686,39 @@ export const BUILT_IN: ProviderDefinition[] = [
   },
 ]
 
+/**
+ * Which models.dev provider describes each built-in's models - matched by the
+ * endpoint each one serves, the mainland one where models.dev lists two. A
+ * provider missing here (and every custom provider) has no models.dev record,
+ * as a provider id models.dev does not know has none in MiMo.
+ */
+export const MODELS_DEV_IDS: Record<string, string> = {
+  anthropic: "anthropic",
+  openai: "openai",
+  chatgpt: "openai",
+  xiaomi: "xiaomi",
+  "xiaomi-plan": "xiaomi-token-plan-cn",
+  google: "google",
+  openrouter: "openrouter",
+  deepseek: "deepseek",
+  moonshot: "moonshotai-cn",
+  zhipu: "zhipuai",
+  dashscope: "alibaba-cn",
+  xai: "xai",
+  groq: "groq",
+  siliconflow: "siliconflow-cn",
+  volcengine: "volcengine",
+  minimax: "minimax-cn",
+  stepfun: "stepfun",
+  mistral: "mistral",
+  together: "togetherai",
+  fireworks: "fireworks-ai",
+  cerebras: "cerebras",
+  perplexity: "perplexity",
+  nvidia: "nvidia",
+  lmstudio: "lmstudio",
+}
+
 export function definition(id: string): ProviderDefinition | undefined {
   return BUILT_IN.find((entry) => entry.id === id)
 }

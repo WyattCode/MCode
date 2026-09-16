@@ -23,7 +23,29 @@ import { handle } from "../src/server/handlers"
 import type { Request } from "../src/shared/protocol"
 import { connectableProviders, providerLabel, quickAddGroups } from "../src/renderer/src/lib/connect"
 import { language } from "../src/renderer/src/lib/i18n"
-import { readFileSync } from "node:fs"
+import { readFileSync, statSync } from "node:fs"
+import { createServer } from "node:http"
+import { imageInputOf, overlayCatalog, trimCatalog, type Catalog } from "../src/shared/models-dev"
+import { CATALOG_FRESH_MS, CATALOG_REFRESH_MS, CATALOG_SOURCE, CATALOG_TIMEOUT_MS, ModelCatalog, shippedCatalog } from "../src/server/provider/models-dev"
+
+/** A catalog with one provider and the given models, in models.dev's own shape. */
+function catalogOf(pid: string, models: Record<string, Record<string, unknown>>): Record<string, unknown> {
+  return { [pid]: { id: pid, name: pid, models: Object.fromEntries(Object.entries(models).map(([id, model]) => [id, { id, ...model }])) } }
+}
+
+/** A local models.dev: answers /api.json with whatever `answer` holds, and counts the requests. */
+async function fakeModelsDev() {
+  const state = { hits: 0, status: 200, body: catalogOf("deepseek", { "deepseek-chat": { name: "Served", limit: { context: 1234, output: 56 } } }) as unknown }
+  const server = createServer((request, response) => {
+    state.hits += 1
+    if (request.url !== "/api.json") return void response.writeHead(404).end()
+    response.writeHead(state.status, { "content-type": "application/json" })
+    response.end(typeof state.body === "string" ? state.body : JSON.stringify(state.body))
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+  const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+  return { state, url, close: () => new Promise<void>((resolve) => server.close(() => resolve())) }
+}
 
 /** How a handler call failed: its code and the values its sentence fills in. */
 async function refusal(run: () => Promise<unknown>): Promise<{ code?: string; params?: Record<string, unknown> }> {
@@ -272,6 +294,169 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       check("a connected provider off the list is still connected", after.find((entry) => entry.id === "groq")?.configured === true)
     } finally {
       await e.close()
+    }
+  }
+
+  section("Round 9 (P9-10): the models.dev catalog - shipped, cached, refreshed hourly, never in the way")
+  {
+    check("MiMo's address, timing and timeout", CATALOG_SOURCE === "https://models.dev" && CATALOG_FRESH_MS === 300_000 && CATALOG_REFRESH_MS === 3_600_000 && CATALOG_TIMEOUT_MS === 10_000)
+    const shipped = trimCatalog(await shippedCatalog())
+    const shippedModels = Object.values(shipped).reduce((sum, provider) => sum + Object.keys(provider.models).length, 0)
+    check("a copy ships with the app, with thousands of models", shippedModels > 3_000, shippedModels)
+    check("it covers the vendors quick add offers", ["xiaomi", "deepseek", "moonshotai-cn", "zhipuai", "alibaba-cn", "minimax-cn"].every((id) => Object.keys(shipped[id]?.models ?? {}).length > 0))
+    const size = statSync("resources/models-snapshot.json").size
+    check("and it holds only the fields MCode reads (under 4 MB)", size < 4_000_000 && !readFileSync("resources/models-snapshot.json", "utf8").includes('"knowledge"'), size)
+
+    let refused = ""
+    try {
+      trimCatalog({ a: { id: "b", models: {} } })
+    } catch (error) {
+      refused = String(error)
+    }
+    check("a catalog whose keys and ids disagree is refused", refused.includes("identity"))
+    let empty = ""
+    try {
+      trimCatalog({ a: { id: "a", models: {} } })
+    } catch (error) {
+      empty = String(error)
+    }
+    check("and so is one without a single model", empty.includes("no models"))
+    const laid = overlayCatalog(
+      trimCatalog(catalogOf("p", { kept: { name: "Old", limit: { context: 10, output: 5 } }, dropped: { name: "Gone" } })),
+      trimCatalog(catalogOf("p", { kept: { limit: { context: 20 } }, fresh: { name: "New" } })),
+    )
+    check(
+      "a download decides what exists, and the shipped copy fills in what it leaves out",
+      JSON.stringify(Object.keys(laid.p!.models)) === '["fresh","kept"]' && laid.p!.models.kept!.name === "Old" && laid.p!.models.kept!.limit?.context === 20 && laid.p!.models.kept!.limit?.output === 5,
+      laid,
+    )
+
+    const fake = await fakeModelsDev()
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r9-catalog-"))
+    const cacheFile = path.join(dir, "cache", "models.json")
+    const errors: unknown[] = []
+    let disabled = false
+    const make = () =>
+      new ModelCatalog({
+        cacheFile,
+        shipped: async () => catalogOf("deepseek", { "deepseek-chat": { name: "Shipped", limit: { context: 1, output: 1 }, cost: { input: 0.5 } } }),
+        source: fake.url,
+        disabled: () => disabled,
+        onError: (error) => errors.push(error),
+      })
+    try {
+      const catalog = make()
+      await catalog.load()
+      check("with nothing downloaded yet, the shipped copy stands alone", catalog.get().deepseek?.models["deepseek-chat"]?.name === "Shipped")
+      let heard = 0
+      catalog.subscribe(() => (heard += 1))
+      await catalog.refresh()
+      const served = catalog.get().deepseek?.models["deepseek-chat"]
+      check("a refresh downloads, and the download wins where it speaks", fake.state.hits === 1 && served?.name === "Served" && served.limit?.context === 1234, served)
+      check("while the shipped copy fills in the rest", served?.cost?.input === 0.5, served?.cost)
+      check("listeners hear that it changed", heard === 1, heard)
+      check("the download is kept on disk", Boolean(trimCatalog(JSON.parse(readFileSync(cacheFile, "utf8"))).deepseek))
+      await catalog.refresh()
+      check("a cache under five minutes old is used rather than fetched again", fake.state.hits === 1, fake.state.hits)
+      await catalog.refresh(true)
+      check("unless the refresh is forced", fake.state.hits === 2, fake.state.hits)
+      check("and an unchanged catalog tells nobody", heard === 1, heard)
+
+      const reopened = make()
+      await reopened.load()
+      check("the next launch starts from the download, offline", reopened.get().deepseek?.models["deepseek-chat"]?.name === "Served")
+
+      fake.state.status = 500
+      const before = JSON.stringify(catalog.get())
+      await catalog.refresh(true)
+      check("a failed download is logged and changes nothing", errors.length === 1 && JSON.stringify(catalog.get()) === before, errors.map(String))
+      fake.state.status = 200
+      fake.state.body = { deepseek: { id: "other", models: {} } }
+      await catalog.refresh(true)
+      check("a malformed one neither replaces the cache nor the catalog", errors.length === 2 && JSON.stringify(catalog.get()) === before && readFileSync(cacheFile, "utf8").includes("Served"))
+      fake.state.body = "{ not json"
+      await catalog.refresh(true)
+      check("nor does one that is not JSON", errors.length === 3 && JSON.stringify(catalog.get()) === before)
+
+      await fs.writeFile(cacheFile, "garbage")
+      const damaged = make()
+      await damaged.load()
+      check("a damaged cache falls back to the shipped copy", damaged.get().deepseek?.models["deepseek-chat"]?.name === "Shipped")
+
+      disabled = true
+      const hits = fake.state.hits
+      await damaged.refresh()
+      damaged.startRefresh()
+      check("with the network switched off nothing is fetched", fake.state.hits === hits, fake.state.hits - hits)
+      damaged.stop()
+      disabled = false
+      const scheduled = make()
+      await scheduled.load()
+      scheduled.startRefresh()
+      const started = Date.now()
+      while (fake.state.hits === hits && Date.now() - started < 5_000) await new Promise((resolve) => setTimeout(resolve, 20))
+      scheduled.stop()
+      check("starting the schedule refreshes straight away", fake.state.hits === hits + 1, fake.state.hits - hits)
+    } finally {
+      await fake.close()
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    }
+
+    /* The catalog reaches what a provider offers. */
+    const e = await engine({ custom: { models: [{ id: "deepseek-chat", name: "Mine" }] } })
+    try {
+      const catalog: Catalog = trimCatalog({
+        ...catalogOf("deepseek", {
+          "deepseek-chat": { name: "DeepSeek Chat (dev)", limit: { context: 131_072, output: 8_192 }, cost: { input: 0.27, output: 1.1 }, modalities: { input: ["text"] }, reasoning: false },
+          "deepseek-new": { name: "DeepSeek New", limit: { context: 200_000, output: 16_000 }, modalities: { input: ["text", "image"] }, reasoning: true },
+        }),
+        ...catalogOf("openai", { "gpt-4o": { name: "GPT-4o", modalities: { input: ["text", "image"] } } }),
+        ...catalogOf("xiaomi", { "mimo-v2.5-pro": { name: "Someone else's name", limit: { context: 1_048_576, output: 32_768 } } }),
+      })
+      await e.config.setDiscovered("deepseek", [
+        { id: "deepseek-chat", name: "deepseek-chat", contextWindow: 0, input: 0, output: 0 },
+        { id: "deepseek-new", name: "deepseek-new", contextWindow: 0, input: 0, output: 0 },
+      ])
+      const before = e.config.models("deepseek").find((entry) => entry.id === "deepseek-new")
+      e.config.useModelCatalog(catalog)
+      const chat = e.config.models("deepseek").find((entry) => entry.id === "deepseek-chat")
+      const fresh = e.config.models("deepseek").find((entry) => entry.id === "deepseek-new")
+      check("a discovered model gets its window, output limit and prices", chat?.contextWindow === 131_072 && chat.maxOutput === 8_192 && chat.input === 0.27 && chat.output === 1.1, chat)
+      const pro = e.config.models("xiaomi").find((entry) => entry.id === "mimo-v2.5-pro")
+      check("the app's own name for a model its table lists is kept", pro?.name === "MiMo-V2.5-Pro" && pro.contextWindow === 1_048_576, pro)
+      check("a discovered model the table does not name takes models.dev's name", chat?.name === "DeepSeek Chat (dev)", chat?.name)
+      check("a model the app has no name for takes models.dev's", fresh?.name === "DeepSeek New" && before?.name !== "DeepSeek New", fresh?.name)
+      check("and its capabilities", fresh?.inputs?.image === true && fresh.reasoning === true && fresh.contextWindow === 200_000)
+      const typed = e.config.models("fake").find((entry) => entry.id === "deepseek-chat")
+      check("a custom provider's model is left as typed", typed?.name === "Mine" && typed.contextWindow === 0)
+
+    } finally {
+      await e.close()
+    }
+
+    const data = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r9p-cat-"))
+    const served = await fakeModelsDev()
+    served.state.body = catalogOf("openai", { "gpt-4o": { name: "GPT-4o", modalities: { input: ["text", "image"] } } })
+    const saved = { disabled: process.env.MCODE_DISABLE_MODELS_FETCH, url: process.env.MCODE_MODELS_URL }
+    delete process.env.MCODE_DISABLE_MODELS_FETCH
+    process.env.MCODE_MODELS_URL = served.url
+    const backend = await startBackend(data)
+    try {
+      const started = Date.now()
+      while (served.state.hits === 0 && Date.now() - started < 10_000) await new Promise((resolve) => setTimeout(resolve, 25))
+      check("the app refreshes the catalog as it starts", served.state.hits === 1, served.state.hits)
+      const cached = path.join(data, "cache", "models.json")
+      const written = Date.now()
+      while (!(await fs.stat(cached).catch(() => undefined)) && Date.now() - written < 5_000) await new Promise((resolve) => setTimeout(resolve, 25))
+      check("into the data folder's cache", Boolean(await fs.stat(cached).catch(() => undefined)))
+    } finally {
+      await backend.close()
+      await served.close()
+      if (saved.disabled === undefined) delete process.env.MCODE_DISABLE_MODELS_FETCH
+      else process.env.MCODE_DISABLE_MODELS_FETCH = saved.disabled
+      if (saved.url === undefined) delete process.env.MCODE_MODELS_URL
+      else process.env.MCODE_MODELS_URL = saved.url
+      await fs.rm(data, { recursive: true, force: true }).catch(() => undefined)
     }
   }
 

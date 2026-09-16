@@ -792,6 +792,9 @@ export const useApp = defineStore("app", () => {
         authState.value = { provider: event.provider, stage: "done" }
         void ensureUsableModel(event.provider)
         break
+      case "providers.updated":
+        providers.value = event.providers
+        break
       case "auth.failed":
         authState.value = { provider: event.provider, stage: "failed", message: event.message }
         break

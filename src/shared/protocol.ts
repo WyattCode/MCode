@@ -2353,6 +2353,8 @@ export type ServerEvent =
   | { type: "mcp.status"; servers: McpServerState[] }
   /** A subscription login finished in the browser, minutes after it began. */
   | { type: "auth.completed"; provider: string; providers: ProviderStatus[] }
+  /** What the providers offer changed without anyone asking - a newer models.dev catalog arrived. */
+  | { type: "providers.updated"; providers: ProviderStatus[] }
   | { type: "auth.failed"; provider: string; message: string }
 
 // ---------------------------------------------------------------------------

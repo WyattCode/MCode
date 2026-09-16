@@ -325,6 +325,8 @@ function section(name: string) {
 async function main() {
   // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.
   process.env.MCODE_GENERATE_TITLES = "0"
+  // round 9: every backend a check starts stays off the network; the models.dev checks use a local server.
+  process.env.MCODE_DISABLE_MODELS_FETCH = "1"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-"))
   const dataDirectory = path.join(root, "data")
   const project = path.join(root, "project")

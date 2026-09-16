@@ -16,6 +16,7 @@ import type {
 } from "@shared/protocol"
 import {
   DEFAULT_PERMISSIONS,
+  EFFORTS,
   PERMISSION_ACTIONS,
   PERMISSION_KINDS,
   type PermissionKind,
@@ -26,6 +27,7 @@ import { writeAtomic } from "./storage"
 import type { Bus } from "./bus"
 import {
   BUILT_IN,
+  MODELS_DEV_IDS,
   definition,
   type ModelEntry,
   type ProviderDefinition,
@@ -33,6 +35,7 @@ import {
 } from "./provider/catalog"
 import { nameFromId } from "./provider/model-name"
 import { CodedError } from "@shared/errors"
+import type { Catalog, CatalogModel } from "@shared/models-dev"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
 import { menuEfforts } from "@shared/effort-menu"
@@ -345,8 +348,42 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   return out
 }
 
+/**
+ * A model as models.dev describes it, laid over what this app knew: models.dev
+ * decides limits, prices and capabilities wherever it states them, and the
+ * app's own table keeps the name it gives a model.
+ */
+export function withCatalog(entry: ModelEntry, listed: CatalogModel | undefined, keepName: boolean): ModelEntry {
+  if (!listed) return entry
+  const input = listed.modalities?.input
+  const efforts = listed.reasoning_options?.find((option) => option.type === "effort")?.values
+  const interleaved = typeof listed.interleaved === "object" && listed.interleaved && "field" in listed.interleaved ? String((listed.interleaved as { field: unknown }).field) : undefined
+  const positive = (value: number | undefined) => (value && value > 0 ? value : undefined)
+  return {
+    ...entry,
+    name: keepName || !listed.name ? entry.name : listed.name,
+    contextWindow: positive(listed.limit?.context) ?? entry.contextWindow,
+    ...(positive(listed.limit?.output) ? { maxOutput: listed.limit!.output } : {}),
+    input: listed.cost?.input ?? entry.input,
+    output: listed.cost?.output ?? entry.output,
+    ...(listed.cost?.cache_read !== undefined ? { cacheRead: listed.cost.cache_read } : {}),
+    ...(listed.cost?.cache_write !== undefined ? { cacheWrite: listed.cost.cache_write } : {}),
+    reasoning: listed.reasoning ?? entry.reasoning,
+    attachment: listed.attachment ?? entry.attachment,
+    toolCall: listed.tool_call ?? entry.toolCall,
+    temperature: listed.temperature ?? entry.temperature,
+    ...(input
+      ? { inputs: { text: input.includes("text"), image: input.includes("image"), audio: input.includes("audio"), video: input.includes("video"), pdf: input.includes("pdf") } }
+      : {}),
+    ...(efforts ? { efforts: efforts.filter((value): value is Effort => (EFFORTS as readonly string[]).includes(value)) } : {}),
+    ...(interleaved ? { interleaved } : {}),
+  }
+}
+
 export class Config {
   private current: AppConfig = defaults()
+  /** The models.dev catalog (provider/models-dev.ts); empty until it has loaded. */
+  private catalog: Catalog = {}
   private credentials: Record<string, string> = {}
   private oauth: Record<string, OAuthTokens> = {}
   private discovered: Record<string, ModelEntry[]> = {}
@@ -804,12 +841,34 @@ export class Config {
     return this.definitions().find((entry) => entry.id === id)
   }
 
+  /** Hands over a newer models.dev catalog; what `models()` answers changes with it. */
+  useModelCatalog(catalog: Catalog): void {
+    this.catalog = catalog
+  }
+
+  /** The models.dev catalog as it stands. */
+  modelCatalog(): Catalog {
+    return this.catalog
+  }
+
+  /**
+   * A provider's models with what models.dev says about each. Custom
+   * providers are left as typed: their ids are the user's, not models.dev's.
+   */
+  models(provider: string): ModelEntry[] {
+    const listed = this.catalog[MODELS_DEV_IDS[provider] ?? ""]?.models
+    const entries = this.listedModels(provider)
+    if (!listed || this.definition(provider)?.handEntered) return entries
+    const curated = new Set((this.definition(provider)?.models ?? []).map((entry) => entry.id))
+    return entries.map((entry) => withCatalog(entry, listed[entry.id], curated.has(entry.id) || entry.name !== nameFromId(entry.id)))
+  }
+
   /**
    * A discovered list wins when we have one - it is fresher than anything
    * baked in here - and the static catalog is the fallback for providers that
    * expose no /models endpoint, or whose discovery has not run or failed.
    */
-  models(provider: string): ModelEntry[] {
+  private listedModels(provider: string): ModelEntry[] {
     const discovered = this.discovered[provider]
     /*
      * Read through `this.definition`, not the module-level one: that only knows
