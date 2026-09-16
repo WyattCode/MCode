@@ -9,8 +9,50 @@ import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { execFileSync } from "node:child_process"
+import type { SessionInfo } from "../src/shared/protocol"
 import { Snapshots } from "../src/server/session/snapshot"
+import { AutomationService } from "../src/server/automation/service"
+import { SessionStore } from "../src/server/session/store"
+import { Storage } from "../src/server/storage"
+import { Config } from "../src/server/config"
+import { Bus } from "../src/server/bus"
 import type { Check } from "./smoke-round5"
+
+const exists = (target: string) =>
+  fs
+    .access(target)
+    .then(() => true)
+    .catch(() => false)
+
+/**
+ * What a file holds, or nothing.
+ *
+ * A check has to fail rather than throw: an exception here ends the whole run,
+ * so every check after it stops being asked and its silence reads as a pass.
+ */
+const readOrNothing = (target: string | undefined): Promise<string | undefined> =>
+  target ? fs.readFile(target, "utf8").catch(() => undefined) : Promise.resolve(undefined)
+
+/**
+ * The answer, or nothing when asking for it threw.
+ *
+ * The same rule as `readOrNothing`, for the calls under test: several of these
+ * checks exist precisely because the old code rejected where it should have
+ * carried on, so asking for the answer unguarded would end the run instead of
+ * failing the one check - and every check after it would go silently unasked.
+ */
+const orNothing = <T>(work: Promise<T>): Promise<T | undefined> => work.then((value) => value, () => undefined)
+
+/** The document a file holds, or nothing when it is absent or will not parse. */
+async function parsedOrNothing<T>(target: string): Promise<T | undefined> {
+  const raw = await readOrNothing(target)
+  if (raw === undefined) return undefined
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return undefined
+  }
+}
 
 /** A project git will record, with the files a turn is about to change. */
 async function project(root: string, name: string, files: Record<string, string>): Promise<string> {
@@ -92,6 +134,99 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     check("a file nobody else touched is still restorable", (await snapshots.writtenSince(directory, "ses_a", 1000, [path.join(directory, "other.txt")])).length === 0)
     /* Written where the shadow repositories live, so the refusal survives a restart. */
     check("the ledger is read back after a restart", (await new Snapshots(store).writtenSince(directory, "ses_a", 1000, [file]))[0] === file)
+  }
+
+  // ------------------------------------------------------------------- F2
+  section("Round 6 (F2): a damaged automations.json blocks rather than emptying")
+  {
+    const directory = path.join(root, "automations")
+    await fs.mkdir(directory, { recursive: true })
+    const file = path.join(directory, "automations.json")
+    /* A write that was cut off part way, which is how this happens for real. */
+    const damaged = '{"automations":[{"id":"auto-1","title":"Daily dig'
+    await fs.writeFile(file, damaged, "utf8")
+
+    const caller = { id: "ses_1", directory, model: { provider: "p", model: "m" } } as unknown as SessionInfo
+    const service = new AutomationService({
+      file,
+      now: () => Date.UTC(2026, 0, 1),
+      sessions: { get: async () => caller, create: async () => caller, messages: async () => [] },
+      prompt: async () => undefined,
+      busy: () => false,
+      models: () => [],
+      agent: () => "build",
+      effort: () => undefined,
+      scratch: async () => directory,
+      publish: () => {},
+    })
+    await service.start({ interval: false })
+    check("a file that will not parse starts with no tasks", service.list().length === 0)
+    check("and says so rather than starting empty in silence", Boolean(service.unreadable.problem), service.unreadable)
+
+    const kept = (await fs.readdir(directory)).filter((name) => name.includes(".corrupt-"))
+    check("the damaged file is kept as evidence rather than written over", kept.length === 1, kept)
+    check("and keeps every byte it had", kept[0] !== undefined && (await fs.readFile(path.join(directory, kept[0]), "utf8")) === damaged)
+
+    /* The next change used to write the empty document straight over the damaged one. */
+    await service.handle(
+      { mode: "create", title: "Daily digest", prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" },
+      { sessionID: caller.id },
+    )
+    const written = await parsedOrNothing<{ automations: unknown[] }>(file)
+    check("a later change writes a fresh file, leaving the evidence alone", written?.automations.length === 1, written)
+    check("the evidence is still there afterwards", (await fs.readdir(directory)).filter((name) => name.includes(".corrupt-")).length === 1)
+  }
+
+  // ------------------------------------------------------------------- F3
+  section("Round 6 (F3): a damaged config.json does not stop the backend")
+  {
+    const dataDirectory = path.join(root, "config-app")
+    const storageRoot = path.join(dataDirectory, "storage")
+    await fs.mkdir(storageRoot, { recursive: true })
+    const damaged = '{"theme":"dark","model":{"provider":"anthropic"'
+    await fs.writeFile(path.join(storageRoot, "config.json"), damaged, "utf8")
+
+    const config = new Config(new Storage(storageRoot), new Bus(), path.join(dataDirectory, "credentials.json"))
+    let threw = false
+    await config.load().catch(() => (threw = true))
+    check("a config that will not parse does not take the backend down with it", !threw)
+    check("and says what went wrong", Boolean(config.unreadable?.problem), config.unreadable)
+    check("the damaged file is kept rather than written over", Boolean(config.unreadable?.evidence) && (await exists(config.unreadable?.evidence ?? "")))
+    check("its bytes are the ones that were there", (await readOrNothing(config.unreadable?.evidence)) === damaged)
+    /*
+     * The trap: a file that is there but cannot be read is not a fresh install.
+     * Answering one with the first-install permissions would quietly change
+     * what this machine allows without anybody choosing it.
+     */
+    check(
+      "a file that could not be read is not treated as a first install",
+      config.get().allowFullAccess === false && config.get().accessLevel === undefined,
+      { allowFullAccess: config.get().allowFullAccess, accessLevel: config.get().accessLevel },
+    )
+    check("the app opens on the defaults", config.get().theme === "system")
+  }
+
+  // ------------------------------------------------------------------- F4
+  section("Round 6 (F4): one damaged conversation does not cost the whole list")
+  {
+    const storageRoot = path.join(root, "sessions", "storage")
+    const record = (id: string, updated: number) =>
+      JSON.stringify({ id, title: id, directory: root, model: { provider: "p", model: "m" }, agent: "build", created: 1, updated })
+    const write = async (id: string, body: string) => {
+      await fs.mkdir(path.join(storageRoot, "session", id), { recursive: true })
+      await fs.writeFile(path.join(storageRoot, "session", id, "info.json"), body, "utf8")
+    }
+    await write("ses_a", record("ses_a", 2))
+    await write("ses_b", '{"id":"ses_b","title":"cut off part way"')
+    await write("ses_c", record("ses_c", 3))
+
+    const store = new SessionStore(new Storage(storageRoot), new Bus())
+    const listed = (await orNothing(store.list()))?.map((session) => session.id)
+    check("a conversation whose record will not parse is skipped, not thrown", listed?.join(",") === "ses_c,ses_a", listed)
+    check("every readable conversation is still listed", listed?.length === 2, listed)
+    let asked = false
+    await store.require("ses_b").catch(() => (asked = true))
+    check("asking for the damaged conversation by id still says so", asked)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

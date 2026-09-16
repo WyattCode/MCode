@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import type { AgentName, Effort, Message, ModelRef, ServerEvent, SessionInfo, UserMessage } from "@shared/protocol"
-import { writeAtomic } from "../storage"
+import { quarantine, writeAtomic } from "../storage"
 import { ToolError } from "../tool/types"
 import { nextOccurrence, parseRRule, scheduleLabel } from "./rrule"
 
@@ -100,6 +100,11 @@ export class AutomationService {
   private readonly starting = new Set<string>()
   private interval: ReturnType<typeof setInterval> | undefined
   private writing: Promise<void> = Promise.resolve()
+  /** Set when the saved tasks could not be read and nothing may be written over them. */
+  private blocked: string | undefined
+  /** Where an unreadable file was kept, and what to tell anyone who asks. */
+  private evidence: string | undefined
+  private problem: string | undefined
 
   constructor(private readonly deps: AutomationDeps) {}
 
@@ -113,8 +118,29 @@ export class AutomationService {
           seq: typeof parsed.seq === "number" ? parsed.seq : 0,
           receipts: Array.isArray(parsed.receipts) ? parsed.receipts.slice(-RECEIPTS_KEPT) : [],
         }
-      } catch {
-        // An unreadable file starts empty rather than stopping the app; the file is left as it is until the next change.
+      } catch (cause) {
+        /*
+         * A file that will not parse is a blocked load, not an empty one.
+         *
+         * It used to start empty and be left "until the next change" - but the
+         * next answer() or tick() called save(), which wrote the empty document
+         * over it, so one truncated write turned every scheduled task into
+         * nothing that could not be got back by hand either. The reference
+         * blocks instead, keeping the raw text as evidence and writing nothing.
+         *
+         * So the damaged file is moved aside under a name of its own and the
+         * app carries on with no tasks; if it cannot be moved, nothing is ever
+         * written here and every change says why.
+         */
+        const aside = await quarantine(this.deps.file)
+        const why = cause instanceof Error ? cause.message : String(cause)
+        this.evidence = aside
+        this.blocked = aside
+          ? undefined
+          : `The scheduled tasks in ${this.deps.file} could not be read (${why}) and the file could not be moved aside, so nothing is saved over it. Repair or move that file, then reopen the app.`
+        this.problem = aside
+          ? `The scheduled tasks in ${this.deps.file} could not be read (${why}). The file was kept as ${aside} and the app started with no tasks.`
+          : this.blocked
       }
     }
     for (const automation of this.saved.automations) this.plan(automation, true)
@@ -138,6 +164,9 @@ export class AutomationService {
   }
 
   private save(): Promise<void> {
+    // Never written over a document that would not parse: what is in it is the
+    // user's only copy, and an empty one on top makes the loss permanent.
+    if (this.blocked) return this.writing
     const snapshot = JSON.stringify(this.saved, null, 2)
     this.writing = this.writing.then(() => writeAtomic(this.deps.file, snapshot)).catch(() => undefined)
     return this.writing
@@ -199,7 +228,10 @@ export class AutomationService {
     if (caller.parentID) throw new ToolError("A subagent cannot manage scheduled tasks.")
     const mode = text(input.mode)
     if (!mode || !(AUTOMATION_MODES as readonly string[]).includes(mode)) throw new ToolError(`mode must be one of ${AUTOMATION_MODES.join(", ")}.`)
-    if (mode === "list") return JSON.stringify({ automations: this.saved.automations.map((automation) => this.view(automation)) })
+    if (mode === "list") return JSON.stringify({ automations: this.saved.automations.map((automation) => this.view(automation)), ...(this.problem ? { warning: this.problem } : {}) })
+    // A change that cannot be saved is refused outright rather than accepted
+    // and lost; reading what is there is still allowed.
+    if (this.blocked && mode !== "view") throw new ToolError(this.blocked)
     const idOf = () => {
       const id = text(input.id)
       if (!id) throw new ToolError(`${mode} needs an automation id; list them to see the ids.`)
@@ -385,6 +417,11 @@ export class AutomationService {
   /** Whether a conversation's current turn is a run, for the checks. */
   running(sessionID: string): boolean {
     return this.runs.has(sessionID)
+  }
+
+  /** What went wrong reading the saved tasks, and where the damaged file was kept. */
+  get unreadable(): { problem?: string; evidence?: string; blocked: boolean } {
+    return { problem: this.problem, evidence: this.evidence, blocked: Boolean(this.blocked) }
   }
 }
 
