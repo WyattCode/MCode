@@ -87,4 +87,14 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     const announcer = read("lib/announce.ts")
     check("the live regions exist before anything is said", /installAnnouncer\(\)/.test(read("main.ts")) && /aria-live", urgency\)/.test(announcer))
   }
+
+  section("round 8 access: the review and the right panel from the keyboard (A4, A5)")
+  {
+    const diff = read("components/parts/DiffBody.vue")
+    check("a file in the review's list is a Tab stop that Enter and Space open", /class="db-list-line"\s+role="button"\s+tabindex="0"[\s\S]{0,80}@keydown\.enter\.space\.self\.prevent="reveal\(index, true\)"/.test(diff))
+    check("a file header is a Tab stop that folds, and says whether it is open", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"[\s\S]{0,80}@keydown\.enter\.space\.self\.prevent="toggle/.test(diff))
+    const panel = read("components/RightPanel.vue")
+    check("the shown right-panel tab is the strip's Tab stop", /:tabindex="tab\.id === rp\.active \? 0 : -1"/.test(panel))
+    check("arrows, Home and End walk the tabs; Enter, Space and the Menu key act", /function onTabKey[\s\S]*"Enter"[\s\S]*"ContextMenu"[\s\S]*ArrowRight[\s\S]*"Home"[\s\S]*"End"/.test(panel) && /@keydown="onTabKey\(\$event, tab\.id\)"/.test(panel))
+  }
 }
