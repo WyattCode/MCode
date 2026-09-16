@@ -2484,15 +2484,33 @@ export class SessionRunner {
    * MCode's shell tool reports no paths it changed.
    */
   private async noteWorktreeChange(sessionID: string, part: ToolPart, directory: string): Promise<void> {
-    if (this.worktreeHits.has(sessionID) || !["write", "edit", "notebook_edit"].includes(part.name)) return
-    const named = part.input?.file_path ?? part.input?.notebook_path
-    const target = typeof named === "string" ? named : undefined
-    if (!target) return
+    if (this.worktreeHits.has(sessionID)) return
     const session = await this.store.get(sessionID)
     if (!session || session.parentID || session.worktreeNotice) return
-    const top = await worktreeTop(path.dirname(path.resolve(directory, target)))
-    if (!top?.main) return
-    this.worktreeHits.set(sessionID, { root: top.root, linked: await hasLinkedWorktrees(top.root) })
+    const root = await this.changedMainWorktree(part, directory)
+    if (!root) return
+    this.worktreeHits.set(sessionID, { root, linked: await hasLinkedWorktrees(root) })
+  }
+
+  /**
+   * The repository main worktree this call changed, if it changed one.
+   *
+   * MiMo reads two kinds of call here. A write tool names the file it wrote, so
+   * the worktree is found from that path. A shell command names nothing, so its
+   * own scan records the main worktrees it would write to and the result
+   * carries them - and only a command that exited cleanly counts, since one
+   * that failed changed nothing worth a notice.
+   */
+  private async changedMainWorktree(part: ToolPart, directory: string): Promise<string | undefined> {
+    if (["write", "edit", "notebook_edit"].includes(part.name)) {
+      const named = part.input?.file_path ?? part.input?.notebook_path
+      if (typeof named !== "string") return undefined
+      const top = await worktreeTop(path.dirname(path.resolve(directory, named)))
+      return top?.main ? top.root : undefined
+    }
+    if (part.name !== "bash" || part.metadata?.exit !== 0) return undefined
+    const hits = part.metadata?.mainWorktreeHits
+    return Array.isArray(hits) ? hits.find((hit): hit is string => typeof hit === "string" && hit.length > 0) : undefined
   }
 
   /**

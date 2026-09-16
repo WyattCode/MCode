@@ -3,7 +3,8 @@ import fs from "node:fs/promises"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
-import { scanCommand } from "./bash-scan"
+import { collectMutationTargets, scanCommand } from "./bash-scan"
+import { mainWorktreeRoots } from "../session/worktree"
 
 const DEFAULT_TIMEOUT = 120_000
 /** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
@@ -261,6 +262,13 @@ export const BashTool: ToolDefinition = {
      * `cd` asks nothing.
      */
     const scan = await scanCommand(command, cwd, context.directory, powershell)
+    /*
+     * MiMo's auto-worktree notice reads a command's result rather than its
+     * arguments: the tool records which repository main worktrees this command
+     * would write to, and the runner raises the notice for one that then
+     * exited cleanly.
+     */
+    const worktreeHits = await mainWorktreeRoots(collectMutationTargets(command, cwd, powershell).paths)
     for (const dir of scan.dirs) await resolvePath(context, dir)
     const question = {
       sessionID: context.sessionID,
@@ -411,7 +419,15 @@ export const BashTool: ToolDefinition = {
         resolve({
           output,
           title: description || command,
-          metadata: { command, cwd, exit: code, description, truncated: cut, ...(cut && file ? { outputPath: file } : {}) },
+          metadata: {
+            command,
+            cwd,
+            exit: code,
+            description,
+            truncated: cut,
+            ...(cut && file ? { outputPath: file } : {}),
+            ...(worktreeHits.length ? { mainWorktreeHits: worktreeHits } : {}),
+          },
         })
       }
 
