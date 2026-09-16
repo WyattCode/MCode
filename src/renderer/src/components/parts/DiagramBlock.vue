@@ -262,7 +262,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
           <span class="md-code-word idle">{{ t("code.copy") }}</span>
           <span class="md-code-word done">{{ t("code.copied") }}</span>
         </button>
-        <button v-if="showingDiagram && svg" type="button" class="md-diagram-more" data-diagram-more aria-haspopup="menu" :aria-expanded="Boolean(menu)" @click="openMenu">
+        <button v-if="showingDiagram && svg" type="button" class="md-diagram-more" data-diagram-more aria-haspopup="menu" :aria-expanded="Boolean(menu)" :aria-label="t('svgMenu.actions')" @click="openMenu">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
         </button>
       </div>

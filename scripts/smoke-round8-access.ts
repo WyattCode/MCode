@@ -97,6 +97,29 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     check("the shown right-panel tab is the strip's Tab stop", /:tabindex="tab\.id === rp\.active \? 0 : -1"/.test(panel))
     const drawer = read("components/TerminalDrawer.vue")
     check("a terminal tab's close is a button beside its label, not inside another button (A6)", /<div[^>]*class="tab"[^>]*role="tab"[^>]*tabindex="0"[\s\S]{0,300}<button type="button" class="tab-close"[\s\S]{0,120}<\/div>/.test(drawer) && !/<span class="tab-close"/.test(drawer))
-    check("arrows, Home and End walk the tabs; Enter, Space and the Menu key act", /function onTabKey[\s\S]*"Enter"[\s\S]*"ContextMenu"[\s\S]*ArrowRight[\s\S]*"Home"[\s\S]*"End"/.test(panel) && /@keydown="onTabKey\(\$event, tab\.id\)"/.test(panel))
+    check("arrows, Home and End walk the tabs; Enter, Space and the Menu key act",
+      /function onTabKey[\s\S]*"Enter"[\s\S]*"ContextMenu"[\s\S]*ArrowRight[\s\S]*"Home"[\s\S]*"End"/.test(panel) && /@keydown="onTabKey\(\$event, tab\.id\)"/.test(panel))
+  }
+
+  section("round 8 access: names that are not drawn (A7, A8, A10)")
+  {
+    const side = read("components/Sidebar.vue")
+    check("the folded rail names 产物中心 and 设置 itself, not through a tip bound before it folded", /:aria-label="collapsed \? t\('side\.railArtifacts'\) : undefined"/.test(side) && /:aria-label="collapsed \? t\('rail\.settings'\) : undefined"/.test(side))
+    const unnamed: string[] = []
+    for (const file of sources(path.join(RENDERER, "components"))) {
+      if (!file.endsWith(".vue")) continue
+      const text = fs.readFileSync(file, "utf8")
+      for (const match of text.matchAll(/<(button|div|span)\b[^>]*>/g)) {
+        const tag = match[0]
+        if (!/role="switch"|class="switch"/.test(tag) || /aria-hidden="true"/.test(tag)) continue
+        // A switch that is a whole row is named by the row's own text.
+        const texty = /class="item |class="row /.test(tag)
+        if (!/role="switch"/.test(tag) || !/aria-checked/.test(tag) || (!texty && !/aria-label/.test(tag))) unnamed.push(`${path.basename(file)}:${text.slice(0, match.index).split("\n").length}`)
+      }
+    }
+    check("every drawn switch is a named role=switch with its state", unnamed.length === 0, unnamed)
+    for (const file of ["components/parts/DiagramBlock.vue", "components/parts/SvgFileCard.vue"]) {
+      check(`${path.basename(file)}'s more button is named`, /class="md-diagram-more"[^>]*:aria-label="t\('svgMenu\.actions'\)"/.test(read(file)))
+    }
   }
 }
