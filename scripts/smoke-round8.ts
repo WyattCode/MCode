@@ -61,16 +61,15 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
   // ------------------------------------------------------------------ M1
   section("Round 8 (M1): one prompt per model family, as MiMo picks one of its ten")
   {
-    check("a Claude model reads the Anthropic prompt", promptFamily({ provider: "anthropic", id: "claude-sonnet-5" }) === "anthropic")
-    check("so does one reached over another provider", promptFamily({ provider: "openrouter", id: "anthropic/claude-haiku-4-5" }) === "anthropic")
-    check("a GPT model reads the GPT one", promptFamily({ provider: "openai", id: "gpt-5.1" }) === "gpt")
-    check("as do the o-series and codex ids MiMo matches", promptFamily({ provider: "openai", id: "o3-mini" }) === "gpt" && promptFamily({ provider: "openai", id: "codex-mini" }) === "gpt")
-    check("every other family falls to the general one", promptFamily({ provider: "lmstudio", id: "qwen3-30b" }) === "general" && promptFamily({ provider: "google", id: "gemini-3-pro" }) === "general")
+    // Round nine corrected the rule to MiMo's engine exactly; smoke-round9 covers the other seven families.
+    check("a Claude model reads the Anthropic prompt", promptFamily({ id: "claude-sonnet-5" }) === "anthropic")
+    check("so does one reached over another provider", promptFamily({ id: "anthropic/claude-haiku-4-5" }) === "anthropic")
+    check("a GPT model reads the GPT one", promptFamily({ id: "gpt-5.1" }) === "gpt")
+    check("an unmatched family falls to the general one", promptFamily({ id: "qwen3-30b" }) === "general")
     check("and so does a turn that names no model at all", promptFamily(undefined) === "general")
 
-    check("the three are three different texts", new Set(Object.values(FAMILY_PROMPTS)).size === 3)
     check(
-      "each is in MiMo's length class rather than a page of bullet points",
+      "the round-eight three are in MiMo's length class rather than a page of bullet points",
       FAMILY_PROMPTS.anthropic.length > 3_000 && FAMILY_PROMPTS.gpt.length > 7_000 && FAMILY_PROMPTS.general.length > 5_000,
       [FAMILY_PROMPTS.anthropic.length, FAMILY_PROMPTS.gpt.length, FAMILY_PROMPTS.general.length],
     )
