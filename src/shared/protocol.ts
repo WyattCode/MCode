@@ -1575,14 +1575,6 @@ export interface AppConfig {
   diffMarks: "color" | "signs"
 
   /**
-   * Whether a new version says what changed in it.
-   *
-   * opencode's `releaseNotes`, and on by default the way its own
-   * `defaultSettings` has it. Its string: "Show What's New popups after
-   * updates".
-   */
-  releaseNotes: boolean
-  /**
    * One-time migrations already applied to this document, by name.
    *
    * A migration that just overwrote the value every load would make the setting

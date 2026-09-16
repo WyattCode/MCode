@@ -179,4 +179,16 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     check("a stored palette is dropped and the scheme kept", !("themeID" in (old.config.get() as object)) && !("themeID" in (await old.disk())) && old.config.get().theme === "light")
     check("and no migration moves palettes any more", !read("src/server/config.ts").includes("theme-mcode-2"))
   }
+
+  section("Round 9 (S9-7): no post-update notes window")
+  {
+    const app = read("src/renderer/src/App.vue")
+    const gone = ["src/renderer/src/components/ReleaseNotesDialog.vue", "src/renderer/src/lib/changelog.ts", "src/renderer/src/lib/changelog.json"]
+    check("the window, its changelog and its reader are deleted", gone.every((file) => !fs.existsSync(path.join(ROOT, file))), gone.filter((file) => fs.existsSync(path.join(ROOT, file))))
+    check("the window opens nothing after an update", !/ReleaseNotes|releaseNotes|loadReleaseHighlights|SEEN_VERSION_KEY/.test(app))
+    check("and the version it remembered is cleared", /localStorage\.removeItem\("mcode\.highlights\.v1"\)/.test(app))
+    check("its strings are gone", !/"rel\./.test(read("src/renderer/src/lib/i18n.ts")))
+    const old = await loaded({ releaseNotes: false })
+    check("a stored switch is dropped", !("releaseNotes" in (old.config.get() as object)) && !("releaseNotes" in (await old.disk())))
+  }
 }

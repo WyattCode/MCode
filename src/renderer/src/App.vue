@@ -30,7 +30,6 @@ import { foldedMatches } from "./lib/find-folded"
 import { imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
 import ServersDialog from "./components/ServersDialog.vue"
-import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
 import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
 import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
@@ -52,8 +51,6 @@ import {
   t,
   detectLanguage,
 } from "./lib/i18n"
-import changelog from "./lib/changelog.json"
-import { loadReleaseHighlights, normalizeVersion, type Highlight } from "./lib/changelog"
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
@@ -287,63 +284,13 @@ function endDrag() {
 }
 
 /*
- * What changed in the version now running, shown once.
- *
- * opencode's flow, step for step: remember the version last seen, and on the
- * first run where it differs, take the highlights between the two and show
- * them after a short delay. A reader with no remembered version - a fresh
- * install - is told nothing and simply has the current version recorded, so
- * the popup is about an upgrade rather than about arriving.
- *
- * The changelog ships with the build instead of being fetched, which is the
- * one place this departs from opencode. It fetches `opencode.ai/changelog.json`
- * because its releases are published; this app has no such feed, and a local
- * file also means the notes describe the build in hand and appear offline.
+ * MiMo has no window of what changed after an update - its update pill says so
+ * before the update. The key an earlier build kept the last version it had
+ * shown notes for under is taken away so it cannot linger.
  */
-const SEEN_VERSION_KEY = "mcode.highlights.v1"
-const RELEASE_NOTES_DELAY = 500
-const highlights = ref<Highlight[]>([])
-
-function showReleaseNotes() {
-  const version = app.version
-  if (!version) return
-  const previous = localStorage.getItem(SEEN_VERSION_KEY) ?? undefined
-  if (!previous) {
-    localStorage.setItem(SEEN_VERSION_KEY, version)
-    return
-  }
-  if (normalizeVersion(previous) === normalizeVersion(version)) return
-  // Recorded before the dialog, not after: a reader who closes it by quitting
-  // should not be shown the same notes again on the next launch.
-  localStorage.setItem(SEEN_VERSION_KEY, version)
-  if (app.config?.releaseNotes === false) return
-  const found = loadReleaseHighlights(changelog, version, previous)
-  if (!found.length) return
-  window.setTimeout(() => (highlights.value = found), RELEASE_NOTES_DELAY)
-}
-
-function dismissReleaseNotes(disable: boolean) {
-  highlights.value = []
-  if (disable) void app.patchConfig({ releaseNotes: false })
-}
-
-/*
- * Once, as soon as both the version and the settings are known - the same gate
- * opencode uses, whose effect waits on `platform.version` and `settings.ready`
- * before it will run. Neither is available at mount: the config arrives over
- * the socket, and reading it early would take the unset default and decide the
- * reader had opted out.
- */
-const releaseNotesStarted = ref(false)
-watch(
-  () => [app.version, app.config] as const,
-  ([version, config]) => {
-    if (releaseNotesStarted.value || !version || !config) return
-    releaseNotesStarted.value = true
-    showReleaseNotes()
-  },
-  { immediate: true },
-)
+try {
+  localStorage.removeItem("mcode.highlights.v1")
+} catch {}
 
 /*
  * Find-in-view over the conversation.
@@ -4301,12 +4248,6 @@ onBeforeUnmount(() => {
       </ErrorBoundary>
     </div>
 
-    <ReleaseNotesDialog
-      v-if="highlights.length"
-      :highlights="highlights"
-      @close="dismissReleaseNotes(false)"
-      @disable="dismissReleaseNotes(true)"
-    />
 
 
     <CommandPalette

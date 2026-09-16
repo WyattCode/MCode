@@ -146,7 +146,6 @@ function defaults(): AppConfig {
     pointerCursor: true,
     reduceMotion: "system",
     diffMarks: "color",
-    releaseNotes: true,
     migrations: [],
     showTerminal: true,
     shell: "",
@@ -194,6 +193,8 @@ export const RETIRED_FIELDS: readonly string[] = [
   "terminalFont",
   // S9-6: the palette choice; MiMo has only the scheme, and MCode draws with its one palette.
   "themeID",
+  // S9-7: the post-update notes window's switch; MiMo has no such window.
+  "releaseNotes",
 ]
 
 /** Takes the retired fields out of a document; answers whether any was there. */
