@@ -141,6 +141,8 @@ export class SessionStore {
     staged?: boolean
     smart?: boolean
     scratch?: boolean
+    /** MiMo's grouping label, carried by a branch so it is listed beside what it came from. */
+    group?: string
     sideOf?: string
     forkOf?: string
     title?: string
@@ -162,6 +164,7 @@ export class SessionStore {
       ...(input.staged ? { staged: true } : {}),
       ...(input.smart ? { smart: true } : {}),
       ...(input.scratch ? { scratch: true } : {}),
+      ...(input.group !== undefined ? { group: input.group } : {}),
       ...(input.sideOf ? { sideOf: input.sideOf } : {}),
       ...(input.forkOf ? { forkOf: input.forkOf } : {}),
       ...(input.parentID ? { parentID: input.parentID } : {}),
@@ -409,6 +412,8 @@ export class SessionStore {
       // A branch works the way its origin did, and in the same kind of folder.
       staged: origin.staged,
       scratch: origin.scratch,
+      // ...and is filed where its origin is filed, so a branch does not jump out of its project's group.
+      group: origin.group,
       // Named for what it came from, so the pair reads as a pair in the list:
       // the same title, or MiMo's 「(分支)」 after it for a branch off a reply.
       title: titleSuffix ? branchTitle(origin.title) : origin.title,

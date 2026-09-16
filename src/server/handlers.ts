@@ -404,33 +404,30 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { session: await runtime.sessions.update(request.sessionID, { title: request.title, titleSource: "user" }) }
 
     /*
-     * The conversation stays as it is; only the project it works in changes.
-     * Nothing on disk moves - a session's transcript lives in this app's own
-     * store, not in the project - so this is the one field and nothing else.
-     */
-    /*
-     * Moved into a project, a conversation that had none stops being marked as
-     * having none: it is listed under that project from now on.
+     * MiMo's `moveToProject`: the grouping label, and nothing else.
+     *
+     * The conversation keeps working where it worked. Rewriting `directory`
+     * here - which this used to do - moved the project commands, every
+     * relative path and every per-project approval out from under a
+     * conversation whose owner believed they had only changed a heading in the
+     * side column.
      */
     case "session.move":
       await runtime.config.adoptProjects([request.directory])
       return {
-        session: await runtime.sessions.update(request.sessionID, { directory: request.directory, scratch: undefined }),
+        session: await runtime.sessions.update(request.sessionID, { group: request.directory }),
       } satisfies Handled<"session.move">
 
     /*
-     * MiMo's "move out of project". MCode has no conversation without a folder,
-     * so it gets a fresh one of its own, made the way a task started with no
-     * project gets its folder. Checked first, so a missing session leaves no
-     * empty folder behind.
+     * MiMo's 移出项目, which is the same call with an empty label: listed under
+     * no project, still working in its own folder. It used to make an empty
+     * folder and point the conversation at it, losing the project it was in.
      */
-    case "session.moveOut": {
-      await runtime.sessions.require(request.sessionID)
-      const directory = await scratchDirectory(new Date(), runtime.config.get().projectRoot)
+    case "session.moveOut":
       return {
-        session: await runtime.sessions.update(request.sessionID, { directory, scratch: true }),
+        session: await runtime.sessions.update(request.sessionID, { group: "" }),
       } satisfies Handled<"session.moveOut">
-    }
+
 
     /*
      * A second conversation that starts where this one was, rather than a blank

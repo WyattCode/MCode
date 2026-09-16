@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
+import { sessionGroup } from "@shared/session-group"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
@@ -86,6 +87,12 @@ const recentShown = ref(RECENT_PAGE)
 const name = (directory: string) =>
   app.config?.projectNames?.[directory] || directory.split(/[\\/]/).filter(Boolean).pop() || directory
 
+/* Which project a row outside the tree says it belongs to; a conversation filed under none says nothing. */
+const groupNote = (session: SessionInfo) => {
+  const group = sessionGroup(session)
+  return group ? name(group) : ""
+}
+
 const title = (text?: string) => (text && text.trim() ? text : t("side.newTask"))
 
 /* What a task row's pin and menu lie over at its end, as MiMo allows for them. */
@@ -148,9 +155,13 @@ const pinnedProject = (directory: string) => (app.config?.pinnedProjects ?? []).
 const projects = computed(() => {
   const byDirectory = new Map(app.projects.map((directory) => [directory, [] as typeof app.sessions]))
   for (const session of app.sessions) {
-    // A folder made for a task with no project is not a project; Recent has it.
-    if (session.archived || session.scratch) continue
-    byDirectory.get(session.directory)?.push(session)
+    if (session.archived) continue
+    /*
+     * Filed by its grouping label where 移动至项目 gave it one, else by the
+     * folder it works in. A task with no project has neither; Recent has it.
+     */
+    const group = sessionGroup(session)
+    if (group) byDirectory.get(group)?.push(session)
   }
   return app.projects.map((directory) => {
     const sessions = [...(byDirectory.get(directory) ?? [])].sort((a, b) => b.updated - a.updated)
@@ -527,7 +538,9 @@ function setRecentSort(mode: "recent" | "name") {
 
 const recentAll = computed(() => {
   const listed = new Set(projects.value.map((project) => project.directory))
-  const rows = app.sessions.filter((session) => !session.archived && !listed.has(session.directory) && !app.isPinned(session.id))
+  const rows = app.sessions.filter(
+    (session) => !session.archived && !listed.has(sessionGroup(session) ?? "") && !app.isPinned(session.id),
+  )
   return recentSort.value === "name"
     ? rows.sort((a, b) => title(a.title).localeCompare(title(b.title), language.value))
     : rows.sort((a, b) => b.updated - a.updated)
@@ -709,7 +722,7 @@ const byDay = computed<TimelineEntry[]>(() => {
       heading = label
       rows.push({ head: label })
     }
-    rows.push({ session, note: name(session.directory) })
+    rows.push({ session, note: groupNote(session) })
   }
   return rows
 })
@@ -717,11 +730,11 @@ const byDay = computed<TimelineEntry[]>(() => {
 /* The priority view, top to bottom: attention, pinned when asked for, the week. */
 const priorityList = computed<TimelineEntry[]>(() => [
   entry({ section: "priority", group: "priority" }),
-  ...attention.value.map((session) => entry({ session, note: name(session.directory), group: "priority" })),
+  ...attention.value.map((session) => entry({ session, note: groupNote(session), group: "priority" })),
   ...(showPinned.value
     ? [
         entry({ section: "pinned", group: "pinned" }),
-        ...pinnedSessions.value.map((session) => entry({ session, note: name(session.directory), group: "pinned" })),
+        ...pinnedSessions.value.map((session) => entry({ session, note: groupNote(session), group: "pinned" })),
       ]
     : []),
   ...byDay.value.map((row) => ({ ...row, group: "day" })),

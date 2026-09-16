@@ -60,6 +60,18 @@ export interface SessionInfo {
    */
   scratch?: boolean
   /**
+   * Which project the side column files this conversation under, when that is
+   * not the folder it works in - MiMo's `groupProject`.
+   *
+   * 移动至项目 only changes where a conversation is listed. Its working
+   * directory, and with it the commands, the relative paths and the
+   * per-project approvals, stay exactly where they were. An empty string is
+   * MiMo's "moved out": listed under no project at all. Absent - every
+   * conversation stored before this field - is filed by `directory`, which is
+   * what those conversations have always done.
+   */
+  group?: string
+  /**
    * A side chat, and the conversation it was opened beside.
    *
    * A side chat is a conversation of its own, in the same project, that no
@@ -1713,9 +1725,9 @@ export type Request =
   | { type: "session.staged"; sessionID: string; staged: boolean }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
-  /* Which project a conversation belongs to, which is the directory it works in. */
+  /* Which project the side column files a conversation under; the folder it works in is untouched. */
   | { type: "session.move"; sessionID: string; directory: string }
-  /* Out of its project, into a fresh folder of its own, as a task with no project works. */
+  /* Out of every project's group and into Recent; again, nothing on disk moves. */
   | { type: "session.moveOut"; sessionID: string }
   /* `titleSuffix` names the branch MiMo's way, 「{title} (分支)」, instead of copying the title. */
   | { type: "session.fork"; sessionID: string; messageID: string; titleSuffix?: boolean }

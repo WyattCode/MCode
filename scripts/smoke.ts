@@ -93,6 +93,7 @@ import {
 } from "../src/server/handlers"
 import { PROJECT_LIST_MIGRATION, customModelOf } from "../src/server/config"
 import { listedProjects, projectsByRecency, reconciledProjects } from "../src/shared/projects"
+import { sessionGroup } from "../src/shared/session-group"
 import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
@@ -462,39 +463,51 @@ async function main() {
   await call({ type: "session.delete", sessionID: unplaced.session.id })
 
   /*
-   * "Move out of project" from a conversation's menu: it leaves for a fresh
-   * folder of its own and is marked as having no project; moving it into a
-   * project again clears that mark, and a session that does not exist is
-   * refused before any folder is made.
+   * 移动至项目 and 移出项目, as MiMo's `moveToProject` does them: the grouping
+   * label moves and nothing else. The folder the conversation works in stays
+   * where it was, so its commands, its relative paths and its per-project
+   * approvals all still point at the same place.
    */
+  const other = path.join(project, "another-project")
+  await fs.mkdir(other, { recursive: true })
   const leaving = await call({ type: "session.create", directory: project })
-  const left = await call({ type: "session.moveOut", sessionID: leaving.session.id })
-  const leftStat = await fs.stat(left.session.directory).catch(() => undefined)
+  const foldersBefore = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
+  const moved = await call({ type: "session.move", sessionID: leaving.session.id, directory: other })
   check(
-    "moving a conversation out of its project gives it a folder of its own",
-    left.session.id === leaving.session.id &&
-      left.session.scratch === true &&
-      path.dirname(left.session.directory) === process.env.MCODE_SCRATCH_ROOT &&
-      leftStat?.isDirectory() === true,
-    left.session,
+    "moving a conversation to another project changes only the grouping label",
+    moved.session.group === other && moved.session.directory === project && moved.session.scratch === undefined,
+    moved.session,
+  )
+  check("the conversation is filed under the project it was moved to", sessionGroup(moved.session) === other, sessionGroup(moved.session))
+  const left = await call({ type: "session.moveOut", sessionID: leaving.session.id })
+  const foldersAfter = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
+  check(
+    "moving out of a project files it under none and still makes no folder",
+    left.session.group === "" && sessionGroup(left.session) === undefined && left.session.directory === project && foldersAfter === foldersBefore,
+    { session: left.session, foldersBefore, foldersAfter },
   )
   const returned = await call({ type: "session.move", sessionID: leaving.session.id, directory: project })
   check(
-    "moving it into a project again drops the no-project mark",
-    returned.session.scratch === undefined && returned.session.directory === project,
+    "moving it back to its own project files it there again",
+    sessionGroup(returned.session) === project && returned.session.directory === project,
     returned.session,
   )
-  const foldersBefore = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
   const moveOutRefused = await call({ type: "session.moveOut", sessionID: "ses_missing" }).then(
     () => false,
     () => true,
   )
-  const foldersAfter = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
-  check("moving out a session that does not exist is refused and makes no folder", moveOutRefused && foldersAfter === foldersBefore, {
-    moveOutRefused,
-    foldersBefore,
-    foldersAfter,
-  })
+  check("moving out a session that does not exist is refused", moveOutRefused)
+  /*
+   * Conversations stored before the label existed: one in a project and one
+   * with a folder of its own. Neither carries a label, and both must be filed
+   * exactly where they always were.
+   */
+  const storedInProject = { directory: project, updated: 1, scratch: undefined, group: undefined }
+  const storedWithoutProject = { directory: path.join(project, "made-for-it"), updated: 1, scratch: true, group: undefined }
+  check(
+    "a conversation stored before the label is still filed by the folder it works in",
+    sessionGroup(storedInProject) === project && sessionGroup(storedWithoutProject) === undefined,
+  )
   await call({ type: "session.delete", sessionID: leaving.session.id })
 
   /*
