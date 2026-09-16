@@ -232,7 +232,7 @@
 - **两个决定已落地**：删除 `server/tool/schedule-ask.ts` 与 cron（schedule / loop / rename）、automation（create / update / resume）的询问，`perm.schedule` 18 张表各删一行；smoke 改为「命令权限设为拒绝时这六个操作照样执行且不产生询问」，临时换回旧代码 8 条失败 7 条。归档提示五张表恢复 W4 之前的值，`toast.archivedNConvos` 加入 `MIMO_CHAT_KEYS`。
 - **第八轮收尾验证**（638418c 构建）：十一项检查全过，build 通过，smoke **2838 全过**（2834 + 窄窗 5 − X10 换成的新检查净减 1）；探针 round8-narrow 8、round5-history 7、round4-feedback 26、round8-security 18、round8-wording 15、round8-a11y 20、round6-visual 24、round5-main 29、round4-small 21 全过；round3-panel `A16_narrowWindow` 失败是期望过时——它在 1180 宽下拖出 500 的面板，旧规则按拖出宽度要折叠侧栏，新规则按显示宽度（424 ≥ 300）只收窄面板，与 MiMo 一致；探针改到 980 宽（低于 62 + 160 + 480 + 300）后 25 项全过。
 
-**第九轮对照（2026-09-17 起）：进行中。** 一边做第八轮留下的清单，一边再开三个没用过的角度：
+**第九轮对照（2026-09-17）：已完成并验证。** 一边做第八轮留下的清单，一边再开三个没用过的角度：
 - 构建：**按模型家族细分系统提示词**（核实 MiMo 对哪些家族用不同提示词或请求参数、按什么规则匹配，照做；提示词内容 MCode 自写）；**清单**——产物库记录多个来源对话并做全文搜索（MiMo 的 `artifact_source` 与 FTS）、xterm 读屏模式（鼠标所见不变）、第八轮遗留的两处安全风险（自定义服务商 baseURL 未遮蔽、MCP OAuth 未防 DNS 重绑定；不新增 MiMo 没有的询问）。
 - 只读排查：**每个设置端到端**（默认值、取值范围、存放位置、是否真的生效、是否即时生效，`round9-settings.md`）、**服务商、模型目录、登录与 MCP 生命周期**（`round9-providers.md`）、**作为 Windows 应用与发行内容**（安装卸载、协议与单实例、任务栏与通知、打包内容、自动更新，`round9-windows.md`）。
 - 仍待用户：V10（需要新 token 名）、L14（需要公开仓库地址）、L24–L27（需要 Linux / macOS 设备）。
@@ -299,6 +299,8 @@
   - **本机 Electron 41 的显示器问题（环境，需要用户留意）**：此刻本机上 Electron 41.7.2 与 41.10.7 的 `screen.getAllDisplays()` 返回空数组，主显示器是假的 1920×1080、缩放 1，窗口按 100% 渲染（空白脚本、经资源管理器启动、不在代理的作业对象里也一样）；同一时刻 38.8.6、43.2.0、44.1.1 都列出真实显示器、按 175% 渲染。用户昨晚 22:10 启动的 MiMo（同为 41.7.2）窗口仍是 175%。今天所有 41 下的探针截图都是 1 倍（04:48 起）。因此：round8-a11y 的 M（0.571px 对 1px 等）与 A1（2px 对 1.714px）、round8-narrow F（761 对 760）只是缩放不同——两个探针改为按 devicePixelRatio 各存一份基准（dpr1 基准分别由第八轮修复前的 r8a-base-app 与 1921bc8^ 构建录得），A1 按缩放取环宽；round5-main M10 是 Electron 给的显示器列表为空、拉回无处可去（MCode 与 MiMo 都用 `getAllDisplays`，N9-14 没动这段），探针在列表为空时用主显示器代替。若用户那边的 MCode（41）也显示得很小，这是 Electron 41 在本机的问题，重启 MiMo 能否复现可以作为判断。
   - round5-main M2 / M3：改由新探针 `mcode-round5-main-update.cjs` 在单独的 Electron 进程里跑真实应用的 electron-updater（`forceDevUpdateConfig` + 探针自己的 app-update.yml，本机 http 更新源，`quitAndInstall` / `install` 为记录器）：5 秒后自动检查、下载并校验、胶囊显示、手动检查不重下、安装前通知、安装的是下载好的文件（静默 + 重启）且事务记为 installer-started；更新源给旧版本时 5 项失败。
   - 验证：六项检查、smoke 3258、build 全过；round9-mcp 15、round9-settings 13、round8-narrow 8、round8-a11y 20、round7-storage 7、round5-plan 8、round5-main 31、round6-journeys 18、round9-windows 8 全过、0 报错。改过的探针都有 `.pre-r9triage` 备份，改动行标 `// Triage:`。
+- **第九轮收尾**：核对那一路合并后（终端面板 dispose 竞态修复 4069262），八个失败探针连同 round6-journeys（18 项）全部通过；除终端面板外都是探针问题（计划模式卡在权限卡上是因为临时配置缺 `orphans-r9` 迁移记录；「始终允许」改用真实回合验证；更新检查改由 `mcode-round5-main-update.cjs` 在独立进程里跑真实 electron-updater）。
+- **待确认（本机环境）**：此刻 Electron 41.7.2 / 41.10.7 的 `screen.getAllDisplays()` 返回空、主显示器是假的 1920×1080 缩放 1，窗口按 100% 渲染；同一时刻 38.8.6、43、44 能读到真实的 175% 显示器。工作站从 04:19 起锁屏（LogonUI 在运行），探针从 04:48 起变成 1 倍，推测是锁屏状态下 Electron 41 列不出显示器；用户解锁后用 `scratchpad9t-displays.cjs` 重测（`OUT_NAME=r9t-now.json`）。若解锁后仍为空，则 Electron 41 在本机有显示器问题，需要重新考虑版本。round8-narrow / round8-a11y 已按 devicePixelRatio 分别存基准。
 
 用户决定不做（不要再主动提）：
 
