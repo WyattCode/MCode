@@ -66,6 +66,8 @@ import { forWire } from "../provider/wire-ids"
 import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
+import { BackgroundUsage, type BackgroundUse } from "./background-usage"
+import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
@@ -314,6 +316,8 @@ export class SessionRunner {
 
   /** Where the per-project shadow repositories that back undo are kept. */
   private readonly snapshots: Snapshots
+  /** What background requests spent; the usage page counts it with the turns. */
+  readonly backgroundUsage: BackgroundUsage
 
   /**
    * The undo stores, for the two things outside a turn that have to reach them:
@@ -383,6 +387,7 @@ export class SessionRunner {
     storage: Storage,
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
+    this.backgroundUsage = new BackgroundUsage(storage)
     // Complete outputs the shared cap cut, kept a week, as MiMo keeps them.
     this.toolOutputs = new ToolOutputs(storage.folder("tool-output"))
     this.toolOutputs.start()
@@ -487,6 +492,7 @@ export class SessionRunner {
         },
       )
       calls = outcome.toolCalls
+      this.noteBackground(session.id, session.model, outcome.usage, "review")
     } catch {
       return false
     } finally {
@@ -1378,6 +1384,7 @@ export class SessionRunner {
         },
       )
       if (outcome.toolCalls.length) called = true
+      this.noteBackground(session.id, session.model, outcome.usage, "compaction")
     } catch (failure) {
       if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
       throw failure
@@ -1648,7 +1655,7 @@ export class SessionRunner {
       const timer = setTimeout(() => controller.abort(), SMART_TIMEOUT_MS)
       let answer = ""
       try {
-        await adapter.stream(
+        const outcome = await adapter.stream(
           {
             apiKey: tokens?.access ?? apiKey,
             model: main,
@@ -1677,6 +1684,7 @@ export class SessionRunner {
             if (event.type === "text.delta") answer += event.text
           },
         )
+        this.noteBackground(session.id, main, outcome.usage, "smart")
         reading = readTask(answer)
       } catch {
         reading = undefined
@@ -1687,6 +1695,14 @@ export class SessionRunner {
     }
     const route = smartRoute(reading)
     return this.store.update(session.id, { model: route === "fast" ? fast : main, smartRoute: route })
+  }
+
+  /** Records what a request outside the turns spent, priced as a turn on that model would be. */
+  private noteBackground(sessionID: string, model: ModelRef, usage: TurnUsage | undefined, kind: BackgroundUse["kind"]): void {
+    if (!usage) return
+    const priced = { ...usage, cost: costOf(usage, this.config.modelEntry(model)) }
+    if (!priced.input && !priced.output && !priced.reasoning && !priced.cacheRead && !priced.cacheWrite) return
+    void this.backgroundUsage.add({ at: Date.now(), sessionID, model, usage: priced, kind })
   }
 
   /**
@@ -1862,7 +1878,7 @@ export class SessionRunner {
     let answer = ""
     try {
       // MiMo's request budget for a call that is not a turn: four quick tries, then the fallback stands.
-      await withRequestRetry(() => {
+      const outcome = await withRequestRetry(() => {
         // Each attempt starts its own answer; a retry must not continue the last one's text.
         answer = ""
         return adapter.stream(
@@ -1899,6 +1915,7 @@ export class SessionRunner {
           },
         )
       }, controller.signal)
+      this.noteBackground(sessionID, model, outcome.usage, "title")
     } catch {
       return
     } finally {

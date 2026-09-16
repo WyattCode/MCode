@@ -1163,18 +1163,23 @@ export interface UsageBucket {
   /** A date as YYYY-MM-DD, or a model as "provider/model". */
   key: string
   usage: Usage
-  /** How many assistant turns went into it. */
+  /** How many assistant turns went into it (background requests add spend, not turns). */
   turns: number
+  /** Requests with a price, and requests that used tokens on a model with no known price. */
+  priced: number
+  unpriced: number
 }
 
 export interface UsageSummary {
   total: Usage
   turns: number
+  priced: number
+  unpriced: number
   /** Oldest first, one entry per day that actually has turns in it. */
   byDay: UsageBucket[]
   /** Heaviest first. */
   byModel: UsageBucket[]
-  /** How many days back the daily list was gathered over. */
+  /** How many days back every figure was gathered over. */
   days: number
 }
 

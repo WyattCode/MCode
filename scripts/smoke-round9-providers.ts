@@ -25,6 +25,7 @@ import { connectableProviders, providerLabel, quickAddGroups } from "../src/rend
 import { language } from "../src/renderer/src/lib/i18n"
 import { readFileSync, statSync } from "node:fs"
 import { AuthManager } from "../src/server/auth/manager"
+import { localDay, summarizeUsage, type UsageRecord } from "../src/server/usage-summary"
 import { OAUTH_PROVIDERS } from "../src/server/auth/oauth"
 import { t } from "../src/renderer/src/lib/i18n"
 import { createServer } from "node:http"
@@ -515,6 +516,69 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       await e.close()
       await new Promise<void>((resolve) => refused.close(() => resolve()))
     }
+  }
+
+  section("Round 9 (P9-13): the usage page counts one window, by local day, and says what has no price")
+  {
+    const zone = process.env.TZ
+    process.env.TZ = "Asia/Shanghai"
+    try {
+      const now = new Date(2026, 8, 17, 12, 0).getTime()
+      const usage = (input: number, cost: number) => ({ input, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost })
+      const early = new Date(2026, 8, 17, 0, 30).getTime()
+      const records: UsageRecord[] = [
+        { at: early, model: { provider: "a", model: "priced" }, usage: usage(100, 0.5), turn: true },
+        { at: early + 60_000, model: { provider: "b", model: "free" }, usage: usage(50, 0), turn: true },
+        { at: early + 120_000, model: { provider: "a", model: "priced" }, usage: usage(10, 0.1), turn: false },
+        { at: now - 20 * 24 * 60 * 60 * 1000, model: { provider: "old", model: "gone" }, usage: usage(999, 9), turn: true },
+      ]
+      const summary = summarizeUsage(records, 14, now)
+      check("a turn at half past midnight is on that local day, not the UTC one before", localDay(early) === "2026-09-17" && summary.byDay.map((day) => day.key).join() === "2026-09-17", summary.byDay.map((day) => day.key))
+      check("the totals cover the same days as the daily list", summary.total.input === 160 && Math.abs(summary.total.cost - 0.6) < 1e-9, summary.total)
+      check("and so does the list by model", summary.byModel.every((entry) => entry.key !== "old/gone") && summary.byModel.length === 2, summary.byModel.map((entry) => entry.key))
+      check("a background request adds spend but not a turn", summary.turns === 2 && summary.byModel.find((entry) => entry.key === "a/priced")?.turns === 1)
+      check("a request that used tokens at no price is counted as unpriced", summary.unpriced === 1 && summary.priced === 2, summary)
+      const free = summary.byModel.find((entry) => entry.key === "b/free")
+      check("per model too", free?.unpriced === 1 && free.priced === 0, free)
+    } finally {
+      if (zone === undefined) delete process.env.TZ
+      else process.env.TZ = zone
+    }
+
+    /* A background request's spend is recorded against its conversation. */
+    const e = await engine({})
+    try {
+      await e.config.set({ model: e.model })
+      const session = await e.store.create({ directory: e.project, model: e.model, smart: true })
+      e.replies.push(say('{"scene": "chat", "difficulty": "easy", "confidence": 0.9}'))
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: session.id, text: "hello" })
+      await e.idle(session.id)
+      const noted = await e.runner.backgroundUsage.list()
+      check("Smart's routing request is recorded as background spend", noted.some((entry) => entry.kind === "smart" && entry.sessionID === session.id && entry.usage.input === 10), noted)
+    } finally {
+      await e.close()
+    }
+
+    const data = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r9p-usage-"))
+    const backend = await startBackend(data)
+    try {
+      await backend.runtime.runner.backgroundUsage.add({ at: Date.now(), sessionID: "s", model: { provider: "p", model: "m" }, usage: { input: 7, output: 3, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }, kind: "title" })
+      const answer = (await handle(backend.runtime, { type: "usage.summary", days: 14 } as unknown as Request)) as { summary: { total: { input: number }; turns: number; unpriced: number; days: number } }
+      check("the page's summary includes it", answer.summary.total.input === 7 && answer.summary.turns === 0 && answer.summary.unpriced === 1 && answer.summary.days === 14, answer.summary)
+      const reopened = await startBackend(data)
+      try {
+        check("and it is still there after a restart", (await reopened.runtime.runner.backgroundUsage.list()).length === 1)
+      } finally {
+        await reopened.close()
+      }
+    } finally {
+      await backend.close()
+      await fs.rm(data, { recursive: true, force: true }).catch(() => undefined)
+    }
+    const settings = readFileSync("src/renderer/src/components/SettingsDialog.vue", "utf8")
+    check("the page shows a dash where nothing had a price", /if \(bucket && !bucket\.priced && bucket\.unpriced\) return "—"/.test(settings) && (settings.match(/spent\(/g) ?? []).length >= 4)
+    check("and says so when only some did", /v-if="usage\?\.priced && usage\.unpriced"[^>]*>\{\{ t\("set\.usagePartlyPriced"\) \}\}/.test(settings))
   }
 
   section("Round 9: the family request shaping - tool schemas and Kimi's thinking")

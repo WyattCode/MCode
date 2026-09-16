@@ -531,6 +531,15 @@ async function loadUsage() {
     .catch(() => undefined)
 }
 
+/*
+ * A spend with no price behind it reads as a dash, not as $0.00: the catalog
+ * had no price for the models it went to.
+ */
+function spent(bucket: { usage: { cost: number }; priced: number; unpriced: number } | undefined): string {
+  if (bucket && !bucket.priced && bucket.unpriced) return "—"
+  return money.value.format(bucket?.usage.cost ?? 0)
+}
+
 /* The widest day sets the scale, so the bars mean something next to each other. */
 const busiestDay = computed(() =>
   Math.max(1, ...(usage.value?.byDay ?? []).map((day) => day.usage.input + day.usage.output)),
@@ -2879,10 +2888,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <template v-else-if="section === 'usage'">
           <h2>{{ t("set.nav.usage") }}</h2>
           <p class="page-sub">{{ t("set.usageSub") }}</p>
+          <!-- Every figure below covers the same days, counted on this machine's calendar. -->
+          <p class="line-sub" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
           <div class="card">
             <div class="totals">
               <div class="total">
-                <span class="total-value">{{ money.format(usage?.total.cost ?? 0) }}</span>
+                <span class="total-value" data-usage-total-cost>{{ usage ? spent({ usage: usage.total, priced: usage.priced, unpriced: usage.unpriced }) : money.format(0) }}</span>
                 <span class="total-name">{{ t("context.usage.cost") }}</span>
               </div>
               <div class="total">
@@ -2898,6 +2909,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <span class="total-name">{{ t("set.usageTurns") }}</span>
               </div>
             </div>
+            <p v-if="usage?.priced && usage.unpriced" class="line-sub" data-usage-partly-priced>{{ t("set.usagePartlyPriced") }}</p>
           </div>
 
           <h3>{{ t("set.usageByDay", { n: String(usage?.days ?? 14) }) }}</h3>
@@ -2914,7 +2926,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 />
               </span>
               <span class="day-value">{{ tokens(day.usage.input + day.usage.output) }}</span>
-              <span class="day-cost">{{ money.format(day.usage.cost) }}</span>
+              <span class="day-cost">{{ spent(day) }}</span>
             </div>
             <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>
@@ -2929,7 +2941,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   {{ tokens(entry.usage.input + entry.usage.output) }}
                 </div>
               </div>
-              <span class="total-value small">{{ money.format(entry.usage.cost) }}</span>
+              <span class="total-value small" data-usage-model-cost>{{ spent(entry) }}</span>
             </div>
             <p v-if="usage && !usage.byModel.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>

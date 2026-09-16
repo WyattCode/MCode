@@ -9,13 +9,12 @@ import type {
   ResponseMap,
   LocalServer,
   SessionArtifacts,
-  Usage,
-  UsageBucket,
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
 import { CodedError } from "@shared/errors"
+import { summarizeUsage, type UsageRecord } from "./usage-summary"
 import { imageInputOf, type Catalog } from "@shared/models-dev"
 // A conversation as a file this app can read back, both halves of the pair.
 import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
@@ -727,35 +726,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "usage.summary": {
       const days = Math.max(1, Math.min(365, request.days ?? 30))
-      const since = Date.now() - days * 24 * 60 * 60 * 1000
-      const empty = (): Usage => ({
-        input: 0,
-        output: 0,
-        reasoning: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-        cost: 0,
-      })
-      const add = (into: Usage, from: Usage) => {
-        into.input += from.input
-        into.output += from.output
-        into.reasoning += from.reasoning
-        into.cacheRead += from.cacheRead
-        into.cacheWrite += from.cacheWrite
-        into.cost += from.cost
-      }
-      const total = empty()
-      let turns = 0
-      const byDay = new Map<string, UsageBucket>()
-      const byModel = new Map<string, UsageBucket>()
-      const bucket = (map: Map<string, UsageBucket>, key: string) => {
-        const found = map.get(key)
-        if (found) return found
-        const made: UsageBucket = { key, usage: empty(), turns: 0 }
-        map.set(key, made)
-        return made
-      }
-
+      const records: UsageRecord[] = []
       for (const session of await runtime.sessions.list()) {
         for (const message of await runtime.sessions.messages(session.id)) {
           if (message.role !== "assistant" || !message.usage) continue
@@ -764,30 +735,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
            * to over a fortnight would otherwise report every token it ever
            * spent on whichever day it was last touched.
            */
-          const at = message.time.created
-          add(total, message.usage)
-          turns += 1
-          const model = `${message.model.provider}/${message.model.model}`
-          const inModel = bucket(byModel, model)
-          add(inModel.usage, message.usage)
-          inModel.turns += 1
-          if (at < since) continue
-          const day = new Date(at).toISOString().slice(0, 10)
-          const inDay = bucket(byDay, day)
-          add(inDay.usage, message.usage)
-          inDay.turns += 1
+          records.push({ at: message.time.created, model: message.model, usage: message.usage, turn: true })
         }
       }
-
-      return {
-        summary: {
-          total,
-          turns,
-          days,
-          byDay: [...byDay.values()].sort((a, b) => a.key.localeCompare(b.key)),
-          byModel: [...byModel.values()].sort((a, b) => b.usage.cost - a.usage.cost || b.turns - a.turns),
-        },
-      } satisfies Handled<"usage.summary">
+      // Titles, Smart's routing, summaries and command reviews spend tokens too, on no message.
+      for (const entry of await runtime.runner.backgroundUsage.list()) records.push({ at: entry.at, model: entry.model, usage: entry.usage, turn: false })
+      return { summary: summarizeUsage(records, days) } satisfies Handled<"usage.summary">
     }
 
     case "voice.transcribe": {
