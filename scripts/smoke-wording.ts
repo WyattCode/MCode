@@ -89,6 +89,53 @@ export function simplifiedLeftovers(tables: Tables): string[] {
   return found
 }
 
+/*
+ * W2: sentences that were still English in eleven tables.
+ *
+ * The info card's git and pull-request rows, the subagent states, and the
+ * browser panel's right-click menu - which the main process draws natively, so
+ * an English row there is the most visible island in a Russian interface.
+ */
+export const MUST_TRANSLATE = [
+  "info.prLoading",
+  "info.prNone",
+  "info.prUnavailable",
+  "info.prStatus.open",
+  "info.prStatus.draft",
+  "info.prStatus.closed",
+  "info.prStatus.merged",
+  "info.detachedHead",
+  "info.branchListUnavailable",
+  "info.branchSwitchFailed",
+  "info.branchSwitchConflicts",
+  "info.loadingBranches",
+  "subagentActivity.status.failed",
+  "subagentActivity.status.cancelled",
+  "subagentActivity.status.stalled",
+  "subagentActivity.status.ended",
+  "rp.browser.ctx.openLinkNewTab",
+  "rp.browser.ctx.copyLink",
+  "rp.browser.ctx.copyImage",
+  "rp.browser.ctx.copyImageUrl",
+  "rp.browser.ctx.back",
+  "rp.browser.ctx.forward",
+  "rp.browser.ctx.reload",
+  "edit.copyImageAddress",
+]
+
+export function untranslated(tables: Tables, keys: readonly string[] = MUST_TRANSLATE): string[] {
+  const english = tables.en ?? {}
+  const found: string[] = []
+  for (const [name, entries] of Object.entries(tables)) {
+    if (name === "en") continue
+    for (const key of keys) {
+      if (!(key in english)) found.push(`en ${key} (missing)`)
+      else if (entries[key] === english[key]) found.push(`${name} ${key}`)
+    }
+  }
+  return found
+}
+
 export function wordingChecks(check: Check, section: (name: string) => void): void {
   const source = fs.readFileSync(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"), "utf8")
   const tables = readTables(source)
@@ -121,5 +168,14 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
       leftovers,
     )
     check("and leaves the characters the three scripts share alone", simplifiedLeftovers({ zhTW: { a: "終端機 伺服器 查看" }, ja: { b: "数を写す" } }).length === 0)
+  }
+
+  section("Round 8 (W2): the git rows, subagent states and browser menu are translated everywhere")
+  {
+    const english = untranslated(tables)
+    check("none of them reads as English outside the English table", english.length === 0, english.slice(0, 8))
+    const broken = clone(tables)
+    broken.ru["rp.browser.ctx.reload"] = broken.en["rp.browser.ctx.reload"]
+    check("the rule catches an English row in the Russian menu", untranslated(broken).includes("ru rp.browser.ctx.reload"))
   }
 }
