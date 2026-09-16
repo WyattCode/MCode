@@ -16,6 +16,8 @@ import { Identifier } from "../src/shared/id"
 import { systemPrompt } from "../src/server/session/prompt"
 // M9: standing down the largest tool results before the summary request replays them.
 import { COMPACTION_TOOL_RESULT_LIMIT, shrinkLargeToolResults } from "../src/server/session/summary"
+// M3: the tool descriptions as the registry hands them to a provider.
+import { findTool } from "../src/server/tool/registry"
 import type { AssistantMessage, Message, ToolPart, UserMessage } from "../src/shared/protocol"
 import type { Check } from "./smoke-round5"
 import { engine, say } from "./smoke-round5"
@@ -446,6 +448,53 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
       check("the summary request no longer replays the whole result", !asked.includes("q".repeat(5_000)), asked.length)
       check("it carries the shrink note instead", asked.includes("left this bash result out of the compaction"))
       check("and still asks for the summary", asked.includes("about to be compacted"))
+    } finally {
+      await e.close()
+    }
+  }
+
+  // ------------------------------------------------------------------ M3
+  section("Round 7 (M3): the tool descriptions carry MiMo's coverage, in MCode's words")
+  {
+    const describe = (name: string) => findTool(name)?.description ?? ""
+
+    const question = describe("question")
+    check("question is no longer the inherited upstream wording", !question.includes("Use this tool when you need to ask the user questions during execution"), question.slice(0, 80))
+    check("it is in MiMo's length class rather than a sentence", question.length > 800, question.length)
+    check("it says the flag, not the wording, is what allows several answers", question.includes("multiple flag"))
+    check('it tells the model not to write its own "Other" row', /Other/.test(question) && question.includes("type your own answer"))
+    check("and how to mark the option it would pick", question.includes("(Recommended)"))
+
+    const read = describe("read")
+    check("read explains the numbered-line form the edit tool matches on", read.includes("N: text") && read.includes("edit expects you to quote back"))
+    check("it explains reading a long file in parts", read.includes("offset") && read.includes("limit") && read.includes("2,000 lines or 50 KB"))
+    check("it discourages a series of tiny slices, as MiMo's does", read.includes("30-line slices"))
+    check("and it is no longer a single sentence", read.length > 800, read.length)
+
+    const bash = describe("bash")
+    check("bash carries the git discipline MiMo spends its length on", bash.includes("Version control") && bash.includes("Commit only when the user asks"))
+    check("including not skipping hooks and not pushing unasked", bash.includes("skip hooks") && bash.includes("Never push unless the user asks"))
+    check("and how to open a pull request", bash.includes("Pull requests") && bash.includes("default branch"))
+    check("it still says to prefer the dedicated tools", bash.includes("read, edit, write, glob and grep"))
+    check("and it is in MiMo's length class", bash.length > 1_500, bash.length)
+
+    const actor = describe("actor")
+    check("actor now lists the agent types, which it never did", actor.includes("Available agent types and what each one may do:"))
+    check("explore is named read-only", /explore: reads only/.test(actor))
+    check("and general is named as the one that may change files", /general:/.test(actor) && actor.includes("change files"))
+
+    /* The description is only worth anything if the provider is the one reading it. */
+    const e = await engine()
+    try {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: session.id, text: "hello" })
+      await e.idle(session.id)
+      const tools = (e.bodies.at(-1)?.tools ?? []) as { function?: { name?: string; description?: string } }[]
+      const sent = tools.find((tool) => tool.function?.name === "bash")?.function?.description ?? ""
+      check("the provider receives the long bash description, not a summary of it", sent.includes("Version control") && sent.length > 1_500, sent.length)
+      const askedFor = tools.find((tool) => tool.function?.name === "question")?.function?.description ?? ""
+      check("and the rewritten question description", askedFor.includes("multiple flag"), askedFor.length)
     } finally {
       await e.close()
     }

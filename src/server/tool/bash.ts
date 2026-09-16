@@ -234,8 +234,29 @@ function stop(child: ChildProcess): void {
 
 export const BashTool: ToolDefinition = {
   name: "bash",
-  description:
-    "Run a shell command in the project and return what it printed. Use the read, edit, glob and grep tools for file work instead of shelling out - they are faster and give better output. Reach for bash for builds, tests, package managers and version control. Set workdir rather than starting the command with cd. A command is stopped after two minutes unless timeout gives it longer. Output past about 30,000 tokens (max_output_tokens) comes back with its middle left out, and the whole of it is saved to a file named in the result.",
+  description: [
+    "Run a shell command in the project and return what it printed.",
+    "",
+    "What it is for",
+    "Builds, tests, type checkers, linters, package managers and version control. For work on files themselves, use read, edit, write, glob and grep instead: they are faster, they do not depend on which utilities this machine has, and their output is shaped for you to act on. Reaching for `cat`, `find`, `grep`, `sed` or `type` here is almost always the slower way round.",
+    "",
+    "Running it",
+    "- Set workdir to choose where the command runs. Do not begin the command with `cd`: each call starts a fresh shell, so a `cd` does not carry to the next one.",
+    "- A command is stopped after two minutes unless timeout allows longer. Give a long build or test run the time it needs rather than letting it be killed half way.",
+    "- Output past about 30,000 tokens comes back with its middle left out and the whole of it saved to a file the result names, which you can then grep or read in parts.",
+    "- The command gets no one to type at it. Anything that would stop for a password or a y/N prompt simply ends, so pass what it needs on the command line - a --yes flag, an environment variable - instead.",
+    "- Quote paths that contain spaces, and prefer a command that fails loudly to one that hides its exit code behind a pipe.",
+    "",
+    "Version control",
+    "- Commit only when the user asks. Finishing a piece of work is not by itself a reason to commit it.",
+    "- Before committing, look at what you are about to commit - the status and the diff - and write the message from what actually changed, in the style the project's own recent history uses. Do not commit files that were already dirty when the turn began unless the user meant them.",
+    "- Never push unless the user asks, and never force-push over a shared branch.",
+    "- Do not skip hooks or bypass signing to make a commit succeed. A hook that fails is telling you something; fix the cause or report it.",
+    "- Do not rewrite history that has already been pushed, and do not reset or checkout over uncommitted work without saying so first.",
+    "",
+    "Pull requests",
+    "Open one only when asked. Push the branch first, target the repository's default branch unless the user names another, and write the description from the whole set of commits on the branch rather than the last one.",
+  ].join("\n"),
   permission: "bash",
   parameters: {
     type: "object",
