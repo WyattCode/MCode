@@ -1000,6 +1000,11 @@ export type PermissionAction = (typeof PERMISSION_ACTIONS)[number]
  * project happened without asking, and everything that changed a file, ran a
  * command or reached the network asked first. Naming them here rather than leaving them
  * implicit is what lets a stored setting be told apart from an untouched one.
+ *
+ * An MCP tool call runs without asking, as in MiMo, whose engine allows every
+ * tool by default and whose desktop only makes edits and commands ask. The
+ * user chose that (2026-09-17); the bucket can still be set to ask or deny, and
+ * a server's own `tools` rules can make single tools ask.
  */
 export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   read: "allow",
@@ -1011,7 +1016,7 @@ export const DEFAULT_PERMISSIONS: Record<PermissionKind, PermissionAction> = {
   bash: "ask",
   webfetch: "ask",
   outside: "ask",
-  mcp: "ask",
+  mcp: "allow",
 }
 
 /**

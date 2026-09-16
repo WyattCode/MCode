@@ -20,6 +20,8 @@ import { checkEntry, claudeServers, projectFiles, resolveServers, substituteEntr
 import type { AppConfig, McpServerConfig, Request } from "../src/shared/protocol"
 import { startBackend } from "../src/server/index"
 import { handle } from "../src/server/handlers"
+import { Permissions } from "../src/server/permission"
+import { DEFAULT_PERMISSIONS } from "../src/shared/protocol"
 
 type Section = (name: string) => void
 
@@ -376,6 +378,46 @@ async function nextConversation(check: Check, section: Section): Promise<void> {
   }
 }
 
+/** M-3: an MCP call asks nothing by default, at the default level and at 帮我审批. */
+async function noApprovalByDefault(check: Check, section: Section): Promise<void> {
+  section("Round 9: MCP tool calls ask no approval by default (M-3)")
+  const dir = await temporary("mcode-r9-approve-")
+  try {
+    const open = async (name: string, stored?: Record<string, unknown>) => {
+      const storage = new Storage(path.join(dir, name))
+      if (stored) await write(storage.fileOf("config"), JSON.stringify(stored))
+      const bus = new Bus()
+      const config = new Config(storage, bus, path.join(dir, name, "credentials.json"))
+      await config.load()
+      const questions: unknown[] = []
+      bus.subscribe((event) => {
+        if (event.type === "permission.requested") questions.push(event.request)
+      })
+      return { config, permissions: new Permissions(bus, config), questions }
+    }
+    const call = (gate: Permissions, sessionID = "ses_m3") =>
+      Promise.race([
+        gate.ask({ sessionID, messageID: "m", callID: `c${Math.random()}`, kind: "mcp", title: "files: read", subject: "{}", scope: "mcp:files" }).then(() => "ran"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("asked"), 400)),
+      ])
+    check("the MCP bucket's default is allow", DEFAULT_PERMISSIONS.mcp === "allow")
+    const fresh = await open("fresh")
+    check("on a first install (帮我审批) a call runs without a question", fresh.config.get().accessLevel === "auto" && (await call(fresh.permissions)) === "ran" && !fresh.questions.length)
+    const plain = await open("plain", { permissions: { mcp: "ask", bash: "ask" }, accessLevel: "ask" })
+    check("a stored config written with the old default is moved to allow once", plain.config.get().permissions.mcp === "allow" && plain.config.get().permissions.bash === "ask", plain.config.get().permissions)
+    check("so at the ask-first level a call runs without a question too", (await call(plain.permissions)) === "ran" && !plain.questions.length)
+    await plain.config.set({ permissions: { ...plain.config.get().permissions, mcp: "ask" } })
+    const reopened = await open("plain")
+    check("choosing ask again afterwards sticks", reopened.config.get().permissions.mcp === "ask", reopened.config.get().permissions)
+    check("and then a call asks", (await call(reopened.permissions)) === "asked" && reopened.questions.length === 1)
+    reopened.permissions.rejectAll("ses_m3")
+    const refused = await open("refused", { permissions: { mcp: "deny" } })
+    check("a refusal is never turned into allow", refused.config.get().permissions.mcp === "deny")
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
   // Never the reader's own ~/.claude.json or ~/.mcode: the backend reads servers from both.
   process.env.MCODE_IMPORT_HOME ??= await temporary("mcode-r9-home-")
@@ -385,6 +427,7 @@ export async function roundNineMcpChecks(check: Check, section: Section): Promis
     ["M-5/M-6/M-16", serverSources],
     ["M-7", perProject],
     ["M-1/M-2", nextConversation],
+    ["M-3", noApprovalByDefault],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))

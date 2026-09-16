@@ -459,6 +459,20 @@ export class Config {
       if (this.existed) this.current.importOnboarded = true
     })
 
+    /*
+     * Round nine: MCP tool calls stop asking by default, as in MiMo (the
+     * user's decision of 2026-09-17). Every stored config carries the old
+     * default written out, which cannot be told from a choice, so an "ask" on
+     * the MCP bucket moves to the new default once; a refusal stays, and
+     * setting it back to ask afterwards sticks.
+     */
+    once("mcp-allow-r9", () => {
+      const map = this.current.permissions
+      if (map?.mcp === "ask") this.current.permissions = { ...map, mcp: "allow" }
+      const kept = this.current.accessBefore
+      if (kept?.mcp === "ask") this.current.accessBefore = { ...kept, mcp: "allow" }
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
@@ -501,8 +515,9 @@ export class Config {
      * first-install permissions would quietly change what this machine allows.
      */
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
+    const migrated = this.migrate()
     this.current.autoApprove = allowed(this.current.permissions)
-    if (this.migrate() && !this.fromNewerVersion) await this.persist()
+    if (migrated && !this.fromNewerVersion) await this.persist()
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
