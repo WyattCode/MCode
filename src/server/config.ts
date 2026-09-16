@@ -436,15 +436,35 @@ export class Config {
   }
 
   async load(): Promise<void> {
-    const stored = await this.storage.read<Partial<AppConfig>>("config")
+    /*
+     * A config that will not parse must not stop the app from opening.
+     *
+     * This used to throw straight out of the backend's start-up, so a half
+     * written or hand-edited config.json left the whole app unopenable with a
+     * syntax error and no interface left to fix it from - the very scenario the
+     * byte-order-mark note in the store describes, fixed there for one cause
+     * only. The reference never throws here either: an absent file is defaults,
+     * an unparseable one is an error it reports and carries on from.
+     *
+     * The damaged file is kept rather than written over, under a name of its
+     * own, so the settings in it can still be got back by hand.
+     */
+    const read = await this.storage.readOrCorrupt<Partial<AppConfig>>("config")
+    const stored = read.value
+    if (read.corrupt) {
+      const aside = await this.storage.quarantine("config")
+      this.unreadable = { problem: read.corrupt, evidence: aside }
+    }
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
      * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
      * an absent file counts: a stored config that lacks the fields was written
-     * under the old defaults and keeps meaning them.
+     * under the old defaults and keeps meaning them. A file that is there but
+     * cannot be read is not a first install either - answering one with the
+     * first-install permissions would quietly change what this machine allows.
      */
-    if (stored === undefined) Object.assign(this.current, firstInstall())
+    if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
     if (this.migrate()) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
@@ -459,6 +479,14 @@ export class Config {
       this.oauth = {}
     }
   }
+
+  /**
+   * Set when the stored config would not parse, with where it was kept.
+   *
+   * The app opens on the defaults either way; this is what lets it say so
+   * rather than leaving the reader to wonder where their settings went.
+   */
+  unreadable: { problem: string; evidence?: string } | undefined
 
   /** The last credential write, so two of them cannot interleave. */
   private persisting: Promise<void> = Promise.resolve()

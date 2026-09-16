@@ -57,8 +57,64 @@ async function renameOver(temp: string, target: string): Promise<void> {
   }
 }
 
+/**
+ * Moves a file that will not parse out of the way, keeping it as evidence.
+ *
+ * Nothing in this app may write over a document it could not read. The contents
+ * are the user's only copy of whatever was in it - scheduled tasks, settings, a
+ * conversation - and an empty document written on top makes a recoverable
+ * truncation into a permanent loss. The reference blocks the same way, holding
+ * the raw text aside rather than starting empty.
+ *
+ * @returns where the file went, or undefined if it could not be moved, in which
+ *   case the caller must refuse to write rather than carry on.
+ */
+export async function quarantine(target: string): Promise<string | undefined> {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const aside = attempt === 0 ? `${target}.corrupt-${stamp}` : `${target}.corrupt-${stamp}-${attempt}`
+    try {
+      // Refuses rather than replacing: a second damaged copy must not erase the first.
+      await fs.rename(target, aside)
+      return aside
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === "ENOENT") return undefined
+      if (code !== "EEXIST" && code !== "EPERM" && code !== "EACCES" && code !== "EBUSY") return undefined
+      const exists = await fs
+        .access(aside)
+        .then(() => true)
+        .catch(() => false)
+      if (!exists) return undefined
+    }
+  }
+  return undefined
+}
+
 export class Storage {
   constructor(private readonly root: string) {}
+
+  /**
+   * A document, or the reason it could not be read.
+   *
+   * `read` throws, which is right for a caller that cannot go on without the
+   * document. A caller that can - the settings, the list of conversations -
+   * needs to tell "there is no such file" from "there is one and it is damaged",
+   * because those call for opposite answers: the first is a fresh install, the
+   * second must never be written over.
+   */
+  async readOrCorrupt<T>(key: string): Promise<{ value?: T; corrupt?: string }> {
+    try {
+      return { value: await this.read<T>(key) }
+    } catch (err) {
+      return { corrupt: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  /** Where an unreadable document was moved to, so it is kept rather than replaced. */
+  quarantine(key: string): Promise<string | undefined> {
+    return quarantine(this.file(key))
+  }
 
   /** Where everything this app stores actually sits, for the page that says so. */
   get directory(): string {

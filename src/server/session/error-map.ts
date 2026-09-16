@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { ProviderError, ProviderHttpError } from "../provider/types"
-import { isContextOverflow } from "./overflow"
+import { isOverflowError } from "./overflow"
 
 /**
  * MiMo's short failure sentences, as keys the window phrases.
@@ -60,7 +60,7 @@ export function failureCode(err: unknown): { code: string; params?: Record<strin
   if (DROPPED.some((word) => lower.includes(word))) return { code: "error.network" }
   if (RATE_LIMITED.test(text)) return { code: "error.rateLimited" }
   if (BAD_KEY.test(text)) return { code: "error.authInvalid" }
-  if (isContextOverflow(text)) return { code: "error.contextExceeded" }
+  if (isOverflowError(err, text)) return { code: "error.contextExceeded" }
   if (NO_MODEL.test(text)) return { code: "error.modelUnavailable" }
   if (status !== undefined && status >= 500) return { code: "error.serverError" }
   return undefined

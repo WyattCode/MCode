@@ -194,7 +194,17 @@ export class SessionStore {
     const ids = await this.storage.listDirectories("session")
     const sessions: SessionInfo[] = []
     for (const id of ids) {
-      const session = await this.get(id)
+      /*
+       * One unreadable record must not cost the whole list.
+       *
+       * This is the guard `messages()` already has, one level up. A single
+       * truncated or hand-edited info.json used to reject `list()` - which is
+       * the side column, cross-conversation search, and everything else that
+       * enumerates conversations - rather than only the damaged one. Asking for
+       * that conversation by id still throws, because a caller that named it
+       * cannot go on without it.
+       */
+      const session = await this.get(id).catch(() => undefined)
       if (session) sessions.push(session)
     }
     // Most recently touched first - matches how the sidebar is read.
