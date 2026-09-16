@@ -300,7 +300,7 @@
   - round5-main M2 / M3：改由新探针 `mcode-round5-main-update.cjs` 在单独的 Electron 进程里跑真实应用的 electron-updater（`forceDevUpdateConfig` + 探针自己的 app-update.yml，本机 http 更新源，`quitAndInstall` / `install` 为记录器）：5 秒后自动检查、下载并校验、胶囊显示、手动检查不重下、安装前通知、安装的是下载好的文件（静默 + 重启）且事务记为 installer-started；更新源给旧版本时 5 项失败。
   - 验证：六项检查、smoke 3258、build 全过；round9-mcp 15、round9-settings 13、round8-narrow 8、round8-a11y 20、round7-storage 7、round5-plan 8、round5-main 31、round6-journeys 18、round9-windows 8 全过、0 报错。改过的探针都有 `.pre-r9triage` 备份，改动行标 `// Triage:`。
 - **第九轮收尾**：核对那一路合并后（终端面板 dispose 竞态修复 4069262），八个失败探针连同 round6-journeys（18 项）全部通过；除终端面板外都是探针问题（计划模式卡在权限卡上是因为临时配置缺 `orphans-r9` 迁移记录；「始终允许」改用真实回合验证；更新检查改由 `mcode-round5-main-update.cjs` 在独立进程里跑真实 electron-updater）。
-- **待确认（本机环境）**：此刻 Electron 41.7.2 / 41.10.7 的 `screen.getAllDisplays()` 返回空、主显示器是假的 1920×1080 缩放 1，窗口按 100% 渲染；同一时刻 38.8.6、43、44 能读到真实的 175% 显示器。工作站从 04:19 起锁屏（LogonUI 在运行），探针从 04:48 起变成 1 倍，推测是锁屏状态下 Electron 41 列不出显示器；用户解锁后用 `scratchpad9t-displays.cjs` 重测（`OUT_NAME=r9t-now.json`）。若解锁后仍为空，则 Electron 41 在本机有显示器问题，需要重新考虑版本。round8-narrow / round8-a11y 已按 devicePixelRatio 分别存基准。
+- **待确认（本机环境）**：此刻 Electron 41.7.2 / 41.10.7 的 `screen.getAllDisplays()` 返回空、主显示器是假的 1920×1080 缩放 1，窗口按 100% 渲染；同一时刻 38.8.6、43、44 能读到真实的 175% 显示器。工作站从 04:19 起锁屏（LogonUI 在运行），探针从 04:48 起变成 1 倍，推测是锁屏状态下 Electron 41 列不出显示器；用户解锁后用 `scratchpad/r9t-displays.cjs` 重测（`OUT_NAME=r9t-now.json`）。若解锁后仍为空，则 Electron 41 在本机有显示器问题，需要重新考虑版本。round8-narrow / round8-a11y 已按 devicePixelRatio 分别存基准。
 
 用户决定不做（不要再主动提）：
 
