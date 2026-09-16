@@ -152,9 +152,9 @@ onBeforeUnmount(() => clearInterval(clock))
 
 function when(at: number): string {
   const age = artifactAge(at, now.value)
-  if (age.unit === "just") return t("art.timeJust")
+  if (age.unit === "just") return t("time.justNow")
   if (age.unit === "date") return `${age.y}/${age.mo}/${age.day}`
-  return t(age.unit === "m" ? "art.timeM" : age.unit === "h" ? "art.timeH" : "art.timeD", { n: age.n })
+  return t(age.unit === "m" ? "time.minutesAgo" : age.unit === "h" ? "time.hoursAgo" : "time.daysAgo", { n: age.n })
 }
 
 /*

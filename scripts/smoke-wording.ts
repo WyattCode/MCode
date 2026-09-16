@@ -313,6 +313,43 @@ export function retiredSessionCalls(root: string): string[] {
   return found
 }
 
+/*
+ * W6: relative time is one family.
+ *
+ * There were four - time.*, art.time*, office.time*, subagents.* - with three
+ * English spellings ("5 min ago", "5m ago") and two placeholder names, so the
+ * side column, the artifacts page and the subagent list wrote the same moment
+ * differently. MiMo has one (lib.minutesAgo / hoursAgo / daysAgo / justNow).
+ */
+export const TIME_KEYS = ["time.justNow", "time.minutesAgo", "time.hoursAgo", "time.daysAgo"]
+const ENGLISH_TIME: Record<string, string> = {
+  "time.justNow": "Just now",
+  "time.minutesAgo": "{n} min ago",
+  "time.hoursAgo": "{n} h ago",
+  "time.daysAgo": "{n} d ago",
+}
+
+export function relativeTimeFamilies(tables: Tables): string[] {
+  const found: string[] = []
+  for (const [key, value] of Object.entries(tables.zhCN ?? {})) {
+    if (TIME_KEYS.includes(key)) continue
+    if (value === "刚刚" || /^\{\w+\} ?(分钟?|小时|天)前$/.test(value)) found.push(`zhCN ${key} is a second relative-time string`)
+  }
+  for (const [key, value] of Object.entries(tables.en ?? {})) {
+    if (TIME_KEYS.includes(key)) continue
+    if (/^just now$/i.test(value) || /^\{\w+\} ?(m|min|minutes?|h|hours?|d|days?) ago$/i.test(value)) found.push(`en ${key} is a second relative-time string`)
+  }
+  for (const key of TIME_KEYS) {
+    if (tables.en?.[key] !== ENGLISH_TIME[key]) found.push(`en ${key} reads ${JSON.stringify(tables.en?.[key])}`)
+    for (const [name, entries] of Object.entries(tables)) {
+      const holes = [...(entries[key] ?? "").matchAll(/\{(\w+)\}/g)].map((m) => m[1]).join(",")
+      if (entries[key] === undefined) found.push(`${name} ${key} (missing)`)
+      else if (holes !== (key === "time.justNow" ? "" : "n")) found.push(`${name} ${key} has placeholders [${holes}]`)
+    }
+  }
+  return found
+}
+
 export function wordingChecks(check: Check, section: (name: string) => void): void {
   const source = fs.readFileSync(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"), "utf8")
   const tables = readTables(source)
@@ -394,6 +431,22 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
     check(
       "the rule catches 会话 on an archive row and chat on a button, and lets the side chat keep its name",
       caught.includes("zhCN cmd.archive says 会话") && caught.includes("en art.back says chat") && !caught.some((line) => line.includes("launch.chat")),
+      caught,
+    )
+  }
+
+  section("Round 8 (W6): relative time is one family with one English spelling")
+  {
+    const extra = relativeTimeFamilies(tables)
+    check("only time.justNow / minutesAgo / hoursAgo / daysAgo say how long ago", extra.length === 0, extra.slice(0, 8))
+    const broken = clone(tables)
+    broken.zhCN["art.timeM"] = "{n} 分钟前"
+    broken.en["art.timeM"] = "{n}m ago"
+    broken.en["time.hoursAgo"] = "{n}h ago"
+    const caught = relativeTimeFamilies(broken)
+    check(
+      "the rule catches a second family and a second English spelling",
+      caught.includes("zhCN art.timeM is a second relative-time string") && caught.includes("en art.timeM is a second relative-time string") && caught.some((line) => line.startsWith("en time.hoursAgo reads")),
       caught,
     )
   }

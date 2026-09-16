@@ -27,10 +27,10 @@ const style = computed(() => ({
 
 function when(ts: number) {
   const seconds = Math.floor((Date.now() - ts) / 1000)
-  if (seconds < 60) return t("office.timeJustNow")
-  if (seconds < 3600) return t("office.timeMinAgo", { n: Math.floor(seconds / 60) })
-  if (seconds < 86400) return t("office.timeHourAgo", { n: Math.floor(seconds / 3600) })
-  if (seconds < 7 * 86400) return t("office.timeDayAgo", { n: Math.floor(seconds / 86400) })
+  if (seconds < 60) return t("time.justNow")
+  if (seconds < 3600) return t("time.minutesAgo", { n: Math.floor(seconds / 60) })
+  if (seconds < 86400) return t("time.hoursAgo", { n: Math.floor(seconds / 3600) })
+  if (seconds < 7 * 86400) return t("time.daysAgo", { n: Math.floor(seconds / 86400) })
   return new Date(ts).toLocaleDateString()
 }
 
