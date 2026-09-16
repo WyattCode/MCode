@@ -15,7 +15,7 @@ export interface SessionFiles {
 }
 
 /** Tools whose `path` input names a file they changed. */
-const WRITERS = new Set(["write", "edit"])
+const WRITERS = new Set(["write", "edit", "multiedit"])
 
 /**
  * What a conversation has produced and what it has looked at.

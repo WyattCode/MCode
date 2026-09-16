@@ -18,8 +18,13 @@ async function mtimeOf(file: string): Promise<number | undefined> {
 
 export const GlobTool: ToolDefinition = {
   name: "glob",
-  description:
-    "Find files by name pattern, e.g. *.ts, src/**/*.vue or *.{js,jsx}. A pattern without a slash matches file names at any depth. Hidden files are included and .gitignore is honoured. Lists absolute paths, newest first, at most 100.",
+  description: [
+    "Find files by name. The pattern is a glob: `*.ts`, `src/**/*.vue`, `*.{js,jsx}`, `**/test/*.py`.",
+    "A pattern with no slash in it matches file names at any depth, so `*.ts` finds every TypeScript file under the folder searched; one with a slash is matched against the path from that folder down.",
+    "path narrows the search to one folder, the project root when left out. Hidden files are included; what .gitignore excludes is not searched.",
+    "Results are absolute paths, most recently changed first, at most 100 - the newest first ordering is what makes it useful for finding what a build or another tool just wrote.",
+    "Use it when you know something about the name. When you know something about the contents instead, use grep; to see how a folder is laid out, use list.",
+  ].join("\n"),
   permission: "glob",
   parameters: {
     type: "object",
@@ -66,8 +71,13 @@ export const GlobTool: ToolDefinition = {
 
 export const GrepTool: ToolDefinition = {
   name: "grep",
-  description:
-    "Search file contents with a regular expression. Returns the matching lines grouped under each file, newest files first, at most 100 matches. Narrow the search with path (a file or a folder) and include (a glob such as *.ts or *.{ts,tsx}).",
+  description: [
+    "Search what is inside files, with a regular expression.",
+    "The pattern is JavaScript regular-expression syntax, matched line by line: escape the characters that mean something in it (`\\.`, `\\(`, `\\$`) when you are looking for them literally.",
+    "Narrow it with path - a folder to search, or a single file - and with include, a glob naming which files to look in (`*.ts`, `*.{ts,tsx}`).",
+    "Matches come back as the matching lines grouped under each file, most recently changed files first, at most 100 matches; past that it says so, so a search that hits the cap should be narrowed rather than trusted as complete.",
+    "It is faster than running grep or Select-String through bash and does not depend on which tools this machine has. Reach for it to find where something is used, then read that file; use glob when you are matching names rather than contents.",
+  ].join("\n"),
   permission: "grep",
   parameters: {
     type: "object",
@@ -145,8 +155,11 @@ export const GrepTool: ToolDefinition = {
 
 export const ListTool: ToolDefinition = {
   name: "list",
-  description:
-    "List a directory as an indented tree. Use this to orient yourself in an unfamiliar part of the project; use glob when you already know what you are looking for.",
+  description: [
+    "List a folder as an indented tree, depth levels deep (two when left out).",
+    "Use it to orient yourself in a part of the project you have not seen: what the top level holds, how a package is laid out, whether the file you expect is where you expect it.",
+    "When you already know what you are looking for, glob and grep answer faster and in fewer lines. A deep listing of a large tree is a lot of text for very little; raise depth only where you need it.",
+  ].join("\n"),
   permission: "list",
   parameters: {
     type: "object",

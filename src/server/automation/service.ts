@@ -79,6 +79,28 @@ interface Receipt {
   response: string
 }
 
+/**
+ * MiMo's terminal-report journal, beside the tasks.
+ *
+ * A run's end is written here before anything else happens to it, and taken
+ * out once the run is settled and the window told. The run record alone could
+ * not cover the gap between those: an app killed after a turn ended but before
+ * the record was saved came back to a record still "running", settled it as
+ * skipped, and told the user a run had failed that had in fact answered. MiMo
+ * replays this file at start ("replayed N terminal report(s)"); so does this.
+ */
+export const TERMINAL_REPORTS_FILE = "automation-terminal-reports.json"
+
+interface TerminalReport {
+  automationID: string
+  runId?: string
+  sessionID: string
+  status: "succeeded" | "failed"
+  finishedAt: number
+  hasNonEmptyReply: boolean
+  notify: boolean
+}
+
 interface Saved {
   /** Which build's idea of this document it is; the same bargain `config.json` makes. */
   schemaVersion?: number
@@ -144,8 +166,58 @@ export class AutomationService {
   /** Where an unreadable file was kept, and what to tell anyone who asks. */
   private evidence: string | undefined
   private problem: string | undefined
+  /** Runs that have ended and are not yet settled and told; mirrored to the journal. */
+  private reports: TerminalReport[] = []
+  /** How many reports the last start replayed, for the checks. */
+  replayed = 0
 
   constructor(private readonly deps: AutomationDeps) {}
+
+  private get journal(): string {
+    return path.join(path.dirname(this.deps.file), TERMINAL_REPORTS_FILE)
+  }
+
+  private writeJournal(): Promise<void> {
+    if (this.blocked || this.fromNewerVersion) return this.writing
+    const snapshot = JSON.stringify({ schemaVersion: AUTOMATION_SCHEMA_VERSION, reports: this.reports }, null, 2)
+    this.writing = this.writing.then(() => writeAtomic(this.journal, snapshot)).catch(() => undefined)
+    return this.writing
+  }
+
+  /**
+   * The reports a previous run of the app wrote and did not get to finish:
+   * each settles its run record with what really happened, and one the window
+   * was never told about is queued, before the sweep below takes whatever is
+   * still open for a run the app died in.
+   */
+  private async replayJournal(): Promise<boolean> {
+    const raw = await fs.readFile(this.journal, "utf8").catch(() => undefined)
+    if (raw === undefined) return false
+    let reports: TerminalReport[] = []
+    try {
+      const parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as { reports?: unknown }
+      reports = Array.isArray(parsed.reports) ? (parsed.reports as TerminalReport[]).filter((entry) => entry && typeof entry.sessionID === "string") : []
+    } catch {
+      // A journal that will not parse holds nothing that can be trusted; the sweep still settles the runs.
+    }
+    let settled = false
+    for (const report of reports) {
+      const automation = this.saved.automations.find((entry) => entry.id === report.automationID)
+      const record = automation?.runHistory?.find((entry) => (report.runId ? entry.runId === report.runId : entry.resultThreadId === report.sessionID) && entry.status === "running")
+      if (record) {
+        record.status = report.status
+        record.finishedAt = report.finishedAt
+        record.hasNonEmptyReply = report.hasNonEmptyReply
+        record.reported = true
+        settled = true
+      }
+      this.pendingReports.push({ sessionID: report.sessionID, notify: report.notify })
+    }
+    this.replayed = reports.length
+    this.reports = []
+    await this.writeJournal()
+    return settled
+  }
 
   async start(options: { interval?: boolean } = {}): Promise<void> {
     const raw = await fs.readFile(this.deps.file, "utf8").catch(() => undefined)
@@ -198,7 +270,7 @@ export class AutomationService {
      * about every other run and silently not that one. A record left "running"
      * is settled here, and one that nobody has been told about is queued.
      */
-    let settled = false
+    let settled = await this.replayJournal()
     for (const automation of this.saved.automations) {
       for (const record of automation.runHistory ?? []) {
         if (record.status === "running") {
@@ -531,14 +603,28 @@ export class AutomationService {
     // The record this run opened is settled here, so only a run the app outlived stays open.
     const saved = this.saved.automations.find((entry) => entry.id === automation.id)
     const record = [...(saved?.runHistory ?? [])].reverse().find((entry) => entry.resultThreadId === sessionID && entry.status === "running")
+    const report: TerminalReport = {
+      automationID: automation.id,
+      ...(record ? { runId: record.runId } : {}),
+      sessionID,
+      status: failed ? "failed" : "succeeded",
+      finishedAt: this.deps.now(),
+      hasNonEmptyReply: reply,
+      notify,
+    }
+    // Journaled first: from here on, a kill anywhere below is replayed at the next start.
+    this.reports.push(report)
+    await this.writeJournal()
     if (record) {
-      record.status = failed ? "failed" : "succeeded"
-      record.finishedAt = this.deps.now()
+      record.status = report.status
+      record.finishedAt = report.finishedAt
       record.hasNonEmptyReply = reply
       record.reported = true
-      void this.save()
+      await this.save()
     }
     this.deps.publish({ type: "automation.run", sessionID, phase: "finished", notify })
+    this.reports = this.reports.filter((entry) => entry !== report)
+    await this.writeJournal()
   }
 
   /** Whether a conversation's current turn is a run, for the checks. */
