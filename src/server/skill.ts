@@ -29,8 +29,10 @@ export interface SkillInfo {
   location: string
   /** The folder it sits in, which its relative paths are resolved against. */
   directory: string
-  /** The body, frontmatter removed. */
+  /** The body, frontmatter removed, up to `SKILL_BODY_MAX`. */
   content: string
+  /** The body was longer than that and what is here stops short of the end. */
+  truncated?: boolean
   /** Kept out of the prompt, the search and the skill tool; `/name` typed by the user still loads it. */
   disableModelInvocation: boolean
   /** Shipped with the app. */
@@ -49,6 +51,16 @@ export interface SkillScan {
 
 /** Where a project keeps its own commands and skills. */
 export const PROJECT_CONFIG_DIR = ".mcode"
+
+/**
+ * The most of one SKILL.md that is read, as MiMo reads one.
+ *
+ * A skill's body goes into the prompt whole, and nothing capped it: an
+ * unusually large SKILL.md quietly spent the conversation's context budget and
+ * its cost before the first question was asked. MiMo stops at the same figure
+ * and marks what it handed back as cut.
+ */
+export const SKILL_BODY_MAX = 200_000
 
 /** How deep a folder scan walks before giving up. */
 export const MAX_DEPTH = 8
@@ -279,13 +291,15 @@ async function add(byName: Map<string, SkillInfo>, problems: SkillProblem[], fil
 
   const existing = byName.get(name)
   if (existing && builtin && !existing.builtin) return
+  const overlong = parsed.body.length > SKILL_BODY_MAX
   byName.set(name, {
     name,
     description: data.description.trim(),
     aliases: Array.isArray(aliases) ? (aliases as string[]).map((alias) => alias.trim()).filter(Boolean) : [],
     location: file,
     directory,
-    content: parsed.body,
+    content: overlong ? parsed.body.slice(0, SKILL_BODY_MAX) : parsed.body,
+    ...(overlong ? { truncated: true } : {}),
     disableModelInvocation: disabled === true,
     builtin,
   })

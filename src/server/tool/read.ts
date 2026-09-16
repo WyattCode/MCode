@@ -163,8 +163,24 @@ export const ReadTool: ToolDefinition = {
 
     const target = await resolvePath(context, String(input.file_path))
     const display = relative(context.directory, target)
-    const stat = await fs.stat(target).catch(() => undefined)
-    if (!stat) throw new ToolError(await missing(context.directory, target, display))
+    /*
+     * Why the stat failed, not merely that it did.
+     *
+     * Every failure used to become "File not found", suggestions and all - so a
+     * protected folder, a file owned by someone else or a Windows directory
+     * this process cannot traverse was described as absent. The sensible next
+     * move for a model told that is to create the file, or to hunt for a
+     * spelling mistake that was never made. MiMo keeps the two apart, `noent`
+     * from `denied`, and so does this.
+     */
+    const stat = await fs.stat(target).then(
+      (value) => value,
+      (err: NodeJS.ErrnoException) => err.code ?? "EUNKNOWN",
+    )
+    if (typeof stat === "string") {
+      if (statFailure(stat) === "denied") throw new ToolError(denied(display), "error.readDenied", { path: display })
+      throw new ToolError(await missing(context.directory, target, display))
+    }
 
     if (stat.isDirectory()) {
       const entries = await entriesOf(target)
@@ -239,6 +255,29 @@ export const ReadTool: ToolDefinition = {
  * only `net.c` gets nothing, because neither name contains the other. That
  * is the reference's rule as it stands, kept as it stands.
  */
+/**
+ * Which of MiMo's two answers a failed stat is.
+ *
+ * Its file reader keeps `noent` and `denied` apart, each from its own
+ * try/catch. Everything here used to collapse into "not found", so a
+ * protected folder or a file owned by someone else was reported as absent -
+ * and the model's reasonable next move was to create it.
+ */
+export function statFailure(code: string | undefined): "missing" | "denied" {
+  return code === "EACCES" || code === "EPERM" ? "denied" : "missing"
+}
+
+/**
+ * What the model reads for a file it is not allowed to open.
+ *
+ * Said as a refusal rather than as an absence, and without the near-name
+ * suggestions: the file is there, so offering other spellings of its name
+ * would only send the model looking for a file that does not exist.
+ */
+function denied(display: string): string {
+  return `Permission denied: ${display} exists but this app is not allowed to read it. Ask the user to grant access, or work from a file it can read.`
+}
+
 async function missing(root: string, target: string, display: string): Promise<string> {
   const dir = path.dirname(target)
   const base = path.basename(target).toLowerCase()

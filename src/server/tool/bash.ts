@@ -7,6 +7,12 @@ import { collectMutationTargets, scanCommand } from "./bash-scan"
 import { mainWorktreeRoots } from "../session/worktree"
 
 const DEFAULT_TIMEOUT = 120_000
+
+/** What a command declaring itself interactive is answered with, since there is no terminal to hand over. */
+export const INTERACTIVE_REFUSAL = [
+  "This environment has no interactive terminal, so the command was not run and nothing was changed.",
+  "Run it without interaction instead: pass its confirmation flag (-y, --yes, -Force, -Confirm:$false), feed the answers in through a pipe, or use an equivalent command that needs no input.",
+].join(" ")
 /** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
 /** How much of the latest output the card shows while the command works. */
@@ -274,6 +280,24 @@ export const BashTool: ToolDefinition = {
     const maxTokens = input.max_output_tokens === undefined ? DEFAULT_MAX_OUTPUT_TOKENS : Number(input.max_output_tokens)
     if (!Number.isInteger(maxTokens) || maxTokens <= 0) throw new ToolError(`max_output_tokens has to be a positive whole number: ${String(input.max_output_tokens)}`)
     const description = typeof input.description === "string" ? input.description : ""
+
+    /*
+     * A command that says it waits for input is answered rather than run.
+     *
+     * `interactive` was in the schema and consumed nowhere: stdin is closed, so
+     * such a command sat until the 120,000 ms timeout killed it, and the model
+     * was told only that it had timed out. The user waited two minutes for
+     * nothing and neither of them learnt what to do differently. MiMo answers
+     * this case at once, with exit code 1 and a sentence naming the ways out,
+     * which is what is written here in this app's own words.
+     */
+    if (input.interactive === true) {
+      return {
+        output: INTERACTIVE_REFUSAL,
+        title: description || command,
+        metadata: { command, cwd: context.directory, exit: 1, description, truncated: false, interactive: true },
+      }
+    }
 
     const cwd = input.workdir ? await resolvePath(context, String(input.workdir)) : context.directory
     const { command: bin, args, powershell } = shell(context.shell)

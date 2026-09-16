@@ -57,6 +57,32 @@ export function usableContext(entry: Pick<ModelEntry, "contextWindow"> | undefin
 }
 
 /**
+ * How near the line a conversation is before a tool's output is halved.
+ *
+ * MiMo passes `pressureCaps` into its truncation and thereby halves both
+ * limits; what makes it decide to is not readable from the bundle, so this
+ * figure is MCode's own. Seven tenths of the usable room: far enough back that
+ * halving still has something to save, and not so early that ordinary turns
+ * lose half of every result.
+ */
+export const OUTPUT_PRESSURE_RATIO = 0.7
+
+/** The whole count the provider reported for a step, which is what both tests read. */
+function totalOf(tokens: { input: number; output: number; reasoning?: number; cacheRead: number; cacheWrite: number }): number {
+  return tokens.input + tokens.output + (tokens.reasoning ?? 0) + tokens.cacheRead + tokens.cacheWrite
+}
+
+/** Whether this conversation is close enough to its compaction line to cap tool output at half. */
+export function underPressure(
+  tokens: { input: number; output: number; reasoning?: number; cacheRead: number; cacheWrite: number },
+  entry: Pick<ModelEntry, "contextWindow"> | undefined,
+): boolean {
+  const usable = usableContext(entry)
+  if (usable === 0) return false
+  return totalOf(tokens) >= usable * OUTPUT_PRESSURE_RATIO
+}
+
+/**
  * MiMo's `isOverflow`: the step's whole count - fresh input, output, reasoning
  * and both cache figures, which together are the provider's total - has
  * reached the usable room. False for a model with no known window.
