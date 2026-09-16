@@ -33,6 +33,12 @@ export interface SessionInfo {
   model: ModelRef
   agent: AgentName
   /**
+   * plan: two words fixed when the conversation is made, which name its plan
+   * file (`<created>-<slug>.md`) as MiMo's session slug names its own.
+   * Conversations stored before this have none and fall back to their id.
+   */
+  slug?: string
+  /**
    * Whether this conversation works in stages: clarify, plan, build, review.
    *
    * Absent is off, which is what every conversation stored before this field
@@ -231,6 +237,13 @@ export interface UserMessage {
   time: { created: number }
   /** Sent into a turn that was already running (MiMo's 插话), so the transcript keeps it inside that turn. */
   steered?: boolean
+  /**
+   * plan: written by the app rather than typed - the word that the user
+   * approved a plan, put where the user's next message would be. The model
+   * reads it; the transcript leaves it out, as MiMo leaves out the synthetic
+   * message its plan_exit writes.
+   */
+  synthetic?: boolean
   /** Places the user pointed at with this message (MiMo's 注释); the model reads them after the text. */
   annotations?: Annotation[]
   /** Documents the user changed since the last message; the model reads them before the text, the transcript does not show them. */
@@ -701,6 +714,13 @@ export interface QuestionPrompt {
   /** "Allow selecting multiple choices". Absent is one answer only. */
   multiple?: boolean
   custom?: boolean
+  /**
+   * plan: the plan file this question is about, which makes it plan_exit's
+   * card - the window says it in the user's own language and offers to open
+   * the file. MiMo tags the same question with a key and the path beside it;
+   * the path alone is what its window reads back out.
+   */
+  plan?: string
 }
 
 /**

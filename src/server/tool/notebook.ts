@@ -5,6 +5,7 @@ import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
 import { unifiedDiff } from "../diff"
+import { guardPlanWrite } from "../session/plan"
 
 interface NotebookCell {
   cell_type: string
@@ -75,6 +76,8 @@ export const NotebookEditTool: ToolDefinition = {
 
     const target = await resolvePath(context, given)
     const display = relative(context.directory, target)
+    // plan: planning writes its plan file and nothing else.
+    guardPlanWrite(context, target, display)
     const before = await fs.readFile(target, "utf8").catch(() => undefined)
     if (before === undefined) throw new ToolError(`Notebook not found: ${display}`)
     let notebook: Notebook

@@ -14,7 +14,7 @@ import type {
   ToolPart,
   UserMessage,
 } from "@shared/protocol"
-import { mkdir, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
 import { readTask, smartRoute, type TaskReading } from "@shared/smart"
@@ -28,7 +28,7 @@ import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } fr
 import { findTool, reachOf, repairableNames, toolsFor } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
-import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
+import type { PlanControl, SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
@@ -46,6 +46,9 @@ import { Snapshots, decode, readSnapshotFile } from "./snapshot"
 import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
+// plan: the plan file, what planning may write, and what each planning turn is told.
+import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf } from "./plan"
+import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
@@ -225,8 +228,16 @@ const MAX_STEPS_PROMPT = [
  * each permission prompt is published as it happens so the UI can render a
  * turn while it is still running, and so an abort can land mid-tool.
  */
-/** Tools a subagent never gets: starting subagents, and talking to other conversations. */
-const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update"])
+/**
+ * Tools a subagent never gets: starting subagents, and talking to other
+ * conversations. plan: leaving plan mode is the conversation's own move, and a
+ * subagent has no plan to put to anyone - MiMo denies it to every agent but
+ * its two primary ones for the same reason.
+ */
+const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit"])
+
+/** plan: the tools whose behaviour depends on whether the conversation is planning. */
+const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -303,6 +314,12 @@ export class SessionRunner {
 
   private readonly toolOutputs: ToolOutputs
 
+  /** plan: the app's own folder, where a plan goes when the project is not a repository. */
+  private readonly dataRoot: string
+
+  /** plan: whether a project is under version control - asked once per folder, since it decides where its plans live. */
+  private readonly repos = new Map<string, boolean>()
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -316,6 +333,7 @@ export class SessionRunner {
     this.toolOutputs = new ToolOutputs(storage.folder("tool-output"))
     this.toolOutputs.start()
     this.globalAgents = globalAgentsPath(storage.directory)
+    this.dataRoot = storage.directory
     this.questions = new Questions(bus)
     // session chat: messages between conversations run through this runner's own prompt.
     this.chat = new SessionChat(store, bus, {
@@ -422,14 +440,14 @@ export class SessionRunner {
    * The tools for a turn: this app's own, plus whatever the connected MCP
    * servers offer.
    *
-   * Plan gets none of the MCP ones. What an outside server does with a call is
-   * not knowable from here, so a mode that promises to change nothing cannot
-   * pass one along.
+   * plan: a planning conversation is offered the MCP ones too, as MiMo offers
+   * them - its rule is about writing files, not about which servers are
+   * reachable, and a plan written without the project's own tools is a worse
+   * plan. An explore subagent is still offered only its own few.
    */
   private tools(agent: string, conversation: string): ToolDefinition[] {
     const own = toolsFor(agent)
-    // An explore subagent is offered only its own few, as MiMo denies it everything else.
-    if (agent === "plan" || agent === "explore") return own
+    if (agent === "explore") return own
     let servers = this.mcpServersAt.get(conversation)
     if (!servers) {
       const configured = Object.entries(this.config.get().mcpServers ?? {})
@@ -438,6 +456,87 @@ export class SessionRunner {
     }
     const kept = servers
     return [...own, ...(this.mcp?.tools() ?? []).filter((tool) => !tool.server || kept.has(tool.server))]
+  }
+
+  /**
+   * plan: where this conversation's plan is written, and which paths planning
+   * may write at all.
+   *
+   * The folder depends on whether the project is a repository, as MiMo's does:
+   * a repository keeps its plans with the code, and a folder that is not one
+   * would be littered by them, so those go to the app's own folder instead.
+   */
+  private async planFor(session: SessionInfo): Promise<{ file: string; folders: string[] }> {
+    let repo = this.repos.get(session.directory)
+    if (repo === undefined) {
+      repo = (await gitStatus(session.directory).catch(() => undefined))?.repo === true
+      this.repos.set(session.directory, repo)
+    }
+    const place = { directory: session.directory, dataRoot: this.dataRoot, repo }
+    return { file: planFile(place, { created: session.created, slug: slugOf(session) }), folders: planFolders(place) }
+  }
+
+  /** plan: what a tool is told about planning - the mode it is in, its plan file, and how to leave. */
+  private async planControl(session: SessionInfo): Promise<PlanControl> {
+    const { file, folders } = await this.planFor(session)
+    return {
+      agent: session.agent,
+      file,
+      writable: (target) => planWritable(target, folders),
+      approve: () => this.approvePlan(session.id, file),
+    }
+  }
+
+  /**
+   * plan: the user approved the plan.
+   *
+   * Two things happen, and both have to, or the conversation and the window
+   * would disagree about what it is: the conversation becomes a building one -
+   * which is what the mode chip reads, and what the next turn's tools and
+   * prompt are built from - and it is told the plan was approved, in the place
+   * a message from the user would have gone. That word is the app's rather than
+   * theirs, so the transcript leaves it out, as MiMo leaves its own out.
+   */
+  private async approvePlan(sessionID: string, file: string): Promise<void> {
+    const session = await this.store.update(sessionID, { agent: "build" })
+    const message: UserMessage = {
+      id: Identifier.message(),
+      sessionID,
+      role: "user",
+      text: approvedNote(planDisplay(session.directory, file)),
+      attachments: [],
+      synthetic: true,
+      time: { created: Date.now() },
+    }
+    await this.store.saveMessage(message)
+  }
+
+  /**
+   * plan: what this turn is told about planning, carried with the user's own
+   * message as MiMo carries it.
+   *
+   * A conversation's first planning turn gets the long note with its plan
+   * file's path, every later one a single line, and the first turn after the
+   * switch is told it may build again - with the plan named when one was
+   * actually written. A subagent gets none: it plans for its parent, and its
+   * parent's turn carries the note.
+   */
+  private async planNote(session: SessionInfo, stored: readonly Message[]): Promise<string | undefined> {
+    if (session.parentID) return undefined
+    const planned = [...stored].reverse().find((message): message is AssistantMessage => message.role === "assistant")?.agent === "plan"
+    if (session.agent !== "plan" && !planned) return undefined
+
+    const { file } = await this.planFor(session)
+    const display = planDisplay(session.directory, file)
+    const exists = await access(file).then(
+      () => true,
+      () => false,
+    )
+    if (session.agent !== "plan") return [buildSwitchNote(), ...(exists ? [carryOutNote(display)] : [])].join("\n\n")
+    if (planned) return laterPlanNote(display)
+    // The folder is made now, so the model's first write lands rather than failing on a missing parent.
+    await mkdir(dirname(file), { recursive: true }).catch(() => undefined)
+    return firstPlanNote(display, exists)
   }
 
   isRunning(sessionID: string): boolean {
@@ -1357,13 +1456,12 @@ export class SessionRunner {
     /*
      * The project is photographed from here rather than from the first tool
      * call, so that on a large project the scan runs while the model is still
-     * composing its reply instead of being waited for. Plan is left out: it is
-     * handed no tool that can write, so there is nothing to photograph.
+     * composing its reply instead of being waited for. plan: a planning turn is
+     * photographed too - it writes its plan file, and its commands run under
+     * the same permission rules as any other turn's.
      */
     this.pending.delete(session.id)
-    if (session.agent !== "plan") {
-      this.turn(session.id).watching = this.snapshots.begin(session.directory)
-    }
+    this.turn(session.id).watching = this.snapshots.begin(session.directory)
 
     // A subscription is authorised by stored tokens, so it has no API key to
     // check here - the bearer is resolved (and refreshed) at turn time.
@@ -1379,7 +1477,8 @@ export class SessionRunner {
     }
 
     // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
-    const first = (await this.store.messages(session.id)).length === 0
+    const stored = await this.store.messages(session.id)
+    const first = stored.length === 0
     // MiMo attaches by path: what each such file is gets settled now, its contents are read per request.
     const attachments = await settleAttachments(input.attachments, session.directory)
     // skills: what the message names, and the hint its office documents bring.
@@ -1387,6 +1486,9 @@ export class SessionRunner {
     const context = input.inbox ? [] : await this.runtimeNotes(session, first)
     const attached = input.inbox ? undefined : attachmentNote(attachments.filter((file) => file.byPath), session.directory)
     if (attached) context.push(attached)
+    // plan: what this turn may do, or - on the turn after the switch - that it may build again.
+    const planning = input.inbox ? undefined : await this.planNote(session, stored)
+    if (planning) context.push(planning)
     const user: UserMessage = {
       id: Identifier.message(),
       sessionID: session.id,
@@ -1438,8 +1540,8 @@ export class SessionRunner {
       ...(first ? { directory: session.directory } : {}),
     })
     if (!first) return [runtime]
-    // The conversation's MCP servers are fixed when it first asks for its tools (plan takes none).
-    if (session.agent !== "plan") this.tools(session.agent, session.id)
+    // The conversation's MCP servers are fixed when it first asks for its tools.
+    this.tools(session.agent, session.id)
     const names = [...(this.mcpServersAt.get(session.id) ?? [])]
     return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
   }
@@ -1548,9 +1650,7 @@ export class SessionRunner {
       // that was ending as they arrived - a rollback aimed at one of them has
       // to reach this turn's recording, not the previous turn's.
       this.turn(sessionID).messages = stranded
-      if (session.agent !== "plan") {
-        this.turn(sessionID).watching = this.snapshots.begin(session.directory)
-      }
+      this.turn(sessionID).watching = this.snapshots.begin(session.directory)
       this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller)
     } catch (failure) {
       this.running.delete(sessionID)
@@ -1583,7 +1683,7 @@ export class SessionRunner {
       this.pending.delete(sessionID)
       // The turn answers the same question the broken one did, so a rollback to it reaches both.
       this.turn(sessionID).messages = [messageID]
-      if (session.agent !== "plan") this.turn(sessionID).watching = this.snapshots.begin(session.directory)
+      this.turn(sessionID).watching = this.snapshots.begin(session.directory)
       this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, true)
       return messageID
     } catch (failure) {
@@ -2262,6 +2362,12 @@ export class SessionRunner {
         arguments: part.input,
         directory: input.session.directory,
       })
+      /*
+       * plan: only the tools that turn on the promise are told about it - the
+       * three that write, and the one that asks to stop planning - so an
+       * ordinary read costs no extra look at the conversation's record.
+       */
+      const planControl = PLAN_AWARE.has(tool.name) ? await this.planControl(await this.store.require(input.session.id)) : undefined
       const result = await tool.execute(part.input, {
         sessionID: input.session.id,
         messageID: assistant.id,
@@ -2285,6 +2391,8 @@ export class SessionRunner {
         },
         skills: () => this.skillsFor(input.session.directory),
         tasks: tool.name === "task" ? await this.taskControl(input.session.id) : undefined,
+        // plan: the write tools read it before they change anything; plan_exit ends planning through it.
+        plan: planControl,
       })
       // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
       const capped =

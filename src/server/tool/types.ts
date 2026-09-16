@@ -54,6 +54,26 @@ export interface ToolContext {
   skills?: () => Promise<SkillInfo[]>
   /** tasks: the conversation's task registry; a subagent's is its parent's. */
   tasks?: TaskControl
+  /**
+   * plan: what planning allows this conversation, and how it ends.
+   *
+   * The write tools consult it before they change anything, and plan_exit uses
+   * it to put the plan to the user. Absent only where no conversation stands
+   * behind the call.
+   */
+  plan?: PlanControl
+}
+
+/** plan: the conversation's planning state, as the runner knows it. */
+export interface PlanControl {
+  /** The agent it runs as; planning is read-only, building is not. */
+  agent: string
+  /** Where this conversation's plan is written, absolute. */
+  file: string
+  /** Whether planning may write this path: the plan folders, and nothing else. */
+  writable(target: string): boolean
+  /** plan_exit's Yes: the conversation becomes a building one and is told the plan was approved. */
+  approve(): Promise<void>
 }
 
 /** tasks: one change to a conversation's task list at a time, by whoever is asking. */

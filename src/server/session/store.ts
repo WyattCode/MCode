@@ -2,6 +2,7 @@ import type { AgentName, AssistantMessage, Message, ModelRef, SessionInfo, Usage
 import { Identifier } from "@shared/id"
 import type { Storage } from "../storage"
 import type { Bus } from "../bus"
+import { newSlug } from "./plan"
 
 export function emptyUsage(): Usage {
   return { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }
@@ -156,6 +157,8 @@ export class SessionStore {
       directory: input.directory,
       model: input.model,
       agent: input.agent ?? "build",
+      // plan: fixed now, so every turn of this conversation finds the same plan file.
+      slug: newSlug(),
       ...(input.staged ? { staged: true } : {}),
       ...(input.smart ? { smart: true } : {}),
       ...(input.scratch ? { scratch: true } : {}),
