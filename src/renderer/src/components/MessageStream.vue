@@ -829,6 +829,22 @@ function finishedNote(turn: Turn, at: number): string {
   return emptyReply(turn) ? t("stream.noContent") : t("stream.stoppedAfter", { dur: stoppedAfter(turn) })
 }
 
+/**
+ * The provider's own words, where they say something the sentence does not.
+ *
+ * MiMo shows both - its short sentence, and the raw text after 原始错误： - and
+ * the runner has stored this all along as `errorParams.detail`. Only shown
+ * once the failure was classified: an unclassified one already has the raw
+ * text as its whole message, and repeating it under itself reads as a stutter.
+ */
+function failureDetail(turn: Turn): string {
+  if (!turn.errorCode) return ""
+  const detail = turn.errorParams?.detail?.trim() ?? ""
+  if (!detail) return ""
+  // Nothing is gained by printing the sentence again in the provider's words.
+  return detail === failureText(turn).text.trim() ? "" : detail
+}
+
 /* The card's words, cut as MiMo cuts them; nothing at all reads as the model having returned nothing usable. */
 function failureText(turn: Turn): { text: string; clamped: boolean } {
   let said = t("stream.thinkOnlyNoAnswer")
@@ -1260,13 +1276,21 @@ defineExpose({ stepMessage, scroller })
             end. A stop that got nothing out, or an empty reply, gets its line and
             a quiet retry under it; a stop after output ends on its action row.
           -->
-          <div v-if="failed(turn)" class="err-card" data-turn-error>
+          <div v-if="failed(turn)" class="err-card" :class="{ detailed: Boolean(failureDetail(turn)) }" data-turn-error>
             <svg class="err-icon" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.7" />
               <path d="M10 5.9v4.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
               <circle cx="10" cy="13.7" r="1" fill="currentColor" />
             </svg>
             <span class="err-text" :class="{ clamped: failureText(turn).clamped }" data-err-text>{{ failureText(turn).text }}</span>
+            <!--
+              MiMo keeps the provider's own words beside its short sentence
+              (`{code, message, detail}`, joined under 原始错误：). Without this
+              a self-hosted gateway's 401, a quota-naming 429 and a 500 naming
+              the wrong model id all collapsed into one generic line, and the
+              detail the runner had already stored was drawn nowhere.
+            -->
+            <span v-if="failureDetail(turn)" class="err-detail" data-err-detail>{{ t("error.detail", { detail: failureDetail(turn) }) }}</span>
             <button v-if="!bare" class="retry-pill" data-retry @click="retry(turn)">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5" stroke="currentColor" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" />
@@ -2106,6 +2130,12 @@ defineExpose({ stepMessage, scroller })
  * its end. A stopped or empty turn keeps its short line with a 26px retry
  * button under it.
  */
+/* With a detail line the card wraps to two rows, so the icon sits with the sentence rather than centred over both. */
+.err-card.detailed {
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
 .err-card {
   display: flex;
   align-items: center;
@@ -2137,6 +2167,19 @@ defineExpose({ stepMessage, scroller })
   flex: 1;
   min-width: 0;
   line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+/* The raw text under the sentence: quieter and smaller, as MiMo's detail line is. */
+.err-detail {
+  flex-basis: 100%;
+  min-width: 0;
+  margin-top: 6px;
+  color: var(--text-weak);
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: 1.6;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }

@@ -438,7 +438,8 @@ async function onPaste(event: ClipboardEvent) {
     event.preventDefault()
     const saved = await window.mcode.saveClipboardImage().catch(() => ({ ok: false as const, error: "" }))
     if (!saved.ok) {
-      notifyFailure(t("attach.unreadable"), "")
+      // MiMo's IMAGE_UNREADABLE: the clipboard said it held a picture and the bitmap could not be read.
+      notifyFailure(t("error.imageUnreadable"), "")
       return
     }
     const data = saved.dataUrl?.split(",")[1] ?? ""

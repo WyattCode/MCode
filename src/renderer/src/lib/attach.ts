@@ -13,10 +13,23 @@ import type { Attachment } from "@shared/protocol"
  *
  * MiMo attaches a file by its path, so a file on disk has no cap: it goes by
  * path and the server reads it when the model is asked. Only what has no path
- * - something pasted from the clipboard - travels as data, and a picture or a
- * video small enough keeps its data too, which is what draws its thumbnail.
+ * - something pasted from the clipboard - travels as data.
+ *
+ * MiMo's engine takes an attachment up to 50 MB, and this used to refuse at 8;
+ * pasting a 12 MB log into the box was turned away with a "too large" notice
+ * that MiMo would never have shown.
  */
-export const MAX_BYTES = 8 * 1024 * 1024
+export const MAX_BYTES = 50 * 1024 * 1024
+
+/**
+ * The most a file on disk may weigh and still have its bytes carried too.
+ *
+ * MiMo's desktop picker inlines a picture under 8 MB as a data URL and passes
+ * anything larger by path alone. Here the bytes are only ever for the
+ * thumbnail beside the box - the model is served from the path either way - so
+ * a large picture keeps its path and loses nothing but the preview.
+ */
+export const THUMBNAIL_MAX = 8 * 1024 * 1024
 
 /** Where a file lives on disk, or empty for one that does not (pasted, or outside the app). */
 function diskPath(file: File): string {
@@ -87,7 +100,7 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
 
   for (const file of files) {
     const absolute = diskPath(file)
-    const thumbnailed = (file.type.startsWith("image/") || file.type.startsWith("video/")) && file.size <= MAX_BYTES
+    const thumbnailed = (file.type.startsWith("image/") || file.type.startsWith("video/")) && file.size <= THUMBNAIL_MAX
     if (absolute && !thumbnailed) {
       // MiMo's attachment by path: no copy in the message, no size cap.
       attachments.push({ path: absolute, mime: file.type, data: "", byPath: true })

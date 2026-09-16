@@ -120,6 +120,7 @@ function pushError(result: PushResult): string {
   if (result.code === "auth") return t("info.pushError.auth")
   if (result.code === "rejected") return t("info.pushError.rejected")
   if (result.code === "no-remote") return t("info.pushError.noRemote")
+  if (result.code === "detached") return t("info.pushError.detached")
   return result.error ? `${t("info.pushError.generic")}: ${result.error}` : t("info.pushError.generic")
 }
 

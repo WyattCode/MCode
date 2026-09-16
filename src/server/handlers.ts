@@ -555,7 +555,17 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {} satisfies Handled<"question.reply">
 
     case "config.get":
-      return { config: runtime.config.get() } satisfies Handled<"config.get">
+      /*
+       * A config that would not parse, or one from a later build, is told to
+       * the window rather than only noted here. The app opens on the defaults
+       * either way, and the reader was left to work out for themselves where
+       * their settings had gone.
+       */
+      return {
+        config: runtime.config.get(),
+        ...(runtime.config.unreadable ? { unreadable: runtime.config.unreadable } : {}),
+        ...(runtime.config.fromNewerVersion ? { fromNewerVersion: true } : {}),
+      } satisfies Handled<"config.get">
 
     case "config.set": {
       const config = await runtime.config.set(request.patch)
@@ -1240,9 +1250,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
          * available rather than made to wait for one. Documents run larger
          * than pictures, so a PDF gets more room.
          */
-        const MEDIA_LIMIT = kind === "pdf" ? 40_000_000 : 8_000_000
+        /*
+         * Over the cap the reader is told the file is too large, not that it is
+         * binary. Changing `kind` to "binary" made the panel draw the generic
+         * binary placeholder for a 60 MB PDF - neither true nor actionable -
+         * while the string for this (`rp.files.errTooBig`) already existed.
+         * One figure for every kind, as MiMo has one.
+         */
         if (bytes.byteLength > MEDIA_LIMIT) {
-          return { path: resolved, kind: "binary", content: "", truncated: false } satisfies Handled<"file.read">
+          return { path: resolved, kind, content: "", truncated: false, tooBig: true } satisfies Handled<"file.read">
         }
         return {
           path: resolved,
@@ -1438,14 +1454,33 @@ export const TREE_IGNORED = new Set([
 /* MiMo's readFileText ceiling: past it a file is refused rather than shown in part. */
 export const PREVIEW_TEXT_LIMIT = 512 * 1024
 
+/**
+ * The most a picture, PDF, audio or video file may weigh and still be shown.
+ *
+ * One figure for every kind, as MiMo has one: its panel reads a file up to
+ * 25 MB and refuses anything larger with `toobig`. This app had two - 40 MB for
+ * a PDF and 8 MB for everything else - and, worse, answered a file over them by
+ * calling it binary, so a 60 MB PDF was described as a file the panel could not
+ * make sense of rather than as one too large to preview.
+ */
+export const MEDIA_LIMIT = 25_000_000
+
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".webm", ".mov", ".ogv"])
 
 /* One file for the files tab: MiMo's kinds, with media left to be played from disk. */
-async function readPreview(resolved: string): Promise<Handled<"file.read">> {
+export async function readPreview(resolved: string): Promise<Handled<"file.read">> {
   const empty = { path: resolved, content: "", truncated: false }
-  if (VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) return { ...empty, kind: "binary", video: true }
+  const oversized = async () => (await fs.stat(resolved).catch(() => undefined))?.size ?? 0
+  if (VIDEO_EXTENSIONS.has(path.extname(resolved).toLowerCase())) {
+    if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind: "binary", tooBig: true }
+    return { ...empty, kind: "binary", video: true }
+  }
   const kind = kindFor(resolved, Buffer.alloc(0))
-  if (kind === "image" || kind === "audio" || kind === "pdf") return { ...empty, kind, mime: mimeFor(resolved) }
+  if (kind === "image" || kind === "audio" || kind === "pdf") {
+    // Measured here as well as on the read of the bytes: this is the answer the tab draws from.
+    if ((await oversized()) > MEDIA_LIMIT) return { ...empty, kind, mime: mimeFor(resolved), tooBig: true }
+    return { ...empty, kind, mime: mimeFor(resolved) }
+  }
   const stats = await fs.stat(resolved)
   if (stats.isDirectory()) throw new Error(`Not a file: ${resolved}`)
   if (stats.size > PREVIEW_TEXT_LIMIT) return { ...empty, kind: "text", tooBig: true }
@@ -1516,30 +1551,39 @@ export async function searchTree(directory: string, query: string): Promise<Hand
 const SEARCH_LIMIT = 50
 /* A walk this long is a huge tree; what was found by then is what is shown. */
 const SEARCH_VISITS = 20_000
+/*
+ * As deep as the files tab's own search goes, and MiMo's `searchFiles` with it.
+ *
+ * The @ picker had a visit budget but no depth at all, so one deep branch - a
+ * nested node_modules a project keeps, a build tree - could spend the whole
+ * 20,000 entries without ever reaching the folders next to it, and the list
+ * came back both slow and worse than MiMo's.
+ */
+const SEARCH_DEPTH = 16
 
 /*
  * Files under a folder whose path from that folder holds the query. A hit in
  * the file's own name ranks ahead of one further up its path, then shorter
  * paths first.
  */
-async function searchFolder(directory: string, query: string, sub?: string, limit?: number): Promise<Handled<"file.search">> {
+export async function searchFolder(directory: string, query: string, sub?: string, limit?: number): Promise<Handled<"file.search">> {
   const { root, target } = insideProject(directory, sub)
   const needle = query.trim().toLowerCase()
   const cap = Math.max(1, Math.min(200, limit ?? SEARCH_LIMIT))
   const hits: Handled<"file.search">["entries"] = []
   if (!needle) return { entries: hits, truncated: false }
-  const queue = [target]
+  const queue = [{ dir: target, depth: 0 }]
   let visits = 0
   let overflow = false
   while (queue.length && visits < SEARCH_VISITS && !overflow) {
-    const dir = queue.shift()!
-    const listed = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+    const folder = queue.shift()!
+    const listed = await fs.readdir(folder.dir, { withFileTypes: true }).catch(() => [])
     for (const entry of listed) {
       visits += 1
       if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
-      const absolute = path.join(dir, entry.name)
+      const absolute = path.join(folder.dir, entry.name)
       if (entry.isDirectory()) {
-        queue.push(absolute)
+        if (folder.depth < SEARCH_DEPTH) queue.push({ dir: absolute, depth: folder.depth + 1 })
         continue
       }
       const within = path.relative(target, absolute).split(path.sep).join("/")

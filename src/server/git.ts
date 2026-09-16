@@ -825,7 +825,13 @@ export async function push(directory: string): Promise<PushResult> {
   try {
     const root = await toplevel(directory)
     const branch = (await git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "")).trim()
-    if (!branch) return { ok: false, error: "not on a branch" }
+    /*
+     * A code rather than a sentence, as every other refusal here answers with
+     * one. This path returned the English "not on a branch" into an interface
+     * that phrases `auth`, `rejected` and `no-remote` from its own tables, so a
+     * detached HEAD was the one push failure a Chinese reader got in English.
+     */
+    if (!branch) return { ok: false, code: "detached" }
     const known = await remotes(root)
     const remote = (await git(root, ["config", "--get", `branch.${branch}.remote`]).catch(() => "")).trim()
     const merge = (await git(root, ["config", "--get", `branch.${branch}.merge`]).catch(() => "")).trim()
