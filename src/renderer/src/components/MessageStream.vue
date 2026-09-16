@@ -175,6 +175,8 @@ const turns = computed<Turn[]>(() => {
    * being drawn.
    */
   for (const message of shownMessages.value) {
+    // plan: the word that a plan was approved is the app's, not the user's - the model reads it, the transcript does not.
+    if (message.role === "user" && message.synthetic) continue
     if (message.role === "user") {
       /*
        * A message sent into a running turn stays inside that turn, where the

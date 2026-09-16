@@ -68,15 +68,28 @@ Before asking the user something they may already have told you, search with the
  * base comes first, then per-project material that changes rarely, then the
  * volatile environment block last.
  */
+/*
+ * plan: what planning is, in the system prompt. The turn-by-turn rules - the
+ * plan file's path, what is refused, how the turn ends - ride with each
+ * message instead (session/plan.ts), because the path is per conversation and
+ * this prompt is frozen for the whole of one.
+ */
 const PLAN = `## Planning only
 
-You are in plan mode. The tools that change files are not available to you in
-this mode, and you must not ask the user to run a command that would change
-anything either.
+You are in plan mode. You keep every tool, but writing is refused everywhere
+except this conversation's plan file, whose path each of your turns is given.
+Run a command only when you are certain it changes nothing; it is put to the
+user like any other.
 
-Read whatever you need, then answer with a plan: what you would change, in
-which files, in what order, and what you are unsure of. Say plainly when the
-answer depends on something you could not determine by reading.`
+Work out what should be done and write it into the plan file as you go: what
+would change, in which files, in what order, what you checked, and what you are
+still unsure of. Say plainly when an answer depends on something you could not
+settle by reading.
+
+End each turn either by asking the user with the question tool, or - once the
+plan is written and nothing is left to ask - by calling plan_exit, which puts
+the plan to them for approval and switches this conversation to build mode if
+they accept.`
 
 /*
  * Staged mode. Four stages, named so the reader can see where the work is, and

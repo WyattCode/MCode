@@ -30,6 +30,8 @@ import { isSummary, touchedFiles } from "../src/server/session/summary"
 import { claudeCallID, forWire, mistralCallID } from "../src/server/provider/wire-ids"
 import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
 import { systemPrompt } from "../src/server/session/prompt"
+// plan: the plan file's name, as the runner builds it.
+import { planFile, slugOf } from "../src/server/session/plan"
 import { createServer, type IncomingHttpHeaders, type ServerResponse } from "node:http"
 import fs from "node:fs/promises"
 import os from "node:os"
@@ -282,6 +284,150 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.idle(session.id)
       const broken = (await e.assistants(session.id)).at(-1)
       check("a step whose tool call had begun is not retried", e.bodies.length === sent + 1 && broken?.finish === "error", { requests: e.bodies.length - sent, finish: broken?.finish })
+    } finally {
+      await e.close()
+    }
+  }
+
+  section("Round 5: plan mode writes one file and leaves through a question (E5)")
+  {
+    const e = await engine()
+    try {
+      // Writing is allowed outright, so what refuses a write here is the plan rule and nothing else.
+      await e.config.set({ permissions: { ...e.config.get().permissions, write: "allow", edit: "allow" } })
+      const session = await e.store.create({ directory: e.project, model: e.model, agent: "plan" })
+      const plan = planFile({ directory: e.project, dataRoot: path.join(e.dir, "data", "storage"), repo: false }, { created: session.created, slug: slugOf(session) })
+      const planName = path.basename(plan)
+
+      /*
+       * Read off the newest user message's notes rather than the whole wire:
+       * every request replays the conversation, so the first turn's long note
+       * is in all of them, and only the notes on this turn's own message say
+       * what this turn was told.
+       */
+      const told = async () => {
+        const messages = await e.store.messages(session.id)
+        const last = messages.filter((message) => message.role === "user").at(-1)
+        return last?.role === "user" ? (last.context ?? []).join("\n\n") : ""
+      }
+
+      e.replies.push(say("reading first"))
+      await e.runner.prompt({ sessionID: session.id, text: "plan the work" })
+      await e.idle(session.id)
+      const firstTurn = await told()
+      check(
+        "a conversation's first planning turn is told the rules and where its plan goes",
+        firstTurn.includes("Plan mode is on.") && firstTurn.includes("No plan file exists yet") && firstTurn.includes(planName),
+        firstTurn.slice(0, 300),
+      )
+      check("and the note reaches the model with the message", wireText(e.bodies.at(-1)).includes("Plan mode is on."))
+      check("and its folder is made, so the first write lands", await fs.stat(path.dirname(plan)).then(() => true, () => false))
+
+      // A write anywhere else is refused before anyone is asked, and nothing appears on disk.
+      e.replies.push(calls([{ name: "write", input: { file_path: "src/app.ts", content: "export const x = 1\n" } }]))
+      await e.runner.prompt({ sessionID: session.id, text: "write the code" })
+      await e.idle(session.id)
+      const writes = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.name === "write")
+      const refusal = writes.at(-1)
+      check(
+        "a write outside the plan file is refused while planning",
+        refusal?.type === "tool" && refusal.status === "error" && refusal.errorCode === "tool.err.planOnly",
+        refusal,
+      )
+      check("and the file is not there", await fs.stat(path.join(e.project, "src", "app.ts")).then(() => false, () => true))
+      check("the model is told where it may write instead", refusal?.type === "tool" && String(refusal.error).includes(planName), refusal?.type === "tool" ? refusal.error : undefined)
+
+      // The plan file itself goes through.
+      e.replies.push(calls([{ name: "write", input: { file_path: plan, content: "# the plan\n\n1. do it\n" } }]))
+      await e.runner.prompt({ sessionID: session.id, text: "write the plan" })
+      await e.idle(session.id)
+      check("the plan file is written", (await fs.readFile(plan, "utf8").catch(() => "")).includes("# the plan"))
+      const laterTurn = await told()
+      check("a later planning turn gets the one-line reminder, not the long one", laterTurn.includes("Plan mode is still on") && !laterTurn.includes("Plan mode is on."), laterTurn.slice(0, 200))
+
+      const asked = () => e.events.flatMap((event) => (event.type === "question.asked" ? [event.request] : []))
+
+      // No keeps the conversation planning.
+      const before = asked().length
+      e.replies.push(calls([{ name: "plan_exit", input: {} }]))
+      void e.runner.prompt({ sessionID: session.id, text: "is it ready" })
+      check("plan_exit raises a question", await e.until(() => asked().length > before))
+      const first = asked().at(-1)!
+      check("the card is tagged with the plan file, so the window can name it and open it", first.questions[0]?.plan === path.relative(e.project, plan).split(path.sep).join("/") || first.questions[0]?.plan === plan, first.questions[0])
+      check("with a Yes and a No, and nothing to fill in", first.questions[0]?.options.map((option) => option.label).join() === "Yes,No", first.questions[0]?.options)
+      e.runner.questions.reply(first.id, [["No"]])
+      await e.idle(session.id)
+      check("No leaves the conversation planning", (await e.store.require(session.id)).agent === "plan")
+      const staying = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.name === "plan_exit").at(-1)
+      check("and the model is told to keep refining rather than to build", staying?.type === "tool" && String(staying.output).includes("do not start implementing"), staying?.type === "tool" ? staying.output : undefined)
+
+      // Yes switches the conversation and leaves the approval where the user's next message would be.
+      const second = asked().length
+      e.replies.push(calls([{ name: "plan_exit", input: {} }]))
+      // The same turn tries to build the moment it is approved; that turn was promised read-only.
+      e.replies.push(calls([{ name: "write", input: { file_path: "src/eager.ts", content: "export const eager = 1\n" } }]))
+      // And, refused, asks to leave plan mode a second time - which the user has already answered.
+      e.replies.push(calls([{ name: "plan_exit", input: {} }]))
+      void e.runner.prompt({ sessionID: session.id, text: "now is it ready" })
+      check("plan_exit asks again", await e.until(() => asked().length > second))
+      const approving = asked().at(-1)!
+      e.runner.questions.reply(approving.id, [["Yes"]])
+      await e.idle(session.id)
+      check("Yes switches the conversation to build", (await e.store.require(session.id)).agent === "build")
+      /*
+       * A turn is judged by the mode it began in, as MiMo judges its own: the
+       * turn that was approved keeps the promise it was given - and its frozen
+       * prompt and tool list still describe planning - so the building starts
+       * on the next turn, which is what plan_exit tells the model to wait for.
+       */
+      const eager = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.name === "write").at(-1)
+      check(
+        "a write in the approving turn itself is still refused",
+        eager?.type === "tool" && eager.status === "error" && eager.errorCode === "tool.err.planApproved",
+        eager,
+      )
+      check("and nothing of it is on disk", await fs.stat(path.join(e.project, "src", "eager.ts")).then(() => false, () => true))
+      /*
+       * What the refusal says matters as much as that it refuses: a real model
+       * told "plan mode is on" a moment after being told the plan was approved
+       * reads the switch as broken and spends the turn retrying. It is told
+       * instead that this turn is the wrong side of a switch that did happen.
+       */
+      check(
+        "and says the switch happened and takes effect next turn, rather than that planning is still on",
+        eager?.type === "tool" && String(eager.error).includes("takes effect from the next turn") && !String(eager.error).includes("plan mode is on"),
+        eager?.type === "tool" ? eager.error : undefined,
+      )
+      const asking = asked().length
+      const again = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool" && part.name === "plan_exit").at(-1)
+      check(
+        "plan_exit called again in that turn answers itself instead of asking the user twice",
+        asking === second + 1 && again?.type === "tool" && again.status === "completed" && String(again.output).includes("already approved"),
+        { asked: asking - second, output: again?.type === "tool" ? again.output : undefined },
+      )
+      const approval = (await e.store.messages(session.id)).filter((message) => message.role === "user").at(-1)
+      check(
+        "and adds the word that the plan was approved, marked as the app's rather than the user's",
+        approval?.role === "user" && approval.synthetic === true && approval.text.includes("approved") && approval.text.includes(planName),
+        approval,
+      )
+
+      // The turn after the switch is told it may build again, and which plan to carry out - and may write.
+      e.replies.push(calls([{ name: "write", input: { file_path: "src/eager.ts", content: "export const eager = 1\n" } }]))
+      await e.runner.prompt({ sessionID: session.id, text: "now build it" })
+      await e.idle(session.id)
+      check("the next turn may write anywhere", await fs.stat(path.join(e.project, "src", "eager.ts")).then(() => true, () => false))
+      const afterSwitch = await told()
+      check(
+        "that turn is told the mode changed and which plan to carry out",
+        afterSwitch.includes("plan mode to build mode") && afterSwitch.includes(planName) && !afterSwitch.includes("Plan mode is still on"),
+        afterSwitch.slice(0, 300),
+      )
+
+      e.replies.push(say("still building"))
+      await e.runner.prompt({ sessionID: session.id, text: "carry on" })
+      await e.idle(session.id)
+      check("and the turn after that is told nothing about planning at all", !(await told()).includes("plan mode to build mode"), (await told()).slice(0, 200))
     } finally {
       await e.close()
     }

@@ -17,6 +17,7 @@ import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
 import { CronTool } from "./cron"
 import { AutomationUpdateTool } from "./automation"
+import { PlanExitTool } from "./plan-exit"
 
 /**
  * The tool surface offered to the model.
@@ -70,24 +71,29 @@ export const TOOLS: ToolDefinition[] = [
   CronTool,
   // automation: MiMo desktop's scheduled tasks, appended after those for the same reason.
   AutomationUpdateTool,
+  // plan: appended after those for the same reason; offered in both modes, and effective only while planning.
+  PlanExitTool,
 ]
-
-/**
- * Tools that can change the project, or the machine around it.
- *
- * `bash` belongs here: a shell is a way to write a file like any other, and a
- * mode that promises to change nothing cannot hand one out.
- */
-// session chat: making another conversation act, or changing its record, is acting too; Plan keeps contacts.
-const MUTATING = new Set(["write", "edit", "notebook_edit", "bash", "talk_to_session", "create_session", "update_session"])
 
 /** MiMo's explore subagent: everything is denied but these, the shell among them. */
 const EXPLORE = new Set(["read", "glob", "grep", "list", "bash", "webfetch"])
 
-/** The tools an agent is allowed to call. Plan inspects; it does not act. An explore subagent only looks. */
+/**
+ * The tools an agent is allowed to call.
+ *
+ * plan: a planning conversation keeps every one of them, as MiMo's plan agent
+ * does. What holds it to reading is not a shorter list but one rule the write
+ * tools enforce - only the plan file may be written - and the ordinary
+ * permission rules, which put its commands to the user exactly as they would
+ * in build mode. Taking the tools away instead made planning weaker than MiMo
+ * at the same promise: it could not run `git log`, and it could not write the
+ * plan down anywhere the user could keep.
+ *
+ * An explore subagent still only looks.
+ */
 export function toolsFor(agent: string): ToolDefinition[] {
   if (agent === "explore") return TOOLS.filter((tool) => EXPLORE.has(tool.name))
-  return agent === "plan" ? TOOLS.filter((tool) => !MUTATING.has(tool.name)) : TOOLS
+  return TOOLS
 }
 
 /**
@@ -145,6 +151,8 @@ const READS = new Set([
   "cron",
   // automation: its runs are turns of their own, which record their own changes.
   "automation_update",
+  // plan: asking to leave plan mode changes the conversation, never a file.
+  "plan_exit",
 ])
 
 /**

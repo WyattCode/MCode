@@ -5,6 +5,7 @@ import { ToolError } from "./types"
 import { relative, resolvePath } from "./fs-util"
 import { unifiedDiff } from "../diff"
 import { isMemoryPath } from "../history/service"
+import { guardPlanWrite } from "../session/plan"
 
 /** The longest closest-match hint a failed edit carries. */
 const HINT_MAX_CHARS = 2000
@@ -80,6 +81,8 @@ export const WriteTool: ToolDefinition = {
   async execute(input, context) {
     const target = await resolvePath(context, String(input.file_path))
     const display = relative(context.directory, target)
+    // plan: planning writes its plan file and nothing else.
+    guardPlanWrite(context, target, display)
     const content = String(input.content)
 
     return locked(target, async () => {
@@ -130,6 +133,8 @@ export const EditTool: ToolDefinition = {
   async execute(input, context) {
     const target = await resolvePath(context, String(input.file_path))
     const display = relative(context.directory, target)
+    // plan: planning writes its plan file and nothing else.
+    guardPlanWrite(context, target, display)
     const oldString = String(input.old_string)
     const newString = String(input.new_string)
     const replaceAll = input.replace_all === true

@@ -5,6 +5,8 @@ import StepIcon from "./StepIcon.vue"
 import StepCollapse from "./StepCollapse.vue"
 import "./steps.css"
 import { t } from "../../lib/i18n"
+import { openPlan, planHeader, planOf, planOptionLabel, planQuestionText } from "../../lib/plan-question"
+import { useApp } from "../../stores/app"
 
 /**
  * A question call in the transcript, on its own row and never inside a group.
@@ -16,10 +18,17 @@ import { t } from "../../lib/i18n"
  */
 const props = defineProps<{ part: ToolPart }>()
 
+/*
+ * plan: plan_exit carries no questions in its input - it writes its own - so
+ * the card falls back to what the call recorded, which is what lets an
+ * approved plan redraw itself after a reload.
+ */
 const asked = computed(() => {
-  const raw = props.part.input?.questions
+  const raw = props.part.input?.questions ?? props.part.metadata?.questions
   return Array.isArray(raw) ? (raw as QuestionPrompt[]) : []
 })
+
+const app = useApp()
 
 const answers = computed(() => {
   const stored = props.part.metadata?.answers
@@ -36,7 +45,8 @@ const settled = computed(() => props.part.status === "completed" || props.part.s
 const answered = computed(() => props.part.status === "completed" && asked.value.some((_, index) => chosen(index).length > 0))
 
 function answerText(index: number) {
-  const values = chosen(index)
+  const prompt = asked.value[index]
+  const values = chosen(index).map((value) => (prompt ? planOptionLabel(prompt, value) : value))
   return values.length ? values.join("、") : t("question.notSelected")
 }
 
@@ -52,7 +62,18 @@ function toggle() {
 <template>
   <div v-if="settled && answered" class="hs-q-card" data-answer-state="answered" :data-question-card="part.id">
     <div v-for="(entry, index) in asked" :key="index" class="hs-q">
-      <div class="hs-q-text">{{ entry.question }}</div>
+      <div class="hs-q-text">{{ planQuestionText(entry) }}</div>
+      <!-- plan: MiMo's 查看方案 under the question, which opens the plan file. -->
+      <button
+        v-if="planOf(entry)"
+        type="button"
+        class="hs-q-plan"
+        data-question-plan
+        :title="planOf(entry)"
+        @click="openPlan(planOf(entry)!, app.current?.directory)"
+      >
+        {{ t("question.viewPlan") }}
+      </button>
       <div class="hs-q-answer" data-question-answer>{{ answerText(index) }}</div>
     </div>
   </div>
@@ -72,8 +93,18 @@ function toggle() {
     <StepCollapse :show="open" :animate="animate">
       <div class="hs-q-list">
         <div v-for="(entry, index) in asked" :key="index" class="hs-q-item">
-          <div v-if="entry.header" class="hs-q-header">{{ entry.header }}</div>
-          <div class="hs-q-text">{{ entry.question }}</div>
+          <div v-if="entry.header" class="hs-q-header">{{ planHeader(entry) }}</div>
+          <div class="hs-q-text">{{ planQuestionText(entry) }}</div>
+          <button
+            v-if="planOf(entry)"
+            type="button"
+            class="hs-q-plan"
+            data-question-plan
+            :title="planOf(entry)"
+            @click="openPlan(planOf(entry)!, app.current?.directory)"
+          >
+            {{ t("question.viewPlan") }}
+          </button>
         </div>
       </div>
     </StepCollapse>
