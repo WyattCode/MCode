@@ -283,6 +283,8 @@ import { roundFiveChecks } from "./smoke-round5"
 import { roundSixChecks } from "./smoke-round6"
 // Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
 import { roundSevenChecks } from "./smoke-round7"
+// Round 8: the wording rules the eighteen language tables keep.
+import { wordingChecks } from "./smoke-wording"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -7079,6 +7081,7 @@ async function main() {
   await roundFiveChecks(check, section)
   await roundSixChecks(check, section)
   await roundSevenChecks(check, section)
+  wordingChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
@@ -8164,8 +8167,8 @@ async function subagentChecks(root: string) {
   check("the tab lists working subagents first and leaves out calls that started nothing", listed.length === 3 && listed[0]?.status === "running", listed.map((item) => item.status))
   check("a stopped subagent reads as cancelled", listed.some((item) => item.status === "rejected"))
   check("a finished subagent's summary is its answer", listed.find((item) => item.status === "completed")?.summary === "done")
-  check("the seconds column counts from the start", subagentTime({ ...listed[0]!, startedAt: 1000 }, 13_500).count === 12)
-  check("an ended subagent reads minutes ago", subagentTime({ ...listed[1]!, endedAt: 0 }, 5 * 60_000).key === "subagents.minutesAgo")
+  check("the seconds column counts from the start", subagentTime({ ...listed[0]!, startedAt: 1000 }, 13_500).n === 12)
+  check("an ended subagent reads minutes ago, in the app's one relative-time family", subagentTime({ ...listed[1]!, endedAt: 0 }, 5 * 60_000).key === "time.minutesAgo")
   check("the completed group shows ten at first", COMPLETED_CAP === 10)
   check(
     "a subagent's request joins its parent's dock",

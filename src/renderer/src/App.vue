@@ -1694,7 +1694,7 @@ const HEADER_MENU: MenuRow[] = [
       { id: "row.copyMarkdown", label: "menu.copyMarkdown", icon: "M2.2 4h11.6v8H2.2zM4.4 10V6l1.6 1.8L7.6 6v4M10.8 6v4M9.4 8.6l1.4 1.4 1.4-1.4" },
     ],
   },
-  { id: "row.continue", label: "menu.branch", icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z" },
+  { id: "row.continue", label: "menu.fork", icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z" },
   { id: "session.delete", label: "menu.delete", icon: "M3 4.4h10M6.4 4.4V2.8h3.2v1.6M4.4 4.4l.7 8.4h5.8l.7-8.4M6.8 6.8v3.8M9.2 6.8v3.8", divided: true, danger: true },
 ]
 
@@ -1738,7 +1738,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
     if (app.currentID !== sessionID) await app.open(sessionID)
     const last = app.messages[app.messages.length - 1]
     if (last) await app.forkFrom(last.id)
-    else notifyFailure(t("stream.branchNeedsMessage"))
+    else notifyFailure(t("stream.forkNeedsMessage"))
   },
   "row.batch": (sessionID) => {
     selectingProjects.value = undefined
@@ -2643,7 +2643,7 @@ const bindableCommands = computed((): AppCommand[] => {
 
   const all: AppCommand[] = [
     // Session
-    { id: "session.new", group: "key.groupGeneral", title: t("cmd.newSession"), hint: "Ctrl+N", run: newSession },
+    { id: "session.new", group: "key.groupGeneral", title: t("side.newTask"), hint: "Ctrl+N", run: newSession },
     {
       id: "view.model",
       group: "key.groupModels",
@@ -2657,14 +2657,14 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.abort",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.abort"),
       enabled: app.busy,
       run: () => app.abort(),
     },
     {
       id: "session.rename",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.rename"),
       hint: "Ctrl+Alt+R",
       enabled: hasSession,
@@ -2672,28 +2672,28 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.undo",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.undo"),
       enabled: hasSession && !app.busy && app.history.undo > 0,
       run: undoTurn,
     },
     {
       id: "session.redo",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.redo"),
       enabled: hasSession && !app.busy && app.history.redo > 0,
       run: redoTurn,
     },
     {
       id: "session.share",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("share.session"),
       enabled: hasSession && app.messages.length > 0,
       run: shareSession,
     },
     {
       id: "session.exportMarkdown",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.exportMarkdown"),
       enabled: hasSession && app.messages.length > 0,
       run: exportSession,
@@ -2701,7 +2701,7 @@ const bindableCommands = computed((): AppCommand[] => {
     {
       /* The other half of the pair: a conversation file written by this app, opened again. */
       id: "session.importFile",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.importConvoFile"),
       run: () => void importConversationFile((sessionID) => void app.open(sessionID)),
     },
@@ -2732,7 +2732,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.compact",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.compact"),
       // A model call, and pointless on a conversation that is one exchange long.
       enabled: hasSession && !app.busy && !app.compacting && app.messages.length > 1,
@@ -2743,14 +2743,14 @@ const bindableCommands = computed((): AppCommand[] => {
       // it will do rather than what is currently true. Turning it on is full
       // access, so it waits for the settings switch as the composer's chip does.
       id: "permissions.autoaccept",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: autoAcceptAll() ? t("cmd.autoAcceptOff") : t("cmd.autoAcceptOn"),
       enabled: autoAcceptAll() || Boolean(app.config?.allowFullAccess),
       run: () => void toggleAutoAccept(),
     },
     {
       id: "session.archive",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.archive"),
       hint: "Ctrl+Alt+A",
       enabled: hasSession,
@@ -2760,7 +2760,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.delete",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.delete"),
       danger: true,
       enabled: hasSession,
@@ -2826,7 +2826,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "view.review",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.reviewTab"),
       hint: "Ctrl+Shift+G",
       enabled: inConversation.value,
@@ -2834,7 +2834,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "app.copyDirectory",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("menu.copyDirectory"),
       hint: "Ctrl+Shift+C",
       enabled: hasSession,
@@ -2849,7 +2849,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "view.right",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.sidePanel"),
       hint: "Ctrl+Alt+B",
       run: toggleSidePanel,
@@ -2987,7 +2987,7 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "app.searchSessions",
       group: "key.groupGeneral",
       // No chord: MiMo's Ctrl+F is only the find bar's.
-      title: t("cmd.searchSessions"),
+      title: t("conv.search"),
       run: () => openPalette("sessions"),
     },
     {
@@ -2998,14 +2998,14 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.prevUnread",
-      group: "key.groupSession",
-      title: t("cmd.prevUnread"),
+      group: "key.groupConversation",
+      title: t("conv.prevUnread"),
       run: () => void stepUnread(-1),
     },
     {
       id: "session.nextUnread",
-      group: "key.groupSession",
-      title: t("cmd.nextUnread"),
+      group: "key.groupConversation",
+      title: t("conv.nextUnread"),
       run: () => void stepUnread(1),
     },
     {
@@ -3016,20 +3016,20 @@ const bindableCommands = computed((): AppCommand[] => {
        * transcript, which is the same thing when there is nothing to focus.
        */
       id: "view.steps",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.toggleSteps"),
       enabled: inWorkspace,
       run: toggleSteps,
     },
     {
       id: "session.prevMessage",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.prevMessage"),
       run: () => stream.value?.stepMessage(-1),
     },
     {
       id: "session.nextMessage",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("cmd.nextMessage"),
       run: () => stream.value?.stepMessage(1),
     },
@@ -3047,15 +3047,15 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.previous",
-      group: "key.groupSession",
-      title: t("key.prevSession"),
+      group: "key.groupConversation",
+      title: t("conv.prev"),
       hint: "Ctrl+Shift+[",
       run: () => void stepSession(-1),
     },
     {
       id: "session.next",
-      group: "key.groupSession",
-      title: t("key.nextSession"),
+      group: "key.groupConversation",
+      title: t("conv.next"),
       hint: "Ctrl+Shift+]",
       run: () => void stepSession(1),
     },
@@ -3162,7 +3162,7 @@ const bindableCommands = computed((): AppCommand[] => {
      */
     ...Array.from({ length: 9 }, (_, index) => ({
       id: `tab.goto.${index + 1}`,
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.gotoTab", { n: index + 1 }),
       hint: `Ctrl+${index + 1}`,
       enabled: () => app.tabs.length > index,
@@ -3173,7 +3173,7 @@ const bindableCommands = computed((): AppCommand[] => {
     })),
     {
       id: "session.side",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("side.chat"),
       hint: "Ctrl+Alt+S",
       enabled: inConversation.value,
@@ -3188,7 +3188,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.pin",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.togglePin"),
       hint: "Ctrl+Alt+P",
       enabled: hasSession,
@@ -3198,7 +3198,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.copyID",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.copyID"),
       hint: "Ctrl+Alt+C",
       enabled: hasSession,
@@ -3210,7 +3210,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.copyLink",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.copyLink"),
       hint: "Ctrl+Alt+L",
       enabled: hasSession,
@@ -3218,7 +3218,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.nextRecent",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.nextRecent"),
       hint: "Ctrl+Tab",
       run: async () => {
@@ -3228,7 +3228,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "session.prevRecent",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.prevRecent"),
       hint: "Ctrl+Shift+Tab",
       run: async () => {
@@ -3289,12 +3289,12 @@ const bindableCommands = computed((): AppCommand[] => {
     {
       // MiMo's branchConvo: the whole conversation at once, titled 「… (分支)」; the store toasts either way.
       id: "session.fork",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.label.fork-chat"),
       enabled: hasSession,
       run: () => {
         const last = app.messages[app.messages.length - 1]
-        if (!last) notifyFailure(t("stream.branchNeedsMessage"))
+        if (!last) notifyFailure(t("stream.forkNeedsMessage"))
         else void app.forkFrom(last.id, { titleSuffix: true })
       },
     },
@@ -3308,7 +3308,7 @@ const bindableCommands = computed((): AppCommand[] => {
     // MiMo's unbound rows: copy as Markdown, and the maximised side panel (only while the panel is open).
     {
       id: "session.copyMarkdown",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("menu.copyMarkdown"),
       enabled: hasSession && app.messages.length > 0,
       run: () => {
@@ -3317,7 +3317,7 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     {
       id: "panel.maximize",
-      group: "key.groupSession",
+      group: "key.groupConversation",
       title: t("key.toggleMaxSide"),
       enabled: rp.open,
       run: () => rp.toggleFullscreen(),

@@ -137,17 +137,21 @@ export function targetOf(part: ToolPart): string {
   return text(part.title) || actorTarget(part.input)
 }
 
-/** MiMo's time column: seconds since it started while it works, else how long ago it ended. */
-export function subagentTime(item: SubagentItem, now: number): { key: string; count?: number } {
+/**
+ * MiMo's time column: seconds since it started while it works, else how long
+ * ago it ended - in the app's one relative-time family, so this column and the
+ * side column never spell the same moment two ways.
+ */
+export function subagentTime(item: SubagentItem, now: number): { key: string; n?: number } {
   if (item.status === "running") {
     if (item.startedAt === undefined) return { key: "subagents.status.running" }
-    return { key: "subagents.seconds", count: Math.max(0, Math.floor((now - item.startedAt) / 1000)) }
+    return { key: "subagents.seconds", n: Math.max(0, Math.floor((now - item.startedAt) / 1000)) }
   }
   if (item.endedAt === undefined) return { key: `subagents.status.${item.status}` }
   const seconds = Math.max(0, Math.floor((now - item.endedAt) / 1000))
-  if (seconds < 60) return { key: "subagents.justNow" }
-  if (seconds < 3600) return { key: "subagents.minutesAgo", count: Math.floor(seconds / 60) }
-  return { key: "subagents.hoursAgo", count: Math.floor(seconds / 3600) }
+  if (seconds < 60) return { key: "time.justNow" }
+  if (seconds < 3600) return { key: "time.minutesAgo", n: Math.floor(seconds / 60) }
+  return { key: "time.hoursAgo", n: Math.floor(seconds / 3600) }
 }
 
 /** The completed group shows ten until 查看全部 is pressed. */
