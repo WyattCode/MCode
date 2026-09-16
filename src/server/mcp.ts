@@ -21,7 +21,7 @@ import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@sh
 import { redactString } from "@shared/mcp-redact"
 import { ToolError, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
-import { windowsLaunch } from "./mcp-launch"
+import { terminate, windowsLaunch } from "./mcp-launch"
 import { probeTools, type ProbeResult } from "./mcp-probe"
 
 /**
@@ -400,7 +400,7 @@ class Connection {
           this.error = undefined
         }
       }
-      this.stop()
+      void this.stop()
     }
   }
 
@@ -457,19 +457,21 @@ class Connection {
   }
 
   disable(): void {
-    this.stop()
+    void this.stop()
     this.status = "disabled"
     this.error = undefined
     this.tools = []
     this.capabilities = {}
   }
 
-  stop(): void {
+  /** Settles once a local server has exited; see `terminate` for how it is asked to. */
+  stop(): Promise<void> {
     this.closed = true
     this.cut()
-    this.child?.kill()
+    const child = this.child
     this.child = undefined
     this.buffer = ""
+    return child ? terminate(child) : Promise.resolve()
   }
 
   /** Settles everything waiting on this connection and closes its streams, without deciding its status. */
@@ -1041,7 +1043,7 @@ export class McpServers {
     const wanted = new Set(entries.map((entry) => entry.name))
     for (const [name, connection] of [...group.connections]) {
       if (wanted.has(name)) continue
-      connection.stop()
+      void connection.stop()
       group.connections.delete(name)
       group.made.delete(name)
     }
@@ -1051,7 +1053,7 @@ export class McpServers {
       const enabled = entry.config?.enabled !== false
       let connection = group.connections.get(entry.name)
       if (connection && group.made.get(entry.name) !== madeFrom(entry)) {
-        connection.stop()
+        void connection.stop()
         connection = undefined
       }
       connection ??= this.connection(group, entry)
@@ -1108,7 +1110,7 @@ export class McpServers {
     for (const [key, group] of [...this.groups]) {
       if (key === view || group.lastUsed > cutoff) continue
       if ([...group.connections.values()].some((connection) => connection.busy())) continue
-      for (const connection of group.connections.values()) connection.stop()
+      for (const connection of group.connections.values()) void connection.stop()
       this.groups.delete(key)
     }
   }
@@ -1170,7 +1172,7 @@ export class McpServers {
       {},
     )
     await attempt.connect()
-    attempt.stop()
+    void attempt.stop()
     if (attempt.status !== "connected") {
       if (attempt.status !== "needs_auth" || !address) {
         throw new Error(attempt.error ?? "the server did not ask for a sign-in")
@@ -1191,7 +1193,7 @@ export class McpServers {
       [...this.groups.values()].map(async (group) => {
         const connection = group.connections.get(name)
         if (!connection || connection.status === "connected" || connection.status === "disabled") return
-        connection.stop()
+        await connection.stop()
         this.publish()
         await connection.connect()
         this.publish()
@@ -1314,8 +1316,10 @@ export class McpServers {
     return out
   }
 
-  close(): void {
-    for (const group of this.groups.values()) for (const connection of group.connections.values()) connection.stop()
+  /** Every server stopped; settles once the local ones have exited. */
+  async close(): Promise<void> {
+    const stopping = [...this.groups.values()].flatMap((group) => [...group.connections.values()].map((connection) => connection.stop()))
     this.groups.clear()
+    await Promise.all(stopping)
   }
 }

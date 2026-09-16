@@ -355,7 +355,7 @@ async function nextConversation(check: Check, section: Section): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 300))
     check("the next conversation keeps a registered server as it is", status("added") === "connected")
   } finally {
-    mcp.close()
+    await mcp.close()
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
   }
 
@@ -511,7 +511,7 @@ async function toolsProbe(check: Check, section: Section): Promise<void> {
     check("probing connects nothing for conversations", mcp.list().length === 0 && mcp.tools(dir).length === 0)
   } finally {
     delete process.env.MCODE_R9_PROBE_KEY
-    mcp.close()
+    await mcp.close()
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
@@ -576,12 +576,52 @@ async function clientRegistration(check: Check, section: Section): Promise<void>
     check("one that can register waits for a sign-in, with nothing to explain", open?.status === "needs_auth" && !open.error, open)
     check("neither was tried a second way", !paths.some((entry) => entry.startsWith("GET /closed/mcp")), paths)
   } finally {
-    mcp.close()
+    await mcp.close()
     server.closeAllConnections()
     await new Promise<void>((resolve) => server.close(() => resolve()))
     await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
   }
   check("the page shows both as waiting for authorization, with 授权", mcpStatusLabel("needs_client_registration") === "needs_auth" && mcpNeedsSignIn("needs_client_registration") && MCP_STATUS_TONE.needs_client_registration === "warn")
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** M-11: a local server is stopped gently first. */
+async function gracefulStop(check: Check, section: Section): Promise<void> {
+  section("Round 9: stopping a local server (M-11)")
+  const dir = await temporary("mcode-r9-stop-")
+  const one = async (name: string, args: string[]) => {
+    const bus = new Bus()
+    const config = stubConfig(bus, { mcpServers: { [name]: { type: "local", command: ["node", fixture(), ...args] } }, directory: dir })
+    const mcp = new McpServers(bus, config as never, undefined, path.join(dir, "home"))
+    await mcp.start()
+    const connected = mcp.list()[0]?.status === "connected"
+    const started = Date.now()
+    await mcp.close()
+    return { connected, ms: Date.now() - started }
+  }
+  try {
+    const gentle = await one("gentle", ["--linger", "--end-file", path.join(dir, "gentle-ended"), "--pid-file", path.join(dir, "gentle-pid")])
+    const gentlePid = Number(await fs.readFile(path.join(dir, "gentle-pid"), "utf8"))
+    check(
+      "its input is closed first, and a server that then exits by itself is left to",
+      gentle.connected && (await fs.readFile(path.join(dir, "gentle-ended"), "utf8").catch(() => "")) === "input closed" && gentle.ms >= 250 && gentle.ms < 1500 && !alive(gentlePid),
+      gentle,
+    )
+    const stubborn = await one("stubborn", ["--stubborn", "--pid-file", path.join(dir, "stubborn-pid")])
+    const stubbornPid = Number(await fs.readFile(path.join(dir, "stubborn-pid"), "utf8"))
+    const gone = await until(() => !alive(stubbornPid), 3000)
+    check("one that ignores it is given two seconds, then terminated", stubborn.connected && stubborn.ms >= 1900 && stubborn.ms < 6000 && gone, stubborn)
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
 }
 
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
@@ -596,6 +636,7 @@ export async function roundNineMcpChecks(check: Check, section: Section): Promis
     ["M-3", noApprovalByDefault],
     ["M-8", toolsProbe],
     ["M-9", clientRegistration],
+    ["M-11", gracefulStop],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))

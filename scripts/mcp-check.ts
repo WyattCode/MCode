@@ -119,7 +119,7 @@ await mcp.toggle("probe")
 await mcp.commitIfDirty()
 check("toggling back on reconnects it for the conversation after", probeStatus() === "connected", probeStatus())
 
-mcp.close()
+await mcp.close()
 
 if (problems.length) {
   console.error(`\nFAILED: ${problems.length} problem(s)`)

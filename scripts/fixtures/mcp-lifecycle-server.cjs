@@ -8,6 +8,7 @@
  *   --stubborn       ignores its stdin closing and SIGTERM, so only a hard kill ends it
  *   --linger         exits by itself 300ms after its stdin closes
  *   --pid-file PATH  writes its process id there on start
+ *   --end-file PATH  writes there when its stdin closes
  *   --tag TEXT       answers `tag` with TEXT, so a check can tell two starts apart
  *
  * Every tool answers with text: `where` the working directory, `argv` the
@@ -84,6 +85,8 @@ process.stdin.on("data", (chunk) => {
 })
 
 process.stdin.on("end", () => {
+  const endFile = option("--end-file")
+  if (endFile) fs.writeFileSync(endFile, "input closed")
   if (flag("--stubborn")) return
   if (flag("--linger")) setTimeout(() => process.exit(0), 300)
   else process.exit(0)

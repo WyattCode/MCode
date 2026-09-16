@@ -239,7 +239,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       // process started, and neither has a window left to stop it.
       stopBashCommands()
       await shells.closeAll()
-      mcp.close()
+      await mcp.close()
       await scheduler.stop()
       await automations.stop()
       stopHistory(history)
