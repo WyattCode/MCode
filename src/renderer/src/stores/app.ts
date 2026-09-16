@@ -35,6 +35,10 @@ export const useApp = defineStore("app", () => {
   /** Down long enough to be worth saying so, rather than mid-restart. */
   const offline = ref(false)
   let offlineTimer: ReturnType<typeof setTimeout> | undefined
+  /* The notice that says the connection is coming back, and the beat it waits first. */
+  let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  const RECONNECT_TOAST = "app-reconnect"
+  const RECONNECT_DELAY = 400
   const platform = ref("")
   const version = ref("")
   /** Loopback port the agent server bound to; shown in the server popover. */
@@ -781,6 +785,25 @@ export const useApp = defineStore("app", () => {
       }
       if (up) offline.value = false
       else offlineTimer = setTimeout(() => (offline.value = true), 2500)
+      /*
+       * And said out loud in the meantime. Frames raised while the socket is
+       * down are queued rather than refused, so without this a message sent in
+       * the gap looked like nothing happened at all - until either it suddenly
+       * went, or the whole screen became the boot overlay. MiMo says the same
+       * thing here: the connection is coming back, and what you sent will go
+       * the moment it is. Held a beat so a restart that is over in a blink
+       * shows nothing.
+       */
+      if (reconnectTimer !== undefined) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = undefined
+      }
+      if (up) notice.dismiss(RECONNECT_TOAST)
+      else if (booted) {
+        reconnectTimer = setTimeout(() => {
+          notice.warning(t("error.connectionRecovering"), { id: RECONNECT_TOAST, duration: 0, closable: false })
+        }, RECONNECT_DELAY)
+      }
     })
     /*
      * A chosen server is read from the browser's own storage rather than from
@@ -1370,13 +1393,35 @@ export const useApp = defineStore("app", () => {
     }
   }
 
+  /*
+   * 停止, with MiMo's persistence behind it: three attempts, 400 ms apart.
+   *
+   * The backend's own stop cannot fail - it is a synchronous abort on a runner
+   * it already holds - so the only exposed part is getting the request there.
+   * A socket dropping at the moment of the press used to leave the turn running
+   * with nothing said anywhere, because every call site let the promise go.
+   */
+  const ABORT_TRIES = 3
+  const ABORT_GAP = 400
+
   async function abort(to?: string) {
     const target = to ?? currentID.value
     if (!target) return
     // Before the request: the idle that follows a stop may arrive ahead of its answer.
     turnStarted.delete(target)
-    await api().request({ type: "session.abort", sessionID: target })
-    running.value.delete(target)
+    let failure: unknown
+    for (let attempt = 1; attempt <= ABORT_TRIES; attempt++) {
+      try {
+        await api().request({ type: "session.abort", sessionID: target })
+        running.value.delete(target)
+        return
+      } catch (err) {
+        failure = err
+        if (attempt < ABORT_TRIES) await new Promise((resolve) => setTimeout(resolve, ABORT_GAP))
+      }
+    }
+    // The turn is still running, and stays marked so; what the reader must not have is silence.
+    notifyFailure(t("error.abortFailed"), failure instanceof Error ? failure.message : String(failure))
   }
 
   /**

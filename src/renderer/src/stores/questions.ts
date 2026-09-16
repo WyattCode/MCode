@@ -4,6 +4,8 @@ import type { QuestionAnswer, QuestionRequest } from "@shared/protocol"
 import { useApp } from "./app"
 import { composerAnswers, confirmQueue, freshGuide, guideShown, type GuideState } from "../lib/confirm-queue"
 import { sessionAccess } from "@shared/access"
+import { t } from "../lib/i18n"
+import { notifyFailure } from "../lib/toast"
 
 /* Waving the guide off holds for every conversation, and across restarts, as in MiMo. */
 const GUIDE_DISMISSED_KEY = "mcode.perm-guide-dismissed-v1"
@@ -63,6 +65,10 @@ export const useQuestions = defineStore("questions", () => {
     sending.value = new Set(sending.value).add(requestID)
     try {
       await app.client?.request({ type: "question.reply", requestID, answers })
+    } catch (failure) {
+      // The question stays up - the turn is still parked on it - and the reader
+      // is told to try again, as MiMo's QUESTION_REPLY_FAILED does.
+      notifyFailure(t("error.questionReplyFailed"), failure instanceof Error ? failure.message : String(failure))
     } finally {
       const next = new Set(sending.value)
       next.delete(requestID)
@@ -200,7 +206,12 @@ export const useQuestions = defineStore("questions", () => {
   function allowOnce(requestID: string): void {
     if (autoAnswered.has(requestID)) return
     autoAnswered.add(requestID)
-    void app.client?.request({ type: "permission.respond", requestID, response: "once" }).catch(() => autoAnswered.delete(requestID))
+    void app.client?.request({ type: "permission.respond", requestID, response: "once" }).catch((failure: unknown) => {
+      // Rolled back so the next pass asks again, and said out loud: the card is
+      // still waiting and nothing on screen would otherwise have changed.
+      autoAnswered.delete(requestID)
+      notifyFailure(t("error.autoPermissionFailed"), failure instanceof Error ? failure.message : String(failure))
+    })
   }
 
   function allowTask(): void {

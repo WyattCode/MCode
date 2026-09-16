@@ -19,6 +19,7 @@ import { Bus } from "../src/server/bus"
 import { isContextOverflow, isOverflowError } from "../src/server/session/overflow"
 import { retryDecision, retryKind } from "../src/server/session/retry"
 import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
+import { interruptedEnd } from "../src/renderer/src/components/parts/turn-end"
 import type { Check } from "./smoke-round5"
 
 const exists = (target: string) =>
@@ -301,6 +302,67 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     const tables = (await readOrNothing(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"))) ?? ""
     const defined = (tables.match(/"error\.network":/g) ?? []).length
     check("and that key is defined in all eighteen tables", defined === 18, defined)
+  }
+
+  /**
+   * The source of one function, from its opening line to the next landmark.
+   *
+   * These four failures are all "the promise was let go": what is checked is
+   * that the call site now has somewhere for a rejection to land, which is a
+   * property of the file rather than of a value a test can hold.
+   */
+  const between = (text: string, from: string, to: string): string => {
+    const start = text.indexOf(from)
+    const end = start < 0 ? -1 : text.indexOf(to, start + from.length)
+    return start < 0 || end < 0 ? "" : text.slice(start, end)
+  }
+  const sourceOf = (file: string) => readOrNothing(path.join(process.cwd(), file))
+  const tables = (await sourceOf("src/renderer/src/lib/i18n.ts")) ?? ""
+  const definedIn = (key: string) => tables.split(`"${key}":`).length - 1
+
+  // ----------------------------------------------------------------- F16, F19
+  section("Round 6 (F16, F19): a stop that did not land, and a connection coming back")
+  {
+    const app = (await sourceOf("src/renderer/src/stores/app.ts")) ?? ""
+    const abort = between(app, "async function abort(", "async function resume(")
+    check("a stop is tried again before it is given up on", /ABORT_TRIES = 3/.test(app) && /ABORT_GAP = 400/.test(app))
+    check("the loop is the one the stop runs", abort.includes("attempt <= ABORT_TRIES"), abort.length)
+    check("a stop that never reached the backend is reported rather than dropped", abort.includes('t("error.abortFailed")'))
+    check("its wording exists in all eighteen tables", definedIn("error.abortFailed") === 18, definedIn("error.abortFailed"))
+
+    check("a socket that dropped says the connection is coming back", app.includes('notice.warning(t("error.connectionRecovering")'))
+    check("the notice stays until it is", app.includes("duration: 0"))
+    check("and goes when the socket returns", app.includes("notice.dismiss(RECONNECT_TOAST)"))
+    check("that wording exists in all eighteen tables too", definedIn("error.connectionRecovering") === 18, definedIn("error.connectionRecovering"))
+  }
+
+  // ----------------------------------------------------------------------- F17
+  section("Round 6 (F17): an answer and a blanket approval that failed to send")
+  {
+    const questions = (await sourceOf("src/renderer/src/stores/questions.ts")) ?? ""
+    const reply = between(questions, "async function reply(", "function dismiss(")
+    check("an answer that could not be submitted is reported", reply.includes('t("error.questionReplyFailed")'), reply.length)
+    check("the form is still freed either way", reply.includes("} finally {"))
+    const allow = between(questions, "function allowOnce(", "function allowTask(")
+    check("a blanket approval that did not land is reported", allow.includes('t("error.autoPermissionFailed")'), allow.length)
+    check("and is rolled back so the next pass asks again", allow.includes("autoAnswered.delete(requestID)"))
+    check("both wordings exist in all eighteen tables", definedIn("error.questionReplyFailed") === 18 && definedIn("error.autoPermissionFailed") === 18)
+  }
+
+  // ----------------------------------------------------------------------- F18
+  section("Round 6 (F18): a turn killed mid-stream says so")
+  {
+    const reply = { last: {} }
+    check("a reply whose finish was never written reads as interrupted", interruptedEnd(reply, false))
+    check("but not while the turn is still being worked on", !interruptedEnd(reply, true))
+    check("a turn that ended normally is not", !interruptedEnd({ ...reply, finish: "stop" }, false))
+    check("a stop keeps its own line", !interruptedEnd({ ...reply, finish: "aborted" }, false))
+    check("a failure keeps its card", !interruptedEnd({ ...reply, error: "the provider refused" }, false))
+    check("a question that never got a reply at all is not drawn as one", !interruptedEnd({}, false))
+
+    const stream = (await sourceOf("src/renderer/src/components/MessageStream.vue")) ?? ""
+    check("the conversation draws the line for it", stream.includes("interrupted(turn, at)") && stream.includes("finishedNote(turn, at)"))
+    check("its wording exists in all eighteen tables", definedIn("stream.interrupted") === 18, definedIn("stream.interrupted"))
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
