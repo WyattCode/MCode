@@ -229,6 +229,13 @@ const savedFiles = new Set<string>()
 let tray: Tray | undefined
 let trayIcon = DEFAULT_APP_ICON
 
+/** MCode's own monochrome mark for the macOS menu bar, drawn by scripts/tray-icon.mjs. */
+function trayTemplateFile(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, "tray", "trayTemplate.png")
+    : path.join(here, "../../resources/tray/trayTemplate.png")
+}
+
 /** The file an id names, or nothing if it names none. */
 function appIconFile(id: string): string | undefined {
   if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
@@ -261,11 +268,26 @@ function refreshTray(enabled: boolean): void {
     tray = undefined
     return
   }
-  const file = appIconFile(trayIcon)
-  if (!file) return
-  // 16 logical pixels is what Windows and Linux draw; macOS takes the same and
-  // scales it. The source is 512, so this is a reduction rather than a stretch.
-  const image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
+  /*
+   * MiMo picks its tray artwork per platform, and so does this: macOS's menu
+   * bar wants a template image - one flat colour over transparency that the
+   * system paints light or dark itself - so a colourway would be ignored there
+   * and look wrong while it was. Windows and Linux keep the coloured icon the
+   * reader chose. 16 logical pixels is what all three draw; the @2x file beside
+   * the template is what a Retina bar actually shows.
+   */
+  let image: Electron.NativeImage
+  if (process.platform === "darwin") {
+    image = nativeImage.createFromPath(trayTemplateFile())
+    if (image.isEmpty()) return
+    image = image.resize({ width: 16, height: 16 })
+    image.setTemplateImage(true)
+  } else {
+    const file = appIconFile(trayIcon)
+    if (!file) return
+    // The source is 512, so this is a reduction rather than a stretch.
+    image = nativeImage.createFromPath(file).resize({ width: 16, height: 16 })
+  }
   /* MiMo's tray opens the window on a click and on a double-click alike; it never hides it. */
   const open = () => activate(raise)
   if (!tray) {
