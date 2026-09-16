@@ -9600,8 +9600,13 @@ async function historyMemoryCronChecks(root: string, project: string) {
   await live.start({ interval: false })
   bindScheduler(live)
   const asks: string[] = []
+  // round 8 (X10): the model's own scheduling call is asked about first; a person says yes to it here.
+  const scheduleAsks: string[] = []
   runnerBus.subscribe((event) => {
-    if (event.type === "permission.requested") asks.push(event.request.sessionID)
+    if (event.type === "permission.requested" && event.request.titleCode === "perm.schedule") {
+      scheduleAsks.push(event.request.sessionID)
+      queueMicrotask(() => permissions.respond(event.request.id, "once"))
+    } else if (event.type === "permission.requested") asks.push(event.request.sessionID)
     if (event.type === "session.idle") live.turnEnded(event.sessionID)
   })
   const until = async (test: () => boolean | Promise<boolean>, ms = 15_000) => {
@@ -9630,7 +9635,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
   )
   const child = (await runnerStore.list()).find((session) => session.parentID === parent.id && session.subagent?.type === "general")
   if (child) {
-    const scheduledByChild = await CronTool.execute({ operation: { action: "schedule", cron: "0 0 1 1 *", prompt: "child job" } }, context(child.id))
+    const scheduledByChild = await CronTool.execute({ operation: { action: "schedule", cron: "0 0 1 1 *", prompt: "child job" } }, context(child.id, { permissions: { ask: async () => undefined } }))
     check("a general subagent's job belongs to the conversation it works for", (await live.list({ ownerID: parent.id })).some((task) => task.id === scheduledByChild.metadata?.id))
     await live.remove(String(scheduledByChild.metadata?.id))
   }
@@ -9644,6 +9649,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
   await quiet()
   const jobs = await live.list({ ownerID: parent.id })
   check("the model's schedule call adds a job for this conversation", jobs.length === 1 && jobs[0]?.prompt === "CRON-WRITES", jobs)
+  check("...once the person has been asked about it", scheduleAsks.includes(parent.id), scheduleAsks)
   runnerClock = (live.dueAt(jobs[0]?.id ?? "") ?? Date.UTC(2026, 3, 1, 8, 5)) + 1000
   await live.tick()
   const firedTurn = await until(async () => (await runnerStore.messages(parent.id)).some((message) => message.role === "user" && message.text.startsWith(`[Scheduled cron ${jobs[0]?.id}`)))

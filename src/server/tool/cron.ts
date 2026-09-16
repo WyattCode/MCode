@@ -2,6 +2,7 @@ import { cronScheduler, type CronScheduler } from "../cron/scheduler"
 import { nextCronRun, parseCron, LOOP_MAX_SECONDS, LOOP_MIN_SECONDS } from "../cron/expr"
 import type { ToolContext, ToolDefinition } from "./types"
 import { ToolError } from "./types"
+import { askToSchedule } from "./schedule-ask"
 
 /**
  * cron: MiMo's scheduled prompts - schedule a prompt on a cron expression,
@@ -122,6 +123,8 @@ export const CronTool: ToolDefinition = {
       if (!parseCron(cron)) throw new ToolError(`"${cron}" is not a five-field cron expression (minute hour day-of-month month day-of-week).`)
       const oneShot = operation.one_shot === true
       const durable = operation.durable === true
+      // round 8 (X10): a prompt that runs later, unattended, is asked about like a command.
+      await askToSchedule(context, `cron ${cron}${oneShot ? " once" : ""}${durable ? " durable" : ""}: ${prompt}`)
       const task = await scheduler.add({ ownerID: owner.id, directory: owner.directory, cron, prompt, recurring: !oneShot, durable })
       const next = nextCronRun(cron, Date.now())
       let warning = ""
@@ -138,6 +141,8 @@ export const CronTool: ToolDefinition = {
       const prompt = text(operation.prompt)
       const delay = operation.delay_seconds
       if (!prompt || typeof delay !== "number" || !Number.isInteger(delay) || delay < 1) throw new ToolError("loop needs prompt and a whole number of delay_seconds.")
+      // Named by its prompt alone, so an "always" carries the loop's later runs, which change only the delay.
+      await askToSchedule(context, `loop: ${prompt}`)
       const armed = scheduler.armLoop({ ownerID: owner.id, directory: owner.directory, prompt, delaySeconds: delay })
       if (!armed) return { title: "Loop ended", output: "This loop has been running for a week, so it has ended.", metadata: { aged_out: true } }
       return {
@@ -170,6 +175,7 @@ export const CronTool: ToolDefinition = {
     }
     const prompt = text(operation.prompt)
     if (!prompt) throw new ToolError("rename needs a prompt.")
+    await askToSchedule(context, `cron ${id} rename: ${prompt}`)
     const renamed = await scheduler.rename(id, prompt, scope)
     return { title: renamed ? `Renamed ${id}` : `${id} not found`, output: renamed ? `The prompt of ${id} is now: ${prompt}` : `There is no job ${id} to rename.`, metadata: { id } }
   },
