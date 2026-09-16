@@ -2889,7 +2889,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           <h2>{{ t("set.nav.usage") }}</h2>
           <p class="page-sub">{{ t("set.usageSub") }}</p>
           <!-- Every figure below covers the same days, counted on this machine's calendar. -->
-          <p class="line-sub" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
+          <p class="page-sub usage-window" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
           <div class="card">
             <div class="totals">
               <div class="total">
@@ -4597,7 +4597,8 @@ h3 {
  * MiMo's custom instructions: a heading, a line with an inline 了解更多 that
  * opens three lines of help, a 200px box on the page itself, and Save below.
  */
-.page-sub.ci-sub {
+.page-sub.ci-sub,
+.page-sub.usage-window {
   margin-top: 0;
 }
 
