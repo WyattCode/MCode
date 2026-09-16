@@ -6,6 +6,7 @@ import { installModal } from "./lib/modal"
 import { installErrorPage } from "./lib/error-page"
 import { watchScrolling } from "./lib/scrollbars"
 import { installSelectContent } from "./lib/select-content"
+import { installFocusRing } from "./lib/focus-ring"
 import "./styles/base.css"
 
 const app = createApp(App)
@@ -20,4 +21,5 @@ installModal(app)
 installErrorPage(app)
 watchScrolling()
 installSelectContent()
+installFocusRing()
 app.mount("#app")

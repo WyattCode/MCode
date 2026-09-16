@@ -4808,6 +4808,16 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 0.5px var(--border-strong);
 }
 
+/* The keyboard's ring (base.css) goes round the card rather than the bare writing area inside it. */
+:root[data-focus-key] .box:has(.input:focus) {
+  outline: 2px solid var(--interactive);
+  outline-offset: 1px;
+}
+
+:root[data-focus-key] .input:focus {
+  outline: none;
+}
+
 .box.dropping {
   box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }

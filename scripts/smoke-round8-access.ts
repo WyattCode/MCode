@@ -63,4 +63,16 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     const stream = read("components/MessageStream.vue")
     check("a reply's copy says 复制失败 when the clipboard refuses", /async function copyToClipboard[\s\S]{0,200}catch \{\s*notifyFailure\(t\("code\.copyFailed"\)\)/.test(stream))
   }
+
+  section("round 8 access: a keyboard focus ring (A1)")
+  {
+    const base = read("styles/base.css")
+    const ring = /:where\(([^)]*\([^)]*\))*[^)]*\):focus-visible \{\s*outline: 2px solid var\(--interactive\)/.exec(base)
+    check("controls reached by keyboard draw the accent ring", Boolean(ring))
+    check("the ring covers buttons, tabs, switches and anything tabbable", Boolean(ring && ["button", '[role="tab"]', '[role="switch"]', "[tabindex]:not"].every((part) => ring[0].includes(part))))
+    check("a text field is ringed only after a Tab press", /:root\[data-focus-key\] :is\([^{]*textarea[^{]*\):focus \{\s*outline: 2px/.test(base))
+    const tracker = read("lib/focus-ring.ts")
+    check("Tab sets the mark and a pointer press clears it", /"Tab"\) root\.dataset\.focusKey = ""/.test(tracker) && /"pointerdown", \(\) => delete root\.dataset\.focusKey/.test(tracker))
+    check("the mark is installed at start", /installFocusRing\(\)/.test(read("main.ts")))
+  }
 }

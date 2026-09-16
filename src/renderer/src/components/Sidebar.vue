@@ -2150,6 +2150,12 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   line-height: normal;
 }
 
+/* MiMo's section toggle keyboard ring: 1px in its muted text colour, 2px out. */
+button.section-head:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--text-strong) 60%, transparent);
+  outline-offset: 2px;
+}
+
 .chev {
   transition: transform var(--motion-fast, 0.12s);
 }
