@@ -187,17 +187,24 @@ function dismissed(): ToolError {
  * The last three lines are the load-bearing part: they are what stops the model
  * writing its own "Other" option, because the client adds one.
  */
-const DESCRIPTION =
-  "Use this tool when you need to ask the user questions during execution. This allows you to:\r\n" +
-  "1. Gather user preferences or requirements\r\n" +
-  "2. Clarify ambiguous instructions\r\n" +
-  "3. Get decisions on implementation choices as you work\r\n" +
-  "4. Offer choices to the user about what direction to take.\r\n" +
-  "\r\n" +
-  "Usage notes:\r\n" +
-  "- When `custom` is enabled (default), a \"Type your own answer\" option is added automatically; don't include \"Other\" or catch-all options\r\n" +
-  "- Answers are returned as arrays of labels; set `multiple: true` to allow selecting more than one\r\n" +
-  '- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label\r\n'
+const DESCRIPTION = [
+  "Put a decision to the user as a card of options, instead of writing the options out in your reply and waiting.",
+  "The turn stops here until they answer, so ask only about things you genuinely cannot settle yourself.",
+  "",
+  "When to use it",
+  "- The choice is the user's to make: which of two designs to build, which file is the right one, whether to change something you were not asked to change.",
+  "- The task is ambiguous in a way that changes what you would do, and reading the project would not resolve it.",
+  "- You are about to do something with consequences the user may not want.",
+  "Do not use it for anything you can find out by reading the project, and do not ask the user to confirm work they already asked for.",
+  "",
+  "Writing the options",
+  "- Keep each label to a few words; put the detail in its description, not in the label.",
+  '- Do not add an "Other", "Something else" or "None of these" option. The window already adds a "type your own answer" row unless custom is false, so writing one yourself gives the user the same choice twice.',
+  '- If one option is the one you would pick, make it the first and end its label with "(Recommended)".',
+  "- The multiple flag, not the wording of the question, is what lets the user pick more than one. A question that reads as multi-choice but leaves multiple unset still accepts exactly one answer.",
+  "",
+  "You may ask several questions in one call; the user is walked through them one at a time. The answer comes back as the labels they chose, or as their own text when they typed it. A question the user skips comes back empty - take that as no preference and carry on rather than asking again.",
+].join("\n")
 
 /** What the model may hand over, checked before anyone is shown it. */
 function readQuestions(raw: unknown): QuestionPrompt[] {

@@ -57,7 +57,7 @@ import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/r
 import { rovingStep } from "../src/renderer/src/lib/composer-menu"
 import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFile } from "../src/main/display-server"
 import { PowerHold } from "../src/main/power"
-import { RecoverySchedule, RendererHealth, recoveryVisibility } from "../src/main/renderer-health"
+import { RecoverySchedule, RendererHealth, SHOW_FALLBACK_MS, STARTUP_TIMEOUT, recoveryVisibility } from "../src/main/renderer-health"
 import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boot-prefs"
 import { createUpdater, parseFeed, type FeedEntry } from "../src/main/updater"
 import { deliveryOf, waitForDelivery } from "../src/main/install-notice"
@@ -213,7 +213,6 @@ import {
 } from "../src/renderer/src/lib/terminal"
 import { typedInput } from "../src/shared/terminal-input"
 import { Shells } from "../src/server/shell"
-import { fadeOpacity, pruneStamps, revealStep } from "../src/renderer/src/lib/stream-reveal"
 import { audioBubbleWidth, audioClock } from "../src/renderer/src/lib/media-card"
 import { originTransform } from "../src/renderer/src/lib/image-preview"
 import { dismiss, notice, notify, notifyFailure, toastID, toastTitle, toasts, zoomNotice } from "../src/renderer/src/lib/toast"
@@ -282,6 +281,8 @@ import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage }
 import { roundFiveChecks } from "./smoke-round5"
 // round 6: the eight differences the user decided on 2026-09-16 to close.
 import { roundSixChecks } from "./smoke-round6"
+// Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
+import { roundSevenChecks } from "./smoke-round7"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -6520,22 +6521,8 @@ async function main() {
   )
   check("a path splits into its folder and its name", splitPath("a/b/c.ts").dir === "a/b/" && splitPath("c.ts").dir === "" && splitPath("c.ts").base === "c.ts")
 
-  // ---------------------------------------------------------------- reply reveal and media
-  section("Reply reveal, voice bubble and preview zoom (MiMo's numbers)")
-  check("a small backlog shows at least two a frame", revealStep(1) === 1 && revealStep(10) === 2 && revealStep(44) === 2, [
-    revealStep(1),
-    revealStep(10),
-    revealStep(44),
-  ])
-  check("a normal backlog drains in about 22 frames", revealStep(66) === 3 && revealStep(200) === 10, [revealStep(66), revealStep(200)])
-  check("past a 200-character lag the reveal catches up", revealStep(260) === 20 && revealStep(500) === 100, [revealStep(260), revealStep(500)])
-  check("nothing to show shows nothing", revealStep(0) === 0 && revealStep(-3) === 0)
-  check("a character fades in over 220ms on a cubic ease-out", fadeOpacity(0) === 0 && fadeOpacity(110) === 0.875 && fadeOpacity(220) === 1 && fadeOpacity(400) === 1, [
-    fadeOpacity(0),
-    fadeOpacity(110),
-    fadeOpacity(220),
-  ])
-  check("finished fades are dropped, oldest first", JSON.stringify(pruneStamps([0, 100, 300], 310)) === "[100,300]", pruneStamps([0, 100, 300], 310))
+  // ---------------------------------------------------------------- voice bubble and media
+  section("Voice bubble and preview zoom (MiMo's numbers)")
   check("the voice bubble is 198 wide until its length is known", audioBubbleWidth(0) === 198 && audioBubbleWidth(Number.NaN) === 198)
   check("the voice bubble grows 3.2px a second between 178 and 590", audioBubbleWidth(1) === 181 && audioBubbleWidth(10) === 210 && audioBubbleWidth(1000) === 590, [
     audioBubbleWidth(1),
@@ -7092,12 +7079,159 @@ async function main() {
   delete process.env.MCODE_GENERATE_TITLES
   await roundFiveChecks(check, section)
   await roundSixChecks(check, section)
+  await roundSevenChecks(check, section)
   await failureChecks(check, section)
   await roundSevenChecks(check, section)
+  await roundSevenTimingChecks()
   await storageChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/**
+ * Round 7 (timing): what the app does before it can do anything, and what it
+ * still does after a turn has ended.
+ *
+ * Read out of the sources, and for the shell's weight out of the build, which
+ * is what makes these a guard rather than a stopwatch: an awaited backend put
+ * back in front of the window, a reveal loop returning, or the terminal drifting
+ * back into the entry chunk fails here, in the same run as everything else. The
+ * window measurements themselves live in the round-7 probe beside them.
+ */
+async function roundSevenTimingChecks() {
+  section("Round 7: startup, streaming cadence and the shell's weight")
+  const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
+
+  // ----------------------------------------------------------------- T1
+  const page = await read("src/renderer/index.html")
+  const styleBlock = /<style>([\s\S]*?)<\/style>/.exec(page)?.[1] ?? ""
+  const mountAt = page.indexOf('<div id="app">')
+  const markAt = page.indexOf('class="startup-mark"')
+  check(
+    "the startup mark is inside the mount point, so mounting replaces it with no seam",
+    mountAt !== -1 && markAt > mountAt && markAt < page.indexOf("</body>"),
+    { mountAt, markAt },
+  )
+  check(
+    "its CSS is inline in the head, so it is painted as the HTML is parsed rather than after the bundle runs",
+    styleBlock.includes(".startup-mark") && page.indexOf("<style>") < page.indexOf("</head>"),
+  )
+  check("a placeholder with nothing to say stays out of the reading", /class="startup-mark"[^>]*aria-hidden="true"/.test(page))
+  /*
+   * The markup and its own CSS, not the whole file: the content policy above
+   * them is commented at length, and that prose names both `<img>` and the
+   * reference by name.
+   */
+  const body = page.slice(page.indexOf("<body>"))
+  check(
+    "the mark costs no request: it is drawn in the page, and the only address in its CSS is the data URI it is masked by",
+    !/<img\b/.test(body) && !/url\((?!"data:)/.test(styleBlock),
+    { images: body.match(/<img[^>]{0,24}/g), addresses: styleBlock.match(/url\((?!"data:)[^)]{0,16}/g) },
+  )
+  /*
+   * Not a search for the reference's name - the comments here explain what it
+   * does, as they do everywhere else. What must not be borrowed is the artwork:
+   * so the mark is one path of MCode's own, drawn in the page and masked by
+   * that very same shape, under MCode's own names.
+   */
+  const svgPath = /<path\s+d="([^"]+)"/.exec(body)?.[1] ?? ""
+  const maskPath = (/%3cpath%20d='([^']+)'/.exec(styleBlock)?.[1] ?? "").replace(/%20/g, " ")
+  check(
+    "and it is MCode's own mark: one path, drawn in the page and masked by the same shape",
+    svgPath !== "" && maskPath === svgPath && !/startup-loader|startup-mimo/.test(page),
+    { svgPath: svgPath.slice(0, 44), maskPath: maskPath.slice(0, 44) },
+  )
+  const guard = (start: string) => {
+    const at = styleBlock.indexOf(start)
+    return at === -1 ? "" : styleBlock.slice(at, at + 400)
+  }
+  const systemOff = guard("@media (prefers-reduced-motion: reduce)")
+  const settingOff = guard(':root[data-motion="on"]')
+  check(
+    "reduced motion keeps the mark and stops both the fade-in and the sweep - the machine's preference",
+    systemOff.includes("startup-mark-glyph") && systemOff.includes("startup-mark-sweep") && systemOff.includes("opacity: 1") &&
+      (systemOff.match(/animation: none/g) ?? []).length >= 2,
+    systemOff.slice(0, 100),
+  )
+  check(
+    "...and MCode's own reduce-motion setting, once the app has written data-motion",
+    settingOff.includes("startup-mark-glyph") && settingOff.includes("startup-mark-sweep") &&
+      (settingOff.match(/animation: none/g) ?? []).length >= 2,
+    settingOff.slice(0, 100),
+  )
+
+  // -------------------------------------------------------------- T2, T6
+  const main = await read("src/main/index.ts")
+  check(
+    "the window is no longer created behind an awaited backend",
+    !/await startBackend\(/.test(main) && /const starting = startBackend\(/.test(main),
+  )
+  check(
+    "the backend is warmed without being waited for, and bootstrap is the one channel that waits for it",
+    /ipcMain\.handle\("mcode:bootstrap"[\s\S]{0,240}await starting/.test(main) && /starting\.catch\(/.test(main),
+  )
+  check("the window is still created inside whenReady", /app\.whenReady\(\)[\s\S]*\n  createWindow\(\)/.test(main))
+  check(
+    "a wedged first load shows a window after three seconds rather than after the 30s startup timeout",
+    SHOW_FALLBACK_MS === 3_000 && SHOW_FALLBACK_MS < STARTUP_TIMEOUT,
+    { SHOW_FALLBACK_MS, STARTUP_TIMEOUT },
+  )
+  check(
+    "the same show is bound to ready-to-show, to did-finish-load and to the fallback timer",
+    /window\.once\("ready-to-show", showWindowOnce\)/.test(main) &&
+      /window\.webContents\.once\("did-finish-load", showWindowOnce\)/.test(main) &&
+      /setTimeout\(\(\) => showWindowOnce\(\), SHOW_FALLBACK_MS\)/.test(main),
+  )
+  check("and however many of the three arrive, the window is shown once", /if \(shownOnce\) return/.test(main))
+
+  // ----------------------------------------------------------------- T4
+  const textPart = await read("src/renderer/src/components/parts/TextPart.vue")
+  const stream = await read("src/renderer/src/components/MessageStream.vue")
+  const revealGone = await fs.stat(path.join(process.cwd(), "src/renderer/src/lib/stream-reveal.ts")).then(() => false, () => true)
+  check("the per-character reveal is gone from the tree", revealGone)
+  check(
+    "no reveal timer is left in the reply renderer: no frame loop, no fade tail, no stall guard",
+    !/requestAnimationFrame|useStreamReveal|fadeTail|sm-fade/.test(textPart),
+  )
+  check(
+    "a live answer is drawn from the text the store holds, as the reference appends each delta as it lands",
+    /renderReply\(props\.part\.text,/.test(textPart),
+  )
+  check("a turn's end no longer waits for a reveal to drain", !/playingOut|revealing/.test(stream))
+  check(
+    "what is animated instead is the block, which is the only thing the reference animates",
+    /\.text\.streaming > \.md-block \{[\s\S]{0,80}animation: stream-block-in/.test(textPart) && /@keyframes stream-block-in/.test(textPart),
+  )
+  check(
+    "and no comment credits the reference with a per-character pacing it does not have",
+    !/MiMo's streaming reveal|MiMo paces|MiMo's fade on the live block/.test(textPart),
+  )
+
+  // ----------------------------------------------------------------- T5
+  const appVue = await read("src/renderer/src/App.vue")
+  check(
+    "the terminal drawer is fetched on first use rather than built into the always-loaded shell",
+    /defineAsyncComponent\(\(\) => import\("\.\/components\/TerminalDrawer\.vue"\)\)/.test(appVue) &&
+      !/^import TerminalDrawer from/m.test(appVue),
+  )
+  const assetDir = path.join(process.cwd(), "out/renderer/assets")
+  const built = await fs.readdir(assetDir).catch(() => undefined)
+  if (!built) {
+    console.log("  --   out/renderer holds no build, so the entry chunk itself is untested here (npm run build first)")
+  } else {
+    const builtPage = await read("out/renderer/index.html")
+    const entryName = /<script[^>]*src="[./]*assets\/(index-[^"]+\.js)"/.exec(builtPage)?.[1] ?? ""
+    const entry = entryName ? await read(`out/renderer/assets/${entryName}`) : ""
+    const others = await Promise.all(
+      built.filter((name) => name.endsWith(".js") && name !== entryName).map((name) => read(`out/renderer/assets/${name}`)),
+    )
+    check(
+      "the built entry chunk carries no terminal, and the terminal sits in a chunk of its own",
+      entryName !== "" && !entry.includes("xterm-viewport") && others.some((text) => text.includes("xterm-viewport")),
+      { entryName, entryBytes: Buffer.byteLength(entry) },
+    )
+  }
 }
 
 /**

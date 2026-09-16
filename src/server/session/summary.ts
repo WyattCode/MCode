@@ -1,6 +1,7 @@
 import path from "node:path"
-import type { Message, ToolPart } from "@shared/protocol"
+import type { AssistantPart, Message, ToolPart } from "@shared/protocol"
 import { reminder } from "./reminders"
+import { estimateTokens } from "./estimate"
 
 /**
  * Compaction as MiMo does it, in MCode's words.
@@ -58,6 +59,46 @@ export function extractSummary(text: string): string {
 export function isSummary(text: string): boolean {
   if (/^\s*##\s*Task overview\b/im.test(text)) return true
   return (text.match(/^\s*##\s+\S/gm) ?? []).length >= 3
+}
+
+/** MiMo's `COMPACTION_TOOL_RESULT_LIMIT`: a completed tool result larger than this is not replayed in full. */
+export const COMPACTION_TOOL_RESULT_LIMIT = 8_000
+
+/** What stands in for a result too large to replay, in MCode's words. */
+export function shrunkResult(name: string, tokens: number): string {
+  return `[MCode left this ${name} result out of the compaction to make the request fit: about ${tokens} tokens. Run ${name} again if you need it.]`
+}
+
+/**
+ * The conversation as the summary request should replay it, with the largest
+ * tool results stood down (MiMo's `shrinkLargeToolResults`).
+ *
+ * Compaction happens exactly when a conversation has outgrown its model, and
+ * until now the request that asked for the summary replayed that conversation
+ * in full - so the one request most likely to be refused for length was also
+ * the largest one MCode ever sent. Anything over the limit becomes a line
+ * naming the tool and roughly what it cost, which is enough for a summary and
+ * cheap enough to send.
+ *
+ * Request-only: nothing here is written back, so the transcript still holds
+ * every result whole and the summary is the only thing built from the short
+ * form. Only completed results are touched - a failed call's message is short
+ * and is usually the very thing worth summarising.
+ */
+export function shrinkLargeToolResults(messages: readonly Message[]): Message[] {
+  return messages.map((message) => {
+    if (message.role !== "assistant") return message
+    if (!message.parts.some((part) => part.type === "tool" && part.status === "completed" && estimateTokens(part.output) > COMPACTION_TOOL_RESULT_LIMIT)) {
+      return message
+    }
+    const parts: AssistantPart[] = message.parts.map((part) => {
+      if (part.type !== "tool" || part.status !== "completed") return part
+      const tokens = estimateTokens(part.output)
+      if (tokens <= COMPACTION_TOOL_RESULT_LIMIT) return part
+      return { ...part, output: shrunkResult(part.name, tokens), attachments: [] }
+    })
+    return { ...message, parts }
+  })
 }
 
 /** MiMo keeps the five files most recently worked on, and each one's last three events. */

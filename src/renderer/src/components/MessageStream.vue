@@ -29,7 +29,6 @@ import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
 import { cardCut, interruptedEnd, stepPart, stickState, stoppedEmpty } from "./parts/turn-end"
-import { revealing } from "../lib/stream-reveal"
 
 /**
  * WHY EVERY MESSAGE IS DRAWN, where opencode virtualises.
@@ -882,15 +881,6 @@ async function retry(turn: Turn) {
 }
 
 /*
- * MiMo holds a turn's end - the action row, the edited-files card - until the
- * answer's paced reveal has caught up. The reply renderer lists the parts
- * still playing out.
- */
-function playingOut(turn: Turn): boolean {
-  return turn.parts.some((part) => revealing.has(part.id))
-}
-
-/*
  * MiMo's search result: the conversation goes to the message and flashes it,
  * the class kept for 1.3s over a 1.2s fade. Asked through the store's
  * revealMessage(id); the message may still be loading when a search opens
@@ -1252,7 +1242,7 @@ defineExpose({ stepMessage, scroller })
             with 撤销 and 审阅. A live turn has none - its files are still moving.
           -->
           <EditedFilesCard
-            v-if="!(at === turns.length - 1 && shownBusy) && !playingOut(turn)"
+            v-if="!(at === turns.length - 1 && shownBusy)"
             :parts="turn.parts"
             :message-ids="turn.messageIDs"
             :session-id="shownID"
@@ -1263,13 +1253,13 @@ defineExpose({ stepMessage, scroller })
 
           <!-- MiMo's delivered-file cards: what the turn's present_files calls handed over. -->
           <DeliveredFilesCard
-            v-if="!(at === turns.length - 1 && shownBusy) && !playingOut(turn)"
+            v-if="!(at === turns.length - 1 && shownBusy)"
             :parts="turn.parts"
             :directory="shownDirectory"
           />
 
           <!-- MiMo's video cards: one group for the whole finished reply, after its delivered files. -->
-          <MediaStrip v-if="!(at === turns.length - 1 && shownBusy) && !playingOut(turn)" :text="replyText(turn)" />
+          <MediaStrip v-if="!(at === turns.length - 1 && shownBusy)" :text="replyText(turn)" />
 
           <!--
             A failure as MiMo shows one: a card with the reason and a retry at its
@@ -1323,7 +1313,7 @@ defineExpose({ stepMessage, scroller })
             each; then the time it finished, which shows under the pointer only.
             A failed turn keeps it, under its card.
           -->
-          <div v-if="!bare && turn.finish && turn.last && !stoppedEmpty(turn) && !playingOut(turn)" class="msg-actions" data-msg-actions>
+          <div v-if="!bare && turn.finish && turn.last && !stoppedEmpty(turn)" class="msg-actions" data-msg-actions>
             <button
               type="button"
               class="msg-act"

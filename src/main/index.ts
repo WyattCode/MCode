@@ -16,6 +16,7 @@ import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
+import { SHOW_FALLBACK_MS } from "./renderer-health"
 import {
   activate,
   beginIntentionalQuit,
@@ -469,10 +470,27 @@ function createWindow(show = true): BrowserWindow {
   window.webContents.on("zoom-changed", () => refreshTitlebar(window))
   window.webContents.on("did-finish-load", () => refreshTitlebar(window))
 
-  window.once("ready-to-show", () => {
-    if (show) window.show()
+  /*
+   * MiMo's addDefaultShow: the same show bound to `ready-to-show`, to
+   * `did-finish-load` and to a three-second timer, whichever arrives first.
+   * This window used to wait on `ready-to-show` alone, so a first load that
+   * never finished showed nothing until renderer-health's 30s startup timeout
+   * built a replacement - half a minute of no window at all.
+   */
+  let shownOnce = false
+  const showFallback = setTimeout(() => showWindowOnce(), SHOW_FALLBACK_MS)
+  function showWindowOnce() {
+    if (shownOnce) return
+    shownOnce = true
+    clearTimeout(showFallback)
+    if (show && !window.isDestroyed()) window.show()
+  }
+  window.once("ready-to-show", showWindowOnce)
+  window.webContents.once("did-finish-load", showWindowOnce)
+  window.on("closed", () => {
+    clearTimeout(showFallback)
+    windows.delete(window)
   })
-  window.on("closed", () => windows.delete(window))
 
   /*
    * MiMo's session-end: Windows is shutting down or logging off. That is a
@@ -588,20 +606,44 @@ app.whenReady().then(async () => {
   // MiMo makes an oversized picture smaller rather than dropping it; the decoder lives here, so the backend is handed one.
   setImageShrinker(shrinkImage)
 
-  backend = await startBackend(app.getPath("userData"))
+  /*
+   * MiMo creates its main window first and only then starts the pieces that
+   * take time, none of them awaited: the database prewarm, auth, the tray, the
+   * updater and the engine. This awaited the whole backend instead, so the
+   * window's appearance was hostage to it - `startBackend` reads every
+   * conversation's info.json, opens the full-text index and reconciles it,
+   * starts cron and automations and waits for the socket to listen, and
+   * nothing was on screen for any of it. Measured: the first window existed at
+   * 166ms with two conversations and 223-236ms with two hundred.
+   *
+   * Everything below registers its handlers in this same tick and reads
+   * `backend` only when a handler is actually called, and the window is created
+   * at the end of the tick - so no message the page sends can arrive before its
+   * channel exists, and a slow disk or a long history now delays the content
+   * inside the window rather than the window itself.
+   */
+  const starting = startBackend(app.getPath("userData")).then((started) => {
+    backend = started
+    /*
+     * MiMo keeps the machine from suspending while a turn runs. The runner's busy
+     * set is the truth; every backend event is a moment it may have changed, and
+     * re-reading a handful of ids costs nothing next to the event itself.
+     */
+    const powerHold = new PowerHold(powerSaveBlocker, (line) => console.info(line))
+    const runtime = started.runtime
+    runtime.bus.subscribe(() => powerHold.sync(runtime.runner.busySessions()))
+    return started
+  })
+  // Handled here so a backend that will not start is the page's error screen rather than an unhandled rejection.
+  starting.catch((error: unknown) => console.error("[boot] the backend did not start", error))
 
   /*
-   * MiMo keeps the machine from suspending while a turn runs. The runner's busy
-   * set is the truth; every backend event is a moment it may have changed, and
-   * re-reading a handful of ids costs nothing next to the event itself.
+   * The renderer has no Node access; this is how it learns where to connect.
+   * It is the one channel that has to wait for the backend, and it waits with
+   * the window already up and its connecting state on screen.
    */
-  const powerHold = new PowerHold(powerSaveBlocker, (line) => console.info(line))
-  const runtime = backend.runtime
-  runtime.bus.subscribe(() => powerHold.sync(runtime.runner.busySessions()))
-
-  // The renderer has no Node access; this is how it learns where to connect.
-  ipcMain.handle("mcode:bootstrap", () => ({
-    port: backend!.port,
+  ipcMain.handle("mcode:bootstrap", async () => ({
+    port: (await starting).port,
     platform: process.platform,
     home: app.getPath("home"),
     // app.getVersion() reports Electron's version until the app is packaged,

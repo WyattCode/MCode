@@ -16,6 +16,17 @@ export const STARTUP_TIMEOUT = 30_000
 export const RECOVERY_DELAYS: readonly number[] = [0, 250, 1000, 5000]
 export const STABLE_AFTER = 30_000
 
+/**
+ * MiMo's addDefaultShow fallback: a window is shown on whichever of
+ * `ready-to-show`, `did-finish-load` and this timer comes first.
+ *
+ * Without it a first load that never finishes shows nothing at all until the
+ * startup timeout above has run out and a replacement window has been built -
+ * a wedged launch looked like an app that did not start for thirty seconds
+ * rather than for three.
+ */
+export const SHOW_FALLBACK_MS = 3_000
+
 /** Per-renderer state, with MiMo's transitions: each answers whether the renderer just became unavailable. */
 export class RendererHealth<Key extends object> {
   private readonly states = new WeakMap<Key, RendererState>()

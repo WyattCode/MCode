@@ -5,7 +5,6 @@ import type { TextPart } from "@shared/protocol"
 import { renderReply, type ReplyBlock } from "../../lib/markdown"
 import { cachedHighlight, highlight, languageOf } from "../../lib/highlight"
 import { openImagePreview, openVideoPreview } from "../../lib/image-preview"
-import { FADE_SOURCE_LIMIT, fadeTail, useStreamReveal, type FadeAnchor } from "../../lib/stream-reveal"
 import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 import { notifyFailure } from "../../lib/toast"
@@ -24,21 +23,18 @@ const instance = getCurrentInstance()
 /* The streaming message this part is in, while it streams. */
 const owner = computed(() => [app.streaming, app.sideStreaming].find((message) => message?.parts.some((part) => part.id === props.part.id)))
 
-/* MiMo paces only the answer's live tail: text that a tool call has followed is a step, and shows whole. */
-const tail = computed(() => {
-  const parts = owner.value?.parts ?? []
-  const at = parts.findIndex((part) => part.id === props.part.id)
-  return at >= 0 && parts.slice(at + 1).every((part) => (part.type === "text" || part.type === "reasoning") && !part.text.trim())
-})
-
-const reveal = useStreamReveal(
-  () => props.part.id,
-  () => props.part.text,
-  () => (!owner.value ? "settle" : tail.value ? "paced" : "full"),
-)
-
-/* Live until the reveal has caught up: MiMo keeps diagrams as code, the last line plain and footnotes back until then. */
-const live = computed(() => Boolean(owner.value) || !reveal.done.value)
+/*
+ * Live while the message it belongs to is still streaming: MiMo keeps diagrams
+ * as code, the last line plain and footnotes back until the reply has ended.
+ *
+ * Text arrives here as the store holds it. There is no per-character pacing -
+ * each delta of MiMo's goes straight onto the run's text as it lands, and the
+ * only thing its stylesheet animates is the block (see the fade at the end of
+ * this file). MCode used to meter the text out a few characters a frame, which
+ * left the screen up to 9,230 characters behind a fast answer and still typing
+ * 309-413ms after the turn had already ended.
+ */
+const live = computed(() => Boolean(owner.value))
 
 /*
  * MiMo's syntax colours, put into the markup before it is bound, from the
@@ -83,7 +79,7 @@ function colourCode(html: string, liveBlock: boolean): string {
 const rendered = computed<ReplyBlock[]>(() => {
   void colourRound.value
   const isLive = live.value
-  const list = renderReply(reveal.text.value, {
+  const list = renderReply(props.part.text, {
     codeActions: { copy: t("code.copy"), copied: t("code.copied"), label: t("code.copyLabel") },
     tableActions: { label: t("table.actions"), preview: t("table.preview"), copy: t("table.copy") },
     videoCards: { tip: t("markdown.previewAnnotateTip"), fallback: t("markdown.videoFallbackLabel") },
@@ -96,29 +92,6 @@ const rendered = computed<ReplyBlock[]>(() => {
   })
   const last = list.length - 1
   return list.map((block, index) => (block.kind === "html" ? { kind: "html", html: colourCode(block.html, isLive && index === last) } : block))
-})
-
-const isOpenLine = (block: ReplyBlock | undefined) => block?.kind === "html" && block.html.startsWith('<div class="stream-open-line">')
-
-/*
- * MiMo's fade on the live block - the last one, or the one before the
- * unfinished line - unless it is code or longer than 9,000 characters. The
- * anchor keeps a character from dimming again, and starts over with each block.
- */
-let anchor: FadeAnchor & { block: number } = { block: -1, start: 0, floors: [] }
-const blocks = computed<ReplyBlock[]>(() => {
-  const list = rendered.value
-  const opacities = reveal.opacities.value
-  if (!live.value || !opacities.length) return list
-  let index = list.length - 1
-  if (isOpenLine(list[index])) index -= 1
-  const block = list[index]
-  if (!block || block.kind !== "html" || /^<(div class="md-codeblock|pre)/.test(block.html)) return list
-  if (anchor.block !== index) anchor = { block: index, start: 0, floors: [] }
-  if (block.html.replace(/<[^>]*>/g, "").length > FADE_SOURCE_LIMIT) return list
-  const next = list.slice()
-  next[index] = { kind: "html", html: fadeTail(block.html, opacities, anchor) }
-  return next
 })
 
 /* A block keeps its element while it is unchanged, so only the one being written is redrawn. */
@@ -208,7 +181,7 @@ function mountMedia() {
   }
 }
 
-watch(blocks, () => void nextTick(mountMedia), { flush: "post" })
+watch(rendered, () => void nextTick(mountMedia), { flush: "post" })
 onMounted(mountMedia)
 
 /*
@@ -398,8 +371,17 @@ function onError(event: Event) {
 </script>
 
 <template>
-  <div ref="root" class="text" data-annotate="answer" @click="onClick" @keydown="onKeydown" @contextmenu="onContextMenu" @error.capture="onError">
-    <template v-for="(block, index) in blocks" :key="blockKey(block, index)">
+  <div
+    ref="root"
+    class="text"
+    :class="{ streaming: live }"
+    data-annotate="answer"
+    @click="onClick"
+    @keydown="onKeydown"
+    @contextmenu="onContextMenu"
+    @error.capture="onError"
+  >
+    <template v-for="(block, index) in rendered" :key="blockKey(block, index)">
       <DiagramBlock v-if="block.kind === 'diagram'" class="md-block" :mode="block.mode" :code="block.code" />
       <AbcBlock v-else-if="block.kind === 'abc'" class="md-block" :code="block.code" />
       <div v-else-if="block.kind === 'svg-loading'" class="md-block md-svg-loading" data-svg-loading>{{ t("svgLoading.generating") }}</div>
@@ -1027,6 +1009,35 @@ function onError(event: Event) {
   margin: 0 0 14px;
   white-space: pre-wrap;
   overflow-wrap: break-word;
+}
+
+/*
+ * The one thing MiMo animates while a reply streams: the block.
+ *
+ * Its stylesheet fades whole streamed elements in - `.answer.streaming
+ * :is(p,li,h1..h6,blockquote,tr,img,hr)` over `@keyframes streamBlockIn`, from
+ * opacity 0 to 1 - and there is no character-level fade, no reveal counter and
+ * no pacing loop anywhere in its bundle. So a block appears by fading in, and
+ * the text inside it simply arrives.
+ *
+ * Put on the wrapper rather than on the elements inside it: a block keeps its
+ * own element while its index and kind are unchanged (see blockKey), so only a
+ * block that is genuinely new plays this. The block being written has its
+ * markup replaced on every flush, and an animation on those children would
+ * restart from nothing each time, which is the flicker this replaced.
+ */
+.text.streaming > .md-block {
+  animation: stream-block-in 220ms ease-out;
+}
+
+@keyframes stream-block-in {
+  0% {
+    opacity: 0;
+  }
+
+  100% {
+    opacity: 1;
+  }
 }
 
 .text .md-svg-loading {
