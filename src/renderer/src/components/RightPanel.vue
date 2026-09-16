@@ -16,7 +16,7 @@ import RpSubagents from "./right/RpSubagents.vue"
 import FloatingChat from "./right/FloatingChat.vue"
 import PaneBoundary from "./right/PaneBoundary.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
-import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf } from "../lib/right-tools"
+import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf, panelWidthShown } from "../lib/right-tools"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 
@@ -112,7 +112,7 @@ watch(
 /* Width: between MiMo's 300 and what leaves the conversation its 480. */
 const viewport = ref(window.innerWidth)
 const maxWidth = computed(() => Math.max(PANEL_MIN_WIDTH, viewport.value - RAIL_WIDTH - props.sidebarWidth - MAIN_MIN_WIDTH))
-const shownWidth = computed(() => Math.min(maxWidth.value, Math.max(PANEL_MIN_WIDTH, rp.width)))
+const shownWidth = computed(() => panelWidthShown(rp.width, viewport.value, props.sidebarWidth, PANEL_MIN_WIDTH))
 const resizing = ref(false)
 
 function onResize() {
@@ -521,6 +521,15 @@ body.resizing webview {
   background: var(--surface-raised);
   border-inline-start: 1px solid var(--border-weak);
   transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s;
+}
+
+/*
+ * Only where zoom leaves the window narrower than the rail and the 300 floor
+ * together: the panel gives up the difference rather than running past the
+ * window's edge. The 63 is the rail and the conversation's hairline.
+ */
+.right-panel:not(.fullscreen) {
+  max-width: calc(100% - 63px);
 }
 
 .right-panel.hidden {

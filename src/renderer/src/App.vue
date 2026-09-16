@@ -58,7 +58,7 @@ import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
-import { arbitratePanel, boundChord, clampSideWidth, sideFits, toolHints } from "./lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationFile, exportConversationMarkdown, importConversationFile, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { openDocument } from "./lib/office-open"
@@ -1261,7 +1261,9 @@ watch(
   [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
   ([viewport, sideOpen], [, sideBefore]) => {
     if (sideOpen) sideAutoFolded = false
-    const room = { viewport, sideWidth: sideWidth.value, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
+    // MiMo weighs the panel as drawn, narrowed toward 300 beside the column, not as dragged.
+    const panelWidth = panelWidthShown(rp.width, viewport, sideWidth.value, PANEL_MIN_WIDTH)
+    const room = { viewport, sideWidth: sideWidth.value, sideOpen, panelOpen: rp.open, panelWidth, fullscreen: rp.fullscreen }
     const outcome = arbitratePanel(room, sideOpen && !sideBefore)
     if (outcome === "close-panel") rp.setOpen(false)
     else if (outcome === "collapse-side") {
@@ -4723,11 +4725,12 @@ onBeforeUnmount(() => {
   flex: 1;
   flex-direction: column;
   /*
-   * Falls back to the full width on a window too narrow to give it 440, which
-   * is the case where something has to overflow and the conversation is not
-   * the thing that should.
+   * MiMo's main column has no floor of its own: the side column and the panel
+   * are sized to leave it 480, and when the window is too narrow for that
+   * beside the panel's 300, the conversation is what narrows, so nothing is
+   * pushed past the window's edge.
    */
-  min-width: min(440px, 100%);
+  min-width: 0;
 }
 
 /* The composer's ordinary dock; `contents` keeps it out of the layout. */
