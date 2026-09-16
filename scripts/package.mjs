@@ -26,7 +26,8 @@ const forWindows = flags.includes("--win") || (process.platform === "win32" && !
 if (status === 0 && forWindows) status = run("node", ["scripts/runtimes.mjs"])
 if (status === 0) status = run("node", ["scripts/bump-version.mjs"])
 if (status === 0) status = run("npx", ["electron-vite", "build"])
-if (status === 0) status = run("npx", ["electron-builder", ...process.argv.slice(2)])
+// Nothing is uploaded from here: a release is published by hand (see electron-builder.yml).
+if (status === 0) status = run("npx", ["electron-builder", "--publish", "never", ...process.argv.slice(2)])
 
 if (status !== 0) {
   for (const [p, bytes] of before) fs.writeFileSync(p, bytes)

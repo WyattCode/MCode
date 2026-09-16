@@ -14,6 +14,9 @@ import { ENV_TIMEOUT_MS, expandPercent, parseRegQuery, parseShellEnv, refreshEnv
 import { applyRuntimeEnv, bundledRuntimeEnv } from "../src/main/runtimes"
 import { attachmentNote } from "../src/server/session/context"
 import * as runtimesScript from "./runtimes.mjs"
+import { NsisUpdater } from "electron-updater"
+import { HELPER_SWEEP_TIMEOUT_MS, compareVersions, createUpdater, feedProblem, helperSweep, isProtectedInstall, refusal, staleInstallers, type AutoUpdaterLike, type FeedInfo } from "../src/main/updater"
+import { createTransactions } from "../src/main/update-transaction"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
 async function sources(root: string): Promise<Map<string, string>> {
@@ -456,6 +459,259 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     check(
       "an attached Office file points at the bundled Python when there is one, and asks to check the library when there is not",
       withPython.includes("MCODE_PYTHON") && !withPython.includes("Check that the library is installed") && withoutPython.includes("Check that the library is installed") && !withoutPython.includes("MCODE_PYTHON"),
+    )
+  }
+
+  section("Round 9 (Windows): updates through electron-updater - newer only, sha512 always, installed after the backend closes")
+  {
+    /*
+     * The decisions run through electron-updater's own isUpdateAvailable (a
+     * real NsisUpdater with a stand-in app); only the network and the download
+     * are simulated.
+     */
+    const real = new NsisUpdater(null as never, {
+      version: "0.2.5",
+      name: "mcode",
+      isPackaged: true,
+      appUpdateConfigPath: "unused.yml",
+      userDataPath: path.join(root, "out"),
+      baseCachePath: path.join(root, "out"),
+      whenReady: () => Promise.resolve(),
+      quit: () => {},
+      relaunch: () => {},
+      onQuit: () => {},
+    } as never)
+    real.logger = null
+    const sha512 = "A".repeat(86) + "=="
+    const day = 24 * 60 * 60 * 1000
+    const now = Date.parse("2026-09-17T00:00:00Z")
+    const library = {
+      autoDownload: false,
+      autoInstallOnAppQuit: false,
+      allowDowngrade: false,
+      allowPrerelease: true,
+      disableWebInstaller: false,
+      requestHeaders: null as Record<string, string> | null,
+      isUpdateSupported: (() => true) as AutoUpdaterLike["isUpdateSupported"],
+      feeds: [] as unknown[],
+      installs: [] as [boolean | undefined, boolean | undefined][],
+      downloads: 0,
+      info: { version: "0.2.5", files: [{ url: "MCode-0.2.5-x64.exe", sha512 }] } as FeedInfo,
+      checkFails: false,
+      downloadFails: false,
+      setFeedURL(options: unknown) {
+        this.feeds.push(options)
+      },
+      async checkForUpdates() {
+        if (this.checkFails) throw new Error("HTTP 503")
+        real.allowDowngrade = this.allowDowngrade
+        real.isUpdateSupported = this.isUpdateSupported as never
+        const available = await real.isUpdateAvailable(this.info as never)
+        let downloadPromise: Promise<string[]> | null = null
+        if (available && this.autoDownload) {
+          this.downloads++
+          downloadPromise = this.downloadFails ? Promise.reject(new Error("sha512 checksum mismatch, expected A== got B==")) : Promise.resolve([`C:/cache/pending/MCode-${this.info.version}-x64.exe`])
+        }
+        return { isUpdateAvailable: available, updateInfo: this.info, downloadPromise }
+      },
+      quitAndInstall(silent?: boolean, forceRun?: boolean) {
+        this.installs.push([silent, forceRun])
+      },
+    }
+    const timers: { kind: string; ms: number }[] = []
+    const phases: string[] = []
+    let feed = ""
+    const updater = createUpdater({
+      currentVersion: "0.2.5",
+      feedURL: () => feed,
+      autoUpdater: library,
+      emit: (state) => phases.push(state.phase),
+      log: () => {},
+      now: () => now,
+      scheduler: {
+        setTimeout: (_run, ms) => timers.push({ kind: "timeout", ms }),
+        setInterval: (_run, ms) => timers.push({ kind: "interval", ms }),
+        clearTimeout: () => {},
+        clearInterval: () => {},
+      },
+    })
+    updater.start()
+    updater.start()
+    check("MiMo's schedule: first check at 5 s, then every 3 h, set up once", JSON.stringify(timers) === JSON.stringify([{ kind: "timeout", ms: 5000 }, { kind: "interval", ms: 3 * 60 * 60 * 1000 }]))
+    check(
+      "the library downloads on its own and installs on quit, as MiMo leaves it; no pre-releases, no web installer, and an anonymous staging id",
+      library.autoDownload && library.autoInstallOnAppQuit && !library.allowPrerelease && library.disableWebInstaller && library.requestHeaders?.["x-user-staging-id"] === "none",
+    )
+
+    const noFeed = await updater.checkNow()
+    check("with no feed configured nothing is fetched and the check says so", noFeed.outcome === "no-feed" && library.feeds.length === 0 && phases.length === 0)
+    feed = "http://updates.example.com/mcode/"
+    const plain = await updater.checkNow()
+    check("a plain-http feed on the network is refused before anything is fetched (its hashes could be rewritten on the way)", plain.outcome === "failed" && /https/.test(plain.error ?? "") && library.feeds.length === 0)
+    feed = "https://updates.example.com/mcode/"
+    const current = await updater.checkNow()
+    check(
+      "the same version is current; the feed is set as a generic folder before the check",
+      current.outcome === "current" && current.phase === "idle" && phases.join(",") === "checking,idle" && JSON.stringify(library.feeds.at(-1)) === JSON.stringify({ provider: "generic", url: feed, useMultipleRangeRequest: false }),
+      { current, phases },
+    )
+
+    library.info = { version: "0.2.4", files: [{ url: "MCode-0.2.4-x64.exe", sha512 }], releaseDate: new Date(now - day).toISOString() }
+    const older = await updater.checkNow()
+    check("N9-1: an older version in the feed is not an update and is never downloaded", older.outcome === "current" && library.downloads === 0, older)
+    library.info = { ...library.info, rollback: true, releaseDate: new Date(now - 40 * day).toISOString() }
+    check("even a declared rollback is refused once it is more than 30 days old", (await updater.checkNow()).outcome === "current" && library.downloads === 0)
+    library.info = { ...library.info, rollback: "yes" as unknown, releaseDate: new Date(now - day).toISOString() }
+    check("and the declaration has to be exactly `rollback: true`", (await updater.checkNow()).outcome === "current" && library.downloads === 0)
+
+    library.info = { version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe" }], releaseNotes: "- faster" }
+    const unverifiable = await updater.checkNow()
+    check("N9-2: a newer version without a sha512 is refused as a failure, not downloaded", unverifiable.outcome === "failed" && unverifiable.during === "check" && /sha512/.test(unverifiable.error ?? "") && library.downloads === 0, unverifiable)
+    library.info = { version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512: "abc" }] }
+    check("so is one whose sha512 is not a real digest", (await updater.checkNow()).outcome === "failed" && library.downloads === 0)
+
+    library.info = { version: "0.3.0", files: [{ url: "MCode-0.3.0-x64.exe", sha512 }], releaseNotes: [{ version: "0.3.0", note: "- faster" }, { version: "0.2.9", note: "- smaller" }] }
+    library.downloadFails = true
+    phases.length = 0
+    const badDownload = await updater.checkNow()
+    check("a download that fails verification leaves nothing ready", badDownload.outcome === "failed" && badDownload.during === "download" && badDownload.ready === null && updater.readyVersion() === undefined && phases.join(",") === "checking,downloading,idle", { badDownload, phases })
+    check("and nothing can be installed", updater.install("C:\\Users\\u\\AppData\\Local\\Programs\\MCode\\MCode.exe") === false && library.installs.length === 0)
+    library.downloadFails = false
+    phases.length = 0
+    const pending = updater.checkNow()
+    check("a second check while one runs is skipped", (await updater.checkNow()).outcome === "busy")
+    const ready = await pending
+    check(
+      "a newer, verified installer downloads and becomes ready with its notes",
+      ready.outcome === "ready" && ready.ready?.version === "0.3.0" && ready.ready.notes === "- faster\n\n- smaller" && phases.join(",") === "checking,downloading,ready",
+      { ready, phases },
+    )
+    library.checkFails = true
+    check("a failure after that is silent and keeps the ready update", (await updater.checkNow()).phase === "ready" && updater.readyVersion() === "0.3.0")
+    library.checkFails = false
+
+    library.info = { version: "0.2.4", files: [{ url: "MCode-0.2.4-x64.exe", sha512: "0".repeat(128) }], rollback: true, releaseDate: new Date(now - 2 * day).toISOString() }
+    const rollbackUpdater = createUpdater({ currentVersion: "0.2.5", feedURL: () => feed, autoUpdater: library, emit: () => {}, log: () => {}, now: () => now })
+    const rolledBack = await rollbackUpdater.checkNow()
+    check("a declared, recent rollback (hex digest) is the one older version that downloads", rolledBack.outcome === "ready" && rolledBack.version === "0.2.4", rolledBack)
+
+    check("N9-3: installing runs the installer silently and relaunches the app", updater.install("C:\\Users\\u\\AppData\\Local\\Programs\\MCode\\MCode.exe") && JSON.stringify(library.installs.at(-1)) === JSON.stringify([true, true]))
+    updater.install("D:\\Apps\\MCode\\MCode.exe")
+    check("an install elsewhere is silent too", JSON.stringify(library.installs.at(-1)) === JSON.stringify([true, true]))
+    updater.install("C:\\Program Files\\MCode\\MCode.exe")
+    check("under Program Files the installer shows its window, so Windows can ask for elevation (MiMo's rule)", JSON.stringify(library.installs.at(-1)) === JSON.stringify([false, true]))
+    check(
+      "which folders count as protected",
+      isProtectedInstall("C:\\Program Files (x86)\\MCode\\MCode.exe") && isProtectedInstall("c:/program files/MCode/MCode.exe") && !isProtectedInstall("C:\\Users\\u\\Program Files Stuff\\MCode.exe") && !isProtectedInstall("D:\\Apps\\MCode\\MCode.exe"),
+    )
+    check(
+      "versions compare by number, segment by segment",
+      compareVersions("0.2.10", "0.2.9") === 1 && compareVersions("1.0.0", "0.9.9") === 1 && compareVersions("0.2.5", "0.2.5") === 0 && compareVersions("0.2.4", "0.2.5") === -1 && compareVersions("0.3", "0.3.0") === 0,
+    )
+    check(
+      "the feed rules: https anywhere, http only to this machine",
+      feedProblem("https://x.example/") === undefined && feedProblem("http://127.0.0.1:8080/f/") === undefined && feedProblem("http://localhost/f/") === undefined && feedProblem("http://10.0.0.2/f/") !== undefined && feedProblem("file:///C:/f/") !== undefined && feedProblem("not a url") !== undefined,
+    )
+    check(
+      "the refusal rule on its own: legacy single-file entries are read too, equal versions are not updates",
+      refusal({ version: "0.3.0", sha512 }, "0.2.5", now) === undefined && refusal({ version: "0.3.0" }, "0.2.5", now) !== undefined && refusal({ version: "0.2.5", sha512 }, "0.2.5", now) !== undefined,
+    )
+
+    // N9-16: what an earlier update left behind.
+    const stale = staleInstallers({ tempNames: ["mcode-0.2.3.exe", "mcode-0.2.4.exe", "mcode-notes.txt", "mcode-0.2.4.exe.part", "other.exe", "mcode-0.3.0.dmg"], pendingFile: "MCode-0.2.5-x64.exe", currentVersion: "0.2.5" })
+    check("the old updater's installers in the temporary folder are found, and nothing else there", JSON.stringify(stale.temp) === JSON.stringify(["mcode-0.2.3.exe", "mcode-0.2.4.exe", "mcode-0.3.0.dmg"]), stale)
+    check(
+      "the pending installer goes once its version is running (or older), and stays while it is still to be installed",
+      stale.pending &&
+        staleInstallers({ tempNames: [], pendingFile: "MCode-0.2.4-x64.exe", currentVersion: "0.2.5" }).pending &&
+        !staleInstallers({ tempNames: [], pendingFile: "MCode-0.2.6-x64.exe", currentVersion: "0.2.5" }).pending &&
+        !staleInstallers({ tempNames: [], currentVersion: "0.2.5" }).pending,
+    )
+
+    // MiMo's sweep of helpers running from resources\ before the installer.
+    const sweep = helperSweep("C:\\Users\\o'brien\\AppData\\Local\\Programs\\MCode\\MCode.exe", "win32", true)
+    check(
+      "the sweep ends only processes under the install's resources folder, quoting the path for PowerShell",
+      sweep?.file === "powershell.exe" &&
+        sweep.prefix === "C:\\Users\\o'brien\\AppData\\Local\\Programs\\MCode\\resources\\" &&
+        (sweep.args.at(-1) ?? "").includes("StartsWith('C:\\Users\\o''brien\\AppData\\Local\\Programs\\MCode\\resources\\'") &&
+        HELPER_SWEEP_TIMEOUT_MS === 3000,
+      sweep,
+    )
+    check(
+      "and never runs for a development build, another platform, or a drive root",
+      helperSweep("C:\\x\\MCode.exe", "win32", false) === undefined && helperSweep("/opt/MCode/mcode", "linux", true) === undefined && helperSweep("C:\\MCode.exe", "win32", true) === undefined,
+    )
+
+    // N9-4: the transaction record.
+    let stored: string | undefined
+    let clock = now
+    const store = {
+      read: () => stored,
+      write: (text: string) => void (stored = text),
+      remove: () => void (stored = undefined),
+    }
+    const transactions = createTransactions(store, () => clock)
+    check("no record is nothing to report", transactions.reconcile("0.2.5") === undefined)
+    transactions.begin("0.2.5", "0.3.0")
+    transactions.markInstallerStarted()
+    clock += 60_000
+    check("the target version started: the update finished and the record goes", transactions.reconcile("0.3.0") === undefined && stored === undefined)
+    transactions.begin("0.2.5", "0.3.0")
+    transactions.markInstallerStarted()
+    const mismatch = transactions.reconcile("0.2.5")
+    check("the installer started but the old version came back: interrupted, said once", mismatch?.error === "version-mismatch" && mismatch.targetVersion === "0.3.0" && stored === undefined && transactions.reconcile("0.2.5") === undefined)
+    transactions.begin("0.2.5", "0.3.0")
+    check("a pending record that is still fresh is left for later (the installer may still be working)", transactions.reconcile("0.2.5") === undefined && stored !== undefined)
+    clock += 61 * 60 * 1000
+    check("an hour on, it is interrupted as stale", transactions.reconcile("0.2.5")?.error === "stale" && stored === undefined)
+    transactions.begin("0.2.5", "0.3.0")
+    transactions.markFailed(new Error("spawn EACCES"))
+    check("an installer that failed to start is reported with its reason", JSON.stringify(transactions.reconcile("0.2.5")) === JSON.stringify({ targetVersion: "0.3.0", error: "spawn EACCES" }))
+    stored = "{not json"
+    check("a damaged record is reported and removed", transactions.reconcile("0.2.5")?.error === "invalid" && stored === undefined)
+    const unwritable = createTransactions({
+      read: () => undefined,
+      write: () => {
+        throw new Error("EACCES")
+      },
+      remove: () => {},
+    })
+    check("a record that cannot be written does not stop anything", unwritable.begin("0.2.5", "0.3.0") === false)
+
+    // How the main process wires it.
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    const handler = /ipcMain\.handle\("mcode:install-update"[\s\S]*?\n {2}\}\)\n/.exec(main)?.[0] ?? ""
+    // Everything the handler does itself, leaving out the deferred install it hands to the quit path.
+    const beforeRun = handler.replace(/pendingInstall = \(\) => \{[\s\S]*?\n {4}\}\n/, "")
+    check(
+      "the install request records the transaction and quits; the installer itself waits for the quit path",
+      /updateTransactions\.begin\(pkg\.version, target\)/.test(beforeRun) &&
+        beforeRun.length < handler.length &&
+        !/\.install\(|quitAndInstall|openPath|spawn/.test(beforeRun) &&
+        /updater\.install\(process\.execPath\)\) updateTransactions\.markInstallerStarted\(\)/.test(handler) &&
+        /helperSweep\(process\.execPath, process\.platform, app\.isPackaged\)/.test(handler),
+    )
+    check(
+      "and the quit path runs it only after the backend has closed (or at once when there is none)",
+      /void closed\.finally\(\(\) => \{\s*runPendingInstall\(\)\s*app\.quit\(\)/.test(main) && /if \(!backend\) return runPendingInstall\(\)/.test(main),
+    )
+    check(
+      "electron-updater is loaded the way MiMo loads it, the feed comes from the setting or MCODE_UPDATE_URL, and the interruption reaches the window",
+      /import\("electron-updater"\)/.test(main) &&
+        /process\.env\.MCODE_UPDATE_URL\?\.trim\(\) \|\| backend\?\.runtime\.config\.get\(\)\.updateFeed/.test(main) &&
+        /updateTransactions\.reconcile\(pkg\.version\)/.test(main) &&
+        /report \? \{ \.\.\.state, interrupted: report \}/.test(main),
+    )
+    const app = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    check("the window shows the interruption as a failure notice", /if \(state\.interrupted\) notifyFailure\(t\("update\.interrupted"/.test(app) && !/no-installer|update\.found/.test(app))
+    const updaterSource = await fs.readFile(path.join(root, "src/main/updater.ts"), "utf8")
+    check("MCode's own feed code is gone: no JSON feed, no hand-rolled download or sha256", !/fetchFeed|parseFeed|sha256\(|createHash|fetch\(/.test(updaterSource + handler) && !/node:crypto/.test(updaterSource))
+    const builder = await fs.readFile(path.join(root, "electron-builder.yml"), "utf8")
+    const packageScript = await fs.readFile(path.join(root, "scripts", "package.mjs"), "utf8")
+    check(
+      "the package writes app-update.yml and latest.yml for a placeholder that can never resolve, and never publishes; the private repository is named nowhere",
+      /^publish:\n {2}provider: generic\n {2}url: https:\/\/updates\.invalid\/mcode\/$/m.test(builder) && !/provider: github|WyattCode/.test(builder) && /"--publish", "never"/.test(packageScript),
     )
   }
 }

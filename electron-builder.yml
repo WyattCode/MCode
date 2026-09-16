@@ -58,9 +58,22 @@ nsis:
   # Shown in Add/Remove Programs.
   installerHeaderIcon: build/icon.ico
 
+# electron-updater (src/main/updater.ts) reads app-update.yml beside the asar
+# for its cache folder name (mcode-updater), and a release needs the latest.yml
+# and .blockmap electron-builder writes beside the installer. Neither needs a
+# real address: MCode has no update server yet, so the feed is set at run time
+# from the settings row (or MCODE_UPDATE_URL), and this one is a reserved name
+# that can never resolve. Nothing is ever uploaded (package.mjs passes
+# --publish never).
+publish:
+  provider: generic
+  url: https://updates.invalid/mcode/
+
 mac:
   target:
     - dmg
+    # electron-updater replaces a macOS app from the zip (and needs the app signed).
+    - zip
   icon: build/icon.icns
   category: public.app-category.developer-tools
 

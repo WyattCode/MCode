@@ -249,7 +249,11 @@ onMounted(() => {
   // The ready event may have gone out before this window was listening.
   void window.mcode
     .updateStatus()
-    .then(takeUpdateState)
+    .then((state) => {
+      takeUpdateState(state)
+      /* MiMo's interrupted-update notice: the last install did not finish, said once. */
+      if (state.interrupted) notifyFailure(t("update.interrupted", { version: state.interrupted.targetVersion || "?" }), state.interrupted.error)
+    })
     .catch(() => {})
   offUpdateState = window.mcode.onUpdateState((state) => {
     takeUpdateState(state)
@@ -687,17 +691,14 @@ async function applyServer(answer: string) {
  * MiMo's updateCheckNow, from the settings row, the menu or the palette.
  *
  * There is no update service behind this app, so the feed is whatever the user
- * points it at - a JSON document with a `version`. The main process reads it
- * and downloads a newer installer (the window's content policy reaches nothing
- * but the local backend); this only says how it went. With no feed configured
- * the command says so rather than pretending to have checked.
+ * points it at - an update folder with electron-builder's latest.yml. The main
+ * process reads it and downloads and verifies a newer installer (the window's
+ * content policy reaches nothing but the local backend); this only says how it
+ * went. With no feed configured the command says so rather than pretending to
+ * have checked.
  */
 async function checkForUpdates() {
   if (updateChecking.value) return
-  if (!app.config?.updateFeed?.trim()) {
-    notifyFailure(t("update.noFeed"))
-    return
-  }
   updateChecking.value = true
   /* MiMo's sticky 正在检查更新…, up for as long as the check (and a download) runs. */
   const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
@@ -706,7 +707,6 @@ async function checkForUpdates() {
     dismiss(checking)
     takeUpdateState(result)
     if (result.outcome === "current") notify(t("update.current"))
-    else if (result.outcome === "no-installer" && result.version) notify(t("update.found", { version: result.version }))
     else if (result.outcome === "ready") notify(t("update.readyToast"))
     else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
     else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
