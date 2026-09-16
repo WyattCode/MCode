@@ -1,4 +1,5 @@
 import { decodeXml } from "./docx-parse"
+import { language } from "./i18n"
 
 /*
  * MiMo draws a workbook's charts itself, as plain SVG laid over the grid, not
@@ -336,7 +337,8 @@ function ticksOf(from: number, to: number, step: number): number[] {
 
 function formatTick(value: number): string {
   if (!Number.isFinite(value)) return "0"
-  return Math.abs(value) >= 1000 ? value.toLocaleString("en-US") : String(Math.round(value * 100) / 100)
+  // Grouped the way the interface language groups thousands (1,234 / 1.234 / 1 234).
+  return Math.abs(value) >= 1000 ? value.toLocaleString(language.value) : String(Math.round(value * 100) / 100)
 }
 
 interface Scale {

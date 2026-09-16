@@ -143,7 +143,7 @@ const headers = computed(() => {
 const LABELS: Record<Row["kind"], string> = {
   file: "search.files",
   project: "search.projects",
-  session: "search.sessions",
+  session: "searchOverlay.convos",
 }
 
 async function choose(index: number) {

@@ -1138,14 +1138,14 @@ export const useApp = defineStore("app", () => {
       })
       .catch(() => undefined)
     if (!result) {
-      notifyFailure(t("stream.branchFailed"))
+      notifyFailure(t("stream.forkFailed"))
       return undefined
     }
     const { session } = result
     // Same guard as create(): the session.updated event usually lands first.
     if (!sessions.value.some((entry) => entry.id === session.id)) sessions.value.unshift(session)
     await open(session.id)
-    notify(how.here ? t("stream.branchedFromHere") : t("stream.branchedFromCurrent"))
+    notify(how.here ? t("stream.forkedFromHere") : t("stream.forkedFromCurrent"))
     return session
   }
 

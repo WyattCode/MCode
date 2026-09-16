@@ -1350,8 +1350,8 @@ defineExpose({ stepMessage, scroller })
               type="button"
               class="msg-act"
               data-msg-act="branch"
-              :aria-label="t('stream.replyBranch')"
-              v-tip="{ label: t('stream.replyBranch'), placement: 'top' }"
+              :aria-label="t('stream.replyFork')"
+              v-tip="{ label: t('stream.replyFork'), placement: 'top' }"
               @click="branchReply(turn)"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">

@@ -18,7 +18,7 @@ import PaneBoundary from "./right/PaneBoundary.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
 import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf } from "../lib/right-tools"
 import { useApp } from "../stores/app"
-import { t } from "../lib/i18n"
+import { language, t } from "../lib/i18n"
 
 /**
  * MiMo's right panel.
@@ -74,6 +74,16 @@ function title(tab: RightTab): string {
   if (tab.type === "files") return t("rp.files.openFileTitle")
   const name = t(TOOL_INFO[tab.type].label)
   return tab.ord > 1 ? `${name} ${tab.ord}` : name
+}
+
+/*
+ * Whether the tab shows one of the app's own tool names. MCode localizes those
+ * (MiMo keeps a short fixed set), so a compact pill may widen to fit one; a
+ * page title or a name the reader chose is cut at the compact width as MiMo cuts it.
+ */
+function isToolName(tab: RightTab): boolean {
+  if (tab.type === "browser" && tab.pageTitle) return false
+  return !tab.name && title(tab) !== ""
 }
 
 /*
@@ -179,7 +189,8 @@ function onWheel(event: WheelEvent) {
   event.preventDefault()
 }
 
-watch(() => [rp.active, rp.tabs.length] as const, async () => {
+// A new language can widen the pills (localized tool names), so the active one is brought back into view then too.
+watch(() => [rp.active, rp.tabs.length, language.value] as const, async () => {
   measure()
   await nextTick()
   strip.value?.querySelector<HTMLElement>(".rp-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" })
@@ -354,7 +365,7 @@ defineExpose({
           v-for="tab in rp.tabs"
           :key="tab.id"
           class="rp-tab"
-          :class="{ active: tab.id === rp.active }"
+          :class="{ active: tab.id === rp.active, 'tool-name': isToolName(tab) }"
           role="tab"
           :aria-selected="tab.id === rp.active"
           :tabindex="tab.id === rp.active ? 0 : -1"
@@ -623,6 +634,21 @@ body.resizing .right-panel {
   width: 120px;
   min-width: min(120px, 100%);
   max-width: min(120px, 100%);
+}
+
+/*
+ * A localized tool name keeps its whole word when the pills turn compact: the
+ * pill grows from 120 toward the full 160 instead of cutting Überprüfung or
+ * الوكلاء الفرعيون mid-word. A short name still sits in exactly 120.
+ */
+.rp-tabs.compact .rp-tab.tool-name {
+  flex-basis: auto;
+  width: auto;
+  max-width: min(160px, 100%);
+}
+
+.rp-tabs.compact .rp-tab.tool-name .rpt-name {
+  flex: 1 1 auto;
 }
 
 .rp-tab.active {
