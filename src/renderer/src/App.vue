@@ -1694,7 +1694,7 @@ const HEADER_MENU: MenuRow[] = [
       { id: "row.copyMarkdown", label: "menu.copyMarkdown", icon: "M2.2 4h11.6v8H2.2zM4.4 10V6l1.6 1.8L7.6 6v4M10.8 6v4M9.4 8.6l1.4 1.4 1.4-1.4" },
     ],
   },
-  { id: "row.continue", label: "menu.branch", icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z" },
+  { id: "row.continue", label: "menu.fork", icon: "M4.6 4.8v6.6M4.6 4.8a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8zM4.6 7.6h4.2a2 2 0 0 1 2 2v1.4M10.8 11a1.4 1.4 0 1 0 0 2.8 1.4 1.4 0 0 0 0-2.8z" },
   { id: "session.delete", label: "menu.delete", icon: "M3 4.4h10M6.4 4.4V2.8h3.2v1.6M4.4 4.4l.7 8.4h5.8l.7-8.4M6.8 6.8v3.8M9.2 6.8v3.8", divided: true, danger: true },
 ]
 
@@ -1738,7 +1738,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
     if (app.currentID !== sessionID) await app.open(sessionID)
     const last = app.messages[app.messages.length - 1]
     if (last) await app.forkFrom(last.id)
-    else notifyFailure(t("stream.branchNeedsMessage"))
+    else notifyFailure(t("stream.forkNeedsMessage"))
   },
   "row.batch": (sessionID) => {
     selectingProjects.value = undefined
@@ -3294,7 +3294,7 @@ const bindableCommands = computed((): AppCommand[] => {
       enabled: hasSession,
       run: () => {
         const last = app.messages[app.messages.length - 1]
-        if (!last) notifyFailure(t("stream.branchNeedsMessage"))
+        if (!last) notifyFailure(t("stream.forkNeedsMessage"))
         else void app.forkFrom(last.id, { titleSuffix: true })
       },
     },

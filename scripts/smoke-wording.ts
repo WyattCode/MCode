@@ -155,6 +155,63 @@ export function bracketPlurals(tables: Tables): string[] {
   return found
 }
 
+/*
+ * W5: forking a conversation is not a git branch.
+ *
+ * The reply row's fork button sits pixels from the git branch chip, and both
+ * used to read 分支 / "Branch". Each table names the git branch with one word;
+ * none of the fork strings may use it. (MiMo itself writes 分支 for both, so this
+ * is MCode's own separation.)
+ */
+const GIT_BRANCH: Record<string, RegExp> = {
+  zhCN: /分支/,
+  zhTW: /分支/,
+  en: /branch/i,
+  ar: /فرع|فروع/,
+  bs: /gran[aeiu]/i,
+  da: /gren/i,
+  de: /branch/i,
+  es: /(^|\s)ramas?(\s|$|[,.])/i,
+  fr: /branche/i,
+  ja: /ブランチ/,
+  ko: /브랜치/,
+  nb: /gren/i,
+  pl: /gałąź|gałęz/i,
+  ptBR: /branch/i,
+  ru: /ветк/i,
+  th: /บรานช์|สาขา/,
+  tr: /(^|\s)dal/i,
+  uk: /гілк|гілок/i,
+}
+export const FORK_KEYS = [
+  "stream.replyFork",
+  "menu.fork",
+  "stream.forkedFrom",
+  "stream.forkedFromHere",
+  "stream.forkedFromCurrent",
+  "stream.forkFailed",
+  "stream.forkNeedsMessage",
+  "key.label.fork-chat",
+  "key.desc.fork-chat",
+]
+
+export function forkSaysBranch(tables: Tables): string[] {
+  const found: string[] = []
+  for (const [name, entries] of Object.entries(tables)) {
+    const word = GIT_BRANCH[name]
+    if (!word) {
+      found.push(`${name} has no git-branch word to check against`)
+      continue
+    }
+    for (const key of FORK_KEYS) {
+      const value = entries[key]
+      if (value === undefined) found.push(`${name} ${key} (missing)`)
+      else if (word.test(value)) found.push(`${name} ${key} (${value})`)
+    }
+  }
+  return found
+}
+
 export function wordingChecks(check: Check, section: (name: string) => void): void {
   const source = fs.readFileSync(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"), "utf8")
   const tables = readTables(source)
@@ -215,6 +272,22 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
     check(
       "and leaves a bracketed count, a placeholder and an abbreviation alone",
       bracketPlurals({ x: { a: "Vis flere filer ({n})", b: "{cur}/{total} (+{hidden})", c: "vor {n} Tg. (PDF)" } }).length === 0,
+    )
+  }
+
+  section("Round 8 (W5): forking a conversation never borrows the git branch's word")
+  {
+    const clashes = forkSaysBranch(tables)
+    check("no fork string in any table uses that table's word for a git branch", clashes.length === 0, clashes.slice(0, 8))
+    check("and each table's git branch label does use it, so the words checked are the real ones", Object.keys(tables).every((name) => GIT_BRANCH[name]?.test(tables[name]["home.branchLabel"] ?? "") || GIT_BRANCH[name]?.test(tables[name]["info.branchSwitchFailed"] ?? "")))
+    const broken = clone(tables)
+    broken.zhCN["stream.replyFork"] = "分支"
+    broken.es["stream.forkFailed"] = "No se pudo crear la rama, inténtalo de nuevo"
+    const caught = forkSaysBranch(broken)
+    check(
+      "the rule catches 分支 on the reply row and a Spanish rama",
+      caught.some((line) => line.startsWith("zhCN stream.replyFork")) && caught.some((line) => line.startsWith("es stream.forkFailed")),
+      caught,
     )
   }
 }
