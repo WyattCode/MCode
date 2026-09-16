@@ -1395,8 +1395,6 @@ export interface AppConfig {
    * reopening it leaves the same set of conversations to hand.
    */
   openTabs: string[]
-  /** Set once the first-run setup has been completed or skipped. */
-  onboarded: boolean
   /**
    * 导入: set once the first run has asked about conversations in other AI
    * apps, whether or not anything was taken. MiMo asks a machine once; so does

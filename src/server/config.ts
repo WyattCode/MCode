@@ -126,7 +126,6 @@ function defaults(): AppConfig {
     agent: "build",
     staged: false,
     openTabs: [],
-    onboarded: false,
     importOnboarded: false,
     expandShell: false,
     expandEdits: false,
