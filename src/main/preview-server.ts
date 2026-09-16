@@ -304,6 +304,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
 }
 
 function serve(request: http.IncomingMessage, response: http.ServerResponse) {
+  /*
+   * On every answer: a served page that loads anything from elsewhere must not
+   * hand over its own address - the token in it is the folder's origin - and
+   * no file is taken for a type other than the one it is served as.
+   */
+  response.setHeader("Referrer-Policy", "no-referrer")
+  response.setHeader("X-Content-Type-Options", "nosniff")
   handle(request, response).catch(() => {
     // A request that failed half way must still end, or the socket hangs open.
     if (!response.headersSent) {

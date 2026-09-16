@@ -9,7 +9,7 @@
  * hold one names its length or its outcome instead.
  */
 import fs from "node:fs/promises"
-import { createServer } from "node:http"
+import { createServer, get as httpGet } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import WebSocket from "ws"
@@ -37,6 +37,8 @@ import { Permissions, namesAskingFile } from "../src/server/permission"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
+import { resolveInsideReal } from "../src/server/tool/fs-util"
+import { servePreview } from "../src/main/preview-server"
 
 type Section = (name: string) => void
 
@@ -82,6 +84,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
     await maskingChecks(check, section, root)
     await egressChecks(check, section, root)
     await approvalChecks(check, section, root)
+    await junctionChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -678,4 +681,77 @@ async function approvalChecks(check: Check, section: Section, root: string): Pro
   const autoEnv = await ask("ses_x7b", "cat .env", "reject")
   check("at the middle level a .env on the command line is not waved through", autoEnv.outcome !== "allowed", autoEnv)
   check("the command parser still reads the line the same way", simpleCommands("cat .env", false)[0]?.tokens.join(" ") === "cat .env")
+}
+
+/** A GET to the preview server as a page there would make it, answering the status and the headers. */
+function previewGet(url: string, file: string): Promise<{ status: number; headers: Record<string, unknown> }> {
+  const parsed = new URL(url)
+  return new Promise((resolve) => {
+    const request = httpGet(
+      { host: "127.0.0.1", port: Number(parsed.port), path: `/${file}`, headers: { host: parsed.host } },
+      (response) => {
+        response.resume()
+        resolve({ status: response.statusCode ?? 0, headers: response.headers })
+      },
+    )
+    request.on("error", () => resolve({ status: 0, headers: {} }))
+  })
+}
+
+// ------------------------------------------------------------------- X9
+async function junctionChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 8 (X9): a junction inside a folder is no way out of it")
+  const project = path.join(root, "x9-project")
+  const outside = path.join(root, "x9-outside")
+  await fs.mkdir(project, { recursive: true })
+  await fs.mkdir(outside, { recursive: true })
+  await fs.writeFile(path.join(outside, "secret.txt"), "outside")
+  await fs.writeFile(path.join(project, "page.html"), "<p>x</p>")
+  const link = path.join(project, "door")
+  if (!(await fs.symlink(outside, link, "junction").then(() => true, () => false))) {
+    check("a junction can be made for the test", false)
+    return
+  }
+  const data = path.join(root, "x9-data")
+  await fs.mkdir(path.join(data, "storage"), { recursive: true })
+  await fs.writeFile(path.join(data, "storage", "config.json"), "{}")
+  const backend = await startBackend(data)
+  try {
+    const ask = (request: Record<string, unknown>) =>
+      handle(backend.runtime, request as unknown as Request).then(
+        (value) => ({ ok: true, value }),
+        (err: unknown) => ({ ok: false, value: err instanceof Error ? err.message : String(err) }),
+      )
+    const listed = await ask({ type: "file.listDir", directory: project, sub: "door", all: true })
+    check("the files tab does not list a folder through a junction", !listed.ok, listed)
+    const searched = await ask({ type: "file.search", directory: project, query: "secret", sub: "door" })
+    check("nor search one", !searched.ok, searched)
+    const plain = await ask({ type: "file.listDir", directory: project, all: true })
+    check("the project itself still lists, the junction shown as an entry", plain.ok && JSON.stringify(plain.value).includes("door"), plain.ok)
+  } finally {
+    await backend.close()
+  }
+  const cwd = await resolveInsideReal(project, "door").then(() => "allowed", (err: Error) => err.message)
+  check("a terminal cannot be opened through it", cwd.startsWith("Path leads outside"), cwd)
+  check("an ordinary subfolder still can", (await resolveInsideReal(project, ".").catch(() => "")) === path.resolve(project))
+  const handlers = await fs.readFile(path.join(process.cwd(), "src/server/handlers.ts"), "utf8").catch(() => "")
+  const main = await fs.readFile(path.join(process.cwd(), "src/main/index.ts"), "utf8").catch(() => "")
+  check("the terminal's folder is checked by where it leads", /request\.cwd \? await resolveInsideReal\(group\.directory, request\.cwd\)/.test(handlers))
+  check("open-file and reveal-file check by where the file leads", /await insideReal\(root, target\)/.test(main) && (main.match(/await inside\(directory, relative\)/g) ?? []).length === 2)
+
+  const served = await servePreview(path.join(project, "page.html"))
+  if (!served.ok) {
+    check("the preview server serves the page", false, served)
+    return
+  }
+  const page = await previewGet(served.url, "page.html")
+  check("the preview server serves the page", page.status === 200, page.status)
+  const escaped = await previewGet(served.url, "door/secret.txt")
+  check("but not a file reached through a junction in its folder", escaped.status === 403, escaped.status)
+
+  section("Round 8 (X14): the preview server sends no Referer and no sniffing")
+  check("pages go out with Referrer-Policy: no-referrer", page.headers["referrer-policy"] === "no-referrer", page.headers["referrer-policy"])
+  check("and X-Content-Type-Options: nosniff", page.headers["x-content-type-options"] === "nosniff", page.headers["x-content-type-options"])
+  const missing = await previewGet(served.url, "nothing.html")
+  check("so do refusals", missing.status === 404 && missing.headers["referrer-policy"] === "no-referrer")
 }
