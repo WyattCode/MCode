@@ -57,7 +57,7 @@ const app = useApp()
 const preferOpen = (() => {
   const config = app.config
   if (props.part.name === "bash") return config?.expandShell === true
-  if (["edit", "write", "patch", "apply_patch"].includes(props.part.name)) return config?.expandEdits === true
+  if (["edit", "multiedit", "write", "patch", "apply_patch"].includes(props.part.name)) return config?.expandEdits === true
   return false
 })()
 

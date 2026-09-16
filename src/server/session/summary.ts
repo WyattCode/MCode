@@ -116,6 +116,7 @@ function eventOf(part: ToolPart): string | undefined {
   }
   if (part.name === "write") return part.metadata?.created === true ? "written" : "edited"
   if (part.name === "edit") return input.old_string === "" ? "written" : "edited"
+  if (part.name === "multiedit") return part.metadata?.created === true ? "written" : "edited"
   return undefined
 }
 

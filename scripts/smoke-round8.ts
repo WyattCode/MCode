@@ -16,13 +16,13 @@ import os from "node:os"
 import path from "node:path"
 import type { ServerResponse } from "node:http"
 import type { Check } from "./smoke-round5"
-import { engine, say, wireText } from "./smoke-round5"
+import { calls, engine, say, wireText } from "./smoke-round5"
 import { FAMILY_PROMPTS, basePrompt, promptFamily } from "../src/server/session/prompts"
 import { systemPrompt } from "../src/server/session/prompt"
 import { attachmentNote, sessionNote } from "../src/server/session/context"
 import { firstPlanNote } from "../src/server/session/plan"
 import { createLoopMonitor } from "../src/server/session/reminders"
-import { findTool } from "../src/server/tool/registry"
+import { findTool, reachOf, toolsFor } from "../src/server/tool/registry"
 
 /** The system text of a request, as the chat-completions wire carries it. */
 function systemOf(body: Record<string, any> | undefined): string {
@@ -262,6 +262,57 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
       check("the file arrives framed as a read the app already made", sent.includes("The read tool was called for you with"))
       check("naming the file it was called on", sent.includes('notes.md\\\"}') || sent.includes("notes.md"), sent.slice(0, 200))
       check("with the contents after it", sent.includes("the answer is 41"))
+    } finally {
+      await e.close()
+    }
+  }
+
+  // ------------------------------------------------------------------ M7
+  section("Round 8 (M7): multiedit makes several changes in one call, or none at all")
+  {
+    const offered = (agent: string) => toolsFor(agent).some((tool) => tool.name === "multiedit")
+    check("it is offered to building and planning conversations, not to an explore subagent", offered("build") && offered("plan") && !offered("explore"))
+    check("and it counts as a change the turn records, as edit does", reachOf("multiedit") === "reports")
+
+    const e = await engine()
+    try {
+      await e.config.set({ permissions: { ...e.config.get().permissions, write: "allow", edit: "allow" } })
+      const file = path.join(e.project, "app.ts")
+      await fs.writeFile(file, "const a = 1\nconst b = 2\nconst c = 3\n")
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      const step = async (edits: Record<string, unknown>[], target = "app.ts") => {
+        e.replies.push(calls([{ name: "multiedit", input: { file_path: target, edits } }]))
+        e.replies.push(say("done"))
+        await e.runner.prompt({ sessionID: session.id, text: "MULTI" })
+        await e.idle(session.id)
+      }
+
+      await step([
+        { old_string: "const a = 1", new_string: "const a = 10" },
+        // Quotes what the first edit left, not what the file said before it.
+        { old_string: "const a = 10\nconst b = 2", new_string: "const a = 10\nconst b = 20" },
+      ])
+      check("both edits land, the second on the text the first left", (await fs.readFile(file, "utf8")) === "const a = 10\nconst b = 20\nconst c = 3\n", await fs.readFile(file, "utf8"))
+
+      await step([
+        { old_string: "const c = 3", new_string: "const c = 30" },
+        { old_string: "const d = 4", new_string: "const d = 40" },
+      ])
+      check("when one edit does not apply, none of them is written", (await fs.readFile(file, "utf8")) === "const a = 10\nconst b = 20\nconst c = 3\n", await fs.readFile(file, "utf8"))
+      check("and the model is told which one, and that nothing changed", wireText(e.bodies.at(-1)).includes("Edit 2 of 2 did not apply, so nothing was written"))
+
+      await step(
+        [
+          { old_string: "", new_string: "export const x = 1\n" },
+          { old_string: "x = 1", new_string: "x = 2" },
+        ],
+        "fresh.ts",
+      )
+      check("an empty first quote creates the file, and the later edits apply to it", (await fs.readFile(path.join(e.project, "fresh.ts"), "utf8").catch(() => "")) === "export const x = 2\n")
+
+      const tools = (e.bodies.at(-1)?.tools ?? []) as { function?: { name?: string; description?: string } }[]
+      const described = tools.find((tool) => tool.function?.name === "multiedit")?.function?.description ?? ""
+      check("the provider is offered it, with the all-or-nothing rule spelled out", described.includes("All or nothing") && described.includes("Only the first edit may have an empty old_string"), described.length)
     } finally {
       await e.close()
     }
