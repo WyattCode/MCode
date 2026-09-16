@@ -68,6 +68,12 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
       "the terminal's addons are build-time packages, beside xterm itself",
       addons.every((name) => pkg.devDependencies[name] && !pkg.dependencies[name] && imports(renderer, name)) && Boolean(pkg.devDependencies["@xterm/xterm"]),
     )
+    const builderFiles = /^files:\n((?: {2}- .*\n)+)/m.exec(await fs.readFile(path.join(root, "electron-builder.yml"), "utf8"))?.[1] ?? ""
+    check(
+      "the asar takes the three build outputs, not the check bundles that also land in out/",
+      builderFiles === "  - out/main/**/*\n  - out/preload/**/*\n  - out/renderer/**/*\n  - package.json\n",
+      builderFiles,
+    )
     // The links addon was listed and never imported: the terminal opens links through its own handler.
     const unused = "@xterm/addon-web-links"
     check("the links addon nothing imports is not listed at all", !pkg.dependencies[unused] && !pkg.devDependencies[unused] && !imports(renderer, unused))

@@ -19,8 +19,12 @@ extraResources:
   - from: resources/soundfont
     to: soundfont
 
+# The three build outputs only: the checks bundle themselves into out/ too
+# (smoke.mjs and friends, about 11 MB), and those are not part of the app.
 files:
-  - out/**/*
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
   - package.json
 # The backend runs in the main process, so only its runtime deps ship.
 # node-pty is the one native dependency. Its .node binaries, and the
