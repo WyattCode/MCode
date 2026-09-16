@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { CodedError, diskErrorCode } from "@shared/errors"
 
 /**
  * Flat JSON document store rooted at the app data directory.
@@ -12,21 +13,71 @@ import path from "node:path"
 let ticket = 0
 
 /**
+ * Where a path stops being safe to lengthen.
+ *
+ * Windows refuses a path over 260 characters unless the process opts in, and
+ * the temp file is necessarily longer than the document it stands in for. The
+ * reference meets the same wall and answers it by shortening the name
+ * (`truncate`, basename to 128) rather than by failing.
+ */
+const PATH_LIMIT = 240
+
+/**
+ * The temp file one write uses.
+ *
+ * Appending is the readable form and is used wherever it fits. Where it would
+ * not, the suffix replaces the tail of the name instead, so the temp path is
+ * never longer than the document's own - which is what made a save near
+ * MAX_PATH fail for a file that fitted perfectly well itself. The suffix
+ * carries the pid and a counter that only ever goes up, so no two writes in
+ * flight - in this process or beside it - can land on one name.
+ */
+export function tempNameFor(target: string): string {
+  const suffix = `.${process.pid}.${++ticket}.tmp`
+  if (target.length + suffix.length <= PATH_LIMIT) return target + suffix
+  const base = path.basename(target)
+  const room = Math.max(1, base.length - suffix.length)
+  return path.join(path.dirname(target), base.slice(0, room) + suffix)
+}
+
+/**
  * Writes a file by replacing it, never by truncating it.
  *
  * A direct write is not a small risk taken for simplicity: it is a window in
  * which the file on disk is neither the old contents nor the new ones, and a
  * crash inside that window loses both.
+ *
+ * The bytes are flushed before the rename, as the reference's full writer
+ * flushes them. Renaming is atomic in the ordering sense and not in the
+ * durable one: without this, power lost shortly after a save can leave some
+ * filesystems showing the new name over no contents at all, which turns "the
+ * old version survived" into "neither version did".
  */
 export async function writeAtomic(target: string, data: string, mode?: number): Promise<void> {
   await fs.mkdir(path.dirname(target), { recursive: true })
-  const temp = `${target}.${process.pid}.${++ticket}.tmp`
-  await fs.writeFile(temp, data, mode === undefined ? "utf8" : { encoding: "utf8", mode })
+  const temp = tempNameFor(target)
+  let written = false
   try {
+    const handle = await fs.open(temp, "w", mode)
+    try {
+      await handle.writeFile(data, "utf8")
+      written = true
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
     await renameOver(temp, target)
   } catch (err) {
-    // Leaving a stray temp behind would be worse than the failure itself.
-    await fs.rm(temp, { force: true }).catch(() => {})
+    /*
+     * Cleanup belongs here rather than on the rename alone.
+     *
+     * A full disk throws inside the write, which used to be outside the try -
+     * so the one failure that leaves temp files behind was the one whose
+     * cleanup never ran, and they piled up in the storage folder.
+     */
+    if (written || (err as NodeJS.ErrnoException)?.code !== "ENOENT") await fs.rm(temp, { force: true }).catch(() => {})
+    const code = diskErrorCode(err)
+    if (code) throw new CodedError(`${target} could not be written: ${(err as Error).message}`, code)
     throw err
   }
 }

@@ -595,7 +595,8 @@ export interface CommitResult {
 
 export interface PushResult {
   ok: boolean
-  code?: "auth" | "rejected" | "no-remote"
+  /** `detached`: the checkout is on no branch, so there is nothing to push. */
+  code?: "auth" | "rejected" | "no-remote" | "detached"
   error?: string
 }
 
@@ -1256,6 +1257,16 @@ export interface ServerEntry {
 }
 
 export interface AppConfig {
+  /**
+   * Which build's idea of this document it is.
+   *
+   * Absent on every config written before this existed, which is read as the
+   * first version. It is here so that an older build installed over a newer
+   * one can tell that the document it is reading was not written for it: none
+   * of these documents carried a version, so a downgrade silently reinterpreted
+   * whatever it found and wrote its own understanding back over the rest.
+   */
+  schemaVersion?: number
   model: ModelRef
   /** New conversations start on Smart rather than on `model`. */
   smart?: boolean
@@ -2132,7 +2143,12 @@ export interface ResponseMap {
   /* `files` are the existing files the prompt names with `@`: `name` as written, `path` absolute. */
   "command.expand": { prompt: string; files: { name: string; path: string }[] }
   "command.shell": { text: string }
-  "config.get": { config: AppConfig }
+  /**
+   * `unreadable` when the stored config would not parse and the app opened on
+   * the defaults, with where the damaged file was kept; `fromNewerVersion`
+   * when it was written by a later build and this one will not write over it.
+   */
+  "config.get": { config: AppConfig; unreadable?: { problem: string; evidence?: string }; fromNewerVersion?: boolean }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }
   "provider.auth": { providers: ProviderStatus[]; models: number }
@@ -2307,7 +2323,16 @@ export interface RequestEnvelope {
 
 export type ResponseEnvelope =
   | { kind: "response"; id: string; ok: true; data: unknown }
-  | { kind: "response"; id: string; ok: false; error: string }
+  /**
+   * `errorCode` names a sentence in the window's own tables.
+   *
+   * A failure raised in the backend reaches the window as `error` alone, so a
+   * sentence written at the throw site is the sentence a reader of any
+   * language sees. MiMo answers these from a central table of codes instead;
+   * where this app can name one, the window phrases it and keeps `error` as
+   * the detail.
+   */
+  | { kind: "response"; id: string; ok: false; error: string; errorCode?: string }
 
 export interface EventEnvelope {
   kind: "event"
