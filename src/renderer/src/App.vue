@@ -61,6 +61,7 @@ import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, sideFits, toolHints } from "./lib/right-tools"
 import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
+import { openDocument } from "./lib/office-open"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
 import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
@@ -1338,9 +1339,31 @@ watch(reviewRequest, () => {
     rp.setOpen(true)
   } else rp.openTool("review")
 })
-watch(fileRequest, (asked) => {
-  const root = app.current?.directory
-  if (asked && root) void window.mcode.openFile(root, asked.path)
+/**
+ * A file named on the edited-files card, opened the way MiMo opens one.
+ *
+ * The recorded path is resolved first - against the project as well as as it
+ * stands - and a path that is no longer there is said so rather than doing
+ * nothing. What can be previewed opens in the panel (a document in the Office
+ * tab, anything else in the files tab, rooted at its own folder when it lies
+ * outside the project); a folder is shown in the system's file manager. Nothing
+ * is handed to an external editor any more.
+ */
+watch(fileRequest, async (asked) => {
+  if (!asked) return
+  const root = app.current?.directory?.replace(/[\\/]+$/, "")
+  const candidates = [asked.path, ...(root ? [`${root}/${asked.path}`] : [])]
+  const found = await window.mcode.resolveExistingPath(candidates).catch(() => null)
+  if (!found) {
+    notifyFailure(t("harnessRow.pathNotExist"))
+    return
+  }
+  if (found.directory) {
+    const shown = await window.mcode.revealPath(found.path).catch(() => ({ ok: false, error: "" }))
+    if (!shown.ok) notifyFailure(t("harnessRow.revealFailed", { error: shown.error ?? "" }))
+    return
+  }
+  await openDocument({ path: found.path }, root)
 })
 
 function copyWorkingDirectory() {
