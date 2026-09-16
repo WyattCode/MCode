@@ -236,6 +236,11 @@
 - 构建：**按模型家族细分系统提示词**（核实 MiMo 对哪些家族用不同提示词或请求参数、按什么规则匹配，照做；提示词内容 MCode 自写）；**清单**——产物库记录多个来源对话并做全文搜索（MiMo 的 `artifact_source` 与 FTS）、xterm 读屏模式（鼠标所见不变）、第八轮遗留的两处安全风险（自定义服务商 baseURL 未遮蔽、MCP OAuth 未防 DNS 重绑定；不新增 MiMo 没有的询问）。
 - 只读排查：**每个设置端到端**（默认值、取值范围、存放位置、是否真的生效、是否即时生效，`round9-settings.md`）、**服务商、模型目录、登录与 MCP 生命周期**（`round9-providers.md`）、**作为 Windows 应用与发行内容**（安装卸载、协议与单实例、任务栏与通知、打包内容、自动更新，`round9-windows.md`）。
 - 仍待用户：V10（需要新 token 名）、L14（需要公开仓库地址）、L24–L27（需要 Linux / macOS 设备）。
+- **清单三项已做（worktree 分支，eaa4499 / 2835dc2 / 3543c96 / c0c4cf3）**，MiMo 仍是 26.914.142245：
+  - 产物库（`server/artifact/store.ts`，库版本 2）：MiMo 的 `artifact` 行按「对话 + 地址」各一行，`artifact_source` 记的是同一产物的多种观测来源，`artifact_fts` 是 `title_search`（文件显示名的 NFC 小写）的 FTS5 trigram 镜像，查询 ≥3 字符走 `MATCH "短语"`、更短走 `instr`，只搜名字；删对话时整行删除并记墓碑。MCode 仍一文件一行（用户此前定的「文件比对话活得久」），新增 `artifact_source`（每个写过它的对话一行）、`title/title_search` + 同形 FTS5 trigram 镜像（Electron 自带 node:sqlite 3.50.4 实测可用）、`artifact_reconcile` 检查点、`artifact_purged_session` 墓碑。删对话只把它的来源解除关联（保留标题）；文件显示在最新的仍存在的对话下，没有则在最新的已删对话下；消息被编辑掉的认领在下一轮对账时删掉，无人认领的行随之删除（同 MiMo）。v1 库在一个事务里迁移，不丢行；更新版本的库仍只读；行上保留 v1 的列，旧版本读新库照样能读。产物页与搜索浮层改为把关键词交给服务端（浮层同 MiMo：150ms 后请求，再在前端做模糊匹配）；**不再按对话标题搜**（MiMo 只搜名字）。另修一个旧缺陷：库非空时启动后新写的文件要重启才出现——现在列表前先对账有变化的对话（消息写入经 `SessionStore.watch` 标脏）。
+  - xterm 读屏：MiMo 从不开 `screenReaderMode`。实测（WebGL 渲染器）开关前后终端区域逐像素相同（静止与拖选后），命中元素、光标与 xterm 各元素计算样式不变，读屏层透明且不接收指针；但它每帧重建逐行 DOM，所以只在 `app.accessibilitySupportEnabled` 为真时开，`accessibility-support-changed` 实时跟随（主进程 `mcode:screen-reader`，`lib/screen-reader.ts`）。新键 `term.tooMuchOutput`（18 张表）。
+  - 安全两项（MiMo 都没做，这里更严，不改变正常配置的行为，未加任何审批）：`redactUrl` 遮自定义服务商 baseURL 与内置服务商端点覆盖里的用户信息和凭据样查询参数（设置文档、服务商列表、`auth.completed` 事件），原样传回时保留磁盘值（设置保存与自定义服务商表单都是），MCP 地址也加遮用户信息，日志遮任何地址里的用户信息；`server/oauth-fetch.ts` 让 MCP 登录对服务器指定的元数据 / 注册 / 令牌地址逐个解析一次、非公网即拒、连接钉在检查过的地址（TLS 仍按主机名校验），重定向逐跳检查；服务器自己的主机照旧信任，服务器本身在本机或内网时可指向内网其他主机。
+  - 验证：十二项检查（含 mcpcheck）全过，build 通过，smoke **2878 全过**（全量里第五轮 E12 / 推理保留两段对本地假模型的请求偶发 0 次，两次出现、重跑即过，与本轮改动无关）；新增 smoke 检查逐个用变异证明会失败；探针 `mcode-round9-backlog-artifacts` 9、`-xterm` 4、`-security` 4 全过，改坏代码后分别失败 8+1、2+1+1、4 项。
 
 用户决定不做（不要再主动提）：
 
