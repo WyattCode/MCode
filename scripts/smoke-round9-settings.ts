@@ -17,6 +17,7 @@ import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
 import { belowFullMap, defaultAccess } from "../src/shared/access"
 import { stepTarget, visibleChatOrder } from "../src/renderer/src/lib/visible-chats"
+import { fontScale } from "../src/renderer/src/lib/font-scale"
 
 const ROOT = process.cwd()
 const read = (file: string) => fs.readFileSync(path.join(ROOT, file), "utf8")
@@ -244,5 +245,62 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const policy = /content="(default-src[^"]*)"/.exec(read("src/renderer/index.html"))?.[1] ?? ""
     const sockets = (/connect-src ([^;]*)/.exec(policy)?.[1] ?? "").trim().split(/\s+/).filter((source) => /^wss?:/.test(source))
     check("the window's content policy lets sockets reach this machine alone", sockets.join(" ") === "ws://127.0.0.1:* ws://localhost:*", sockets)
+  }
+
+  section("Round 9 (S9-10): every stored value is checked as it is read")
+  {
+    const bad = await loaded({
+      theme: "foo",
+      reduceMotion: "sometimes",
+      diffMarks: 3,
+      voiceMode: "loud",
+      agent: "ninja",
+      effort: "extreme",
+      appIcon: "../../evil.png",
+      taskDoneSound: "triple",
+      accessLevel: "turbo",
+      tray: "yes",
+      spineSound: 0,
+      smart: "on",
+      uiFontSize: 100,
+      codeFontSize: "abc",
+      maxSteps: -3,
+      pinnedTabs: ["a", 7, null],
+      projects: "C:/x",
+      keybinds: { "session.new": "Ctrl+K", "app.search": 5, "view.right": null },
+      projectNames: ["not", "a", "map"],
+      model: "claude",
+      titleModel: { provider: 1 },
+      instructionFiles: "notes.md",
+      customProviders: [{ id: "ok", name: "OK", baseURL: "http://x" }, { id: 3 }],
+      migrations: ["orphans-r9"],
+    }).catch((error: Error) => error)
+    // Unchecked, a number where a chord belongs threw inside the load and the backend never started.
+    check("a document with the wrong types in it still loads", !(bad instanceof Error), bad instanceof Error ? bad.message : undefined)
+    if (!(bad instanceof Error)) {
+      const got = bad.config.get() as unknown as Record<string, unknown>
+      check("unknown enums fall back to the defaults", got.theme === "system" && got.reduceMotion === "system" && got.diffMarks === "color" && got.voiceMode === "smart" && got.agent === "build", got)
+      check("an unknown effort is medium, as MiMo's guard answers", got.effort === "medium")
+      check("an unknown app icon is the default one", got.appIcon === "classic")
+      check("a retired chime moves to its nearest, as the round-five migration would", got.taskDoneSound === "vibes")
+      check("an unknown access level is dropped, so the level is read off the map", !("accessLevel" in got))
+      check("a switch that is not a boolean is its default, an optional one is dropped", got.tray === true && got.spineSound === true && !("smart" in got))
+      check("a size past its range is clamped and one that is not a number is the default", got.uiFontSize === 24 && got.codeFontSize === 12, [got.uiFontSize, got.codeFontSize])
+      check("a step limit that is not a positive whole number is dropped", !("maxSteps" in got))
+      check("a list keeps only its strings, and a non-list is the default", JSON.stringify(got.pinnedTabs) === '["a"]' && JSON.stringify(got.projects) === "[]")
+      check("only a chord written as text is kept, so the rest still bind", JSON.stringify(got.keybinds) === '{"session.new":"Ctrl+K"}', got.keybinds)
+      check("a map that is not a map is the default", JSON.stringify(got.projectNames) === "{}")
+      check("a model that is not a model is the default, an optional one is dropped", (got.model as { model?: string })?.model === "claude-opus-5" && !("titleModel" in got))
+      check("a non-list of instruction files is dropped, and a malformed custom provider left out", !("instructionFiles" in got) && JSON.stringify((got.customProviders as { id: string }[]).map((entry) => entry.id)) === '["ok"]')
+      const disk = await bad.disk()
+      check("and the corrected document is what is written back", disk.theme === "system" && disk.uiFontSize === 24 && JSON.stringify(disk.keybinds) === '{"session.new":"Ctrl+K"}')
+    }
+
+    const good = { theme: "dark", reduceMotion: "on", diffMarks: "signs", uiFontSize: 16, codeFontSize: 9, effort: "xhigh", appIcon: "moss", taskDoneSound: "off", accessLevel: "auto", keybinds: { "app.search": "Ctrl+P" }, migrations: ["orphans-r9"] }
+    const kept = (await loaded(good)).config.get() as unknown as Record<string, unknown>
+    check("valid values are left exactly as they were", Object.entries(good).every(([key, value]) => key === "migrations" || JSON.stringify(kept[key]) === JSON.stringify(value)), kept)
+
+    check("the window's scale is clamped the way MiMo's is", fontScale(100, 14, 10, 24) === 24 / 14 && fontScale("abc", 12, 9, 24) === 1 && fontScale(-4, 14, 10, 24) === 1 && fontScale("16", 14, 10, 24) === 16 / 14)
+    check("and the window works its scale out through that", /fontScale\(ui, 14, 10, 24\)/.test(read("src/renderer/src/App.vue")) && /fontScale\(code, 12, 9, 24\)/.test(read("src/renderer/src/App.vue")))
   }
 }

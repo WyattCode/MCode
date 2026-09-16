@@ -21,6 +21,7 @@ import {
   type PermissionKind,
 } from "@shared/protocol"
 import { adoptedProjects, reconciledProjects } from "@shared/projects"
+import { sanitizeConfig } from "./config-sanitize"
 import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
 import { writeAtomic } from "./storage"
@@ -521,6 +522,8 @@ export class Config {
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     const retired = dropRetired(this.current)
+    // Before the migrations, which read these values as the types they claim to be.
+    const cleaned = sanitizeConfig(this.current, defaults())
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
      * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
@@ -532,7 +535,7 @@ export class Config {
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
     const migrated = this.migrate()
-    if ((migrated || retired) && !this.fromNewerVersion) await this.storage.write("config", this.current)
+    if ((migrated || retired || cleaned) && !this.fromNewerVersion) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
@@ -635,6 +638,8 @@ export class Config {
     if (!stored || typeof stored !== "object") return
     if (JSON.stringify(stored) === JSON.stringify(this.current)) return
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    dropRetired(this.current)
+    sanitizeConfig(this.current, defaults())
     this.current.autoApprove = allowed(this.current.permissions)
     this.bus.publish({ type: "config.updated", config: this.current })
   }

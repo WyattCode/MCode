@@ -72,6 +72,7 @@ import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind } from "./lib/find"
 import { chime } from "./lib/sound"
 import { stepTarget } from "./lib/visible-chats"
+import { fontScale } from "./lib/font-scale"
 import { announce } from "./lib/announce"
 import { chimeOf, longTask } from "@shared/chime"
 
@@ -628,7 +629,8 @@ async function checkForUpdates() {
 const rebound = computed(() => {
   const out = new Map<string, string>()
   for (const [id, chord] of Object.entries(app.config?.keybinds ?? {})) {
-    if (chord) out.set(normalizeChord(chord), id)
+    // Only a chord written as text is one; the backend drops anything else as it reads the file.
+    if (chord && typeof chord === "string") out.set(normalizeChord(chord), id)
   }
   return out
 })
@@ -966,14 +968,16 @@ watch(
  * The two sizes on the appearance page, carried the way MiMo carries them: a
  * scale on the root that every size in the interface is multiplied by - text
  * by the UI scale, code in the transcript and the diffs by the code one. At
- * the defaults both are 1 and nothing moves.
+ * the defaults both are 1 and nothing moves. Worked out as MiMo's does: a size
+ * is clamped to its range before it becomes a scale, and anything that is not
+ * a positive number is no scale at all.
  */
 watch(
   () => [app.config?.uiFontSize, app.config?.codeFontSize] as const,
   ([ui, code]) => {
     const style = document.documentElement.style
-    style.setProperty("--ui-font-scale", String((ui || 14) / 14))
-    style.setProperty("--code-font-scale", String((code || 12) / 12))
+    style.setProperty("--ui-font-scale", String(fontScale(ui, 14, 10, 24)))
+    style.setProperty("--code-font-scale", String(fontScale(code, 12, 9, 24)))
   },
   { immediate: true },
 )
