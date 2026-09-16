@@ -43,7 +43,7 @@ import { failureCode, failureDetail } from "./error-map"
 import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
-import { Snapshots, decode, readSnapshotFile } from "./snapshot"
+import { Snapshots, keepSnapshotFile, snapshotBytes } from "./snapshot"
 import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
@@ -310,6 +310,15 @@ export class SessionRunner {
 
   /** Where the per-project shadow repositories that back undo are kept. */
   private readonly snapshots: Snapshots
+
+  /**
+   * The undo stores, for the two things outside a turn that have to reach them:
+   * collecting a project's store when its last conversation goes, and moving an
+   * old profile's inline undo bodies into it.
+   */
+  get checkpoints(): Snapshots {
+    return this.snapshots
+  }
   /** Sessions with a summary in flight; see `compactingSessions`. */
   private readonly summarising = new Set<string>()
 
@@ -785,7 +794,12 @@ export class SessionRunner {
     // A path recorded twice keeps its first reading, because the state to
     // return to is the one the turn began from, not the one the last edit did.
     if (turn.told.has(key)) return
-    turn.told.set(key, await readSnapshotFile(target))
+    /*
+     * The body goes to the project's checkpoint store and only the reference is
+     * held here, so a turn that rewrites a large file no longer puts that file
+     * into the conversation's own undo document.
+     */
+    turn.told.set(key, await keepSnapshotFile(this.snapshots, turn.directory, target))
   }
 
   /**
@@ -836,6 +850,23 @@ export class SessionRunner {
       files: blocked ? [] : [...files.values()],
       blocked,
       messages: turn.messages,
+      /*
+       * Where this turn's bodies were kept, and how big it was - MiMo's
+       * `summary_files` / `summary_additions` / `summary_deletions`. The
+       * snapshot no longer holds anything that could be counted later, so the
+       * count is taken now, and the store is named so a restore knows where to
+       * look even if the conversation is moved afterwards.
+       */
+      ...(turn.directory ? { directory: turn.directory } : {}),
+      ...(blocked
+        ? {}
+        : {
+            summary: {
+              files: files.size,
+              ...(watched?.additions !== undefined ? { additions: watched.additions } : {}),
+              ...(watched?.deletions !== undefined ? { deletions: watched.deletions } : {}),
+            },
+          }),
     })
   }
 
@@ -953,7 +984,7 @@ export class SessionRunner {
       const at = order.get(step.messageID)
       if (at === undefined || at >= target) break
       await this.guardOthers(sessionID, step.snapshot.at, step.swapped)
-      await this.write(step.swapped)
+      await this.write(step.swapped, step.snapshot.directory)
       await this.noteRestore(sessionID, step.swapped)
       files += step.swapped.length
       for (const id of step.messages) restoredTo = Math.max(restoredTo, (order.get(id) ?? -1) + 1)
@@ -1103,22 +1134,40 @@ export class SessionRunner {
    * the stacks holding neither.
    */
   private async restore(snapshot: Snapshot): Promise<SnapshotFile[]> {
-    return this.write(snapshot.files)
+    return this.write(snapshot.files, snapshot.directory)
   }
 
-  /** Writes recorded contents back over what is there, handing back what was. */
-  private async write(files: SnapshotFile[]): Promise<SnapshotFile[]> {
+  /**
+   * Writes recorded contents back over what is there, handing back what was.
+   *
+   * `directory` names the checkpoint store the recorded bodies are in, and is
+   * where the state being replaced is kept in turn - so the swap that makes
+   * undo and redo one operation costs a reference each way rather than two
+   * copies of every file.
+   */
+  private async write(files: SnapshotFile[], directory?: string): Promise<SnapshotFile[]> {
     const swapped: SnapshotFile[] = []
     for (const file of files) {
-      swapped.push(await readSnapshotFile(file.path))
-      if (file.content === null) {
+      swapped.push(await keepSnapshotFile(this.snapshots, directory, file.path))
+      // "Did not exist" in either shape: a checkpoint reference of null, or a legacy body of null.
+      const absent = file.blob !== undefined ? file.blob === null : file.content === null
+      if (absent) {
         await rm(file.path, { force: true })
         continue
       }
+      /*
+       * A body the store can no longer answer for stops the restore rather than
+       * emptying the file. Writing nothing in place of something is the one
+       * outcome worse than saying the turn cannot be put back.
+       */
+      const bytes = await snapshotBytes(this.snapshots, directory, file)
+      if (bytes === undefined) {
+        throw new Error(`${file.path} could not be read back from this conversation's undo store, so this turn cannot be put back`)
+      }
       await mkdir(dirname(file.path), { recursive: true })
-      // Written as bytes rather than as a string: a snapshot may hold a file
+      // Written as bytes rather than as a string: a snapshot may stand for a file
       // that is not text at all, and encoding it on the way out would change it.
-      await writeFile(file.path, decode(file))
+      await writeFile(file.path, bytes)
     }
     return swapped
   }

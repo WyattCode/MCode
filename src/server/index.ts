@@ -8,6 +8,7 @@ import { Config } from "./config"
 import { AuthManager } from "./auth/manager"
 import { Permissions } from "./permission"
 import { SessionStore } from "./session/store"
+import { migrateCheckpoints } from "./session/checkpoint-migrate"
 import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
@@ -72,6 +73,21 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
+  /*
+   * Undo's own housekeeping, in the background so the window is not held up by
+   * it: an existing profile's inline undo bodies move into the projects'
+   * checkpoint stores, and stores belonging to no conversation any more are
+   * swept. Both are safe to run at every launch - the first only converts what
+   * is still in the old shape, the second only removes what nothing names.
+   */
+  void (async () => {
+    try {
+      await migrateCheckpoints(storage, runner.checkpoints, config)
+      await runner.checkpoints.sweep((await sessions.list()).map((session) => session.directory))
+    } catch {
+      // Housekeeping must never be the reason the app fails to open.
+    }
+  })()
   // history: the search index beside the store, filled in the background.
   const history = startHistory(dataDirectory, sessions, storage, bus)
   // cron: scheduled prompts fire into their conversations while the app runs.

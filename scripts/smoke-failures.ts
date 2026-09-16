@@ -103,7 +103,20 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     check("a turn records the file its own tool wrote", names(one.files).join(",") === "a.txt", one)
     check("and not the file the other conversation wrote at the same time", one.files.length === 1, names(one.files))
     check("the other conversation's turn records its own file too", names(two.files).join(",") === "b.txt", two)
-    check("what each turn recorded is the state it opened on", one.files[0]?.content === "a0" && two.files[0]?.content === "b0", [one.files[0], two.files[0]])
+    /*
+     * Read back through the checkpoint store rather than off the snapshot: a
+     * recording now holds a reference where it used to hold the body. This
+     * asserts the same thing it always did, one step further along - that the
+     * reference resolves to the bytes the turn opened on.
+     */
+    const opened = async (files: { blob?: string | null }[]) => {
+      const blob = files[0]?.blob
+      return typeof blob === "string" ? (await snapshots.fetch(directory, blob))?.toString("utf8") : undefined
+    }
+    check("what each turn recorded is the state it opened on", (await opened(one.files)) === "a0" && (await opened(two.files)) === "b0", [
+      one.files[0],
+      two.files[0],
+    ])
 
     /* A change while both were watching that neither tool named: refused, not guessed at. */
     const third = snapshots.begin(directory)

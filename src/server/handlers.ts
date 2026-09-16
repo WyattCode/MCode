@@ -391,15 +391,34 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       } satisfies Handled<"session.revert">
     }
 
-    case "session.delete":
+    case "session.delete": {
       runtime.runner.abort(request.sessionID)
+      // The project it worked in, read before the record goes, so its store can be collected after.
+      const worked = (await runtime.sessions.get(request.sessionID).catch(() => undefined))?.directory
       // subagents: a conversation's subagents go with it, background ones stopped first; nothing else could reach them.
       await runtime.runner.dropSubagents(request.sessionID)
       for (const child of await runtime.sessions.list()) {
         if (child.parentID === request.sessionID) await runtime.sessions.delete(child.id)
       }
       await runtime.sessions.delete(request.sessionID)
+      /*
+       * The shadow repository undo keeps for that project goes with it, once the
+       * last conversation working there has gone. Deleting a conversation used to
+       * leave the store behind for the life of the profile - the one thing this
+       * app's deletion did not reach, while MiMo's own store cascades.
+       */
+      if (worked) {
+        const place = (directory: string) => {
+          const resolved = path.resolve(directory)
+          return process.platform === "win32" ? resolved.toLowerCase() : resolved
+        }
+        const remaining = await runtime.sessions.list()
+        if (!remaining.some((session) => place(session.directory) === place(worked))) {
+          await runtime.runner.checkpoints.collect(worked)
+        }
+      }
       return {} satisfies Handled<"session.delete">
+    }
 
     case "session.rename":
       // A title the user chose is theirs: the generated one never replaces it.

@@ -70,8 +70,18 @@ const ABSENT = "000000"
 
 /** The outcome of comparing the project against how the turn found it. */
 export interface Recorded {
-  /** Files the turn changed, holding what they contained before it ran. */
+  /** Files the turn changed, each pointing at what it contained before the turn ran. */
   files: SnapshotFile[]
+  /**
+   * How much the turn changed, as MiMo's session row records it.
+   *
+   * Only where the project could be compared against itself: a turn recorded
+   * from what the write tools reported has no second photograph to count
+   * against, and reporting nought lines for it would be a figure rather than an
+   * absence.
+   */
+  additions?: number
+  deletions?: number
   /**
    * Why the project could not be compared, when it could not.
    *
@@ -97,7 +107,7 @@ interface Ran {
  * otherwise silently retarget these commands at the user's own repository -
  * where `add -A` would stage their work in progress.
  */
-function exec(args: string[], cwd: string, stdin?: string): Promise<Ran> {
+function exec(args: string[], cwd: string, stdin?: string | Buffer): Promise<Ran> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env }
     for (const name of [
@@ -212,7 +222,13 @@ class Repo {
     return next
   }
 
-  private git(args: string[], stdin?: string): Promise<Ran> {
+  /*
+   * `stdin` may be bytes, and for `hash-object` it must be: a file's contents
+   * handed over as a string would be written back out as UTF-8, which replaces
+   * every byte the decoder did not understand - so a picture or a compiled
+   * artefact would be stored corrupted, silently.
+   */
+  private git(args: string[], stdin?: string | Buffer): Promise<Ran> {
     return exec(["--git-dir", this.gitDir, ...args], this.directory, stdin)
   }
 
@@ -298,6 +314,38 @@ class Repo {
   }
 
   /**
+   * How many lines the turn added and removed between two trees.
+   *
+   * MiMo keeps exactly this on its session row (`summary_additions`,
+   * `summary_deletions`) rather than recomputing it from bodies it no longer
+   * holds. Asked of git in one call, for the same reason: once the snapshot
+   * carries references instead of contents, there is nothing here to count from.
+   *
+   * A binary file answers "-\t-\t<path>", which is counted as no lines rather
+   * than as NaN.
+   */
+  async numstat(before: string, after: string): Promise<{ additions: number; deletions: number }> {
+    const shown = await this.lock(() => this.git(["diff-tree", "-r", "--numstat", "-z", before, after]))
+    if (shown.code !== 0) throw new Error(shown.stderr.trim() || "git diff-tree --numstat failed")
+    let additions = 0
+    let deletions = 0
+    /*
+     * `--numstat -z` writes "<added>\t<deleted>\t" and then the path as its own
+     * NUL-terminated field, so the counts are read off the head of each record
+     * and the path is never parsed.
+     */
+    for (const record of shown.stdout.toString("utf8").split("\0")) {
+      const parts = record.split("\t")
+      if (parts.length < 2) continue
+      const added = Number(parts[0])
+      const removed = Number(parts[1])
+      if (Number.isInteger(added)) additions += added
+      if (Number.isInteger(removed)) deletions += removed
+    }
+    return { additions, deletions }
+  }
+
+  /**
    * The contents these paths held in that tree.
    *
    * One `cat-file --batch` rather than a process per file: a turn that touched
@@ -331,6 +379,35 @@ class Repo {
       at += size + 1
     }
     return found
+  }
+
+  /**
+   * Keeps one file's bytes as an object, and hands back its id.
+   *
+   * This is what lets a turn's recording be a reference rather than a body. git
+   * addresses an object by the hash of its contents, so a file saved
+   * unchanged - or the same file recorded by twenty turns in a row - is stored
+   * once however often it is recorded, which the old inline shape could not do.
+   */
+  async keep(bytes: Buffer): Promise<string> {
+    const written = await this.lock(() => this.git(["hash-object", "-w", "--stdin"], bytes))
+    if (written.code !== 0) throw new Error(written.stderr.trim() || "git hash-object failed")
+    const id = written.stdout.toString("utf8").trim()
+    if (!/^[0-9a-f]{40,64}$/.test(id)) throw new Error("git hash-object answered with something that is not an object id")
+    return id
+  }
+
+  /** One stored object's bytes, or nothing if this store has never held it. */
+  async fetch(id: string): Promise<Buffer | undefined> {
+    // Asked as bytes through the same batch reader the trees use, so a body that is not text survives.
+    const read = await this.lock(() => this.git(["cat-file", "--batch"], `${id}\n`))
+    if (read.code !== 0) return undefined
+    const body = read.stdout
+    const end = body.indexOf(0x0a)
+    if (end < 0) return undefined
+    const size = blobSize(body.toString("utf8", 0, end))
+    if (size === undefined) return undefined
+    return body.subarray(end + 1, end + 1 + size)
   }
 }
 
@@ -566,7 +643,8 @@ export class Recording {
     for (const change of changes) {
       const absolute = path.resolve(repo.directory, change.path)
       if (change.from === ABSENT) {
-        files.push({ path: absolute, content: null })
+        // null is how "did not exist" is recorded, which a restore turns back into a deletion.
+        files.push({ path: absolute, blob: null })
         continue
       }
       const held = before.get(change.path)
@@ -576,37 +654,102 @@ export class Recording {
           unavailable: `${change.path} could not be read back, so this turn cannot be taken back.`,
         }
       }
-      files.push({ path: absolute, ...encode(held) })
+      /*
+       * Kept in the store rather than carried in the snapshot. These bodies are
+       * already git objects in this very repository - `contents` just read them
+       * out of the tree - so writing them back with `hash-object` costs one
+       * call and stores nothing twice: the object is already there under the
+       * same id, and git recognises it.
+       */
+      try {
+        files.push({ path: absolute, blob: await repo.keep(held) })
+      } catch (cause) {
+        return {
+          files: [],
+          unavailable: `${change.path} could not be kept for undo (${reason(cause)}), so this turn cannot be taken back.`,
+        }
+      }
     }
-    return { files }
+
+    /*
+     * The turn's size, counted while the trees are still to hand. A failure here
+     * costs the figure, never the recording: undo works without a summary.
+     */
+    let counted: { additions: number; deletions: number } | undefined
+    try {
+      counted = await repo.numstat(tree, previous)
+    } catch {
+      counted = undefined
+    }
+    return { files, ...(counted ?? {}) }
   }
 }
 
 /**
- * A file's bytes as they can be stored in a JSON document.
+ * One file as it stands right now, recorded into a project's checkpoint store.
  *
- * Text goes in as text, which keeps a snapshot readable and its diffs small.
- * Anything that is not valid UTF-8 - an icon a build step rewrote, a compiled
- * artefact - goes in as base64, because reading it back through a UTF-8 string
- * would replace every byte it did not understand and restore a corrupted file.
+ * The bytes go to the store and the snapshot keeps the reference. This replaces
+ * a reader that returned the whole body: that body then travelled into the
+ * conversation's own document and stayed there, which is what made an undo
+ * document grow without bound.
  */
-export function encode(bytes: Buffer): { content: string; base64?: boolean } {
+export async function keepSnapshotFile(store: Checkpoints, directory: string | undefined, target: string): Promise<SnapshotFile> {
+  const bytes = await fs.readFile(target).catch(() => null)
+  // null stands for "did not exist", which a restore turns back into a deletion.
+  if (bytes === null) return { path: target, blob: null }
+  /*
+   * Without a project there is no store to put this in, and a turn must never
+   * become un-undoable because of where it happened to run: the body is carried
+   * in the old shape instead, which every reader still understands. This is the
+   * only path that writes an inline body, and nothing reaches it in an ordinary
+   * turn, whose project is known before any tool runs.
+   */
+  if (!directory) return { path: target, ...inline(bytes) }
+  return { path: target, blob: await store.keep(directory, bytes) }
+}
+
+/**
+ * A file's bytes as a JSON document can carry them, for the one case that has
+ * nowhere else to put them.
+ *
+ * Text goes in as text. Anything that is not valid UTF-8 - an icon a build step
+ * rewrote, a compiled artefact - goes in as base64, because reading it back
+ * through a UTF-8 string would replace every byte it did not understand and
+ * restore a corrupted file.
+ */
+function inline(bytes: Buffer): { content: string; base64?: boolean } {
   const text = bytes.toString("utf8")
   if (Buffer.from(text, "utf8").equals(bytes)) return { content: text }
   return { content: bytes.toString("base64"), base64: true }
 }
 
-/** One file as it stands right now, in the shape a snapshot holds. */
-export async function readSnapshotFile(target: string): Promise<SnapshotFile> {
-  const bytes = await fs.readFile(target).catch(() => null)
-  // null stands for "did not exist", which a restore turns back into a deletion.
-  if (bytes === null) return { path: target, content: null }
-  return { path: target, ...encode(bytes) }
+/** Where a recorded body is fetched from; `Snapshots` is the one that has them. */
+export interface Checkpoints {
+  keep(directory: string, bytes: Buffer): Promise<string>
+  fetch(directory: string, blob: string): Promise<Buffer | undefined>
 }
 
-/** The bytes to write back for one recorded file. */
-export function decode(file: SnapshotFile): Buffer {
-  return Buffer.from(file.content ?? "", file.base64 ? "base64" : "utf8")
+/**
+ * The bytes to write back for one recorded file, wherever they are kept.
+ *
+ * Both shapes are read. An entry carrying a checkpoint reference is fetched
+ * from the project's store; one written before the store existed still carries
+ * its body, and is decoded exactly as it always was - so a profile nobody has
+ * migrated keeps every turn it could take back before.
+ *
+ * Undefined means the body cannot be found, which the caller has to report
+ * rather than write: an empty file in place of a missing one is the one outcome
+ * worse than a refusal.
+ */
+export async function snapshotBytes(store: Checkpoints, directory: string | undefined, file: SnapshotFile): Promise<Buffer | undefined> {
+  if (file.blob !== undefined) {
+    if (file.blob === null) return Buffer.alloc(0)
+    // A reference with no store named is one nothing can answer for; saying so beats writing an empty file.
+    if (!directory) return undefined
+    return store.fetch(directory, file.blob)
+  }
+  if (file.content === undefined || file.content === null) return Buffer.alloc(0)
+  return Buffer.from(file.content, file.base64 ? "base64" : "utf8")
 }
 
 /**
@@ -629,6 +772,14 @@ export function decode(file: SnapshotFile): Buffer {
  */
 export class Snapshots {
   private readonly repos = new Map<string, Promise<Repo>>()
+  /**
+   * The same repositories, opened as checkpoint stores.
+   *
+   * Kept apart from `repos` because the two are reached on different terms: a
+   * project that is not under git can never be scanned, so `repos` refuses it
+   * for good reason, while its turns still have bodies to keep.
+   */
+  private readonly bares = new Map<string, Promise<Repo>>()
   /** A project's last writer per file, read once and then kept. */
   private readonly ledgers = new Map<string, Promise<Record<string, Writer>>>()
   /** Ledger writes one at a time, so two turns ending together cannot lose one another's entries. */
@@ -753,7 +904,19 @@ export class Snapshots {
     if (inside.code !== 0 || inside.stdout.toString("utf8").trim() !== "true") {
       throw new Error("the project is not a git repository, so it cannot be compared against itself")
     }
+    return this.bare(directory)
+  }
 
+  /**
+   * The project's own repository in this app's storage, made if it is not there.
+   *
+   * Opened without the work-tree check `create` makes, because this is also the
+   * checkpoint store. A project that is not itself a repository can be scanned
+   * by nothing - which is why `create` refuses it - but its turns are still
+   * recorded from what the write tools report, and those bodies have to go
+   * somewhere other than the conversation's own document. They go here.
+   */
+  private async bare(directory: string): Promise<Repo> {
     /*
      * Named for the project rather than for the session: every session open on
      * the same directory shares one index, which is what keeps the scan a stat
@@ -816,6 +979,103 @@ export class Snapshots {
     }
 
     return new Repo(gitDir, directory)
+  }
+
+  /**
+   * Removes one project's store: the shadow repository and the ledger beside it.
+   *
+   * Nothing ever removed these. MiMo's conversation store cascades - deleting a
+   * conversation takes everything hanging off it - and its profile carries no
+   * equivalent of these repositories at all, while MCode's accumulated for the
+   * life of the profile: six of them sat in the profile this was measured in,
+   * for two live conversations, holding objects for projects and conversations
+   * long since deleted.
+   */
+  async collect(directory: string): Promise<void> {
+    const key = process.platform === "win32" ? directory.toLowerCase() : directory
+    this.repos.delete(key)
+    this.bares.delete(key)
+    this.ledgers.delete(this.ledgerFile(directory))
+    await fs.rm(path.join(this.root, this.digest(directory)), { recursive: true, force: true }).catch(() => undefined)
+    await fs.rm(this.ledgerFile(directory), { force: true }).catch(() => undefined)
+  }
+
+  /**
+   * Stores belonging to no conversation any more, swept once at start-up.
+   *
+   * This is what reaches the ones already orphaned, which no deletion can go
+   * back and collect. A conversation's `directory` never moves - MiMo's
+   * "move to project" changes only the grouping label, and so does this app's -
+   * so the live conversations' folders name every store that is still spoken
+   * for, and anything else is a project whose conversations have all gone.
+   */
+  async sweep(live: readonly string[]): Promise<number> {
+    const spokenFor = new Set(live.map((directory) => this.digest(directory)))
+    const entries = await fs.readdir(this.root).catch(() => [] as string[])
+    let removed = 0
+    for (const name of entries) {
+      const digest = name.endsWith(".writers.json") ? name.slice(0, -".writers.json".length) : name
+      // Only this app's own names, so nothing else that finds its way in here is touched.
+      if (!/^[0-9a-f]{40}$/.test(digest) || spokenFor.has(digest)) continue
+      await fs.rm(path.join(this.root, name), { recursive: true, force: true }).catch(() => undefined)
+      removed += 1
+    }
+    /*
+     * Anything held open for a store that has just been removed is dropped with
+     * it. A cached repository outliving its directory would go on answering for
+     * a git directory that is no longer there, and every command through it
+     * would fail - so a project swept and then worked in again would record
+     * nothing until the app was restarted. Nothing is cached at start-up, where
+     * this runs, but that is a property of the caller rather than of this.
+     */
+    for (const key of [...this.repos.keys()]) if (!spokenFor.has(this.digest(key))) this.repos.delete(key)
+    for (const key of [...this.bares.keys()]) if (!spokenFor.has(this.digest(key))) this.bares.delete(key)
+    for (const file of [...this.ledgers.keys()]) {
+      const digest = path.basename(file).replace(/\.writers\.json$/, "")
+      if (!spokenFor.has(digest)) this.ledgers.delete(file)
+    }
+    return removed
+  }
+
+  /**
+   * Keeps one file's bytes in a project's checkpoint store, and hands back the
+   * reference a snapshot holds instead of the body.
+   *
+   * One store per project - the repository undo already keeps for it - so the
+   * objects are shared by every conversation working there, and they go when
+   * that project's store goes.
+   */
+  async keep(directory: string, bytes: Buffer): Promise<string> {
+    return (await this.checkpoints(directory)).keep(bytes)
+  }
+
+  /**
+   * What a checkpoint reference stands for, or nothing when the store cannot
+   * answer for it.
+   *
+   * Nothing rather than a throw: the caller has to be able to tell the reader
+   * that a particular turn can no longer be put back, which is a sentence, not
+   * a failed undo.
+   */
+  async fetch(directory: string, blob: string): Promise<Buffer | undefined> {
+    try {
+      return await (await this.checkpoints(directory)).fetch(blob)
+    } catch {
+      return undefined
+    }
+  }
+
+  private checkpoints(directory: string): Promise<Repo> {
+    const key = process.platform === "win32" ? directory.toLowerCase() : directory
+    const existing = this.bares.get(key)
+    if (existing) return existing
+    // A failure is not cached: git may be installed a minute later, as with `open`.
+    const opening = this.bare(directory).catch((cause: unknown) => {
+      this.bares.delete(key)
+      throw cause
+    })
+    this.bares.set(key, opening)
+    return opening
   }
 
   /**
