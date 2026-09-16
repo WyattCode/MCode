@@ -40,6 +40,10 @@ import { Config } from "../src/server/config"
 import { resolveInsideReal } from "../src/server/tool/fs-util"
 import { servePreview } from "../src/main/preview-server"
 import { askToSchedule } from "../src/server/tool/schedule-ask"
+import { ensureCallbackServer, stopCallbackServer, trustedDiscoveryUrl } from "../src/server/mcp-oauth"
+import { conversationDocument } from "../src/shared/convo-file"
+import { pageMayNavigate } from "../src/shared/web-address"
+import { createServer as createNetServer } from "node:net"
 
 type Section = (name: string) => void
 
@@ -88,6 +92,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
     await junctionChecks(check, section, root)
     await scheduleChecks(check, section, root)
     await storedSecretChecks(check, section, root)
+    await remainingChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -844,4 +849,81 @@ async function storedSecretChecks(check: Check, section: Section, root: string):
   const logged = redactSecrets(JSON.stringify({ headers: { "X-Custom-Auth": "hunter2-fake-value", "X-Route": "eu" } }))
   check("a custom credential header's value is masked in a logged object", !logged.includes("hunter2-fake-value") && logged.includes('"X-Route":"eu"'), logged)
   check("ordinary text is left alone", redactSecrets("opened config.json in 12ms") === "opened config.json in 12ms")
+}
+
+// ------------------------------------------------ X15, X16, X17, X19, X20
+async function remainingChecks(check: Check, section: Section, root: string): Promise<void> {
+  const read = (file: string) => fs.readFile(path.join(process.cwd(), file), "utf8").catch(() => "")
+
+  section("Round 8 (X15): the main window is sandboxed")
+  const main = await read("src/main/index.ts")
+  const vite = await read("electron.vite.config.ts")
+  check("the window runs sandboxed", /preload: path\.join\(here, "\.\.\/preload\/index\.cjs"\),[\s\S]{0,160}sandbox: true,/.test(main))
+  check("its preload is built as CommonJS, which a sandboxed page can run", /output: \{ format: "cjs", entryFileNames: "\[name\]\.cjs" \}/.test(vite))
+  const built = await read("out/preload/index.cjs")
+  if (built) check("the built preload loads nothing but electron", !/^import /m.test(built) && [...built.matchAll(/require\("([^"]+)"\)/g)].every((match) => match[1] === "electron"))
+
+  section("Round 8 (X16): MCP sign-in follows only addresses it may, and never gives way on its port")
+  const server = "https://mcp.example.com/mcp"
+  check("the server's own host is followed", trustedDiscoveryUrl(server, "https://mcp.example.com/.well-known/x")?.hostname === "mcp.example.com")
+  check("another https host is followed", Boolean(trustedDiscoveryUrl(server, "https://auth.example.org/")))
+  check("loopback named by a remote server is not", !trustedDiscoveryUrl(server, "https://127.0.0.1:8080/meta") && !trustedDiscoveryUrl(server, "http://localhost/x"))
+  check("nor a private network address", !trustedDiscoveryUrl(server, "https://192.168.1.1/meta") && !trustedDiscoveryUrl(server, "https://10.0.0.5/") && !trustedDiscoveryUrl(server, "https://[fd00::1]/"))
+  check("nor plain http to another host", !trustedDiscoveryUrl(server, "http://auth.example.org/"))
+  check("nor another scheme", !trustedDiscoveryUrl(server, "file:///etc/passwd"))
+  check("a local server may name itself", Boolean(trustedDiscoveryUrl("http://127.0.0.1:9000/mcp", "http://127.0.0.1:9000/.well-known/oauth-protected-resource")))
+  const squatter = createNetServer(() => undefined)
+  await new Promise<void>((resolve) => squatter.listen(0, "127.0.0.1", resolve))
+  const busy = (squatter.address() as { port: number }).port
+  const outcome = await ensureCallbackServer(`http://127.0.0.1:${busy}/mcp/oauth/callback`).then(
+    () => "started",
+    (err: Error) => err.message,
+  )
+  check("a callback port another program holds is refused, not given way to", outcome.includes(String(busy)) && outcome !== "started", outcome)
+  squatter.close()
+  await stopCallbackServer().catch(() => undefined)
+
+  section("Round 8 (X17): an imported conversation does not choose its own project")
+  const data = path.join(root, "x17-data")
+  const project = path.join(root, "x17-project")
+  await fs.mkdir(path.join(data, "storage"), { recursive: true })
+  await fs.mkdir(project, { recursive: true })
+  await fs.writeFile(path.join(data, "storage", "config.json"), "{}")
+  const backend = await startBackend(data)
+  try {
+    const runtime = backend.runtime
+    await handle(runtime, { type: "project.add", directory: project } as unknown as Request)
+    const fallback = runtime.config.get().directory
+    const documentFor = (directory: string) =>
+      JSON.stringify(
+        conversationDocument(
+          { id: "ses_x", title: "Imported", directory, created: 1, updated: 2, model: { provider: "anthropic", model: "claude-opus-5" } } as never,
+          [{ id: "msg_1", sessionID: "ses_x", role: "user", text: "hi", attachments: [], time: { created: 1 } } as never],
+        ),
+      )
+    const planted = (await handle(runtime, { type: "session.importFile", text: documentFor(os.homedir()) } as unknown as Request)) as { session?: { directory: string } }
+    check("a file naming a folder this profile does not work in is opened in the profile's own", planted.session?.directory === fallback, planted.session?.directory)
+    const kept = (await handle(runtime, { type: "session.importFile", text: documentFor(project) } as unknown as Request)) as { session?: { directory: string } }
+    check("one naming a listed project keeps it", kept.session?.directory === project, kept.session?.directory)
+  } finally {
+    await backend.close()
+  }
+
+  section("Round 8 (X19): no tool writes an alternate data stream")
+  if (process.platform === "win32") {
+    const context = allowingContext(project)
+    await fs.writeFile(path.join(project, "notes.txt"), "visible")
+    const written = await failure(() => WriteTool.execute({ file_path: "notes.txt:hidden", content: "payload" }, context))
+    check("write refuses a colon after the drive", /alternate data stream/.test(written.message), written.message)
+    const read2 = await failure(() => ReadTool.execute({ file_path: path.join(project, "notes.txt:hidden") }, context))
+    check("so does read", /alternate data stream/.test(read2.message), read2.message)
+    const shell = await failure(() => BashTool.execute({ command: "echo payload > notes.txt:hidden", description: "x" }, context))
+    check("and a shell redirect into one", /alternate data stream/.test(shell.message), shell.message)
+    check("an ordinary absolute path still works", (await failure(() => WriteTool.execute({ file_path: path.join(project, "plain.txt"), content: "x" }, context))).message === "")
+  }
+
+  section("Round 8 (X20): the browser panel holds a redirect to the navigation rule")
+  const browser = await read("src/main/browser.ts")
+  check("a server redirect is checked like a navigation", /contents\.on\("will-redirect", \(event, url\) => \{\s*if \(event\.isMainFrame && !pageMayNavigate\(contents\.getURL\(\), url\)\) event\.preventDefault\(\)/.test(browser))
+  check("and the rule refuses a web page's move onto a local file", !pageMayNavigate("https://evil.example/", "file:///C:/Users/"))
 }

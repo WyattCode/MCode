@@ -156,6 +156,13 @@ function makeTab(panel: Panel): Tab {
   contents.on("will-navigate", (event, url) => {
     if (!pageMayNavigate(contents.getURL(), url)) event.preventDefault()
   })
+  /*
+   * A server's redirect does not raise will-navigate, so it is held to the
+   * same rule here (round 8, X20), judged from the page the tab was on.
+   */
+  contents.on("will-redirect", (event, url) => {
+    if (event.isMainFrame && !pageMayNavigate(contents.getURL(), url)) event.preventDefault()
+  })
   for (const event of [
     "did-navigate",
     "did-navigate-in-page",
