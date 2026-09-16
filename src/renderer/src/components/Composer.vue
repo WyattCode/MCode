@@ -2102,21 +2102,13 @@ async function chooseModelEffort(provider: string, model: string, level: Effort)
  */
 const agent = computed(() => session.value?.agent ?? app.config?.agent ?? "build")
 
-/**
- * Models offered in the picker: every connected provider, minus anything the
- * user switched off in Settings. An empty enabled list means "not curated",
- * so everything shows rather than nothing.
- */
-const groups = computed(() => {
-  const chosen = new Set(app.config?.enabledModels ?? [])
-  return app.providers
+/* Models offered in the picker: every model of every connected provider, as MiMo lists them. */
+const groups = computed(() =>
+  app.providers
     .filter((provider) => provider.configured)
-    .map((provider) => ({
-      provider,
-      models: provider.models.filter((model) => !chosen.size || chosen.has(`${provider.id}/${model.id}`)),
-    }))
-    .filter((group) => group.models.length > 0)
-})
+    .map((provider) => ({ provider, models: provider.models }))
+    .filter((group) => group.models.length > 0),
+)
 
 const CONFIG_KEY = "action:config"
 const MORE_KEY = "action:more"

@@ -545,12 +545,13 @@ const columnBlocks = computed<ColumnBlock[]>(() => {
 /*
  * How Recent is ordered, chosen from its heading's menu. MiMo starts every
  * launch at 最近 and never saves the choice; the key earlier builds wrote is
- * taken away so it cannot linger.
+ * taken away so it cannot linger. Held in the store, because the numbered
+ * shortcuts count along the same order.
  */
 try {
   localStorage.removeItem("mcode.recentSort")
 } catch {}
-const recentSort = ref<"recent" | "name">("recent")
+const recentSort = computed({ get: () => app.recentSort, set: (mode) => (app.recentSort = mode) })
 
 /* MiMo's setSort: only a real change is said. */
 function setRecentSort(mode: "recent" | "name") {

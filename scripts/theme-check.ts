@@ -1,16 +1,17 @@
 /**
- * Checks the theme engine against the stylesheet it was reverse-engineered from.
+ * Checks the stylesheet against the one palette it is generated from.
  *
- * The app's own colours were written out by hand before the engine existed, and
- * they were taken from the reference's OC-2 theme. So OC-2 run through the
- * engine has to land on exactly those values - any drift means the port of the
- * colour arithmetic is wrong, and every other theme is wrong with it.
+ * MiMo has no palette choice, so the window no longer runs the theme engine:
+ * tokens.css holds what the engine derives from MCode 2.0, in all three of its
+ * blocks - light, the system-dark media query, and the explicit dark choice.
+ * So the palette run through the engine has to land on exactly those values;
+ * a token edited by hand, or a palette edited without regenerating, fails.
  */
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { themeTokens } from "../src/renderer/src/lib/theme-engine"
-import { THEMES, themeByID } from "../src/renderer/src/lib/theme-palettes"
+import { MCODE_THEME } from "../src/renderer/src/lib/theme-palettes"
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const css = fs.readFileSync(path.join(here, "../src/renderer/src/styles/tokens.css"), "utf8")
@@ -41,37 +42,48 @@ function block(selector: string) {
 }
 
 const problems: string[] = []
-const oc2 = themeByID("oc-2")
 
+/*
+ * Every token the engine makes is written in every block, with the engine's
+ * value: nothing paints over the stylesheet at runtime any more, so a token the
+ * stylesheet left out would simply be missing from the window.
+ */
 for (const [scheme, selector] of [
   ["dark", ':root[data-theme="dark"]'],
+  ["system dark", ':root:not([data-theme="light"])'],
   ["light", ":root {"],
 ] as const) {
   const written = block(selector)
-  const generated = themeTokens(oc2, scheme === "dark")
+  const generated = themeTokens(MCODE_THEME, scheme !== "light")
   for (const [name, value] of Object.entries(generated)) {
     const expected = written[name]
-    if (!expected) continue // a token the stylesheet leaves to the engine alone
-    if (expected.toLowerCase() !== value.toLowerCase()) {
+    if (!expected) problems.push(`${scheme} ${name}: the engine makes it, the stylesheet does not have it`)
+    else if (expected.toLowerCase() !== value.toLowerCase()) {
       problems.push(`${scheme} ${name}: engine ${value}, stylesheet ${expected}`)
     }
   }
 }
 
-// Every theme has to produce a usable colour for every token in both schemes:
-// a palette with a missing seed would otherwise surface as an undefined that
-// only shows up as an unstyled corner of the window.
+// The palette has to produce a usable colour for every token in both schemes:
+// a missing seed would otherwise surface as an undefined in the stylesheet.
 const hex = /^#[0-9a-f]{6}$/i
 const alpha = /^#[0-9a-f]{8}$/i
-for (const theme of THEMES) {
-  for (const isDark of [true, false]) {
-    const tokens = themeTokens(theme, isDark)
-    for (const [name, value] of Object.entries(tokens)) {
-      if (!hex.test(value) && !alpha.test(value)) {
-        problems.push(`${theme.id} ${isDark ? "dark" : "light"} ${name}: ${value}`)
-      }
+for (const isDark of [true, false]) {
+  const tokens = themeTokens(MCODE_THEME, isDark)
+  for (const [name, value] of Object.entries(tokens)) {
+    if (!hex.test(value) && !alpha.test(value)) {
+      problems.push(`${MCODE_THEME.id} ${isDark ? "dark" : "light"} ${name}: ${value}`)
     }
   }
+}
+
+/*
+ * No palette is painted over the stylesheet: MiMo's only colour setting is the
+ * scheme, and the window must not bring the engine back.
+ */
+for (const file of ["../src/renderer/src/App.vue", "../src/renderer/src/components/SettingsDialog.vue"]) {
+  const source = fs.readFileSync(path.join(here, file), "utf8")
+  if (/theme-engine|theme-palettes|themeID/.test(source)) problems.push(`${path.basename(file)}: reads a palette, which MiMo does not have`)
 }
 
 /*
@@ -293,10 +305,10 @@ for (const file of walkVue(path.join(componentDir, ".."))) {
   }
 }
 
-console.log(`themes: ${THEMES.length}, tokens each: ${Object.keys(themeTokens(oc2, true)).length}`)
+console.log(`palette: ${MCODE_THEME.name}, tokens: ${Object.keys(themeTokens(MCODE_THEME, true)).length}, in three blocks`)
 if (problems.length) {
   console.error(`FAILED with ${problems.length} problem(s):`)
   for (const problem of problems.slice(0, 40)) console.error("  " + problem)
   process.exit(1)
 }
-console.log("OC-2 regenerates tokens.css exactly, and every theme resolves.")
+console.log("MCode 2.0 regenerates tokens.css exactly, in all three blocks.")

@@ -17,7 +17,8 @@ import type { Attachment, AgentName,
   SessionInfo,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
-import { t } from "../lib/i18n"
+import { language, sessionTitle, t } from "../lib/i18n"
+import { visibleChatOrder } from "../lib/visible-chats"
 import { projectName } from "../lib/project"
 import { projectsByRecency } from "@shared/projects"
 import type { ChatLink } from "@shared/protocol"
@@ -295,15 +296,6 @@ export const useApp = defineStore("app", () => {
   const current = computed(() => sessions.value.find((session) => session.id === currentID.value))
 
   /**
-   * Sessions with a tab in the title bar, in the order they are drawn.
-   *
-   * Held as its own list rather than read off `sessions`: which conversations
-   * exist and which the user still wants to hand are different questions, and
-   * a project with forty sessions would otherwise arrive as forty tabs.
-   */
-  const tabs = ref<string[]>([])
-
-  /**
    * Tabs the user has pinned, which sort to the front of the strip.
    *
    * Held in config rather than in memory so a pinned tab is still pinned
@@ -325,8 +317,23 @@ export const useApp = defineStore("app", () => {
     notify(t(was ? "side.unpinnedToast" : "side.pinnedToast"))
   }
 
-  /** Recently closed tabs, newest last, for Ctrl+Shift+T. */
-  const closedTabs = ref<{ sessionID: string; at: number }[]>([])
+  /*
+   * How the side column's Recent list is ordered. MiMo keeps this in its store,
+   * starts every launch at 最近 and never saves it; the digit and bracket
+   * shortcuts count along the same order.
+   */
+  const recentSort = ref<"recent" | "name">("recent")
+
+  /** MiMo's visible conversations, in the order the numbered and bracket shortcuts count them. */
+  const visibleChats = computed(() =>
+    visibleChatOrder(
+      sessions.value,
+      config.value?.pinnedTabs ?? [],
+      recentSort.value,
+      (session) => (session.title && session.title.trim() ? sessionTitle(session.title) : t("side.newTask")),
+      language.value,
+    ),
+  )
 
   /**
    * Conversations, the most recently viewed first, for Ctrl+Tab.
@@ -337,84 +344,14 @@ export const useApp = defineStore("app", () => {
   const recent = ref<string[]>([])
 
   /**
-   * Puts back the last tab that was closed.
-   *
-   * Sessions outlive their tabs, so this is only about the strip - but a
-   * session that has since been deleted has nothing to come back to, and is
-   * skipped rather than reopened as a blank.
-   */
-  async function reopenTab(): Promise<boolean> {
-    while (closedTabs.value.length) {
-      const entry = closedTabs.value.pop()!
-      if (!entry || tabs.value.includes(entry.sessionID)) continue
-      if (!sessions.value.some((session) => session.id === entry.sessionID)) continue
-      tabs.value.splice(Math.min(entry.at, tabs.value.length), 0, entry.sessionID)
-      rememberTabs()
-      await open(entry.sessionID)
-      return true
-    }
-    return false
-  }
-
-  /**
-   * Written back to config so the set survives a restart.
-   *
-   * Failures are swallowed: a tab that does not come back next launch is a
-   * smaller problem than an error banner over a click that otherwise worked.
-   */
-  function rememberTabs() {
-    if (!config.value) return
-    void patchConfig({ openTabs: [...tabs.value] }).catch(() => {})
-  }
-
-  /** Gives a session a tab, if it has not got one already. */
-  function track(sessionID: string) {
-    if (tabs.value.includes(sessionID)) return
-    tabs.value.push(sessionID)
-    rememberTabs()
-  }
-
-  /**
-   * Takes the tab away, and moves on if it was the open one.
-   *
-   * The neighbour to the right is preferred, which is where the eye already is
-   * after closing something; the left one is taken only at the end of the row.
-   */
-  function closeTab(sessionID: string) {
-    const at = tabs.value.indexOf(sessionID)
-    if (at === -1) return
-    // Remembered so it can be brought back, with the place it sat in: a tab
-    // reopened at the far end of the strip is not the tab that was closed.
-    closedTabs.value.push({ sessionID, at })
-    if (closedTabs.value.length > 20) closedTabs.value.shift()
-    tabs.value.splice(at, 1)
-    rememberTabs()
-    if (currentID.value !== sessionID) return
-    const next = tabs.value[at] ?? tabs.value[at - 1]
-    if (next) void open(next)
-    else currentID.value = undefined
-  }
-
-  /** Drops tabs for sessions that are gone, wherever they went. */
-  function forgetTab(sessionID: string) {
-    const at = tabs.value.indexOf(sessionID)
-    if (at === -1) return
-    tabs.value.splice(at, 1)
-    rememberTabs()
-  }
-
-  /**
    * Drops every trace of a session that no longer exists.
    *
-   * Seven collections here are keyed by session id and only two of them were
+   * Several collections here are keyed by session id and only some of them were
    * being cleared, so a long-lived window accumulated entries nothing could
-   * reach - a slow leak rather than anything on screen. Reopening a closed tab
-   * was never at risk: it already skips an entry whose session has gone.
+   * reach - a slow leak rather than anything on screen.
    */
   function forgetSession(sessionID: string) {
     held.delete(sessionID)
-    forgetTab(sessionID)
-    closedTabs.value = closedTabs.value.filter((entry) => entry.sessionID !== sessionID)
 
     if (running.value.delete(sessionID)) running.value = new Set(running.value)
     turnStarted.delete(sessionID)
@@ -429,14 +366,6 @@ export const useApp = defineStore("app", () => {
       pendingPermissions.value = next
     }
     noteError(sessionID, undefined)
-  }
-
-  /** Puts the row back on boot, minus anything deleted while the app was shut. */
-  function restoreTabs() {
-    const alive = (config.value?.openTabs ?? []).filter((id) =>
-      sessions.value.some((session) => session.id === id),
-    )
-    tabs.value = alive
   }
 
   /**
@@ -691,8 +620,8 @@ export const useApp = defineStore("app", () => {
         if (began !== undefined) finished.value = { sessionID: event.sessionID, elapsed: Date.now() - began }
         if (event.sessionID === currentID.value) void refreshHistory(event.sessionID)
         // A turn that ended somewhere the user is not looking is the thing the
-        // unread dot exists to report.
-        else if (tabs.value.includes(event.sessionID)) {
+        // unread dot exists to report, for any conversation MiMo knows of.
+        else if (sessions.value.some((session) => session.id === event.sessionID)) {
           unseen.value = new Set(unseen.value).add(event.sessionID)
         }
         break
@@ -852,17 +781,14 @@ export const useApp = defineStore("app", () => {
       }
     })
     /*
-     * A chosen server is read from the browser's own storage rather than from
-     * config: config lives on the server, and asking it where to connect would
-     * require being connected already.
+     * The window only ever talks to the backend this app started, as MiMo's
+     * does. The addresses an earlier build kept for other servers are taken
+     * away so they cannot linger.
      */
-    /*
-     * A default outranks the address last connected to: it is the answer to
-     * "where should this app start", where the other is only a record of where
-     * it happened to finish.
-     */
-    const stored = localStorage.getItem("mcode.defaultServerURL") ?? localStorage.getItem("mcode.serverURL")
-    if (stored) instance.useServer(stored)
+    try {
+      localStorage.removeItem("mcode.defaultServerURL")
+      localStorage.removeItem("mcode.serverURL")
+    } catch {}
     instance.connect()
 
     // Poll briefly for the first open rather than racing the socket.
@@ -918,7 +844,6 @@ export const useApp = defineStore("app", () => {
      */
     pendingPermissions.value = groupPermissions(listed.permissions)
     chatLinks.value = listed.chatLinks ?? {}
-    restoreTabs()
     booted = true
     /*
      * Everything the first screen reads has now arrived.
@@ -1095,7 +1020,6 @@ export const useApp = defineStore("app", () => {
       next.delete(sessionID)
       unseen.value = next
     }
-    track(sessionID)
     recent.value = [sessionID, ...recent.value.filter((id) => id !== sessionID)].slice(0, 50)
     const fresh = result.messages.map(readLegacyMessage)
     // Replaced only when the read differs from what is on show: an identical list would be drawn again for nothing.
@@ -1718,22 +1642,6 @@ export const useApp = defineStore("app", () => {
   }
 
   /**
-   * Remembers which saved server to connect to at launch.
-   *
-   * Mirrored into the browser own storage for the same reason the current
-   * address is: the next launch has to know where to connect before it has a
-   * connection to ask. An id with no server behind it clears the choice rather
-   * than being written, so a deleted row cannot send the next launch at an
-   * address that is gone.
-   */
-  async function setDefaultServer(id: string) {
-    const entry = config.value?.servers?.find((row) => row.id === id)
-    if (entry) localStorage.setItem("mcode.defaultServerURL", entry.url)
-    else localStorage.removeItem("mcode.defaultServerURL")
-    await patchConfig({ defaultServer: entry ? id : "" })
-  }
-
-  /**
    * Points the default - and the open session - at a model that can actually
    * run. Connecting a provider otherwise changes nothing visible: the composer
    * shows the session's model, and that session was created against whatever
@@ -2029,8 +1937,8 @@ export const useApp = defineStore("app", () => {
     sessions,
     currentID,
     current,
-    tabs,
-    closeTab,
+    visibleChats,
+    recentSort,
     messages,
     loadingID,
     busy,
@@ -2062,7 +1970,6 @@ export const useApp = defineStore("app", () => {
     automationRuns,
     automationNotice,
     clearPermission,
-    reopenTab,
     recent,
     forkFrom,
     isPinned,
@@ -2132,7 +2039,6 @@ export const useApp = defineStore("app", () => {
     projects,
     addProject,
     removeProjects,
-    setDefaultServer,
     setProviderEndpoint,
     setApiKey,
     authState,

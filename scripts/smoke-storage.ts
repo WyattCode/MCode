@@ -239,12 +239,16 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     await first.load(storage)
     const granted = await settle(first, ask(first, "ses_a", "c1", "npm run build", directory), "always")
     check("the question is put, and answering always allows it", granted.asked && granted.outcome === "allowed", granted)
-    check("the rule is listed with where it was granted and what it covers", first.savedRules().some((rule) => rule.kind === "bash" && rule.pattern === "npm run build *" && rule.sessionID === ""), first.savedRules())
 
     // The write is deliberately not awaited by the approval itself, so wait for it here.
     await first.flush()
     const written = await fs.readFile(storage.fileOf(RULES_KEY), "utf8")
-    check("and written to the profile rather than kept in memory alone", written.includes("npm run build *"), written)
+    const projects = (JSON.parse(written) as { projects?: Record<string, { kind: string; pattern: string }[]> }).projects ?? {}
+    check(
+      "and written to the profile for the project, not the conversation, rather than kept in memory alone",
+      Object.entries(projects).some(([key, rules]) => !key.startsWith("session:") && rules.some((rule) => rule.kind === "bash" && rule.pattern === "npm run build *")),
+      written,
+    )
 
     /* The restart: a second gate reading the same profile, as the next launch does. */
     const second = new Permissions(bus, config)
@@ -255,22 +259,31 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     const other = await settle(second, ask(second, "ses_c", "c3", "npm run build", elsewhere), "reject")
     check("while another project is still asked", other.asked, other)
 
-    await second.forget({ directory, kind: "bash", pattern: "npm run build *" })
-    check("withdrawing the rule empties the list", second.savedRules().length === 0, second.savedRules())
-    const third = new Permissions(bus, config)
-    await third.load(storage)
-    const askedAgain = await settle(third, ask(third, "ses_d", "c4", "npm run build", directory), "reject")
-    check("and the withdrawal survives a restart, so it asks once more", askedAgain.asked, askedAgain)
+    /* A conversation's own allowance goes with the conversation; the project's stays (MiMo keeps both, lists neither). */
+    const loose = await settle(second, ask(second, "ses_e", "c5", "npm run build", ""), "always")
+    check("a call that names no project is remembered for its conversation", loose.asked && loose.outcome === "allowed", loose)
+    await second.forgetSession("ses_e")
+    await second.flush()
+    const afterDelete = JSON.parse(await fs.readFile(storage.fileOf(RULES_KEY), "utf8")) as { projects?: Record<string, unknown[]> }
+    check(
+      "deleting that conversation drops its allowance and keeps the project's",
+      !Object.keys(afterDelete.projects ?? {}).some((key) => key === "session:ses_e") && JSON.stringify(afterDelete.projects).includes("npm run build *"),
+      afterDelete,
+    )
 
     /*
      * A document from a later build: read as far as it goes, never written back.
      * A downgrade that still saves is how the newer build's rules are lost.
      */
-    await storage.write(RULES_KEY, { schemaVersion: 99, projects: { [directory]: [{ kind: "bash", pattern: "from-a-newer-build *" }] } })
+    // Keyed the way the store keys a project, so the newer build's rule is one this build can find.
+    const stored = process.platform === "win32" ? path.resolve(directory).toLowerCase() : path.resolve(directory)
+    await storage.write(RULES_KEY, { schemaVersion: 99, projects: { [stored]: [{ kind: "bash", pattern: "from-a-newer-build *" }] } })
     const newer = new Permissions(bus, config)
     await newer.load(storage)
-    check("a profile written by a newer build is still read", newer.savedRules().some((rule) => rule.pattern === "from-a-newer-build *"), newer.savedRules())
-    await newer.forget({})
+    const fromNewer = await settle(newer, ask(newer, "ses_f", "c6", "from-a-newer-build now", directory), "reject")
+    check("a profile written by a newer build is still read", !fromNewer.asked && fromNewer.outcome === "allowed", fromNewer)
+    await settle(newer, ask(newer, "ses_f", "c7", "npm run build", directory), "always")
+    await newer.flush()
     const kept = JSON.parse(await fs.readFile(storage.fileOf(RULES_KEY), "utf8")) as { schemaVersion?: number; projects?: Record<string, unknown[]> }
     check("but nothing is written over it", kept.schemaVersion === 99 && Object.keys(kept.projects ?? {}).length === 1, kept)
 
@@ -280,7 +293,8 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     await damaged.load(storage)
     const aside = (await fs.readdir(path.dirname(storage.fileOf(RULES_KEY)))).filter((name) => name.startsWith("permissions.json.corrupt-"))
     check("an unreadable rules document is kept aside rather than replaced", aside.length === 1, aside)
-    check("and the app carries on with no rules in force", damaged.savedRules().length === 0, damaged.savedRules())
+    const unruled = await settle(damaged, ask(damaged, "ses_g", "c8", "npm run build", directory), "reject")
+    check("and the app carries on with no rules in force", unruled.asked, unruled)
   }
 
   // ------------------------------------------------------------------- S4

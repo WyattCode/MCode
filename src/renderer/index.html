@@ -4,14 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
-      Sockets may go anywhere; nothing else may.
-
-      connect-src named ws://127.0.0.1:* alone, which meant the app could talk
-      only to a backend on that literal address. Not ws://localhost - the same
-      machine under its other name was refused - and no other machine at all, so
-      the Servers dialog, the saved-server list and the stored server address
-      were a feature that could not work, failing silently because a blocked
-      socket looks exactly like a server that is not answering.
+      Sockets may reach this machine only: the window talks to the backend this
+      app started on 127.0.0.1, as MiMo's does, and to nothing else (the
+      localhost name is for the development server's own socket). There is no
+      remote-server connection any more.
 
       Everything else stays shut. Scripts and styles are still 'self' only, so
       no page content can bring in code, and http/https are still not reachable
@@ -49,7 +45,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: mcode-media:; font-src 'self' data:; connect-src 'self' ws: wss: http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: http: https: mcode-media:; font-src 'self' data:; connect-src 'self' ws://127.0.0.1:* ws://localhost:* http://*.localhost:*; frame-src 'self' http://*.localhost:*; media-src 'self' data: blob: http: https:"
     />
     <title>MCode</title>
     <!--

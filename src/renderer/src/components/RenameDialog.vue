@@ -19,12 +19,11 @@ const props = withDefaults(
     value: string
     heading?: string
     subtitle?: string
-    placeholder?: string
     confirm?: string
     maxLength?: number
     closable?: boolean
   }>(),
-  { heading: undefined, subtitle: undefined, placeholder: undefined, confirm: undefined, maxLength: 80, closable: true },
+  { heading: undefined, subtitle: undefined, confirm: undefined, maxLength: 80, closable: true },
 )
 const emit = defineEmits<{ close: []; submit: [title: string] }>()
 
@@ -89,7 +88,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         class="field"
         spellcheck="false"
         :maxlength="maxLength"
-        :placeholder="placeholder"
         @input="onInput"
         @keydown.enter="onEnter"
       />

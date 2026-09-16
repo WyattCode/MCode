@@ -20,14 +20,13 @@ import LanguageMenu from "./LanguageMenu.vue"
 import VoiceUsageDialog from "./VoiceUsageDialog.vue"
 import ThirdPartyDialog from "./ThirdPartyDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
-import type { AgentsFileState, AppPath, AppPaths, SavedRule, UsageSummary } from "@shared/protocol"
+import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
-import { DEFAULT_THEME, THEMES } from "../lib/theme-palettes"
 import { installUpdate, updateState } from "./UpdatePill.vue"
 
 /* MiMo's 当前版本 button reads the update capsule's phase; a download announced by the app counts as ready. */
@@ -48,7 +47,6 @@ type Section =
   | "environment"
   | "usage"
   | "updates"
-  | "server"
   | "models"
   | "mcp"
 
@@ -91,28 +89,6 @@ const section = computed<Section>({
 
 /* MiMo's 默认打开目标: the same remembered choice the title bar's open-location control uses. */
 const { options: openOptions, choice: openChoice, choose: chooseOpen } = useOpenWith(() => app.platform)
-
-/*
- * MiMo's 标题生成模型: 跟随当前模型, then every model a connected provider
- * offers. Naming a cheap model here keeps the one title request a new
- * conversation makes off the working model.
- */
-const titleModelOptions = computed(() => [
-  { value: "", label: t("set.titleModelFollow") },
-  ...app.providers
-    .filter((provider) => provider.configured)
-    .flatMap((provider) => provider.models.map((model) => ({ value: `${provider.id}/${model.id}`, label: `${model.name} · ${provider.name}` }))),
-])
-
-const titleModelValue = computed(() => {
-  const chosen = app.config?.titleModel
-  return chosen ? `${chosen.provider}/${chosen.model}` : ""
-})
-
-function chooseTitleModel(value: string) {
-  const cut = value.indexOf("/")
-  void app.patchConfig({ titleModel: cut > 0 ? { provider: value.slice(0, cut), model: value.slice(cut + 1) } : undefined })
-}
 
 /*
  * Standing instructions are edited in a box and saved on purpose rather than
@@ -582,7 +558,9 @@ function configure(directory: string) {
 /*
  * The name is the project's display name, the same one renaming it in the side
  * column sets. MiMo's rules: a blank name, or the current one, renames nothing;
- * a name another project already shows is refused with a warning.
+ * a name another project already shows renames nothing either, and says so in
+ * an ordinary notice - MiMo has saved the rest of the page by then, so it is
+ * not a failure.
  */
 async function saveEnv() {
   const directory = configuring.value
@@ -598,7 +576,7 @@ async function saveEnv() {
     (other) => other !== directory && projectName(other, app.config?.projectNames) === name,
   )
   if (taken) {
-    notifyFailure(t("set.envSavedNameTaken", { name }))
+    notify(t("set.envSavedNameTaken", { name }))
     return
   }
   await app.patchConfig({ projectNames: { ...(app.config?.projectNames ?? {}), [directory]: name } })
@@ -824,7 +802,6 @@ const NAV_LABELS: Record<Section, string> = {
   appearance: "set.appearance",
   files: "set.nav.files",
   models: "set.models",
-  server: "set.server",
   personal: "set.personal",
   keys: "set.shortcuts",
   mcp: "set.nav.mcp",
@@ -840,7 +817,6 @@ const NAV_KEYWORDS: Record<Section, string> = {
   appearance: "set.keywords.appearance",
   files: "set.keywords.files",
   models: "set.keywords.models",
-  server: "set.keywords.server",
   personal: "set.keywords.personal",
   keys: "set.keywords.keys",
   mcp: "set.keywords.mcp",
@@ -1148,7 +1124,6 @@ const themeOptions = computed(() => [
   { value: "light", label: t("set.appearance.themeLight") },
   { value: "dark", label: t("set.appearance.themeDark") },
 ])
-const paletteOptions = THEMES.map((entry) => ({ value: entry.id, label: entry.name }))
 const languageOptions = computed(() => LANGUAGES.map((entry) => ({ value: entry.id, label: entry.label })))
 
 /**
@@ -1255,21 +1230,6 @@ watch(
  * out of a label adds a step without adding a thought, and it is the step
  * people learn to do without reading.
  */
-/*
- * What each font box falls back to, named rather than described.
- *
- * The reference puts the font's own name in the placeholder - measured on the
- * running app, its sans box reads `value: "", placeholder: "System Sans"` - so
- * an unset field still tells you what is actually being used. This said
- * "Default", which says only that you have not chosen. The sans and mono names
- * are its own constants (`sansDefault`, `monoDefault`), and being font names
- * they are the same in every language. MiMo's terminal default is its whole
- * stack rather than one face, so that box has no name to show.
- */
-const FONT_SANS_DEFAULT = "System Sans"
-const FONT_MONO_DEFAULT = "System Mono"
-const FONT_TERMINAL_DEFAULT = ""
-
 /** What the shortcuts page is narrowed to by typing. */
 const keyFilter = ref("")
 
@@ -1331,59 +1291,6 @@ async function toggleFullAccess() {
     /* patchConfig has said so */
   }
 }
-
-/*
- * S3: the "always" approvals this profile has remembered, and the way to take
- * one back.
- *
- * MiMo persists the same decisions - `permission(project_id)` in its engine's
- * database, `permByConvo` in its desktop preferences - but shows no list of
- * them anywhere. This list is MCode's own: an approval that outlives the app
- * and cannot be withdrawn is worse than one forgotten at quit, because nothing
- * would ever say what the app had been told it may do.
- */
-const savedRules = ref<SavedRule[]>([])
-
-async function loadSavedRules() {
-  try {
-    const answer = await app.client?.request({ type: "permission.rules" })
-    if (answer) savedRules.value = answer.rules
-  } catch {
-    /* Nothing to say here: the section simply shows what it last knew. */
-  }
-}
-
-async function forgetRule(rule: SavedRule) {
-  try {
-    const answer = await app.client?.request({
-      type: "permission.forget",
-      directory: rule.directory || undefined,
-      sessionID: rule.sessionID || undefined,
-      kind: rule.kind,
-      pattern: rule.pattern,
-    })
-    if (answer) savedRules.value = answer.rules
-  } catch {
-    notifyFailure(t("common.requestFailed"))
-  }
-}
-
-async function forgetAllRules() {
-  try {
-    const answer = await app.client?.request({ type: "permission.forget" })
-    if (answer) savedRules.value = answer.rules
-  } catch {
-    notifyFailure(t("common.requestFailed"))
-  }
-}
-
-/** Where a rule was granted, as its row reads it: the project's folder, or the one conversation. */
-function ruleWhere(rule: SavedRule): string {
-  if (rule.sessionID) return t("set.savedRuleThisChat")
-  return folderName(rule.directory) || rule.directory
-}
-
-onMounted(() => void loadSavedRules())
 
 /** Where tasks with no project get their folders. Empty is the default under the home folder. */
 async function pickProjectRoot() {
@@ -1710,10 +1617,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           @keydown.enter="openFirstMatch"
         />
         <!--
-          MiMo's four groups, in its order. MCode's own server and provider pages
-          sit beside Models, which they feed.
+          MiMo's four groups, in its order.
         -->
-        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('server') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
         <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1759,16 +1665,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             />
           </svg>
           {{ t("set.models") }}
-        </button>
-
-        <button v-show="navShows('server')" class="nav-item" :class="{ on: section === 'server' }" @click="section = 'server'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <rect x="3.35547" y="1.92969" width="13.2857" height="16.1429" stroke="currentColor" />
-            <rect x="3.35547" y="11.9297" width="13.2857" height="6.14286" stroke="currentColor" />
-            <rect x="12.8555" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
-            <rect x="10" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
-          </svg>
-          {{ t("set.server") }}
         </button>
 
         <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
@@ -1882,15 +1778,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               />
             </div>
 
-            <!-- MiMo's 标题生成模型: which model writes a conversation's title, falling back to the working one. -->
-            <div class="line" data-title-model-row>
-              <div class="line-text">
-                <div class="line-title">{{ t("set.titleModel") }}</div>
-                <div class="line-sub">{{ t("set.titleModelSub") }}</div>
-              </div>
-              <SelectMenu :model-value="titleModelValue" :options="titleModelOptions" :width="240" @update:model-value="chooseTitleModel($event)" />
-            </div>
-
             <!-- MiMo's 显示服务器, Linux only: 自动 names the backend in use; a change takes a restart. -->
             <div v-if="displayServer.supported" class="line" data-display-server-row>
               <div class="line-text">
@@ -1921,7 +1808,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             </div>
           </div>
 
-          <!-- MiMo's 权限 section: its full access gate, then MCode's own auto-accept. -->
+          <!-- MiMo's 权限 section: its full access gate alone. -->
           <h3 data-section="permissions">{{ t("set.sectionPermissions") }}</h3>
           <div class="card">
             <!-- MiMo's gate: full access can only be picked in the box once this is on. -->
@@ -1940,30 +1827,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               >
                 <span class="knob" />
               </button>
-            </div>
-            <!-- S3: what "always allow" has remembered, where it is kept, and how to take it back. -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.savedRules") }}</div>
-                <div class="line-sub">{{ t("set.savedRulesSub") }}</div>
-              </div>
-              <button v-if="savedRules.length" class="ctl-btn" @click="forgetAllRules">{{ t("set.savedRulesForgetAll") }}</button>
-            </div>
-            <div v-if="!savedRules.length" class="line">
-              <div class="line-text">
-                <div class="line-sub">{{ t("set.savedRulesEmpty") }}</div>
-              </div>
-            </div>
-            <div
-              v-for="rule in savedRules"
-              :key="`${rule.directory}|${rule.sessionID}|${rule.kind}|${rule.pattern}`"
-              class="line"
-            >
-              <div class="line-text">
-                <div class="line-title">{{ rule.pattern }}</div>
-                <div class="line-sub">{{ rule.kind }} · {{ ruleWhere(rule) }}</div>
-              </div>
-              <button class="ctl-btn" @click="forgetRule(rule)">{{ t("set.savedRulesForget") }}</button>
             </div>
           </div>
 
@@ -2186,7 +2049,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <!-- Appearance: a page of its own, as MiMo keeps it, rather than a group under General. -->
         <template v-else-if="section === 'appearance'">
           <h2>{{ t("set.appearance") }}</h2>
-          <!-- MiMo's first card: 主题, then MCode's own palette row under a name of its own. -->
+          <!-- MiMo's first card: 主题 alone - there is no palette to choose. -->
           <div class="card" data-appearance-theme>
             <div class="line">
               <div class="line-text">
@@ -2197,18 +2060,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :model-value="app.config?.theme ?? 'system'"
                 :options="themeOptions"
                 @update:model-value="app.patchConfig({ theme: $event as 'dark' })"
-              />
-            </div>
-
-            <div class="line" data-palette-row>
-              <div class="line-text">
-                <div class="line-title">{{ t("set.paletteName") }}</div>
-                <div class="line-sub">{{ t("set.themePaletteSub") }}</div>
-              </div>
-              <SelectMenu
-                :model-value="app.config?.themeID ?? DEFAULT_THEME"
-                :options="paletteOptions"
-                @update:model-value="app.patchConfig({ themeID: $event })"
               />
             </div>
           </div>
@@ -2353,53 +2204,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               >
                 <span class="knob" />
               </button>
-            </div>
-
-            <!--
-              MCode's own rows after MiMo's. Three faces rather than one, because
-              the jobs differ: prose wants a different face from code, and a
-              terminal wants one whose glyphs are all the same width.
-            -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.uiFont") }}</div>
-                <div class="line-sub">{{ t("set.uiFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.uiFont ?? ''"
-                :placeholder="FONT_SANS_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ uiFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.codeFont") }}</div>
-                <div class="line-sub">{{ t("set.codeFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.codeFont ?? ''"
-                :placeholder="FONT_MONO_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ codeFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.terminalFont") }}</div>
-                <div class="line-sub">{{ t("set.terminalFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.terminalFont ?? ''"
-                :placeholder="FONT_TERMINAL_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
             </div>
           </div>
         </template>
@@ -3253,31 +3057,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               @close="confirmingDelete = undefined"
             />
           </Teleport>
-        </template>
-
-        <!-- Server -->
-        <template v-else-if="section === 'server'">
-          <h2>{{ t("set.server") }}</h2>
-          <!--
-            opencode's server row, measured: one 20px line inside a list
-            padded 20, a 6px dot and then the name 10 after it, and a 20px
-            action at the end. No description under the name and no
-            "connected" label - the dot is the whole status.
-          -->
-          <div class="card server-card">
-            <div class="line">
-              <span
-                class="status"
-                role="status"
-                :class="{ ok: app.connected }"
-                :aria-label="app.connected ? t('set.connected') : t('set.disconnected')"
-                v-tip="{ label: app.connected ? t('set.connected') : t('set.disconnected'), placement: 'top' }"
-              >
-                <span class="led" />
-              </span>
-              <div class="line-title">{{ t("set.localServer") }}</div>
-            </div>
-          </div>
         </template>
 
         <!-- Providers -->
@@ -4790,55 +4569,6 @@ h3 {
   :root:not([data-theme="light"]) .choice {
     border-color: #3d3d3d;
   }
-}
-
-/*
- * The servers list: padded 20 all round, its single row 20 tall with no
- * padding of its own, the dot 6x6 and 10 ahead of the name. Measured on
- * opencode's 服务器 tab.
- */
-.server-card {
-  padding: 20px;
-}
-
-.server-card .line {
-  gap: 10px;
-  min-height: 20px;
-  padding: 0;
-  border-bottom: 0;
-}
-
-.server-card .line-title {
-  font-weight: 440;
-}
-
-.server-card .status {
-  gap: 0;
-}
-
-.server-card .led {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.led {
-  width: 7px;
-  height: 7px;
-  background: var(--error);
-  border-radius: 50%;
-}
-
-.status.ok .led {
-  background: var(--success);
 }
 
 .actions {
