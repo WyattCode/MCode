@@ -151,6 +151,9 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     const side = read("components/Sidebar.vue")
     check("the side column and its navigation are named regions (A13)", /<aside class="side"[^>]*:aria-label="t\('a11y\.sidebar'\)"/.test(side) && /<nav class="nav" :aria-label="t\('key\.groupNavigation'\)"/.test(side))
     check("each turn has a heading that is never drawn, found or selected (A13)", /<h2 v-if="!latest" class="a11y-only" data-turn-heading data-find-skip data-selectable="none">\{\{ t\("a11y\.turnHeading"/.test(read("components/MessageStream.vue")))
+    const toasts = read("components/Toasts.vue")
+    check("each notice is an alert and a Tab stop, as MiMo's are (A14)", /class="notice"[^>]*role="alert"\s+tabindex="0"\s+@mousedown="keepFocus"/.test(toasts))
+    check("the column of notices stays a polite status region (A14)", /class="toasts"\s+role="status"\s+aria-live="polite"/.test(toasts))
     check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="openImagePreview/))
   }
 }
