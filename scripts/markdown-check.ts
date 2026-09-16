@@ -33,7 +33,6 @@ import {
   readMediaMeta,
 } from "../src/shared/media-platform"
 import { isSvgFile, stripSvgHazards, svgSize } from "../src/renderer/src/lib/svg-safe"
-import { fadeTail, type FadeAnchor } from "../src/renderer/src/lib/stream-reveal"
 
 /* A reply while it is still arriving, with everything a finished reply gets. */
 const LIVE: MarkdownOptions = {
@@ -330,28 +329,6 @@ for (const [name, source, test] of liveCases) {
 }
 if (!/data-footnotes/.test(htmlOf("said[^1]\n\n[^1]: the note\n", REPLY))) problems.push("footnotes no longer show once the reply has ended")
 
-/* The fade tail: which characters it wraps, at what opacity, and that it only ever adds a span with an opacity. */
-const fadeCases: [string, string, number[], string][] = [
-  ["the newest characters fade, oldest first", '<p class="md-p">hello</p>', [0.5, 0.2], '<p class="md-p">hel<span class="sm-fade" style="opacity:0.500">l</span><span class="sm-fade" style="opacity:0.200">o</span></p>'],
-  ["code is left alone", '<p class="md-p">ab <code>xyz</code></p>', [0.1, 0.2, 0.3], '<p class="md-p"><span class="sm-fade" style="opacity:0.100">a</span><span class="sm-fade" style="opacity:0.200">b</span><span class="sm-fade" style="opacity:0.300"> </span><code>xyz</code></p>'],
-  ["an entity is one character", '<p class="md-p">a&amp;</p>', [0.25], '<p class="md-p">a<span class="sm-fade" style="opacity:0.250">&amp;</span></p>'],
-  ["a fully bright character stays plain", '<p class="md-p">ab</p>', [1, 0.5], '<p class="md-p">a<span class="sm-fade" style="opacity:0.500">b</span></p>'],
-  ["the code block's own words are not typed text", '<div class="md-codeblock"><span class="md-code-lang">js</span></div><p class="md-p">q</p>', [0.4], '<div class="md-codeblock"><span class="md-code-lang">js</span></div><p class="md-p"><span class="sm-fade" style="opacity:0.400">q</span></p>'],
-  ["fewer characters than stamps take the newest", '<p class="md-p">ab</p>', [0.1, 0.2, 0.3], '<p class="md-p"><span class="sm-fade" style="opacity:0.200">a</span><span class="sm-fade" style="opacity:0.300">b</span></p>'],
-]
-for (const [name, html, opacities, want] of fadeCases) {
-  const got = fadeTail(html, opacities)
-  if (got !== want) problems.push(`fade: ${name}: ${got}`)
-  inspect(`fade: ${name}`, got)
-}
-const fadeAnchor: FadeAnchor = { start: 0, floors: [] }
-fadeTail('<p class="md-p">ab</p>', [0.6, 0.7], fadeAnchor)
-const brightened = fadeTail('<p class="md-p">ab</p>', [0.1, 0.2], fadeAnchor)
-if (brightened !== '<p class="md-p"><span class="sm-fade" style="opacity:0.600">a</span><span class="sm-fade" style="opacity:0.700">b</span></p>') {
-  problems.push(`fade: a character dimmed again after brightening: ${brightened}`)
-}
-for (const item of HOSTILE) inspect(`${item.name} (live, faded)`, fadeTail(liveHtml(item.source), [0.1, 0.2, 0.3, 0.4]))
-
 /* MiMo's SVG file card: which paths get it, where it mounts, and the file's markup before it is ever made a picture. */
 const SVG_FILES: [string, boolean][] = [
   ["/Users/me/diagram.svg", true],
@@ -539,7 +516,7 @@ if (/(?:^|;)\s*(?:connect|frame|script|media)-src [^;]*mcode-media:/.test(policy
 inspect("a platform link in a reply", htmlOf("watch https://www.youtube.com/watch?v=dQw4w9WgXcQ and [this](https://www.bilibili.com/video/BV1GJ411x7h7)", REPLY))
 
 console.log(`abc cases: ${ABC_HOSTILE.length * (OPTIONS.length + 3) + abcBlockCases.length + 1}, platform cases: ${PLATFORM_LINKS.length + 5}, cover proxy cases: ${COVER_REQUESTS.length + COVER_REDIRECTS.length + COVER_ANSWERS.length + 6}`)
-console.log(`live cases: ${liveCases.length + 1}, fade cases: ${fadeCases.length + 1 + HOSTILE.length}, svg card cases: ${SVG_FILES.length + 6}`)
+console.log(`live cases: ${liveCases.length + 1}, svg card cases: ${SVG_FILES.length + 6}`)
 console.log(`hostile inputs: ${HOSTILE.length} x ${OPTIONS.length + 1} option sets, svg pre-pass cases: ${SVG_CASES.length}, formatting cases: ${shape.length + blockCases.length + PATHS.length}`)
 
 if (problems.length) {

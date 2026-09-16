@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue"
-import TerminalPane from "../TerminalPane.vue"
+import { computed, defineAsyncComponent, ref, watch } from "vue"
 import { useApp } from "../../stores/app"
 import { t } from "../../lib/i18n"
 import { shouldRespawn, showMismatch } from "../../lib/terminal"
@@ -26,6 +25,16 @@ const props = defineProps<{
 const emit = defineEmits<{ opened: [shellID: string, cwd: string]; used: []; openNew: [] }>()
 
 const app = useApp()
+
+/*
+ * Fetched when a terminal tab is first shown, for the same reason the drawer is
+ * (see App.vue): this is the panel's own path to the terminal, and while it was
+ * a plain import the entry chunk still carried xterm however the drawer was
+ * loaded - the panel is always built into the shell, so a static import here
+ * pulled xterm in with it. The pane is used only in this template, so nothing
+ * holds an instance of it that an async wrapper would hide.
+ */
+const TerminalPane = defineAsyncComponent(() => import("../TerminalPane.vue"))
 
 const cwd = ref<string | undefined>(props.cwd)
 /* The shell the pane shows, which a restart replaces before the tab hears of it. */

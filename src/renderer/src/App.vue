@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { AGENT_NAMES, DEFAULT_PERMISSIONS, IMPORT_SOURCES, PERMISSION_KINDS } from "@shared/protocol"
 import type { Worktree } from "@shared/protocol"
 import { useApp } from "./stores/app"
@@ -33,7 +33,7 @@ import ServersDialog from "./components/ServersDialog.vue"
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
 import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
-import TerminalDrawer from "./components/TerminalDrawer.vue"
+import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
 import Toasts from "./components/Toasts.vue"
 import ConfirmDialog from "./components/ConfirmDialog.vue"
 import NewProjectDialog from "./components/NewProjectDialog.vue"
@@ -758,7 +758,20 @@ const retiredChords = computed(() => {
   return out
 })
 
-const drawer = ref<InstanceType<typeof TerminalDrawer>>()
+/*
+ * The terminal is fetched the first time one is opened rather than built into
+ * the shell. MiMo keeps its terminal out of the entry chunk the same way -
+ * ./vendor/xterm.js, addon-fit.js and pty-term.js are injected into the
+ * document only when a terminal is first attached - while this bundle carried
+ * xterm, its two addons and its stylesheet in the always-loaded chunk because
+ * the drawer was imported like any other panel. Measured: the entry chunk was
+ * 6 197 212 B against MiMo's 2 271 966 B, and was the only built file holding
+ * xterm at all. The drawer is only ever rendered behind `terminalUp`, so the
+ * fetch happens on the press that opens it.
+ */
+const TerminalDrawer = defineAsyncComponent(() => import("./components/TerminalDrawer.vue"))
+
+const drawer = ref<InstanceType<typeof TerminalDrawerComponent>>()
 const rightPanel = ref<InstanceType<typeof RightPanel>>()
 /* Set while the project picker is standing in for a workspace picker. */
 const workspaceChoices = ref<string[]>([])
