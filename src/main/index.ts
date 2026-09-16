@@ -9,6 +9,8 @@ import { PowerHold } from "./power"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
+import { setImageShrinker } from "../server/provider/attachment-parts"
+import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
 import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
@@ -582,6 +584,9 @@ app.whenReady().then(async () => {
   wireProcessRecovery()
   // Packaged only: a development build would register the bare Electron binary.
   if (app.isPackaged) app.setAsDefaultProtocolClient(LINK_SCHEME)
+
+  // MiMo makes an oversized picture smaller rather than dropping it; the decoder lives here, so the backend is handed one.
+  setImageShrinker(shrinkImage)
 
   backend = await startBackend(app.getPath("userData"))
 

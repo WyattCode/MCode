@@ -78,10 +78,24 @@ export function toProviderMessages(messages: Message[], inputs?: Partial<ModelMo
         // A call that never finished arrives here already answered as interrupted (see history.ts).
         // Calls go after every other part, as MiMo splits a reply whose words follow its calls.
         calls.push({ type: "tool_use", id: part.callID, name: part.name, input: part.input })
+        const said = part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? "")
+        /*
+         * MiMo's tool media: a result's pictures go inside the tool_result
+         * itself, which this wire takes. Anything else the model cannot be
+         * handed here arrives as the line attachmentParts wrote for it.
+         */
+        const pieces = part.status === "error" ? [] : attachmentParts(part.attachments ?? [], inputs, "anthropic")
+        const blocks: (Anthropic.TextBlockParam | Anthropic.ImageBlockParam)[] = []
+        if (said) blocks.push({ type: "text", text: said })
+        for (const piece of pieces) {
+          if (piece.kind === "text") blocks.push({ type: "text", text: piece.text })
+          else if (piece.kind === "image") blocks.push({ type: "image", source: { type: "base64", media_type: piece.mime as "image/png", data: piece.data } })
+          else blocks.push({ type: "text", text: `[${piece.kind === "pdf" ? piece.name : piece.kind} cannot be put in a tool result for this provider, so it was not sent.]` })
+        }
         results.push({
           type: "tool_result",
           tool_use_id: part.callID,
-          content: part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? ""),
+          content: pieces.length ? blocks : said,
           is_error: part.status === "error",
         })
       }

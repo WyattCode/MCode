@@ -1,5 +1,5 @@
 import type { Message, ModelModalities } from "@shared/protocol"
-import { attachmentParts } from "./attachment-parts"
+import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
@@ -64,6 +64,15 @@ function toolSchemas(tools: ToolDefinition[]) {
  * the backend rejects the turn - the same constraint as the other adapters,
  * expressed with different item types.
  */
+/** One piece of media as this wire carries it; it takes pictures and PDFs and nothing else. */
+function responsesMedia(part: WirePart): Record<string, unknown>[] {
+  return part.kind === "image"
+    ? [{ type: "input_image", image_url: `data:${part.mime};base64,${part.data}` }]
+    : part.kind === "pdf"
+      ? [{ type: "input_file", filename: part.name, file_data: `data:application/pdf;base64,${part.data}` }]
+      : []
+}
+
 function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<string, unknown>[] {
   const out: Record<string, unknown>[] = []
 
@@ -74,13 +83,7 @@ function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<
       const text = [...parts.flatMap((part) => (part.kind === "text" ? [part.text] : [])), userText(message)].filter(Boolean).join("\n\n")
       const content = [
         ...(text ? [{ type: "input_text", text }] : []),
-        ...parts.flatMap((part): Record<string, unknown>[] =>
-          part.kind === "image"
-            ? [{ type: "input_image", image_url: `data:${part.mime};base64,${part.data}` }]
-            : part.kind === "pdf"
-              ? [{ type: "input_file", filename: part.name, file_data: `data:application/pdf;base64,${part.data}` }]
-              : [],
-        ),
+        ...parts.flatMap(responsesMedia),
       ]
       if (content.length) out.push({ type: "message", role: "user", content })
       continue
@@ -108,6 +111,13 @@ function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<
         name: part.name,
         arguments: JSON.stringify(part.input ?? {}),
       })
+      /*
+       * MiMo's tool media: this wire's function output takes text only, so what
+       * the model can read follows the result as a message of its own.
+       */
+      const pieces = part.status === "error" ? [] : attachmentParts(part.attachments ?? [], inputs, "responses")
+      const notes = pieces.flatMap((piece) => (piece.kind === "text" ? [piece.text] : []))
+      const carried = pieces.flatMap(responsesMedia)
       out.push({
         type: "function_call_output",
         call_id: part.callID,
@@ -125,8 +135,9 @@ function toInput(history: Message[], inputs?: Partial<ModelModalities>): Record<
          * completed call because the exit code and the output are the answer,
          * and it keeps `output` here.
          */
-        output: part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? ""),
+        output: [part.status === "error" ? (part.error ?? "Tool failed") : (part.output ?? ""), ...notes].filter(Boolean).join("\n\n"),
       })
+      if (carried.length) out.push({ type: "message", role: "user", content: [{ type: "input_text", text: TOOL_MEDIA_NOTE }, ...carried] })
     }
   }
 

@@ -1,8 +1,8 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import type { Attachment, Message } from "@shared/protocol"
+import type { AssistantPart, Attachment, Message } from "@shared/protocol"
 import { kindFor, mimeFor } from "../media"
-import type { LoadedAttachment } from "../provider/attachment-parts"
+import { fittedImage, type LoadedAttachment } from "../provider/attachment-parts"
 
 /**
  * Files attached by path, as MiMo attaches them: the message carries the path,
@@ -87,7 +87,14 @@ async function load(file: Attachment, directory: string): Promise<LoadedAttachme
       if (size > MEDIA_BYTES) {
         return { ...file, mime, data: "", note: `[${path.basename(target)} was attached, but at ${size} bytes it is too large to put into a request, so it was not sent. Tell the user.]` }
       }
-      return { ...file, mime, data: (await fs.readFile(target)).toString("base64") }
+      const data = (await fs.readFile(target)).toString("base64")
+      /*
+       * MiMo makes an oversized picture smaller rather than letting the wire
+       * drop it. Where there is no decoder - the checks, which run this under
+       * plain node - it goes as it was and the wire says why it did not fit.
+       */
+      const fitted = await fittedImage({ mime, data })
+      return { ...file, mime: fitted?.mime ?? mime, data: fitted?.data ?? data }
     }
     return { ...file, mime, data: "" }
   } catch (err) {
@@ -96,21 +103,21 @@ async function load(file: Attachment, directory: string): Promise<LoadedAttachme
 }
 
 /**
- * The history with every file attached by path read in. Within one turn a file
- * is read once; the stored messages are not changed.
+ * The history with every file attached by path read in - what the user
+ * attached, and what a tool's result carries. Within one turn a file is read
+ * once; the stored messages are not changed.
  */
 export async function withAttachmentData(history: Message[], directory: string, cache: AttachmentCache): Promise<Message[]> {
-  if (!history.some((message) => message.role === "user" && message.attachments?.some((file) => file.byPath))) return history
-  const out: Message[] = []
-  for (const message of history) {
-    if (message.role !== "user" || !message.attachments?.some((file) => file.byPath)) {
-      out.push(message)
-      continue
-    }
-    const attachments: Attachment[] = []
-    for (const file of message.attachments) {
+  const byPath = (list: readonly Attachment[] | undefined) => Boolean(list?.some((file) => file.byPath))
+  const carries = (message: Message) =>
+    message.role === "user" ? byPath(message.attachments) : message.parts.some((part) => part.type === "tool" && byPath(part.attachments))
+  if (!history.some(carries)) return history
+
+  const read = async (list: readonly Attachment[]): Promise<Attachment[]> => {
+    const out: Attachment[] = []
+    for (const file of list) {
       if (!file.byPath) {
-        attachments.push(file)
+        out.push(file)
         continue
       }
       const key = resolved(file, directory)
@@ -119,9 +126,26 @@ export async function withAttachmentData(history: Message[], directory: string, 
         loaded = await load(file, directory)
         cache.set(key, loaded)
       }
-      attachments.push({ ...loaded, path: file.path })
+      out.push({ ...loaded, path: file.path })
     }
-    out.push({ ...message, attachments })
+    return out
+  }
+
+  const out: Message[] = []
+  for (const message of history) {
+    if (!carries(message)) {
+      out.push(message)
+      continue
+    }
+    if (message.role === "user") {
+      out.push({ ...message, attachments: await read(message.attachments ?? []) })
+      continue
+    }
+    const parts: AssistantPart[] = []
+    for (const part of message.parts) {
+      parts.push(part.type === "tool" && byPath(part.attachments) ? { ...part, attachments: await read(part.attachments ?? []) } : part)
+    }
+    out.push({ ...message, parts })
   }
   return out
 }

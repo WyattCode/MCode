@@ -25,9 +25,69 @@ export type Wire = "anthropic" | "chat" | "responses"
 /** An attachment as the loader hands it over: with its data, or with a note saying why it has none. */
 export type LoadedAttachment = Attachment & { note?: string }
 
+/**
+ * What the message carrying a tool's media says.
+ *
+ * Anthropic takes pictures inside a `tool_result`; the chat-completions and
+ * Responses wires take only text there, so what the model can read follows the
+ * result as a message of its own and this line says where it came from.
+ */
+export const TOOL_MEDIA_NOTE = "The file or files in this message are what the tool call just above returned."
+
 /** MiMo's image cap for Anthropic routes: 4.5 MB and 2000 px on the longest side. */
 export const ANTHROPIC_IMAGE_BYTES = 4_500_000
 export const ANTHROPIC_IMAGE_PIXELS = 2000
+
+/** What an image has to fit before it is sent. */
+export interface ImageFit {
+  maxBytes: number
+  maxPixels: number
+}
+
+/**
+ * Whether a picture has to be made smaller before it is sent.
+ *
+ * MiMo re-encodes an oversized picture rather than dropping it (`compressImage`
+ * in its engine, against each provider's caps). This app measures against one
+ * conservative pair - the Anthropic route's, the strictest it knows - so a
+ * picture that fits them fits every wire it might go out on.
+ */
+export function imageFit(
+  mime: string,
+  data: string,
+  caps: ImageFit = { maxBytes: ANTHROPIC_IMAGE_BYTES, maxPixels: ANTHROPIC_IMAGE_PIXELS },
+): ImageFit | undefined {
+  if (!mime.startsWith("image/") || !data) return undefined
+  const bytes = Math.floor((data.length * 3) / 4)
+  const size = imageSize(decoded(data, 96_000))
+  const tooHeavy = bytes > caps.maxBytes
+  const tooWide = Boolean(size && Math.max(size.width, size.height) > caps.maxPixels)
+  return tooHeavy || tooWide ? caps : undefined
+}
+
+/**
+ * How a picture is made smaller, when this app can do it at all.
+ *
+ * The decoder belongs to the desktop process - Electron's `nativeImage` - and
+ * not here: this package runs under plain node in the checks, where there is
+ * nothing to decode an image with. The desktop registers one at startup; with
+ * none, an oversized picture is left as it was and the wire's own note explains
+ * why it did not go.
+ */
+export type ImageShrinker = (input: { data: string; mime: string; fit: ImageFit }) => Promise<{ data: string; mime: string } | undefined>
+
+let shrinker: ImageShrinker | undefined
+
+export function setImageShrinker(fn: ImageShrinker | undefined): void {
+  shrinker = fn
+}
+
+/** The picture as it should be sent: smaller when it has to be and can be, and nothing when it is already fine. */
+export async function fittedImage(file: { mime: string; data: string }): Promise<{ mime: string; data: string } | undefined> {
+  const fit = imageFit(file.mime, file.data)
+  if (!fit || !shrinker) return undefined
+  return (await shrinker({ data: file.data, mime: file.mime, fit }).catch(() => undefined)) ?? undefined
+}
 
 const AUDIO_FORMATS: Record<string, string> = { "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3", "audio/mp3": "mp3", "audio/flac": "flac", "audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/ogg": "ogg" }
 const VIDEO_TYPES = new Set(["video/mp4", "video/quicktime", "video/x-msvideo", "video/x-ms-wmv"])

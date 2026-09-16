@@ -28,6 +28,16 @@ export interface SessionInfo {
   titleSource?: "fallback" | "generated" | "user"
   /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
   worktreeNotice?: boolean
+  /**
+   * The MCP servers this conversation was offered at its first turn.
+   *
+   * MiMo's MCP page says a saved change applies from the next conversation, so
+   * the list is kept with the conversation and read back on the next run: a
+   * server added or switched on later reaches new conversations only. Absent
+   * on conversations stored before this, which take whatever is configured at
+   * their next turn and keep that.
+   */
+  mcpServers?: string[]
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
@@ -189,6 +199,14 @@ export interface ToolPart {
   /** i18n key for `error`, when the failure was one the tool anticipated. */
   errorCode?: string
   errorParams?: Record<string, string>
+  /**
+   * Media the call is handing to the model, as MiMo hands a tool result's
+   * attachments over: a picture `read` was pointed at, what an MCP server
+   * answered with, a file `history` found. One attached by path is read from
+   * disk each time a request is built, exactly as a user's attachment is, so
+   * the transcript never carries its bytes.
+   */
+  attachments?: Attachment[]
   time: { created: number; started?: number; completed?: number }
 }
 
@@ -1742,8 +1760,8 @@ export type Request =
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
-  /* An empty folder for a new project, named by the user, under the default project location. */
-  | { type: "project.createBlank"; name: string }
+  /* An empty folder for a new project, named by the user. `location` is where it goes, as MiMo's dialog lets it be changed; without one it is the default project location. */
+  | { type: "project.createBlank"; name: string; location?: string }
   /* A folder onto the project list, with no conversation; `used` also makes it the latest pick. */
   | { type: "project.add"; directory: string; used?: boolean }
   /* Folders off the project list; their conversations stay. */
@@ -1791,7 +1809,21 @@ export type Request =
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
-  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[]; fileNotices?: FileNotice[] }
+  /*
+   * `agent` and `model` are what a slash command named, and they hold for the
+   * turn this starts and no longer: MiMo runs a command's turn as the agent and
+   * model the command names and leaves the conversation's own settings alone.
+   */
+  | {
+      type: "session.prompt"
+      sessionID: string
+      text: string
+      attachments?: Attachment[]
+      annotations?: Annotation[]
+      fileNotices?: FileNotice[]
+      agent?: AgentName
+      model?: ModelRef
+    }
   | { type: "session.abort"; sessionID: string }
   /*
    * subagents: a slash command marked `subtask`. `text` is the line as typed,

@@ -2114,13 +2114,13 @@ async function confirmRemoveProjects() {
  * without, a new empty folder. A conversation waiting on it moves in and opens;
  * otherwise the project is added and opened, as a dropped folder is.
  */
-async function createNamedProject(title: string, source?: string) {
+async function createNamedProject(title: string, source?: string, location?: string) {
   const moving = namingProject.value?.sessionID
   namingProject.value = undefined
   let directory = source
   if (!directory) {
     try {
-      directory = (await app.client?.request({ type: "project.createBlank", name: title }))?.directory
+      directory = (await app.client?.request({ type: "project.createBlank", name: title, ...(location ? { location } : {}) }))?.directory
     } catch (failure) {
       notifyFailure(t("menu.createFailed", { error: reasonOf(failure) }))
       return
@@ -4496,6 +4496,7 @@ onBeforeUnmount(() => {
   <NewProjectDialog
     v-if="namingProject"
     :value="t('home.blankDefault')"
+    :default-location="app.config?.projectRoot"
     @close="namingProject = undefined"
     @submit="createNamedProject"
   />

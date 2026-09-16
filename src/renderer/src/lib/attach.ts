@@ -141,9 +141,9 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
  */
 const previews = new WeakMap<Attachment, string>()
 
-/** A data URL for playing a video attachment back in the video preview. */
+/** A data URL for playing a video attachment back in the video preview; one restored by path alone has no bytes to play. */
 export function videoUrl(attachment: Attachment): string | undefined {
-  if (!attachment.mime.startsWith("video/")) return undefined
+  if (!attachment.mime.startsWith("video/") || !attachment.data) return undefined
   const known = previews.get(attachment)
   if (known) return known
   const url = `data:${attachment.mime};base64,${attachment.data}`
@@ -151,9 +151,15 @@ export function videoUrl(attachment: Attachment): string | undefined {
   return url
 }
 
-/** A data URL for showing an image attachment back to the user. */
+/**
+ * A data URL for showing an image attachment back to the user.
+ *
+ * A draft restored from disk carries a file by its path and no bytes, as MiMo
+ * saves it; without them there is no thumbnail to draw, and the box shows the
+ * file as a capsule with its name instead of an empty picture.
+ */
 export function preview(attachment: Attachment): string | undefined {
-  if (!attachment.mime.startsWith("image/")) return undefined
+  if (!attachment.mime.startsWith("image/") || !attachment.data) return undefined
   const known = previews.get(attachment)
   if (known) return known
   const url = `data:${attachment.mime};base64,${attachment.data}`

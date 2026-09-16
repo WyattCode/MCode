@@ -2,10 +2,11 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, micFailure, transcribeFailure, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
-import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
+import type { Attachment, CommandInfo, DirEntry, Effort, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
+import { matchingNames } from "../lib/word-match"
 import { drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
 import { accessPatch } from "../lib/confirm-queue"
@@ -1059,7 +1060,7 @@ async function submit() {
     ? false
     : subtask
       ? await app.subtask(value, subtask)
-      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed)
+      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -1139,10 +1140,11 @@ async function withShell(value: string, root?: string): Promise<string> {
  * nothing; a skill's `/name` line goes as typed, for the server to load it.
  * The transcript shows the filled-in prompt, as MiMo's does.
  *
- * NOT carried across, because `session.prompt` has nowhere to put them: a
- * command's `agent` and `model`. MiMo runs the turn as whichever agent and
- * model the command names; here it runs as whatever the session is already set
- * to.
+ * A command's `agent` and `model` ride along with the message: MiMo runs the
+ * turn as whichever agent and model the command names, and this does too. They
+ * hold for that one turn - the conversation keeps whatever it was set to - and
+ * the listed command already carries both, so nothing has to be fetched for
+ * them.
  *
  * Undefined when the backend could not fill the command in; the failure has
  * been said and the draft should come back.
@@ -1227,15 +1229,10 @@ async function mentionAttachments(value: string, chosen: Set<string>, to?: strin
  */
 const atSub = ref("")
 const atEntries = ref<DirEntry[]>([])
-const atHits = ref<FileHit[]>([])
-const atTruncated = ref(false)
-const atStatus = ref<"idle" | "loading" | "ready" | "dirFailed" | "searchFailed">("idle")
+const atStatus = ref<"idle" | "loading" | "ready" | "dirFailed">("idle")
 const atIndex = ref(0)
 /* Answers are matched to the latest ask, so a slow one cannot overwrite a newer one. */
 let atAsk = 0
-let atTimer: ReturnType<typeof setTimeout> | undefined
-
-const SEARCH_PAUSE_MS = 150
 
 /** The mention the caret is standing in, if it is standing in one. */
 const atSpan = computed(() => (mode.value === "shell" ? undefined : mentionSpan(text.value, caret.value)))
@@ -1252,10 +1249,15 @@ const joinRel = (folder: string, name: string) => (folder ? `${folder}/${name}` 
 const atRows = computed<AtRow[]>(() => {
   const span = atSpan.value
   if (!span || !projectRoot.value) return []
-  if (!span.query) {
-    return atEntries.value.map((entry) => ({ kind: entry.type, name: entry.name, rel: joinRel(atSub.value, entry.name) }))
-  }
-  return atHits.value.map((hit) => ({ kind: "file" as const, name: hit.name, rel: hit.rel, dir: hit.dir }))
+  /*
+   * MiMo narrows what this folder already listed, with the matcher its settings
+   * search uses, rather than asking the backend again for every keystroke.
+   */
+  return matchingNames(atEntries.value, span.query).map((entry) => ({
+    kind: entry.type,
+    name: entry.name,
+    rel: joinRel(atSub.value, entry.name),
+  }))
 })
 
 /* The breadcrumb: the workspace, then each folder below it. */
@@ -1265,55 +1267,34 @@ function loadAt() {
   const span = atSpan.value
   const root = projectRoot.value
   const client = app.client
-  clearTimeout(atTimer)
   if (!span || !root || !client) return
   const ask = ++atAsk
   const sub = atSub.value
   atStatus.value = "loading"
-  if (!span.query) {
-    client
-      .request({ type: "file.listDir", directory: root, sub })
-      .then((result) => {
-        if (ask !== atAsk) return
-        atEntries.value = result.entries
-        atStatus.value = "ready"
-      })
-      .catch(() => {
-        if (ask !== atAsk) return
-        atEntries.value = []
-        atStatus.value = "dirFailed"
-      })
-    return
-  }
-  const query = span.query
-  atTimer = setTimeout(() => {
-    client
-      .request({ type: "file.search", directory: root, query, sub })
-      .then((result) => {
-        if (ask !== atAsk) return
-        atHits.value = result.entries
-        atTruncated.value = result.truncated
-        atStatus.value = "ready"
-      })
-      .catch(() => {
-        if (ask !== atAsk) return
-        atHits.value = []
-        atTruncated.value = false
-        atStatus.value = "searchFailed"
-      })
-  }, SEARCH_PAUSE_MS)
+  client
+    .request({ type: "file.listDir", directory: root, sub })
+    .then((result) => {
+      if (ask !== atAsk) return
+      atEntries.value = result.entries
+      atStatus.value = "ready"
+    })
+    .catch(() => {
+      if (ask !== atAsk) return
+      atEntries.value = []
+      atStatus.value = "dirFailed"
+    })
 }
 
+/* The folder is listed once, when the menu opens on it; what is typed after that only filters it. */
 watch(
-  () => [atSpan.value?.query, atSpan.value !== undefined, atSub.value, projectRoot.value] as const,
-  ([, open]) => {
+  () => [atSpan.value !== undefined, atSub.value, projectRoot.value] as const,
+  ([open]) => {
     if (open) {
       loadAt()
       return
     }
     // Closed: the next @ starts from the project root again.
     atAsk += 1
-    clearTimeout(atTimer)
     atSub.value = ""
     atStatus.value = "idle"
   },
@@ -1327,7 +1308,7 @@ watch(
 const atOpen = computed(() => {
   if (!atSpan.value || dismissed.value) return false
   if (!projectRoot.value) return true
-  return atRows.value.length > 0 || ["loading", "dirFailed", "searchFailed"].includes(atStatus.value)
+  return atRows.value.length > 0 || ["loading", "dirFailed"].includes(atStatus.value)
 })
 
 watch(atRows, (rows) => {
@@ -2670,7 +2651,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <div v-else-if="atSpan?.query" class="slash-head">{{ t("composer.at.searchFiles") }}</div>
             <div v-else class="slash-head">{{ t("composer.at.filesGroup") }}</div>
             <div v-if="atStatus === 'dirFailed'" class="at-note">{{ t("composer.at.cannotReadDir") }}</div>
-            <div v-else-if="atStatus === 'searchFailed'" class="at-note">{{ t("composer.at.searchFailed") }}</div>
             <div v-else-if="atStatus === 'loading' && !atRows.length" class="at-note">{{ t("composer.at.loading") }}</div>
             <div
               v-for="(row, at) in atRows"
@@ -2707,9 +2687,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                   ›
                 </button>
               </span>
-            </div>
-            <div v-if="atSpan?.query && atTruncated && atRows.length" class="at-truncated">
-              {{ t("composer.at.truncated", { count: atRows.length }) }}
             </div>
           </template>
         </div>
@@ -3465,12 +3442,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   padding: 7px 10px;
   color: var(--text-weaker);
   font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.at-truncated {
-  padding: 4px 10px 2px;
-  color: var(--text-weaker);
-  font-size: calc(11px * var(--ui-font-scale, 1));
 }
 
 /*
