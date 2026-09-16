@@ -436,6 +436,7 @@ export const useApp = defineStore("app", () => {
    * was never at risk: it already skips an entry whose session has gone.
    */
   function forgetSession(sessionID: string) {
+    held.delete(sessionID)
     forgetTab(sessionID)
     closedTabs.value = closedTabs.value.filter((entry) => entry.sessionID !== sessionID)
 
@@ -467,6 +468,44 @@ export const useApp = defineStore("app", () => {
    * part is found by index instead of rescanning the transcript per token.
    */
   const partIndex = reactive(new Map<string, { messageID: string; index: number }>())
+
+  /*
+   * The transcripts of the conversations left most recently, newest last.
+   *
+   * MiMo keeps every conversation's messages in its store once they are read
+   * (`msgsByConvo`), so coming back to one draws what it already has and
+   * refreshes it in place; this app emptied the list and read the whole
+   * conversation again on every switch, which on a 150-turn one meant the
+   * loading line and 580ms before anything was back. The copies here follow
+   * the same message events the open conversation does, so they are current
+   * when they are shown, and the read that follows only replaces one that
+   * turned out to differ.
+   */
+  const HELD_MAX = 8
+  const held = new Map<string, Message[]>()
+
+  function hold(sessionID: string | undefined) {
+    if (!sessionID || loadingID.value === sessionID || !messages.value.length) return
+    held.delete(sessionID)
+    held.set(sessionID, messages.value)
+    while (held.size > HELD_MAX) {
+      const oldest = held.keys().next().value
+      if (oldest === undefined) break
+      held.delete(oldest)
+    }
+  }
+
+  /** What a transcript looks like, cheaply: enough to tell whether a fresh read changed anything. */
+  function transcriptKey(list: readonly Message[]): string {
+    return list
+      .map((message) =>
+        message.role === "user"
+          ? `${message.id}:${message.text.length}:${message.attachments?.length ?? 0}`
+          : `${message.id}:${message.finish ?? ""}:${message.time.completed ?? ""}:${message.error ?? ""}:${message.reverted ? 1 : 0}:` +
+            message.parts.map((part) => `${part.id}${part.type === "tool" ? part.status : part.type === "text" || part.type === "reasoning" ? part.text.length : ""}`).join(","),
+      )
+      .join("|")
+  }
 
   function reindex(message: Message) {
     if (message.role !== "assistant") return
@@ -570,6 +609,8 @@ export const useApp = defineStore("app", () => {
         chatLinks.value = event.links
         break
       case "session.reverted":
+        // A held copy cannot be shortened by events, so one that lost messages is read again when it is next opened.
+        held.delete(event.sessionID)
         if (event.sessionID === currentID.value) void reread(event.sessionID)
         break
       case "message.updated": {
@@ -605,6 +646,15 @@ export const useApp = defineStore("app", () => {
             else list[at] = event.message
             sideReindex(event.message.sessionID, event.message)
             break
+          }
+        }
+        {
+          // A conversation left a moment ago keeps following its own messages, so coming back shows them as they are.
+          const kept = held.get(event.message.sessionID)
+          if (kept) {
+            const at = kept.findIndex((message) => message.id === event.message.id)
+            if (at === -1) kept.push(event.message)
+            else kept[at] = event.message
           }
         }
         if (event.message.sessionID !== currentID.value) break
@@ -1044,11 +1094,21 @@ export const useApp = defineStore("app", () => {
      * keeps what it shows. A failed read leaves the line up, as MiMo's does.
      */
     if (currentID.value !== sessionID) {
+      hold(currentID.value)
+      // Coming back to one still held draws it at once, as MiMo does; the read below refreshes it.
+      const kept = held.get(sessionID)
+      held.delete(sessionID)
       currentID.value = sessionID
-      loadingID.value = sessionID
-      messages.value = []
       partIndex.clear()
       error.value = undefined
+      if (kept) {
+        loadingID.value = undefined
+        messages.value = kept
+        messages.value.forEach(reindex)
+      } else {
+        loadingID.value = sessionID
+        messages.value = []
+      }
     }
     const result = await api().request({ type: "session.get", sessionID })
     // Left for another conversation while this one was read: its answer is not shown.
@@ -1061,9 +1121,13 @@ export const useApp = defineStore("app", () => {
     }
     track(sessionID)
     recent.value = [sessionID, ...recent.value.filter((id) => id !== sessionID)].slice(0, 50)
-    messages.value = result.messages.map(readLegacyMessage)
-    partIndex.clear()
-    messages.value.forEach(reindex)
+    const fresh = result.messages.map(readLegacyMessage)
+    // Replaced only when the read differs from what is on show: an identical list would be drawn again for nothing.
+    if (transcriptKey(fresh) !== transcriptKey(messages.value)) {
+      messages.value = fresh
+      partIndex.clear()
+      messages.value.forEach(reindex)
+    }
     error.value = undefined
     noteError(sessionID, undefined)
     /*
@@ -1106,6 +1170,7 @@ export const useApp = defineStore("app", () => {
       sessions.value.unshift(result.session)
     }
     // Known to be empty, so it opens straight onto its hero rather than a loading line.
+    hold(currentID.value)
     currentID.value = result.session.id
     messages.value = []
     partIndex.clear()
