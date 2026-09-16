@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { AssistantPart, Attachment, Message } from "@shared/protocol"
 import { kindFor, mimeFor } from "../media"
-import type { LoadedAttachment } from "../provider/attachment-parts"
+import { fittedImage, type LoadedAttachment } from "../provider/attachment-parts"
 
 /**
  * Files attached by path, as MiMo attaches them: the message carries the path,
@@ -87,7 +87,14 @@ async function load(file: Attachment, directory: string): Promise<LoadedAttachme
       if (size > MEDIA_BYTES) {
         return { ...file, mime, data: "", note: `[${path.basename(target)} was attached, but at ${size} bytes it is too large to put into a request, so it was not sent. Tell the user.]` }
       }
-      return { ...file, mime, data: (await fs.readFile(target)).toString("base64") }
+      const data = (await fs.readFile(target)).toString("base64")
+      /*
+       * MiMo makes an oversized picture smaller rather than letting the wire
+       * drop it. Where there is no decoder - the checks, which run this under
+       * plain node - it goes as it was and the wire says why it did not fit.
+       */
+      const fitted = await fittedImage({ mime, data })
+      return { ...file, mime: fitted?.mime ?? mime, data: fitted?.data ?? data }
     }
     return { ...file, mime, data: "" }
   } catch (err) {

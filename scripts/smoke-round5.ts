@@ -25,7 +25,7 @@ import { messagesRequest } from "../src/server/provider/anthropic"
 import { ChatGPTSubscription } from "../src/server/provider/chatgpt"
 import { TOOLS } from "../src/server/tool/registry"
 import { execFileSync } from "node:child_process"
-import { attachmentParts, imageSize } from "../src/server/provider/attachment-parts"
+import { attachmentParts, fittedImage, imageFit, imageSize, setImageShrinker } from "../src/server/provider/attachment-parts"
 import { isSummary, touchedFiles } from "../src/server/session/summary"
 import { claudeCallID, forWire, mistralCallID } from "../src/server/provider/wire-ids"
 import { AnthropicAdapter, toProviderMessages } from "../src/server/provider/anthropic"
@@ -1178,6 +1178,43 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     } finally {
       await e.close()
     }
+  }
+
+  section("Round 6: an oversized picture is made smaller rather than dropped (L12)")
+  {
+    /* A PNG header is all this needs: the size is read from it, and the byte count from the payload. */
+    const pngOf = (width: number, height: number) => {
+      const bytes = Buffer.alloc(24)
+      bytes[0] = 0x89
+      bytes.write("PNG", 1, "latin1")
+      bytes.writeUInt32BE(width, 16)
+      bytes.writeUInt32BE(height, 20)
+      return bytes.toString("base64")
+    }
+    const roomy = { maxBytes: 1_000_000, maxPixels: 2000 }
+    check("a picture inside both caps needs nothing done to it", imageFit("image/png", pngOf(100, 100), roomy) === undefined)
+    check("one too wide has to be made smaller", Boolean(imageFit("image/png", pngOf(4000, 100), roomy)), imageFit("image/png", pngOf(4000, 100), roomy))
+    check("so does one too heavy", Boolean(imageFit("image/png", pngOf(100, 100), { maxBytes: 10, maxPixels: 2000 })))
+    check("anything that is not a picture, or has no bytes, is not measured", imageFit("text/plain", "abc") === undefined && imageFit("image/png", "") === undefined)
+    check("the caps it measures against by default are the Anthropic route's, the strictest it knows", Boolean(imageFit("image/png", pngOf(3000, 100))))
+
+    let asked: { maxBytes: number; maxPixels: number } | undefined
+    setImageShrinker(async ({ fit }) => {
+      asked = fit
+      return { data: "c2hydW5r", mime: "image/jpeg" }
+    })
+    const shrunk = await fittedImage({ mime: "image/png", data: pngOf(3000, 100) })
+    check(
+      "an oversized picture is handed to the decoder and comes back smaller",
+      shrunk?.mime === "image/jpeg" && shrunk.data === "c2hydW5r" && asked?.maxPixels === 2000,
+      { shrunk, asked },
+    )
+    check("one already within the caps is never re-encoded", (await fittedImage({ mime: "image/png", data: pngOf(100, 100) })) === undefined)
+    setImageShrinker(undefined)
+    check(
+      "with no decoder to hand it is left exactly as it was, and the wire's own note explains it",
+      (await fittedImage({ mime: "image/png", data: pngOf(3000, 100) })) === undefined,
+    )
   }
 
   section("Round 6: a command's agent and model run its turn (L3)")
