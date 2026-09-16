@@ -191,4 +191,16 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const old = await loaded({ releaseNotes: false })
     check("a stored switch is dropped", !("releaseNotes" in (old.config.get() as object)) && !("releaseNotes" in (await old.disk())))
   }
+
+  section("Round 9 (S9-8): no commands that change settings from a hand-written chord")
+  {
+    const app = read("src/renderer/src/App.vue")
+    const ids = ['"permissions.autoaccept"', "`agent.${entry}`", "`scheme.${entry}`", "`language.${entry.id}`", '"language.cycle"', '"theme.scheme.cycle"']
+    const still = ids.filter((id) => app.includes(`id: ${id}`))
+    check("the six families are gone from the command table", still.length === 0, still)
+    check("and so are the helpers only they used", !/function (cycleScheme|cycleLanguage|setLanguage|toggleAutoAccept|autoAcceptAll)\b/.test(app))
+    check("the agent cycle, which changes the conversation, stays", /id: "agent\.cycle"/.test(app))
+    const tables = read("src/renderer/src/lib/i18n.ts")
+    check("their unlocked strings are gone", !/"(cmd\.useAgent|cmd\.useLanguage|cmd\.useScheme|cmd\.cycleScheme|toast\.switchedTo)"/.test(tables))
+  }
 }

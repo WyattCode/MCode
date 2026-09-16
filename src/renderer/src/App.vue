@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { AGENT_NAMES, DEFAULT_PERMISSIONS, IMPORT_SOURCES, PERMISSION_KINDS } from "@shared/protocol"
+import { AGENT_NAMES, IMPORT_SOURCES } from "@shared/protocol"
 import type { Worktree } from "@shared/protocol"
 import { useApp } from "./stores/app"
 import Sidebar from "./components/Sidebar.vue"
@@ -1392,43 +1392,6 @@ function newSession() {
   if (!alreadyNewTask(app.current?.directory)) startIn(app.current?.directory)
 }
 
-/**
- * Every permission bucket at once, on and off.
- *
- * Worth knowing while reading this: MCode's list is global, where the
- * reference scopes the same flag per session or per directory. Turning it on
- * here grants far more than the reference's equivalent does, which is why both
- * edges toast rather than only the one that reduces access.
- *
- * The question this button answers is "will anything stop and ask me", which is
- * why a bucket counts as satisfied when it is anything other than Ask. Reading
- * it as "is everything set to Allow" instead would leave the button stuck
- * showing off forever the moment a single bucket was refused, since the button
- * is not permitted to lift a refusal and so could never reach that state.
- */
-function autoAcceptAll(): boolean {
-  const current = app.config?.permissions
-  return PERMISSION_KINDS.every((kind) => (current?.[kind] ?? DEFAULT_PERMISSIONS[kind]) !== "ask")
-}
-
-async function toggleAutoAccept() {
-  const on = autoAcceptAll()
-  const next = { ...DEFAULT_PERMISSIONS, ...app.config?.permissions }
-  /*
-   * A bucket the user set to Deny is left alone by both edges of this button.
-   * Turning interruptions off is a statement about being asked, not about being
-   * refused, and a switch that quietly undid a refusal would be the more
-   * dangerous of the two readings.
-   */
-  for (const kind of PERMISSION_KINDS) {
-    if (next[kind] === "deny") continue
-    next[kind] = on ? DEFAULT_PERMISSIONS[kind] : "allow"
-  }
-  await app.patchConfig({ permissions: next, accessLevel: on ? "ask" : "full" })
-  // MiMo's notice is its title alone.
-  notify(t(on ? "toast.autoOffTitle" : "toast.autoOnTitle"))
-}
-
 async function focusComposer() {
   await new Promise((resolve) => setTimeout(resolve, 0))
   composer.value?.focus()
@@ -2638,16 +2601,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: compactSession,
     },
     {
-      // The title swaps with the state, so the row always names what pressing
-      // it will do rather than what is currently true. Turning it on is full
-      // access, so it waits for the settings switch as the composer's chip does.
-      id: "permissions.autoaccept",
-      group: "key.groupConversation",
-      title: autoAcceptAll() ? t("cmd.autoAcceptOff") : t("cmd.autoAcceptOn"),
-      enabled: autoAcceptAll() || Boolean(app.config?.allowFullAccess),
-      run: () => void toggleAutoAccept(),
-    },
-    {
       id: "session.archive",
       group: "key.groupConversation",
       title: t("cmd.archive"),
@@ -2760,37 +2713,6 @@ const bindableCommands = computed((): AppCommand[] => {
       hint: "Ctrl+`",
       enabled: inWorkspace,
       run: () => (terminalOpen.value = !terminalOpen.value),
-    },
-
-    ...(["build", "plan"] as const).map((entry) => ({
-      id: `agent.${entry}`,
-      group: "key.groupModels",
-      title: t("cmd.useAgent", { name: t(`agent.${entry}`) }),
-      enabled: (app.config?.agent ?? "build") !== entry,
-      run: async () => {
-        await app.patchConfig({ agent: entry })
-      },
-    })),
-    ...(["system", "dark", "light"] as const).map((entry) => ({
-      id: `scheme.${entry}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useScheme", { name: t(`set.theme${entry[0].toUpperCase()}${entry.slice(1)}`) }),
-      enabled: (app.config?.theme ?? "system") !== entry,
-      run: async () => {
-        await app.patchConfig({ theme: entry })
-      },
-    })),
-    ...LANGUAGES.map((entry) => ({
-      id: `language.${entry.id}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useLanguage", { name: entry.label }),
-      run: () => void setLanguage(entry.id),
-    })),
-    {
-      id: "language.cycle",
-      group: "key.groupGeneral",
-      title: t("cmd.cycleLanguage"),
-      run: () => void cycleLanguage(),
     },
     // App
     {
@@ -3004,12 +2926,6 @@ const bindableCommands = computed((): AppCommand[] => {
       group: "key.groupGeneral",
       title: t("key.nextProject"),
       run: () => void stepProject(1),
-    },
-    {
-      id: "theme.scheme.cycle",
-      group: "key.groupGeneral",
-      title: t("cmd.cycleScheme"),
-      run: () => void cycleScheme(),
     },
     {
       id: "input.focus",
@@ -3234,34 +3150,6 @@ const modalOpen = computed(
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
 const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
 watch(annotationScope, (scope) => (mainAnnotationScope.value = scope), { immediate: true })
-
-/** Steps to the next colour scheme, in the order the settings list them. */
-async function cycleScheme() {
-  const order = ["system", "dark", "light"] as const
-  const next = order[(order.indexOf(theme.value) + 1) % order.length]
-  await app.patchConfig({ theme: next })
-  notify(t("cmd.useScheme", { name: t(`set.theme${next[0].toUpperCase()}${next.slice(1)}`) }))
-}
-
-/**
- * Steps to the next language, naming it in the language being moved to.
- *
- * Naming it in its own language rather than the outgoing one is what makes the
- * step legible when you have cycled somewhere you cannot read.
- */
-async function setLanguage(id: string) {
-  const entry = LANGUAGES.find((candidate) => candidate.id === id)
-  await app.patchConfig({ language: id })
-  // Named in the language just chosen, which is what makes the step legible
-  // when you have landed somewhere you cannot read.
-  notify(t("toast.switchedTo", { name: entry?.label ?? id }))
-}
-
-async function cycleLanguage() {
-  const current = language.value
-  const index = LANGUAGES.findIndex((entry) => entry.id === current)
-  await setLanguage(LANGUAGES[(index + 1) % LANGUAGES.length].id)
-}
 
 /** Stops the browser opening a file the user let go of by accident. */
 function swallowDrop(event: DragEvent) {
