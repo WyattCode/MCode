@@ -269,7 +269,7 @@
   - P9-10 models.dev：照 MiMo 启动即刷新（缓存不足 5 分钟不取）、之后每小时、10 秒超时，下载原子写入 `<数据目录>/cache/models.json`，叠在随包快照上（快照只补下载缺的字段）；失败只记日志。随包快照 `resources/models-snapshot.json`（2.6MB，217 家 7823 个模型，只留 MCode 读的字段；MiMo 把 4.7MB 的快照直接打进引擎，所以这里也提交进仓库，`npm run models-snapshot` 手动更新，打包时按需加载成独立 chunk）。内置服务商按 `MODELS_DEV_IDS` 对应 models.dev 的服务商，上下文、输出上限、价格、能力、输入模态、强度选项以 models.dev 为准，名称仍用自己的表；自定义服务商不套。`MCODE_DISABLE_MODELS_FETCH` 关网（smoke 与探针都设了），`MCODE_MODELS_URL` 换源。新事件 `providers.updated`。
   - P9-12 ChatGPT 续期被拒时发 `auth.expired`，窗口常驻提示「{name} 登录已过期，请重新登录」并带「重新登录」（打开该服务商的连接弹窗）；回合遇到同样情况报同一句。
   - P9-13 使用情况页三块统一为最近 14 天、按本机时区分日；没有价格的用量显示「—」，部分有价时注明；标题、Smart 路由、上下文压缩、命令审查这些后台请求的用量记入 `storage/usage-background.json`，算花费不算回合。
-  - 新文案 13 个键进 18 张表。验证（合并 v2.0 的 Electron 41.7.2 与设置一路之后）：十三项检查全过，build 通过，smoke **3075 全过**（`smoke-round9-providers.ts` 118 条；另把 round9-settings 里「坏模型回到默认 claude-opus-5」的预期改为空默认）；每条新检查都在改坏代码后确认会失败。探针 `mcode-round9-providers.cjs` 7 项全过（截图 home-empty / quick-add / custom-form / model-menu / expired-notice / expired-connect / connect-browse / usage），改坏构建后 6 项失败、单改「重新登录」链接后 V6 失败；回归 round8-model 9、round3-settings 38、round9-settings 13 全过。`mcode-round3-composer.cjs` 仍读已在第八轮删除的 `SessionTabs.vue`，中途报错，属探针过期。
+  - 新文案 12 个键进 18 张表。验证（合并 v2.0 的 Electron 41.7.2 与设置一路之后）：十三项检查全过，build 通过，smoke **3075 全过**（`smoke-round9-providers.ts` 115 条；另把 round9-settings 里「坏模型回到默认 claude-opus-5」的预期改为空默认）；每条新检查都在改坏代码后确认会失败。探针 `mcode-round9-providers.cjs` 7 项全过（截图 home-empty / quick-add / custom-form / model-menu / expired-notice / expired-connect / connect-browse / usage），改坏构建后 6 项失败、单改「重新登录」链接后 V6 失败；回归 round8-model 9、round3-settings 38、round9-settings 13 全过。`mcode-round3-composer.cjs` 仍读已在第八轮删除的 `SessionTabs.vue`，中途报错，属探针过期。
   - 未做（归另一路）：P9-14 … P9-18 与 MCP 各行。
 - 进行中：MCP、Windows 发行两路构建。
 
@@ -292,7 +292,6 @@
 - 服务商预设连接后自动拉 `/models` 发现模型（MiMo 的预设是「填 Key + 手填模型名」的单模型表单）；「已添加」按服务商列行并保留刷新与地址编辑（第九轮 P9-6，2026-09-17 用户决定保留）。
 - 自定义表单保留「接口协议」（OpenAI / Anthropic）选项（MiMo 新建自定义只能是 OpenAI 兼容，P9-7）。
 - 保留 ChatGPT Pro/Plus 订阅登录（MiMo 桌面只有小米账号登录，P9-11）；入口在连接弹窗（模型菜单 / 命令面板打开的那个），设置页快速添加里没有。
-- 所有模型同一份系统提示词，与 MiMo 桌面一致，但不是 MiMo 引擎的按家族选择（2026-09-17 用户决定）。
 
 ## 本会话完成的轮次（新到旧）
 
