@@ -251,7 +251,14 @@
   - MCP：改动在下一个新对话统一生效（照 MiMo）；MCP 工具默认不询问；按项目目录各起一套；配置文件支持 JSONC。
   - 发行：Electron 41；按用户一键安装；改用 electron-updater。
   - 暂缓：N9-7 / N9-19（需要公开服务器）、N9-8（代码签名证书）、N9-20。
-- 进行中：设置、服务商与提示词、MCP、Windows 发行四路构建。
+- **设置这一路已完成**（S9-1 … S9-14，`round9-settings.md`，worktree 分支 be9843e … d57324a）：
+  - 配置读写：`server/config.ts` 新增 `RETIRED_FIELDS`，每次加载（和 `set`）都删掉已退役字段并写回：R25 的七个（通知两个、提示音两个、`pinchZoom`、`expandShell/expandEdits`）、`enabledModels`、`openTabs`、三个字体、`themeID`、`releaseNotes`、`showTerminal`、`serverURL/servers/defaultServer`。一次性迁移 `orphans-r9` 把按工具的 `permissions` 恢复为当前档位对应的表（完全访问 = 全部允许，其余 = 默认表；存下的 deny 一并清掉），删 `accessBefore`，档位和完全访问开关保留。新文件 `server/config-sanitize.ts`：照 MiMo 读时逐项校验（枚举、布尔、字号夹到 10–24 / 9–24 并取整、effort 不认识就 medium、accessLevel 不认识就删、提示音、应用图标、列表 / 映射 / 模型引用、keybinds 只留字符串）；此前 keybinds 里有数字会让后端启动时直接抛错。窗口缩放改用 `lib/font-scale.ts`（MiMo 的 `_T`）。
+  - 热重载（S9-11）：`reloadFromDisk` 照 load 判断较新版本（之后 `set` 拒写）、走 `customProviderWrite`（手删的自定义提供商进 `disabledProviders`）、同样清洗；`Config.onReload` 由 `server/index.ts` 挂上，手改 `allowFullAccess` 为 false 时立即 `dropFullAccess()`。
+  - 删掉的界面与功能：模型过滤（选择器、托盘、`keepModelsSelectable`）；隐藏标签条（`tabs/track/closeTab/forgetTab/reopenTab/closedTabs` 与 `session.reopenTab` 命令）——Ctrl+1–9、Ctrl+Shift+[ / ]、上/下一个未读改沿 `lib/visible-chats.ts`（MiMo 的 `K3` / `m5e`：置顶在前，其余按侧栏顺序，最近 / 名称两种排序，`recentSort` 挪进 store）；「标题生成模型」行（`titleModel` 仍可在配置文件里写）；三行字体；37 套配色、配色行与 `theme.*` 命令；升级后「新功能」窗（`ReleaseNotesDialog.vue`、`changelog.*`）；只能手写 keybinds 触发的改设置命令（自动接受、默认智能体、配色方案、语言）；权限分节的「已保存的规则」列表及 `permission.rules/forget` 请求（规则照旧存盘，删对话仍会删掉它自己的，`Permissions.forgetSession`）；「服务器」设置页与整个远程后端（`ServersDialog.vue`、`ServerPopover.vue`、切换服务器命令、`Client.useServer`、localStorage 里的地址启动时清除），CSP 的 `connect-src` 收回为 `ws://127.0.0.1:* ws://localhost:*`（后者给开发服务器）。环境页重名改为普通提示（S9-12，名称仍存 `projectNames`，不建 `.mimo` 目录）。共从 18 张表删掉 48 个未锁定键；锁定键（`set.codeFont`、`set.terminalFont`、`set.notifyAgent`、`set.pinchZoom`、`set.themePalette`、`cmd.useTheme`、`cmd.reopenTab`、`cmd.cycleLanguage`、`cmd.autoAcceptOn/Off`、`toast.autoOn/OffTitle`、`cmd.server`、`server.switch`、`set.server`、`set.localServer`、`set.connected`、`srv.*` 中的锁定项、`mcp.empty/enabledCount`）按规则保留。
+  - 主题：窗口不再运行主题引擎；`tokens.css` 的 41 个引擎 token 在三个块里都换成 MCode 2.0 生成值（运行时本来就是这些值，画面不变），`lib/theme-palettes.ts` 只剩 `MCODE_THEME`；themecheck 改为三个块逐个比对并禁止 App / 设置读配色。
+  - wiringcheck（S9-9）：配置字段只认属性访问（`.x`、`?.x`、`["x"]`）和解构，先抹掉带点的字符串键；改完即在 `showTerminal` 上失败（又用删掉 `spineSound` 读取点验证），随后删掉该字段。CSP 检查改为要求 socket 只到本机。
+  - 验证：十三项检查全过，build 通过，smoke **3046 全过**（新 `scripts/smoke-round9-settings.ts` 100 条，另改 smoke-storage / round8-security / round8-access / session-check / smoke.ts 里依赖旧行为的检查）；每组新检查都在改坏代码后确认会失败。探针 `mcode-round9-settings.cjs` 13 项全过、0 报错（截图 general / permissions / appearance / environment），在 v2.0 基线构建上 13 项全失败（`PROBE_TEXT_CHORDS=1` 时各项按各自原因失败，否则基线会被 keybinds 里的数字弄崩键盘）。回归探针 round9-backlog-security 4、round8-security 18、round3-settings 38、round2-settings 23、round5-keys 16、round4-small 21 全过；round2-settings 的 G1 / G6 / G14 预期已按 R25、S9-6、W4 更新（探针问题，仓库未改）。
+- 进行中：服务商与提示词、MCP、Windows 发行三路构建。
 
 用户决定不做（不要再主动提）：
 
