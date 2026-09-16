@@ -13,6 +13,9 @@ import type {
   UsageBucket,
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
+import { Identifier } from "@shared/id"
+// A conversation as a file this app can read back, both halves of the pair.
+import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
 import { addedProject, removedProjects } from "@shared/projects"
 import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
@@ -270,6 +273,44 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      *
      * Sessions with no writes are left out entirely rather than listed empty.
      */
+    case "session.exportFile": {
+      const session = await runtime.sessions.require(request.sessionID)
+      const messages = await runtime.sessions.messages(request.sessionID)
+      return {
+        name: conversationFileName(session.title, "conversation"),
+        text: JSON.stringify(conversationDocument(session, messages), null, 2),
+      } satisfies Handled<"session.exportFile">
+    }
+
+    case "session.importFile": {
+      const read = parseConversationDocument(request.text)
+      if (!read.file) return { problem: read.problem } satisfies Handled<"session.importFile">
+      const document = read.file
+      const config = runtime.config.get()
+      const session = await runtime.sessions.create({
+        // The folder it worked in, when that folder is named; otherwise this profile's own.
+        directory: document.session.directory || config.directory,
+        model: document.session.model ?? config.model,
+        agent: document.session.agent,
+        title: document.session.title || undefined,
+        // Its title came out of the profile that wrote it, so nothing here may replace it.
+        titleSource: document.session.titleSource ?? "user",
+        created: document.session.created,
+        updated: document.session.updated,
+        ...(document.session.group !== undefined ? { group: document.session.group } : {}),
+      })
+      for (const message of document.messages) {
+        /*
+         * Fresh ids. The conversation being written is a new one in this
+         * profile, and the ids in the file belong to the profile it came from -
+         * keeping them would collide with a conversation already here, or
+         * quietly write over one.
+         */
+        await runtime.sessions.saveMessage({ ...message, id: Identifier.message(), sessionID: session.id }, true)
+      }
+      return { session } satisfies Handled<"session.importFile">
+    }
+
     case "permission.rules":
       return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.rules">
 

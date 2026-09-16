@@ -40,6 +40,9 @@ const api = {
     ipcRenderer.invoke("mcode:pick-directory", title, multiple, true),
   saveText: (suggested: string, text: string): Promise<string | undefined> =>
     ipcRenderer.invoke("mcode:save-text", suggested, text),
+  /** The other half of the export: picks a conversation file and hands back its text. */
+  openText: (title: string): Promise<{ name: string; text: string } | undefined> =>
+    ipcRenderer.invoke("mcode:open-text", title),
 
   /** A pasted picture, written under userData so it can be attached by path as MiMo attaches one. */
   savePastedImage: (dataUrl: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>

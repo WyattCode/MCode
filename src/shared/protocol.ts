@@ -1788,6 +1788,13 @@ export type Request =
   | { type: "session.list" }
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
+  /*
+   * A conversation as a file, and back again - MiMo's `mimo export` / `mimo
+   * import` pair, over this app's own documents. The Markdown export is a
+   * transcript to read; this is a conversation to reopen.
+   */
+  | { type: "session.exportFile"; sessionID: string }
+  | { type: "session.importFile"; text: string }
   /* The "always" approvals this profile has remembered, and where each one is kept. */
   | { type: "permission.rules" }
   /* Takes one remembered approval back, everything remembered for one place, or the lot. */
@@ -2125,6 +2132,16 @@ export interface ResponseMap {
     chatLinks: Record<string, ChatLink[]>
   }
   "artifact.list": { artifacts: SessionArtifacts[] }
+  /** The document and the name to suggest for it; the window puts up the save dialog. */
+  "session.exportFile": { name: string; text: string }
+  /**
+   * The conversation that was read back, or why the file was not one.
+   *
+   * A reason rather than a thrown error: every one of them is something the
+   * reader can act on - the wrong file was picked, it is damaged, or it was
+   * written by a newer build - and the window has its own sentence for each.
+   */
+  "session.importFile": { session?: SessionInfo; problem?: "notJson" | "notMCode" | "fromNewer" | "noMessages" }
   "permission.rules": { rules: SavedRule[] }
   /* The list as it now stands, so the page redraws from the answer rather than guessing. */
   "permission.forget": { rules: SavedRule[] }
