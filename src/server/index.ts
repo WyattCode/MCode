@@ -25,6 +25,7 @@ import { startAutomations } from "./automation/start"
 import { protectAppData } from "./tool/app-data"
 import { frameForWindow } from "./config-view"
 import { newSocketSecret, refusalOf, SOCKET_PROTOCOL } from "./socket-guard"
+import { ModelCatalog, shippedCatalog } from "./provider/models-dev"
 
 export interface Runtime {
   storage: Storage
@@ -132,6 +133,32 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   const scheduler = startScheduler(runner, sessions, config, bus)
   // automation: MiMo's scheduled tasks, kept in the data folder and run while the app is open.
   const automations = startAutomations(dataDirectory, runner, sessions, config, bus)
+  /*
+   * The models.dev catalog: the shipped copy (or a recent download) as soon as
+   * it is read, then MiMo's refresh - now if the download is over five
+   * minutes old, and hourly after. The window hears about what changes.
+   */
+  const catalog = new ModelCatalog({
+    cacheFile: path.join(dataDirectory, "cache", "models.json"),
+    shipped: shippedCatalog,
+    source: process.env.MCODE_MODELS_URL || undefined,
+    disabled: () => Boolean(process.env.MCODE_DISABLE_MODELS_FETCH),
+    onError: (error) => console.warn("[models.dev] refresh failed:", error instanceof Error ? error.message : error),
+  })
+  catalog.subscribe(() => {
+    config.useModelCatalog(catalog.get())
+    bus.publish({ type: "providers.updated", providers: config.providers() })
+  })
+  let catalogClosed = false
+  void catalog.load().then(() => {
+    if (catalogClosed) return
+    if (Object.keys(catalog.get()).length) {
+      config.useModelCatalog(catalog.get())
+      bus.publish({ type: "providers.updated", providers: config.providers() })
+    }
+    catalog.startRefresh()
+  })
+
   const shells = new Shells(bus)
   const mcp = new McpServers(bus, config, storage)
   mcp.useSampling(createSampler({ config, auth, permissions }))
@@ -242,6 +269,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       // The model's own commands go with the terminals: both are children this
       // process started, and neither has a window left to stop it.
       stopBashCommands()
+      catalogClosed = true
+      catalog.stop()
       await shells.closeAll()
       await mcp.close()
       await scheduler.stop()

@@ -59,7 +59,6 @@ import { displayServerPref, displaySwitches, ozonePlatform, readDisplayServerFil
 import { PowerHold } from "../src/main/power"
 import { RecoverySchedule, RendererHealth, SHOW_FALLBACK_MS, STARTUP_TIMEOUT, recoveryVisibility } from "../src/main/renderer-health"
 import { readBootPrefs, windowBackground, writeBootPrefs } from "../src/main/boot-prefs"
-import { createUpdater, parseFeed, type FeedEntry } from "../src/main/updater"
 import { deliveryOf, waitForDelivery } from "../src/main/install-notice"
 import { boundsOnShow, clampToWorkAreas, closeBounds } from "../src/main/work-area"
 import { DailyLog, dayOfLogFile, expiredLogFiles, logFileName, logLine, redactSecrets } from "../src/main/log-file"
@@ -290,8 +289,9 @@ import { roundEightAccessChecks } from "./smoke-round8-access"
 // Round 8: the wording rules the eighteen language tables keep.
 import { wordingChecks } from "./smoke-wording"
 import { roundEightChecks } from "./smoke-round8"
-// Round 9: a prompt for every model family MiMo's engine tells apart, and the family request shaping.
-import { roundNineChecks } from "./smoke-round9"
+// Round 9: providers and models - request shaping per family, endpoints, fallbacks, the model catalog.
+import { roundNineProviderChecks } from "./smoke-round9-providers"
+import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
 // The round-six audit of failures and edge cases (F1 onwards).
@@ -327,6 +327,8 @@ function section(name: string) {
 async function main() {
   // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.
   process.env.MCODE_GENERATE_TITLES = "0"
+  // round 9: every backend a check starts stays off the network; the models.dev checks use a local server.
+  process.env.MCODE_DISABLE_MODELS_FETCH = "1"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-"))
   /*
    * Never the reader's own home: MCP servers are also read from ~/.claude.json
@@ -385,7 +387,8 @@ async function main() {
   }
 
   const config = await call({ type: "config.get" })
-  check("config.get returns defaults", config.config.model.model === "claude-opus-5", config.config.model)
+  // P9-4: a fresh profile names no model, so the picker reads "choose a model" rather than a provider nobody set up.
+  check("config.get returns defaults", config.config.model.provider === "" && config.config.model.model === "", config.config.model)
 
   const created = await call({ type: "session.create", directory: project })
   const sessionID: string = created.session.id
@@ -3749,10 +3752,10 @@ async function main() {
      * default prompt does, so "plan mode" appearing at all proves nothing. What
      * build must not carry is the section that says it is planning.
      */
-    check("build is not", !buildPrompt.includes("You are in plan mode") && !buildPrompt.includes("## Planning only"))
+    check("build is not", !buildPrompt.includes("This conversation is in plan mode") && !buildPrompt.includes("# Plan mode"))
     // plan: the prompt says how planning ends and what it may write; the per-turn note carries the path.
     check("plan is told how the mode ends", planPrompt.includes("plan_exit"), planPrompt.slice(0, 200))
-    check("and that one file is writable rather than that nothing is", planPrompt.includes("except this conversation's plan file") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
+    check("and that one file is writable rather than that nothing is", planPrompt.includes("apart from writing the plan file each turn names") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
 
     /*
      * Standing instructions. They are the reader's own rather than the
@@ -3914,108 +3917,6 @@ async function main() {
     failing.sync(["x"])
     failing.sync([])
     check("a blocker that fails to start holds nothing and stops nothing", failing.state.held.length === 0 && !calls.includes("stop:unexpected"))
-  }
-
-  section("Automatic updates (MiMo's schedule and phases, MCode's feed)")
-  {
-    check("the feed reads version, installer, hash and notes", JSON.stringify(parseFeed({ version: " 1.2.0 ", url: "https://x/y.exe", sha256: "ABC", notes: 7 })) === JSON.stringify({ version: "1.2.0", url: "https://x/y.exe", sha256: "abc", notes: "" }))
-    check("a feed that is not an object reads as empty", parseFeed(null).version === "" && parseFeed("x").url === "")
-
-    const timers: { kind: "timeout" | "interval"; ms: number; run: () => void; id: number }[] = []
-    let timerId = 0
-    const scheduler = {
-      setTimeout: (run: () => void, ms: number) => (timers.push({ kind: "timeout", ms, run, id: ++timerId }), timerId),
-      setInterval: (run: () => void, ms: number) => (timers.push({ kind: "interval", ms, run, id: ++timerId }), timerId),
-      clearTimeout: (id: unknown) => void timers.splice(timers.findIndex((entry) => entry.id === id), 1),
-      clearInterval: (id: unknown) => void timers.splice(timers.findIndex((entry) => entry.id === id), 1),
-    }
-    let feed: FeedEntry = { version: "0.2.4", url: "", sha256: "", notes: "" }
-    let feedFails = false
-    let downloadFails = false
-    const files = new Map<string, Uint8Array>()
-    const downloads: string[] = []
-    const phases: string[] = []
-    let feedAddress = "https://feed.example/update.json"
-    const updater = createUpdater({
-      currentVersion: "0.2.4",
-      feedURL: () => feedAddress,
-      fetchFeed: async () => {
-        if (feedFails) throw new Error("HTTP 503")
-        return feed
-      },
-      installerFile: (entry) => `mcode-${entry.version}.exe`,
-      readFile: async (file) => files.get(file),
-      sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
-      download: async (entry, file) => {
-        downloads.push(entry.version)
-        if (downloadFails) throw new Error("the installer does not match the checksum the feed gave")
-        files.set(file, new TextEncoder().encode(`installer ${entry.version}`))
-      },
-      emit: (state) => phases.push(state.phase),
-      log: () => {},
-      scheduler,
-    })
-    updater.start()
-    updater.start()
-    check("starting schedules the first check at 5 s and then every 3 h, once", timers.length === 2 && timers[0]?.kind === "timeout" && timers[0]?.ms === 5000 && timers[1]?.kind === "interval" && timers[1]?.ms === 3 * 60 * 60 * 1000, timers.map((entry) => [entry.kind, entry.ms]))
-
-    const current = await updater.checkNow()
-    check("the running version is current and the phase returns to idle", current.outcome === "current" && current.phase === "idle" && phases.join(",") === "checking,idle", { current, phases })
-
-    feedAddress = ""
-    check("with no feed nothing is fetched", (await updater.checkNow()).outcome === "no-feed" && phases.length === 2)
-    feedAddress = "https://feed.example/update.json"
-
-    feed = { version: "0.3.0", url: "", sha256: "", notes: "" }
-    const nameOnly = await updater.checkNow()
-    check("a newer version without an installer is only named", nameOnly.outcome === "no-installer" && nameOnly.version === "0.3.0" && downloads.length === 0)
-
-    feedFails = true
-    const silent = await updater.checkNow()
-    check("a failed check is silent and falls back to idle", silent.outcome === "failed" && silent.during === "check" && silent.phase === "idle" && silent.error === "HTTP 503")
-    feedFails = false
-
-    const body = new TextEncoder().encode("installer 0.3.0")
-    feed = { version: "0.3.0", url: "https://x/mcode.exe", sha256: createHash("sha256").update(body).digest("hex"), notes: "- faster" }
-    downloadFails = true
-    const badDownload = await updater.checkNow()
-    check("a download that fails verification leaves nothing ready", badDownload.outcome === "failed" && badDownload.during === "download" && badDownload.ready === null && updater.readyFile() === undefined)
-    downloadFails = false
-
-    phases.length = 0
-    const pending = updater.checkNow()
-    check("a second check while one runs is skipped", (await updater.checkNow()).outcome === "busy")
-    const readyResult = await pending
-    check("a newer installer downloads and the update becomes ready", readyResult.outcome === "ready" && readyResult.ready?.version === "0.3.0" && readyResult.ready.notes === "- faster" && updater.readyFile() === "mcode-0.3.0.exe" && phases.join(",") === "checking,downloading,ready", { readyResult, phases })
-
-    const again = downloads.length
-    const same = await updater.checkNow()
-    check("the same version found again is not downloaded twice", same.outcome === "ready" && downloads.length === again && same.phase === "ready")
-    feedFails = true
-    check("a failure after that keeps the ready update", (await updater.checkNow()).phase === "ready" && updater.readyFile() === "mcode-0.3.0.exe")
-    feedFails = false
-
-    const fresh = createUpdater({
-      currentVersion: "0.2.4",
-      feedURL: () => "https://feed.example/update.json",
-      fetchFeed: async () => feed,
-      installerFile: (entry) => `mcode-${entry.version}.exe`,
-      readFile: async (file) => files.get(file),
-      sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
-      download: async (entry) => void downloads.push(`fresh ${entry.version}`),
-      emit: () => {},
-      log: () => {},
-      scheduler,
-    })
-    const before = downloads.length
-    const reused = await fresh.checkNow()
-    check("a cached installer whose sha256 matches is reused without downloading", reused.outcome === "ready" && downloads.length === before)
-    files.set("mcode-0.3.0.exe", new TextEncoder().encode("tampered"))
-    const refetch = createUpdater({ ...{ currentVersion: "0.2.4", feedURL: () => "f", fetchFeed: async () => feed, installerFile: (entry: FeedEntry) => `mcode-${entry.version}.exe`, readFile: async (file: string) => files.get(file), sha256: (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex"), download: async (entry: FeedEntry) => void downloads.push(`refetch ${entry.version}`), emit: () => {}, log: () => {}, scheduler } })
-    await refetch.checkNow()
-    check("a cached file that does not match is downloaded again", downloads.at(-1) === "refetch 0.3.0")
-    updater.stop()
-    check("stopping clears the schedule", timers.length === 0)
   }
 
   section("Installing notice (MiMo's wait for delivery before quitting)")
@@ -6512,9 +6413,9 @@ async function main() {
     nextZoom(0.3, "out") === 0.25 && nextZoom(0.25, "out") === 0.25 && nextZoom(2.95, "in") === 3 && nextZoom(1.7, "reset") === 1,
   )
 
-  check("a notification is titled project · conversation", noticeTitle("MCode", { project: "proj", title: "Fix it" }) === "proj · Fix it")
-  check("either half alone, or the app name", noticeTitle("MCode", { title: "Only" }) === "Only" && noticeTitle("MCode", {}) === "MCode")
-  const longTitle = noticeTitle("MCode", { project: "a-long-project-name", title: "and a long conversation title too" })
+  check("a notification is titled project · conversation", noticeTitle({ project: "proj", title: "Fix it" }) === "proj · Fix it")
+  check("either half alone, or the app name", noticeTitle({ title: "Only" }) === "Only" && noticeTitle({}) === "MCode")
+  const longTitle = noticeTitle({ project: "a-long-project-name", title: "and a long conversation title too" })
   check("a title over 40 is cut to 39 and an ellipsis", longTitle.length === 40 && longTitle.endsWith("…"), longTitle)
   const noticeRaw = readTaskNotice({ kind: "confirm", silent: "yes", sessionID: 4 })
   check("an IPC notice is read field by field", noticeRaw.kind === "confirm" && noticeRaw.silent === false && noticeRaw.sessionID === undefined, noticeRaw)
@@ -6758,7 +6659,7 @@ async function main() {
     const shippedNames = await fs.readdir(path.join(process.cwd(), "resources/licenses"))
     check(
       "the dialog lists every component MCode redistributes, each with a licence text that is a real file",
-      JSON.stringify(entryIds) === JSON.stringify(["fluidsynth", "codecs", "js-synthesizer", "abcjs", "musescore-general"]) &&
+      JSON.stringify(entryIds) === JSON.stringify(["fluidsynth", "codecs", "js-synthesizer", "abcjs", "musescore-general", "node", "python", "python-packages", "ripgrep"]) &&
         textImports.length === entryIds.length && licenseTexts.every((text) => text.length > 500) &&
         shippedNames.every((name) => textImports.includes(`@resources/licenses/${name}`)),
       { entryIds, missing: textImports.filter((specifier, index) => licenseTexts[index].length <= 500), shippedNames },
@@ -7035,7 +6936,8 @@ async function main() {
   await roundEightAccessChecks(check, section)
   wordingChecks(check, section)
   await roundEightChecks(check, section)
-  await roundNineChecks(check, section)
+  await roundNineProviderChecks(check, section)
+  await roundNineWindowsChecks(check, section)
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
   await failureChecks(check, section)

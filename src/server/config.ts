@@ -16,6 +16,7 @@ import type {
 } from "@shared/protocol"
 import {
   DEFAULT_PERMISSIONS,
+  EFFORTS,
   PERMISSION_ACTIONS,
   PERMISSION_KINDS,
   type PermissionKind,
@@ -28,6 +29,7 @@ import { writeAtomic } from "./storage"
 import type { Bus } from "./bus"
 import {
   BUILT_IN,
+  MODELS_DEV_IDS,
   definition,
   type ModelEntry,
   type ProviderDefinition,
@@ -35,12 +37,15 @@ import {
 } from "./provider/catalog"
 import { nameFromId } from "./provider/model-name"
 import { CodedError } from "@shared/errors"
+import type { Catalog, CatalogModel } from "@shared/models-dev"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
+import { menuEfforts } from "@shared/effort-menu"
+import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
 import { parseJsonc, renderJsonc } from "./jsonc"
 
-export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-opus-5" }
+export const DEFAULT_MODEL: ModelRef = { provider: "", model: "" }
 
 /** Recorded in `migrations` once the project list has been filled from conversations. */
 export const PROJECT_LIST_MIGRATION = "projects-list"
@@ -69,7 +74,7 @@ export type { ModelEntry }
  * a catalog edit cannot leave a model advertising levels its family has never
  * accepted.
  */
-function modelInfo(kind: ProviderKind, model: ModelEntry, provider: string): ModelInfo {
+function modelInfo(model: ModelEntry): ModelInfo {
   const inputs = model.inputs ?? {}
   return {
     id: model.id,
@@ -90,7 +95,8 @@ function modelInfo(kind: ProviderKind, model: ModelEntry, provider: string): Mod
       pdf: inputs.pdf ?? false,
     },
     cost: { input: model.input, output: model.output },
-    variants: modelVariants(kind, model, provider),
+    // The levels the menu offers, by MiMo's desktop rule; what each becomes on the wire is `variants()` below.
+    variants: menuEfforts(model.id, model.name),
   }
 }
 
@@ -347,21 +353,22 @@ function customProviderWrite(
 type CustomModelEntry = NonNullable<CustomProvider["models"]>[number]
 
 /**
- * A custom model as it may be stored: its id and name trimmed, and MiMo's
+ * A custom model as it may be stored: its id stripped of every blank and its
+ * name trimmed, as MiMo saves them, and MiMo's
  * 高级配置 checked. The image switch has three states (absent is the default),
  * and each limit is a positive whole number of tokens, with an output limit
  * allowed only beside an input limit. A limit that breaks those rules is
  * refused rather than quietly dropped, so a mistyped cap never passes as set.
  */
 export function customModelOf(model: CustomModelEntry): CustomModelEntry {
-  const out: CustomModelEntry = { id: String(model.id ?? "").trim(), name: String(model.name ?? "").trim() }
+  const out: CustomModelEntry = { id: normalizeModelId(String(model.id ?? "")), name: String(model.name ?? "").trim() }
   if (typeof model.attachment === "boolean") out.attachment = model.attachment
   const positive = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0
   const context = model.limit?.context
   const output = model.limit?.output
   const invalid = "A model limit must be a positive whole number, and an output limit needs an input limit"
-  if (context !== undefined && !positive(context)) throw new Error(invalid)
-  if (output !== undefined && (!positive(output) || context === undefined)) throw new Error(invalid)
+  if (context !== undefined && !positive(context)) throw new CodedError(invalid, "provider.custom.limitInvalid")
+  if (output !== undefined && (!positive(output) || context === undefined)) throw new CodedError(invalid, "provider.custom.limitInvalid")
   if (positive(context)) out.limit = positive(output) ? { context, output } : { context }
   // MiMo's other model fields, kept when a config file states them.
   const inputs = Object.fromEntries((["pdf", "audio", "video"] as const).flatMap((key) => (typeof model.inputs?.[key] === "boolean" ? [[key, model.inputs[key]]] : [])))
@@ -371,8 +378,42 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   return out
 }
 
+/**
+ * A model as models.dev describes it, laid over what this app knew: models.dev
+ * decides limits, prices and capabilities wherever it states them, and the
+ * app's own table keeps the name it gives a model.
+ */
+export function withCatalog(entry: ModelEntry, listed: CatalogModel | undefined, keepName: boolean): ModelEntry {
+  if (!listed) return entry
+  const input = listed.modalities?.input
+  const efforts = listed.reasoning_options?.find((option) => option.type === "effort")?.values
+  const interleaved = typeof listed.interleaved === "object" && listed.interleaved && "field" in listed.interleaved ? String((listed.interleaved as { field: unknown }).field) : undefined
+  const positive = (value: number | undefined) => (value && value > 0 ? value : undefined)
+  return {
+    ...entry,
+    name: keepName || !listed.name ? entry.name : listed.name,
+    contextWindow: positive(listed.limit?.context) ?? entry.contextWindow,
+    ...(positive(listed.limit?.output) ? { maxOutput: listed.limit!.output } : {}),
+    input: listed.cost?.input ?? entry.input,
+    output: listed.cost?.output ?? entry.output,
+    ...(listed.cost?.cache_read !== undefined ? { cacheRead: listed.cost.cache_read } : {}),
+    ...(listed.cost?.cache_write !== undefined ? { cacheWrite: listed.cost.cache_write } : {}),
+    reasoning: listed.reasoning ?? entry.reasoning,
+    attachment: listed.attachment ?? entry.attachment,
+    toolCall: listed.tool_call ?? entry.toolCall,
+    temperature: listed.temperature ?? entry.temperature,
+    ...(input
+      ? { inputs: { text: input.includes("text"), image: input.includes("image"), audio: input.includes("audio"), video: input.includes("video"), pdf: input.includes("pdf") } }
+      : {}),
+    ...(efforts ? { efforts: efforts.filter((value): value is Effort => (EFFORTS as readonly string[]).includes(value)) } : {}),
+    ...(interleaved ? { interleaved } : {}),
+  }
+}
+
 export class Config {
   private current: AppConfig = defaults()
+  /** The models.dev catalog (provider/models-dev.ts); empty until it has loaded. */
+  private catalog: Catalog = {}
   private credentials: Record<string, string> = {}
   private oauth: Record<string, OAuthTokens> = {}
   private discovered: Record<string, ModelEntry[]> = {}
@@ -891,7 +932,8 @@ export class Config {
         // MiMo lets a custom provider name its SDK; here that is the protocol it speaks.
         kind: entry.protocol === "anthropic" ? "anthropic" : "openai-compatible",
         description: "provider.desc.custom",
-        baseURL: entry.baseURL,
+        // Tidied as a save would be, so an address stored before that rule still reaches the right path.
+        baseURL: normalizeBaseURL(entry.baseURL),
         headers: entry.headers,
         /*
          * The typed-in list becomes the provider's catalog, and `handEntered`
@@ -931,12 +973,34 @@ export class Config {
     return this.definitions().find((entry) => entry.id === id)
   }
 
+  /** Hands over a newer models.dev catalog; what `models()` answers changes with it. */
+  useModelCatalog(catalog: Catalog): void {
+    this.catalog = catalog
+  }
+
+  /** The models.dev catalog as it stands. */
+  modelCatalog(): Catalog {
+    return this.catalog
+  }
+
+  /**
+   * A provider's models with what models.dev says about each. Custom
+   * providers are left as typed: their ids are the user's, not models.dev's.
+   */
+  models(provider: string): ModelEntry[] {
+    const listed = this.catalog[MODELS_DEV_IDS[provider] ?? ""]?.models
+    const entries = this.listedModels(provider)
+    if (!listed || this.definition(provider)?.handEntered) return entries
+    const curated = new Set((this.definition(provider)?.models ?? []).map((entry) => entry.id))
+    return entries.map((entry) => withCatalog(entry, listed[entry.id], curated.has(entry.id) || entry.name !== nameFromId(entry.id)))
+  }
+
   /**
    * A discovered list wins when we have one - it is fresher than anything
    * baked in here - and the static catalog is the fallback for providers that
    * expose no /models endpoint, or whose discovery has not run or failed.
    */
-  models(provider: string): ModelEntry[] {
+  private listedModels(provider: string): ModelEntry[] {
     const discovered = this.discovered[provider]
     /*
      * Read through `this.definition`, not the module-level one: that only knows
@@ -1053,7 +1117,7 @@ export class Config {
       authenticated: Boolean(this.oauth[entry.id]),
       environment: this.environmentKey(entry.id),
       authMethods: entry.authMethods ?? [],
-      models: this.models(entry.id).map((model) => modelInfo(entry.kind, model, entry.id)),
+      models: this.models(entry.id).map((model) => modelInfo(model)),
     }))
   }
 

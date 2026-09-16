@@ -36,6 +36,7 @@ import ConfirmDialog from "./components/ConfirmDialog.vue"
 import NewProjectDialog from "./components/NewProjectDialog.vue"
 import type { MenuItem } from "./lib/menu"
 import ConnectDialog from "./components/ConnectDialog.vue"
+import { connectableProviders, groupProviders, type Group } from "./lib/connect"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import ErrorBoundary from "./components/ErrorBoundary.vue"
 import ImportDialog from "./components/ImportDialog.vue"
@@ -244,7 +245,11 @@ onMounted(() => {
   // The ready event may have gone out before this window was listening.
   void window.mcode
     .updateStatus()
-    .then(takeUpdateState)
+    .then((state) => {
+      takeUpdateState(state)
+      /* MiMo's interrupted-update notice: the last install did not finish, said once. */
+      if (state.interrupted) notifyFailure(t("update.interrupted", { version: state.interrupted.targetVersion || "?" }), state.interrupted.error)
+    })
     .catch(() => {})
   offUpdateState = window.mcode.onUpdateState((state) => {
     takeUpdateState(state)
@@ -587,17 +592,14 @@ async function exportLog() {
  * MiMo's updateCheckNow, from the settings row, the menu or the palette.
  *
  * There is no update service behind this app, so the feed is whatever the user
- * points it at - a JSON document with a `version`. The main process reads it
- * and downloads a newer installer (the window's content policy reaches nothing
- * but the local backend); this only says how it went. With no feed configured
- * the command says so rather than pretending to have checked.
+ * points it at - an update folder with electron-builder's latest.yml. The main
+ * process reads it and downloads and verifies a newer installer (the window's
+ * content policy reaches nothing but the local backend); this only says how it
+ * went. With no feed configured the command says so rather than pretending to
+ * have checked.
  */
 async function checkForUpdates() {
   if (updateChecking.value) return
-  if (!app.config?.updateFeed?.trim()) {
-    notifyFailure(t("update.noFeed"))
-    return
-  }
   updateChecking.value = true
   /* MiMo's sticky 正在检查更新…, up for as long as the check (and a download) runs. */
   const checking = notify(t("update.checking"), { id: "update-check", duration: 0 })
@@ -606,7 +608,6 @@ async function checkForUpdates() {
     dismiss(checking)
     takeUpdateState(result)
     if (result.outcome === "current") notify(t("update.current"))
-    else if (result.outcome === "no-installer" && result.version) notify(t("update.found", { version: result.version }))
     else if (result.outcome === "ready") notify(t("update.readyToast"))
     else if (result.outcome === "no-feed") notifyFailure(t("update.noFeed"))
     else if (result.outcome === "failed") notifyFailure(t(result.during === "download" ? "update.failed" : "update.checkFailed"), result.error ?? "")
@@ -1356,6 +1357,18 @@ async function focusComposer() {
 
 /** Reachable from the model menu, so an empty list has somewhere to go. */
 const connectOpen = ref(false)
+/** The vendor a request named (an expired sign-in's "sign in again"), or none to browse. */
+const connectGroup = ref<Group>()
+watch(
+  () => app.connectRequest,
+  (request) => {
+    if (!request) return
+    connectGroup.value = request.provider
+      ? groupProviders(connectableProviders(app.providers)).find((group) => group.entries.some((entry) => entry.id === request.provider))
+      : undefined
+    connectOpen.value = true
+  },
+)
 
 /**
  * 导入: the first run's one question about conversations in other AI apps.
@@ -3644,14 +3657,14 @@ async function cycleEffort() {
    * and the keyboard disagreeing about what the control is. A model with no
    * steps at all draws no pill and this does nothing.
    */
-  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
+  const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   const next = cycleVariant(variants, app.config?.effort)
   if (next) await app.setEffort(next)
 }
 
 /** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
 async function stepEffort(by: 1 | -1) {
-  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
+  const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   if (!variants.length) return
   const current = app.config?.effort
   const at = current ? variants.indexOf(current) : -1
@@ -4140,7 +4153,7 @@ onBeforeUnmount(() => {
     />
 
   </div>
-  <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
+  <ConnectDialog v-if="connectOpen" :group="connectGroup" @close="(connectOpen = false), (connectGroup = undefined)" />
   <ImportDialog v-if="importOpen" @close="importOpen = false" />
   <ImagePreview />
   <VideoPreview />

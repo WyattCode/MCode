@@ -5,6 +5,13 @@ description: Read, create, combine, split, rotate and fill PDF files. Use whenev
 
 # PDF files
 
+**Which Python.** When the `MCODE_PYTHON` environment variable is set, use that
+interpreter wherever this skill says `python`: `"$MCODE_PYTHON" scripts/...` in
+bash, `& $env:MCODE_PYTHON scripts/...` in PowerShell. MCode ships it with
+python-docx, python-pptx, openpyxl, pandas, pypdf, pypdfium2, reportlab, lxml and
+Pillow installed, so the install checks below can be skipped. It has no pip
+console scripts; run tools as modules (`-m`).
+
 ## Reading
 
 - The read tool can open a PDF directly when the model supports it; for long

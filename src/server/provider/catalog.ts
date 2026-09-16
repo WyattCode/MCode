@@ -447,7 +447,7 @@ export const BUILT_IN: ProviderDefinition[] = [
   },
   {
     id: "xiaomi",
-    name: "Xiaomi MiMo",
+    name: "Xiaomi MiMo API",
     kind: "openai-compatible",
     description: "provider.desc.xiaomi",
     recommended: true,
@@ -466,7 +466,7 @@ export const BUILT_IN: ProviderDefinition[] = [
      * provider rather than a toggle.
      */
     id: "xiaomi-plan",
-    name: "Xiaomi MiMo Token Plan",
+    name: "MiMo Token Plan",
     kind: "openai-compatible",
     description: "provider.desc.xiaomiPlan",
     order: 3,
@@ -507,7 +507,7 @@ export const BUILT_IN: ProviderDefinition[] = [
   {
     id: "moonshot",
     order: 7,
-    name: "Moonshot",
+    name: "Kimi / Moonshot",
     kind: "openai-compatible",
     description: "provider.desc.moonshot",
     baseURL: "https://api.moonshot.cn/v1",
@@ -525,7 +525,7 @@ export const BUILT_IN: ProviderDefinition[] = [
   {
     id: "dashscope",
     order: 9,
-    name: "Alibaba DashScope",
+    name: "Qwen",
     kind: "openai-compatible",
     description: "provider.desc.dashscope",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -573,7 +573,7 @@ export const BUILT_IN: ProviderDefinition[] = [
     kind: "openai-compatible",
     description: "provider.desc.minimax",
     order: 12,
-    baseURL: "https://api.minimax.chat/v1",
+    baseURL: "https://api.minimaxi.com/v1",
     keyURL: "https://platform.minimaxi.com/user-center/basic-information",
   },
   {
@@ -685,6 +685,39 @@ export const BUILT_IN: ProviderDefinition[] = [
     authMethods: ["local"],
   },
 ]
+
+/**
+ * Which models.dev provider describes each built-in's models - matched by the
+ * endpoint each one serves, the mainland one where models.dev lists two. A
+ * provider missing here (and every custom provider) has no models.dev record,
+ * as a provider id models.dev does not know has none in MiMo.
+ */
+export const MODELS_DEV_IDS: Record<string, string> = {
+  anthropic: "anthropic",
+  openai: "openai",
+  chatgpt: "openai",
+  xiaomi: "xiaomi",
+  "xiaomi-plan": "xiaomi-token-plan-cn",
+  google: "google",
+  openrouter: "openrouter",
+  deepseek: "deepseek",
+  moonshot: "moonshotai-cn",
+  zhipu: "zhipuai",
+  dashscope: "alibaba-cn",
+  xai: "xai",
+  groq: "groq",
+  siliconflow: "siliconflow-cn",
+  volcengine: "volcengine",
+  minimax: "minimax-cn",
+  stepfun: "stepfun",
+  mistral: "mistral",
+  together: "togetherai",
+  fireworks: "fireworks-ai",
+  cerebras: "cerebras",
+  perplexity: "perplexity",
+  nvidia: "nvidia",
+  lmstudio: "lmstudio",
+}
 
 export function definition(id: string): ProviderDefinition | undefined {
   return BUILT_IN.find((entry) => entry.id === id)

@@ -6,7 +6,7 @@ import { defaultBranch, gitUser, recentCommits, status } from "../git"
 import { globToRegExp } from "../tool/ignore"
 import { foldersUp } from "./worktree"
 import { modelInvocable, type SkillInfo } from "../skill"
-import { basePrompt } from "./prompts"
+import { agentPrompt } from "./prompts"
 
 /** MiMo reads CLAUDE.md beside AGENTS.md only while the AGENTS.md files say less than this. */
 const AGENTS_SHORT = 500
@@ -67,29 +67,6 @@ Before asking the user something they may already have told you, search with the
  * volatile environment block last.
  */
 /*
- * plan: what planning is, in the system prompt. The turn-by-turn rules - the
- * plan file's path, what is refused, how the turn ends - ride with each
- * message instead (session/plan.ts), because the path is per conversation and
- * this prompt is frozen for the whole of one.
- */
-const PLAN = `## Planning only
-
-You are in plan mode. You keep every tool, but writing is refused everywhere
-except this conversation's plan file, whose path each of your turns is given.
-Run a command only when you are certain it changes nothing; it is put to the
-user like any other.
-
-Work out what should be done and write it into the plan file as you go: what
-would change, in which files, in what order, what you checked, and what you are
-still unsure of. Say plainly when an answer depends on something you could not
-settle by reading.
-
-End each turn either by asking the user with the question tool, or - once the
-plan is written and nothing is left to ask - by calling plan_exit, which puts
-the plan to them for approval and switches this conversation to build mode if
-they accept.`
-
-/*
  * Staged mode. Four stages, named so the reader can see where the work is, and
  * each with the one thing that makes it a stage rather than a heading: what has
  * to be true before moving on. Plan mode already stops before building, so in
@@ -112,13 +89,12 @@ stage you are in when you move into it.
 
 export async function systemPrompt(context: PromptContext): Promise<string> {
   /*
-   * The agent prompt of this model's family (session/prompts.ts), as MiMo picks
-   * one of its ten by model id. It is the first section, so the whole of the
-   * cached prefix below it stays in one order for every family.
+   * The one agent prompt every model reads (session/prompts.ts), with plan
+   * mode's section when planning. It is the first section, so the cached
+   * prefix opens with the same bytes whatever the model.
    */
-  const sections = [basePrompt(context.model ? { id: context.model.id } : undefined)]
-  if (context.agent === "plan") sections.push(PLAN)
-  else if (context.staged) sections.push(STAGED)
+  const sections = [agentPrompt(context.agent)]
+  if (context.agent !== "plan" && context.staged) sections.push(STAGED)
 
   /*
    * Before the project's own files, and said to be the reader's rather than

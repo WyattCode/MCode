@@ -1,11 +1,13 @@
 import fs from "node:fs/promises"
-import { existsSync, readFileSync } from "node:fs"
-import { execFile } from "node:child_process"
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
+import { execFile, execFileSync, spawnSync } from "node:child_process"
 import path from "node:path"
-import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, crashReporter, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { PowerHold } from "./power"
+import { PRUNE_DELAY_MS, pruneCrashDumps, startLocalCrashDumps } from "./crash-dumps"
+import { refreshEnvironment } from "./shell-env"
+import { applyRuntimeEnv, bundledRuntimeEnv } from "./runtimes"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
@@ -38,7 +40,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
-import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
+import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { registerComposerInput } from "./composer-input"
 import { registerPasteFiles } from "./paste-files"
@@ -69,10 +71,11 @@ import {
   type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
-import { restore, track } from "./window-state"
+import { restore, saveWindowState, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
-import { createUpdater, parseFeed, type FeedEntry, type UpdateState } from "./updater"
+import { HELPER_SWEEP_TIMEOUT_MS, createUpdater, helperSweep, staleInstallers, type AutoUpdaterLike, type UpdateState, type Updater } from "./updater"
+import { TRANSACTION_FILE, createTransactions } from "./update-transaction"
 import { deliveryOf, waitForDelivery } from "./install-notice"
 import pkg from "../../package.json"
 
@@ -98,6 +101,13 @@ import pkg from "../../package.json"
  */
 const APP_ID = "dev.mcode.app"
 if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
+
+/*
+ * The profile stays where every release kept it (see pinnedProfile), before
+ * anything below reads it.
+ */
+const pinned = pinnedProfile(app.getPath("userData"), app.getPath("appData"), app.getName(), path.join)
+if (pinned) app.setPath("userData", pinned)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -131,6 +141,56 @@ process.on("uncaughtException", (error) => recordProcessError("uncaught exceptio
 process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))
 
 /*
+ * MiMo's local crash dumps: Crashpad writes a minidump for a native crash and
+ * uploads nothing; ten seconds after launch the old ones are pruned.
+ */
+const crashFolder = startLocalCrashDumps({
+  reporter: crashReporter,
+  setCrashFolder: (folder) => app.setPath("crashDumps", folder),
+  profile: app.getPath("userData"),
+  log: (line) => console.info(line),
+})
+if (crashFolder) {
+  void app.whenReady().then(() => {
+    setTimeout(() => {
+      const files = { readdir: (directory: string) => fs.readdir(directory, { withFileTypes: true }), stat: fs.stat, unlink: fs.unlink }
+      void pruneCrashDumps(crashFolder, files).then((removed) => {
+        if (removed.length) console.info(`[crash] pruned ${removed.length} old crash dump(s)`)
+      })
+    }, PRUNE_DELAY_MS).unref()
+  })
+}
+
+/*
+ * MiMo's environment refresh (shell-env.ts): the registry's or the login
+ * shell's PATH and variables, before the backend, a terminal or a tool runs.
+ */
+const refreshed = refreshEnvironment({
+  env: process.env,
+  platform: process.platform,
+  exec: (file, args, options) => execFileSync(file, args, options),
+  development: Boolean(process.env.ELECTRON_RENDERER_URL),
+  home: app.getPath("home"),
+})
+console.info(`[env] environment from ${refreshed.source}${refreshed.added.length ? `; added ${refreshed.added.join(", ")}` : ""}`)
+
+/*
+ * MiMo's bundled runtimes (runtimes.ts): Node.js, Python and ripgrep beside the
+ * app, named to every child process. An unpackaged run looks in the repository.
+ */
+const runtimeNames = applyRuntimeEnv(
+  process.env,
+  bundledRuntimeEnv({
+    resourcesDir: app.isPackaged ? process.resourcesPath : undefined,
+    devDir: app.isPackaged ? undefined : path.join(here, "..", "..", "resources", "runtimes"),
+    platform: process.platform,
+    arch: process.arch,
+    exists: existsSync,
+  }),
+)
+if (runtimeNames.length) console.info(`[runtimes] bundled runtimes named in ${runtimeNames.join(", ")}`)
+
+/*
  * MiMo's native theme at boot: the saved app theme is applied before any
  * window exists, so the first paint, the text context menu, the tray menu and
  * message boxes already match a dark app on a light system (and the reverse).
@@ -156,6 +216,64 @@ function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
 let backend: Backend | undefined
 
 const windows = new Set<BrowserWindow>()
+
+/* MiMo's update transaction record (update-transaction.ts), in the profile's updates folder. */
+const transactionFile = path.join(app.getPath("userData"), "updates", TRANSACTION_FILE)
+const updateTransactions = createTransactions({
+  read: () => {
+    try {
+      return readFileSync(transactionFile, "utf8")
+    } catch {
+      return undefined
+    }
+  },
+  write: (text) => {
+    mkdirSync(path.dirname(transactionFile), { recursive: true })
+    writeFileSync(transactionFile, `${text}\n`, { encoding: "utf8", mode: 0o600 })
+  },
+  remove: () => {
+    try {
+      unlinkSync(transactionFile)
+    } catch {
+      // Already gone.
+    }
+  },
+})
+
+/* An install the person asked for, run by the quit path once the backend has closed. */
+let pendingInstall: (() => void) | undefined
+function runPendingInstall() {
+  const run = pendingInstall
+  pendingInstall = undefined
+  run?.()
+}
+
+/*
+ * N9-16: installers an earlier update left behind - the old updater's copies
+ * in the temporary folder, and electron-updater's pending installer once that
+ * version (or a newer one) is running. The cache folder is electron-updater's,
+ * named in app-update.yml; its installer.exe (the base for the next
+ * differential download) is kept.
+ */
+async function removeStaleInstallers() {
+  const temp = app.getPath("temp")
+  const cacheRoot =
+    process.platform === "win32"
+      ? process.env.LOCALAPPDATA || path.join(app.getPath("home"), "AppData", "Local")
+      : process.platform === "darwin"
+        ? path.join(app.getPath("home"), "Library", "Caches")
+        : process.env.XDG_CACHE_HOME || path.join(app.getPath("home"), ".cache")
+  const pending = path.join(cacheRoot, `${pkg.name}-updater`, "pending")
+  const names = await fs.readdir(temp).catch(() => [] as string[])
+  const info = await fs
+    .readFile(path.join(pending, "update-info.json"), "utf8")
+    .then((text) => JSON.parse(text) as { fileName?: unknown })
+    .catch(() => ({}) as { fileName?: unknown })
+  const stale = staleInstallers({ tempNames: names, pendingFile: typeof info.fileName === "string" ? info.fileName : undefined, currentVersion: pkg.version })
+  for (const name of stale.temp) await fs.rm(path.join(temp, name), { force: true }).catch(() => {})
+  if (stale.pending) await fs.rm(pending, { recursive: true, force: true }).catch(() => {})
+  if (stale.temp.length || stale.pending) console.info(`[update] removed ${stale.temp.length} old installer(s)${stale.pending ? " and the installed pending update" : ""}`)
+}
 
 /*
  * A session link that arrived before a window could show it: the one the app
@@ -327,7 +445,7 @@ function refreshTray(enabled: boolean): void {
       ])
     : [{ label: label("tray.profilesEmpty", "(None)"), enabled: false }]
 
-  tray.setToolTip(app.getName())
+  tray.setToolTip(APP_NAME)
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: label("tray.open", "Open MCode"), click: open },
@@ -465,9 +583,9 @@ function createWindow(show = true): BrowserWindow {
   // Maximise before the first paint, so the window does not appear at its
   // restored size and then jump.
   if (saved.maximized) window.maximize()
-  if (saved.fullScreen) window.setFullScreen(true)
-  // getNormalBounds covers the first run, where the OS picked the position.
-  track(window, saved.x !== undefined && saved.y !== undefined ? (saved as Rectangle) : window.getNormalBounds())
+  // getNormalBounds covers the first run, where the OS picked the position. MiMo saves as the last window goes.
+  const requested = saved.x !== undefined && saved.y !== undefined ? ({ x: saved.x, y: saved.y, width: saved.width, height: saved.height } as Rectangle) : window.getNormalBounds()
+  track(window, requested, () => ![...windows].some((entry) => entry !== window && !entry.isDestroyed()))
 
   // A pinch or Ctrl+wheel scales the page without going through applyZoom, so
   // the band has to follow that as well as the menu and keyboard paths.
@@ -785,7 +903,7 @@ app.whenReady().then(async () => {
         ? label("notify.confirm", "Your confirmation is needed before the task can continue")
         : label("notify.done", "Task completed")
     try {
-      const note = new Notification({ title: noticeTitle(app.getName(), notice), body, silent: notice.silent })
+      const note = new Notification({ title: noticeTitle(notice), body, silent: notice.silent })
       note.on("click", () => {
         raise(owner)
         if (notice.sessionID && !owner.isDestroyed()) owner.webContents.send("mcode:notify-click", notice.sessionID)
@@ -880,102 +998,95 @@ app.whenReady().then(async () => {
    * three the items simply would not exist.
    */
   /*
-   * MiMo's automatic updates, on MCode's own JSON feed: the first check 5 s
-   * after launch, then every 3 h, silent on failure, with a newer installer
-   * downloaded in the background (see updater.ts). Every phase change goes to
-   * the windows; the capsule and the settings row react to a ready update.
+   * MiMo's automatic updates, through electron-updater (see updater.ts): the
+   * first check 5 s after launch, then every 3 h, silent on failure, with a
+   * newer installer downloaded in the background and verified against the
+   * sha512 in the feed. Every phase change goes to the windows; the capsule and
+   * the settings row react to a ready update.
    *
-   * The feed and the installer are fetched out here. The window is served under
-   * a content policy that reaches the local backend and nothing else, which is
-   * right for a page that renders model output; relaxing it for one command
-   * would open every other path with it.
+   * The feed is fetched out here. The window is served under a content policy
+   * that reaches the local backend and nothing else, which is right for a page
+   * that renders model output.
+   *
+   * electron-updater is loaded on first use, the way MiMo loads it, so a
+   * library that fails to load costs updates and nothing else.
    */
-  const MAX_INSTALLER = 400_000_000
-  const updater = createUpdater({
-    currentVersion: pkg.version,
-    feedURL: () => backend?.runtime.config.get().updateFeed ?? "",
-    fetchFeed: async (address) => {
-      if (!/^https?:\/\//.test(address)) throw new Error("the feed must be an http address")
-      const response = await fetch(address, { cache: "no-store" })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      return parseFeed(await response.json())
-    },
-    /*
-     * The OS temporary directory, under a name taken from the version rather
-     * than the URL: a name that came over the network does not decide where a
-     * file is written.
-     */
-    installerFile: (entry: FeedEntry) => {
-      const safe = entry.version.replace(/[^0-9A-Za-z._-]/g, "") || "update"
-      const suffix = process.platform === "win32" ? ".exe" : process.platform === "darwin" ? ".dmg" : ".AppImage"
-      return path.join(app.getPath("temp"), `mcode-${safe}${suffix}`)
-    },
-    readFile: (file) => fs.readFile(file).catch(() => undefined),
-    sha256: (bytes) => createHash("sha256").update(bytes).digest("hex"),
-    download: async (entry, file) => {
-      /*
-       * https, not http. The feed may be plain http - it is only read. This
-       * file is run, and fetching an executable over a connection anyone on the
-       * path can rewrite is remote code execution with extra steps.
-       */
-      if (!/^https:\/\//.test(entry.url)) throw new Error("the installer must be at an https address")
-      const response = await fetch(entry.url, { cache: "no-store" })
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-      // A ceiling, checked before the body is in memory, and again as chunks arrive for a server that declares no length.
-      const declared = Number(response.headers.get("content-length") ?? "")
-      if (Number.isFinite(declared) && declared > MAX_INSTALLER) throw new Error("the installer is too large")
-      const chunks: Buffer[] = []
-      let seen = 0
-      for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-        seen += chunk.byteLength
-        if (seen > MAX_INSTALLER) throw new Error("the installer is too large")
-        chunks.push(Buffer.from(chunk))
+  const updateFeed = () => process.env.MCODE_UPDATE_URL?.trim() || backend?.runtime.config.get().updateFeed || ""
+  const updaterReady: Promise<Updater | undefined> = import("electron-updater")
+    .then((loaded) => {
+      const autoUpdater = (loaded as { autoUpdater?: unknown; default?: { autoUpdater?: unknown } }).autoUpdater ?? (loaded as { default?: { autoUpdater?: unknown } }).default?.autoUpdater
+      if (!autoUpdater) throw new Error("electron-updater has no autoUpdater")
+      const library = autoUpdater as AutoUpdaterLike & { logger: unknown }
+      library.logger = {
+        info: (text: unknown) => console.info(`[update] ${String(text)}`),
+        warn: (text: unknown) => console.warn(`[update] ${String(text)}`),
+        error: (text: unknown) => console.warn(`[update] ${String(text)}`),
+        debug: () => {},
       }
-      const body = Buffer.concat(chunks)
-
-      /*
-       * If the feed said what it should hash to, it has to: https alone says the
-       * bytes arrived unaltered from whoever answered, not that they are the
-       * right bytes.
-       */
-      if (entry.sha256 && createHash("sha256").update(body).digest("hex") !== entry.sha256) {
-        throw new Error("the installer does not match the checksum the feed gave")
-      }
-      await fs.writeFile(file, body)
-    },
-    emit: (state: UpdateState) => {
-      for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("mcode:update-state", state)
-    },
-    log: (line) => console.info(line),
-  })
-  ipcMain.handle("mcode:update-status", () => updater.state())
-  ipcMain.handle("mcode:update-check", () => updater.checkNow())
-  updater.start()
-  app.on("before-quit", () => updater.stop())
+      const created = createUpdater({
+        currentVersion: pkg.version,
+        feedURL: updateFeed,
+        autoUpdater: library,
+        emit: (state: UpdateState) => {
+          for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("mcode:update-state", state)
+        },
+        log: (line) => console.info(line),
+      })
+      created.start()
+      app.on("before-quit", () => created.stop())
+      return created
+    })
+    .catch((error: unknown) => {
+      console.warn("[update] electron-updater did not load; updates are off for this run", error)
+      return undefined
+    })
+  const idleUpdate: UpdateState = { phase: "idle", ready: null }
 
   /*
-   * Only what the updater downloaded or verified. The renderer names no path
+   * MiMo's update transaction: the last install's record, compared with the
+   * version that is running now. An interruption is reported to the first
+   * window that asks, once.
+   */
+  let interrupted = updateTransactions.reconcile(pkg.version)
+  if (interrupted) console.warn(`[update] the update to ${interrupted.targetVersion || "a new version"} did not finish (${interrupted.error})`)
+  ipcMain.handle("mcode:update-status", async () => {
+    const report = interrupted
+    interrupted = undefined
+    const state = (await updaterReady)?.state() ?? idleUpdate
+    return report ? { ...state, interrupted: report } : state
+  })
+  ipcMain.handle("mcode:update-check", async () => {
+    const updater = await updaterReady
+    if (!updater) return { ...idleUpdate, outcome: "failed", during: "check", error: "the updater is not available" }
+    return updater.checkNow()
+  })
+  if (app.isPackaged) void removeStaleInstallers()
+
+  /*
+   * Only what the updater downloaded and verified. The renderer names no path
    * here - it asks to install "the one that is ready" - so a window cannot talk
    * the app into launching an arbitrary executable.
+   *
+   * The installer itself starts only after the backend has shut down (the quit
+   * path below calls runPendingInstall): a silent installer run with --updated
+   * ends a running MCode after a second, which could cut the backend off while
+   * it writes.
    */
   ipcMain.handle("mcode:install-update", async () => {
-    const file = updater.readyFile()
-    if (!file) throw new Error("no update has been downloaded")
+    const updater = await updaterReady
+    const target = updater?.readyVersion()
+    if (!updater || !target) throw new Error("no update has been downloaded")
+    updateTransactions.begin(pkg.version, target)
     /*
      * MiMo's installing notice: shown before the app goes, and given up to 1.5 s
      * to be delivered so it is on screen as the window disappears. Worded in the
      * window's language through the published labels.
      */
-    let notice: Notification | undefined
     try {
       if (Notification.isSupported()) {
-        notice = new Notification({
+        const notice = new Notification({
           title: label("update.installingTitle", "Installing the MCode update"),
-          body: label(
-            "update.installingBody",
-            "MCode closes so the installer can put the new version in place. When it finishes, the installer can open MCode again.",
-          ),
+          body: label("update.installingBody", "MCode closes to finish installing and then opens again by itself. This can take a few minutes."),
         })
         const delivered = deliveryOf(notice)
         notice.show()
@@ -984,12 +1095,27 @@ app.whenReady().then(async () => {
     } catch {
       // No notice is no reason not to install.
     }
-    const failure = await shell.openPath(file)
-    if (failure) {
-      notice?.close()
-      throw new Error(failure)
+    pendingInstall = () => {
+      try {
+        // MiMo's sweep: a helper still running from resources\ (a bundled python, say) would hold files the installer replaces.
+        const sweep = helperSweep(process.execPath, process.platform, app.isPackaged)
+        if (sweep) {
+          const swept = spawnSync(sweep.file, sweep.args, { timeout: HELPER_SWEEP_TIMEOUT_MS, windowsHide: true, stdio: "ignore" })
+          console.info(`[update] helper sweep under ${sweep.prefix} exited ${swept.status ?? swept.error?.message}`)
+        }
+      } catch (error) {
+        console.warn("[update] helper sweep failed (the install goes on)", error)
+      }
+      try {
+        if (updater.install(process.execPath)) updateTransactions.markInstallerStarted()
+        else updateTransactions.markFailed("no update was ready to install")
+      } catch (error) {
+        updateTransactions.markFailed(error)
+        console.warn("[update] the installer did not start", error)
+      }
     }
     beginIntentionalQuit()
+    // With no backend to wait for, the quit path goes straight to the installer.
     app.quit()
     return true
   })
@@ -1390,9 +1516,13 @@ let quitting = false
  * added to close(). Hold the quit, close, then quit for real.
  */
 app.on("before-quit", (event) => {
-  if (quitting || !backend) return
+  if (quitting) return
+  // No backend to wait for: an install asked for goes ahead at once.
+  if (!backend) return runPendingInstall()
   event.preventDefault()
   quitting = true
+  // MiMo saves every window's state as the app quits, while they are still where the person left them.
+  for (const window of windows) saveWindowState(window)
   /*
    * Out of sight while the backend closes. Ending the terminals takes about
    * three seconds on Windows, and a window left standing through that looks
@@ -1402,5 +1532,9 @@ app.on("before-quit", (event) => {
   // Bounded, so a backend that will not close cannot trap the app open; above
   // the terminals' own four-second bound so that bound is the one that applies.
   const closed = Promise.race([backend.close(), new Promise((resolve) => setTimeout(resolve, 5000))])
-  void closed.finally(() => app.quit())
+  // Then the installer, if the person asked for one (MiMo quits into it; see mcode:install-update).
+  void closed.finally(() => {
+    runPendingInstall()
+    app.quit()
+  })
 })

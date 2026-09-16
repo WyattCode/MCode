@@ -1,7 +1,7 @@
 import { app, dialog, Menu, BrowserWindow, type MenuItemConstructorOptions } from "electron"
 import { label } from "./labels"
 import { applyZoom } from "./zoom"
-import { quitPress } from "./desktop-rules"
+import { APP_NAME, quitPress } from "./desktop-rules"
 import pkg from "../../package.json"
 
 /* When the first Cmd+Q was pressed, while it is still waiting for a second. */
@@ -89,7 +89,7 @@ export function buildMenu(): void {
 
   const template: MenuItemConstructorOptions[] = [
     {
-      label: app.name,
+      label: APP_NAME,
       submenu: [
         /* Not Electron's stock about panel: MiMo's version box, on every platform. */
         { label: L("menu.about", "About MCode"), click: () => void showAbout() },

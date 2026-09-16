@@ -134,6 +134,9 @@ export class AuthManager {
       const status = Number(/auth\.refresh:(\d+)/.exec((cause as Error).message)?.[1])
       if (status >= 400 && status < 500) {
         await this.config.setTokens(provider, undefined)
+        // Said out loud, so the reader learns why the provider went quiet and can sign in again.
+        const name = this.config.definition(provider)?.name ?? provider
+        this.bus.publish({ type: "auth.expired", provider, name, providers: this.config.providers() })
         return undefined
       }
       throw cause

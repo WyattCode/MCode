@@ -292,7 +292,8 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
       check("a list keeps only its strings, and a non-list is the default", JSON.stringify(got.pinnedTabs) === '["a"]' && JSON.stringify(got.projects) === "[]")
       check("only a chord written as text is kept, so the rest still bind", JSON.stringify(got.keybinds) === '{"session.new":"Ctrl+K"}', got.keybinds)
       check("a map that is not a map is the default", JSON.stringify(got.projectNames) === "{}")
-      check("a model that is not a model is the default, an optional one is dropped", (got.model as { model?: string })?.model === "claude-opus-5" && !("titleModel" in got))
+      // The default names no model since P9-4 (the picker reads "choose a model").
+      check("a model that is not a model is the default, an optional one is dropped", JSON.stringify(got.model) === '{"provider":"","model":""}' && !("titleModel" in got), got.model)
       check("a non-list of instruction files is dropped, and a malformed custom provider left out", !("instructionFiles" in got) && JSON.stringify((got.customProviders as { id: string }[]).map((entry) => entry.id)) === '["ok"]')
       const disk = await bad.disk()
       check("and the corrected document is what is written back", disk.theme === "system" && disk.uiFontSize === 24 && JSON.stringify(disk.keybinds) === '{"session.new":"Ctrl+K"}')

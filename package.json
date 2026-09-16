@@ -1,6 +1,7 @@
 {
   "name": "mcode",
-  "version": "0.2.4",
+  "productName": "MCode",
+  "version": "0.2.7",
   "description": "A keyboard-first, command-palette-driven AI coding agent.",
   "author": "MCode",
   "main": "./out/main/index.js",
@@ -10,6 +11,7 @@
     "predev": "node scripts/soundfont.mjs --optional",
     "dev": "electron-vite dev",
     "soundfont": "node scripts/soundfont.mjs",
+    "models-snapshot": "node scripts/models-snapshot.mjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "vue-tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",
@@ -34,9 +36,6 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
     "@lydell/node-pty": "^1.2.0-beta.12",
-    "@xterm/addon-unicode11": "^0.9.0",
-    "@xterm/addon-web-links": "^0.12.0",
-    "@xterm/addon-webgl": "^0.19.0",
     "electron-updater": "^6.8.9",
     "jsonc-parser": "^3.3.1",
     "ws": "^8.18.0"
@@ -53,6 +52,8 @@
     "@univerjs/presets": "0.25.1",
     "@vitejs/plugin-vue": "^6.0.0",
     "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^5.5.0",
     "abcjs": "6.7.0",
     "docx-preview": "0.3.7",

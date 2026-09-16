@@ -12,7 +12,7 @@ export class CodedError extends Error {
   constructor(
     message: string,
     readonly code: string,
-    /** Values the code's sentence names, filled into its `{placeholders}`. */
+    /** The values the code's sentence fills in, such as a provider's name. */
     readonly params?: Record<string, string | number>,
   ) {
     super(message)
@@ -25,7 +25,7 @@ export function codeOf(err: unknown): string | undefined {
   return err instanceof CodedError ? err.code : undefined
 }
 
-/** What that code's sentence fills in, when it has anything to fill. */
+/** The values a named failure's sentence fills in, when it has any. */
 export function paramsOf(err: unknown): Record<string, string | number> | undefined {
   return err instanceof CodedError ? err.params : undefined
 }

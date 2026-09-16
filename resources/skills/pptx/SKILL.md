@@ -9,6 +9,13 @@ aliases:
 
 # Presentations
 
+**Which Python.** When the `MCODE_PYTHON` environment variable is set, use that
+interpreter wherever this skill says `python`: `"$MCODE_PYTHON" scripts/...` in
+bash, `& $env:MCODE_PYTHON scripts/...` in PowerShell. MCode ships it with
+python-docx, python-pptx, openpyxl, pandas, pypdf, pypdfium2, reportlab, lxml and
+Pillow installed, so the install checks below can be skipped. It has no pip
+console scripts; run tools as modules (`-m`).
+
 Plan the story first, then build slides with python-pptx, then look at what you
 built. A deck is judged by its pages, so checking visually matters here.
 

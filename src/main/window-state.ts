@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import { app, screen, type BrowserWindow, type Rectangle } from "electron"
-import { WINDOW_MIN, firstRunSize } from "./desktop-rules"
+import { WINDOW_MIN, firstRunSize, readSavedWindow, windowStateToSave, type SavedWindow } from "./desktop-rules"
 
 /**
  * Remembers where the window was and how big it was.
@@ -9,43 +9,23 @@ import { WINDOW_MIN, firstRunSize } from "./desktop-rules"
  * Kept out of the app config on purpose: this is a property of the machine and
  * its monitors, not of the user's preferences, and it must be readable before
  * the backend has started - the window is created first.
+ *
+ * MiMo's rule: the state is written when the last window closes (or hides to
+ * the tray) and when the app quits, not on every move; a minimised or
+ * full-screen window writes nothing, and full screen is never restored.
  */
-
-interface State {
-  bounds: Rectangle
-  maximized: boolean
-  fullScreen: boolean
-}
 
 const FILE = "window.json"
 /* MiMo's minimum; a remembered size smaller than it is grown to it. */
 const MIN = WINDOW_MIN
-/** Writes are cheap but pointless mid-drag; settle first. */
-const SETTLE = 400
-/**
- * How far the measured window may sit from what was asked for before it counts
- * as the user having resized it.
- *
- * Restoring bounds does not reproduce them exactly - fractional display scaling
- * rounds the round-trip by a pixel or three. Saving the measured value fed that
- * error back in, so the window grew a little on every launch and kept growing.
- */
-const JITTER = 4
 
 function file(): string {
   return path.join(app.getPath("userData"), FILE)
 }
 
-function read(): State | undefined {
+function read(): SavedWindow | undefined {
   try {
-    const raw = JSON.parse(fs.readFileSync(file(), "utf8"))
-    const { x, y, width, height } = raw?.bounds ?? {}
-    if (![x, y, width, height].every((value) => Number.isFinite(value))) return undefined
-    return {
-      bounds: { x, y, width, height },
-      maximized: Boolean(raw.maximized),
-      fullScreen: Boolean(raw.fullScreen),
-    }
+    return readSavedWindow(JSON.parse(fs.readFileSync(file(), "utf8")))
   } catch {
     return undefined
   }
@@ -87,7 +67,7 @@ function visible(bounds: Rectangle): Rectangle {
 }
 
 /**
- * Bounds and flags to pass to the BrowserWindow constructor.
+ * Bounds and the maximised flag to pass to the BrowserWindow constructor.
  *
  * x and y come back undefined when there is nothing remembered, which is not a
  * gap to fill in: omitting them is what makes Electron centre the window. An
@@ -100,66 +80,50 @@ export function restore(): {
   width: number
   height: number
   maximized: boolean
-  fullScreen: boolean
 } {
   const saved = read()
-  const flags = { maximized: saved?.maximized ?? false, fullScreen: saved?.fullScreen ?? false }
   if (!saved) {
     // First run: MiMo's share of the primary work area; the position is left to the OS, which centres it.
-    return { ...firstRunSize(screen.getPrimaryDisplay().workArea), ...flags }
+    return { ...firstRunSize(screen.getPrimaryDisplay().workArea), maximized: false }
   }
-  return { ...visible(saved.bounds), ...flags }
+  return { ...visible(saved.bounds), maximized: saved.maximized }
 }
 
-/** Starts saving position, size and maximised state for this window. */
-export function track(window: BrowserWindow, requested: Rectangle): void {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  /** What is on disk, so measurement noise never ratchets the size up. */
-  let baseline = requested
+/** What is on disk for each window, so measurement noise never ratchets the size up. */
+const baselines = new WeakMap<BrowserWindow, Rectangle>()
 
-  const write = () => {
-    if (window.isDestroyed()) return
-    // getNormalBounds is the un-maximised geometry, which is what restoring
-    // needs; getBounds while maximised would pin the window to full screen
-    // for good.
-    const measured = window.getNormalBounds()
-    const settled =
-      Math.abs(measured.x - baseline.x) <= JITTER &&
-      Math.abs(measured.y - baseline.y) <= JITTER &&
-      Math.abs(measured.width - baseline.width) <= JITTER &&
-      Math.abs(measured.height - baseline.height) <= JITTER
-
-    baseline = settled ? baseline : measured
-
-    const state: State = {
-      bounds: baseline,
-      maximized: window.isMaximized(),
+/** Writes this window's state now, unless it is minimised or full screen (MiMo keeps the older state then). */
+export function saveWindowState(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  const baseline = baselines.get(window)
+  if (!baseline) return
+  const state = windowStateToSave(
+    {
+      minimized: window.isMinimized(),
       fullScreen: window.isFullScreen(),
-    }
-    try {
-      fs.mkdirSync(path.dirname(file()), { recursive: true })
-      fs.writeFileSync(file(), JSON.stringify(state, null, 2), "utf8")
-    } catch {
-      // Losing the remembered size is not worth interrupting anything over.
-    }
+      maximized: window.isMaximized(),
+      // The un-maximised geometry, which is what restoring needs.
+      normalBounds: window.getNormalBounds(),
+    },
+    baseline,
+  )
+  if (!state) return
+  baselines.set(window, state.bounds)
+  try {
+    fs.mkdirSync(path.dirname(file()), { recursive: true })
+    fs.writeFileSync(file(), JSON.stringify(state, null, 2), "utf8")
+  } catch {
+    // Losing the remembered size is not worth interrupting anything over.
   }
+}
 
-  const later = () => {
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(write, SETTLE)
-  }
-
-  // Listed one by one: the overloaded signature does not accept a union.
-  window.on("resize", later)
-  window.on("move", later)
-  window.on("maximize", later)
-  window.on("unmaximize", later)
-  window.on("enter-full-screen", later)
-  window.on("leave-full-screen", later)
-
-  // A debounce that never fires is a debounce that loses the last change.
+/**
+ * Saves this window's state when it closes or hides as the last window. The
+ * quit path saves every window itself (saveWindowState), before it hides them.
+ */
+export function track(window: BrowserWindow, requested: Rectangle, isLast: () => boolean): void {
+  baselines.set(window, requested)
   window.on("close", () => {
-    if (timer) clearTimeout(timer)
-    write()
+    if (isLast()) saveWindowState(window)
   })
 }
