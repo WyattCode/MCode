@@ -21,16 +21,17 @@ import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
 import type { Permissions } from "../permission"
-import type { CommandRisk } from "../command-risk"
-import { PermissionDenied, REVIEW_TIMEOUT_MS } from "../permission"
+import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, verdictApproves } from "../permission"
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, reachOf, toolsFor } from "../tool/registry"
+import { findTool, reachOf, repairableNames, toolsFor } from "../tool/registry"
+import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
 import type { SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
+import { ToolOutputs } from "../tool/truncate"
 import { retryDecision, waitFor } from "./retry"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
@@ -153,18 +154,36 @@ const SMART_REQUEST_CHARS = 4000
  * carry on with the work.
  */
 const REVIEW_SYSTEM = [
-  "You check one shell command before a coding assistant runs it.",
-  "The user has chosen to let this check settle risky commands instead of being asked about each one.",
-  "Approve only when the command is plainly a needed step of what the user asked for, and its effects go no further than that request needs.",
-  "Reject when it reaches beyond the request, affects the machine or other programs broadly, publishes or sends work somewhere, or when you are not sure.",
-  "Reply with a single word: APPROVE or REJECT.",
+  "You decide whether one action a coding assistant wants to take may go ahead without asking the user, who chose to let this check settle such questions.",
+  "Go by what the user recently asked for.",
+  "Approve work that carries out those requests and does not destroy existing files: making folders, running scripts and searches, reading anywhere - outside the project and in temporary folders included.",
+  "Deny what destroys or overwrites work, runs code fetched from elsewhere, or goes against what the user asked.",
+  `Answer only by calling ${VERDICT_TOOL_NAME} once with {"decision":"APPROVE"} or {"decision":"DENY"}, and write nothing else.`,
 ].join("\n")
 
-/** Room for a one-word verdict, and for a model that reasons before giving it. */
-const REVIEW_OUTPUT_TOKENS = 2048
+/** MiMo's judge answers in one small tool call. */
+const REVIEW_OUTPUT_TOKENS = 64
 
-/** The latest request is quoted from its end, where the instruction usually is. */
-const REVIEW_REQUEST_CHARS = 4000
+/** The review sees the user's last three requests, each cut at 400 characters. */
+const REVIEW_REQUESTS = 3
+const REVIEW_REQUEST_CHARS = 400
+
+/** The review's one tool: a verdict given in prose does not count. */
+const VERDICT_TOOL: ToolDefinition = {
+  name: VERDICT_TOOL_NAME,
+  description: "Give the decision. Call it once, and write nothing else.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    required: ["decision"],
+    properties: {
+      decision: { type: "string", enum: ["APPROVE", "DENY"], description: "APPROVE lets this one action go ahead; DENY leaves it for the user" },
+    },
+  },
+  async execute() {
+    return { output: "" }
+  },
+}
 
 /** How long a title may take before the fallback is kept. */
 const TITLE_TIMEOUT_MS = 60_000
@@ -208,8 +227,6 @@ const MAX_STEPS_PROMPT = [
  */
 /** Tools a subagent never gets: starting subagents, and talking to other conversations. */
 const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update"])
-/* history, memory, cron: MiMo's explore agent is denied everything but reading and searching the project. */
-const EXPLORE_WITHHELD = new Set(["history", "memory", "cron"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -284,6 +301,8 @@ export class SessionRunner {
   /** Where the global AGENTS.md lives, next to the app's own config. */
   private readonly globalAgents: string
 
+  private readonly toolOutputs: ToolOutputs
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -293,6 +312,9 @@ export class SessionRunner {
     storage: Storage,
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
+    // Complete outputs the shared cap cut, kept a week, as MiMo keeps them.
+    this.toolOutputs = new ToolOutputs(storage.folder("tool-output"))
+    this.toolOutputs.start()
     this.globalAgents = globalAgentsPath(storage.directory)
     this.questions = new Questions(bus)
     // session chat: messages between conversations run through this runner's own prompt.
@@ -323,7 +345,7 @@ export class SessionRunner {
    * `Permissions` asks the user for everything else, and for anything that
    * takes longer than its timeout, which also ends the request here.
    */
-  private async reviewCommand(input: { sessionID: string; command: string; risk: CommandRisk }): Promise<boolean> {
+  private async reviewCommand(input: { sessionID: string; kind: string; subject: string }): Promise<boolean> {
     const session = await this.store.get(input.sessionID)
     if (!session) return false
     const definition = this.config.definition(session.model.provider)
@@ -337,23 +359,24 @@ export class SessionRunner {
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const stored = await this.store.messages(session.id)
-    const request = [...stored].reverse().find((message) => message.role === "user")?.text ?? ""
+    // As MiMo's judge reads them: the last few requests, each cut short, any that looks like it holds a credential left out.
+    const requests = stored
+      .flatMap((message) => (message.role === "user" && message.text.trim() ? [message.text.trim()] : []))
+      .map((text) => (text.length > REVIEW_REQUEST_CHARS ? `${text.slice(0, REVIEW_REQUEST_CHARS)}…` : text))
+      .filter((text) => !looksSecret(text))
+      .slice(-REVIEW_REQUESTS)
     const text = [
-      "The user's latest request:",
-      request.slice(-REVIEW_REQUEST_CHARS) || "(none)",
-      "",
-      `Working directory: ${session.directory}`,
-      `Flagged as: ${input.risk}`,
-      "",
-      "Command:",
-      input.command,
+      input.kind,
+      input.subject,
+      ...(requests.length ? ["", "What the user asked for recently, oldest first:", ...requests.map((request, index) => `${index + 1}. ${request}`)] : []),
     ].join("\n")
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), REVIEW_TIMEOUT_MS)
     let answer = ""
+    let calls: { name: string; input: Record<string, unknown> }[] = []
     try {
-      await adapter.stream(
+      const outcome = await adapter.stream(
         {
           apiKey: tokens?.access ?? apiKey,
           model: session.model,
@@ -368,8 +391,9 @@ export class SessionRunner {
               time: { created: Date.now() },
             },
           ],
-          tools: [],
-          effort: "low",
+          tools: [VERDICT_TOOL],
+          effort: "",
+          variants: [],
           showReasoning: false,
           signal: controller.signal,
           baseURL: definition.baseURL,
@@ -381,12 +405,13 @@ export class SessionRunner {
           if (event.type === "text.delta") answer += event.text
         },
       )
+      calls = outcome.toolCalls
     } catch {
       return false
     } finally {
       clearTimeout(timer)
     }
-    return /^[^a-z]*approve/i.test(answer.trim())
+    return verdictApproves(calls, answer)
   }
 
   useMcp(mcp: { tools: () => ToolDefinition[] }): void {
@@ -400,14 +425,11 @@ export class SessionRunner {
    * Plan gets none of the MCP ones. What an outside server does with a call is
    * not knowable from here, so a mode that promises to change nothing cannot
    * pass one along.
-   *
-   * The model id is passed on because the surface depends on it: the reference
-   * gives a GPT-5 model `apply_patch` and withholds `edit` and `write`, and
-   * every other model the reverse. See `usesPatch` in the registry.
    */
-  private tools(agent: string, modelID: string, conversation: string): ToolDefinition[] {
-    const own = toolsFor(agent, modelID)
-    if (agent === "plan") return own
+  private tools(agent: string, conversation: string): ToolDefinition[] {
+    const own = toolsFor(agent)
+    // An explore subagent is offered only its own few, as MiMo denies it everything else.
+    if (agent === "plan" || agent === "explore") return own
     let servers = this.mcpServersAt.get(conversation)
     if (!servers) {
       const configured = Object.entries(this.config.get().mcpServers ?? {})
@@ -905,7 +927,7 @@ export class SessionRunner {
       config.instructionFiles ?? [],
       session.model.provider,
       session.model.model,
-      this.tools(session.agent, session.model.model, session.parentID ?? session.id).map((tool) => tool.name),
+      this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).map((tool) => tool.name),
       // skills: a skill added or removed changes the list the prompt carries.
       skills.map((skill) => skill.name),
     ])
@@ -984,7 +1006,7 @@ export class SessionRunner {
           model: session.model,
           ...(await this.systemFor(session)),
           history: [...replay, instruction],
-          tools: this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+          tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
           // MiMo's effort is one app-wide value, not a conversation's own.
           effort: this.config.get().effort,
           variants: this.config.variants(session.model),
@@ -1417,7 +1439,7 @@ export class SessionRunner {
     })
     if (!first) return [runtime]
     // The conversation's MCP servers are fixed when it first asks for its tools (plan takes none).
-    if (session.agent !== "plan") this.tools(session.agent, session.model.model, session.id)
+    if (session.agent !== "plan") this.tools(session.agent, session.id)
     const names = [...(this.mcpServersAt.get(session.id) ?? [])]
     return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
   }
@@ -1803,9 +1825,7 @@ export class SessionRunner {
         tools: lastStep
           ? []
           : [
-              ...this.tools(session.agent, session.model.model, session.parentID ?? session.id).filter(
-                (tool) => !session.parentID || (!SUBAGENT_WITHHELD.has(tool.name) && !(session.subagent?.type === "explore" && EXPLORE_WITHHELD.has(tool.name))),
-              ),
+              ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort,
@@ -2143,10 +2163,12 @@ export class SessionRunner {
       findTool(name) ?? (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ?? this.mcp?.tools().find((entry) => entry.name === name)
     let tool = lookup(part.name)
     if (!tool) {
-      const lowered = part.name.toLowerCase()
-      const repaired = lowered === part.name ? undefined : lookup(lowered)
-      if (repaired) {
-        part.name = lowered
+      // MiMo's repair: the name without case, then with dashes, underscores and spaces ignored.
+      const offered = [...repairableNames(), ...(schema ? [STRUCTURED_OUTPUT] : []), ...(this.mcp?.tools().map((entry) => entry.name) ?? [])]
+      const resolved = resolveToolName(part.name, offered)
+      const repaired = resolved ? lookup(resolved) : undefined
+      if (resolved && repaired) {
+        part.name = resolved
         tool = repaired
       } else {
         tool = findTool("invalid")
@@ -2173,6 +2195,8 @@ export class SessionRunner {
      * transcript draws it as a step that was not executed.
      */
     const unreadable = this.inputErrors.get(part)
+    // Argument names a model spelled its own way (filePath for file_path) are put onto the schema's, as MiMo's repair does.
+    if (tool.name !== "invalid" && !unreadable) part.input = normalizeToolInput(part.input, tool.parameters)
     const problems = tool.name === "invalid" ? [] : unreadable ? [unreadable] : argumentProblems(tool.parameters, part.input)
     if (problems.length) {
       part.status = "error"
@@ -2236,6 +2260,7 @@ export class SessionRunner {
         tool: tool.name,
         kind: tool.permission ?? "",
         arguments: part.input,
+        directory: input.session.directory,
       })
       const result = await tool.execute(part.input, {
         sessionID: input.session.id,
@@ -2247,6 +2272,7 @@ export class SessionRunner {
         signal: input.signal,
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
+        toolOutputs: this.toolOutputs,
         // session chat: a conversation's own calls only; a subagent has no contacts.
         chat: this.workers.has(input.session.id) ? undefined : this.chat,
         // subagents: offered to a conversation's own calls; a subagent's calls get none, so there is no nesting.
@@ -2260,10 +2286,15 @@ export class SessionRunner {
         skills: () => this.skillsFor(input.session.directory),
         tasks: tool.name === "task" ? await this.taskControl(input.session.id) : undefined,
       })
+      // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
+      const capped =
+        result.metadata?.truncated === undefined
+          ? await this.toolOutputs.cap(result.output, !this.workers.has(input.session.id)).catch(() => undefined)
+          : undefined
       part.status = "completed"
-      part.output = result.output
+      part.output = capped?.text ?? result.output
       part.title = result.title ?? part.title
-      part.metadata = result.metadata
+      part.metadata = capped?.truncated ? { ...result.metadata, truncated: true, outputPath: capped.file } : result.metadata
       // MiMo's auto-worktree notice: the first change a conversation makes to a repository's main worktree is noted.
       await this.noteWorktreeChange(owner, part, input.session.directory)
     } catch (err) {
@@ -2310,8 +2341,9 @@ export class SessionRunner {
    * MCode's shell tool reports no paths it changed.
    */
   private async noteWorktreeChange(sessionID: string, part: ToolPart, directory: string): Promise<void> {
-    if (this.worktreeHits.has(sessionID) || !["write", "edit", "apply_patch"].includes(part.name)) return
-    const target = typeof part.input?.path === "string" ? part.input.path : undefined
+    if (this.worktreeHits.has(sessionID) || !["write", "edit", "notebook_edit"].includes(part.name)) return
+    const named = part.input?.file_path ?? part.input?.notebook_path
+    const target = typeof named === "string" ? named : undefined
     if (!target) return
     const session = await this.store.get(sessionID)
     if (!session || session.parentID || session.worktreeNotice) return
@@ -2491,6 +2523,8 @@ export class SessionRunner {
     const controller = new AbortController()
     this.running.set(child.id, controller)
     if (options.owner) this.owners.set(child.id, options.owner)
+    // A background subagent is never shown a question, as MiMo's background actors are not.
+    this.permissions.markBackground(child.id, options.background ? child.parentID : undefined)
     // Open to follow-ups from the start, as a conversation's own turn is to the user's.
     this.steering.set(child.id, { waiting: [], written: Promise.resolve() })
     const worker: Worker = {

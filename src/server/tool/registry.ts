@@ -3,14 +3,15 @@ import { ReadTool } from "./read"
 import { EditTool, WriteTool } from "./edit"
 import { GlobTool, GrepTool, ListTool } from "./search"
 import { BashTool } from "./bash"
-import { TaskTool, WebFetchTool } from "./task"
+import { TaskTool } from "./task"
+import { WebFetchTool } from "./webfetch"
 import { QuestionTool } from "./question"
-import { ApplyPatchTool } from "./patch"
 import { InvalidTool } from "./invalid"
 import { ActorTool } from "./subagent"
 import { PdfLocateTool, PresentFilesTool } from "./present"
 import { GetDesktopSettingsTool, SetDesktopSettingTool } from "./desktop-settings"
 import { ContactsTool, CreateSessionTool, TalkToSessionTool, UpdateSessionTool } from "./session-chat"
+import { NotebookEditTool } from "./notebook"
 import { SkillSearchTool, SkillTool } from "./skill"
 import { HistoryTool } from "./history"
 import { MemoryTool } from "./memory"
@@ -30,8 +31,8 @@ import { AutomationUpdateTool } from "./automation"
  * edit, write, task, fetch, todo, search, skill, patch]` (node-BBwF64dM.js
  * @32849132), and the desktop client is inside `questionEnabled`.
  *
- * `apply_patch` is NOT here. It is offered instead of `edit` and `write`, and
- * only to one family of models; `toolsFor` is where that is decided.
+ * Every model gets `edit` and `write`: MiMo's desktop turns its engine's codex
+ * mode off, so a GPT model is never handed `apply_patch` in their place.
  */
 export const TOOLS: ToolDefinition[] = [
   QuestionTool,
@@ -52,6 +53,8 @@ export const TOOLS: ToolDefinition[] = [
   PresentFilesTool,
   GetDesktopSettingsTool,
   SetDesktopSettingTool,
+  // MiMo's notebook_edit: after the window tools, before the session chat tools and skills that came after it.
+  NotebookEditTool,
   // session chat: appended after those for the same reason.
   ContactsTool,
   TalkToSessionTool,
@@ -76,57 +79,34 @@ export const TOOLS: ToolDefinition[] = [
  * mode that promises to change nothing cannot hand one out.
  */
 // session chat: making another conversation act, or changing its record, is acting too; Plan keeps contacts.
-const MUTATING = new Set(["write", "edit", "bash", "apply_patch", "talk_to_session", "create_session", "update_session"])
+const MUTATING = new Set(["write", "edit", "notebook_edit", "bash", "talk_to_session", "create_session", "update_session"])
 
-/**
- * Whether a model is given `apply_patch` in place of `edit` and `write`.
- *
- * The reference's rule, verbatim (@32851450):
- *
- *   const usePatch = input.modelID.includes("gpt-") && !input.modelID.includes("oss") && !input.modelID.includes("gpt-4")
- *   if (tool.id === ApplyPatchTool.id) return usePatch
- *   if (tool.id === EditTool.id || tool.id === WriteTool.id) return !usePatch
- *
- * So it is a swap, not an addition: a GPT-5 model gets the patch language and
- * nothing else, every other model gets the two string tools and never sees
- * `apply_patch`. `gpt-oss` and the `gpt-4` family are carved back out because
- * neither was trained on the format.
- *
- * An empty id - which is what a caller that has no model in hand passes -
- * contains no "gpt-", so it takes the edit/write branch. That is the safe
- * direction: it is the surface every model but one family gets.
- */
-export function usesPatch(modelID: string): boolean {
-  return modelID.includes("gpt-") && !modelID.includes("oss") && !modelID.includes("gpt-4")
-}
+/** MiMo's explore subagent: everything is denied but these, the shell among them. */
+const EXPLORE = new Set(["read", "glob", "grep", "list", "bash", "webfetch"])
 
-/**
- * The tools an agent is allowed to call. Plan inspects; it does not act.
- *
- * @param modelID the model this turn will run on, which decides between the
- *   patch language and the two string tools. Passed rather than read from
- *   config because a session can be on a different model from the app default.
- */
-export function toolsFor(agent: string, modelID = ""): ToolDefinition[] {
-  const patch = usesPatch(modelID)
-  const list = patch ? [...TOOLS.filter((tool) => tool.name !== "edit" && tool.name !== "write"), ApplyPatchTool] : TOOLS
-  return agent === "plan" ? list.filter((tool) => !MUTATING.has(tool.name)) : list
+/** The tools an agent is allowed to call. Plan inspects; it does not act. An explore subagent only looks. */
+export function toolsFor(agent: string): ToolDefinition[] {
+  if (agent === "explore") return TOOLS.filter((tool) => EXPLORE.has(tool.name))
+  return agent === "plan" ? TOOLS.filter((tool) => !MUTATING.has(tool.name)) : TOOLS
 }
 
 /**
  * A tool by name, for dispatching a call the model has already made.
  *
- * `apply_patch` and `invalid` are found here but are in no list above:
- * `apply_patch` because a model can call it in the same turn its surface
- * changed, and `invalid` because it is never offered at all - the reference
- * strips it out of the request with
+ * `invalid` is found here but is in no list above, because it is never offered
+ * at all - the reference strips it out of the request with
  * `activeTools: Object.keys(prepared.tools).filter((x) => x !== "invalid")`
  * (@22827789) and only ever reaches it from its repair hook.
  */
-const DISPATCHABLE: ToolDefinition[] = [...TOOLS, ApplyPatchTool, InvalidTool]
+const DISPATCHABLE: ToolDefinition[] = [...TOOLS, InvalidTool]
 
 export function findTool(name: string): ToolDefinition | undefined {
   return DISPATCHABLE.find((tool) => tool.name === name)
+}
+
+/** The names a model's call can be repaired to: every tool it could have been offered, `invalid` never. */
+export function repairableNames(): string[] {
+  return TOOLS.map((tool) => tool.name)
 }
 
 /*
@@ -183,15 +163,8 @@ const READS = new Set([
 export type ToolReach = "reads" | "reports" | "opaque"
 
 export function reachOf(name: string): ToolReach {
-  /*
-   * `apply_patch` is a reporter, not an opaque one. It snapshots every path it
-   * is about to touch - both ends of a rename - before writing any of them, so
-   * the runner already knows the whole set and does not need to photograph the
-   * project to find out. Leaving it to the default would have made every patch
-   * force a full-project comparison, which is the slow path and the one that
-   * cannot tell a model's write from a background build's.
-   */
-  if (name === "write" || name === "edit" || name === "apply_patch") return "reports"
+  // notebook_edit records its file before writing, as edit does.
+  if (name === "write" || name === "edit" || name === "notebook_edit") return "reports"
   if (READS.has(name)) return "reads"
   return "opaque"
 }

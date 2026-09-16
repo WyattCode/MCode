@@ -1,6 +1,7 @@
 import type { Permissions } from "../permission"
 import type { Questions } from "./question"
 import type { SessionChat } from "../session/chat"
+import type { ToolOutputs } from "./truncate"
 import type { SkillInfo } from "../skill"
 import type { TaskItem } from "@shared/protocol"
 
@@ -47,6 +48,8 @@ export interface ToolContext {
   subagents?: SubagentControl
   /** session chat: messaging the other conversations. Absent inside a subagent. */
   chat?: SessionChat
+  /** Where outputs the shared cap cut are saved; a tool may read those wherever the project is. */
+  toolOutputs?: ToolOutputs
   /** skills: every skill this conversation can reach, read fresh from disk. */
   skills?: () => Promise<SkillInfo[]>
   /** tasks: the conversation's task registry; a subagent's is its parent's. */

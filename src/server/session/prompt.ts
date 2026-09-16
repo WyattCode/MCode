@@ -3,7 +3,7 @@ import path from "node:path"
 import os from "node:os"
 import { pathToFileURL } from "node:url"
 import { recentCommits, status } from "../git"
-import { globToRegExp } from "../tool/search"
+import { globToRegExp } from "../tool/ignore"
 import { foldersUp } from "./worktree"
 import { modelInvocable, type SkillInfo } from "../skill"
 

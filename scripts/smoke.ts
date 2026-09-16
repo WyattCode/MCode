@@ -53,6 +53,18 @@ import { RETIRED_DEFAULTS, normalizeChord, retireKeybinds } from "../src/shared/
 import { PAGE_ROWS, pageRows } from "../src/renderer/src/lib/shortcut-page"
 import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/custom-model"
 import { mergeMcpSecrets } from "../src/server/mcp-save"
+// round 5: MCP names, folder, server messages, results, transports and sampling.
+import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../src/server/mcp"
+import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
+import type { McpServerConfig } from "../src/shared/protocol"
+import { ToolOutputs } from "../src/server/tool/truncate"
+import { readAsks, verdictApproves, wildcardMatch } from "../src/server/permission"
+import { dangerousCommand, readOnlyCommand } from "../src/server/command-risk"
+import { normalizeToolInput, resolveToolName } from "../src/server/tool/repair"
+import { repairableNames } from "../src/server/tool/registry"
+import { STALL, stallGuard } from "../src/server/provider/stall"
+import { arityPrefix, scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
+import { blockedIPv4, blockedIPv6 } from "../src/server/tool/webfetch"
 import { ago, t } from "../src/renderer/src/lib/i18n"
 import {
   VOICE_EDIT_MAX,
@@ -120,7 +132,7 @@ import { cardCut, latestTurnParts, stepPart, stickState, stoppedEmpty } from "..
 import type { AssistantPart, ToolPart } from "../src/shared/protocol"
 import { Bus } from "../src/server/bus"
 import { unifiedDiff } from "../src/server/diff"
-import { globToRegExp } from "../src/server/tool/search"
+import { globToRegExp } from "../src/server/tool/ignore"
 import { discoverSubscriptionModels } from "../src/server/provider/discover"
 import { workspaceInfo } from "../src/server/workspace"
 import * as gitOps from "../src/server/git"
@@ -651,8 +663,8 @@ async function main() {
   /* The model's review of the other risky commands. */
   const reviewed: string[] = []
   let verdict: "approve" | "reject" | "fail" | "hang" = "approve"
-  gate.useReviewer(async ({ command }) => {
-    reviewed.push(command)
+  gate.useReviewer(async ({ subject }) => {
+    reviewed.push(subject)
     if (verdict === "fail") throw new Error("no model")
     if (verdict === "hang") return new Promise<boolean>(() => {})
     return verdict === "approve"
@@ -668,12 +680,17 @@ async function main() {
   check("so is one the model cannot review", (await waited(askAbout("bash", "chmod 777 run.sh"))) === "waiting" && raised.includes("permission.requested"), raised)
   verdict = "hang"
   raised.length = 0
-  check("and one it takes too long over", (await waited(askAbout("bash", "git push origin main"))) === "waiting" && raised.includes("permission.requested"), raised)
+  check("and one it takes too long over", (await waited(askAbout("bash", "crontab -e"))) === "waiting" && raised.includes("permission.requested"), raised)
   verdict = "approve"
   raised.length = 0
   reviewed.length = 0
   check("a delete is never put to the model", (await waited(askAbout("bash", "git push origin main && rm -rf dist"))) === "waiting" && raised.includes("permission.requested") && reviewed.length === 0, { raised, reviewed })
   check("nor is a hard reset", (await waited(askAbout("bash", "git reset --hard HEAD~1"))) === "waiting" && reviewed.length === 0, reviewed)
+  // E33: MiMo's lists decide what is dangerous; an ordinary push is not.
+  gate.rejectAll("ses_level")
+  raised.length = 0
+  reviewed.length = 0
+  check("an ordinary push runs unasked and unreviewed, as MiMo's lists do not flag it", (await waited(askAbout("bash", "git push origin main"))) === "ran" && raised.length === 0 && reviewed.length === 0, { raised, reviewed })
 
   level = "ask"
   raised.length = 0
@@ -732,8 +749,12 @@ async function main() {
     snapshot: async () => {},
   })
 
-  const read = await findTool("read")!.execute({ path: "hello.ts" }, context("c1"))
-  check("read numbers lines", read.output.includes("1\texport const greeting"), read.output.slice(0, 60))
+  const read = await findTool("read")!.execute({ file_path: "hello.ts" }, context("c1"))
+  check(
+    "read numbers lines as N: text inside its tags",
+    read.output.includes("<type>file</type>") && read.output.includes("1: export const greeting") && read.output.includes("(End of file - 2 lines in all)"),
+    read.output.slice(0, 200),
+  )
 
   /*
    * Leaving the project asks rather than refusing. Wanting to read the folder
@@ -771,7 +792,7 @@ async function main() {
 
   // "always" covers the tree, so walking into it does not ask a second time.
   const nested = await findTool("read")!
-    .execute({ path: path.join(outsideRoot, "nested", "note.txt") }, context("c-esc3"))
+    .execute({ file_path: path.join(outsideRoot, "nested", "note.txt") }, context("c-esc3"))
     .then((result) => result, (error: unknown) => error)
   check("an approved directory covers what is under it", !(nested instanceof Error), nested)
   check("no second prompt was raised", permissions.outstanding().length === 0)
@@ -847,10 +868,325 @@ async function main() {
   await fs.rm(outsideRoot, { recursive: true, force: true })
 
   const glob = await findTool("glob")!.execute({ pattern: "**/*.ts" }, context("c2"))
-  check("glob finds nested files", glob.output.includes("src/app.ts") && glob.output.includes("hello.ts"), glob.output)
+  check("glob lists absolute paths of nested files", glob.output.includes(path.join(project, "src", "app.ts")) && glob.output.includes(path.join(project, "hello.ts")), glob.output)
 
   const grep = await findTool("grep")!.execute({ pattern: "TODO" }, context("c3"))
-  check("grep reports file:line", grep.output.includes("src/app.ts:1"), grep.output)
+  check(
+    "grep groups its matches under each file as Line N rows",
+    grep.output.startsWith("Found 1 matches") && grep.output.includes(`${path.join(project, "src", "app.ts")}:\n  Line 1: // TODO: implement`),
+    grep.output,
+  )
+
+  // E2: matched as ripgrep matches for MiMo - a name glob at any depth, hidden files searched, .git and ignored files not.
+  {
+    const tree = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-glob-"))
+    const put = async (rel: string, text: string) => {
+      await fs.mkdir(path.dirname(path.join(tree, rel)), { recursive: true })
+      await fs.writeFile(path.join(tree, rel), text)
+    }
+    await put(".git/HEAD", "ref: refs/heads/main\n")
+    await put(".git/config.ts", "needle\n")
+    await put(".gitignore", "ignored/\n*.log\n!keep.log\n")
+    await put("top.ts", "needle\n")
+    await put("src/deep/inner.ts", "needle\n")
+    await put("src/app.ts", "needle\n")
+    await put(".hidden/secret.ts", "needle\n")
+    await put("ignored/skip.ts", "needle\n")
+    await put("debug.log", "needle\n")
+    await put("keep.log", "needle\n")
+    const inTree = (callID: string) => ({ ...context(callID), directory: tree })
+    // Paths come back absolute; compared with forward slashes so the checks read the same on every platform.
+    const posix = (output: string) => output.split("\\").join("/")
+    const any = posix((await findTool("glob")!.execute({ pattern: "*.ts" }, inTree("g-e2-1"))).output)
+    check("glob *.ts matches at any depth", ["top.ts", "src/deep/inner.ts", "src/app.ts"].every((file) => any.includes(file)), any)
+    check("hidden files are searched, .git and .gitignore'd files are not", any.includes(".hidden/secret.ts") && !any.includes("ignored/skip.ts") && !any.includes("config.ts"), any)
+    const sub = posix((await findTool("glob")!.execute({ pattern: "*.ts", path: "src" }, inTree("g-e2-2"))).output)
+    check("a name glob inside a subdirectory finds its files", sub.includes("src/app.ts") && sub.includes("src/deep/inner.ts") && !sub.includes("top.ts"), sub)
+    const anchored = posix((await findTool("glob")!.execute({ pattern: "src/*.ts" }, inTree("g-e2-3"))).output)
+    check("a glob with a slash is anchored to the folder searched", anchored.includes("src/app.ts") && !anchored.includes("inner.ts"), anchored)
+    const logs = posix((await findTool("glob")!.execute({ pattern: "*.log" }, inTree("g-e2-4"))).output)
+    check("an ignore rule can be negated", logs.includes("keep.log") && !logs.includes("debug.log"), logs)
+    const found = posix((await findTool("grep")!.execute({ pattern: "needle", include: "*.ts" }, inTree("g-e2-5"))).output)
+    check(
+      "grep's include matches at any depth and skips ignored files",
+      found.includes("src/deep/inner.ts") && found.includes(".hidden/secret.ts") && !found.includes("ignored/") && !found.includes(".log"),
+      found,
+    )
+    await fs.rm(tree, { recursive: true, force: true })
+  }
+
+  // E24 and E25: read, edit, glob and grep as MiMo's.
+  {
+    const e24 = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-read-"))
+    const put = async (rel: string, data: string | Buffer) => {
+      await fs.mkdir(path.dirname(path.join(e24, rel)), { recursive: true })
+      await fs.writeFile(path.join(e24, rel), data)
+    }
+    const inE24 = (callID: string) => ({ ...context(callID), sessionID: "ses_e24", directory: e24 })
+    const run = (tool: string, input: Record<string, unknown>, callID: string) =>
+      findTool(tool)!
+        .execute(input, inE24(callID))
+        .then(
+          (result) => ({ output: result.output, metadata: result.metadata }),
+          (error: Error) => ({ output: `ERROR ${error.message}`, metadata: undefined as Record<string, unknown> | undefined }),
+        )
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+
+    await put("AGENTS.md", "Root rule.\n")
+    await put("src/a.ts", "alpha\n")
+    await put("src/lib/b.ts", "beta\n")
+    const listing = await run("read", { file_path: "src" }, "r-dir")
+    check("reading a folder lists it, folders marked, with a count", listing.output.includes("<type>directory</type>") && listing.output.includes("a.ts\nlib/") && listing.output.includes("(2 entries)"), listing.output)
+    await put("wide.txt", "z".repeat(2500))
+    check("a line past 2,000 characters is cut with a note", (await run("read", { file_path: "wide.txt" }, "r-wide")).output.includes("(line cut at 2000 characters)"))
+    await put("big.txt", Array.from({ length: 1000 }, (_, i) => `${i + 1} ${"y".repeat(96)}`).join("\n"))
+    const big = await run("read", { file_path: "big.txt" }, "r-big")
+    check("50 KB of text stops the read and says where to continue", big.metadata?.truncated === true && big.output.includes("Stopped at 50 KB") && big.output.includes("offset="), big.output.slice(-200))
+    check("an offset past the end is refused", (await run("read", { file_path: "src/a.ts", offset: 50 }, "r-past")).output.startsWith("ERROR Offset 50 is past the end"))
+    check("an offset below 1 is refused", (await run("read", { file_path: "src/a.ts", offset: 0 }, "r-zero")).output.startsWith("ERROR offset"))
+    await put("blob.txt", Buffer.from([65, 0, 66]))
+    check("a file with a NUL in it is binary", (await run("read", { file_path: "blob.txt" }, "r-bin")).output.startsWith("ERROR Cannot read binary file"))
+    await put("pic.png", "not really")
+    const picture = await run("read", { file_path: "pic.png" }, "r-png")
+    check("an image is named and left unread, not an error", !picture.output.startsWith("ERROR") && picture.output.includes("cannot attach it"), picture.output)
+    await put("pkg/AGENTS.md", "Pkg rule: tabs.\n")
+    await put("pkg/deep/code.ts", "code\n")
+    const nestedRead = await run("read", { file_path: "pkg/deep/code.ts" }, "r-agents1")
+    check(
+      "instructions between the file and the project root come with it, the root's own do not",
+      nestedRead.output.includes("Pkg rule: tabs.") && !nestedRead.output.includes("Root rule.") && Array.isArray(nestedRead.metadata?.loaded) && (nestedRead.metadata?.loaded as unknown[]).length === 1,
+      nestedRead.output,
+    )
+    check("and only once in a conversation", !(await run("read", { file_path: "pkg/deep/code.ts" }, "r-agents2")).output.includes("Pkg rule: tabs."))
+
+    await put("crlf.txt", "one\r\ntwo\r\n")
+    await run("edit", { file_path: "crlf.txt", old_string: "one\ntwo", new_string: "uno\ndos" }, "e-crlf")
+    check("an edit keeps a file's CRLF line endings", (await fs.readFile(path.join(e24, "crlf.txt"), "utf8")) === "uno\r\ndos\r\n")
+    await run("edit", { file_path: "made/new.txt", old_string: "", new_string: "fresh\n" }, "e-create")
+    check("an empty old_string writes the whole file, creating it", (await fs.readFile(path.join(e24, "made", "new.txt"), "utf8").catch(() => "")) === "fresh\n")
+    await put("indent.txt", "    indented line\n")
+    const miss = await run("edit", { file_path: "indent.txt", old_string: "  indented   line", new_string: "x" }, "e-miss")
+    check("a text not found comes back with the closest text in the file", miss.output.startsWith("ERROR old_string was not found") && miss.output.includes("closest text") && miss.output.includes("    indented line"), miss.output)
+    await put("twice.txt", "x\nx\n")
+    check("two matches without replace_all say so", (await run("edit", { file_path: "twice.txt", old_string: "x", new_string: "y" }, "e-twice")).output.includes("replace_all is not set"))
+
+    for (let i = 0; i < 150; i++) await put(`many/f${i}.txt`, "n")
+    const many = await run("glob", { pattern: "*.txt", path: "many" }, "g-many")
+    check("glob lists at most 100 and says there were more", many.output.split("\n").filter((line) => line.endsWith(".txt")).length === 100 && many.metadata?.truncated === true, many.output.slice(-200))
+    check("glob's path has to be a folder", (await run("glob", { pattern: "*", path: "src/a.ts" }, "g-file")).output.includes("has to be a folder"))
+    const inFile = await run("grep", { pattern: "x", path: "twice.txt" }, "gr-file")
+    check("grep searches a single file named as its path", inFile.output === `Found 2 matches\n${path.join(e24, "twice.txt")}:\n  Line 1: x\n  Line 2: x`, inFile.output)
+    await put("old.md", "needle\n")
+    const hourAgo = (Date.now() - 3_600_000) / 1000
+    await fs.utimes(path.join(e24, "old.md"), hourAgo, hourAgo)
+    await put("new.md", "needle\n")
+    const sorted = await run("grep", { pattern: "needle", include: "*.md" }, "gr-sort")
+    check("grep lists the newest file first", sorted.output.indexOf("new.md") !== -1 && sorted.output.indexOf("new.md") < sorted.output.indexOf("old.md"), sorted.output)
+    await put("long.txt", `needle${"q".repeat(2500)}`)
+    const longHit = await run("grep", { pattern: "needle", path: "long.txt" }, "gr-long")
+    check("a matching line past 2,000 characters is cut", longHit.output.endsWith("...") && !longHit.output.includes("q".repeat(2001)), longHit.output.slice(-40))
+    clearInterval(approving)
+    await fs.rm(e24, { recursive: true, force: true })
+  }
+
+  // E30: MiMo's notebook_edit.
+  {
+    const nb = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-notebook-"))
+    const file = path.join(nb, "work.ipynb")
+    const notebook = {
+      nbformat: 4,
+      nbformat_minor: 4,
+      metadata: {},
+      cells: [
+        { cell_type: "code", source: ["print(1)\n", "print(2)"], metadata: { tag: "keep" }, outputs: [{ output_type: "stream", text: ["1\n"] }], execution_count: 3 },
+        { cell_type: "markdown", source: ["# Title"], metadata: {} },
+      ],
+    }
+    await fs.writeFile(file, JSON.stringify(notebook, null, 1) + "\n")
+    const inNotebook = (callID: string) => ({ ...context(callID), directory: nb })
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+    const change = (input: Record<string, unknown>, callID: string) =>
+      findTool("notebook_edit")!
+        .execute(input, inNotebook(callID))
+        .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+    type Cell = { id: string; cell_type: string; source: string[]; outputs?: unknown[]; execution_count?: number | null; metadata?: Record<string, unknown> }
+    const load = async () => JSON.parse(await fs.readFile(file, "utf8")) as { nbformat_minor: number; cells: Cell[] }
+
+    const replaced = await change({ notebook_path: "work.ipynb", cell_id: "#0", new_source: "print(10)\nprint(20)" }, "nb-1")
+    let doc = await load()
+    check(
+      "replacing a code cell by #N keeps its outputs, count and metadata",
+      !replaced.startsWith("ERROR") &&
+        JSON.stringify(doc.cells[0].source) === JSON.stringify(["print(10)\n", "print(20)"]) &&
+        doc.cells[0].outputs?.length === 1 &&
+        doc.cells[0].execution_count === 3 &&
+        doc.cells[0].metadata?.tag === "keep",
+      { replaced, cell: doc.cells[0] },
+    )
+    check("cells without ids get eight-character ids and the notebook is marked 4.5", doc.cells.every((cell) => /^[0-9a-f-]{8}$/.test(cell.id)) && doc.nbformat_minor === 5, doc)
+    check("the file keeps its trailing newline", (await fs.readFile(file, "utf8")).endsWith("}\n"))
+    const firstID = doc.cells[0].id
+    await change({ notebook_path: "work.ipynb", cell_id: firstID, edit_mode: "insert", cell_type: "markdown", new_source: "Notes" }, "nb-2")
+    await change({ notebook_path: "work.ipynb", edit_mode: "insert", cell_type: "code", new_source: "" }, "nb-3")
+    doc = await load()
+    check(
+      "insert goes after the named cell, or first without one",
+      doc.cells.length === 4 && doc.cells[0].cell_type === "code" && doc.cells[0].source.length === 0 && doc.cells[1].id === firstID && JSON.stringify(doc.cells[2].source) === '["Notes"]',
+      doc.cells.map((cell) => [cell.cell_type, cell.source]),
+    )
+    await change({ notebook_path: "work.ipynb", cell_id: "#3", edit_mode: "delete" }, "nb-4")
+    doc = await load()
+    check("delete removes the cell", doc.cells.length === 3 && !doc.cells.some((cell) => JSON.stringify(cell.source) === '["# Title"]'), doc.cells.map((cell) => cell.source))
+    const unknownCell = await change({ notebook_path: "work.ipynb", cell_id: "nope", new_source: "x" }, "nb-5")
+    check("a cell that is not there is refused, naming the cells there are", unknownCell.startsWith("ERROR No cell nope") && unknownCell.includes(firstID), unknownCell)
+    check("only a .ipynb file is taken", (await change({ notebook_path: "notes.txt", cell_id: "#0", new_source: "x" }, "nb-6")).includes(".ipynb"))
+    check("an insert needs a cell type", (await change({ notebook_path: "work.ipynb", edit_mode: "insert", new_source: "x" }, "nb-7")).includes("cell_type is required"))
+    check(
+      "notebook_edit is withheld from plan and recorded as a file change",
+      !toolsFor("plan").some((tool) => tool.name === "notebook_edit") && toolsFor("build").some((tool) => tool.name === "notebook_edit") && reachOf("notebook_edit") === "reports",
+    )
+    clearInterval(approving)
+    await fs.rm(nb, { recursive: true, force: true })
+  }
+
+  // E26: MiMo's webfetch - formats, 5 MB, internal addresses refused before anything is sent, a Cloudflare challenge tried once more.
+  {
+    let challenged = 0
+    const site = createServer((request, response) => {
+      const agent = String(request.headers["user-agent"] ?? "")
+      if (request.url === "/page") {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" })
+        response.end(
+          `<html><head><title>T</title><style>.x{}</style></head><body><h1>Title</h1><p>Some <strong>bold</strong> and <a href="http://example.com/">a link</a>.</p><ul><li>one</li><li>two</li></ul><pre><code>let x = 1 &lt; 2</code></pre><script>secret()</script></body></html>`,
+        )
+      } else if (request.url === "/plain") {
+        response.writeHead(200, { "content-type": "text/plain" })
+        response.end("just text")
+      } else if (request.url === "/huge") {
+        response.writeHead(200, { "content-type": "text/plain", "content-length": String(6 * 1024 * 1024) })
+        response.flushHeaders()
+        setTimeout(() => response.destroy(), 300)
+      } else if (request.url === "/guarded") {
+        if (agent === "mcode") {
+          response.writeHead(200, { "content-type": "text/plain" })
+          response.end("past the challenge")
+        } else {
+          challenged++
+          response.writeHead(403, { "cf-mitigated": "challenge" })
+          response.end()
+        }
+      } else if (request.url === "/hop") {
+        response.writeHead(302, { location: "http://169.254.169.254/latest/meta-data" })
+        response.end()
+      } else if (request.url === "/pic") {
+        response.writeHead(200, { "content-type": "image/png" })
+        response.end(Buffer.from([137, 80, 78, 71]))
+      } else {
+        response.writeHead(404)
+        response.end()
+      }
+    })
+    const sitePort = await new Promise<number>((resolve) => site.listen(0, "127.0.0.1", () => resolve((site.address() as { port: number }).port)))
+    const base = `http://127.0.0.1:${sitePort}`
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+    const fetched = (input: Record<string, unknown>) =>
+      findTool("webfetch")!
+        .execute(input, context("wf"))
+        .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+
+    const markdown = await fetched({ url: `${base}/page` })
+    check(
+      "an HTML page comes back as Markdown by default",
+      markdown.includes("# Title") &&
+        markdown.includes("**bold**") &&
+        markdown.includes("[a link](http://example.com/)") &&
+        markdown.includes("- one") &&
+        markdown.includes("```\nlet x = 1 < 2\n```") &&
+        !markdown.includes("secret()") &&
+        !markdown.includes("<p>"),
+      markdown,
+    )
+    const words = await fetched({ url: `${base}/page`, format: "text" })
+    // The page's own "1 &lt; 2" decodes to a "<", so it is tags that must be gone, not the character.
+    check("format text keeps the words and drops the markup and scripts", words.includes("Title") && words.includes("bold") && !/<\/?[a-z]/i.test(words) && !words.includes("secret()"), words)
+    check("format html is the page as sent", (await fetched({ url: `${base}/page`, format: "html" })).includes("<h1>Title</h1>"))
+    check("a body that is not HTML comes back as it is", (await fetched({ url: `${base}/plain` })) === "just text")
+    check("a response over 5 MB is refused", (await fetched({ url: `${base}/huge` })).includes("larger than 5 MB"))
+    check("a Cloudflare challenge is tried once more as this app", (await fetched({ url: `${base}/guarded` })) === "past the challenge" && challenged === 1, challenged)
+    check("a redirect to an internal address is refused before it is followed", (await fetched({ url: `${base}/hop` })).startsWith("ERROR Refused"))
+    const refusedBefore = permissions.outstanding().length
+    check(
+      "an internal address is refused before anything is asked",
+      (await fetched({ url: "http://10.1.2.3/" })).startsWith("ERROR Refused") &&
+        (await fetched({ url: "http://[fe80::1]/" })).startsWith("ERROR Refused") &&
+        (await fetched({ url: "http://metadata.google.internal/" })).startsWith("ERROR Refused") &&
+        refusedBefore === 0,
+    )
+    check(
+      "the blocked ranges are MiMo's, loopback left out",
+      blockedIPv4("192.168.1.1") && blockedIPv4("100.100.100.200") && blockedIPv4("0.0.0.0") && !blockedIPv4("127.0.0.1") && !blockedIPv4("8.8.8.8") && blockedIPv6("::ffff:10.0.0.1") && blockedIPv6("fd00::1") && !blockedIPv6("::1"),
+    )
+    check("an image is named, not passed on", (await fetched({ url: `${base}/pic` })).includes("image/png"))
+    check("only http and https are fetched", (await fetched({ url: "ftp://example.com/" })).includes("http://"))
+    clearInterval(approving)
+    site.closeAllConnections()
+    await new Promise<void>((resolve) => site.close(() => resolve()))
+  }
+
+  // E27: MiMo's desktop never hands a GPT model apply_patch; every model edits with edit and write.
+  const surface = toolsFor("build").map((tool) => tool.name)
+  check("every model is offered edit and write, and no apply_patch", surface.includes("edit") && surface.includes("write") && !surface.includes("apply_patch") && findTool("apply_patch") === undefined, surface)
+
+  // E21: MiMo's shared cap - over 2,000 lines or 50 KB is cut, and the whole output saved to a file the result names.
+  {
+    const outputsDir = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-tool-output-"))
+    const outputs = new ToolOutputs(outputsDir)
+    const short = await outputs.cap("one\ntwo")
+    check("output inside the cap is left alone", short.text === "one\ntwo" && !short.truncated && short.file === undefined, short)
+    const many = Array.from({ length: 2500 }, (_, i) => `line ${i + 1}`).join("\n")
+    const cut = await outputs.cap(many)
+    const cutLines = cut.text.split("\n")
+    check(
+      "over 2,000 lines keeps the first 2,000 and says how many were cut",
+      cut.truncated && cutLines[0] === "line 1" && cutLines[1999] === "line 2000" && !cut.text.includes("line 2001") && cut.text.includes("500 lines cut"),
+      cut.text.slice(-300),
+    )
+    check("the complete output is saved and named", Boolean(cut.file) && cut.text.includes(cut.file ?? "?") && (await fs.readFile(cut.file ?? "", "utf8").catch(() => "")) === many)
+    const wide = await outputs.cap(`${"x".repeat(60 * 1024)}\nend`)
+    check("over 50 KB is cut by bytes", wide.truncated && wide.text.includes(`${60 * 1024 + 4} bytes cut`), wide.text.slice(0, 200))
+    const failing = await outputs.cap(Array.from({ length: 3000 }, (_, i) => `step ${i + 1}`).join("\n") + "\nError: the build failed")
+    check(
+      "an end that looks like a failure keeps the start and the end",
+      failing.truncated &&
+        failing.text.startsWith("step 1\n") &&
+        failing.text.includes("step 1400\n") &&
+        !failing.text.includes("step 1401\n") &&
+        failing.text.includes("Error: the build failed") &&
+        failing.text.includes("lines left out between the start and the end"),
+      failing.text.slice(0, 120),
+    )
+    check("a conversation that can start subagents is pointed at one", !cut.text.includes("subagent") && (await outputs.cap(many, true)).text.includes("explore subagent"))
+    check("only a saved output counts as the output folder", Boolean(cut.file) && outputs.holds(cut.file ?? "") && !outputs.holds(project))
+    const stopAsking = answer("reject")
+    const readBack = await findTool("read")!
+      .execute({ file_path: cut.file ?? "" }, { ...context("c-e21-read"), toolOutputs: outputs })
+      .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+    stopAsking()
+    check("a saved output is read without asking to leave the project", readBack.includes("line 1") && !readBack.startsWith("ERROR"), readBack.slice(0, 120))
+    const old = await outputs.save("old")
+    const fresh = await outputs.save("fresh")
+    const eightDaysAgo = (Date.now() - 8 * 24 * 60 * 60 * 1000) / 1000
+    await fs.utimes(old, eightDaysAgo, eightDaysAgo)
+    await outputs.sweep()
+    check("a saved output older than a week is swept and a new one kept", !(await exists(old)) && (await exists(fresh)))
+    await fs.rm(outputsDir, { recursive: true, force: true })
+  }
 
   const list = await findTool("list")!.execute({}, context("c4"))
   check("list renders a tree", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
@@ -866,7 +1202,7 @@ async function main() {
    * the project - but nothing reaches disk until the user has said yes.
    */
   const traversal = findTool("read")!
-    .execute({ path: "../../../etc/passwd" }, context("c6"))
+    .execute({ file_path: "../../../etc/passwd" }, context("c6"))
     .then(() => "read it", (error: unknown) => (error instanceof PermissionDenied ? "denied" : String(error)))
   await new Promise((resolve) => setTimeout(resolve, 60))
   const traversalPrompt = permissions.outstanding()
@@ -881,11 +1217,230 @@ async function main() {
     .catch((err: Error) => (refused = err.message.includes("Refused")))
   check("bash refuses recursive force delete", refused)
 
+  // E22: MiMo's bash - workdir, max_output_tokens with the middle left out and the whole saved, a timeout that returns what ran, the exit code kept out of the output.
+  {
+    const bashOutputs = new ToolOutputs(await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-output-")))
+    const bashContext = (callID: string) => ({ ...context(callID), toolOutputs: bashOutputs })
+    const bash = findTool("bash")!
+    const approving = setInterval(() => {
+      for (const request of permissions.outstanding()) permissions.respond(request.id, "once")
+    }, 10)
+    const long = await bash.execute({ command: `node -e "process.stdout.write('ab'.repeat(3000))"`, description: "Print a lot", max_output_tokens: 100 }, bashContext("b-e22-1"))
+    const whole = await fs.readFile(String(long.metadata?.outputPath ?? ""), "utf8").catch(() => "")
+    check(
+      "past max_output_tokens the middle is left out and the whole output saved",
+      long.output.startsWith("The output was cut: about 1500 tokens in all.") && long.output.includes("tokens left out") && long.metadata?.truncated === true && whole.length === 6000,
+      { output: long.output.slice(0, 200), metadata: long.metadata, saved: whole.length },
+    )
+    const where = await bash.execute({ command: `node -e "console.log(process.cwd())"`, workdir: "src" }, bashContext("b-e22-2"))
+    check("workdir sets where the command runs", where.output.trim().toLowerCase() === path.join(project, "src").toLowerCase(), where.output)
+    const failing = await bash.execute({ command: `node -e "process.exit(3)"` }, bashContext("b-e22-3"))
+    // PowerShell reports a failed native command as 1 rather than passing its code on; either way it is not 0.
+    check(
+      "an exit code is kept in metadata, not written into the output",
+      failing.output === "(no output)" && typeof failing.metadata?.exit === "number" && failing.metadata.exit !== 0,
+      failing,
+    )
+    const startedAt = Date.now()
+    const slow = await bash
+      .execute({ command: `node -e "console.log('started'); setInterval(() => {}, 1000)"`, timeout: 1500 }, bashContext("b-e22-4"))
+      .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+    check(
+      "a timeout stops the command and returns what it printed, with a note",
+      slow.includes("started") && slow.includes("1500 ms timeout") && !slow.startsWith("ERROR") && Date.now() - startedAt < 10_000,
+      slow,
+    )
+    if (process.platform === "win32") {
+      const python = await bash.execute({ command: `node -e "console.log(process.env.PYTHONIOENCODING)"` }, bashContext("b-e22-5"))
+      check("Python is told to write UTF-8 on Windows", python.output.trim() === "utf-8", python.output)
+    }
+    const negative = await bash.execute({ command: "echo x", timeout: -1 }, bashContext("b-e22-6")).then(() => "ran", (error: Error) => error.message)
+    check("a negative timeout is refused before anything runs", negative.includes("timeout"), negative)
+    clearInterval(approving)
+  }
+
+  // E23: what bash asks, as MiMo's tool reads a command - prefixes for "always", deletes asked on their own, outside folders first.
+  {
+    const e23 = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-scan-"))
+    const elsewhere = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-elsewhere-"))
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-bash-temp-"))
+    await fs.writeFile(path.join(e23, "notes.txt"), "x")
+    await fs.writeFile(path.join(elsewhere, "secret.txt"), "x")
+
+    const posix = await scanCommand("FOO=1 git status --short && npm run build -- --watch 2>&1 | tee log.txt; cd sub", e23, e23, false)
+    check(
+      "a command line is read as its simple commands, each saved by its prefix, a bare cd asking nothing",
+      JSON.stringify(posix.always) === JSON.stringify(["git status *", "npm run build *", "tee *"]) && posix.patterns.length === 3 && posix.deletes.length === 0,
+      posix,
+    )
+    check("substitutions are read too", simpleCommands('echo "$(rm -rf out)" `rm x`', false).some((entry) => entry.tokens[0] === "rm"))
+    check("MiMo's arities decide the prefix", arityPrefix(["docker", "compose", "up", "-d"]).join(" ") === "docker compose up" && arityPrefix(["kubectl", "get", "pods"]).join(" ") === "kubectl get" && arityPrefix(["myscript", "a"]).join(" ") === "myscript")
+    const deleting = await scanCommand("git push --force; Remove-Item -Recurse -Force build", e23, e23, true)
+    check("deletes and force pushes are picked out, PowerShell's too", deleting.deletes.length === 2 && !deleting.tempOnlyDeletes, deleting)
+    check("a plain push is not a delete", (await scanCommand("git push origin main", e23, e23, false)).deletes.length === 0)
+    const reaching = await scanCommand(`cat "${path.join(elsewhere, "secret.txt")}"`, e23, e23, false)
+    check("a file argument outside the project names its folder", reaching.dirs.length === 1 && path.resolve(reaching.dirs[0]) === path.resolve(elsewhere), reaching)
+    check("a delete only of files in the temp folder needs no question of its own", (await scanCommand(`rm "${path.join(scratch, "old.txt")}"`, e23, e23, false)).tempOnlyDeletes)
+    check("but one inside the project does, and so does one whose target is not known", !(await scanCommand("rm notes.txt", e23, e23, false)).tempOnlyDeletes && !(await scanCommand("rm $TARGET", e23, e23, false)).tempOnlyDeletes)
+
+    const gate = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS } }) } as never)
+    const seen: PermissionRequest[] = []
+    const replies: Record<string, PermissionResponse> = {}
+    const answering = setInterval(() => {
+      for (const request of gate.outstanding()) {
+        seen.push(request)
+        gate.respond(request.id, replies[request.kind] ?? "reject")
+      }
+    }, 10)
+    let calls = 0
+    const bashIn = (sessionID: string, command: string) =>
+      findTool("bash")!
+        .execute({ command }, { ...context(`b-e23-${++calls}`), sessionID, directory: e23, permissions: gate })
+        .then((result) => result.output, (error: Error) => `ERROR ${error.message}`)
+
+    await bashIn("s-e23", "rm notes.txt")
+    check("a delete is asked on its own, as one that is never remembered", seen.at(-1)?.kind === "bash" && seen.at(-1)?.forced === true, seen.at(-1))
+    check("and nothing was deleted when it was refused", await exists(path.join(e23, "notes.txt")))
+    const before = seen.length
+    await bashIn("s-e23", `cat "${path.join(elsewhere, "secret.txt")}"`)
+    check("a folder outside the project is asked about before the command", seen[before]?.kind === "outside" && seen.length === before + 1, seen.slice(before))
+    replies.outside = "once"
+    const tempAt = seen.length
+    await bashIn("s-e23", `rm "${path.join(scratch, "old.txt")}"`)
+    const tempBash = seen.slice(tempAt).find((request) => request.kind === "bash")
+    check("a delete of temp files asks as an ordinary command", tempBash !== undefined && tempBash.forced !== true, seen.slice(tempAt))
+    replies.bash = "always"
+    await bashIn("s-e23-a", "git status")
+    const alwaysAt = seen.length
+    await bashIn("s-e23-b", "git status --short")
+    check("always on a command covers its prefix in another conversation of the project", seen.length === alwaysAt, seen.slice(alwaysAt))
+
+    // As MiMo forces its delete question: commands allowed, or full access, still ask before a delete; only Deny refuses first.
+    const allowing = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, bash: "allow" }, accessLevel: "full" }) } as never)
+    const deleteUnderAllow = allowing
+      .ask({ sessionID: "s-allow", messageID: "m", callID: "c-allow-rm", kind: "bash", title: "t", subject: "rm x", forced: true })
+      .then(() => "allowed", (error: Error) => error.message)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const parkedDelete = allowing.outstanding()[0]
+    check("a delete asks even when commands are allowed, at full access", parkedDelete?.forced === true, parkedDelete)
+    if (parkedDelete) allowing.respond(parkedDelete.id, "reject")
+    await deleteUnderAllow
+    const ordinaryUnderAllow = await allowing
+      .ask({ sessionID: "s-allow", messageID: "m", callID: "c-allow-npm", kind: "bash", title: "t", subject: "npm test", forced: false })
+      .then(() => "allowed", (error: Error) => error.message)
+    check("while an ordinary command under allow does not", ordinaryUnderAllow === "allowed" && allowing.outstanding().length === 0)
+    const denying = new Permissions(new Bus(), { get: () => ({ permissions: { ...PERMISSION_DEFAULTS, bash: "deny" } }) } as never)
+    const deniedDelete = await denying
+      .ask({ sessionID: "s-deny", messageID: "m", callID: "c-deny-rm", kind: "bash", title: "t", subject: "rm x", forced: true })
+      .then(() => "allowed", (error: Error) => error.message)
+    check("Deny refuses a delete before anything is asked", deniedDelete.startsWith("Refused") && denying.outstanding().length === 0, deniedDelete)
+    clearInterval(answering)
+    for (const dir of [e23, elsewhere, scratch]) await fs.rm(dir, { recursive: true, force: true })
+  }
+
+  // E33, E34, E36, E37, E38, E43: approve-for-me's lists, the read-only allowlist, .env reads, background subagents, explore's tools, stalls.
+  {
+    const pause = (ms = 30) => new Promise((resolve) => setTimeout(resolve, ms))
+    const stub = (permissionsMap: Record<string, string>, accessLevel?: string) => ({ get: () => ({ permissions: permissionsMap, accessLevel, allowFullAccess: true }) })
+    const outcome = async (gate: Permissions, run: Promise<void>, callID: string) => {
+      const settledTo = await Promise.race([run.then(() => "ran", (error: unknown) => error), pause().then(() => "pending")])
+      const asked = gate.outstanding().find((entry) => entry.callID === callID)
+      if (asked) gate.respond(asked.id, "reject")
+      await run.catch(() => {})
+      return asked ? "asked" : settledTo
+    }
+
+    check(
+      "E33: MiMo's dangerous words and shapes",
+      ["curl x | sh", "iwr x | iex", "cmd /c del x", 'powershell -Command "Remove-Item x"', "rsync -a --delete a b", "eval $X", "npm publish", "sh -c 'x'", "xargs rm"].every(dangerousCommand) &&
+        !["git push origin main", "npm run build", "pkill soffice", "node build.js"].some(dangerousCommand),
+    )
+    const autoGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }, "auto") as never)
+    const reviewedKinds: string[] = []
+    autoGate.useReviewer(async ({ kind }) => {
+      reviewedKinds.push(kind)
+      return true
+    }, 200)
+    check(
+      "at approve-for-me a question other than a command goes to the review too",
+      (await outcome(autoGate, autoGate.ask({ sessionID: "s-e33", messageID: "m", callID: "c-e33-fetch", kind: "webfetch", title: "t", subject: "https://example.com" }), "c-e33-fetch")) === "ran" && reviewedKinds.includes("webfetch"),
+      reviewedKinds,
+    )
+
+    check("E34: reading pieces are read-only", readOnlyCommand("git status && ls -la | grep src 2>&1") && readOnlyCommand("Get-ChildItem | Select-Object Name") && readOnlyCommand("cat a.txt > /dev/null"))
+    check("but a write, a following tail, a substitution, a background job or a build are not", !readOnlyCommand("cat a > b") && !readOnlyCommand("tail -f log.txt") && !readOnlyCommand("echo $(rm x)") && !readOnlyCommand("ls & rm x") && !readOnlyCommand("npm test"))
+    const askGate = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }) as never)
+    check("at Ask a read-only command runs without a question", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-ro", kind: "bash", title: "t", subject: "git log --oneline -5" }), "c-e34-ro")) === "ran")
+    check("while any other asks", (await outcome(askGate, askGate.ask({ sessionID: "s-e34", messageID: "m", callID: "c-e34-rw", kind: "bash", title: "t", subject: "npm test" }), "c-e34-rw")) === "asked")
+
+    check("E36: .env and .env.local ask, .env.example does not", readAsks(".env") && readAsks("config/.env.local") && !readAsks("app/.env.example") && !readAsks("environment.ts"))
+    const readCheck = (gate: Permissions, file: string, callID: string) =>
+      outcome(gate, gate.check({ sessionID: "s-e36", messageID: "m", callID, tool: "read", kind: "read", arguments: { file_path: file } }), callID)
+    check("reading .env asks though reading is allowed", (await readCheck(askGate, ".env", "c-e36-env")) === "asked")
+    check("reading .env.example does not", (await readCheck(askGate, ".env.example", "c-e36-example")) === "ran")
+    const fullGate = new Permissions(new Bus(), stub(Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"]))) as never)
+    check("and at full access nothing asks", (await readCheck(fullGate, ".env", "c-e36-full")) === "ran")
+
+    const bgProject = path.join(root, "background-project")
+    const bg = new Permissions(new Bus(), stub({ ...PERMISSION_DEFAULTS }) as never)
+    bg.markBackground("s-child", "s-parent")
+    const command = (sessionID: string, callID: string, extra: Record<string, unknown> = {}) =>
+      bg.ask({ sessionID, messageID: "m", callID, kind: "bash", title: "t", subject: "npm test", patterns: ["npm test"], always: ["npm test *"], directory: bgProject, ...extra })
+    // Raced against a pause and anything left waiting refused, so a question raised by mistake fails the check rather than hanging the run.
+    const settledOrAsked = async (run: Promise<void>) => {
+      const result = await Promise.race([run.then(() => "ran", (error: unknown) => error), pause(200).then(() => "still waiting")])
+      bg.rejectAll("s-child")
+      await run.catch(() => {})
+      return result
+    }
+    const refusedChild = await settledOrAsked(command("s-child", "c-bg-1"))
+    check("E37: a background subagent's call nothing allows is refused without a question", refusedChild instanceof PermissionDenied && !refusedChild.byUser && bg.outstanding().length === 0, refusedChild)
+    const parentAsk = command("s-parent", "c-bg-2")
+    await pause(20)
+    const parentQuestion = bg.outstanding().find((entry) => entry.callID === "c-bg-2")
+    if (parentQuestion) bg.respond(parentQuestion.id, "always")
+    await parentAsk.catch(() => {})
+    check("one its project already allows with always runs", (await settledOrAsked(command("s-child", "c-bg-3"))) === "ran")
+    const childDelete = await settledOrAsked(command("s-child", "c-bg-4", { subject: "rm x", patterns: ["rm x"], always: [], forced: true }))
+    check("and a delete from the background is refused, never asked", childDelete instanceof PermissionDenied && bg.outstanding().length === 0, childDelete)
+    bg.markBackground("s-child", undefined)
+    const foreground = command("s-child", "c-bg-5", { subject: "rm y", patterns: ["rm y"], always: [], forced: true })
+    check("a subagent running in the foreground asks as a conversation does", (await outcome(bg, foreground, "c-bg-5")) === "asked")
+
+    check("E38: an explore subagent gets read, glob, grep, list, bash and webfetch only", toolsFor("explore").map((tool) => tool.name).sort().join() === "bash,glob,grep,list,read,webfetch", toolsFor("explore").map((tool) => tool.name))
+
+    const stallTimes = { ...STALL }
+    Object.assign(STALL, { headerMs: 300, chunkMs: 300 })
+    const quiet = createServer((request, response) => {
+      request.resume()
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "hi" } }] })}\n\n`)
+    })
+    const quietPort = await new Promise<number>((resolve) => quiet.listen(0, "127.0.0.1", () => resolve((quiet.address() as { port: number }).port)))
+    const stallStarted = Date.now()
+    // The check's own limit: a stall that never fires fails here after 5s instead of hanging the run.
+    const giveUp = new AbortController()
+    const stopWaiting = setTimeout(() => giveUp.abort(new Error("the stall never fired")), 5000)
+    const stalled = await OpenAICompatible.stream(
+      { apiKey: "k", model: { provider: "x", model: "m" }, system: "", history: [], tools: [], effort: "", variants: [], showReasoning: false, signal: giveUp.signal, baseURL: `http://127.0.0.1:${quietPort}/v1` },
+      () => {},
+    ).then(() => undefined, (error: unknown) => error)
+    clearTimeout(stopWaiting)
+    check("E43: a stream that goes quiet is cut off after the stall timeout, as a failure to retry", stalled instanceof Error && Date.now() - stallStarted < 5000 && isRetryable(stalled), String(stalled))
+    const waiting = stallGuard(new AbortController().signal, true)
+    await pause(450)
+    check("and so is a response whose headers never come", waiting.signal.aborted && isRetryable(waiting.failure(new Error("aborted"))))
+    waiting.dispose()
+    Object.assign(STALL, stallTimes)
+    quiet.closeAllConnections()
+    quiet.close()
+  }
+
   // -------------------------------------------------------------- permission
   section("Permissions")
   // edit is not auto-approved, so this must park until answered.
   const editPromise = findTool("edit")!.execute(
-    { path: "hello.ts", oldString: "const count = 1", newString: "const count = 2" },
+    { file_path: "hello.ts", old_string: "const count = 1", new_string: "const count = 2" },
     context("c8"),
   )
   await new Promise((resolve) => setTimeout(resolve, 60))
@@ -900,7 +1455,7 @@ async function main() {
   check("file actually changed on disk", afterEdit.includes("count = 2"), afterEdit)
 
   const denyPromise = findTool("write")!
-    .execute({ path: "denied.ts", content: "nope" }, context("c9"))
+    .execute({ file_path: "denied.ts", content: "nope" }, context("c9"))
     .then(() => "allowed")
     .catch((err: Error) => err.message)
   await new Promise((resolve) => setTimeout(resolve, 60))
@@ -911,12 +1466,12 @@ async function main() {
   check("rejected write created no file", !(await exists(path.join(project, "denied.ts"))))
 
   // "always" should suppress the next prompt in the same bucket.
-  const firstWrite = findTool("write")!.execute({ path: "a.txt", content: "one" }, context("c10"))
+  const firstWrite = findTool("write")!.execute({ file_path: "a.txt", content: "one" }, context("c10"))
   await new Promise((resolve) => setTimeout(resolve, 60))
   const third = permissions.outstanding()
   permissions.respond(third[0].id, "always")
   await firstWrite
-  await findTool("write")!.execute({ path: "b.txt", content: "two" }, context("c11"))
+  await findTool("write")!.execute({ file_path: "b.txt", content: "two" }, context("c11"))
   check("always suppresses the next prompt", permissions.outstanding().length === 0)
   check("both writes landed", (await exists(path.join(project, "a.txt"))) && (await exists(path.join(project, "b.txt"))))
 
@@ -954,6 +1509,61 @@ async function main() {
   check("always on a delete is not remembered", againAsk?.forced === true, againAsk)
   if (againAsk) permissions.respond(againAsk.id, "reject")
   await again
+
+  // E35: "always" is kept per project, as a pattern, and lets through what is still waiting that it now covers.
+  {
+    const projectA = path.join(root, "rules-a")
+    const projectB = path.join(root, "rules-b")
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 20))
+    const inProject = (sessionID: string, directory: string, callID: string, command: string, always: string[]) =>
+      permissions
+        .ask({ sessionID, messageID: "m-rules", callID, kind: "bash", title: "t", subject: command, patterns: [command], always, directory })
+        .then(() => "allowed", (err: Error) => err.message)
+    const waiting = (callID: string) => permissions.outstanding().find((entry) => entry.callID === callID)
+    const settleIfAsked = (callID: string) => {
+      const asked = waiting(callID)
+      if (asked) permissions.respond(asked.id, "reject")
+      return Boolean(asked)
+    }
+
+    // Commands that ask: a read-only one (git status) runs without a question at all.
+    const first = inProject("s-rule-1", projectA, "c-rule-1", "npm run build", ["npm run build *"])
+    await pause()
+    const firstAsk = waiting("c-rule-1")
+    if (firstAsk) permissions.respond(firstAsk.id, "always")
+    await first
+    const same = inProject("s-rule-2", projectA, "c-rule-2", "npm run build --watch", ["npm run build *"])
+    await pause()
+    check("always on a command prefix covers it in another conversation of the same project", Boolean(firstAsk) && !settleIfAsked("c-rule-2") && (await same) === "allowed")
+    const otherCommand = inProject("s-rule-2", projectA, "c-rule-3", "npm test", ["npm test *"])
+    await pause()
+    check("but not a command with another prefix", settleIfAsked("c-rule-3"))
+    await otherCommand
+    const otherProject = inProject("s-rule-3", projectB, "c-rule-4", "npm run build", ["npm run build *"])
+    await pause()
+    check("nor the same command in another project", settleIfAsked("c-rule-4"))
+    await otherProject
+
+    const heard: PermissionRecord[] = []
+    const stopHearing = permissions.onDecided("c-rule-6", (record) => heard.push(record))
+    const logOne = inProject("s-rule-4", projectA, "c-rule-5", "make all", ["make all *"])
+    const logTwo = inProject("s-rule-5", projectA, "c-rule-6", "make all -j2", ["make all *"])
+    await pause()
+    const logAsk = waiting("c-rule-5")
+    if (logAsk) permissions.respond(logAsk.id, "always")
+    // Raced against a pause and settled after, so a release that never comes fails here rather than hanging the run.
+    const secondSettled = await Promise.race([logTwo, new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 500))])
+    const stillParked = settleIfAsked("c-rule-6")
+    check("answering always lets through a question already waiting that it covers", (await logOne) === "allowed" && secondSettled === "allowed" && !stillParked, secondSettled)
+    await logTwo
+    check("recorded as let through by that always", heard[0]?.decided === "allow-always", heard)
+    stopHearing()
+
+    check(
+      "MiMo's wildcard: a trailing ' *' also matches the words alone, slashes match either way",
+      wildcardMatch("git status", "git status *") && wildcardMatch("git status -s", "git status *") && !wildcardMatch("git statusx", "git status *") && wildcardMatch("C:\\work\\a\\b.txt", "C:/work/*"),
+    )
+  }
 
   // A decided question is reported to whoever listens for its call, so the part can keep it.
   {
@@ -1246,11 +1856,11 @@ async function main() {
   section("Tool arguments")
   {
     const readSchema = findTool("read")!.parameters
-    check("arguments that fit have no problems", argumentProblems(readSchema, { path: "a.ts", limit: 20 }).length === 0)
+    check("arguments that fit have no problems", argumentProblems(readSchema, { file_path: "a.ts", limit: 20 }).length === 0)
     const missing = argumentProblems(readSchema, {})
-    check("a missing required field is named", missing.length === 1 && missing[0] === "path is required", missing)
-    const wrong = argumentProblems(readSchema, { path: 5 })
-    check("a wrong type is named with what arrived", wrong[0] === "path should be string, got integer", wrong)
+    check("a missing required field is named", missing.length === 1 && missing[0] === "file_path is required", missing)
+    const wrong = argumentProblems(readSchema, { file_path: 5 })
+    check("a wrong type is named with what arrived", wrong[0] === "file_path should be string, got integer", wrong)
     const nestedEnum = { type: "object", properties: { todos: { type: "array", items: { type: "object", properties: { status: { type: "string", enum: ["pending", "done"] } } } } } }
     const todos = argumentProblems(nestedEnum, {
       todos: [{ id: "1", content: "x", status: "doing" }],
@@ -1259,6 +1869,16 @@ async function main() {
     check(
       "a schema construct the checker does not know is let through",
       argumentProblems({ type: "object", properties: { value: { anyOf: [{ type: "string" }, { type: "number" }] } } }, { value: true }).length === 0,
+    )
+    // E20: MiMo's repair of a tool call.
+    const offered = repairableNames()
+    check(
+      "a tool name is repaired by case, then with dashes, underscores and spaces ignored",
+      resolveToolName("READ", offered) === "read" && resolveToolName("NotebookEdit", offered) === "notebook_edit" && resolveToolName("mcp__fake__echo", ["fake_echo"]) === "fake_echo" && resolveToolName("reed", offered) === undefined,
+    )
+    check(
+      "argument names are put onto the schema's spelling, an exact one winning",
+      JSON.stringify(normalizeToolInput({ filePath: "a.ts", offset: 2 }, readSchema)) === JSON.stringify({ offset: 2, file_path: "a.ts" }) && normalizeToolInput({ file_path: "x", filePath: "y" }, readSchema).file_path === "x",
     )
     const note = refusedArgumentsNote("read", wrong)
     check("the note says nothing ran and what to send", note.includes("was not run") && note.includes("path should be string"), note)
@@ -2390,7 +3010,7 @@ async function main() {
     }
 
     // Arguments that do not fit: refused before running, marked recoverable, and the turn goes on.
-    replies.push(toolCall("call_badargs", "read", '{"path": 5}'))
+    replies.push(toolCall("call_badargs", "read", '{"file_path": 5}'))
     let from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "read something" })
     check("the turn with a refused call finished", await idle(from))
@@ -2406,12 +3026,20 @@ async function main() {
     )
 
     // Arguments that are not JSON at all.
-    replies.push(toolCall("call_cutoff", "read", '{"path": "hel'))
+    replies.push(toolCall("call_cutoff", "read", '{"file_path": "hel'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "read again" })
     await idle(from)
     found = await toolPart("call_cutoff")
     check("arguments cut off mid-object are refused the same way", found.part?.metadata?.recoverable === true && String(found.part?.error).includes("not valid JSON"), found.part)
+
+    // E20: through a real turn, a name in the wrong case and an argument named its own way are repaired.
+    replies.push(toolCall("call_repair", "READ", '{"filePath": "hello.ts"}'))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "read it by another name" })
+    await idle(from)
+    found = await toolPart("call_repair")
+    check("a mis-cased tool name and a camelCase argument are repaired and run", found.part?.name === "read" && found.part?.status === "completed" && found.part?.input?.file_path === "hello.ts", found.part)
 
     // A refusal with a reason: kept on the part, and the turn ends there, as MiMo stops on a rejection.
     const askedFor = (callID: string, since: number) =>
@@ -2425,7 +3053,7 @@ async function main() {
           }
         }, 50)
       })
-    replies.push(toolCall("call_perm", "write", '{"path": "steps-denied.md", "content": "no"}'))
+    replies.push(toolCall("call_perm", "write", '{"file_path": "steps-denied.md", "content": "no"}'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "write a note" })
     const asked = await askedFor("call_perm", from)
@@ -2453,7 +3081,7 @@ async function main() {
     )
 
     // A refusal without a reason ends the turn the same way.
-    replies.push(toolCall("call_perm_bare", "write", '{"path": "steps-bare.md", "content": "no"}'))
+    replies.push(toolCall("call_perm_bare", "write", '{"file_path": "steps-bare.md", "content": "no"}'))
     from = events.length
     await call({ type: "session.prompt", sessionID: stepsID, text: "write another note" })
     const bareAsk = await askedFor("call_perm_bare", from)
@@ -2464,6 +3092,38 @@ async function main() {
     const bareKept = (found.part?.metadata?.permissions ?? []) as PermissionRecord[]
     check("a refusal without a reason ends the turn too", found.last?.finish === "aborted" && bodies.length === requestsBeforeBare, [found.last?.finish, bodies.length - requestsBeforeBare])
     check("recorded as a plain reject", bareKept[0]?.decided === "reject" && bareKept[0]?.reason === undefined, bareKept)
+
+    /*
+     * E21: a tool that does not cap its own output is cut by the runner's shared cap before the model reads it,
+     * and the whole of it saved. read, glob, grep and bash cap themselves, as MiMo's do, so an MCP tool carries it.
+     */
+    await call({ type: "config.set", patch: { mcpServers: { rich: { type: "local", command: ["node", path.join(process.cwd(), "scripts/fixtures/mcp-rich-server.cjs")] } } } })
+    const richUp = await (async () => {
+      const end = Date.now() + 20_000
+      while (Date.now() < end) {
+        const listed = await call({ type: "mcp.list" })
+        if (listed.servers.some((server: { name: string; status: string }) => server.name === "rich" && server.status === "connected")) return true
+        await new Promise((resolve) => setTimeout(resolve, 100))
+      }
+      return false
+    })()
+    check("the MCP server with a long output connects", richUp)
+    replies.push(toolCall("call_long", "rich_big", "{}"))
+    from = events.length
+    await call({ type: "session.prompt", sessionID: stepsID, text: "fetch the long output" })
+    const longAsk = await askedFor("call_long", from)
+    if (longAsk) await call({ type: "permission.respond", requestID: longAsk, response: "once" })
+    check("the turn with a long output finished", await idle(from))
+    found = await toolPart("call_long")
+    const savedAt = String(found.part?.metadata?.outputPath ?? "")
+    check(
+      "a long tool output is cut by the shared cap, and says where the rest is",
+      found.part?.status === "completed" && found.part?.metadata?.truncated === true && String(found.part?.output).includes(savedAt) && !String(found.part?.output).includes("row 1000 "),
+      { metadata: found.part?.metadata, tail: String(found.part?.output).slice(-300) },
+    )
+    check("the saved file holds the whole output", savedAt !== "" && (await fs.readFile(savedAt, "utf8").catch(() => "")).includes("row 1000 "))
+    check("and the model was sent the cut output", !JSON.stringify(bodies.at(-1) ?? {}).includes("row 1000 ") && JSON.stringify(bodies.at(-1) ?? {}).includes("row 1 "))
+    await call({ type: "config.set", patch: { mcpServers: {} } })
 
     // A transient failure: retried in the open, then the turn completes.
     replies.push((response) => {
@@ -2515,9 +3175,14 @@ async function main() {
       request.on("end", () => {
         seen = JSON.parse(raw)
         response.writeHead(200, { "content-type": "text/event-stream" })
+        // MiMo's judge answers through its verdict tool; a verdict written as text is no answer.
+        const answer =
+          verdict === "TEXT"
+            ? { choices: [{ delta: { content: "APPROVE" } }] }
+            : { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_verdict", type: "function", function: { name: "permission_verdict", arguments: JSON.stringify({ decision: verdict }) } }] } }] }
         response.end(
-          `data: ${JSON.stringify({ choices: [{ delta: { content: verdict } }] })}\n\n` +
-            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\n` +
+          `data: ${JSON.stringify(answer)}\n\n` +
+            `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: verdict === "TEXT" ? "stop" : "tool_calls" }] })}\n\n` +
             "data: [DONE]\n\n",
         )
       })
@@ -2537,17 +3202,25 @@ async function main() {
 
     const before = events.length
     check("a risky command the model approves runs", (await within(askRun("sudo apt install x"), 10_000)) === "ran", seen)
-    check("the model was asked with no tools", Array.isArray(seen?.tools) ? seen.tools.length === 0 : seen?.tools === undefined, seen?.tools)
+    check("the model was asked with only the verdict tool", Array.isArray(seen?.tools) && seen.tools.length === 1 && seen.tools[0]?.function?.name === "permission_verdict", seen?.tools)
     const sent = JSON.stringify(seen?.messages ?? [])
-    check("and was shown the command and what it is flagged as", sent.includes("sudo apt install x") && sent.includes("Flagged as: elevate"), sent.slice(0, 400))
-    check("and told to answer in one word", sent.includes("APPROVE or REJECT"), sent.slice(0, 400))
+    check("and was shown what is asked and the command", sent.includes("sudo apt install x") && sent.includes("bash"), sent.slice(0, 400))
+    check("and told to answer through the verdict tool, with 64 tokens", sent.includes("permission_verdict") && seen?.max_tokens === 64, { sent: sent.slice(0, 400), max: seen?.max_tokens })
     check(
       "and nothing was asked of the user",
       !events.slice(before).some((event) => event.type === "permission.requested" && event.request.sessionID === judgedID),
       events.slice(before).map((event) => event.type),
     )
 
-    verdict = "REJECT"
+    verdict = "TEXT"
+    const inProse = askRun("chmod 700 run.sh")
+    check("an APPROVE written as text is no answer, so the user is asked", (await within(inProse, 3_000)) === "waiting")
+    const proseQuestion = events.slice(before).find((event) => event.type === "permission.requested" && event.request.subject === "chmod 700 run.sh")
+    if (proseQuestion) gateOf.respond((proseQuestion as any).request.id, "reject")
+    await inProse.catch(() => {})
+    check("the verdict counts only as one call with only a decision", verdictApproves([{ name: "permission_verdict", input: { decision: "APPROVE" } }], "") && !verdictApproves([{ name: "permission_verdict", input: { decision: "APPROVE", why: "x" } }], "") && !verdictApproves([{ name: "permission_verdict", input: { decision: "APPROVE" } }], "sure"))
+
+    verdict = "DENY"
     const rejected = askRun("taskkill /F /IM node.exe")
     check("one the model rejects waits for the user", (await within(rejected, 3_000)) === "waiting")
     const question = events
@@ -5976,6 +6649,7 @@ async function main() {
   await sessionChatChecks(root, project)
   await projectListChecks()
   await deliveredToolChecks(root)
+  await mcpChecks(project)
   await skillChecks(root)
   taskChecks()
   await commandTemplateChecks(root)
@@ -6911,7 +7585,8 @@ async function subagentChecks(root: string) {
       }
       if (prompt.includes("PERM")) {
         if (answered) return say("perm done")
-        return call([{ name: "bash", input: { command: "echo subagent", description: "Say something" } }])
+        // Not a read-only command, which would run without asking at all.
+        return call([{ name: "bash", input: { command: "node -e \"console.log('subagent')\"", description: "Say something" } }])
       }
       // STRUCT returns its result through StructuredOutput; STRUCTLATE only once reminded; STRUCTNEVER never does.
       if (prompt.includes("STRUCT")) {
@@ -7419,7 +8094,9 @@ async function sessionChatChecks(root: string, project: string) {
       const at = TOOLS.findIndex((tool) => tool.name === "contacts")
       return (
         TOOLS.slice(at, at + 4).map((tool) => tool.name).join() === "contacts,talk_to_session,create_session,update_session" &&
-        TOOLS[at - 1]?.name === "set_desktop_setting" &&
+        // notebook_edit sits between the window tools and them.
+        TOOLS[at - 1]?.name === "notebook_edit" &&
+        TOOLS[at - 2]?.name === "set_desktop_setting" &&
         // Only tools added since (the skill tools, then history, memory, cron and scheduled tasks) come after them.
         TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update"].includes(tool.name))
       )
@@ -7643,6 +8320,236 @@ async function sessionChatChecks(root: string, project: string) {
   check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("no longer exists"), gone)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
+}
+
+/** Round 5 (E45-E49): MCP tool names, the folder a server starts in, messages a server sends first, results, Stop and timeouts, remote transports, sampling. */
+async function mcpChecks(project: string) {
+  section("MCP servers (round 5)")
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const waitFor = async (test: () => boolean, ms: number) => {
+    const end = Date.now() + ms
+    while (Date.now() < end) {
+      if (test()) return true
+      await sleep(25)
+    }
+    return test()
+  }
+  const listen = (server: ReturnType<typeof createServer>) =>
+    new Promise<number>((resolve) => server.listen(0, "127.0.0.1", () => resolve((server.address() as { port: number }).port)))
+  const readBody = (request: import("node:http").IncomingMessage) =>
+    new Promise<string>((resolve) => {
+      let body = ""
+      request.on("data", (chunk) => (body += chunk))
+      request.on("end", () => resolve(body))
+    })
+
+  // A Streamable HTTP server that answers a call as an event stream with a ping of its own first.
+  const httpSeen: { session?: string; pingAnswered: boolean } = { pingAnswered: false }
+  const streamable = createServer(async (request, response) => {
+    if (request.method !== "POST") return void response.writeHead(405).end()
+    const message = JSON.parse(await readBody(request))
+    if (!message.method) {
+      if (message.id === "p1" && message.result) httpSeen.pingAnswered = true
+      return void response.writeHead(202).end()
+    }
+    if (message.id === undefined) return void response.writeHead(202).end()
+    const reply = (result: unknown) => {
+      response.writeHead(200, { "content-type": "application/json", "mcp-session-id": "sess-1" })
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }))
+    }
+    if (message.method === "initialize") reply({ protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "http", version: "1" } })
+    else if (message.method === "tools/list") reply({ tools: [{ name: "echo", inputSchema: { type: "object" } }] })
+    else if (message.method === "tools/call") {
+      httpSeen.session = String(request.headers["mcp-session-id"] ?? "")
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: "p1", method: "ping" })}\n\n`)
+      await sleep(100)
+      response.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: `http:${message.params.arguments.text}` }] } })}\n\n`)
+    } else reply({})
+  })
+  // An HTTP+SSE-only server: a POST to its address is refused, its event stream names where to post.
+  let legacyStream: ServerResponse | undefined
+  const legacy = createServer(async (request, response) => {
+    if (request.method === "GET") {
+      response.writeHead(200, { "content-type": "text/event-stream" })
+      response.write("event: endpoint\ndata: /messages?session=1\n\n")
+      legacyStream = response
+      return
+    }
+    if (!request.url?.startsWith("/messages")) return void response.writeHead(405).end()
+    const message = JSON.parse(await readBody(request))
+    response.writeHead(202).end()
+    if (message.id === undefined || !message.method) return
+    const push = (result: unknown) => legacyStream?.write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n\n`)
+    if (message.method === "initialize") push({ protocolVersion: message.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "legacy", version: "1" } })
+    else if (message.method === "tools/list") push({ tools: [{ name: "echo", inputSchema: { type: "object" } }] })
+    else if (message.method === "tools/call") push({ content: [{ type: "text", text: `legacy:${message.params.arguments.text}` }] })
+    else push({})
+  })
+  const httpPort = await listen(streamable)
+  const legacyPort = await listen(legacy)
+
+  const fixture = path.join(process.cwd(), "scripts/fixtures/mcp-rich-server.cjs")
+  const workFolder = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-mcp-cwd-"))
+  let servers: Record<string, McpServerConfig> = {
+    "my.server": { type: "local", command: ["node", fixture] },
+    quick: { type: "local", command: ["node", fixture], timeout: 400 },
+    web: { type: "remote", url: `http://127.0.0.1:${httpPort}/mcp`, oauth: false },
+    old: { type: "remote", url: `http://127.0.0.1:${legacyPort}/sse`, oauth: false },
+  }
+  const stubConfig = {
+    get: () => ({ mcpServers: servers, directory: workFolder }) as unknown as AppConfig,
+    set: async (patch: Partial<AppConfig>) => {
+      if (patch.mcpServers) servers = patch.mcpServers
+      return stubConfig.get()
+    },
+  }
+  const mcpBus = new Bus()
+  const counts: number[] = []
+  mcpBus.subscribe((event) => {
+    if (event.type === "mcp.status") counts.push(event.servers.find((entry) => entry.name === "my.server")?.tools ?? -1)
+  })
+  const mcp = new McpServers(mcpBus, stubConfig as never)
+  const sampled: { server: string; sessionID?: string }[] = []
+  mcp.useSampling(async (input) => {
+    sampled.push({ server: input.server, sessionID: input.sessionID })
+    return { role: "assistant", content: { type: "text", text: "sampled" }, model: "fake/m", stopReason: "endTurn" }
+  })
+  await mcp.sync()
+  const mcpContext = (callID: string, signal = new AbortController().signal) =>
+    ({ sessionID: "ses_mcp", messageID: "msg_mcp", callID, directory: project, permissions: { ask: async () => {} }, signal, progress: () => {}, snapshot: async () => {} }) as never
+  const named = (name: string) => mcp.tools().find((tool) => tool.name === name)
+  // A tool that is not there is a failed check, not a crash that hides every check after it.
+  const run = async (name: string, input: Record<string, unknown> = {}, signal?: AbortSignal) => {
+    const tool = named(name)
+    if (!tool) return `ERROR no tool named ${name}`
+    return tool.execute(input, mcpContext(`m-${name}`, signal)).then(
+      (result) => result.output,
+      (error: Error) => `ERROR ${error.message}`,
+    )
+  }
+  check("every configured server connects, both remote transports included", mcp.list().every((entry) => entry.status === "connected"), mcp.list())
+
+  // E45
+  check(
+    "an MCP tool is named server_tool with everything outside [a-zA-Z0-9_-] as _",
+    Boolean(named("my_server_echo")) && Boolean(named("my_server_ask-model")) && mcp.tools().every((tool) => /^[a-zA-Z0-9_-]+$/.test(tool.name)),
+    mcp.tools().map((tool) => tool.name),
+  )
+  const echoSchema = named("my_server_echo")?.parameters
+  check(
+    "its schema is made a closed object",
+    echoSchema?.type === "object" && echoSchema.additionalProperties === false && JSON.stringify(echoSchema.properties) === JSON.stringify({ text: { type: "string" } }),
+    echoSchema,
+  )
+  check("a server with no schema gets empty properties", JSON.stringify(mcpToolSchema(undefined)) === JSON.stringify({ type: "object", properties: {}, additionalProperties: false }))
+
+  // E46
+  const where = await run("my_server_where")
+  check("a local server starts in the project folder", path.resolve(where).toLowerCase() === path.resolve(workFolder).toLowerCase(), { where, workFolder })
+
+  // E47
+  const countsBefore = counts.length
+  await run("my_server_grow")
+  const grew = await waitFor(() => Boolean(named("my_server_extra")), 3000)
+  check("tools/list_changed refetches a server's tools and says so", grew && counts.slice(countsBefore).includes(10), counts.slice(countsBefore))
+  check("a server request reusing a waiting call's id is answered, not taken for the call's reply", (await run("my_server_collide")) === "pong:{}")
+  check("Streamable HTTP: a call answered as an event stream, with the session sent back", (await run("web_echo", { text: "hi" })) === "http:hi" && httpSeen.session === "sess-1", httpSeen)
+  check("and the server's own ping inside that stream is answered", await waitFor(() => httpSeen.pingAnswered, 2000))
+  check("a server that only speaks HTTP+SSE is reached through the fallback", (await run("old_echo", { text: "hi" })) === "legacy:hi")
+
+  // E48
+  const shape = await run("my_server_shape")
+  check(
+    "a result keeps text and resource text, names what it leaves out, lists a link and appends structured content",
+    shape ===
+      ["alpha", "[image/png image left out: this app cannot pass it to the model]", "resource body", "doc: https://example.com/doc"].join("\n\n") +
+        '\n\nStructured content:\n{"answer":42}',
+    shape,
+  )
+  check("structured content the text already carries is not repeated", mcpToolOutput({ content: [{ type: "text", text: '{"a":1}' }], structuredContent: { a: 1 } }).output === '{"a":1}')
+  check("structured content alone is the whole output", mcpToolOutput({ content: [], structuredContent: { a: 1 } }).output === '{"a":1}')
+  const stopper = new AbortController()
+  const slow = run("my_server_slow", {}, stopper.signal)
+  await sleep(150)
+  const stoppedAt = Date.now()
+  stopper.abort()
+  const slowResult = await slow
+  check("Stop settles an MCP call at once", slowResult === "ERROR The MCP call was stopped" && Date.now() - stoppedAt < 500, slowResult)
+  const parsed = (text: string): unknown => {
+    try {
+      return JSON.parse(text)
+    } catch {
+      return text
+    }
+  }
+  const cancelledIDs = parsed(await run("my_server_cancelled"))
+  check("and the server is told to cancel it", Array.isArray(cancelledIDs) && cancelledIDs.length === 1, cancelledIDs)
+  const quickStart = Date.now()
+  const timedOut = await run("quick_slow")
+  check("a server's own timeout bounds its calls", timedOut === "ERROR tools/call timed out" && Date.now() - quickStart < 2000, { timedOut, ms: Date.now() - quickStart })
+
+  // E49
+  const asked = (parsed(await run("my_server_ask-model")) ?? {}) as { content?: { text?: string } }
+  check(
+    "a sampling request is answered, in the conversation whose call reached the server",
+    asked.content?.text === "sampled" && sampled[0]?.server === "my.server" && sampled[0]?.sessionID === "ses_mcp",
+    { asked, sampled },
+  )
+
+  mcp.close()
+  legacyStream?.end()
+  streamable.closeAllConnections()
+  legacy.closeAllConnections()
+  await new Promise<void>((resolve) => streamable.close(() => resolve()))
+  await new Promise<void>((resolve) => legacy.close(() => resolve()))
+
+  // The sampler itself: per-server policy, the question, and the model's answer over a fake provider.
+  const model = createServer(async (request, response) => {
+    await readBody(request)
+    response.writeHead(200, { "content-type": "text/event-stream" })
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "from the model" } }] })}\n\n`)
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })}\n\n`)
+    response.end("data: [DONE]\n\n")
+  })
+  const modelPort = await listen(model)
+  const policies: Record<string, McpServerConfig> = { off: { type: "local", sampling: "deny" }, open: { type: "local", sampling: "allow" }, asks: { type: "local" } }
+  const samplingConfig = {
+    get: () => ({ mcpServers: policies, model: { provider: "fake", model: "m" }, permissions: { ...PERMISSION_DEFAULTS } }),
+    definition: (id: string) => (id === "fake" ? { id: "fake", kind: "openai", baseURL: `http://127.0.0.1:${modelPort}/v1` } : undefined),
+    usable: () => true,
+    apiKey: () => "k",
+  }
+  const samplingGate = new Permissions(new Bus(), samplingConfig as never)
+  const sampler = createSampler({ config: samplingConfig as never, auth: {} as never, permissions: samplingGate })
+  const params = { messages: [{ role: "user", content: { type: "text", text: "hello" } }], maxTokens: 20 }
+  const signal = new AbortController().signal
+  const refusal = (promise: Promise<unknown>) => promise.then(() => undefined, (error: unknown) => error)
+  const off = await refusal(sampler({ server: "off", params, sessionID: "s", signal }))
+  check("a server set to deny is refused with MiMo's code -1", off instanceof McpRequestError && off.code === -1, off)
+  const nowhere = await refusal(sampler({ server: "asks", params, signal }))
+  check("asking with no conversation to ask in is refused, not left waiting", nowhere instanceof McpRequestError && nowhere.code === -1, nowhere)
+  const waiting = refusal(sampler({ server: "asks", params, sessionID: "s-sample", signal }))
+  await sleep(30)
+  const card = samplingGate.outstanding()[0]
+  check("unset, a server's sampling asks in that conversation", card?.sessionID === "s-sample" && card.subject === "asks" && card.title === "mcp_sampling", card)
+  if (card) samplingGate.respond(card.id, "reject")
+  const declined = await waiting
+  check("a refusal is answered with code -1", declined instanceof McpRequestError && declined.code === -1, declined)
+  const answer = await sampler({ server: "open", params, signal })
+  check(
+    "a server set to allow gets the model's answer",
+    (answer.content as { text?: string }).text === "from the model" && answer.model === "fake/m" && answer.role === "assistant" && answer.stopReason === "endTurn",
+    answer,
+  )
+  const malformed = samplingRequest("x", { messages: [], maxTokens: 5 })
+  check("a request with no messages is invalid params", malformed instanceof McpRequestError && malformed.code === -32602)
+  check("the policy is ask when unset", samplingPolicy(undefined) === "ask" && samplingPolicy({ type: "local", sampling: "allow" }) === "allow")
+  const kept = mergeMcpSecrets({ type: "local", command: ["x"], timeout: 5, sampling: "deny" }, { type: "local", command: ["y"] })
+  check("saving from the form keeps a hand-written timeout and sampling policy", kept.timeout === 5 && kept.sampling === "deny", kept)
+  model.closeAllConnections()
+  await new Promise<void>((resolve) => model.close(() => resolve()))
+  await fs.rm(workFolder, { recursive: true, force: true }).catch(() => {})
 }
 
 /* history, memory, cron: MiMo's three tools, the index behind the first two and the scheduler behind the third. */
@@ -7995,7 +8902,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
       if (lastUser.includes("SPAWN-EXPLORE")) return call("actor", { action: "run", description: "look around", prompt: "EXPLORE-CHILD", subagent_type: "explore" })
       if (lastUser.includes("SPAWN-GENERAL")) return call("actor", { action: "run", description: "do work", prompt: "GENERAL-CHILD", subagent_type: "general" })
       if (lastUser.includes("SCHEDULE-IT")) return call("cron", { operation: { action: "schedule", cron: "*/5 * * * *", prompt: "CRON-WRITES" } })
-      if (lastUser.includes("CRON-WRITES")) return call("write", { path: "from-cron.txt", content: "x" })
+      if (lastUser.includes("CRON-WRITES")) return call("write", { file_path: "from-cron.txt", content: "x" })
       if (lastUser.includes("HISTORY-IT")) return call("history", { operation: "search", query: "quokkafile", scope: "global" })
       return say("nothing to do")
     })

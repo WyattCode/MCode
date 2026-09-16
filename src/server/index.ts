@@ -11,6 +11,7 @@ import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
 import { McpServers } from "./mcp"
+import { createSampler } from "./mcp-sampling"
 import { handle } from "./handlers"
 import { bindDesktopSettings } from "./tool/desktop-settings"
 import { startHistory, stopHistory } from "./history/service"
@@ -77,6 +78,7 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   const automations = startAutomations(dataDirectory, runner, sessions, config, bus)
   const shells = new Shells(bus)
   const mcp = new McpServers(bus, config, storage)
+  mcp.useSampling(createSampler({ config, auth, permissions }))
   runner.useMcp(mcp)
 
   const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp }

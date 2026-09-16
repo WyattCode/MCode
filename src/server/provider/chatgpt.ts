@@ -6,6 +6,7 @@ import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "
 import { ProviderError, ProviderHttpError, headersOf, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 import { USER_AGENT } from "../auth/oauth"
+import { stallGuard } from "./stall"
 
 /**
  * Adapter for a ChatGPT subscription, served by the Codex backend.
@@ -196,10 +197,12 @@ export const ChatGPTSubscription: ProviderAdapter = {
     // MiMo keeps a conversation's requests together with this header.
     if (request.sessionID) headers["x-session-affinity"] = request.sessionID
 
+    // MiMo's timeouts for this API: 300s to the response headers, then 480s of quiet at most.
+    const guard = stallGuard(request.signal, true)
     const response = await fetch(`${base}/responses`, {
       method: "POST",
       headers,
-      signal: request.signal,
+      signal: guard.signal,
       body: JSON.stringify({
         model: request.model.model,
         instructions: systemText(request),
@@ -216,9 +219,13 @@ export const ChatGPTSubscription: ProviderAdapter = {
         // MiMo asks GPT-5.x for terse text, except the codex and chat models.
         ...(verbose(request.model.model) ? {} : { text: { verbosity: "low" } }),
       }),
+    }).catch((err: unknown) => {
+      guard.dispose()
+      throw guard.failure(err)
     })
 
     if (!response.ok || !response.body) {
+      guard.dispose()
       const detail = await response.text().catch(() => "")
       throw new ProviderHttpError(`ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`, response.status, headersOf(response), wireOfBody(detail))
     }
@@ -246,9 +253,17 @@ export const ChatGPTSubscription: ProviderAdapter = {
     const decoder = new TextDecoder()
     let buffer = ""
 
+    guard.alive()
     while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+      const { done, value } = await reader.read().catch((err: unknown) => {
+        guard.dispose()
+        throw guard.failure(err)
+      })
+      if (done) {
+        guard.dispose()
+        break
+      }
+      guard.alive()
       buffer += decoder.decode(value, { stream: true })
 
       const lines = buffer.split("\n")

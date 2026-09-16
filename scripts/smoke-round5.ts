@@ -771,18 +771,18 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       model: { provider: "p", model: "m" },
       agent: "build",
       parts: [
-        call("c1", "read", { path: "src/a.ts", offset: 3, limit: 5 }),
-        call("c2", "edit", { path: "src/a.ts", oldString: "x", newString: "y" }),
-        call("c3", "write", { path: "notes.md", content: "n" }, { created: true }),
-        ...["b", "c", "d", "e", "f"].map((name, index) => call(`r${index}`, "read", { path: `${name}.ts` })),
-        call("c4", "read", { path: "src/a.ts" }),
+        call("c1", "read", { file_path: "src/a.ts", offset: 3, limit: 5 }),
+        call("c2", "edit", { file_path: "src/a.ts", old_string: "x", new_string: "y" }),
+        call("c3", "write", { file_path: "notes.md", content: "n" }, { created: true }),
+        ...["b", "c", "d", "e", "f"].map((name, index) => call(`r${index}`, "read", { file_path: `${name}.ts` })),
+        call("c4", "read", { file_path: "src/a.ts" }),
       ],
       time: { created: 1 },
     }
     const manifest = touchedFiles([work], "/proj")
     check("the manifest keeps the five files most recently touched, newest last", manifest.length === 5 && manifest.at(-1)?.startsWith("src/a.ts:") === true && !manifest.some((line) => line.startsWith("b.ts")), manifest)
     check("with each one's last three events", manifest.at(-1) === "src/a.ts: read: lines 3-7 then edited then read: full", manifest.at(-1))
-    const created: Message = { ...work, parts: [call("w1", "write", { path: "notes.md", content: "n" }, { created: true }), call("w2", "write", { path: "old.md", content: "o" })] } as Message
+    const created: Message = { ...work, parts: [call("w1", "write", { file_path: "notes.md", content: "n" }, { created: true }), call("w2", "write", { file_path: "old.md", content: "o" })] } as Message
     check("a file a write created is written, one it replaced is edited", JSON.stringify(touchedFiles([created], "/proj")) === JSON.stringify(["notes.md: written", "old.md: edited"]), touchedFiles([created], "/proj"))
     check("a summary is known by its sections, a sentence is not", isSummary(DEFAULT_SUMMARY.replace(/<\/?summary>/g, "")) && !isSummary("Let me look at one more file first."))
 
@@ -982,20 +982,20 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.config.set({ permissions: { ...e.config.get().permissions, write: "allow", edit: "allow" } })
       execFileSync("git", ["init", "-q"], { cwd: e.project })
       const session = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "write", input: { path: "note.txt", content: "first" } }]))
+      e.replies.push(calls([{ name: "write", input: { file_path: "note.txt", content: "first" } }]))
       await e.runner.prompt({ sessionID: session.id, text: "WORKTREE write" })
       await e.idle(session.id)
       const noted = wireText(e.bodies.at(-1))
       check("a change to a main worktree brings the note at the next step", noted.includes("main worktree of a git repository") && noted.includes("ask the user"), noted.slice(0, 700))
       check("stored on the user's message, and the conversation marked", (await e.store.get(session.id))?.worktreeNotice === true && (await e.store.messages(session.id)).some((message) => message.role === "user" && message.context?.some((note) => note.includes("main worktree"))))
-      e.replies.push(calls([{ name: "write", input: { path: "note.txt", content: "second" } }]))
+      e.replies.push(calls([{ name: "write", input: { file_path: "note.txt", content: "second" } }]))
       await e.runner.prompt({ sessionID: session.id, text: "WORKTREE again" })
       await e.idle(session.id)
       check("once per conversation", wireText(e.bodies.at(-1)).split("main worktree of a git repository").length === 2)
 
       await fs.mkdir(path.join(e.project, ".git", "worktrees", "feature"), { recursive: true })
       const linked = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "write", input: { path: "other.txt", content: "x" } }]))
+      e.replies.push(calls([{ name: "write", input: { file_path: "other.txt", content: "x" } }]))
       await e.runner.prompt({ sessionID: linked.id, text: "WORKTREE linked" })
       await e.idle(linked.id)
       check("with linked worktrees already there, it says to work in a new one", wireText(e.bodies.at(-1)).includes("create a new worktree for the task"))

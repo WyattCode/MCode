@@ -75,7 +75,7 @@ export function noteToolWrites(message: Message, directory: string | undefined) 
     const input = (part.input ?? {}) as Record<string, unknown>
     const files = (part.metadata as { files?: unknown } | undefined)?.files
     const paths = [
-      ...(typeof input.path === "string" ? [input.path] : []),
+      ...(typeof input.file_path === "string" ? [input.file_path] : typeof input.path === "string" ? [input.path] : []),
       ...(Array.isArray(files) ? files.map((entry) => (typeof entry === "string" ? entry : (entry as { path?: string })?.path)).filter((entry): entry is string => typeof entry === "string") : []),
     ]
     const made = part.name === "write" && (part.metadata as { created?: unknown } | undefined)?.created === true

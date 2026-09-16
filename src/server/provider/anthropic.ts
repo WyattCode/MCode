@@ -5,6 +5,7 @@ import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
 import { anthropicAdaptive, anthropicOpus45 } from "./variants"
+import { guarded, stallGuard } from "./stall"
 import { costOf } from "../session/usage"
 import { requestHistory } from "./history"
 
@@ -260,13 +261,15 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
 export const AnthropicAdapter: ProviderAdapter = {
   async stream(request: TurnRequest, emit: Emit): Promise<TurnOutcome> {
     const client = createClient(request.apiKey, request.retries, request.baseURL, request.headers)
+    // MiMo's stall timeout: a stream that goes quiet for 480s is cut off and retried.
+    const guard = stallGuard(request.signal, false)
     const stream = client.messages.stream(messagesRequest(request), {
-      signal: request.signal,
+      signal: guard.signal,
       // MiMo keeps a conversation's requests together with this header.
       ...(request.sessionID ? { headers: { "x-session-affinity": request.sessionID } } : {}),
     })
 
-    for await (const event of stream) {
+    for await (const event of guarded(stream, guard)) {
       if (request.signal.aborted) break
 
       if (event.type === "content_block_start") {

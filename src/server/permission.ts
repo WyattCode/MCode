@@ -9,8 +9,7 @@ import type {
 import { PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
 import { accessAction, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { Identifier } from "@shared/id"
-import type { CommandRisk } from "./command-risk"
-import { LOST_WORK, commandRisk } from "./command-risk"
+import { LOST_WORK, commandRisk, dangerousCommand, readOnlyCommand } from "./command-risk"
 import path from "node:path"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
@@ -52,26 +51,66 @@ function refusal(kind: string, subject: string): string {
 
 /** The bucket a tool declares, when this build knows the name. */
 /*
- * What the composer's middle level lets through. Changes inside the project and
- * reaching outside it go ahead, and so does a command - unless it deletes or is
- * risky, which still asks. Everything else keeps whatever its bucket says.
+ * What the composer's middle level lets through, as MiMo's 帮我审批 does:
+ * changes to files, reaching outside the project, and a command with nothing
+ * dangerous in it. Everything else goes to the model's review.
  */
 export function autoAllows(kind: PermissionKind, subject: string): boolean {
   if (kind === "edit" || kind === "write" || kind === "outside") return true
-  if (kind === "bash") return commandRisk(subject) === undefined
+  if (kind === "bash") return !dangerousCommand(subject)
   return false
 }
 
 /**
- * A second opinion on a risky command, from the model working in that session.
+ * A second opinion on a question the middle level did not let through, from
+ * the model working in that session.
  *
  * Resolves true only for a clear yes. Anything else - a no, an answer that is
  * neither, a failure - leaves the question to the user.
  */
-export type CommandReviewer = (input: { sessionID: string; command: string; risk: CommandRisk }) => Promise<boolean>
+export type CommandReviewer = (input: { sessionID: string; kind: string; subject: string }) => Promise<boolean>
 
-/** How long a review may take before the user is asked instead. */
-export const REVIEW_TIMEOUT_MS = 30_000
+/** How long a review may take before the user is asked instead: MiMo's judge gives it 8 seconds. */
+export const REVIEW_TIMEOUT_MS = 8_000
+
+/** The review's one tool; its answer counts only as a single call of it, with nothing written beside. */
+export const VERDICT_TOOL_NAME = "permission_verdict"
+
+export function verdictApproves(calls: readonly { name: string; input: Record<string, unknown> }[], text: string): boolean {
+  if (calls.length !== 1 || calls[0].name !== VERDICT_TOOL_NAME || text.trim()) return false
+  const input = calls[0].input
+  return Object.keys(input).length === 1 && input.decision === "APPROVE"
+}
+
+/** A request that looks like it carries a credential, which the review is never shown, as MiMo leaves it out. */
+export function looksSecret(text: string): boolean {
+  return (
+    /\bBearer\s+\S+/i.test(text) ||
+    /\bBasic\s+[A-Za-z0-9+/=]+/i.test(text) ||
+    /\b(api[_-]?key|token|password|passwd|secret|authorization)\s*[=:]/i.test(text) ||
+    /\b[A-Z][A-Z0-9_]*(?:API[_-]?KEY|TOKEN|PASSWORD|SECRET|PASSWD|CREDENTIAL)\s*=/i.test(text) ||
+    /--(api[_-]?key|token|password|passwd|secret)\b/i.test(text) ||
+    /\b(sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AKIA[A-Z0-9]{16})\b/.test(text) ||
+    /:\/\/[^/\s:]+:[^/\s@]+@/.test(text)
+  )
+}
+
+/** MiMo's default read rules: a `.env` file asks, its `.env.example` does not; the last rule that matches wins. */
+export function readAsks(file: string): boolean {
+  let asks = false
+  for (const [pattern, answer] of [["*.env", true], ["*.env.*", true], ["*.env.example", false]] as const) {
+    if (wildcardMatch(file, pattern)) asks = answer
+  }
+  return asks
+}
+
+/** What a background subagent is told when nothing already allows its call. */
+function backgroundRefusal(kind: string, subject: string): string {
+  return (
+    `Refused: this subagent runs in the background, where no one can be asked, and nothing already allows this "${kind}" call (${subject}). ` +
+    `It was not run. Carry on without it, or report that it needs the user's approval.`
+  )
+}
 
 function bucketOf(kind: string): PermissionKind | undefined {
   return (PERMISSION_KINDS as readonly string[]).includes(kind) ? (kind as PermissionKind) : undefined
@@ -87,16 +126,53 @@ function bucketOf(kind: string): PermissionKind | undefined {
  * what is being asked about rather than showing an empty line.
  */
 function subjectOf(tool: string, args: Record<string, unknown> | undefined): string {
-  for (const field of ["path", "pattern", "filePattern", "query", "url", "command"]) {
+  for (const field of ["file_path", "notebook_path", "path", "pattern", "filePattern", "query", "url", "command"]) {
     const value = args?.[field]
     if (typeof value === "string" && value.trim()) return value
   }
   return tool
 }
 
+/** A saved "always": the kind it was given for and the pattern it covers. */
+interface Rule {
+  kind: string
+  pattern: string
+}
+
+/**
+ * MiMo's wildcard, as its permission rules match: `*` is any run of characters,
+ * `?` one character, a pattern ending in " *" also matches the words alone (so
+ * `git status *` covers `git status`), slashes match either way round, and case
+ * is ignored on Windows.
+ */
+export function wildcardMatch(value: string, pattern: string): boolean {
+  let source = pattern
+    .replaceAll("\\", "/")
+    .replace(/[.+^${}()|[\]]/g, "\\$&")
+    .replace(/\*/g, ".*")
+    .replace(/\?/g, ".")
+  if (source.endsWith(" .*")) source = `${source.slice(0, -3)}( .*)?`
+  return new RegExp(`^${source}$`, process.platform === "win32" ? "si" : "s").test(value.replaceAll("\\", "/"))
+}
+
+/** Where "always" is kept: the project when the asker names it, else the conversation alone. */
+function projectKey(input: { directory?: string; sessionID: string }): string {
+  if (!input.directory) return `session:${input.sessionID}`
+  const resolved = path.resolve(input.directory)
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved
+}
+
+/** The pattern a scope stands for: a folder covers everything below it, anything else is its own name. */
+function scopePattern(kind: string, scope: string): string {
+  return kind === "outside" ? `${path.resolve(scope)}/*` : scope
+}
+
 interface Pending {
   request: PermissionRequest
   resolve: (response: PermissionResponse) => void
+  /** The project its "always" would be kept for, and what it asks about. */
+  key: string
+  patterns: string[]
   /** What the user said when refusing, if anything. */
   reason?: string
   /** How it was closed, for the record the transcript keeps. */
@@ -118,15 +194,17 @@ function decisionOf(response: PermissionResponse, reason?: string): PermissionDe
  * the socket, and Deny refuses before anything runs and without a question -
  * putting a question whose answer is already no is the thing being fixed here.
  *
- * "always" is remembered for the rest of the process per (session, bucket)
- * pair - deliberately not persisted to disk, so a blanket approval cannot
+ * "always" is remembered as MiMo's engine keeps it: one allow rule per saved
+ * pattern, for the project - a command's prefix (`git status *`), a folder
+ * outside the project (`dir/*`), or the whole kind (`*`) - for the rest of the
+ * process, deliberately not persisted to disk, so a blanket approval cannot
  * silently outlive the app.
  */
 export class Permissions {
   private readonly pending = new Map<string, Pending>()
-  private readonly approved = new Set<string>()
-  /** Directories outside the project that the user let this session reach. */
-  private readonly outsideRoots = new Map<string, Set<string>>()
+  private readonly rules = new Map<string, Rule[]>()
+  /** Background subagents, with the conversation each works for: they are never shown a question. */
+  private readonly background = new Map<string, string>()
   /** Who wants to hear how a call's questions ended, by call id. */
   private readonly listeners = new Map<string, (record: PermissionRecord) => void>()
   private reviewer?: CommandReviewer
@@ -174,13 +252,12 @@ export class Permissions {
    * that says no, says something else, fails or takes too long hands the
    * question back to the user, so the review can only ever save a question.
    */
-  private async reviewed(sessionID: string, command: string): Promise<boolean> {
-    const risk = commandRisk(command)
-    if (!risk || LOST_WORK.includes(risk) || !this.reviewer) return false
+  private async reviewed(sessionID: string, kind: string, subject: string): Promise<boolean> {
+    if (!this.reviewer) return false
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       return await Promise.race([
-        this.reviewer({ sessionID, command, risk }).then((approved) => approved === true),
+        this.reviewer({ sessionID, kind, subject }).then((approved) => approved === true),
         new Promise<boolean>((resolve) => {
           timer = setTimeout(() => resolve(false), this.reviewTimeout)
         }),
@@ -190,10 +267,6 @@ export class Permissions {
     } finally {
       clearTimeout(timer)
     }
-  }
-
-  private key(sessionID: string, kind: string) {
-    return `${sessionID}:${kind}`
   }
 
   /**
@@ -225,22 +298,45 @@ export class Permissions {
     return accessAction(bucket, level, this.config.get())
   }
 
-  /** True when `target` sits under something already approved for this session. */
-  allowsOutside(sessionID: string, target: string): boolean {
-    const roots = this.outsideRoots.get(sessionID)
-    if (!roots) return false
-    const resolved = path.resolve(target)
-    for (const root of roots) {
-      const relative = path.relative(root, resolved)
-      if (!relative.startsWith("..") && !path.isAbsolute(relative)) return true
-    }
-    return false
+  /**
+   * Marks a subagent as running in the background for `parentID`, or clears it.
+   * As MiMo's background actors, it runs at its conversation's level and on its
+   * project's "always" rules, and anything those do not allow is refused
+   * without a question, since there is no one watching to answer one.
+   */
+  markBackground(sessionID: string, parentID: string | undefined): void {
+    if (parentID) this.background.set(sessionID, parentID)
+    else this.background.delete(sessionID)
   }
 
-  private allowOutside(sessionID: string, root: string): void {
-    const roots = this.outsideRoots.get(sessionID) ?? new Set<string>()
-    roots.add(path.resolve(root))
-    this.outsideRoots.set(sessionID, roots)
+  /** True when a folder outside the project was already let in with "always", for this project. */
+  allowsOutside(where: { directory?: string; sessionID: string }, scope: string): boolean {
+    return this.allowedByRules(projectKey(where), "outside", [scopePattern("outside", scope)])
+  }
+
+  /** Whether every pattern asked about is covered by a saved "always" of the same kind. */
+  private allowedByRules(key: string, kind: string, patterns: string[]): boolean {
+    const saved = (this.rules.get(key) ?? []).filter((rule) => rule.kind === kind)
+    return patterns.length > 0 && patterns.every((pattern) => saved.some((rule) => wildcardMatch(pattern, rule.pattern)))
+  }
+
+  /*
+   * Saving "always", and then letting through anything still waiting in the
+   * same project that it now covers, as MiMo's reply does. Those were not
+   * answered by a person, but by the approval just given, and are recorded so.
+   */
+  private remember(key: string, kind: string, always: string[], answered: string): void {
+    const saved = this.rules.get(key) ?? []
+    for (const pattern of always) if (!saved.some((rule) => rule.kind === kind && rule.pattern === pattern)) saved.push({ kind, pattern })
+    this.rules.set(key, saved)
+    for (const [id, pending] of [...this.pending]) {
+      if (id === answered || pending.key !== key || pending.request.kind !== kind || pending.request.forced) continue
+      if (!this.allowedByRules(key, kind, pending.patterns)) continue
+      this.pending.delete(id)
+      pending.decided = "allow-always"
+      pending.resolve("once")
+      this.bus.publish({ type: "permission.resolved", requestID: id, decided: "allow-always" })
+    }
   }
 
   async ask(input: {
@@ -253,35 +349,59 @@ export class Permissions {
     subject: string
     preview?: string
     /**
-     * What "always" should cover. Without it an approval is remembered for the
-     * whole bucket, which is far too broad for a directory outside the project.
+     * What "always" should cover: a folder outside the project, or an MCP
+     * server. Shorthand for giving the same single pattern as both `patterns`
+     * and `always`.
      */
     scope?: string
+    /** The project the call works in, which is what "always" is kept for; without it, the conversation. */
+    directory?: string
+    /** What exactly is asked about, each matched against saved "always" rules; the subject when left out. */
+    patterns?: string[]
+    /** What "always" saves: `*` - the whole kind - when left out. */
+    always?: string[]
+    /** Asked every time and never remembered, whatever was said before; decided from the command when left out. */
+    forced?: boolean
+    /** A pattern rule asks for this call even where its bucket allows it - a `.env` read - except at full access. */
+    patternAsks?: boolean
   }): Promise<void> {
-    const found = this.levelOf(input.sessionID)
+    const found = this.levelOf(this.background.get(input.sessionID) ?? input.sessionID)
     const level = found instanceof Promise ? await found : found
-    const action = this.action(input.kind, level)
+    let action = this.action(input.kind, level)
+    if (input.patternAsks && action === "allow" && level !== "full") action = "ask"
     /*
      * Read first, before anything remembered. A bucket switched to Deny has to
      * beat an "always" granted earlier in the same session, or turning a tool
      * off would not take effect until the app was restarted.
      */
     if (action === "deny") throw new PermissionDenied(input.subject, refusal(input.kind, input.subject))
-    if (action === "allow") return
-    // The middle access level. A refusal set in settings has already won above.
-    if (level === "auto") {
-      if (autoAllows(input.kind, input.subject)) return
-      if (input.kind === "bash" && (await this.reviewed(input.sessionID, input.subject))) return
-    }
-    if (input.scope && this.allowsOutside(input.sessionID, input.scope)) return
     /*
      * A command that loses work is asked about every time, whatever was said
      * for the bucket before: "always run commands" was an answer about builds
-     * and tests, not about deleting things.
+     * and tests, not about deleting things. As MiMo forces its delete question,
+     * that holds when commands are allowed and at full access too, and neither
+     * the middle level nor the model's review ever answers it.
      */
     const risk = input.kind === "bash" ? commandRisk(input.subject) : undefined
-    const forced = risk !== undefined && LOST_WORK.includes(risk)
-    if (!input.scope && !forced && this.approved.has(this.key(input.sessionID, input.kind))) return
+    const forced = input.forced ?? (risk !== undefined && LOST_WORK.includes(risk))
+    if (action === "allow" && !forced) return
+    // MiMo's read-only allowlist: a command made only of reading pieces runs once without a question.
+    if (!forced && input.kind === "bash" && readOnlyCommand(input.subject)) return
+    const key = projectKey(input)
+    const scoped = input.scope ? [scopePattern(input.kind, input.scope)] : undefined
+    const patterns = input.patterns?.length ? input.patterns : (scoped ?? [input.subject])
+    const always = input.always ?? scoped ?? ["*"]
+    if (!forced && this.allowedByRules(key, input.kind, patterns)) return
+    if (this.background.has(input.sessionID)) throw new PermissionDenied(input.subject, backgroundRefusal(input.kind, input.subject))
+    /*
+     * The middle access level, as this conversation runs at. What it does not
+     * let through goes to the model's review - except a delete, which only a
+     * person answers.
+     */
+    if (!forced && level === "auto") {
+      if (autoAllows(input.kind, input.subject)) return
+      if (await this.reviewed(input.sessionID, input.kind, input.subject)) return
+    }
 
     const request: PermissionRequest = {
       id: Identifier.permission(),
@@ -299,7 +419,7 @@ export class Permissions {
 
     let entry: Pending | undefined
     const response = await new Promise<PermissionResponse>((resolve) => {
-      entry = { request, resolve }
+      entry = { request, resolve, key, patterns }
       this.pending.set(request.id, entry)
       this.bus.publish({ type: "permission.requested", request })
     })
@@ -316,10 +436,7 @@ export class Permissions {
       time: Date.now(),
     })
 
-    if (response === "always" && !forced) {
-      if (input.scope) this.allowOutside(input.sessionID, input.scope)
-      else this.approved.add(this.key(input.sessionID, input.kind))
-    }
+    if (response === "always" && !forced) this.remember(key, input.kind, always, request.id)
     if (response === "reject") {
       /*
        * A question closed because its bucket was switched to Deny while it sat
@@ -374,6 +491,8 @@ export class Permissions {
     kind: string
     /** What the model passed, so the question can name the file or pattern. */
     arguments?: Record<string, unknown>
+    /** The project the call works in, which "always" is kept for. */
+    directory?: string
   }): Promise<void> {
     const bucket = bucketOf(input.kind)
     if (!bucket) return
@@ -406,6 +525,8 @@ export class Permissions {
       title: input.tool,
       titleCode: `tool.desc.${bucket}`,
       subject,
+      directory: input.directory,
+      patternAsks: bucket === "read" && readAsks(subject),
     })
   }
 

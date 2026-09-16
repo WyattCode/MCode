@@ -994,6 +994,13 @@ export interface McpServerConfig {
   oauth?: McpOAuthConfig | false
   /** Absent counts as on, so a server added by hand starts working. */
   enabled?: boolean
+  /**
+   * MiMo's per-server `timeout`, in milliseconds: how long connecting may take
+   * (30s without it) and how long each tool call may take (a minute without it).
+   */
+  timeout?: number
+  /** MiMo's per-server `sampling`: whether the server may have a model write for it. Unset asks. */
+  sampling?: "deny" | "ask" | "allow"
 }
 
 export interface McpOAuthConfig {

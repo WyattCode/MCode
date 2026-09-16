@@ -87,6 +87,8 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
     : path.resolve(context.directory, target)
+  // A cut output's saved file is the model's to read, as MiMo allows its truncation folder outright.
+  if (context.toolOutputs?.holds(resolved)) return resolved
   /*
    * Compared by where the files really are, not by how the path is spelled. A
    * symlink - or a junction, which Windows creates without elevation - reads as
@@ -99,7 +101,6 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   const relative = path.relative(root, real)
   if (!relative.startsWith("..") && !path.isAbsolute(relative)) return resolved
 
-  if (context.permissions.allowsOutside(context.sessionID, real)) return resolved
   // memory: the memory folder is reached without asking, as MiMo does.
   if (isMemoryPath(real)) return resolved
 
@@ -109,8 +110,10 @@ export async function resolvePath(context: ToolContext, target: string): Promise
   // Approved against the real location too, so the same directory reached by a
   // different route is recognised as the one already allowed.
   const scope = stats?.isDirectory() ? real : path.dirname(real)
+  if (context.permissions.allowsOutside({ directory: context.directory, sessionID: context.sessionID }, scope)) return resolved
 
   await context.permissions.ask({
+    directory: context.directory,
     sessionID: context.sessionID,
     messageID: context.messageID,
     callID: context.callID,

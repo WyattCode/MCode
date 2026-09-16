@@ -49,7 +49,8 @@ export function sessionFiles(messages: readonly Message[], directory: string): S
       const part = parts[at] as Partial<ToolPart>
       if (part.type !== "tool" || part.status !== "completed" || !part.name) continue
       const when = part.time?.completed ?? part.time?.created ?? message.time.created
-      const target = part.input?.path
+      // `file_path` since the tools took MiMo's names; `path` on turns stored before.
+      const target = part.input?.file_path ?? part.input?.path
       if (WRITERS.has(part.name)) {
         if (typeof target === "string") add(written, seenWritten, target, when)
       } else if (part.name === "apply_patch") {
@@ -230,7 +231,7 @@ export function sessionArtifacts(messages: readonly Message[], directory: string
       }
       if (part.type !== "tool" || part.name !== "write" || part.status !== "completed") continue
       if (part.metadata?.created !== true) continue
-      const target = part.input?.path
+      const target = part.input?.file_path ?? part.input?.path
       if (typeof target !== "string") continue
       const file = projectRelative(directory, target)
       if (!file) continue
