@@ -28,6 +28,16 @@ export interface SessionInfo {
   titleSource?: "fallback" | "generated" | "user"
   /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
   worktreeNotice?: boolean
+  /**
+   * The MCP servers this conversation was offered at its first turn.
+   *
+   * MiMo's MCP page says a saved change applies from the next conversation, so
+   * the list is kept with the conversation and read back on the next run: a
+   * server added or switched on later reaches new conversations only. Absent
+   * on conversations stored before this, which take whatever is configured at
+   * their next turn and keep that.
+   */
+  mcpServers?: string[]
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef

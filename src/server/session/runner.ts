@@ -473,6 +473,41 @@ export class SessionRunner {
   }
 
   /**
+   * The MCP servers this conversation is offered, fixed at its first turn and
+   * kept with the conversation.
+   *
+   * MiMo's MCP page says a saved change applies from the next conversation.
+   * Holding that in memory alone meant a restart quietly read the config
+   * afresh, so a server switched on meanwhile reached an old conversation
+   * after all. A conversation with a stored list is seeded from it; one
+   * without records whatever is configured now.
+   */
+  private async rememberMcpServers(session: SessionInfo): Promise<void> {
+    // A subagent is offered its parent's servers, so the parent's record is the one that counts.
+    const conversation = session.parentID ?? session.id
+    const owner = conversation === session.id ? session : await this.store.get(conversation)
+    const stored = owner?.mcpServers
+    if (stored) {
+      // The record stands, whatever is configured now and whatever was worked out before it was read.
+      this.mcpServersAt.set(conversation, new Set(stored))
+      return
+    }
+    /*
+     * No record yet. `tools` fixes the set the first time a conversation asks
+     * for its tools, which can happen before this runs, so that set is what
+     * gets written down rather than a second reading of the config.
+     */
+    const known = this.mcpServersAt.get(conversation)
+    const names = known
+      ? [...known]
+      : Object.entries(this.config.get().mcpServers ?? {})
+          .filter(([, entry]) => entry.enabled !== false)
+          .map(([name]) => name)
+    if (!known) this.mcpServersAt.set(conversation, new Set(names))
+    await this.store.setMcpServers(conversation, names).catch(() => undefined)
+  }
+
+  /**
    * plan: where this conversation's plan is written, and which paths planning
    * may write at all.
    *
@@ -1558,7 +1593,8 @@ export class SessionRunner {
       ...(first ? { directory: session.directory } : {}),
     })
     if (!first) return [runtime]
-    // The conversation's MCP servers are fixed when it first asks for its tools.
+    // The conversation's MCP servers are fixed when it first asks for its tools; its own record comes first.
+    await this.rememberMcpServers(session)
     this.tools(session.agent, session.id)
     const names = [...(this.mcpServersAt.get(session.id) ?? [])]
     return [sessionNote({ mcpServers: names, globalAgentsFile: this.globalAgents }), runtime]
@@ -1767,6 +1803,8 @@ export class SessionRunner {
     let session = await this.store.require(sessionID)
     // plan: what this turn is judged by, however the conversation changes while it runs.
     this.turnAgents.set(sessionID, session.agent)
+    // MiMo's MCP rule: the servers this conversation started with, read back from disk after a restart.
+    await this.rememberMcpServers(session)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
     const adapter: ProviderAdapter =
