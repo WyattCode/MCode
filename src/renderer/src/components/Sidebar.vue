@@ -1114,6 +1114,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
       <button
         class="row"
         :class="{ on: page === 'artifacts' }"
+        :aria-label="collapsed ? t('side.railArtifacts') : undefined"
         v-tip="collapsed ? { label: t('side.railArtifacts'), placement: 'right' } : ''"
         @click="emit('artifacts')"
       >
@@ -1690,6 +1691,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         class="row foot-menu"
         :aria-expanded="Boolean(footMenu)"
         aria-haspopup="menu"
+        :aria-label="collapsed ? t('rail.settings') : undefined"
         v-tip="collapsed ? { label: t('rail.settings'), placement: 'right' } : ''"
         @click="openFootMenu"
       >
