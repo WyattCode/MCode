@@ -79,6 +79,10 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   // The "always" approvals this profile has remembered, so a restart does not ask again.
   await permissions.load(storage)
   const sessions = new SessionStore(storage, bus)
+  // Full access turned off by hand in config.json takes conversations off it at once, as the settings switch does.
+  config.onReload(async (before, after) => {
+    if (before.allowFullAccess && !after.allowFullAccess) await sessions.dropFullAccess()
+  })
   // Each conversation's own access level; a side chat or subagent runs at the level of the conversation it belongs to.
   permissions.useSessions(async (sessionID) => {
     let session = await sessions.get(sessionID)

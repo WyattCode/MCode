@@ -50,18 +50,8 @@ const props = withDefaults(
 
 const app = useApp()
 
-/*
- * Closed, as MiMo leaves every row - unless the reader has asked in settings for
- * commands or edits to arrive open, which is a choice of theirs to keep.
- */
-const preferOpen = (() => {
-  const config = app.config
-  if (props.part.name === "bash") return config?.expandShell === true
-  if (["edit", "multiedit", "write", "patch", "apply_patch"].includes(props.part.name)) return config?.expandEdits === true
-  return false
-})()
-
-const open = ref(preferOpen)
+/* Closed, as MiMo leaves every row. */
+const open = ref(false)
 /** Only a fold the reader asked for animates. */
 const animate = ref(false)
 

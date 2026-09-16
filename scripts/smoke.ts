@@ -292,6 +292,7 @@ import { wordingChecks } from "./smoke-wording"
 import { roundEightChecks } from "./smoke-round8"
 // Round 9: providers and models - request shaping per family, endpoints, fallbacks, the model catalog.
 import { roundNineProviderChecks } from "./smoke-round9-providers"
+import { roundNineSettingsChecks } from "./smoke-round9-settings"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -2510,7 +2511,7 @@ async function main() {
     check("and the readable one survives", loaded[0]?.id === "msg_good", loaded[0]?.id)
   }
 
-  section("Model curation")
+  section("Every connected model is offered (S9-2)")
   {
     const models = [{ id: "alpha" }, { id: "beta" }]
     const fake = createServer((request, response) => {
@@ -2520,41 +2521,19 @@ async function main() {
     await new Promise<void>((resolve) => fake.listen(8794, "127.0.0.1", resolve))
 
     const config = backend.runtime.config
-    await config.set({
-      // Curated before this provider existed, which is the whole problem.
-      enabledModels: ["anthropic/claude-opus-5"],
-      providerEndpoints: { lmstudio: "http://127.0.0.1:8794/v1" },
-    })
+    // A curation list an older build left behind has no say any more.
+    await config.set({ providerEndpoints: { lmstudio: "http://127.0.0.1:8794/v1" }, ...({ enabledModels: ["anthropic/claude-opus-5"] } as object) })
 
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
-    const afterConnect = config.get().enabledModels ?? []
-    check(
-      "connecting adds the provider's models to a curated list",
-      afterConnect.includes("lmstudio/alpha") && afterConnect.includes("lmstudio/beta"),
-      afterConnect,
-    )
-    check("and leaves the existing curation alone", afterConnect.includes("anthropic/claude-opus-5"), afterConnect)
-
-    // Switching one off has to stick: only a provider with nothing enabled is
-    // treated as a state nobody chose.
-    await config.set({ enabledModels: afterConnect.filter((key) => key !== "lmstudio/beta") })
+    const offered = config.enabled().filter((entry) => entry.provider === "lmstudio").map((entry) => entry.model.id)
+    check("connecting offers every model the provider serves", offered.join() === "alpha,beta", offered)
     await call({ type: "provider.discover", provider: "lmstudio" })
-    const afterRefresh = config.get().enabledModels ?? []
-    check("refreshing respects a model that was switched off", !afterRefresh.includes("lmstudio/beta"), afterRefresh)
-
-    // With none of its models enabled, refreshing repairs it.
-    await config.set({ enabledModels: ["anthropic/claude-opus-5"] })
-    await call({ type: "provider.discover", provider: "lmstudio" })
-    const repaired = config.get().enabledModels ?? []
-    check(
-      "refreshing repairs a provider with nothing enabled",
-      repaired.includes("lmstudio/alpha") && repaired.includes("lmstudio/beta"),
-      repaired,
-    )
+    const listed = (config.get() as unknown as Record<string, unknown>).enabledModels
+    check("and a curation list sent by an older window is not kept", listed === undefined, listed)
 
     // Left as it was found: the next section asserts on this provider too.
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
-    await config.set({ enabledModels: [], providerEndpoints: {} })
+    await config.set({ providerEndpoints: {} })
     fake.close()
   }
 
@@ -2734,9 +2713,6 @@ async function main() {
      * `{env:VAR}` names a variable instead of storing a secret.
      */
     process.env.SMOKE_CUSTOM_KEY = "from-the-environment"
-    // Curated before this provider existed, which is what makes the next
-    // assertion about its models being offered mean anything.
-    await config.set({ enabledModels: ["anthropic/claude-opus-5"] })
     await call({
       type: "provider.addCustom",
       id: "mygateway",
@@ -2805,13 +2781,8 @@ async function main() {
     )
     check("a malformed id is refused", malformed.includes("not a valid provider id"), malformed)
 
-    const curated = config.get().enabledModels ?? []
-    check(
-      "its models join a curated picker rather than being hidden by it",
-      curated.includes("mygateway/big") && curated.includes("mygateway/small"),
-      curated,
-    )
-    check("and the existing curation is left alone", curated.includes("anthropic/claude-opus-5"), curated)
+    const offered = config.enabled().filter((entry) => entry.provider === "mygateway").map((entry) => entry.model.id)
+    check("its models are offered in the picker", offered.join() === "big,small", offered)
 
     /*
      * Editing and copying, MiMo's 编辑 / 复制. An edit keeps the id; a blank key
@@ -2871,7 +2842,6 @@ async function main() {
     await call({ type: "provider.removeCustom", provider: "mygateway-copy-2" })
 
     await call({ type: "provider.removeCustom", provider: "mygateway" })
-    await config.set({ enabledModels: [] })
     delete process.env.SMOKE_CUSTOM_KEY
   }
 
@@ -7061,6 +7031,7 @@ async function main() {
   wordingChecks(check, section)
   await roundEightChecks(check, section)
   await roundNineProviderChecks(check, section)
+  await roundNineSettingsChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)

@@ -35,45 +35,20 @@ export class Client {
     this.onState = handler
   }
 
-  /**
-   * Where to connect.
-   *
-   * Normally the backend this app started, on a port it was told at boot. A
-   * server the user names instead takes its place: the protocol is the same
-   * either way, so nothing above this line knows the difference.
-   */
-  private address: string
-
-  /** This app's own backend, the only address the launch secret is ever offered to. */
-  private readonly own: string
+  /** The backend this app started, on the port it was told at boot - the only place this window connects to. */
+  readonly server: string
 
   constructor(
     port: number,
     private readonly secret: string,
   ) {
-    this.own = `ws://127.0.0.1:${port}`
-    this.address = this.own
-  }
-
-  /** Points at another server, and reconnects there. */
-  useServer(url?: string): void {
-    this.address = url?.trim() || this.own
-    this.retry = 0
-    this.socket?.close()
-  }
-
-  get server(): string {
-    return this.address
+    this.server = `ws://127.0.0.1:${port}`
   }
 
   connect(): void {
     if (this.closed) return
-    /*
-     * The launch secret proves this window belongs to the app. It is offered to
-     * the app's own backend only: a server the user named elsewhere is a
-     * different program and has no business learning it.
-     */
-    const socket = this.address === this.own ? new WebSocket(this.address, socketProtocols(this.secret)) : new WebSocket(this.address)
+    // The launch secret proves this window belongs to the app.
+    const socket = new WebSocket(this.server, socketProtocols(this.secret))
     this.socket = socket
 
     socket.addEventListener("open", () => {

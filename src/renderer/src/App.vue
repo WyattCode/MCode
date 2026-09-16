@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { AGENT_NAMES, DEFAULT_PERMISSIONS, IMPORT_SOURCES, PERMISSION_KINDS } from "@shared/protocol"
+import { AGENT_NAMES, IMPORT_SOURCES } from "@shared/protocol"
 import type { Worktree } from "@shared/protocol"
 import { useApp } from "./stores/app"
 import Sidebar from "./components/Sidebar.vue"
@@ -22,15 +22,12 @@ import QuestionDock from "./components/QuestionDock.vue"
 import { useQuestions } from "./stores/questions"
 import SettingsDialog from "./components/SettingsDialog.vue"
 import ProjectDialog from "./components/ProjectDialog.vue"
-import ServerPopover from "./components/ServerPopover.vue"
 import ImagePreview from "./components/ImagePreview.vue"
 import LiveEditPill from "./components/LiveEditPill.vue"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
 import { imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
-import ServersDialog from "./components/ServersDialog.vue"
-import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
 import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
 import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
@@ -53,8 +50,6 @@ import {
   t,
   detectLanguage,
 } from "./lib/i18n"
-import changelog from "./lib/changelog.json"
-import { loadReleaseHighlights, normalizeVersion, type Highlight } from "./lib/changelog"
 import { toggleSteps } from "./lib/steps"
 import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
@@ -76,11 +71,11 @@ import AnnotationMarkers from "./components/AnnotationMarkers.vue"
 import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind } from "./lib/find"
-import { chime, play } from "./lib/sound"
+import { chime } from "./lib/sound"
+import { stepTarget } from "./lib/visible-chats"
+import { fontScale } from "./lib/font-scale"
 import { announce } from "./lib/announce"
 import { chimeOf, longTask } from "@shared/chime"
-import { themeTokens } from "./lib/theme-engine"
-import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
 
 const app = useApp()
 // The confirm dock's queue: permissions and questions for the session on screen.
@@ -289,63 +284,13 @@ function endDrag() {
 }
 
 /*
- * What changed in the version now running, shown once.
- *
- * opencode's flow, step for step: remember the version last seen, and on the
- * first run where it differs, take the highlights between the two and show
- * them after a short delay. A reader with no remembered version - a fresh
- * install - is told nothing and simply has the current version recorded, so
- * the popup is about an upgrade rather than about arriving.
- *
- * The changelog ships with the build instead of being fetched, which is the
- * one place this departs from opencode. It fetches `opencode.ai/changelog.json`
- * because its releases are published; this app has no such feed, and a local
- * file also means the notes describe the build in hand and appear offline.
+ * MiMo has no window of what changed after an update - its update pill says so
+ * before the update. The key an earlier build kept the last version it had
+ * shown notes for under is taken away so it cannot linger.
  */
-const SEEN_VERSION_KEY = "mcode.highlights.v1"
-const RELEASE_NOTES_DELAY = 500
-const highlights = ref<Highlight[]>([])
-
-function showReleaseNotes() {
-  const version = app.version
-  if (!version) return
-  const previous = localStorage.getItem(SEEN_VERSION_KEY) ?? undefined
-  if (!previous) {
-    localStorage.setItem(SEEN_VERSION_KEY, version)
-    return
-  }
-  if (normalizeVersion(previous) === normalizeVersion(version)) return
-  // Recorded before the dialog, not after: a reader who closes it by quitting
-  // should not be shown the same notes again on the next launch.
-  localStorage.setItem(SEEN_VERSION_KEY, version)
-  if (app.config?.releaseNotes === false) return
-  const found = loadReleaseHighlights(changelog, version, previous)
-  if (!found.length) return
-  window.setTimeout(() => (highlights.value = found), RELEASE_NOTES_DELAY)
-}
-
-function dismissReleaseNotes(disable: boolean) {
-  highlights.value = []
-  if (disable) void app.patchConfig({ releaseNotes: false })
-}
-
-/*
- * Once, as soon as both the version and the settings are known - the same gate
- * opencode uses, whose effect waits on `platform.version` and `settings.ready`
- * before it will run. Neither is available at mount: the config arrives over
- * the socket, and reading it early would take the unset default and decide the
- * reader had opted out.
- */
-const releaseNotesStarted = ref(false)
-watch(
-  () => [app.version, app.config] as const,
-  ([version, config]) => {
-    if (releaseNotesStarted.value || !version || !config) return
-    releaseNotesStarted.value = true
-    showReleaseNotes()
-  },
-  { immediate: true },
-)
+try {
+  localStorage.removeItem("mcode.highlights.v1")
+} catch {}
 
 /*
  * Find-in-view over the conversation.
@@ -387,10 +332,7 @@ function toggleSearch() {
 }
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<"general" | "keys" | "server" | "models" | "mcp" | "archive">()
-
-/** The server control opens its own panel rather than general settings. */
-const serverPanel = ref(false)
+const settingsSection = ref<"general" | "keys" | "models" | "mcp" | "archive">()
 /*
  * Three things need a line of text from the user, and Electron has no
  * window.prompt to fall back on - it throws outright. Each is a flag rather
@@ -402,9 +344,6 @@ const serverPanel = ref(false)
  */
 /** The project a new workspace is being branched from, while it is being named. */
 const namingWorkspace = ref<string>()
-const choosingServer = ref(false)
-/** Whether the saved-servers dialog is up. */
-const managingServers = ref(false)
 
 /*
  * The model menu's "configure custom models" lands on the models page, as MiMo's
@@ -415,15 +354,6 @@ function openSettings(section?: unknown) {
   settingsOpen.value = true
 }
 
-/**
- * The title bar's server control carries a server icon and a status light, so
- * it has to land on the server page - sending it to general settings made the
- * icon a lie.
- */
-function openServerInfo() {
-  settingsSection.value = "server"
-  settingsOpen.value = true
-}
 /** Directory whose presentation is being edited, if any. */
 const editingProject = ref<string>()
 
@@ -645,43 +575,13 @@ async function exportLog() {
     `MCode log`,
     `exported ${new Date().toISOString()}`,
     `platform ${navigator.userAgent}`,
-    `theme ${app.config?.themeID ?? "oc-2"} / ${app.config?.theme ?? "system"}`,
+    `theme ${app.config?.theme ?? "system"}`,
     `language ${language.value}`,
     "",
   ]
   const body = logLines.length ? logLines : [t("log.empty")]
   const saved = await window.mcode.saveText("mcode-log.txt", [...header, ...body].join("\n"))
   if (saved) notify(t("log.saved"), { action: revealAction(saved) })
-}
-
-/**
- * Points the window at another server, or back at the local one.
- *
- * The address is remembered, so the choice survives a restart - a server the
- * user has to re-enter every morning is not a server they will use.
- */
-function chooseServer() {
-  choosingServer.value = true
-}
-
-async function applyServer(answer: string) {
-  choosingServer.value = false
-  const url = answer.trim()
-  if (url && !/^wss?:\/\//.test(url)) {
-    notifyFailure(t("server.badURL"))
-    return
-  }
-  /*
-   * The socket moves first. Writing the config is a request over it, so doing
-   * that first meant a server that had stopped answering could not be left -
-   * the write to change the address had to reach the address being changed.
-   * Local storage is what the next boot reads, and is written here too.
-   */
-  if (url) localStorage.setItem("mcode.serverURL", url)
-  else localStorage.removeItem("mcode.serverURL")
-  app.client?.useServer(url)
-  void app.patchConfig({ serverURL: url })
-  notify(url ? t("server.switched", { url }) : t("server.local"))
 }
 
 /**
@@ -730,7 +630,8 @@ async function checkForUpdates() {
 const rebound = computed(() => {
   const out = new Map<string, string>()
   for (const [id, chord] of Object.entries(app.config?.keybinds ?? {})) {
-    if (chord) out.set(normalizeChord(chord), id)
+    // Only a chord written as text is one; the backend drops anything else as it reads the file.
+    if (chord && typeof chord === "string") out.set(normalizeChord(chord), id)
   }
   return out
 })
@@ -932,7 +833,6 @@ function addSelection() {
 /** Which rail badge has its panel open, and where to anchor it. */
 
 const theme = computed(() => app.config?.theme ?? "system")
-const themeID = computed(() => app.config?.themeID ?? DEFAULT_THEME)
 
 // The palette is defined against :root, so the override has to land on <html>.
 // Setting it on a wrapper element silently does nothing - "system" would still
@@ -947,9 +847,9 @@ watch(
 )
 
 /*
- * Which scheme is actually showing. "System" is the default, so the palette
- * below cannot be chosen from the setting alone - it has to follow the OS, and
- * follow it while the window is open rather than only at startup.
+ * Which scheme is actually showing. "System" is the default, so it cannot be
+ * read from the setting alone - it has to follow the OS, and follow it while
+ * the window is open rather than only at startup.
  */
 const schemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
 const systemDark = ref(schemeQuery.matches)
@@ -958,27 +858,13 @@ const darkScheme = computed(() =>
   theme.value === "system" ? systemDark.value : theme.value === "dark",
 )
 
-/**
- * Paints the chosen palette onto the document.
- *
- * The stylesheet already carries a full set of colours - they are OC-2, run
- * through this same generator - so this writes over them rather than filling a
- * blank. Setting the properties inline is what lets one theme override all
- * three of the stylesheet's blocks at once, media query included.
+/*
+ * The colours are the stylesheet's, as MiMo's are: tokens.css carries MCode's
+ * one palette for both schemes, and `data-theme` above picks between them.
+ * The caption buttons are the OS's, drawn over a transparent fill. It knows the
+ * system theme but not this app's, so it has to be told which one won.
  */
-watch(
-  [themeID, darkScheme],
-  ([id, dark]) => {
-    const tokens = themeTokens(themeByID(id), dark)
-    for (const [name, value] of Object.entries(tokens)) {
-      document.documentElement.style.setProperty(name, value)
-    }
-    // The caption buttons are the OS's, drawn over a transparent fill. It knows
-    // the system theme but not this app's, so it has to be told which one won.
-    window.mcode.titlebarMode(dark ? "dark" : "light")
-  },
-  { immediate: true },
-)
+watch(darkScheme, (dark) => window.mcode.titlebarMode(dark ? "dark" : "light"), { immediate: true })
 
 /*
  * MiMo's native theme: main sets the OS-drawn surfaces (context menus, the
@@ -1028,13 +914,11 @@ watch(
  */
 watch(
   () => {
-    const chosen = app.config?.enabledModels ?? []
     const current = app.config?.model
     return app.providers
       .filter((provider) => provider.configured)
       .flatMap((provider) =>
         provider.models
-          .filter((model) => !chosen.length || chosen.includes(`${provider.id}/${model.id}`))
           .map((model) => ({
             key: `${provider.id}/${model.id}`,
             label: `${provider.name} · ${model.name || model.id}`,
@@ -1080,44 +964,21 @@ watch(
   { immediate: true },
 )
 
-/*
- * A chosen typeface goes in front of the built-in stack rather than replacing
- * it: a name that turns out not to be installed then falls through to what was
- * there before instead of dropping the app to Times New Roman. The name is
- * quoted so a face with a space in it - "JetBrains Mono" - survives.
- */
-/* MiMo's terminal stack, the same as tokens.css's --font-terminal, for a chosen face to stand in front of. */
-const TERMINAL_FONT_STACK =
-  '"SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", monospace'
-watch(
-  () => [app.config?.uiFont, app.config?.codeFont, app.config?.terminalFont] as const,
-  ([ui, code, terminal]) => {
-    const style = document.documentElement.style
-    const put = (variable: string, chosen: string | undefined, fallback: string) => {
-      const name = (chosen ?? "").trim()
-      if (!name) style.removeProperty(variable)
-      else style.setProperty(variable, `"${name.replace(/"/g, "")}", ${fallback}`)
-    }
-    put("--font-sans", ui, "var(--font-sans-stack)")
-    put("--font-mono", code, "var(--font-mono-stack)")
-    // MiMo's terminal stack, as tokens.css has it: a chosen face goes in front of it.
-    put("--font-terminal", terminal, TERMINAL_FONT_STACK)
-  },
-  { immediate: true },
-)
 
 /*
  * The two sizes on the appearance page, carried the way MiMo carries them: a
  * scale on the root that every size in the interface is multiplied by - text
  * by the UI scale, code in the transcript and the diffs by the code one. At
- * the defaults both are 1 and nothing moves.
+ * the defaults both are 1 and nothing moves. Worked out as MiMo's does: a size
+ * is clamped to its range before it becomes a scale, and anything that is not
+ * a positive number is no scale at all.
  */
 watch(
   () => [app.config?.uiFontSize, app.config?.codeFontSize] as const,
   ([ui, code]) => {
     const style = document.documentElement.style
-    style.setProperty("--ui-font-scale", String((ui || 14) / 14))
-    style.setProperty("--code-font-scale", String((code || 12) / 12))
+    style.setProperty("--ui-font-scale", String(fontScale(ui, 14, 10, 24)))
+    style.setProperty("--code-font-scale", String(fontScale(code, 12, 9, 24)))
   },
   { immediate: true },
 )
@@ -1487,43 +1348,6 @@ async function selectTab(id: string) {
 /** Starts a task from the 2.0 home screen, in the project picked there. */
 function newSession() {
   if (!alreadyNewTask(app.current?.directory)) startIn(app.current?.directory)
-}
-
-/**
- * Every permission bucket at once, on and off.
- *
- * Worth knowing while reading this: MCode's list is global, where the
- * reference scopes the same flag per session or per directory. Turning it on
- * here grants far more than the reference's equivalent does, which is why both
- * edges toast rather than only the one that reduces access.
- *
- * The question this button answers is "will anything stop and ask me", which is
- * why a bucket counts as satisfied when it is anything other than Ask. Reading
- * it as "is everything set to Allow" instead would leave the button stuck
- * showing off forever the moment a single bucket was refused, since the button
- * is not permitted to lift a refusal and so could never reach that state.
- */
-function autoAcceptAll(): boolean {
-  const current = app.config?.permissions
-  return PERMISSION_KINDS.every((kind) => (current?.[kind] ?? DEFAULT_PERMISSIONS[kind]) !== "ask")
-}
-
-async function toggleAutoAccept() {
-  const on = autoAcceptAll()
-  const next = { ...DEFAULT_PERMISSIONS, ...app.config?.permissions }
-  /*
-   * A bucket the user set to Deny is left alone by both edges of this button.
-   * Turning interruptions off is a statement about being asked, not about being
-   * refused, and a switch that quietly undid a refusal would be the more
-   * dangerous of the two readings.
-   */
-  for (const kind of PERMISSION_KINDS) {
-    if (next[kind] === "deny") continue
-    next[kind] = on ? DEFAULT_PERMISSIONS[kind] : "allow"
-  }
-  await app.patchConfig({ permissions: next, accessLevel: on ? "ask" : "full" })
-  // MiMo's notice is its title alone.
-  notify(t(on ? "toast.autoOffTitle" : "toast.autoOnTitle"))
 }
 
 async function focusComposer() {
@@ -2437,24 +2261,18 @@ function goHome() {
 }
 
 /**
- * Steps through the open tabs.
- *
- * Wraps at both ends: with three conversations open, going back from the first
- * should reach the last rather than stop, which is what makes the pair of
- * shortcuts usable without looking at the row.
- */
-/**
- * Steps to the next session with something waiting.
+ * Steps to the next conversation with something waiting, along the side
+ * column's visible order.
  *
  * Wraps around and stops where it started, so pressing it with nothing unread
- * leaves the screen alone rather than walking the whole strip.
+ * leaves the screen alone rather than walking the whole list.
  */
 async function stepUnread(by: 1 | -1) {
-  const tabs = app.tabs
-  if (!tabs.length) return
-  const at = app.currentID ? tabs.indexOf(app.currentID) : -1
-  for (let step = 1; step <= tabs.length; step += 1) {
-    const candidate = tabs[(at + by * step + tabs.length * step) % tabs.length]
+  const chats = app.visibleChats
+  if (!chats.length) return
+  const at = app.currentID ? chats.indexOf(app.currentID) : -1
+  for (let step = 1; step <= chats.length; step += 1) {
+    const candidate = chats[(at + by * step + chats.length * step) % chats.length]
     if (candidate && app.unread(candidate)) {
       await app.open(candidate)
       return
@@ -2523,12 +2341,10 @@ function endRecentWalk(event?: KeyboardEvent) {
 }
 const forgetRecentWalk = () => endRecentWalk()
 
+/* MiMo's previous / next conversation, along the side column's visible order. */
 async function stepSession(by: 1 | -1) {
-  const tabs = app.tabs
-  if (tabs.length < 2) return
-  const at = app.currentID ? tabs.indexOf(app.currentID) : -1
-  const next = tabs[(at + by + tabs.length) % tabs.length]
-  if (next) await app.open(next)
+  const next = stepTarget(app.visibleChats, app.currentID, by)
+  if (next) await selectTab(next)
 }
 
 /**
@@ -2722,12 +2538,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => void importConversationFile((sessionID) => void app.open(sessionID)),
     },
     {
-      id: "app.server",
-      group: "key.groupGeneral",
-      title: t("server.switch"),
-      run: () => void chooseServer(),
-    },
-    {
       id: "app.update",
       group: "key.groupGeneral",
       title: t("update.check"),
@@ -2753,16 +2563,6 @@ const bindableCommands = computed((): AppCommand[] => {
       // A model call, and pointless on a conversation that is one exchange long.
       enabled: hasSession && !app.busy && !app.compacting && app.messages.length > 1,
       run: compactSession,
-    },
-    {
-      // The title swaps with the state, so the row always names what pressing
-      // it will do rather than what is currently true. Turning it on is full
-      // access, so it waits for the settings switch as the composer's chip does.
-      id: "permissions.autoaccept",
-      group: "key.groupConversation",
-      title: autoAcceptAll() ? t("cmd.autoAcceptOff") : t("cmd.autoAcceptOn"),
-      enabled: autoAcceptAll() || Boolean(app.config?.allowFullAccess),
-      run: () => void toggleAutoAccept(),
     },
     {
       id: "session.archive",
@@ -2857,13 +2657,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: copyWorkingDirectory,
     },
     {
-      id: "view.server",
-      group: "key.groupGeneral",
-      title: t("cmd.server"),
-      enabled: inWorkspace,
-      run: () => (serverPanel.value = !serverPanel.value),
-    },
-    {
       id: "view.right",
       group: "key.groupConversation",
       title: t("key.sidePanel"),
@@ -2878,43 +2671,6 @@ const bindableCommands = computed((): AppCommand[] => {
       enabled: inWorkspace,
       run: () => (terminalOpen.value = !terminalOpen.value),
     },
-
-    ...(["build", "plan"] as const).map((entry) => ({
-      id: `agent.${entry}`,
-      group: "key.groupModels",
-      title: t("cmd.useAgent", { name: t(`agent.${entry}`) }),
-      enabled: (app.config?.agent ?? "build") !== entry,
-      run: async () => {
-        await app.patchConfig({ agent: entry })
-      },
-    })),
-    ...(["system", "dark", "light"] as const).map((entry) => ({
-      id: `scheme.${entry}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useScheme", { name: t(`set.theme${entry[0].toUpperCase()}${entry.slice(1)}`) }),
-      enabled: (app.config?.theme ?? "system") !== entry,
-      run: async () => {
-        await app.patchConfig({ theme: entry })
-      },
-    })),
-    ...LANGUAGES.map((entry) => ({
-      id: `language.${entry.id}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useLanguage", { name: entry.label }),
-      run: () => void setLanguage(entry.id),
-    })),
-    {
-      id: "language.cycle",
-      group: "key.groupGeneral",
-      title: t("cmd.cycleLanguage"),
-      run: () => void cycleLanguage(),
-    },
-    ...THEMES.map((entry) => ({
-      id: `theme.${entry.id}`,
-      group: "key.groupGeneral",
-      title: t("cmd.useTheme", { name: entry.name }),
-      run: () => void setTheme(entry.id, entry.name),
-    })),
     // App
     {
       /*
@@ -3050,12 +2806,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => stream.value?.stepMessage(1),
     },
     {
-      id: "session.reopenTab",
-      group: "key.groupGeneral",
-      title: t("cmd.reopenTab"),
-      run: () => void app.reopenTab(),
-    },
-    {
       id: "app.mcp",
       group: "key.groupModels",
       title: t("cmd.mcp"),
@@ -3135,19 +2885,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => void stepProject(1),
     },
     {
-      id: "theme.cycle",
-      group: "key.groupGeneral",
-      // No chord: Ctrl+Shift+T is reopening a tab, and one chord holds one command.
-      title: t("cmd.cycleTheme"),
-      run: () => void cycleTheme(),
-    },
-    {
-      id: "theme.scheme.cycle",
-      group: "key.groupGeneral",
-      title: t("cmd.cycleScheme"),
-      run: () => void cycleScheme(),
-    },
-    {
       id: "input.focus",
       group: "key.groupGeneral",
       title: t("key.focusInput"),
@@ -3172,19 +2909,18 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => window.mcode.window("close"),
     },
     /*
-     * The numbered slots. The strip is what they count along - not the sidebar
-     * and not the recency order - because the number a reader is aiming at is
-     * the position they can see.
+     * The numbered slots, counted along the side column as MiMo counts them:
+     * pinned conversations first, then the rest in the order they are listed.
      */
     ...Array.from({ length: 9 }, (_, index) => ({
       id: `tab.goto.${index + 1}`,
       group: "key.groupConversation",
       title: t("key.gotoTab", { n: index + 1 }),
       hint: `Ctrl+${index + 1}`,
-      enabled: () => app.tabs.length > index,
+      enabled: () => app.visibleChats.length > index,
       run: () => {
-        const target = app.tabs[index]
-        if (target) void app.open(target)
+        const target = app.visibleChats[index]
+        if (target) void selectTab(target)
       },
     })),
     {
@@ -3360,8 +3096,6 @@ const modalOpen = computed(
     Boolean(imagePreview.value) ||
     Boolean(videoPreview.value) ||
     settingsOpen.value ||
-    choosingServer.value ||
-    managingServers.value ||
     Boolean(namingWorkspace.value) ||
     Boolean(editingProject.value) ||
     Boolean(renamingSession.value) ||
@@ -3371,46 +3105,6 @@ const modalOpen = computed(
 /* The box MiMo's annotations go to: the open conversation's, or the home screen's. */
 const annotationScope = computed(() => (isHome.value || !app.currentID ? HOME_SCOPE : app.currentID))
 watch(annotationScope, (scope) => (mainAnnotationScope.value = scope), { immediate: true })
-
-/** Steps to the next colour scheme, in the order the settings list them. */
-async function cycleScheme() {
-  const order = ["system", "dark", "light"] as const
-  const next = order[(order.indexOf(theme.value) + 1) % order.length]
-  await app.patchConfig({ theme: next })
-  notify(t("cmd.useScheme", { name: t(`set.theme${next[0].toUpperCase()}${next.slice(1)}`) }))
-}
-
-/**
- * Steps to the next language, naming it in the language being moved to.
- *
- * Naming it in its own language rather than the outgoing one is what makes the
- * step legible when you have cycled somewhere you cannot read.
- */
-async function setLanguage(id: string) {
-  const entry = LANGUAGES.find((candidate) => candidate.id === id)
-  await app.patchConfig({ language: id })
-  // Named in the language just chosen, which is what makes the step legible
-  // when you have landed somewhere you cannot read.
-  notify(t("toast.switchedTo", { name: entry?.label ?? id }))
-}
-
-async function cycleLanguage() {
-  const current = language.value
-  const index = LANGUAGES.findIndex((entry) => entry.id === current)
-  await setLanguage(LANGUAGES[(index + 1) % LANGUAGES.length].id)
-}
-
-/** Steps to the next palette, naming it - there are thirty-seven to walk. */
-async function setTheme(id: string, name: string) {
-  await app.patchConfig({ themeID: id })
-  notify(t("toast.switchedTo", { name }))
-}
-
-async function cycleTheme() {
-  const index = THEMES.findIndex((entry) => entry.id === themeID.value)
-  const next = THEMES[(index + 1) % THEMES.length]
-  await setTheme(next.id, next.name)
-}
 
 /** Stops the browser opening a file the user let go of by accident. */
 function swallowDrop(event: DragEvent) {
@@ -3596,12 +3290,12 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /*
-   * Ctrl and a digit opens the conversation in that slot of the strip, the way
-   * MiMo and a browser both do. The project in that position is Ctrl+Alt and
-   * the digit.
+   * Ctrl and a digit opens the conversation in that slot of the side column's
+   * visible order, the way MiMo does. The project in that position is Ctrl+Alt
+   * and the digit.
    */
   if (/^[1-9]$/.test(event.key)) {
-    const target = app.tabs[Number(event.key) - 1]
+    const target = app.visibleChats[Number(event.key) - 1]
     if (!target) return
     event.preventDefault()
     void selectTab(target)
@@ -3785,19 +3479,6 @@ const disabledMenuItems = computed(() => {
   return out
 })
 
-/**
- * Ctrl+wheel is the other way people expect to zoom. preventDefault stops
- * Chromium applying its own page zoom on top of ours.
- */
-function onWheel(event: WheelEvent) {
-  if (!event.ctrlKey && !event.metaKey) return
-  // Turned off, the gesture goes back to being an ordinary scroll.
-  if (app.config?.pinchZoom === false) return
-  event.preventDefault()
-  if (event.deltaY === 0) return
-  window.mcode.zoom(event.deltaY < 0 ? "in" : "out")
-}
-
 /*
  * MiMo's task notifications.
  *
@@ -3809,8 +3490,7 @@ function onWheel(event: WheelEvent) {
  * on, or any confirmation with the chime on. A long finish in the conversation
  * on screen is held while it stays there, and sent once it is left.
  *
- * Sound, banner and spoken line stay separate settings: someone watching the
- * window wants the tone and not the banner; someone away from it the reverse.
+ * MiMo has no switch for either notice, and neither does this.
  */
 const chimeOn = () => chimeOf(app.config?.taskDoneSound) !== "off"
 
@@ -3866,7 +3546,6 @@ watch(
     const done = t("notify.done")
     if (app.currentID === turn.sessionID) announce(done)
     else if (about.title !== undefined) announce(`${about.title} · ${done}`)
-    if (app.config?.notifyAgent === false) return
     // automation: a scheduled task's run is told about by its own policy, below.
     if (app.automationRuns.has(turn.sessionID)) return
     if (chiming && watching(turn.sessionID)) {
@@ -3902,7 +3581,7 @@ watch(
 watch(
   () => app.automationNotice,
   (notice) => {
-    if (!notice || app.config?.notifyAgent === false) return
+    if (!notice) return
     window.mcode.taskNotice({ kind: "done", ...noticeAbout(notice.sessionID), silent: false })
   },
 )
@@ -3922,8 +3601,6 @@ watch(awaitingConfirm, (entries) => {
   for (const entry of entries) {
     if (announcedConfirms.has(entry.id)) continue
     announcedConfirms.add(entry.id)
-    if (app.config?.soundPermission) play("permission")
-    if (app.config?.notifyPermission === false) continue
     window.mcode.taskNotice({ kind: "confirm", ...noticeAbout(entry.sessionID), silent: chimeOn() })
   }
 })
@@ -3947,9 +3624,8 @@ watch(
   },
   (message) => {
     if (!message) return
-    // Logged, with its cue if that is on; MiMo sends no notification for a failure.
+    // Logged; MiMo makes no sound and sends no notification for a failure.
     recordLog("ERROR", message)
-    if (app.config?.soundError) play("error")
   },
 )
 
@@ -4032,7 +3708,6 @@ onMounted(async () => {
   // MiMo re-reads the working tree whenever its window comes back; the review tab reads on this.
   window.addEventListener("focus", app.bumpFsNonce)
   schemeQuery.addEventListener("change", onSchemeChange)
-  window.addEventListener("wheel", onWheel, { passive: false })
   offMenu = window.mcode.onMenu(runMenuCommand)
   // MiMo's zoom notice after every step, and once at load when the window is not at 100%.
   offZoom = window.mcode.onZoomChanged((percent) =>
@@ -4136,7 +3811,6 @@ onBeforeUnmount(() => {
   window.removeEventListener("blur", forgetRecentWalk)
   window.removeEventListener("focus", app.bumpFsNonce)
   schemeQuery.removeEventListener("change", onSchemeChange)
-  window.removeEventListener("wheel", onWheel)
   offMenu?.()
   offZoom?.()
   offQuitHint?.()
@@ -4218,9 +3892,6 @@ onBeforeUnmount(() => {
         <div v-if="!app.connected && (app.error || app.offline)" class="boot">
           <p class="boot-msg">{{ app.error || t("boot.unreachable", { url: app.client?.server ?? "" }) }}</p>
           <button class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
-          <button v-if="app.config?.serverURL" class="boot-retry" @click="applyServer('')">
-            {{ t("boot.useLocal") }}
-          </button>
         </div>
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
@@ -4417,12 +4088,6 @@ onBeforeUnmount(() => {
       </ErrorBoundary>
     </div>
 
-    <ReleaseNotesDialog
-      v-if="highlights.length"
-      :highlights="highlights"
-      @close="dismissReleaseNotes(false)"
-      @disable="dismissReleaseNotes(true)"
-    />
 
 
     <CommandPalette
@@ -4442,17 +4107,6 @@ onBeforeUnmount(() => {
       @project="startIn"
     />
 
-    <ServerPopover
-      v-if="serverPanel"
-      @close="serverPanel = false"
-      @manage="
-        () => {
-          serverPanel = false
-          managingServers = true
-        }
-      "
-    />
-
     <RenameDialog
       v-if="namingWorkspace"
       :value="''"
@@ -4460,21 +4114,6 @@ onBeforeUnmount(() => {
       :confirm="t('workspace.new')"
       @close="namingWorkspace = undefined"
       @submit="(name) => createWorkspace(namingWorkspace!, name)"
-    />
-
-    <ServersDialog
-      v-if="managingServers"
-      @close="managingServers = false"
-      @connect="applyServer"
-    />
-
-    <RenameDialog
-      v-if="choosingServer"
-      :value="app.config?.serverURL ?? ''"
-      :heading="t('server.prompt')"
-      placeholder="ws://host:port"
-      @close="choosingServer = false"
-      @submit="applyServer"
     />
 
     <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
