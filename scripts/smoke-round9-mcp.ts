@@ -23,6 +23,7 @@ import { startBackend } from "../src/server/index"
 import { handle } from "../src/server/handlers"
 import { Permissions } from "../src/server/permission"
 import { DEFAULT_PERMISSIONS } from "../src/shared/protocol"
+import { MCP_STATUS_TONE, mcpNeedsSignIn, mcpStatusLabel } from "../src/renderer/src/lib/mcp-status"
 
 type Section = (name: string) => void
 
@@ -517,6 +518,72 @@ async function toolsProbe(check: Check, section: Section): Promise<void> {
   }
 }
 
+/** M-9: a server that wants a sign-in but cannot register a client has a state of its own. */
+async function clientRegistration(check: Check, section: Section): Promise<void> {
+  section("Round 9: a server that cannot register a client (M-9)")
+  const dir = await temporary("mcode-r9-register-")
+  const paths: string[] = []
+  const server = createServer((request, response) => {
+    request.resume()
+    request.on("end", () => {
+      const url = request.url ?? ""
+      paths.push(`${request.method} ${url}`)
+      const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`
+      const open = url.includes("/open")
+      const json = (value: unknown) => {
+        response.writeHead(200, { "content-type": "application/json" })
+        response.end(JSON.stringify(value))
+      }
+      if (url.includes("oauth-protected-resource")) return json({ resource: `${origin}${open ? "/open" : "/closed"}/mcp`, authorization_servers: [`${origin}${open ? "/open" : "/closed"}`] })
+      if (url.includes("oauth-authorization-server") || url.includes("openid-configuration")) {
+        const base = url.includes("/open") ? `${origin}/open` : `${origin}/closed`
+        return json({
+          issuer: base,
+          authorization_endpoint: `${base}/authorize`,
+          token_endpoint: `${base}/token`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+          ...(url.includes("/open") ? { registration_endpoint: `${base}/register` } : {}),
+        })
+      }
+      if (url.endsWith("/register")) return json({ client_id: "probe-client", redirect_uris: ["http://127.0.0.1:19876/mcp/oauth/callback"] })
+      const scope = url.startsWith("/open") ? "/open" : "/closed"
+      response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${scope}/mcp"` })
+      response.end()
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+  const bus = new Bus()
+  const config = stubConfig(bus, {
+    mcpServers: {
+      closed: { type: "remote", url: `http://127.0.0.1:${port}/closed/mcp` },
+      open: { type: "remote", url: `http://127.0.0.1:${port}/open/mcp` },
+    },
+    directory: dir,
+  })
+  const storage = new Storage(path.join(dir, "storage"))
+  const mcp = new McpServers(bus, config as never, storage, path.join(dir, "home"))
+  try {
+    await mcp.start()
+    const closed = mcp.list().find((entry) => entry.name === "closed")
+    const open = mcp.list().find((entry) => entry.name === "open")
+    check(
+      "a server whose authorization server will not register a client waits for a client id, and says so",
+      closed?.status === "needs_client_registration" && Boolean(closed.error?.includes("oauth.clientId")),
+      closed,
+    )
+    check("one that can register waits for a sign-in, with nothing to explain", open?.status === "needs_auth" && !open.error, open)
+    check("neither was tried a second way", !paths.some((entry) => entry.startsWith("GET /closed/mcp")), paths)
+  } finally {
+    mcp.close()
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+  check("the page shows both as waiting for authorization, with 授权", mcpStatusLabel("needs_client_registration") === "needs_auth" && mcpNeedsSignIn("needs_client_registration") && MCP_STATUS_TONE.needs_client_registration === "warn")
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
   // Never the reader's own ~/.claude.json or ~/.mcode: the backend reads servers from both.
   process.env.MCODE_IMPORT_HOME ??= await temporary("mcode-r9-home-")
@@ -528,6 +595,7 @@ export async function roundNineMcpChecks(check: Check, section: Section): Promis
     ["M-1/M-2", nextConversation],
     ["M-3", noApprovalByDefault],
     ["M-8", toolsProbe],
+    ["M-9", clientRegistration],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))

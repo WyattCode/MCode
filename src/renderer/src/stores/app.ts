@@ -18,6 +18,7 @@ import type { Attachment, AgentName,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
 import { t } from "../lib/i18n"
+import { mcpNeedsSignIn } from "../lib/mcp-status"
 import { projectName } from "../lib/project"
 import { projectsByRecency } from "@shared/projects"
 import type { ChatLink } from "@shared/protocol"
@@ -973,7 +974,7 @@ export const useApp = defineStore("app", () => {
    */
   const runtimeStatus = computed<"down" | "attention" | "warning" | "ok">(() => {
     if (!connected.value) return "down"
-    if (mcpServers.value.some((entry) => entry.status === "needs_auth")) return "attention"
+    if (mcpServers.value.some((entry) => mcpNeedsSignIn(entry.status))) return "attention"
     if (mcpServers.value.some((entry) => entry.status === "failed")) return "warning"
     return "ok"
   })

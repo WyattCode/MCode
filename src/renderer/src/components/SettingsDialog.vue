@@ -22,6 +22,7 @@ import ThirdPartyDialog from "./ThirdPartyDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
 import type { AgentsFileState, AppPath, AppPaths, SavedRule, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
+import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
@@ -218,13 +219,6 @@ interface McpForm {
 }
 
 const MCP_KINDS = ["stdio", "http"] as const
-const MCP_TONE: Record<McpStatus, string> = {
-  connected: "ok",
-  failed: "err",
-  needs_auth: "warn",
-  pending: "muted",
-  disabled: "muted",
-}
 const MCP_EXAMPLE = `{
   "mcpServers": {
     "filesystem": {
@@ -294,7 +288,7 @@ const mcpRows = computed(() =>
         ? "disabled"
         : mcpChecking.value
           ? "checking"
-          : state && state.status in MCP_TONE
+          : state && isMcpStatus(state.status)
             ? state.status
             : "unknown"
       return {
@@ -302,7 +296,8 @@ const mcpRows = computed(() =>
         remote: entry.type === "remote",
         enabled,
         status,
-        tone: status in MCP_TONE ? MCP_TONE[status as McpStatus] : "muted",
+        tone: isMcpStatus(status) ? MCP_STATUS_TONE[status] : "muted",
+        label: isMcpStatus(status) ? mcpStatusLabel(status) : status,
         error: state?.error,
       }
     }),
@@ -2687,7 +2682,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     <span>{{ t(row.remote ? "set.mcp.remote" : "set.mcp.local") }}</span>
                     <span class="mcp-status" :class="row.tone" :data-mcp-status="row.status" :title="row.error">
                       <span class="mcp-status-dot" />
-                      {{ t(`set.mcp.status.${row.status}`) }}
+                      {{ t(`set.mcp.status.${row.label}`) }}
                     </span>
                   </div>
                 </div>
@@ -2704,7 +2699,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     <span class="knob" />
                   </button>
                   <button
-                    v-if="row.enabled && row.status === 'needs_auth'"
+                    v-if="row.enabled && mcpNeedsSignIn(row.status)"
                     class="ctl-btn"
                     :data-mcp-auth="row.name"
                     :disabled="mcpAuthorizing === row.name"

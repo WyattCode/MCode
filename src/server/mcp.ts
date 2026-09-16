@@ -261,6 +261,21 @@ async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: str
   line("")
 }
 
+/** A sign-in cannot go ahead because the authorization server will not register a client. */
+function registrationFailure(reason: string): boolean {
+  return reason.includes("registration") || reason.includes("client_id")
+}
+
+/**
+ * A failure that is about signing in, which is answered with 授权 rather than
+ * with a second transport: MiMo's test, plus a refused registration, which
+ * this app's own OAuth code reports without the word OAuth.
+ */
+function signInFailure(err: unknown): boolean {
+  const reason = err instanceof Error ? err.message : String(err)
+  return err instanceof UnauthorizedError || reason.includes("OAuth") || registrationFailure(reason)
+}
+
 /** What a connection asks of the servers' owner. */
 interface ConnectionHooks {
   /** Where a local server starts: the project, as MiMo's engine starts it in its instance directory. */
@@ -376,9 +391,10 @@ class Connection {
        * 授权, except one that cannot register a client, which needs a client
        * id written into its config first.
        */
-      if (this.provider && (err instanceof UnauthorizedError || reason.includes("OAuth"))) {
-        if (reason.includes("registration") || reason.includes("client_id")) {
-          this.error = "Server does not support dynamic client registration. Please provide clientId in config."
+      if (this.provider && signInFailure(err)) {
+        if (registrationFailure(reason)) {
+          this.status = "needs_client_registration"
+          this.error = "This server cannot register a client by itself: give its entry an oauth.clientId in the config file."
         } else {
           this.status = "needs_auth"
           this.error = undefined
@@ -399,7 +415,7 @@ class Connection {
       return
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
-      if (err instanceof UnauthorizedError || (this.provider && reason.includes("OAuth"))) throw err
+      if (err instanceof UnauthorizedError || (this.provider && signInFailure(err))) throw err
       this.cut()
       this.sessionID = undefined
       this.protocolVersion = undefined

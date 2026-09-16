@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue"
 import { useApp } from "../stores/app"
 import { t } from "../lib/i18n"
+import { mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 
 /**
  * What the title bar's server control opens.
@@ -48,7 +49,7 @@ const busy = ref<string>()
 /** Which light a server's state deserves, in the reference's own grading. */
 function mcpTone(status: string): string {
   if (status === "connected") return ""
-  if (status === "needs_auth") return "attention"
+  if (mcpNeedsSignIn(status)) return "attention"
   if (status === "failed") return "off"
   return "idle"
 }
@@ -131,7 +132,7 @@ onBeforeUnmount(() => {
       >
         <span class="dot" :class="mcpTone(entry.status)" />
         <span class="name">{{ entry.name }}</span>
-        <span class="meta">{{ t(`mcp.status.${entry.status}`) }}</span>
+        <span class="meta">{{ t(`mcp.status.${mcpStatusLabel(entry.status)}`) }}</span>
         <!-- Drawn only: the row is the switch, so nothing interactive sits inside a button. -->
         <span class="switch" :class="{ on: entry.status === 'connected' }" aria-hidden="true">
           <span class="knob" />

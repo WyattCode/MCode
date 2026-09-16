@@ -1199,7 +1199,8 @@ export interface Worktree {
   main: boolean
 }
 
-export type McpStatus = "connected" | "pending" | "failed" | "needs_auth" | "disabled"
+/** `needs_client_registration`: the server wants a sign-in but cannot register a client, so its config needs a client id. */
+export type McpStatus = "connected" | "pending" | "failed" | "needs_auth" | "needs_client_registration" | "disabled"
 
 export interface McpServerState {
   name: string
