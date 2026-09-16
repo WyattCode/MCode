@@ -13,8 +13,13 @@ import type { Check } from "./smoke-round5"
 
 const RENDERER = path.join("src", "renderer", "src")
 
+/* A file that is gone reads as empty, so its checks fail rather than stopping the run. */
 function read(file: string): string {
-  return fs.readFileSync(path.join(RENDERER, file), "utf8")
+  try {
+    return fs.readFileSync(path.join(RENDERER, file), "utf8")
+  } catch {
+    return ""
+  }
 }
 
 function sources(directory: string): string[] {
