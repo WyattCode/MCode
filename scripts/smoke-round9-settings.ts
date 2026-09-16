@@ -203,4 +203,13 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const tables = read("src/renderer/src/lib/i18n.ts")
     check("their unlocked strings are gone", !/"(cmd\.useAgent|cmd\.useLanguage|cmd\.useScheme|cmd\.cycleScheme|toast\.switchedTo)"/.test(tables))
   }
+
+  section("Round 9 (S9-9): the dead terminal-toggle field is gone, and the wiring check counts only reads")
+  {
+    check("the protocol has no showTerminal", !/^\s*showTerminal\??:/m.test(read("src/shared/protocol.ts")))
+    const old = await loaded({ showTerminal: false })
+    check("a stored one is dropped", !("showTerminal" in (old.config.get() as object)) && !("showTerminal" in (await old.disk())))
+    const wiring = read("scripts/wiring-check.ts")
+    check("the wiring check blanks dotted string keys before looking", wiring.includes("readers.replace(keyLike") && !/new RegExp\(WORD \+ field \+ WORD\)/.test(wiring))
+  }
 }

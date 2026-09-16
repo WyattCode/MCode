@@ -147,7 +147,6 @@ function defaults(): AppConfig {
     reduceMotion: "system",
     diffMarks: "color",
     migrations: [],
-    showTerminal: true,
     shell: "",
     customProviders: [],
     /*
@@ -195,6 +194,8 @@ export const RETIRED_FIELDS: readonly string[] = [
   "themeID",
   // S9-7: the post-update notes window's switch; MiMo has no such window.
   "releaseNotes",
+  // S9-9: the bar's terminal toggle switch, which nothing ever read.
+  "showTerminal",
 ]
 
 /** Takes the retired fields out of a document; answers whether any was there. */

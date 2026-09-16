@@ -1585,16 +1585,6 @@ export interface AppConfig {
   migrations: string[]
 
   /**
-   * The bottom-panel toggle in the bar, on to begin with.
-   *
-   * The reference this app follows for 2.0 keeps a bottom-panel toggle in the
-   * bar at all times, and the drawer is otherwise reachable only by a chord
-   * nobody is told about. The setting stays, so a reader who wants the bar
-   * emptier can have that.
-   */
-  showTerminal: boolean
-
-  /**
    * The shell the terminal opens and the bash tool runs in.
    *
    * Empty means whatever the system says; naming one is how someone whose

@@ -372,8 +372,26 @@ console.log("context ring: checked")
     return body ? source.split(body).join("") : source
   })
   const readers = texts.join(String.fromCharCode(10))
-  const WORD = String.fromCharCode(92) + "b"
-  const unread = fields.filter((field) => !new RegExp(WORD + field + WORD).test(readers))
+  /*
+   * Only a read counts as a read.
+   *
+   * This used to accept the field's name as a whole word anywhere, and a word
+   * is not a read: `showTerminal` had no reader at all, yet the command table's
+   * string key "cmd.showTerminal" satisfied it, and names as common as `shell`,
+   * `theme` or `model` could hardly fail. A field is read now only as a property
+   * access (`.field`, `?.field`, `["field"]`) or by destructuring
+   * (`{ field } = ...`), and dotted string keys - an i18n key, a command id -
+   * are blanked out first. A Vue binding is a quoted expression too, so a
+   * quoted string straight after `=` is left alone.
+   */
+  const BACKSLASH = String.fromCharCode(92)
+  const keyLike = new RegExp(`(^|[^=])(["'])[A-Za-z_][${BACKSLASH}w-]*(?:${BACKSLASH}.[${BACKSLASH}w-]+)+${BACKSLASH}2`, "g")
+  const accessible = readers.replace(keyLike, "$1$2$2")
+  const isRead = (field: string) =>
+    new RegExp(`${BACKSLASH}.${field}(?![${BACKSLASH}w$])`).test(accessible) ||
+    new RegExp(`${BACKSLASH}[${BACKSLASH}s*["']${field}["']${BACKSLASH}s*${BACKSLASH}]`).test(readers) ||
+    new RegExp(`${BACKSLASH}{[^{}]*${BACKSLASH}b${field}${BACKSLASH}b[^{}]*${BACKSLASH}}${BACKSLASH}s*=(?![=>])`).test(accessible)
+  const unread = fields.filter((field) => !isRead(field))
   for (const field of unread) {
     problems.push(`the config carries ${field} and nothing outside settings reads it`)
   }
