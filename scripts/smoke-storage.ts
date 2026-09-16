@@ -18,6 +18,7 @@ import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
 import { Storage } from "../src/server/storage"
 import { SessionStore } from "../src/server/session/store"
+import { Permissions, RULES_KEY } from "../src/server/permission"
 import { Snapshots, snapshotBytes } from "../src/server/session/snapshot"
 import { CHECKPOINT_MIGRATION, migrateCheckpoints } from "../src/server/session/checkpoint-migrate"
 
@@ -199,6 +200,83 @@ export async function storageChecks(check: Check, section: (name: string) => voi
     await live.finish()
     const kept = await snapshots.sweep([two])
     check("a sweep never touches a store a live conversation still names", kept === 0 && (await fs.readdir(storeRoot)).length > 0, await fs.readdir(storeRoot))
+  }
+
+  // ------------------------------------------------------------------- S3
+  section("Round 7 (S3): an always is remembered across a restart, and can be taken back")
+  {
+    const dataRoot = path.join(root, "rules")
+    const storage = new Storage(path.join(dataRoot, "storage"))
+    const bus = new Bus()
+    const config = new Config(storage, bus, path.join(dataRoot, "credentials.json"))
+    await storage.write("config", {})
+    await config.load()
+    await config.set({ accessLevel: "ask", permissions: { bash: "ask" } })
+    const directory = path.join(root, "rules-project")
+    const elsewhere = path.join(root, "rules-other")
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 20))
+
+    const ask = (gate: Permissions, sessionID: string, callID: string, command: string, where: string) =>
+      gate
+        .ask({ sessionID, messageID: "m1", callID, kind: "bash", title: "t", subject: command, patterns: [command], always: ["npm run build *"], directory: where })
+        .then(
+          () => "allowed",
+          (err: Error) => err.message,
+        )
+    /** Answers whatever is parked, so a check can never hang waiting for a question nobody sees. */
+    const settle = async (gate: Permissions, running: Promise<string>, answer: "always" | "reject") => {
+      await pause()
+      const parked = gate.outstanding()[0]
+      if (parked) gate.respond(parked.id, answer)
+      return { asked: Boolean(parked), outcome: await running }
+    }
+
+    const first = new Permissions(bus, config)
+    await first.load(storage)
+    const granted = await settle(first, ask(first, "ses_a", "c1", "npm run build", directory), "always")
+    check("the question is put, and answering always allows it", granted.asked && granted.outcome === "allowed", granted)
+    check("the rule is listed with where it was granted and what it covers", first.savedRules().some((rule) => rule.kind === "bash" && rule.pattern === "npm run build *" && rule.sessionID === ""), first.savedRules())
+
+    // The write is deliberately not awaited by the approval itself, so wait for it here.
+    await first.flush()
+    const written = await fs.readFile(storage.fileOf(RULES_KEY), "utf8")
+    check("and written to the profile rather than kept in memory alone", written.includes("npm run build *"), written)
+
+    /* The restart: a second gate reading the same profile, as the next launch does. */
+    const second = new Permissions(bus, config)
+    await second.load(storage)
+    const remembered = await settle(second, ask(second, "ses_b", "c2", "npm run build --watch", directory), "reject")
+    check("after a restart the same command is not asked again", !remembered.asked && remembered.outcome === "allowed", remembered)
+
+    const other = await settle(second, ask(second, "ses_c", "c3", "npm run build", elsewhere), "reject")
+    check("while another project is still asked", other.asked, other)
+
+    await second.forget({ directory, kind: "bash", pattern: "npm run build *" })
+    check("withdrawing the rule empties the list", second.savedRules().length === 0, second.savedRules())
+    const third = new Permissions(bus, config)
+    await third.load(storage)
+    const askedAgain = await settle(third, ask(third, "ses_d", "c4", "npm run build", directory), "reject")
+    check("and the withdrawal survives a restart, so it asks once more", askedAgain.asked, askedAgain)
+
+    /*
+     * A document from a later build: read as far as it goes, never written back.
+     * A downgrade that still saves is how the newer build's rules are lost.
+     */
+    await storage.write(RULES_KEY, { schemaVersion: 99, projects: { [directory]: [{ kind: "bash", pattern: "from-a-newer-build *" }] } })
+    const newer = new Permissions(bus, config)
+    await newer.load(storage)
+    check("a profile written by a newer build is still read", newer.savedRules().some((rule) => rule.pattern === "from-a-newer-build *"), newer.savedRules())
+    await newer.forget({})
+    const kept = JSON.parse(await fs.readFile(storage.fileOf(RULES_KEY), "utf8")) as { schemaVersion?: number; projects?: Record<string, unknown[]> }
+    check("but nothing is written over it", kept.schemaVersion === 99 && Object.keys(kept.projects ?? {}).length === 1, kept)
+
+    /* A document that will not parse is evidence, not something to write over. */
+    await fs.writeFile(storage.fileOf(RULES_KEY), "{ this is not json", "utf8")
+    const damaged = new Permissions(bus, config)
+    await damaged.load(storage)
+    const aside = (await fs.readdir(path.dirname(storage.fileOf(RULES_KEY)))).filter((name) => name.startsWith("permissions.json.corrupt-"))
+    check("an unreadable rules document is kept aside rather than replaced", aside.length === 1, aside)
+    check("and the app carries on with no rules in force", damaged.savedRules().length === 0, damaged.savedRules())
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

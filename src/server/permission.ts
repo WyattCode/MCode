@@ -5,6 +5,7 @@ import type {
   PermissionRecord,
   PermissionRequest,
   PermissionResponse,
+  SavedRule,
 } from "@shared/protocol"
 import { PERMISSION_KINDS, SELF_ASKING_KINDS } from "@shared/protocol"
 import { accessAction, defaultAccess, sessionAccess, type Access } from "@shared/access"
@@ -13,6 +14,7 @@ import { LOST_WORK, commandRisk, dangerousCommand, readOnlyCommand } from "./com
 import path from "node:path"
 import type { Bus } from "./bus"
 import type { Config } from "./config"
+import type { Storage } from "./storage"
 
 export class PermissionDenied extends Error {
   /**
@@ -139,6 +141,30 @@ interface Rule {
   pattern: string
 }
 
+/** Where saved "always" rules are kept, beside the rest of this app's documents. */
+export const RULES_KEY = "permissions"
+
+/**
+ * Which build's idea of this document this one is.
+ *
+ * Raised only when a change would be misread by a build that predates it; a
+ * document from a later build is read as far as it can be and never written
+ * over, the same bargain `config.json` makes.
+ */
+export const RULES_SCHEMA_VERSION = 1
+
+interface StoredRules {
+  schemaVersion: number
+  /**
+   * Where a rule was granted, to the rules granted there: an absolute project
+   * path, or `session:<id>` for one given in a conversation that named no
+   * project. MiMo keeps both too - `permission(project_id)` in its engine's
+   * database, and `permByConvo` in its desktop preferences.
+   */
+  projects: Record<string, Rule[]>
+}
+
+
 /**
  * MiMo's wildcard, as its permission rules match: `*` is any run of characters,
  * `?` one character, a pattern ending in " *" also matches the words alone (so
@@ -196,13 +222,26 @@ function decisionOf(response: PermissionResponse, reason?: string): PermissionDe
  *
  * "always" is remembered as MiMo's engine keeps it: one allow rule per saved
  * pattern, for the project - a command's prefix (`git status *`), a folder
- * outside the project (`dir/*`), or the whole kind (`*`) - for the rest of the
- * process, deliberately not persisted to disk, so a blanket approval cannot
- * silently outlive the app.
+ * outside the project (`dir/*`), or the whole kind (`*`).
+ *
+ * These now outlive the app, as MiMo's do. MiMo keeps them in two places that
+ * both survive a restart - `permission(project_id, data)` and `permission_grant`
+ * in its engine's database, and `permByConvo` in its desktop preferences - while
+ * this app kept them in memory only, so every "always" was forgotten at quit and
+ * the same question came back the next morning. They are written to
+ * `storage/permissions.json`, the settings page lists them, and any one of them
+ * can be taken back: an approval that cannot be withdrawn is the reason not to
+ * persist one, so it is withdrawable.
  */
 export class Permissions {
   private readonly pending = new Map<string, Pending>()
   private readonly rules = new Map<string, Rule[]>()
+  /** Where the rules are written; without one they last only as long as the process, as they used to. */
+  private store: Storage | undefined
+  /** Set when the stored rules were written by a later build: read as far as they go, never written over. */
+  private fromNewerVersion = false
+  /** The last write, so two cannot interleave. */
+  private writing: Promise<void> = Promise.resolve()
   /** Background subagents, with the conversation each works for: they are never shown a question. */
   private readonly background = new Map<string, string>()
   /** Who wants to hear how a call's questions ended, by call id. */
@@ -329,6 +368,8 @@ export class Permissions {
     const saved = this.rules.get(key) ?? []
     for (const pattern of always) if (!saved.some((rule) => rule.kind === kind && rule.pattern === pattern)) saved.push({ kind, pattern })
     this.rules.set(key, saved)
+    // Written as it is granted, so tomorrow morning does not ask it again.
+    void this.persist()
     for (const [id, pending] of [...this.pending]) {
       if (id === answered || pending.key !== key || pending.request.kind !== kind || pending.request.forced) continue
       if (!this.allowedByRules(key, kind, pending.patterns)) continue
@@ -590,6 +631,94 @@ export class Permissions {
       pending.resolve("reject")
       this.bus.publish({ type: "permission.resolved", requestID: id, decided: "cancelled" })
     }
+  }
+
+  /**
+   * Reads the saved rules, once, as the backend starts.
+   *
+   * A document that will not parse is kept as evidence rather than written over:
+   * it is this machine's only record of what it has allowed. One written by a
+   * later build is read as far as it goes and never written back, the same
+   * bargain the settings make - a downgrade that still saves is how the newer
+   * build's rules would be lost.
+   */
+  async load(storage: Storage): Promise<void> {
+    this.store = storage
+    const read = await storage.readOrCorrupt<Partial<StoredRules>>(RULES_KEY)
+    if (read.corrupt) {
+      await storage.quarantine(RULES_KEY)
+      return
+    }
+    const stored = read.value
+    if (!stored) return
+    this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > RULES_SCHEMA_VERSION
+    for (const [key, rules] of Object.entries(stored.projects ?? {})) {
+      if (!Array.isArray(rules)) continue
+      // A hand-edited document must not put a rule this build cannot read into force.
+      const kept = rules.filter((rule): rule is Rule => Boolean(rule) && typeof rule.kind === "string" && typeof rule.pattern === "string")
+      if (kept.length) this.rules.set(key, kept)
+    }
+  }
+
+  private persist(): Promise<void> {
+    const storage = this.store
+    if (!storage || this.fromNewerVersion) return this.writing
+    const document: StoredRules = { schemaVersion: RULES_SCHEMA_VERSION, projects: Object.fromEntries(this.rules) }
+    // Serialised, so two approvals answered at once cannot land in the wrong order.
+    this.writing = this.writing
+      .catch(() => undefined)
+      .then(() => storage.write(RULES_KEY, document))
+      .catch(() => undefined)
+    return this.writing
+  }
+
+  /**
+   * Settles the last write, for a caller that has to know the rules have
+   * reached the disk.
+   *
+   * Granting one deliberately does not wait for the write: the tool that asked
+   * the question is held up until `ask` returns, and a disk that is busy would
+   * be felt as the approval taking a moment to take effect. The rule is in
+   * force the instant it is granted either way; this is for the checks, and for
+   * anything that wants to be sure before the process ends.
+   */
+  flush(): Promise<void> {
+    return this.writing
+  }
+
+  /** Every remembered allowance, for the settings page that lists and withdraws them. */
+  savedRules(): SavedRule[] {
+    const out: SavedRule[] = []
+    for (const [key, rules] of this.rules) {
+      const sessionID = key.startsWith("session:") ? key.slice("session:".length) : ""
+      for (const rule of rules) out.push({ directory: sessionID ? "" : key, sessionID, kind: rule.kind, pattern: rule.pattern })
+    }
+    return out.sort((a, b) => a.directory.localeCompare(b.directory) || a.kind.localeCompare(b.kind) || a.pattern.localeCompare(b.pattern))
+  }
+
+  /**
+   * Takes a remembered allowance back: one rule, everything granted in one
+   * place, or the lot.
+   *
+   * This is the half that makes persisting them defensible. An approval that
+   * outlives the app and cannot be withdrawn is worse than one that is
+   * forgotten at quit, because nothing in the interface would ever say what the
+   * app had been told it may do.
+   */
+  async forget(input: { directory?: string; sessionID?: string; kind?: string; pattern?: string } = {}): Promise<void> {
+    const key = input.sessionID
+      ? `session:${input.sessionID}`
+      : input.directory
+        ? projectKey({ directory: input.directory, sessionID: "" })
+        : undefined
+    if (!key) this.rules.clear()
+    else if (input.kind === undefined || input.pattern === undefined) this.rules.delete(key)
+    else {
+      const left = (this.rules.get(key) ?? []).filter((rule) => rule.kind !== input.kind || rule.pattern !== input.pattern)
+      if (left.length) this.rules.set(key, left)
+      else this.rules.delete(key)
+    }
+    await this.persist()
   }
 
   /**

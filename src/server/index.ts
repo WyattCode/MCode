@@ -59,6 +59,8 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   bindDesktopSettings(config)
 
   const permissions = new Permissions(bus, config)
+  // The "always" approvals this profile has remembered, so a restart does not ask again.
+  await permissions.load(storage)
   const sessions = new SessionStore(storage, bus)
   // Each conversation's own access level; a side chat or subagent runs at the level of the conversation it belongs to.
   permissions.useSessions(async (sessionID) => {

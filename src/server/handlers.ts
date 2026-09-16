@@ -270,6 +270,18 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      *
      * Sessions with no writes are left out entirely rather than listed empty.
      */
+    case "permission.rules":
+      return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.rules">
+
+    case "permission.forget":
+      await runtime.permissions.forget({
+        directory: request.directory,
+        sessionID: request.sessionID,
+        kind: request.kind,
+        pattern: request.pattern,
+      })
+      return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.forget">
+
     case "artifact.list": {
       const sessions = await runtime.sessions.list()
       const artifacts: SessionArtifacts[] = []
@@ -407,6 +419,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * leave the store behind for the life of the profile - the one thing this
        * app's deletion did not reach, while MiMo's own store cascades.
        */
+      // Anything remembered for this conversation alone goes with it; a project's rules stay.
+      await runtime.permissions.forget({ sessionID: request.sessionID })
       if (worked) {
         const place = (directory: string) => {
           const resolved = path.resolve(directory)
