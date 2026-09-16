@@ -10,6 +10,7 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { APP_NAME, noticeTitle, pinnedProfile, readSavedWindow, windowStateToSave } from "../src/main/desktop-rules"
 import { PRUNE_DELAY_MS, prunableDumps, pruneCrashDumps, startLocalCrashDumps } from "../src/main/crash-dumps"
+import { ENV_TIMEOUT_MS, expandPercent, parseRegQuery, parseShellEnv, refreshEnvironment, unionPath } from "../src/main/shell-env"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
 async function sources(root: string): Promise<Map<string, string>> {
@@ -210,6 +211,127 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     check(
       "the main process starts it before the app is ready and sweeps ten seconds after",
       PRUNE_DELAY_MS === 10_000 && /startLocalCrashDumps\(\{\s*reporter: crashReporter/.test(main) && main.indexOf("startLocalCrashDumps({") < main.indexOf("app.whenReady().then(async") && !/uploadToServer: true/.test(main),
+    )
+  }
+
+  section("Round 9 (Windows): the environment is refreshed from the registry or the login shell at launch")
+  {
+    const machine = [
+      "",
+      "HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+      "    ComSpec    REG_EXPAND_SZ    %SystemRoot%\\system32\\cmd.exe",
+      "    Path    REG_EXPAND_SZ    %SystemRoot%\\system32;C:\\Program Files\\Git\\cmd",
+      "    NUMBER_OF_PROCESSORS    REG_SZ    8",
+      "    USERNAME    REG_SZ    SYSTEM",
+      "    Some Name    REG_SZ    with spaces",
+      "    Blob    REG_BINARY    0102",
+      "",
+    ].join("\r\n")
+    const user = [
+      "",
+      "HKEY_CURRENT_USER\\Environment",
+      "    Path    REG_EXPAND_SZ    %USERPROFILE%\\AppData\\Local\\Programs\\Python\\Python312\\;C:\\Users\\u\\.cargo\\bin;c:\\program files\\git\\cmd\\",
+      "    JAVA_HOME    REG_SZ    C:\\Program Files\\Java\\jdk-21",
+      "    TOOL_DIR    REG_EXPAND_SZ    %JAVA_HOME%\\bin",
+      "    张三的变量    REG_SZ    D:\\资料\\工具",
+      "",
+    ].join("\r\n")
+    check(
+      "reg query output: string values only, names with spaces, PATH under one spelling",
+      JSON.stringify(parseRegQuery(machine)) ===
+        JSON.stringify({ ComSpec: "%SystemRoot%\\system32\\cmd.exe", PATH: "%SystemRoot%\\system32;C:\\Program Files\\Git\\cmd", NUMBER_OF_PROCESSORS: "8", USERNAME: "SYSTEM", "Some Name": "with spaces" }),
+      parseRegQuery(machine),
+    )
+    const calls: { file: string; args: string[]; options: Record<string, unknown> }[] = []
+    const winEnv: Record<string, string | undefined> = {
+      SystemRoot: "C:\\Windows",
+      USERPROFILE: "C:\\Users\\u",
+      USERNAME: "u",
+      PATH: "C:\\Windows\\system32;C:\\Old\\bin",
+      ComSpec: "C:\\Windows\\system32\\cmd.exe",
+    }
+    const fromRegistry = refreshEnvironment({
+      env: winEnv,
+      platform: "win32",
+      development: false,
+      home: "C:\\Users\\u",
+      exec: (file, args, options) => {
+        calls.push({ file, args, options })
+        return Buffer.from(args.join(" ").includes("HKCU") ? user : machine, "utf8")
+      },
+    })
+    check(
+      "Windows reads both keys read-only through cmd with the UTF-8 code page, hidden and bounded",
+      calls.length === 2 &&
+        calls.every((call) => call.file === "C:\\Windows\\system32\\cmd.exe" && /chcp 65001>nul & "C:\\Windows\\System32\\reg\.exe" query "HK(LM|CU)\\/.test(call.args.at(-1) ?? "") && !/\badd\b|\bdelete\b|\bimport\b/i.test(call.args.join(" ")) && call.options.timeout === ENV_TIMEOUT_MS && call.options.windowsHide === true) &&
+        /HKLM/.test(calls[0].args.at(-1) ?? "") && /HKCU/.test(calls[1].args.at(-1) ?? ""),
+      calls.map((call) => call.args.at(-1)),
+    )
+    check(
+      "the registry PATH comes first, expanded, machine before user, each folder once regardless of case or a trailing slash",
+      winEnv.PATH === "C:\\Windows\\system32;C:\\Program Files\\Git\\cmd;C:\\Users\\u\\AppData\\Local\\Programs\\Python\\Python312\\;C:\\Users\\u\\.cargo\\bin;C:\\Old\\bin",
+      winEnv.PATH,
+    )
+    check(
+      "new variables are added and expanded, a non-ASCII one intact; values the process already has - USERNAME above all - stay",
+      winEnv.JAVA_HOME === "C:\\Program Files\\Java\\jdk-21" && winEnv.TOOL_DIR === "C:\\Program Files\\Java\\jdk-21\\bin" && winEnv["张三的变量"] === "D:\\资料\\工具" && winEnv.USERNAME === "u" && winEnv.ComSpec === "C:\\Windows\\system32\\cmd.exe",
+      winEnv,
+    )
+    check("and it says what it added", fromRegistry.source === "registry" && fromRegistry.added.includes("JAVA_HOME") && fromRegistry.added.includes("PATH") && !fromRegistry.added.includes("USERNAME"), fromRegistry)
+
+    const failing = { PATH: "C:\\keep" } as Record<string, string | undefined>
+    const failed = refreshEnvironment({
+      env: failing,
+      platform: "win32",
+      development: false,
+      home: "",
+      exec: () => {
+        throw new Error("ETIMEDOUT")
+      },
+    })
+    check("a registry that cannot be read changes nothing", failed.source === "unchanged" && failing.PATH === "C:\\keep" && Object.keys(failing).length === 1)
+    let devCalls = 0
+    refreshEnvironment({ env: {}, platform: "win32", development: true, home: "", exec: () => (devCalls++, "") })
+    check("a development run is left alone, as MiMo's is", devCalls === 0)
+
+    const shellCalls: { file: string; args: string[]; options: Record<string, unknown> }[] = []
+    const macEnv: Record<string, string | undefined> = { PATH: "/usr/bin:/bin", HOME: "/Users/u", ELECTRON_RUN_AS_NODE: "1", LANG: "en_US.UTF-8" }
+    const printed = `Welcome banner\0__MCODE_LOGIN_ENV_BEGIN__\0PATH=/opt/homebrew/bin:/usr/bin:/bin\0HOMEBREW_PREFIX=/opt/homebrew\0LANG=zh_CN.UTF-8\0bad-name=x\0__MCODE_LOGIN_ENV_END__\0`
+    const fromShell = refreshEnvironment({
+      env: macEnv,
+      platform: "darwin",
+      development: false,
+      home: "/Users/u",
+      exec: (file, args, options) => {
+        shellCalls.push({ file, args, options })
+        return printed
+      },
+    })
+    const baseline = shellCalls[0]?.options.env as Record<string, string> | undefined
+    check(
+      "macOS asks the interactive login shell, from home, without Electron's variables, bounded",
+      shellCalls.length === 1 && shellCalls[0].file === "/bin/zsh" && shellCalls[0].args[0] === "-ilc" && shellCalls[0].options.cwd === "/Users/u" && shellCalls[0].options.timeout === ENV_TIMEOUT_MS && baseline?.PATH === "/usr/bin:/bin" && !("ELECTRON_RUN_AS_NODE" in (baseline ?? {})),
+      shellCalls,
+    )
+    check(
+      "the shell's PATH goes first, its new variables are added, and what the process set stays",
+      macEnv.PATH === "/opt/homebrew/bin:/usr/bin:/bin" && macEnv.HOMEBREW_PREFIX === "/opt/homebrew" && macEnv.LANG === "en_US.UTF-8" && !("bad-name" in macEnv) && fromShell.source === "login-shell",
+      macEnv,
+    )
+    const linuxCalls: string[][] = []
+    refreshEnvironment({ env: { SHELL: "/usr/bin/fish", PATH: "/usr/bin" }, platform: "linux", development: false, home: "/home/u", exec: (file, args) => (linuxCalls.push([file, ...args]), "no markers here") })
+    check("Linux uses $SHELL with -lc, and output without the markers changes nothing", linuxCalls[0]?.[0] === "/usr/bin/fish" && linuxCalls[0]?.[1] === "-lc")
+    check(
+      "the shell output parser takes the last marked block and only valid names",
+      JSON.stringify(parseShellEnv("__MCODE_LOGIN_ENV_BEGIN__\0A=1\0__MCODE_LOGIN_ENV_END__\0echo __MCODE_LOGIN_ENV_BEGIN__\0B=2=3\x001C=4\0__MCODE_LOGIN_ENV_END__\0")) === JSON.stringify({ B: "2=3" }) &&
+        parseShellEnv("A=1") === undefined,
+    )
+    check("percent expansion ignores case and keeps unknown names", expandPercent("%systemroot%\\x;%NOPE%", { SystemRoot: "C:\\W" }) === "C:\\W\\x;%NOPE%")
+    check("POSIX PATH entries are compared exactly", unionPath("/a:/B", "/b:/a:", ":", false) === "/a:/B:/b")
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    check(
+      "the refresh runs as the main module loads, before the backend starts",
+      main.indexOf("refreshEnvironment({") > 0 && main.indexOf("refreshEnvironment({") < main.indexOf("startBackend(app.getPath") && /development: Boolean\(process\.env\.ELECTRON_RENDERER_URL\)/.test(main),
     )
   }
 }

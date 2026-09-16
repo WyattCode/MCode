@@ -1,12 +1,13 @@
 import fs from "node:fs/promises"
 import { existsSync, readFileSync } from "node:fs"
-import { execFile } from "node:child_process"
+import { execFile, execFileSync } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, crashReporter, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { PowerHold } from "./power"
 import { PRUNE_DELAY_MS, pruneCrashDumps, startLocalCrashDumps } from "./crash-dumps"
+import { refreshEnvironment } from "./shell-env"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
@@ -158,6 +159,19 @@ if (crashFolder) {
     }, PRUNE_DELAY_MS).unref()
   })
 }
+
+/*
+ * MiMo's environment refresh (shell-env.ts): the registry's or the login
+ * shell's PATH and variables, before the backend, a terminal or a tool runs.
+ */
+const refreshed = refreshEnvironment({
+  env: process.env,
+  platform: process.platform,
+  exec: (file, args, options) => execFileSync(file, args, options),
+  development: Boolean(process.env.ELECTRON_RENDERER_URL),
+  home: app.getPath("home"),
+})
+console.info(`[env] environment from ${refreshed.source}${refreshed.added.length ? `; added ${refreshed.added.join(", ")}` : ""}`)
 
 /*
  * MiMo's native theme at boot: the saved app theme is applied before any
