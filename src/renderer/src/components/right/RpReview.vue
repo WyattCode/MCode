@@ -81,8 +81,9 @@ watch(() => props.root, () => {
   selected.value = undefined
   void load()
 }, { immediate: true })
+/* `fsNonce` is bumped when the window comes back, so an edit made elsewhere is read as MiMo reads it. */
 watch(
-  () => [app.messages.length, app.busy, app.history.undo, app.history.redo, edits.value] as const,
+  () => [app.messages.length, app.busy, app.history.undo, app.history.redo, edits.value, app.fsNonce] as const,
   () => void load(),
 )
 onBeforeUnmount(() => clearTimeout(restTimer))

@@ -59,7 +59,7 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, sideFits, toolHints } from "./lib/right-tools"
-import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
+import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
@@ -2135,16 +2135,6 @@ function transcriptMarkdown(): string {
  * transcript drops them: this is the format meant to be parsed, so leaving
  * parts out would defeat it.
  */
-function exportFilename(): string {
-  const session = app.current
-  const raw = session ? sessionTitle(session.title) || session.id : "session"
-  const clean = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-  return `${clean || session?.id || "session"}.json`
-}
-
 /**
  * Says that writing a file did not work, and leaves the app alone otherwise.
  *
@@ -2174,12 +2164,6 @@ function reportSaveFailure(what: string, failure: unknown): void {
 function reasonOf(failure: unknown): string {
   const raw = failure instanceof Error ? failure.message : String(failure)
   return raw.replace(/^Error invoking remote method '[^']*':\s*/, "")
-}
-
-/* Round 3 AR17-AR18 (artifacts agent): MiMo's file name and single-line toasts, shared with the row menu's export. */
-async function exportSessionData() {
-  if (!app.current) return
-  await saveExport(exportFilename(), JSON.stringify({ info: app.current, messages: app.messages }, null, 2))
 }
 
 async function exportSession() {
@@ -2662,13 +2646,6 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("share.session"),
       enabled: hasSession && app.messages.length > 0,
       run: shareSession,
-    },
-    {
-      id: "session.export",
-      group: "key.groupSession",
-      title: t("cmd.export"),
-      enabled: hasSession && app.messages.length > 0,
-      run: exportSessionData,
     },
     {
       id: "session.exportMarkdown",
@@ -3956,6 +3933,8 @@ onMounted(async () => {
   window.addEventListener("keydown", onKeydown)
   window.addEventListener("keyup", endRecentWalk)
   window.addEventListener("blur", forgetRecentWalk)
+  // MiMo re-reads the working tree whenever its window comes back; the review tab reads on this.
+  window.addEventListener("focus", app.bumpFsNonce)
   schemeQuery.addEventListener("change", onSchemeChange)
   window.addEventListener("wheel", onWheel, { passive: false })
   offMenu = window.mcode.onMenu(runMenuCommand)
@@ -4059,6 +4038,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown)
   window.removeEventListener("keyup", endRecentWalk)
   window.removeEventListener("blur", forgetRecentWalk)
+  window.removeEventListener("focus", app.bumpFsNonce)
   schemeQuery.removeEventListener("change", onSchemeChange)
   window.removeEventListener("wheel", onWheel)
   offMenu?.()
