@@ -310,6 +310,9 @@ function codeFolds(code: string) {
   return askedLines(code) > ASKED_LINES
 }
 
+/* MiMo's chip under a sent message carries the file's name; the whole path is its tooltip. */
+const fileName = (file: string) => file.split(/[\\/]/).pop() || file
+
 /* MiMo's sent file chip: a document opens in the Office tab, anything else in the files tab. */
 function openSentFile(file: string) {
   const directory = shownSession.value?.directory
@@ -996,7 +999,7 @@ defineExpose({ stepMessage, scroller })
                   />
                   <path d="M13.4 3.2V9.6H19.8" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
                 </svg>
-                <span class="sent-name">{{ item.path }}</span>
+                <span class="sent-name">{{ fileName(item.path) }}</span>
               </span>
             </template>
           </div>
@@ -1114,7 +1117,8 @@ defineExpose({ stepMessage, scroller })
         </div>
 
         <!-- subagents: a turn started by news of background subagents opens with their pills, as MiMo draws its actor notifications. -->
-        <div v-if="!latest && turn.notices?.length" class="subagent-notices" data-subagent-notices>
+        <!-- Drawn in the floating card too, as MiMo's harness row draws its actor notifications wherever the row is. -->
+        <div v-if="turn.notices?.length" class="subagent-notices" data-subagent-notices>
           <SubagentActivity :notices="turn.notices" />
         </div>
 
@@ -1195,7 +1199,7 @@ defineExpose({ stepMessage, scroller })
                     <video :src="videoUrl(item)" muted playsinline preload="metadata" />
                   </button>
                   <span v-else class="sent-tile file">
-                    <span class="sent-name">{{ item.path }}</span>
+                    <span class="sent-name">{{ fileName(item.path) }}</span>
                   </span>
                 </template>
               </div>

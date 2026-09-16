@@ -22,18 +22,33 @@ export function legacyTypeOf(name: string): OfficeType | null {
   return extension === "doc" ? "docx" : extension === "xls" ? "xlsx" : extension === "ppt" ? "pptx" : null
 }
 
-/** A file outside the Office tab: the files tab when it is in the project, else its folder. */
+/**
+ * A file outside the Office tab: the files tab, as MiMo opens one.
+ *
+ * Inside the project it is shown under the project root. Outside it - an
+ * attachment dragged in from the desktop, a path the model named - MiMo still
+ * opens the files tab, rooted at the file's own folder
+ * (`openFileInViewer(folder, name)`), and the viewer itself says when the file
+ * is not there or cannot be previewed. Only a name with no folder at all is
+ * left to the system.
+ */
 export function openFileInViewer(file: string, directory?: string) {
   const rp = useRightPanel()
   const norm = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "")
+  const full = norm(file)
   if (directory) {
     const base = `${norm(directory)}/`
-    const full = norm(file)
     if (full.toLowerCase().startsWith(base.toLowerCase())) {
       const tab = rp.openTool("files")
-      rp.update(tab.id, { viewFile: full.slice(base.length) })
+      rp.update(tab.id, { viewFile: full.slice(base.length), fileRoot: undefined })
       return
     }
+  }
+  const cut = full.lastIndexOf("/")
+  if (cut > 0) {
+    const tab = rp.openTool("files")
+    rp.update(tab.id, { viewFile: full.slice(cut + 1), fileRoot: full.slice(0, cut) })
+    return
   }
   void window.mcode.revealPath(file)
 }

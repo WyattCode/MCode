@@ -266,7 +266,8 @@ async function pickMenu(key: string) {
           @click="requestFile(file.path)"
           @contextmenu="openMenu($event, file.path)"
         >
-          <span class="fc-name">{{ file.path }}</span>
+          <!-- MiMo writes each row relative to the project, keeping the whole path for the tooltip. -->
+          <span class="fc-name">{{ relative(file.path) }}</span>
           <span class="fc-stat" data-fc-file-stats>
             <span class="fc-add">+{{ file.add }}</span>
             <span class="fc-del">-{{ file.del }}</span>

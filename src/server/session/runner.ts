@@ -51,7 +51,7 @@ import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNo
 import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
-import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
+import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
@@ -1639,12 +1639,18 @@ export class SessionRunner {
     if (process.env.MCODE_GENERATE_TITLES === "0") return
     const session = await this.store.get(sessionID)
     if (!session || session.titleSource !== "fallback") return
-    const definition = this.config.definition(session.model.provider)
-    if (!definition || !this.config.usable(session.model.provider)) return
+    /* MiMo's 标题生成模型: the model named for titles when this install can still reach it, else the conversation's own. */
+    const model = titleModelRef(
+      this.config.get().titleModel,
+      session.model,
+      (ref) => Boolean(this.config.definition(ref.provider)) && this.config.usable(ref.provider) && Boolean(this.config.modelEntry(ref)),
+    )
+    const definition = this.config.definition(model.provider)
+    if (!definition || !this.config.usable(model.provider)) return
     const adapter: ProviderAdapter =
       definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
-    const entry = this.config.modelEntry(session.model)
+    const entry = this.config.modelEntry(model)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
     let answer = ""
@@ -1652,7 +1658,7 @@ export class SessionRunner {
       await adapter.stream(
         {
           apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
-          model: session.model,
+          model,
           system: TITLE_SYSTEM,
           history: [
             {
@@ -1666,16 +1672,16 @@ export class SessionRunner {
           ],
           tools: [],
           effort: "low",
-          variants: this.config.variants(session.model),
+          variants: this.config.variants(model),
           showReasoning: false,
           signal: controller.signal,
           baseURL: definition.baseURL,
           headers: definition.headers,
           accountId: tokens?.accountId,
-          maxOutput: maxOutputTokens(session.model, entry),
+          maxOutput: maxOutputTokens(model, entry),
           outputLimit: entry?.maxOutput,
           // MiMo's title agent runs at 0.5, where the model takes a temperature.
-          sampling: { ...samplingFor(session.model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
+          sampling: { ...samplingFor(model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
         },
         (event) => {
           if (event.type === "text.delta") answer += event.text

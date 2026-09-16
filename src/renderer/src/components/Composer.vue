@@ -10,7 +10,7 @@ import { drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
 import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { mentionable, preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
 import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
 import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
@@ -427,6 +427,24 @@ async function onPaste(event: ClipboardEvent) {
     await take(files)
     return
   }
+  /*
+   * MiMo's fallback: the clipboard says it holds a picture but hands the page
+   * no File item (a screenshot from some tools), so the main process reads the
+   * bitmap itself and the picture is attached by path.
+   */
+  const types = [...(event.clipboardData?.types ?? [])]
+  if (types.some((type) => type.startsWith("image/"))) {
+    event.preventDefault()
+    const saved = await window.mcode.saveClipboardImage().catch(() => ({ ok: false as const, error: "" }))
+    if (!saved.ok) {
+      notifyFailure(t("attach.unreadable"), "")
+      return
+    }
+    const data = saved.dataUrl?.split(",")[1] ?? ""
+    attachments.value = [...attachments.value, { path: saved.path, mime: "image/png", data, byPath: true }]
+    notify(t("toast.attachmentsAdded", { count: 1 }))
+    return
+  }
   const pasted = event.clipboardData?.getData("text/plain") ?? ""
   if (pasted.length < PASTE_AS_FILE) {
     // MiMo's code paste: text that reads as code goes in fenced, on lines of its own.
@@ -444,6 +462,17 @@ async function onPaste(event: ClipboardEvent) {
     return
   }
   event.preventDefault()
+  /*
+   * MiMo writes the block to a file in the system temp folder and attaches it
+   * by path, so a log of any size goes with the message and can be opened
+   * afterwards. Only if that write fails does it stay inside the message.
+   */
+  const written = await window.mcode.savePastedText(pasted).catch(() => ({ ok: false as const, error: "" }))
+  if (written.ok) {
+    attachments.value = [...attachments.value, { path: written.path, mime: "text/plain", data: "", byPath: true }]
+    notify(t("composer.pasteAttached"))
+    return
+  }
   const name = `mcode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`
   if (new Blob([pasted]).size > MAX_BYTES) {
     notifyFailure(t("attach.tooLarge"), name)
@@ -529,13 +558,20 @@ async function onDrop(event: DragEvent) {
    * is attached. A folder is named but not carried, as a folder picked in the
    * @ menu is.
    */
+  /*
+   * MiMo only turns a text file into an @mention: the main process fills in a
+   * dropped file's text for text-like names under 256KB, and the drop splits on
+   * that - a text file inside the project becomes a mention, and everything
+   * else (a PDF, a spreadsheet, an archive, a huge log, a folder) becomes a
+   * real attachment by path. MCode read only "not a picture or a video", so a
+   * PDF in the project reached the model as a bare path.
+   */
   const files = [...(event.dataTransfer?.files ?? [])]
   const inside: { rel: string; absolute: string }[] = []
   const attach: File[] = []
   for (const file of files) {
-    const media = file.type.startsWith("image/") || file.type.startsWith("video/")
     const absolute = window.mcode.pathForFile(file)
-    const rel = root && !media ? projectRelative(root, absolute) : undefined
+    const rel = root && mentionable(file) ? projectRelative(root, absolute) : undefined
     if (rel) inside.push({ rel, absolute })
     else attach.push(file)
   }

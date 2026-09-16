@@ -12,6 +12,22 @@
 /** MiMo's longest title, in code points. */
 export const TITLE_MAX = 48
 
+/**
+ * Which model writes the title, as MiMo's 标题生成模型 row decides it.
+ *
+ * The setting names a model to spend this request on - usually a cheap one -
+ * and MiMo's own description promises the fallback in so many words: "所选模型
+ * 不可用时回落当前工作模型". So an unset setting, or one naming a model this
+ * install can no longer reach, is the conversation's own model.
+ */
+export function titleModelRef<T extends { provider: string; model: string }>(
+  chosen: T | undefined,
+  session: T,
+  usable: (ref: T) => boolean,
+): T {
+  return chosen && usable(chosen) ? chosen : session
+}
+
 /** The title a conversation has before anything names it; the window shows its own word for it. */
 export const UNTITLED = "New session"
 

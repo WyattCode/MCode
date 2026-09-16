@@ -151,6 +151,15 @@ export class SessionStore {
     parentMessageID?: string
     parentCallID?: string
     subagent?: SessionInfo["subagent"]
+    /*
+     * 导入: a conversation taken from another AI app keeps that app's own
+     * clock and the name it had there, so the list reads as the history it is
+     * rather than as a batch of conversations made this minute.
+     */
+    created?: number
+    updated?: number
+    titleSource?: SessionInfo["titleSource"]
+    imported?: SessionInfo["imported"]
   }): Promise<SessionInfo> {
     const now = Date.now()
     const session: SessionInfo = {
@@ -171,8 +180,10 @@ export class SessionStore {
       ...(input.parentMessageID ? { parentMessageID: input.parentMessageID } : {}),
       ...(input.parentCallID ? { parentCallID: input.parentCallID } : {}),
       ...(input.subagent ? { subagent: input.subagent } : {}),
-      created: now,
-      updated: now,
+      ...(input.titleSource ? { titleSource: input.titleSource } : {}),
+      ...(input.imported ? { imported: input.imported } : {}),
+      created: input.created ?? now,
+      updated: input.updated ?? now,
       usage: emptyUsage(),
     }
     await this.storage.write(this.infoKey(session.id), session)
@@ -214,6 +225,22 @@ export class SessionStore {
   async update(sessionID: string, patch: Partial<SessionInfo>): Promise<SessionInfo> {
     const session = await this.require(sessionID)
     const next: SessionInfo = { ...session, ...patch, updated: Date.now() }
+    await this.storage.write(this.infoKey(sessionID), next)
+    this.bus.publish({ type: "session.updated", session: next })
+    return next
+  }
+
+  /**
+   * 导入: writes a patch with the time it names rather than with now.
+   *
+   * `update` stamps every write with the current moment, which is right for
+   * anything a turn does and wrong for a conversation being written again from
+   * the app it came from: that one's place in the list belongs to when it was
+   * last touched there.
+   */
+  async stamp(sessionID: string, patch: Partial<SessionInfo> & { updated: number }): Promise<SessionInfo> {
+    const session = await this.require(sessionID)
+    const next: SessionInfo = { ...session, ...patch }
     await this.storage.write(this.infoKey(sessionID), next)
     this.bus.publish({ type: "session.updated", session: next })
     return next

@@ -126,7 +126,7 @@ function defaults(): AppConfig {
     agent: "build",
     staged: false,
     openTabs: [],
-    onboarded: false,
+    importOnboarded: false,
     expandShell: false,
     expandEdits: false,
     uiFont: "",
@@ -331,6 +331,8 @@ export class Config {
   private credentials: Record<string, string> = {}
   private oauth: Record<string, OAuthTokens> = {}
   private discovered: Record<string, ModelEntry[]> = {}
+  /** Whether a document was already on disk when this process read it; see the import migration. */
+  private existed = false
 
   constructor(
     private readonly storage: Storage,
@@ -431,6 +433,16 @@ export class Config {
       if (full && !this.current.allowFullAccess) this.current.allowFullAccess = true
     })
 
+    /*
+     * 导入: the one question about conversations in other AI apps belongs to a
+     * new profile's first run. A profile that has been running without it is
+     * marked as already asked, so an upgrade never opens a window over the
+     * conversations it already has - and nothing stored is touched either way.
+     */
+    once("import-prompt-r6", () => {
+      if (this.existed) this.current.importOnboarded = true
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
@@ -455,6 +467,12 @@ export class Config {
       const aside = await this.storage.quarantine("config")
       this.unreadable = { problem: read.corrupt, evidence: aside }
     }
+    /*
+     * A file that could not be read still means a profile that has been used
+     * before: treating it as a first run would offer to import from other apps
+     * on a machine that has been running MCode for months.
+     */
+    this.existed = stored !== undefined || read.corrupt !== undefined
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
