@@ -11,6 +11,9 @@ import type { Check } from "./smoke-round5"
 import { APP_NAME, noticeTitle, pinnedProfile, readSavedWindow, windowStateToSave } from "../src/main/desktop-rules"
 import { PRUNE_DELAY_MS, prunableDumps, pruneCrashDumps, startLocalCrashDumps } from "../src/main/crash-dumps"
 import { ENV_TIMEOUT_MS, expandPercent, parseRegQuery, parseShellEnv, refreshEnvironment, unionPath } from "../src/main/shell-env"
+import { applyRuntimeEnv, bundledRuntimeEnv } from "../src/main/runtimes"
+import { attachmentNote } from "../src/server/session/context"
+import * as runtimesScript from "./runtimes.mjs"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
 async function sources(root: string): Promise<Map<string, string>> {
@@ -332,6 +335,127 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     check(
       "the refresh runs as the main module loads, before the backend starts",
       main.indexOf("refreshEnvironment({") > 0 && main.indexOf("refreshEnvironment({") < main.indexOf("startBackend(app.getPath") && /development: Boolean\(process\.env\.ELECTRON_RENDERER_URL\)/.test(main),
+    )
+  }
+
+  section("Round 9 (Windows): Node.js, Python and ripgrep ship with the app, as MiMo's do")
+  {
+    const packaged = path.join("C:", "Apps", "MCode", "resources")
+    const present = new Set([
+      path.join(packaged, "runtimes", "win32-x64", "node", "node.exe"),
+      path.join(packaged, "runtimes", "win32-x64", "node", "node_modules", "npm", "bin", "npm-cli.js"),
+      path.join(packaged, "runtimes", "win32-x64", "python", "python.exe"),
+      path.join(packaged, "runtimes", "win32-x64", "ripgrep", "rg.exe"),
+      path.join("repo", "resources", "runtimes", "win32-x64", "python", "python.exe"),
+    ])
+    const found = bundledRuntimeEnv({ resourcesDir: packaged, devDir: path.join("repo", "resources", "runtimes"), platform: "win32", arch: "x64", exists: (file) => present.has(file) })
+    check(
+      "the packaged app names each runtime it carries, from resources/runtimes/win32-x64, and turns Python's bytecode writing off",
+      found.MCODE_NODE === path.join(packaged, "runtimes", "win32-x64", "node", "node.exe") &&
+        found.MCODE_NPM?.endsWith(path.join("npm", "bin", "npm-cli.js")) === true &&
+        found.MCODE_PYTHON === path.join(packaged, "runtimes", "win32-x64", "python", "python.exe") &&
+        found.MCODE_RIPGREP_PATH === path.join(packaged, "runtimes", "win32-x64", "ripgrep", "rg.exe") &&
+        found.PYTHONDONTWRITEBYTECODE === "1",
+      found,
+    )
+    const devOnly = bundledRuntimeEnv({ devDir: path.join("repo", "resources", "runtimes"), platform: "win32", arch: "x64", exists: (file) => present.has(file) })
+    check("an unpackaged run finds the repository's copy, and a runtime that is missing is simply not named", JSON.stringify(devOnly) === JSON.stringify({ MCODE_PYTHON: path.join("repo", "resources", "runtimes", "win32-x64", "python", "python.exe"), PYTHONDONTWRITEBYTECODE: "1" }), devOnly)
+    check("another platform looks in its own folder and finds nothing here", Object.keys(bundledRuntimeEnv({ resourcesDir: packaged, platform: "darwin", arch: "arm64", exists: (file) => present.has(file) })).length === 0)
+    const env: Record<string, string | undefined> = { MCODE_PYTHON: "D:\\my\\python.exe" }
+    const applied = applyRuntimeEnv(env, found)
+    check(
+      "a variable the user set wins; the rest are added, and nothing goes on PATH",
+      env.MCODE_PYTHON === "D:\\my\\python.exe" && env.MCODE_NODE === found.MCODE_NODE && !applied.includes("MCODE_PYTHON") && applied.includes("MCODE_RIPGREP_PATH") && env.PATH === undefined,
+      applied,
+    )
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    check(
+      "the main process names them before the backend starts, from the package or the repository",
+      /applyRuntimeEnv\(\s*process\.env,\s*bundledRuntimeEnv\(\{\s*resourcesDir: app\.isPackaged \? process\.resourcesPath : undefined,\s*devDir: app\.isPackaged \? undefined : path\.join\(here, "\.\.", "\.\.", "resources", "runtimes"\)/.test(main) &&
+        main.indexOf("bundledRuntimeEnv({") < main.indexOf("startBackend(app.getPath"),
+    )
+
+    // The script that fetches them.
+    const hosts = /^https:\/\/(nodejs\.org\/dist\/|github\.com\/astral-sh\/python-build-standalone\/releases\/download\/|github\.com\/BurntSushi\/ripgrep\/releases\/download\/|files\.pythonhosted\.org\/packages\/)/
+    const downloads = runtimesScript.DOWNLOADS as { id: string; file: string; url: string; size: number; sha256: string }[]
+    check(
+      "every download is a publisher's official https address with an exact size and sha256",
+      downloads.length === 24 && downloads.every((entry) => hosts.test(entry.url) && entry.url.endsWith(encodeURIComponent(entry.file).replace(/%2B/g, "%2B")) && entry.size > 1000 && /^[0-9a-f]{64}$/.test(entry.sha256)),
+      downloads.filter((entry) => !hosts.test(entry.url)).map((entry) => entry.url),
+    )
+    const wheels = (runtimesScript.WHEELS as { name: string; version: string; file: string }[]).map((wheel) => `${wheel.name} ${wheel.version}`)
+    const mimo = ["chardet 7.6.0", "defusedxml 0.7.1", "et-xmlfile 2.0.0", "lxml 5.3.0", "numpy 2.5.2", "openpyxl 3.1.5", "pandas 2.2.3", "pillow 11.1.0", "pip 26.1.2", "pypdf 5.1.0", "pypdfium2 5.12.1", "python-dateutil 2.9.0.post0", "python-docx 1.1.2", "python-pptx 1.0.2", "pytz 2026.3.post1", "reportlab 4.2.5", "six 1.17.0", "typing-extensions 4.16.0", "tzdata 2026.3", "xlsxwriter 3.2.0"]
+    check("the Python packages are MiMo's twenty, at MiMo's versions, as Windows x64 or pure wheels", JSON.stringify(wheels) === JSON.stringify(mimo) && (runtimesScript.WHEELS as { file: string }[]).every((wheel) => /(cp312-cp312-win_amd64|py3-none-win_amd64|none-any)\.whl$/.test(wheel.file)), wheels)
+    check(
+      "Node.js 24.18 (the line Electron 41 runs), Python 3.12.13 (MiMo's), ripgrep 15.1.0 (MiMo's), and no LibreOffice",
+      runtimesScript.NODE.version === "24.18.1" && runtimesScript.PYTHON.version === "3.12.13" && runtimesScript.RIPGREP.version === "15.1.0" && !downloads.some((entry) => /libreoffice|soffice/i.test(entry.url)),
+    )
+
+    const scratch = await fs.mkdtemp(path.join((await import("node:os")).tmpdir(), "mcode-runtimes-"))
+    const good = { file: "a.bin", size: 5, sha256: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" }
+    await fs.writeFile(path.join(scratch, "a.bin"), "hello")
+    check("a file of the right size and hash passes", (await runtimesScript.fileProblem(path.join(scratch, "a.bin"), good)) === undefined)
+    await fs.writeFile(path.join(scratch, "a.bin"), "hellp")
+    check("one changed byte is refused by its hash", (await runtimesScript.fileProblem(path.join(scratch, "a.bin"), good)) === "hash")
+    await fs.writeFile(path.join(scratch, "a.bin"), "hello!")
+    check("a different length is refused by its size", (await runtimesScript.fileProblem(path.join(scratch, "a.bin"), good)) === "size")
+    let refused = ""
+    try {
+      await runtimesScript.cachedArchive({ ...good, id: "a", url: "https://example.invalid/a.bin" }, scratch, () => {}, false)
+    } catch (error) {
+      refused = String(error)
+    }
+    check("a tampered cached archive is deleted and never used", /not in the cache/.test(refused) && !(await fs.stat(path.join(scratch, "a.bin")).catch(() => undefined)))
+    await fs.mkdir(path.join(scratch, "tree", "python"), { recursive: true })
+    await fs.writeFile(path.join(scratch, "tree", "python", "clean.txt"), "nothing local here")
+    await fs.writeFile(path.join(scratch, "tree", "python", "launcher.exe"), Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from("c:\\builds\\staging\\python.exe", "utf16le")]))
+    await fs.writeFile(path.join(scratch, "tree", "record.json"), '{"url": "file:///C:/Builds/Staging/x.whl"}')
+    const leaks = (runtimesScript.findLocalPaths(path.join(scratch, "tree"), ["C:\\Builds\\Staging"]) as string[]).sort()
+    check("the leak scan finds a build path in any spelling - UTF-16, lower case, forward slashes", JSON.stringify(leaks) === JSON.stringify([path.join("python", "launcher.exe"), "record.json"]), leaks)
+    await fs.rm(scratch, { recursive: true, force: true })
+
+    const licences = path.join(root, "resources", "licenses")
+    const text = async (name: string) => (await fs.readFile(path.join(licences, name), "utf8").catch(() => "")).replace(/\r\n/g, "\n")
+    const packages = await text("python-packages.txt")
+    const sections = [...packages.matchAll(/^={79}\n(\S+) (\S+) - /gm)].map((match) => `${match[1].toLowerCase().replace(/_/g, "-")} ${match[2]}`)
+    check(
+      "the committed licence texts are the ones the script writes: each names the version it covers, one section per package",
+      (await text("node.txt")).startsWith(`Node.js ${runtimesScript.NODE.version} (`) &&
+        (await text("python.txt")).startsWith(`Python ${runtimesScript.PYTHON.version}, python-build-standalone ${runtimesScript.PYTHON.build} (`) &&
+        /LICENSE\.openssl-3\.txt[\s\S]*Apache License/.test(await text("python.txt")) &&
+        (await text("ripgrep.txt")).startsWith(`ripgrep ${runtimesScript.RIPGREP.version} (`) &&
+        JSON.stringify(sections) === JSON.stringify(mimo) &&
+        !/ships no licence file/.test(packages),
+      sections,
+    )
+    const tree = path.join(root, "resources", "runtimes", "win32-x64")
+    if (await fs.stat(path.join(tree, "python", "python.exe")).catch(() => undefined)) {
+      check("and with the runtimes placed, they match the files in the tree exactly", (runtimesScript.checkLicences(tree, licences, false) as string[]).length === 0)
+    } else {
+      check("(no runtimes placed in this checkout: the tree comparison runs in scripts/runtimes.mjs at package time)", true)
+    }
+
+    const builder = await fs.readFile(path.join(root, "electron-builder.yml"), "utf8")
+    const ignore = await fs.readFile(path.join(root, ".gitignore"), "utf8")
+    const packageScript = await fs.readFile(path.join(root, "scripts", "package.mjs"), "utf8")
+    check(
+      "a Windows package places and verifies them first and carries them beside the asar; git never holds them",
+      /win:[\s\S]*extraResources:\s*\n\s*- from: resources\/runtimes\/win32-x64\s*\n\s*to: runtimes\/win32-x64/.test(builder) &&
+        /^resources\/runtimes\/$/m.test(ignore) &&
+        /if \(status === 0 && forWindows\) status = run\("node", \["scripts\/runtimes\.mjs"\]\)/.test(packageScript) &&
+        packageScript.indexOf("scripts/runtimes.mjs") < packageScript.indexOf("scripts/bump-version.mjs"),
+    )
+    const skills = await Promise.all(["docx", "pdf", "pptx", "xlsx", "data-analytics"].map((name) => fs.readFile(path.join(root, "resources", "skills", name, "SKILL.md"), "utf8")))
+    check("the document skills tell the model to use the bundled Python and skip the install checks", skills.every((skill) => skill.includes('"$MCODE_PYTHON"') && skill.includes("$env:MCODE_PYTHON")))
+    const before = process.env.MCODE_PYTHON
+    process.env.MCODE_PYTHON = "C:\\x\\python.exe"
+    const withPython = attachmentNote([{ path: "C:\\docs\\book.xlsx" }], "C:\\docs") ?? ""
+    delete process.env.MCODE_PYTHON
+    const withoutPython = attachmentNote([{ path: "C:\\docs\\book.xlsx" }], "C:\\docs") ?? ""
+    if (before !== undefined) process.env.MCODE_PYTHON = before
+    check(
+      "an attached Office file points at the bundled Python when there is one, and asks to check the library when there is not",
+      withPython.includes("MCODE_PYTHON") && !withPython.includes("Check that the library is installed") && withoutPython.includes("Check that the library is installed") && !withoutPython.includes("MCODE_PYTHON"),
     )
   }
 }

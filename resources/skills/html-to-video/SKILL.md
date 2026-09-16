@@ -41,7 +41,8 @@ Fix the page size (for example 1920x1080), load fonts locally, and wait for
 Write a script in the project (for example `render.mjs`) that opens the page in
 Playwright at the video size, and for frame `n` from 0 to `duration * fps` calls
 `renderAt(n / fps)`, waits for two animation frames, and saves
-`frames/frame_%05d.png`. Run it with `node render.mjs` through bash.
+`frames/frame_%05d.png`. Run it with `node render.mjs` through bash; when `node` is not
+installed, MCode's bundled Node.js is `$MCODE_NODE` (`"$MCODE_NODE" render.mjs`).
 
 ## 3. Encode
 

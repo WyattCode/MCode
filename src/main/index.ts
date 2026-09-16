@@ -8,6 +8,7 @@ import { app, BrowserWindow, clipboard, crashReporter, ipcMain, dialog, shell, n
 import { PowerHold } from "./power"
 import { PRUNE_DELAY_MS, pruneCrashDumps, startLocalCrashDumps } from "./crash-dumps"
 import { refreshEnvironment } from "./shell-env"
+import { applyRuntimeEnv, bundledRuntimeEnv } from "./runtimes"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
@@ -172,6 +173,22 @@ const refreshed = refreshEnvironment({
   home: app.getPath("home"),
 })
 console.info(`[env] environment from ${refreshed.source}${refreshed.added.length ? `; added ${refreshed.added.join(", ")}` : ""}`)
+
+/*
+ * MiMo's bundled runtimes (runtimes.ts): Node.js, Python and ripgrep beside the
+ * app, named to every child process. An unpackaged run looks in the repository.
+ */
+const runtimeNames = applyRuntimeEnv(
+  process.env,
+  bundledRuntimeEnv({
+    resourcesDir: app.isPackaged ? process.resourcesPath : undefined,
+    devDir: app.isPackaged ? undefined : path.join(here, "..", "..", "resources", "runtimes"),
+    platform: process.platform,
+    arch: process.arch,
+    exists: existsSync,
+  }),
+)
+if (runtimeNames.length) console.info(`[runtimes] bundled runtimes named in ${runtimeNames.join(", ")}`)
 
 /*
  * MiMo's native theme at boot: the saved app theme is applied before any

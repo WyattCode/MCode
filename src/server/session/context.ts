@@ -70,7 +70,9 @@ export function attachmentNote(files: readonly { path: string }[], directory: st
   }
   if (office.length) {
     lines.push("", "Office documents. They are not text: reading one with the read tool gives you the compressed container, not the content. Open each with what fits it:", ...office.map((target) => `- ${target} - ${OFFICE_TOOLS[extensionOf(target)]}`))
-    lines.push("Check that the library is installed before relying on it, and say so plainly if it is not rather than guessing at the contents.")
+    // MiMo's bundled runtime: its Python already has these libraries (src/main/runtimes.ts names it).
+    if (process.env.MCODE_PYTHON) lines.push("MCode's bundled Python (the MCODE_PYTHON environment variable) has openpyxl, pandas, python-docx, python-pptx and pypdf installed; run these with it.")
+    else lines.push("Check that the library is installed before relying on it, and say so plainly if it is not rather than guessing at the contents.")
   }
   if (media.length) {
     lines.push("", "Pictures, audio, video and PDFs. They travel in this message where this model reads that kind of file, and a line says so where it does not:", ...listed(media))

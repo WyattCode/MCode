@@ -6781,7 +6781,7 @@ async function main() {
     const shippedNames = await fs.readdir(path.join(process.cwd(), "resources/licenses"))
     check(
       "the dialog lists every component MCode redistributes, each with a licence text that is a real file",
-      JSON.stringify(entryIds) === JSON.stringify(["fluidsynth", "codecs", "js-synthesizer", "abcjs", "musescore-general"]) &&
+      JSON.stringify(entryIds) === JSON.stringify(["fluidsynth", "codecs", "js-synthesizer", "abcjs", "musescore-general", "node", "python", "python-packages", "ripgrep"]) &&
         textImports.length === entryIds.length && licenseTexts.every((text) => text.length > 500) &&
         shippedNames.every((name) => textImports.includes(`@resources/licenses/${name}`)),
       { entryIds, missing: textImports.filter((specifier, index) => licenseTexts[index].length <= 500), shippedNames },

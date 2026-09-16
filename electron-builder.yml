@@ -39,6 +39,16 @@ win:
     - nsis
   icon: build/icon.ico
   artifactName: ${productName}-${version}-${arch}.${ext}
+  # MiMo's bundled runtimes - Node.js, Python with its document libraries,
+  # ripgrep - placed and verified by scripts/runtimes.mjs before a Windows
+  # package build; the main process names them to child processes
+  # (src/main/runtimes.ts). Windows x64 only for now.
+  extraResources:
+    - from: resources/runtimes/win32-x64
+      to: runtimes/win32-x64
+      filter:
+        - "**/*"
+        - "!.mcode-runtimes.json"
 
 nsis:
   oneClick: false

@@ -94,4 +94,61 @@ export const THIRD_PARTY: ThirdPartyNotice[] = [
     source: "https://ftp.osuosl.org/pub/musescore/soundfont/MuseScore_General/",
     text: () => raw(import("@resources/licenses/musescore-general.txt?raw")),
   },
+  /*
+   * The bundled runtimes (Windows package): official builds, unmodified, in
+   * resources/runtimes. scripts/runtimes.mjs writes these four texts from the
+   * very files it ships and fails a package build when they differ.
+   */
+  {
+    id: "node",
+    name: "Node.js",
+    version: "24.18.1",
+    license: "MIT, with the licences of the libraries it includes",
+    about: [
+      "Copyright Node.js contributors and the other holders named in the notice below.",
+      "",
+      "The JavaScript runtime MCode's agent can run scripts and tools with (MCODE_NODE),",
+      "shipped as the official Windows build with its npm.",
+    ].join("\n"),
+    source: "https://github.com/nodejs/node",
+    text: () => raw(import("@resources/licenses/node.txt?raw")),
+  },
+  {
+    id: "python",
+    name: "Python (python-build-standalone)",
+    version: "3.12.13, build 20260807",
+    license: "PSF-2.0, with the licences of the libraries it links",
+    about: [
+      "Copyright Python Software Foundation and the other holders named in the notices below.",
+      "",
+      "The Python interpreter MCode's agent and its built-in skills use (MCODE_PYTHON), as the",
+      "python-build-standalone project builds it; OpenSSL, libffi, SQLite, Tcl/Tk and the other",
+      "libraries it links carry their own notices, which follow CPython's.",
+    ].join("\n"),
+    source: "https://github.com/astral-sh/python-build-standalone",
+    text: () => raw(import("@resources/licenses/python.txt?raw")),
+  },
+  {
+    id: "python-packages",
+    name: "Python packages in the bundled Python",
+    version:
+      "chardet 7.6.0, defusedxml 0.7.1, et_xmlfile 2.0.0, lxml 5.3.0, numpy 2.5.2, openpyxl 3.1.5, pandas 2.2.3, pillow 11.1.0, pip 26.1.2, pypdf 5.1.0, pypdfium2 5.12.1, python-dateutil 2.9.0.post0, python-docx 1.1.2, python-pptx 1.0.2, pytz 2026.3.post1, reportlab 4.2.5, six 1.17.0, typing_extensions 4.16.0, tzdata 2026.3, XlsxWriter 3.2.0",
+    license: "Each package's own (BSD, MIT, Apache-2.0, PSF and others)",
+    about: [
+      "The document and data libraries the built-in skills read and write Office files, PDFs",
+      "and tables with, installed from the wheels their projects publish on PyPI. Each",
+      "package's licence files follow, as its wheel installed them.",
+    ].join("\n"),
+    source: "https://pypi.org",
+    text: () => raw(import("@resources/licenses/python-packages.txt?raw")),
+  },
+  {
+    id: "ripgrep",
+    name: "ripgrep",
+    version: "15.1.0",
+    license: "MIT or Unlicense",
+    about: "Copyright (c) 2015 Andrew Gallant. The fast text search tool named to the agent's shell (MCODE_RIPGREP_PATH).",
+    source: "https://github.com/BurntSushi/ripgrep",
+    text: () => raw(import("@resources/licenses/ripgrep.txt?raw")),
+  },
 ]

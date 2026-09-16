@@ -1,5 +1,6 @@
 /**
- * Packages the app: places the verified score soundfont (see soundfont.mjs),
+ * Packages the app: places the verified score soundfont (see soundfont.mjs)
+ * and, for Windows, the bundled runtimes (see runtimes.mjs),
  * advances the version one step (see bump-version.mjs), builds, and runs
  * electron-builder with whatever flags follow the script
  * name (`--win`, `--mac`, or none for the host platform).
@@ -19,6 +20,10 @@ const run = (cmd, args) => spawnSync(cmd, args, { stdio: "inherit", shell: proce
 
 // The score soundfont ships beside the asar and is not in git: place it and verify its size and hash, or stop here.
 let status = run("node", ["scripts/soundfont.mjs"])
+// A Windows package carries the bundled runtimes (see runtimes.mjs), verified the same way.
+const flags = process.argv.slice(2)
+const forWindows = flags.includes("--win") || (process.platform === "win32" && !flags.some((flag) => flag === "--mac" || flag === "--linux"))
+if (status === 0 && forWindows) status = run("node", ["scripts/runtimes.mjs"])
 if (status === 0) status = run("node", ["scripts/bump-version.mjs"])
 if (status === 0) status = run("npx", ["electron-vite", "build"])
 if (status === 0) status = run("npx", ["electron-builder", ...process.argv.slice(2)])
