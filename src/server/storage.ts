@@ -237,7 +237,13 @@ export class Storage {
   }
 
   private async writeNow(key: string, value: unknown): Promise<void> {
-    await writeAtomic(this.file(key), JSON.stringify(value, null, 2))
+    /*
+     * Owner-only, as the credential file is: config.json holds MCP bearer
+     * headers and gateway keys, mcp-auth.json the MCP sign-ins, and the rest
+     * is the user's conversations. (On Windows the mode only sets the
+     * read-only bit; there the profile folder's own ACL is what keeps others out.)
+     */
+    await writeAtomic(this.file(key), JSON.stringify(value, null, 2), 0o600)
   }
 
   async remove(key: string): Promise<void> {

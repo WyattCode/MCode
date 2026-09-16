@@ -58,6 +58,13 @@ export function expiredLogFiles(names: readonly string[], now: Date, retainDays 
 const SECRET_SHAPES: [RegExp, string][] = [
   [/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{12,}/g, "[redacted]"],
   [/\bAIza[0-9A-Za-z_-]{30,}/g, "[redacted]"],
+  // round 8 (X12): the rest of MiMo's table - GitHub, AWS, Slack tokens and JWTs.
+  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g, "[redacted]"],
+  [/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[redacted]"],
+  [/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, "[redacted]"],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, "[redacted]"],
+  // A logged settings object: any JSON field whose own name marks it as a credential, custom header names included.
+  [/("[^"\n]*(?:auth|token|secret|passw|credential|cookie|api[_-]?key|access[_-]?key)[^"\n]*"\s*:\s*")(?!\[redacted\])[^"\n]*(")/gi, "$1[redacted]$2"],
   [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]"],
   [
     /((?:api[_-]?key|x-api-key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|client[_-]?secret|password|passwd|authorization)["']?\s*[:=]\s*["']?)(?!\[redacted\])[^"'\s,;&}]+/gi,

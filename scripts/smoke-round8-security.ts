@@ -87,6 +87,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
     await approvalChecks(check, section, root)
     await junctionChecks(check, section, root)
     await scheduleChecks(check, section, root)
+    await storedSecretChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -810,4 +811,37 @@ async function scheduleChecks(check: Check, section: Section, root: string): Pro
   const automation = await fs.readFile(path.join(process.cwd(), "src/server/tool/automation.ts"), "utf8").catch(() => "")
   check("cron asks before it schedules, arms a loop or rewrites a prompt", (cron.match(/await askToSchedule\(context,/g) ?? []).length === 3 && cron.indexOf("askToSchedule(context") < cron.indexOf("scheduler.add("))
   check("automation_update asks before create, update and resume", /mode === "create" \|\| mode === "update" \|\| mode === "resume"\) \{[\s\S]{0,300}await askToSchedule\(context,/.test(automation) && automation.indexOf("askToSchedule(context") < automation.indexOf("service.handle("))
+}
+
+// ------------------------------------------------------------- X11, X12
+async function storedSecretChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 8 (X11): the settings file is written owner-only")
+  const storage = new Storage(path.join(root, "x11-storage"))
+  await storage.write("config", { mcpServers: {} })
+  const file = path.join(root, "x11-storage", "config.json")
+  const mode = (await fs.stat(file)).mode & 0o777
+  if (process.platform === "win32") {
+    // Windows keeps only the read-only bit from a mode; the file must still be writable by its owner.
+    check("config.json stays writable on Windows", (mode & 0o200) !== 0, mode.toString(8))
+  } else {
+    check("config.json is 0600", mode === 0o600, mode.toString(8))
+  }
+  const source = await fs.readFile(path.join(process.cwd(), "src/server/storage.ts"), "utf8").catch(() => "")
+  check("every stored document is written with 0600", /writeAtomic\(this\.file\(key\), JSON\.stringify\(value, null, 2\), 0o600\)/.test(source))
+
+  section("Round 8 (X12): the log file masks the rest of MiMo's secret shapes")
+  // Made-up tokens of the right shapes.
+  const samples = [
+    `ghp_${"a".repeat(36)}`,
+    `github_pat_${"b".repeat(40)}`,
+    `AKIA${"C".repeat(16)}`,
+    `xoxb-${"1".repeat(12)}-abc`,
+    `eyJ${"h".repeat(12)}.eyJ${"p".repeat(12)}.${"s".repeat(16)}`,
+  ]
+  for (const sample of samples) {
+    check(`a ${sample.slice(0, 4)}... token is masked`, !redactSecrets(`value ${sample} end`).includes(sample))
+  }
+  const logged = redactSecrets(JSON.stringify({ headers: { "X-Custom-Auth": "hunter2-fake-value", "X-Route": "eu" } }))
+  check("a custom credential header's value is masked in a logged object", !logged.includes("hunter2-fake-value") && logged.includes('"X-Route":"eu"'), logged)
+  check("ordinary text is left alone", redactSecrets("opened config.json in 12ms") === "opened config.json in 12ms")
 }
