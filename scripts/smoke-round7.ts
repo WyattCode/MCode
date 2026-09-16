@@ -29,6 +29,9 @@ import {
   softTrim,
 } from "../src/server/session/prune"
 import { contextCount } from "../src/server/session/overflow"
+// M10: the per-provider body fields, and the wire they are written onto.
+import { providerExtras } from "../src/server/provider/sampling"
+import { OpenAICompatible } from "../src/server/provider/openai"
 
 /** A finished tool call carrying `output`, as a completed step leaves one. */
 function toolPart(name: string, output: string): ToolPart {
@@ -300,6 +303,57 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
       check("the newest turn survives that too", cleared.includes("the newest result"))
     } finally {
       await e.close()
+    }
+  }
+
+  // ------------------------------------------------------------------ M10
+  section("Round 7 (M10): the per-provider body fields MCode never sent")
+  {
+    check(
+      "Zhipu's thinking switch and DashScope's are untouched",
+      JSON.stringify(providerExtras("zhipu", false)) === JSON.stringify({ thinking: { type: "enabled", clear_thinking: false } }) &&
+        providerExtras("dashscope", true).enable_thinking === true &&
+        Object.keys(providerExtras("dashscope", false)).length === 0,
+    )
+
+    const router = providerExtras("openrouter", false, "ses_1")
+    check("OpenRouter is asked for the usage MCode already reads back", JSON.stringify(router.usage) === JSON.stringify({ include: true }), router.usage)
+    check("and carries the conversation as its prompt cache key", router.prompt_cache_key === "ses_1", router.prompt_cache_key)
+    check("llmgateway asks for the same usage", JSON.stringify(providerExtras("llmgateway", false).usage) === JSON.stringify({ include: true }))
+    check("xAI is told not to retain the request, as MiMo defaults it", providerExtras("xai", false, "s").store === false)
+    check("OpenAI gets the cache key without the retention switch", providerExtras("openai", false, "s").prompt_cache_key === "s" && providerExtras("openai", false, "s").store === undefined)
+    check("a request belonging to no conversation carries no cache key", providerExtras("openrouter", false).prompt_cache_key === undefined)
+    check("a provider MiMo names none of is sent nothing extra", Object.keys(providerExtras("deepseek", true)).length === 0)
+
+    /*
+     * On the wire, because the point of this item is a field the provider
+     * receives: reading it back off the adapter's own request body is the only
+     * way to know `extra` was actually written into it.
+     */
+    const p = await engine()
+    try {
+      p.replies.push(say("ok"))
+      const controller = new AbortController()
+      await OpenAICompatible.stream(
+        {
+          apiKey: "k",
+          model: { provider: "openrouter", model: "m" },
+          system: "s",
+          history: [],
+          tools: [],
+          effort: "",
+          showReasoning: false,
+          signal: controller.signal,
+          baseURL: `http://127.0.0.1:${p.port}/v1`,
+          extra: providerExtras("openrouter", false, "ses_wire"),
+        },
+        () => {},
+      )
+      const body = p.bodies.at(-1) ?? {}
+      check("the provider really receives the usage request", JSON.stringify(body.usage) === JSON.stringify({ include: true }), body.usage)
+      check("and the prompt cache key travels with it", body.prompt_cache_key === "ses_wire", body.prompt_cache_key)
+    } finally {
+      await p.close()
     }
   }
 }

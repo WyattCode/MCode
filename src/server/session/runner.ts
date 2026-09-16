@@ -1274,7 +1274,7 @@ export class SessionRunner {
           cacheTTL: entry?.cacheTTL,
           inputs: modelInputs(entry),
           sampling: samplingFor(session.model.model, entry?.temperature === true),
-          extra: providerExtras(session.model.provider, entry?.reasoning === true),
+          extra: providerExtras(session.model.provider, entry?.reasoning === true, session.id),
         },
         (event) => {
           if (event.type === "text.delta") summary += event.text
@@ -2147,7 +2147,7 @@ export class SessionRunner {
         interleaved: interleavedField(definition.kind, session.model, this.config.modelEntry(session.model)),
         // MiMo's family sampling and provider switches.
         sampling: samplingFor(session.model.model, this.config.modelEntry(session.model)?.temperature === true),
-        extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true),
+        extra: providerExtras(session.model.provider, this.config.modelEntry(session.model)?.reasoning === true, sessionID),
       })
       } catch (failure) {
         /*
