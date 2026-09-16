@@ -324,21 +324,24 @@ const normalProjects = computed(() =>
  */
 const PROJECT_DRAG = "application/x-mcode-project"
 const TASK_DRAG = "application/x-mcode-task"
-const carried = ref<{ kind: "project" | "task"; key: string; group?: string }>()
+/* 置顶 rows reorder among themselves, as MiMo's pinned list does. */
+const PINNED_DRAG = "application/x-mcode-pinned"
+type CarryKind = "project" | "task" | "pinned"
+const carried = ref<{ kind: CarryKind; key: string; group?: string }>()
 const dropBefore = ref<string>()
 
-function startCarry(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+function startCarry(event: DragEvent, kind: CarryKind, key: string, group?: string) {
   if (picking.value) {
     event.preventDefault()
     return
   }
   event.stopPropagation()
-  event.dataTransfer?.setData(kind === "project" ? PROJECT_DRAG : TASK_DRAG, key)
+  event.dataTransfer?.setData(kind === "project" ? PROJECT_DRAG : kind === "pinned" ? PINNED_DRAG : TASK_DRAG, key)
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"
   carried.value = { kind, key, group }
 }
 
-function carryOver(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+function carryOver(event: DragEvent, kind: CarryKind, key: string, group?: string) {
   const held = carried.value
   if (!held || held.kind !== kind || held.group !== group) return
   event.stopPropagation()
@@ -356,12 +359,27 @@ function endCarry() {
   dropBefore.value = undefined
 }
 
-async function setDown(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+async function setDown(event: DragEvent, kind: CarryKind, key: string, group?: string) {
   const held = carried.value
   endCarry()
   if (!held || held.kind !== kind || held.group !== group || held.key === key) return
   event.preventDefault()
   event.stopPropagation()
+  /*
+   * 置顶 is kept in the order it is pinned in, and MiMo lets that order be
+   * dragged. Without it a sixth pin can only be reached by unpinning and
+   * pinning again, since the section shows five rows before 展开更多.
+   */
+  if (kind === "pinned") {
+    const list = pinnedConvos.value.map((session) => session.id)
+    const next = movedBefore(list, held.key, key)
+    if (next !== list) {
+      // Anything pinned that this list does not name - a pinned project - keeps its place at the end.
+      const rest = (app.config?.pinnedTabs ?? []).filter((id) => !next.includes(id))
+      await app.patchConfig({ pinnedTabs: [...next, ...rest] })
+    }
+    return
+  }
   if (kind === "project") {
     const list = normalProjects.value.map((project) => project.directory)
     const next = movedBefore(list, held.key, key)
@@ -375,8 +393,8 @@ async function setDown(event: DragEvent, kind: "project" | "task", key: string, 
   if (next !== list) await app.patchConfig({ taskOrder: { ...(app.config?.taskOrder ?? {}), [group]: next } })
 }
 
-const carrying = (kind: "project" | "task", key: string) => carried.value?.kind === kind && carried.value.key === key
-const landing = (kind: "project" | "task", key: string) => carried.value?.kind === kind && dropBefore.value === key
+const carrying = (kind: CarryKind, key: string) => carried.value?.kind === kind && carried.value.key === key
+const landing = (kind: CarryKind, key: string) => carried.value?.kind === kind && dropBefore.value === key
 
 /*
  * Folders dropped onto the project list become projects, as MiMo takes them:
@@ -1167,7 +1185,17 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         <div
           v-else-if="block.session"
           class="row task recent pinned-convo"
-          :class="{ on: app.currentID === block.session.id }"
+          :class="{
+            on: app.currentID === block.session.id,
+            carried: carrying('pinned', block.session.id),
+            'lands-before': landing('pinned', block.session.id),
+          }"
+          :data-pinned-drag="block.session.id"
+          :draggable="!anyPicking"
+          @dragstart="startCarry($event, 'pinned', block.session.id)"
+          @dragover="carryOver($event, 'pinned', block.session.id)"
+          @drop="setDown($event, 'pinned', block.session.id)"
+          @dragend="endCarry"
           @contextmenu.prevent="openMenu(block.session.id, $event)"
         >
           <button class="row-open" @click="press(block.session.id)">
