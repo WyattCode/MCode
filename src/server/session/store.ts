@@ -222,12 +222,47 @@ export class SessionStore {
     return sessions.sort((a, b) => b.updated - a.updated)
   }
 
-  async update(sessionID: string, patch: Partial<SessionInfo>): Promise<SessionInfo> {
+  /**
+   * The read-modify-write in flight for each document, so two cannot overlap.
+   *
+   * `Storage.write` puts writes of one key in order, but a read and the write
+   * that follows it are not one critical section. Two of these run at the same
+   * moment on a conversation's first turn - the background title and the first
+   * step's usage - and whichever wrote second did so from a copy taken before
+   * the other's field existed, so the title never appeared or the first step's
+   * tokens were never counted. Chaining them by key makes each read see the
+   * previous write.
+   */
+  private readonly updating = new Map<string, Promise<unknown>>()
+
+  private exclusive<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.updating.get(key) ?? Promise.resolve()
+    // Both arms, so a failed predecessor does not cancel everything behind it.
+    const result = previous.then(work, work)
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    )
+    this.updating.set(key, settled)
+    void settled.then(() => {
+      if (this.updating.get(key) === settled) this.updating.delete(key)
+    })
+    return result
+  }
+
+  /** One change to a conversation's record, read and written without anything in between. */
+  private async writeInfo(sessionID: string, change: (session: SessionInfo) => SessionInfo): Promise<SessionInfo> {
     const session = await this.require(sessionID)
-    const next: SessionInfo = { ...session, ...patch, updated: Date.now() }
+    const next = change(session)
     await this.storage.write(this.infoKey(sessionID), next)
     this.bus.publish({ type: "session.updated", session: next })
     return next
+  }
+
+  async update(sessionID: string, patch: Partial<SessionInfo>): Promise<SessionInfo> {
+    return this.exclusive(this.infoKey(sessionID), () =>
+      this.writeInfo(sessionID, (session) => ({ ...session, ...patch, updated: Date.now() })),
+    )
   }
 
   /**
@@ -239,11 +274,7 @@ export class SessionStore {
    * last touched there.
    */
   async stamp(sessionID: string, patch: Partial<SessionInfo> & { updated: number }): Promise<SessionInfo> {
-    const session = await this.require(sessionID)
-    const next: SessionInfo = { ...session, ...patch }
-    await this.storage.write(this.infoKey(sessionID), next)
-    this.bus.publish({ type: "session.updated", session: next })
-    return next
+    return this.exclusive(this.infoKey(sessionID), () => this.writeInfo(sessionID, (session) => ({ ...session, ...patch })))
   }
 
   /*
@@ -252,12 +283,13 @@ export class SessionStore {
    * the side column.
    */
   async setAccess(sessionID: string, access: SessionInfo["access"]): Promise<SessionInfo> {
-    const session = await this.require(sessionID)
-    const next: SessionInfo = { ...session, access }
-    if (!access) delete next.access
-    await this.storage.write(this.infoKey(sessionID), next)
-    this.bus.publish({ type: "session.updated", session: next })
-    return next
+    return this.exclusive(this.infoKey(sessionID), () =>
+      this.writeInfo(sessionID, (session) => {
+        const next: SessionInfo = { ...session, access }
+        if (!access) delete next.access
+        return next
+      }),
+    )
   }
 
   /*
@@ -270,10 +302,7 @@ export class SessionStore {
    * and must not move the conversation up the side column.
    */
   async setMcpServers(sessionID: string, names: readonly string[]): Promise<void> {
-    const session = await this.require(sessionID)
-    const next: SessionInfo = { ...session, mcpServers: [...names] }
-    await this.storage.write(this.infoKey(sessionID), next)
-    this.bus.publish({ type: "session.updated", session: next })
+    await this.exclusive(this.infoKey(sessionID), () => this.writeInfo(sessionID, (session) => ({ ...session, mcpServers: [...names] })))
   }
 
   /** Turning off full access puts every conversation that was at it back on the default, as MiMo does. */
@@ -283,19 +312,28 @@ export class SessionStore {
     }
   }
 
-  /** Folds one assistant turn's usage into the session running total. */
+  /**
+   * Folds one assistant turn's usage into the session running total.
+   *
+   * Summed inside the lock rather than by reading first and calling `update`:
+   * the figure being added to has to be the one on disk at the moment of the
+   * write, and this is one of the two writers that used to race.
+   */
   async addUsage(sessionID: string, usage: Usage): Promise<void> {
-    const session = await this.require(sessionID)
-    await this.update(sessionID, {
-      usage: {
-        input: session.usage.input + usage.input,
-        output: session.usage.output + usage.output,
-        reasoning: session.usage.reasoning + usage.reasoning,
-        cacheRead: session.usage.cacheRead + usage.cacheRead,
-        cacheWrite: session.usage.cacheWrite + usage.cacheWrite,
-        cost: session.usage.cost + usage.cost,
-      },
-    })
+    await this.exclusive(this.infoKey(sessionID), () =>
+      this.writeInfo(sessionID, (session) => ({
+        ...session,
+        updated: Date.now(),
+        usage: {
+          input: session.usage.input + usage.input,
+          output: session.usage.output + usage.output,
+          reasoning: session.usage.reasoning + usage.reasoning,
+          cacheRead: session.usage.cacheRead + usage.cacheRead,
+          cacheWrite: session.usage.cacheWrite + usage.cacheWrite,
+          cost: session.usage.cost + usage.cost,
+        },
+      })),
+    )
   }
 
 
@@ -310,7 +348,22 @@ export class SessionStore {
    * restart: a change made an hour ago is exactly the one worth taking back.
    */
   private async history(sessionID: string): Promise<History> {
-    const stored = await this.storage.read<Partial<History>>(this.historyKey(sessionID))
+    /*
+     * A damaged history must cost this conversation its undo, not its readers.
+     *
+     * Reading threw before, straight out of every caller - the depth the window
+     * asks for, the snapshot a turn records - so one unparseable document
+     * stopped undo, redo and rollback for that conversation altogether. The
+     * shape was already tolerated (a document written before rollback existed
+     * carries neither list); only unreadable JSON was not.
+     *
+     * The file is moved aside rather than left to be written over: what it held
+     * is whole turns of file contents, and the next `pushSnapshot` would
+     * otherwise replace it with a stack of one.
+     */
+    const read = await this.storage.readOrCorrupt<Partial<History>>(this.historyKey(sessionID))
+    if (read.corrupt) await this.storage.quarantine(this.historyKey(sessionID))
+    const stored = read.value
     // Written before rollback existed, so its documents carry neither list.
     return { undo: stored?.undo ?? [], redo: stored?.redo ?? [], reverted: stored?.reverted ?? [], floor: stored?.floor }
   }
@@ -322,6 +375,10 @@ export class SessionStore {
   }
 
   async pushSnapshot(sessionID: string, snapshot: Snapshot): Promise<void> {
+    await this.exclusive(this.historyKey(sessionID), () => this.pushSnapshotNow(sessionID, snapshot))
+  }
+
+  private async pushSnapshotNow(sessionID: string, snapshot: Snapshot): Promise<void> {
     const state = await this.history(sessionID)
     state.undo.push(snapshot)
     // A new change ends the redo line, the way it does in any editor.
@@ -360,10 +417,12 @@ export class SessionStore {
    * back, in one write.
    */
   async takeBack(sessionID: string, step: RevertStep): Promise<void> {
-    const state = await this.history(sessionID)
-    state.undo.pop()
-    state.reverted.unshift(step)
-    await this.storage.write(this.historyKey(sessionID), state)
+    await this.exclusive(this.historyKey(sessionID), async () => {
+      const state = await this.history(sessionID)
+      state.undo.pop()
+      state.reverted.unshift(step)
+      await this.storage.write(this.historyKey(sessionID), state)
+    })
   }
 
   /**
@@ -375,18 +434,22 @@ export class SessionStore {
    * to a turn the reader can no longer see.
    */
   async forgetRedo(sessionID: string): Promise<void> {
-    const state = await this.history(sessionID)
-    if (!state.redo.length) return
-    state.redo = []
-    await this.storage.write(this.historyKey(sessionID), state)
+    await this.exclusive(this.historyKey(sessionID), async () => {
+      const state = await this.history(sessionID)
+      if (!state.redo.length) return
+      state.redo = []
+      await this.storage.write(this.historyKey(sessionID), state)
+    })
   }
 
   /** Puts the earliest rolled back turn back on the undo stack, in one write. */
   async putBack(sessionID: string): Promise<void> {
-    const state = await this.history(sessionID)
-    const step = state.reverted.shift()
-    if (step) state.undo.push(step.snapshot)
-    await this.storage.write(this.historyKey(sessionID), state)
+    await this.exclusive(this.historyKey(sessionID), async () => {
+      const state = await this.history(sessionID)
+      const step = state.reverted.shift()
+      if (step) state.undo.push(step.snapshot)
+      await this.storage.write(this.historyKey(sessionID), state)
+    })
   }
 
   /**
@@ -397,10 +460,12 @@ export class SessionStore {
    * whole files for it would be so much dead weight.
    */
   async dropReverted(sessionID: string): Promise<void> {
-    const state = await this.history(sessionID)
-    if (!state.reverted.length) return
-    state.reverted = []
-    await this.storage.write(this.historyKey(sessionID), state)
+    return this.exclusive(this.historyKey(sessionID), async () => {
+      const state = await this.history(sessionID)
+      if (!state.reverted.length) return
+      state.reverted = []
+      await this.storage.write(this.historyKey(sessionID), state)
+    })
   }
 
   /**
@@ -425,10 +490,12 @@ export class SessionStore {
     to: "undo" | "redo",
     replacement: Snapshot,
   ): Promise<void> {
-    const state = await this.history(sessionID)
-    state[from].pop()
-    state[to].push(replacement)
-    await this.storage.write(this.historyKey(sessionID), state)
+    await this.exclusive(this.historyKey(sessionID), async () => {
+      const state = await this.history(sessionID)
+      state[from].pop()
+      state[to].push(replacement)
+      await this.storage.write(this.historyKey(sessionID), state)
+    })
   }
 
   async delete(sessionID: string): Promise<void> {

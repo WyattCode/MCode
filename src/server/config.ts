@@ -32,6 +32,7 @@ import {
   type ProviderKind,
 } from "./provider/catalog"
 import { nameFromId } from "./provider/model-name"
+import { CodedError } from "@shared/errors"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
 import type { OAuthTokens } from "./auth/oauth"
@@ -40,6 +41,20 @@ export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-o
 
 /** Recorded in `migrations` once the project list has been filled from conversations. */
 export const PROJECT_LIST_MIGRATION = "projects-list"
+
+/**
+ * Which build's idea of the stored config this one is.
+ *
+ * None of this app's JSON documents carried a version, so a build installed
+ * over a newer one read whatever it found straight into its config object,
+ * kept the fields it did not know, possibly misread the ones it did, and wrote
+ * its own understanding back over the lot. Detecting it has to mean refusing to
+ * write, not merely refusing to read: a downgrade that still saves is exactly
+ * how the newer build's settings are lost.
+ *
+ * Raise this only when a change would be misread by a build that predates it.
+ */
+export const CONFIG_SCHEMA_VERSION = 1
 
 export type { ModelEntry }
 
@@ -473,6 +488,8 @@ export class Config {
      * on a machine that has been running MCode for months.
      */
     this.existed = stored !== undefined || read.corrupt !== undefined
+    // Read before anything is merged: what follows must not write over a newer document.
+    this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
@@ -484,7 +501,7 @@ export class Config {
      */
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
-    if (this.migrate()) await this.storage.write("config", this.current)
+    if (this.migrate() && !this.fromNewerVersion) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
@@ -505,6 +522,15 @@ export class Config {
    * rather than leaving the reader to wonder where their settings went.
    */
   unreadable: { problem: string; evidence?: string } | undefined
+
+  /**
+   * Set when the stored config was written by a later build than this one.
+   *
+   * Everything still works - the settings that are understood are read as
+   * usual - but nothing is written back, so re-installing an older build and
+   * opening it once cannot strip the fields the newer one had added.
+   */
+  fromNewerVersion = false
 
   /** The last credential write, so two of them cannot interleave. */
   private persisting: Promise<void> = Promise.resolve()
@@ -607,6 +633,20 @@ export class Config {
       this.current.permissions = before
     }
     this.current.autoApprove = allowed(this.current.permissions)
+    /*
+     * Never written over a document a later build wrote.
+     *
+     * Reading one is fine - the fields this build understands still mean what
+     * they say - but writing this build's understanding back would drop every
+     * field the newer one had added. Detecting a newer document has to mean
+     * refusing the write, not only refusing to trust the read, and refusing it
+     * out loud so the user is told rather than left with settings that quietly
+     * do not stick.
+     */
+    if (this.fromNewerVersion) {
+      throw new CodedError("The stored settings were written by a newer version of this app", "error.configNewer")
+    }
+    this.current.schemaVersion = CONFIG_SCHEMA_VERSION
     await this.storage.write("config", this.current)
     this.bus.publish({ type: "config.updated", config: this.current })
     return this.current

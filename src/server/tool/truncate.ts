@@ -18,6 +18,44 @@ import { randomBytes } from "node:crypto"
 
 export const OUTPUT_MAX_LINES = 2000
 export const OUTPUT_MAX_BYTES = 50 * 1024
+
+/**
+ * What a tool's output is allowed when the conversation is close to its line.
+ *
+ * MiMo's `Truncate.output` takes `pressureCaps`, and setting it halves both
+ * limits - 1,000 lines and 25 KB rather than 2,000 and 50 KB. Without it a
+ * conversation at the edge of compaction still spends a full 50 KB on every
+ * tool result, so it crosses the line sooner and is compacted more often than
+ * MiMo's would be.
+ */
+export const PRESSURE_MAX_LINES = OUTPUT_MAX_LINES / 2
+export const PRESSURE_MAX_BYTES = OUTPUT_MAX_BYTES / 2
+
+/**
+ * When a conversation counts as being under that pressure.
+ *
+ * MiMo's own trigger for setting `pressureCaps` is not readable from the
+ * bundle, so this is MCode's: seven tenths of the room a conversation has
+ * before it must be compacted (`usableContext`, itself 90% of the window). Far
+ * enough back that the halving has time to help, and not so early that ordinary
+ * turns lose half their output.
+ */
+export const PRESSURE_RATIO = 0.7
+
+/** How a call ended, which changes what the note says was cut. */
+export type CapOutcome = "success" | "failure"
+
+export interface CapOptions {
+  /**
+   * Whether the conversation can hand the file to a subagent, which is what
+   * the note then suggests.
+   */
+  delegate?: boolean
+  /** The conversation is near its compaction line, so half of each cap applies. */
+  pressure?: boolean
+  /** Whether the call this output came from succeeded. */
+  outcome?: CapOutcome
+}
 /** How much of the end is looked at for signs of a failure. */
 const TAIL_SCAN_CHARS = 2048
 const FAILURE = /error|exception|failed|fatal|traceback|panic|exit code/i
@@ -53,11 +91,22 @@ function tail(lines: readonly string[], maxLines: number, maxBytes: number): str
 }
 
 /** What the model is told after a cut: where the rest is, and how to get at it without reading it all back in. */
-function note(file: string, delegate: boolean): string {
+function note(file: string, delegate: boolean, outcome?: CapOutcome): string {
   const how = delegate
     ? "To look through it, start an explore subagent with the task tool and have it grep and read the file in parts, rather than reading the whole file here."
     : "Search it with grep, or read the parts you need with read and an offset and limit."
-  return `This output was too long and was cut. The complete output is saved at ${file}\n${how}`
+  /*
+   * MiMo says which it was. A model reading "this output was too long" cannot
+   * tell whether the call it is looking at worked, and the difference decides
+   * whether the next step is to carry on or to fix something.
+   */
+  const said =
+    outcome === "failure"
+      ? "The tool call failed, and its output was too long and was cut."
+      : outcome === "success"
+        ? "The tool call succeeded, but its output was too long and was cut."
+        : "This output was too long and was cut."
+  return `${said} The complete output is saved at ${file}\n${how}`
 }
 
 export class ToolOutputs {
@@ -74,33 +123,36 @@ export class ToolOutputs {
   /**
    * The text the model reads for one output, and the saved file when it was cut.
    *
-   * @param delegate whether the conversation can hand the file to a subagent,
-   *   which is what the note then suggests.
+   * A bare `true` is still read as `delegate`, which is what every call site
+   * meant before the other two options existed.
    */
-  async cap(text: string, delegate = false): Promise<{ text: string; truncated: boolean; file?: string }> {
+  async cap(text: string, options: boolean | CapOptions = {}): Promise<{ text: string; truncated: boolean; file?: string }> {
+    const { delegate = false, pressure = false, outcome } = typeof options === "boolean" ? { delegate: options } : options
+    const maxLines = pressure ? PRESSURE_MAX_LINES : OUTPUT_MAX_LINES
+    const maxBytes = pressure ? PRESSURE_MAX_BYTES : OUTPUT_MAX_BYTES
     const lines = text.split("\n")
     const total = bytesOf(text)
-    if (lines.length <= OUTPUT_MAX_LINES && total <= OUTPUT_MAX_BYTES) return { text, truncated: false }
+    if (lines.length <= maxLines && total <= maxBytes) return { text, truncated: false }
 
     const end = text.length > TAIL_SCAN_CHARS ? text.slice(-TAIL_SCAN_CHARS) : text
     if (FAILURE.test(end)) {
-      const headLines = Math.floor(OUTPUT_MAX_LINES * 0.7)
-      const headBytes = Math.floor(OUTPUT_MAX_BYTES * 0.7)
+      const headLines = Math.floor(maxLines * 0.7)
+      const headBytes = Math.floor(maxBytes * 0.7)
       const start = head(lines, headLines, headBytes).kept
-      const finish = tail(lines, OUTPUT_MAX_LINES - headLines, OUTPUT_MAX_BYTES - headBytes)
+      const finish = tail(lines, maxLines - headLines, maxBytes - headBytes)
       const omitted = lines.length - start.length - finish.length
       const file = await this.save(text)
       return {
-        text: `${start.join("\n")}\n\n... ${omitted} lines left out between the start and the end ...\n\n${finish.join("\n")}\n\n${note(file, delegate)}`,
+        text: `${start.join("\n")}\n\n... ${omitted} lines left out between the start and the end ...\n\n${finish.join("\n")}\n\n${note(file, delegate, outcome)}`,
         truncated: true,
         file,
       }
     }
 
-    const { kept, bytes, hitBytes } = head(lines, OUTPUT_MAX_LINES, OUTPUT_MAX_BYTES)
+    const { kept, bytes, hitBytes } = head(lines, maxLines, maxBytes)
     const removed = hitBytes ? `${total - bytes} bytes` : `${lines.length - kept.length} lines`
     const file = await this.save(text)
-    return { text: `${kept.join("\n")}\n\n... ${removed} cut ...\n\n${note(file, delegate)}`, truncated: true, file }
+    return { text: `${kept.join("\n")}\n\n... ${removed} cut ...\n\n${note(file, delegate, outcome)}`, truncated: true, file }
   }
 
   /** Whether a path is one of the saved outputs, which a tool may read wherever the project is. */

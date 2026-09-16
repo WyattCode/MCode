@@ -3,7 +3,7 @@ import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-pa
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
 import type { Emit, ProviderAdapter, ToolCall, TurnOutcome, TurnRequest } from "./types"
-import { ProviderError, ProviderHttpError, headersOf, systemText, wireOfBody } from "./types"
+import { ProviderError, ProviderHttpError, headersOf, isHtmlBody, systemText, wireOfBody } from "./types"
 import { requestHistory } from "./history"
 import { USER_AGENT } from "../auth/oauth"
 import { stallGuard } from "./stall"
@@ -238,7 +238,11 @@ export const ChatGPTSubscription: ProviderAdapter = {
     if (!response.ok || !response.body) {
       guard.dispose()
       const detail = await response.text().catch(() => "")
-      throw new ProviderHttpError(`ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`, response.status, headersOf(response), wireOfBody(detail))
+      // A proxy's HTML page is never joined to the message; see `isHtmlBody`.
+      const said = isHtmlBody(detail)
+        ? `ChatGPT request failed (${response.status}): a gateway or proxy answered with a web page rather than a reply.`
+        : `ChatGPT request failed (${response.status}) ${detail.slice(0, 300)}`
+      throw new ProviderHttpError(said, response.status, headersOf(response), wireOfBody(detail))
     }
 
     const toolCalls: ToolCall[] = []

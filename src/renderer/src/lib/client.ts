@@ -85,7 +85,16 @@ export class Client {
       if (!waiter) return
       this.waiters.delete(frame.id)
       if (frame.ok) waiter.resolve(frame.data)
-      else waiter.reject(new Error(frame.error))
+      /*
+       * A failure the backend named is phrased here rather than repeated.
+       *
+       * These rejections are shown as the body of a notice, so the backend's
+       * own English sentence used to surface verbatim in a translated
+       * interface - the same fault the socket-close path below was fixed for.
+       * The sentence comes from the tables; the raw text stays on the error
+       * for anything that logs it.
+       */
+      else waiter.reject(frame.errorCode ? new Error(t(frame.errorCode)) : new Error(frame.error))
     })
 
     socket.addEventListener("close", () => {

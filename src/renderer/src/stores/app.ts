@@ -859,7 +859,18 @@ export const useApp = defineStore("app", () => {
     })
     connected.value = true
 
-    config.value = (await instance.request({ type: "config.get" })).config
+    const settings = await instance.request({ type: "config.get" })
+    config.value = settings.config
+    /*
+     * MiMo's CONFIG_INVALID, said rather than only noted.
+     *
+     * A settings file that would not parse was recorded in the backend and
+     * nowhere else: the app opened on the defaults and the reader was left to
+     * work out for themselves where their settings had gone. The damaged file
+     * is kept, so the notice stays up until it is dismissed.
+     */
+    if (settings.unreadable) notice.warning(t("error.configInvalid"), { duration: 0 })
+    else if (settings.fromNewerVersion) notice.warning(t("error.configNewer"), { duration: 0 })
     providers.value = (await instance.request({ type: "provider.list" })).providers
     const listed = await instance.request({ type: "session.list" })
     // subagents: listed apart from both, as their own conversations are.

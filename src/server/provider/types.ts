@@ -151,6 +151,19 @@ export function headersOf(response: Response): Record<string, string> {
 }
 
 /** The code and type an error body carries, when it is the usual `{error: {code, type}}` JSON. */
+/**
+ * A body that is a web page rather than an answer.
+ *
+ * A gateway, a captive portal or a corporate proxy replies with HTML, and
+ * joining 300 characters of it onto a sentence put `<!DOCTYPE html><html>
+ * <head><title>407 Proxy Authentication Required` on the failure card as
+ * though it were what the provider had said. MiMo tests the body for the same
+ * two openings and never concatenates one.
+ */
+export function isHtmlBody(body: string): boolean {
+  return /^\s*(?:<!doctype|<html)/i.test(body)
+}
+
 export function wireOfBody(body: string): { code?: string; type?: string } | undefined {
   try {
     const parsed = JSON.parse(body) as { error?: { code?: unknown; type?: unknown } }

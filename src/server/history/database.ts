@@ -97,10 +97,54 @@ export class IndexDatabase {
     const existed = fs.existsSync(file)
     try {
       return new IndexDatabase(IndexDatabase.connect(file), file, existed ? "existing" : "created")
-    } catch {
-      IndexDatabase.remove(file)
+    } catch (failure) {
+      /*
+       * Only a damaged index is started over.
+       *
+       * A bare catch could not tell "this file is not a database" from "another
+       * instance of this app holds it", "the virus scanner has the -wal open"
+       * or an EACCES on a read-only data folder. Those pass, and deleting a
+       * long history's index over one is a silent, avoidable rebuild. The
+       * reference gates its own recovery on the same test and rethrows
+       * everything else.
+       */
+      if (!IndexDatabase.damaged(failure)) throw failure
+      IndexDatabase.quarantine(file)
       return new IndexDatabase(IndexDatabase.connect(file), file, "recreated")
     }
+  }
+
+  /** The reference's `isCorruption`, plus this app's own word for a file from another schema. */
+  private static damaged(failure: unknown): boolean {
+    const text = failure instanceof Error ? `${failure.message} ${String((failure as { code?: unknown }).code ?? "")}` : String(failure)
+    return /integrity check failed|failed its integrity check|database disk image is malformed|file is not a database|SQLITE_(?:CORRUPT|NOTADB)|is at schema/i.test(text)
+  }
+
+  /**
+   * Moves a damaged index aside rather than deleting it.
+   *
+   * Nothing in it cannot be rebuilt, so this is not about recovery - it is so
+   * that a file this app could not read is still there to be looked at when
+   * the rebuild turns out to have been triggered by something worth fixing.
+   * The journal files go with it, since a `-wal` left beside a fresh database
+   * is itself a way to corrupt one.
+   */
+  private static quarantine(file: string): void {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-")
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const aside = attempt === 0 ? `${file}.corrupt-${stamp}` : `${file}.corrupt-${stamp}-${attempt}`
+      if (fs.existsSync(aside)) continue
+      try {
+        for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+          if (fs.existsSync(file + suffix)) fs.renameSync(file + suffix, aside + suffix)
+        }
+        return
+      } catch {
+        // Tried again under another name, and failing that the file is removed below.
+      }
+    }
+    // The app must open with a working index even where the rename cannot happen.
+    IndexDatabase.remove(file)
   }
 
   private static connect(file: string): DatabaseSync {

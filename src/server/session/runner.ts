@@ -32,7 +32,8 @@ import type { PlanControl, SubagentControl, SubagentSpec, ToolDefinition, ToolRe
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
-import { retryDecision, waitFor } from "./retry"
+import { retryDecision, waitFor, withRequestRetry } from "./retry"
+import { CodedError } from "@shared/errors"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
@@ -43,7 +44,7 @@ import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
-import { isOverflowByCount, isOverflowError, maxOutputTokens } from "./overflow"
+import { isOverflowByCount, isOverflowError, maxOutputTokens, underPressure } from "./overflow"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
@@ -244,6 +245,19 @@ const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
+  /**
+   * The requests a conversation has out that are not its turn.
+   *
+   * Naming a conversation is launched and forgotten, with a controller of its
+   * own and no entry in `running` - so Stop, which reaches subagents, stream
+   * controllers, pending permissions and pending questions, could never reach
+   * it. Pressing Stop on the first message left the title request running to
+   * its own timeout, renamed the conversation seconds later, and billed the
+   * user for the request they had just cancelled.
+   */
+  private readonly background = new Map<string, Set<AbortController>>()
+  /** Which conversations are close enough to their compaction line to halve tool output. */
+  private readonly pressured = new Map<string, boolean>()
   /** Calls whose arguments arrived as text that could not be read, and why. */
   private readonly inputErrors = new WeakMap<ToolPart, string>()
   /**
@@ -655,6 +669,9 @@ export class SessionRunner {
     // subagents: Stop on a conversation stops the subagents working for it first.
     for (const child of [...(this.children.get(sessionID) ?? [])]) this.abort(child)
     this.running.get(sessionID)?.abort()
+    // ...and the requests that are not the turn: the title, and Smart's routing question.
+    for (const controller of [...(this.background.get(sessionID) ?? [])]) controller.abort()
+    this.pressured.delete(sessionID)
     this.permissions.rejectAll(sessionID)
     /*
      * Stopping a turn has to settle its question too. The tool is parked on a
@@ -663,6 +680,20 @@ export class SessionRunner {
      * that no longer exists - and the session would keep reporting itself busy.
      */
     this.questions.rejectAll(sessionID)
+  }
+
+  /**
+   * Holds a controller for work that is not this conversation's turn, so Stop
+   * reaches it, and gives back the way to let it go.
+   */
+  private hold(sessionID: string, controller: AbortController): () => void {
+    const held = this.background.get(sessionID) ?? new Set<AbortController>()
+    this.background.set(sessionID, held)
+    held.add(controller)
+    return () => {
+      held.delete(controller)
+      if (held.size === 0) this.background.delete(sessionID)
+    }
   }
 
   /**
@@ -833,7 +864,7 @@ export class SessionRunner {
      * would mark a boundary against a message that is not finished, and undoing
      * it would fight the tool that is mid-write.
      */
-    if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
+    if (this.running.has(sessionID)) throw new CodedError("Wait for the current turn to finish", "error.sessionBusy")
     const snapshot = await this.store.peekSnapshot(sessionID, "undo")
     if (!snapshot) throw new Error("Nothing to undo")
     /*
@@ -878,7 +909,7 @@ export class SessionRunner {
      * under it would cut the transcript at a message that is still being
      * answered, and put files back while a tool is mid-write.
      */
-    if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
+    if (this.running.has(sessionID)) throw new CodedError("Wait for the current turn to finish", "error.sessionBusy")
     const session = await this.store.require(sessionID)
     const stored = await this.store.messages(sessionID)
     const order = new Map(stored.map((message, at) => [message.id, at]))
@@ -1024,7 +1055,7 @@ export class SessionRunner {
    * the deleted messages summarised them, so it goes with them.
    */
   async truncate(sessionID: string, messageID: string): Promise<SessionInfo> {
-    if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
+    if (this.running.has(sessionID)) throw new CodedError("Wait for the current turn to finish", "error.sessionBusy")
     let session = await this.store.require(sessionID)
     if (session.revert) session = await this.commitRevert(session)
     const stored = await this.store.messages(sessionID)
@@ -1052,7 +1083,7 @@ export class SessionRunner {
      * would mark a boundary against a message that is not finished, and undoing
      * it would fight the tool that is mid-write.
      */
-    if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
+    if (this.running.has(sessionID)) throw new CodedError("Wait for the current turn to finish", "error.sessionBusy")
     const snapshot = await this.store.peekSnapshot(sessionID, "redo")
     if (!snapshot) throw new Error("Nothing to redo")
     await this.guardOthers(sessionID, snapshot.at, snapshot.files)
@@ -1144,7 +1175,7 @@ export class SessionRunner {
    * same way, and Stop cancels the summary like any other request.
    */
   async compact(sessionID: string): Promise<SessionInfo> {
-    if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
+    if (this.running.has(sessionID)) throw new CodedError("Wait for the current turn to finish", "error.sessionBusy")
     const session = await this.store.require(sessionID)
     const controller = new AbortController()
     this.running.set(sessionID, controller)
@@ -1367,7 +1398,7 @@ export class SessionRunner {
     const open = this.steering.get(input.sessionID)
     if (open) return this.join(open, input)
 
-    if (this.running.has(input.sessionID)) throw new Error("This session is already working on something")
+    if (this.running.has(input.sessionID)) throw new CodedError("This session is already working on something", "error.sessionBusy")
 
     // A command's agent and model belong to the turn this starts, never to one already running.
     if (input.agent || input.model) this.turnOverrides.set(input.sessionID, { agent: input.agent, model: input.model })
@@ -1398,7 +1429,7 @@ export class SessionRunner {
    * Refused while a turn is running, since the subagent has to lead the turn.
    */
   async subtask(input: { sessionID: string; text: string; description: string; prompt: string; type: SubagentSpec["type"] }): Promise<string> {
-    if (this.running.has(input.sessionID)) throw new Error("This session is already working on something")
+    if (this.running.has(input.sessionID)) throw new CodedError("This session is already working on something", "error.sessionBusy")
     if (!input.prompt.trim()) throw new Error("The command has no prompt to hand to a subagent")
     const controller = new AbortController()
     this.running.set(input.sessionID, controller)
@@ -1545,6 +1576,8 @@ export class SessionRunner {
       const apiKey = this.config.apiKey(definition.id) ?? ""
       const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
       const controller = new AbortController()
+      // Stop reaches Smart's routing question too; it is asked before the turn claims the session.
+      const release = this.hold(session.id, controller)
       const timer = setTimeout(() => controller.abort(), SMART_TIMEOUT_MS)
       let answer = ""
       try {
@@ -1581,6 +1614,7 @@ export class SessionRunner {
         reading = undefined
       } finally {
         clearTimeout(timer)
+        release()
       }
     }
     const route = smartRoute(reading)
@@ -1729,46 +1763,61 @@ export class SessionRunner {
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(model)
     const controller = new AbortController()
+    /*
+     * Held where Stop can reach it. This request is launched and forgotten and
+     * has no entry in `running`, so pressing Stop on the very first message
+     * used to leave it running to its own timeout - renaming the conversation
+     * seconds after it had been cancelled, and billing for the request.
+     */
+    const release = this.hold(sessionID, controller)
     const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
     let answer = ""
     try {
-      await adapter.stream(
-        {
-          apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
-          model,
-          system: TITLE_SYSTEM,
-          history: [
-            {
-              id: `${session.id}:title`,
-              sessionID: session.id,
-              role: "user",
-              text: titlePrompt(text.slice(0, TITLE_SOURCE_CHARS), interfaceLocale(this.config.get().language)),
-              attachments: [],
-              time: { created: Date.now() },
-            },
-          ],
-          tools: [],
-          effort: "low",
-          variants: this.config.variants(model),
-          showReasoning: false,
-          signal: controller.signal,
-          baseURL: definition.baseURL,
-          headers: definition.headers,
-          accountId: tokens?.accountId,
-          maxOutput: maxOutputTokens(model, entry),
-          outputLimit: entry?.maxOutput,
-          // MiMo's title agent runs at 0.5, where the model takes a temperature.
-          sampling: { ...samplingFor(model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
-        },
-        (event) => {
-          if (event.type === "text.delta") answer += event.text
-        },
-      )
+      // MiMo's request budget for a call that is not a turn: four quick tries, then the fallback stands.
+      await withRequestRetry(() => {
+        // Each attempt starts its own answer; a retry must not continue the last one's text.
+        answer = ""
+        return adapter.stream(
+          {
+            apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
+            model,
+            system: TITLE_SYSTEM,
+            history: [
+              {
+                id: `${session.id}:title`,
+                sessionID: session.id,
+                role: "user",
+                text: titlePrompt(text.slice(0, TITLE_SOURCE_CHARS), interfaceLocale(this.config.get().language)),
+                attachments: [],
+                time: { created: Date.now() },
+              },
+            ],
+            tools: [],
+            effort: "low",
+            variants: this.config.variants(model),
+            showReasoning: false,
+            signal: controller.signal,
+            baseURL: definition.baseURL,
+            headers: definition.headers,
+            accountId: tokens?.accountId,
+            maxOutput: maxOutputTokens(model, entry),
+            outputLimit: entry?.maxOutput,
+            // MiMo's title agent runs at 0.5, where the model takes a temperature.
+            sampling: { ...samplingFor(model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
+          },
+          (event) => {
+            if (event.type === "text.delta") answer += event.text
+          },
+        )
+      }, controller.signal)
     } catch {
       return
     } finally {
       clearTimeout(timer)
+      release()
     }
+    // Stopped while it was writing: the conversation keeps the fallback it already has.
+    if (controller.signal.aborted) return
     const title = cleanTitle(answer)
     if (!title) return
     const current = await this.store.get(sessionID)
@@ -2176,9 +2225,23 @@ export class SessionRunner {
        * discovered model reports 0 - which has only the refusal to fall back on.
        */
       const overflowing = isOverflowByCount(usage, this.config.modelEntry(session.model))
+      /*
+       * Whether the next tool's output is capped at half the usual, as MiMo's
+       * `pressureCaps` does. Read from the count the provider just reported
+       * against the room this model has: a conversation this near the line
+       * spends 50 KB on every tool result otherwise, and crosses it sooner
+       * than MiMo's would.
+       */
+      this.pressured.set(sessionID, underPressure(usage, this.config.modelEntry(session.model)))
 
       if (outcome.stop === "refusal") {
         assistant.finish = "refusal"
+        /*
+         * A refusal is one of MiMo's coded failures (CONTENT_BLOCKED), so the
+         * card can say it in the reader's language. The English stays as the
+         * message for anything that logs it.
+         */
+        assistant.errorCode = "error.contentBlocked"
         assistant.error =
           outcome.finishReason === "content_filter"
             ? "The provider's content filter stopped this reply."
@@ -2497,6 +2560,14 @@ export class SessionRunner {
     const problems = tool.name === "invalid" ? [] : unreadable ? [unreadable] : argumentProblems(tool.parameters, part.input)
     if (problems.length) {
       part.status = "error"
+      /*
+       * MiMo's TOOL_ARGUMENT_INVALID: the row says one sentence in the
+       * reader's language, and the English instructions - which are addressed
+       * to the model, not to a person - stay on `error`, where the model reads
+       * them. Without the code a Chinese reader got two lines of English
+       * prose in the step for what is a common, self-correcting slip.
+       */
+      part.errorCode = "error.toolArgumentInvalid"
       part.error = refusedArgumentsNote(tool.name, problems)
       part.metadata = { recoverable: true }
       part.time.started = Date.now()
@@ -2599,7 +2670,14 @@ export class SessionRunner {
       // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
       const capped =
         result.metadata?.truncated === undefined
-          ? await this.toolOutputs.cap(result.output, !this.workers.has(input.session.id)).catch(() => undefined)
+          ? await this.toolOutputs
+              .cap(result.output, {
+                delegate: !this.workers.has(input.session.id),
+                pressure: this.pressured.get(owner) ?? false,
+                // The call reached here, so it did not throw: MiMo's "succeeded but was cut".
+                outcome: "success",
+              })
+              .catch(() => undefined)
           : undefined
       part.status = "completed"
       part.output = capped?.text ?? result.output
