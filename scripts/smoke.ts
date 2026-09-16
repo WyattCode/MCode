@@ -6535,9 +6535,9 @@ async function main() {
     nextZoom(0.3, "out") === 0.25 && nextZoom(0.25, "out") === 0.25 && nextZoom(2.95, "in") === 3 && nextZoom(1.7, "reset") === 1,
   )
 
-  check("a notification is titled project · conversation", noticeTitle("MCode", { project: "proj", title: "Fix it" }) === "proj · Fix it")
-  check("either half alone, or the app name", noticeTitle("MCode", { title: "Only" }) === "Only" && noticeTitle("MCode", {}) === "MCode")
-  const longTitle = noticeTitle("MCode", { project: "a-long-project-name", title: "and a long conversation title too" })
+  check("a notification is titled project · conversation", noticeTitle({ project: "proj", title: "Fix it" }) === "proj · Fix it")
+  check("either half alone, or the app name", noticeTitle({ title: "Only" }) === "Only" && noticeTitle({}) === "MCode")
+  const longTitle = noticeTitle({ project: "a-long-project-name", title: "and a long conversation title too" })
   check("a title over 40 is cut to 39 and an ellipsis", longTitle.length === 40 && longTitle.endsWith("…"), longTitle)
   const noticeRaw = readTaskNotice({ kind: "confirm", silent: "yes", sessionID: 4 })
   check("an IPC notice is read field by field", noticeRaw.kind === "confirm" && noticeRaw.silent === false && noticeRaw.sessionID === undefined, noticeRaw)

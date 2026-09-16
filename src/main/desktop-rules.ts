@@ -75,9 +75,33 @@ export function readTaskNotice(raw: unknown): TaskNotice {
   }
 }
 
-/** MiMo's title: "project · conversation", or whichever exists, cut at 40; the app name when neither does. */
-export function noticeTitle(appName: string, notice: { title?: string; project?: string }): string {
-  const fallback = appName.trim() || "MCode"
+/**
+ * The product name the tray and notifications show. A constant, as MiMo's tray
+ * uses its brand constant: `app.getName()` is whatever the running package.json
+ * says, which for an unpackaged run is not the product at all.
+ */
+export const APP_NAME = "MCode"
+
+/**
+ * The profile folder under the OS application-data folder: `mcode`, the name
+ * every MCode release has used. Electron derives its default from the product
+ * name, which is now `MCode`; on Windows and a default macOS volume the two
+ * spellings are one folder, but Linux (and a case-sensitive macOS volume) would
+ * start an empty profile beside the old one. So the default is pinned back to
+ * the old folder - and only the default: a profile chosen on purpose
+ * (`--user-data-dir`, or `app.setPath` before the main module runs) is left
+ * alone. Returns the folder to set, or undefined to leave userData as it is.
+ */
+export const PROFILE_FOLDER = "mcode"
+export function pinnedProfile(current: string, appData: string, appName: string, join: (...parts: string[]) => string): string | undefined {
+  if (current !== join(appData, appName)) return undefined
+  const pinned = join(appData, PROFILE_FOLDER)
+  return pinned === current ? undefined : pinned
+}
+
+/** MiMo's title: "project · conversation", or whichever exists, cut at 40; the product name when neither does. */
+export function noticeTitle(notice: { title?: string; project?: string }): string {
+  const fallback = APP_NAME
   const title = (notice.title ?? "").trim()
   const project = (notice.project ?? "").trim()
   const joined = project && title ? `${project} · ${title}` : title || project

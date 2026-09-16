@@ -38,7 +38,7 @@ import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
 import { readSoundfont } from "./soundfont"
 import { applyZoom } from "./zoom"
-import { WINDOW_MIN, badgeCount, noticeTitle, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
+import { APP_NAME, WINDOW_MIN, badgeCount, noticeTitle, pinnedProfile, readTaskNotice, textMenuItems, wantsNotice } from "./desktop-rules"
 import { registerOffice } from "./office"
 import { registerComposerInput } from "./composer-input"
 import { registerPasteFiles } from "./paste-files"
@@ -98,6 +98,13 @@ import pkg from "../../package.json"
  */
 const APP_ID = "dev.mcode.app"
 if (process.platform === "win32") app.setAppUserModelId(app.isPackaged ? APP_ID : `${APP_ID}.dev`)
+
+/*
+ * The profile stays where every release kept it (see pinnedProfile), before
+ * anything below reads it.
+ */
+const pinned = pinnedProfile(app.getPath("userData"), app.getPath("appData"), app.getName(), path.join)
+if (pinned) app.setPath("userData", pinned)
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 
@@ -327,7 +334,7 @@ function refreshTray(enabled: boolean): void {
       ])
     : [{ label: label("tray.profilesEmpty", "(None)"), enabled: false }]
 
-  tray.setToolTip(app.getName())
+  tray.setToolTip(APP_NAME)
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: label("tray.open", "Open MCode"), click: open },
@@ -785,7 +792,7 @@ app.whenReady().then(async () => {
         ? label("notify.confirm", "Your confirmation is needed before the task can continue")
         : label("notify.done", "Task completed")
     try {
-      const note = new Notification({ title: noticeTitle(app.getName(), notice), body, silent: notice.silent })
+      const note = new Notification({ title: noticeTitle(notice), body, silent: notice.silent })
       note.on("click", () => {
         raise(owner)
         if (notice.sessionID && !owner.isDestroyed()) owner.webContents.send("mcode:notify-click", notice.sessionID)

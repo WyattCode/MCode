@@ -8,6 +8,7 @@
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
+import { APP_NAME, noticeTitle, pinnedProfile } from "../src/main/desktop-rules"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
 async function sources(root: string): Promise<Map<string, string>> {
@@ -70,6 +71,41 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
       addons.every((name) => lock.packages[`node_modules/${name}`]?.dev === true && !lock.packages[""]?.dependencies?.[name]) &&
         !lock.packages[`node_modules/${unused}`] &&
         !lock.packages[""]?.devDependencies?.[unused],
+    )
+  }
+
+  section("Round 9 (Windows): the product is called MCode, and the profile stays where it was")
+  {
+    const manifest = pkg as unknown as { name: string; productName?: string }
+    check("package.json names the product, so the packaged app reports MCode rather than mcode", manifest.productName === APP_NAME && manifest.name === "mcode")
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    const menu = await fs.readFile(path.join(root, "src/main/menu.ts"), "utf8")
+    check(
+      "the tray, the notification fallback and the app menu use the product name, never app.getName()",
+      /tray\.setToolTip\(APP_NAME\)/.test(main) && /noticeTitle\(notice\)/.test(main) && /label: APP_NAME/.test(menu) && !/getName\(\)\)/.test(main.replace(/pinnedProfile\([^)]*\)/, "")) && !/app\.name\b/.test(menu),
+    )
+    check("a notice with neither project nor title is headed MCode", noticeTitle({}) === "MCode")
+    const posix = path.posix.join
+    const win = path.win32.join
+    check(
+      "Linux: the default profile the new name would give (~/.config/MCode) is pinned back to ~/.config/mcode",
+      pinnedProfile("/home/u/.config/MCode", "/home/u/.config", "MCode", posix) === "/home/u/.config/mcode",
+    )
+    check(
+      "a profile chosen on purpose - a probe's, or --user-data-dir - is never moved",
+      pinnedProfile("/tmp/probe-data", "/home/u/.config", "MCode", posix) === undefined &&
+        pinnedProfile("C:\\probe\\data", "C:\\Users\\u\\AppData\\Roaming", "Electron", win) === undefined,
+    )
+    check(
+      "Windows: the same folder spelled the old way, so nothing moves on disk",
+      pinnedProfile("C:\\Users\\u\\AppData\\Roaming\\MCode", "C:\\Users\\u\\AppData\\Roaming", "MCode", win) === "C:\\Users\\u\\AppData\\Roaming\\mcode" &&
+        pinnedProfile("C:\\Users\\u\\AppData\\Roaming\\mcode", "C:\\Users\\u\\AppData\\Roaming", "mcode", win) === undefined,
+    )
+    const pinAt = main.indexOf("pinnedProfile(app.getPath(\"userData\")")
+    const firstRead = main.indexOf("app.getPath(\"userData\")", pinAt + 40)
+    check(
+      "and the pin runs before anything else in the main module reads the profile",
+      pinAt > 0 && main.indexOf("app.getPath(\"userData\")") === pinAt + "pinnedProfile(".length && firstRead > pinAt && /if \(pinned\) app\.setPath\("userData", pinned\)/.test(main),
     )
   }
 }
