@@ -286,7 +286,6 @@ import { roundSevenChecks } from "./smoke-round7"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
-import { roundSevenChecks } from "./smoke-round7"
 // round 7 (storage): what the profile keeps, in its own file for the same reason.
 import { storageChecks } from "./smoke-storage"
 // skills: discovery, frontmatter and the slash list.
@@ -7081,7 +7080,6 @@ async function main() {
   await roundSixChecks(check, section)
   await roundSevenChecks(check, section)
   await failureChecks(check, section)
-  await roundSevenChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
 
