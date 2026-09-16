@@ -9,6 +9,7 @@ import { PowerHold } from "./power"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
+import { rendererOrigins } from "../server/socket-guard"
 import { setImageShrinker } from "../server/provider/attachment-parts"
 import { shrinkImage } from "./image-shrink"
 import { scratchRoot } from "../server/scratch"
@@ -622,7 +623,8 @@ app.whenReady().then(async () => {
    * channel exists, and a slow disk or a long history now delays the content
    * inside the window rather than the window itself.
    */
-  const starting = startBackend(app.getPath("userData")).then((started) => {
+  // Only this app's own page may open the socket from a browser context.
+  const starting = startBackend(app.getPath("userData"), { origins: rendererOrigins(process.env.ELECTRON_RENDERER_URL) }).then((started) => {
     backend = started
     /*
      * MiMo keeps the machine from suspending while a turn runs. The runner's busy
@@ -642,14 +644,25 @@ app.whenReady().then(async () => {
    * It is the one channel that has to wait for the backend, and it waits with
    * the window already up and its connecting state on screen.
    */
-  ipcMain.handle("mcode:bootstrap", async () => ({
-    port: (await starting).port,
-    platform: process.platform,
-    home: app.getPath("home"),
-    // app.getVersion() reports Electron's version until the app is packaged,
-    // so take the real one from package.json - the bundler inlines it.
-    version: pkg.version,
-  }))
+  ipcMain.handle("mcode:bootstrap", async (event) => {
+    /*
+     * The socket secret goes only to the top frame of one of the app's own
+     * windows. No other frame holds the preload, but the check costs nothing
+     * and keeps the secret from ever reaching a page that found a way to ask.
+     */
+    const owner = BrowserWindow.fromWebContents(event.sender)
+    if (!owner || !windows.has(owner) || event.senderFrame !== event.sender.mainFrame) throw new Error("not the app window")
+    const started = await starting
+    return {
+      port: started.port,
+      secret: started.secret,
+      platform: process.platform,
+      home: app.getPath("home"),
+      // app.getVersion() reports Electron's version until the app is packaged,
+      // so take the real one from package.json - the bundler inlines it.
+      version: pkg.version,
+    }
+  })
 
   /*
    * The title arrives from the renderer because only the renderer knows the

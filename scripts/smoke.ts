@@ -283,6 +283,9 @@ import { roundFiveChecks } from "./smoke-round5"
 import { roundSixChecks } from "./smoke-round6"
 // Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
 import { roundSevenChecks } from "./smoke-round7"
+// Round 8: the attack surface - who may reach the backend, what the tools may touch.
+import { roundEightSecurityChecks } from "./smoke-round8-security"
+import { socketProtocols } from "../src/shared/socket-auth"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -335,7 +338,8 @@ async function main() {
   const backend = await startBackend(dataDirectory)
   check("backend picked a port", backend.port > 0, backend.port)
 
-  const socket = new WebSocket(`ws://127.0.0.1:${backend.port}`)
+  // round 8 (X1): the socket admits only a client holding this launch's secret.
+  const socket = new WebSocket(`ws://127.0.0.1:${backend.port}`, socketProtocols(backend.secret))
   await new Promise<void>((resolve, reject) => {
     socket.once("open", resolve)
     socket.once("error", reject)
@@ -7079,6 +7083,7 @@ async function main() {
   await roundFiveChecks(check, section)
   await roundSixChecks(check, section)
   await roundSevenChecks(check, section)
+  await roundEightSecurityChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
