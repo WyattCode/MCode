@@ -430,6 +430,11 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       const typed = e.config.models("fake").find((entry) => entry.id === "deepseek-chat")
       check("a custom provider's model is left as typed", typed?.name === "Mine" && typed.contextWindow === 0)
 
+      /* P9-8: saving a custom model guesses its image input from the catalog. */
+      check("(P9-8) an id every entry says takes images is an image model", imageInputOf(catalog, "GPT-4o") === true && imageInputOf(catalog, "openai/gpt-4o") === true)
+      check("(P9-8) a text-only one is not, an unknown one is not known", imageInputOf(catalog, "deepseek-chat") === false && imageInputOf(catalog, "nobody-knows") === undefined)
+      const split = trimCatalog({ ...catalogOf("a", { twin: { modalities: { input: ["text", "image"] } } }), ...catalogOf("b", { twin: { modalities: { input: ["text"] } } }) })
+      check("(P9-8) entries that disagree decide nothing", imageInputOf(split, "twin") === undefined)
     } finally {
       await e.close()
     }
@@ -449,6 +454,11 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       const written = Date.now()
       while (!(await fs.stat(cached).catch(() => undefined)) && Date.now() - written < 5_000) await new Promise((resolve) => setTimeout(resolve, 25))
       check("into the data folder's cache", Boolean(await fs.stat(cached).catch(() => undefined)))
+      await handle(backend.runtime, { type: "provider.addCustom", id: "vision", name: "V", baseURL: "https://v.example/v1", apiKey: "k", models: [{ id: "gpt-4o", name: "G" }, { id: "local-llm", name: "L" }, { id: "GPT-4O", name: "G2", attachment: false }] } as unknown as Request)
+      const models = backend.runtime.config.get().customProviders.find((entry) => entry.id === "vision")?.models ?? []
+      check("(P9-8) a saved gpt-4o is marked as taking images", models[0]?.attachment === true, models[0])
+      check("(P9-8) an unknown model keeps the default", models[1]?.attachment === undefined, models[1])
+      check("(P9-8) and an explicit choice is never overridden", models[2]?.attachment === false, models[2])
     } finally {
       await backend.close()
       await served.close()

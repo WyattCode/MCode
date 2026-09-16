@@ -16,6 +16,7 @@ import { sessionFiles } from "@shared/session-files"
 import { Identifier } from "@shared/id"
 import { normalizeBaseURL } from "@shared/custom-endpoint"
 import { CodedError } from "@shared/errors"
+import { imageInputOf, type Catalog } from "@shared/models-dev"
 // A conversation as a file this app can read back, both halves of the pair.
 import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
 import { addedProject, removedProjects } from "@shared/projects"
@@ -90,6 +91,17 @@ const VOICE_NETWORK_CODES = new Set([
   "UND_ERR_CONNECT_TIMEOUT",
   "UND_ERR_SOCKET",
 ])
+
+/**
+ * MiMo's save-time guess for a custom model's image input: left at its
+ * default, it is switched on when every models.dev entry of that id takes
+ * images. Only ever on - a model the catalog does not know, or knows as
+ * text-only, keeps the default - and only when saving, never afterwards.
+ */
+function withImageInput<T extends { id: string; attachment?: boolean }>(model: T, catalog: Catalog): T {
+  if (model.attachment !== undefined || imageInputOf(catalog, model.id) !== true) return model
+  return { ...model, attachment: true }
+}
 
 function errorCodeOf(value: unknown): string {
   if (!value || typeof value !== "object" || !("code" in value)) return ""
@@ -1020,7 +1032,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         throw new CodedError(`A provider with the id ${id} already exists`, "provider.custom.error.providerID.exists")
       }
       // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
-      const models = request.models.map((model) => customModelOf(model))
+      const models = request.models.map((model) => withImageInput(customModelOf(model), runtime.config.modelCatalog()))
       if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
       /*
        * `{env:MY_VAR}` in the key field names a variable rather than supplying
@@ -1071,7 +1083,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       const existing = config.customProviders.find((entry) => entry.id === request.id)
       if (!existing) throw new CodedError(`No custom provider with the id ${request.id}`, "provider.notFound")
       // Id and name trimmed, and 高级配置 checked: a bad limit is refused, not dropped.
-      const models = request.models.map((model) => customModelOf(model))
+      const models = request.models.map((model) => withImageInput(customModelOf(model), runtime.config.modelCatalog()))
       if (!models.length) throw new CodedError("A custom provider needs at least one model", "provider.needsModel")
       const typed = request.apiKey.trim()
       const environment = /^\{env:([^}]+)\}$/.exec(typed)?.[1]?.trim()
