@@ -21,6 +21,7 @@ import { language, sessionTitle, t } from "../lib/i18n"
 import { visibleChatOrder } from "../lib/visible-chats"
 import { projectName } from "../lib/project"
 import { projectsByRecency } from "@shared/projects"
+import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import type { ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
@@ -626,23 +627,26 @@ export const useApp = defineStore("app", () => {
         }
         break
       }
-      case "session.error":
+      case "session.error": {
+        // A failure the backend named is said in the reader's language.
+        const said = event.errorCode ? t(event.errorCode, event.errorParams) : event.error
         // subagents: shown in its own transcript in the 子智能体 tab, nowhere else.
         if (isSubagent(event.sessionID)) {
           if (running.value.delete(event.sessionID)) running.value = new Set(running.value)
-          setSideError(event.sessionID, event.error)
+          setSideError(event.sessionID, said)
           break
         }
         noteRunEnded(event.sessionID)
         endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
         turnStarted.delete(event.sessionID)
-        noteError(event.sessionID, event.error)
+        noteError(event.sessionID, said)
         // The banner is only for the session on screen; the record is kept for
         // all of them, so the sidebar can mark the ones that went wrong.
-        if (event.sessionID === currentID.value) error.value = event.error
-        if (isSide(event.sessionID)) setSideError(event.sessionID, event.error)
+        if (event.sessionID === currentID.value) error.value = said
+        if (isSide(event.sessionID)) setSideError(event.sessionID, said)
         break
+      }
       case "permission.requested": {
         // subagents: filed under the conversation a subagent works for, so its dock and its row show it.
         const key = rootOf(event.request.sessionID)
@@ -719,6 +723,17 @@ export const useApp = defineStore("app", () => {
         providers.value = event.providers
         authState.value = { provider: event.provider, stage: "done" }
         void ensureUsableModel(event.provider)
+        break
+      case "auth.expired":
+        providers.value = event.providers
+        notifyFailure(t("auth.expired", { name: event.name }), {
+          id: `auth.expired:${event.provider}`,
+          duration: 0,
+          action: { label: t("auth.signInAgain"), run: () => requestConnect(event.provider) },
+        })
+        break
+      case "providers.updated":
+        providers.value = event.providers
         break
       case "auth.failed":
         authState.value = { provider: event.provider, stage: "failed", message: event.message }
@@ -1648,22 +1663,30 @@ export const useApp = defineStore("app", () => {
    * default was in place beforehand.
    */
   async function ensureUsableModel(prefer?: string) {
-    const usable = (id: string) => providers.value.find((entry) => entry.id === id)?.configured
     const chosen = config.value?.model
 
-    // Nothing to do when the current pick already works and no move was asked for.
-    if (!prefer && chosen && usable(chosen.provider)) return
+    // Nothing to do when the current pick still works and no move was asked for.
+    const preferReady = Boolean(prefer && providers.value.some((entry) => entry.id === prefer && entry.configured && entry.models.length))
+    if ((!prefer || !preferReady) && modelAvailable(providers.value, chosen)) return
 
-    const target =
-      providers.value.find((entry) => entry.id === prefer && entry.configured && entry.models.length) ??
-      providers.value.find((entry) => entry.configured && entry.models.length)
-    const model = target?.models[0]
-    if (!target || !model) return
-
-    const ref = { provider: target.id, model: model.id }
+    const ref = fallbackModel(availableModels(providers.value), preferReady ? prefer : undefined)
+    if (!ref) return
     await patchConfig({ model: ref })
-    // An open session keeps its own model, so it has to be moved explicitly.
-    if (currentID.value) await api().request({ type: "session.model", sessionID: currentID.value, model: ref })
+    // An open session keeps its own model, so it has to be moved explicitly; the others follow on their next turn.
+    const open = currentID.value ? sessions.value.find((entry) => entry.id === currentID.value) : undefined
+    if (open && !modelAvailable(providers.value, open.model)) await api().request({ type: "session.model", sessionID: open.id, model: ref })
+    else if (open && preferReady) await api().request({ type: "session.model", sessionID: open.id, model: ref })
+  }
+
+  /**
+   * The model a conversation runs on, as the window shows it: its own while
+   * that is still there, otherwise the app's - which is what its next turn
+   * will move to (MiMo's conversations follow the global model once theirs
+   * has gone).
+   */
+  function shownModel(ref: ModelRef | undefined): ModelRef | undefined {
+    if (ref && modelAvailable(providers.value, ref)) return ref
+    return config.value?.model?.model ? config.value.model : ref
   }
 
   /**
@@ -1725,6 +1748,12 @@ export const useApp = defineStore("app", () => {
   async function signOut(provider: string) {
     providers.value = (await api().request({ type: "auth.signOut", provider })).providers
     await ensureUsableModel()
+  }
+
+  /** Asks the window to open the connect dialog, on one provider when named. */
+  const connectRequest = ref<{ provider?: string; at: number }>()
+  function requestConnect(provider?: string) {
+    connectRequest.value = { provider, at: Date.now() }
   }
 
   /** Re-reads the provider list, which carries config-derived fields. */
@@ -1798,6 +1827,7 @@ export const useApp = defineStore("app", () => {
     protocol?: "openai" | "anthropic"
   }) {
     providers.value = (await api().request({ type: "provider.updateCustom", ...entry })).providers
+    await ensureUsableModel()
   }
 
   /** Copies a custom provider under a free id, and answers that id. */
@@ -2051,6 +2081,9 @@ export const useApp = defineStore("app", () => {
     cancelAuth,
     signOut,
     ensureUsableModel,
+    connectRequest,
+    requestConnect,
+    shownModel,
     discoverModels,
     addCustomProvider,
     removeCustomProvider,

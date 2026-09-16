@@ -289,8 +289,8 @@ import { roundEightAccessChecks } from "./smoke-round8-access"
 // Round 8: the wording rules the eighteen language tables keep.
 import { wordingChecks } from "./smoke-wording"
 import { roundEightChecks } from "./smoke-round8"
-// Round 9: a prompt for every model family MiMo's engine tells apart, and the family request shaping.
-import { roundNineChecks } from "./smoke-round9"
+// Round 9: providers and models - request shaping per family, endpoints, fallbacks, the model catalog.
+import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
 // The round-six audit of failures and edge cases (F1 onwards).
@@ -326,6 +326,8 @@ function section(name: string) {
 async function main() {
   // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.
   process.env.MCODE_GENERATE_TITLES = "0"
+  // round 9: every backend a check starts stays off the network; the models.dev checks use a local server.
+  process.env.MCODE_DISABLE_MODELS_FETCH = "1"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-"))
   const dataDirectory = path.join(root, "data")
   const project = path.join(root, "project")
@@ -379,7 +381,8 @@ async function main() {
   }
 
   const config = await call({ type: "config.get" })
-  check("config.get returns defaults", config.config.model.model === "claude-opus-5", config.config.model)
+  // P9-4: a fresh profile names no model, so the picker reads "choose a model" rather than a provider nobody set up.
+  check("config.get returns defaults", config.config.model.provider === "" && config.config.model.model === "", config.config.model)
 
   const created = await call({ type: "session.create", directory: project })
   const sessionID: string = created.session.id
@@ -3741,10 +3744,10 @@ async function main() {
      * default prompt does, so "plan mode" appearing at all proves nothing. What
      * build must not carry is the section that says it is planning.
      */
-    check("build is not", !buildPrompt.includes("You are in plan mode") && !buildPrompt.includes("## Planning only"))
+    check("build is not", !buildPrompt.includes("This conversation is in plan mode") && !buildPrompt.includes("# Plan mode"))
     // plan: the prompt says how planning ends and what it may write; the per-turn note carries the path.
     check("plan is told how the mode ends", planPrompt.includes("plan_exit"), planPrompt.slice(0, 200))
-    check("and that one file is writable rather than that nothing is", planPrompt.includes("except this conversation's plan file") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
+    check("and that one file is writable rather than that nothing is", planPrompt.includes("apart from writing the plan file each turn names") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
 
     /*
      * Standing instructions. They are the reader's own rather than the
@@ -6925,7 +6928,7 @@ async function main() {
   await roundEightAccessChecks(check, section)
   wordingChecks(check, section)
   await roundEightChecks(check, section)
-  await roundNineChecks(check, section)
+  await roundNineProviderChecks(check, section)
   await roundNineWindowsChecks(check, section)
   await roundNineSettingsChecks(check, section)
   await failureChecks(check, section)

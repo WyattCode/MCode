@@ -1,4 +1,5 @@
 import type { Effort, ModelInfo, ModelRef, ProviderStatus } from "@shared/protocol"
+import { effortToSend } from "@shared/effort-menu"
 
 /**
  * Reading the model record the server sends, and the reasoning steps on it.
@@ -34,11 +35,7 @@ export function cycleVariant(variants: readonly Effort[], selected?: Effort): Ef
  * A model without levels has none. The menu no longer has a "follow the
  * default" row, so a model with levels always has one named.
  */
-export function clampEffort(variants: readonly Effort[], level?: Effort): Effort | undefined {
-  if (!variants.length) return undefined
-  if (level && variants.includes(level)) return level
-  return variants.includes("medium") ? "medium" : variants[0]
-}
+export const clampEffort: (variants: readonly Effort[], level?: Effort) => Effort | undefined = effortToSend
 
 /** The families MiMo draws a round vendor badge for in the model menu. */
 export type ModelFamily = "claude" | "openai" | "gemini" | "deepseek" | "kimi" | "glm" | "minimax" | "qwen" | "hunyuan"

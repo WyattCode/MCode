@@ -1145,18 +1145,23 @@ export interface UsageBucket {
   /** A date as YYYY-MM-DD, or a model as "provider/model". */
   key: string
   usage: Usage
-  /** How many assistant turns went into it. */
+  /** How many assistant turns went into it (background requests add spend, not turns). */
   turns: number
+  /** Requests with a price, and requests that used tokens on a model with no known price. */
+  priced: number
+  unpriced: number
 }
 
 export interface UsageSummary {
   total: Usage
   turns: number
+  priced: number
+  unpriced: number
   /** Oldest first, one entry per day that actually has turns in it. */
   byDay: UsageBucket[]
   /** Heaviest first. */
   byModel: UsageBucket[]
-  /** How many days back the daily list was gathered over. */
+  /** How many days back every figure was gathered over. */
   days: number
 }
 
@@ -2196,7 +2201,8 @@ export type ServerEvent =
    * up, which is how the first working version of the rescue was read.
    */
   | { type: "session.compacting"; sessionID: string; active: boolean }
-  | { type: "session.error"; sessionID: string; error: string }
+  /** `errorCode`, when present, names the sentence the window shows instead of `error`. */
+  | { type: "session.error"; sessionID: string; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
   | { type: "message.updated"; message: Message }
   /**
    * Messages have left the transcript for good.
@@ -2238,7 +2244,11 @@ export type ServerEvent =
   | { type: "mcp.status"; servers: McpServerState[] }
   /** A subscription login finished in the browser, minutes after it began. */
   | { type: "auth.completed"; provider: string; providers: ProviderStatus[] }
+  /** What the providers offer changed without anyone asking - a newer models.dev catalog arrived. */
+  | { type: "providers.updated"; providers: ProviderStatus[] }
   | { type: "auth.failed"; provider: string; message: string }
+  /** A subscription's sign-in was refused on renewal and has been cleared; the window asks for a new one. */
+  | { type: "auth.expired"; provider: string; name: string; providers: ProviderStatus[] }
 
 // ---------------------------------------------------------------------------
 // Envelopes
@@ -2261,7 +2271,7 @@ export type ResponseEnvelope =
    * where this app can name one, the window phrases it and keeps `error` as
    * the detail.
    */
-  | { kind: "response"; id: string; ok: false; error: string; errorCode?: string }
+  | { kind: "response"; id: string; ok: false; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
 
 export interface EventEnvelope {
   kind: "event"

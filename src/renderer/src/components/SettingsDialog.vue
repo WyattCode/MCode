@@ -5,7 +5,7 @@ import { useOpenWith } from "../lib/open-with"
 import ConnectDialog from "./ConnectDialog.vue"
 import CustomModelDialog from "./CustomModelDialog.vue"
 import ProviderIcon from "./ProviderIcon.vue"
-import { groupProviders, waysFor, type Group } from "../lib/connect"
+import { providerLabel, quickAddGroups, waysFor, type Group } from "../lib/connect"
 import type { ProviderStatus } from "@shared/protocol"
 import { LANGUAGES, ago, language, sessionTitle, t, type Language } from "../lib/i18n"
 import { wordMatch } from "../lib/word-match"
@@ -505,6 +505,15 @@ async function loadUsage() {
     ?.request({ type: "usage.summary", days: 14 })
     .then((result) => result.summary)
     .catch(() => undefined)
+}
+
+/*
+ * A spend with no price behind it reads as a dash, not as $0.00: the catalog
+ * had no price for the models it went to.
+ */
+function spent(bucket: { usage: { cost: number }; priced: number; unpriced: number } | undefined): string {
+  if (bucket && !bucket.priced && bucket.unpriced) return "—"
+  return money.value.format(bucket?.usage.cost ?? 0)
 }
 
 /* The widest day sets the scale, so the bars mean something next to each other. */
@@ -1367,10 +1376,11 @@ function groupDescription(group: Group): string {
 }
 
 /*
- * MiMo lists every preset whether or not one is added, since several models per
- * vendor can be; a connected vendor's chip opens its connect screen on 已连接.
+ * MiMo's seven presets, listed whether or not one is added, since several
+ * models per vendor can be; a connected vendor's chip opens its connect screen
+ * on 已连接. Everything else is added through 自定义.
  */
-const presetGroups = computed(() => groupProviders(app.providers))
+const presetGroups = computed(() => quickAddGroups(app.providers))
 const busy = ref<string>()
 /**
  * The last thing that went wrong, and which row it belongs to.
@@ -2682,10 +2692,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
         <template v-else-if="section === 'usage'">
           <h2>{{ t("set.nav.usage") }}</h2>
           <p class="page-sub">{{ t("set.usageSub") }}</p>
+          <!-- Every figure below covers the same days, counted on this machine's calendar. -->
+          <p class="page-sub usage-window" data-usage-window>{{ t("set.usageWindow", { n: String(usage?.days ?? 14) }) }}</p>
           <div class="card">
             <div class="totals">
               <div class="total">
-                <span class="total-value">{{ money.format(usage?.total.cost ?? 0) }}</span>
+                <span class="total-value" data-usage-total-cost>{{ usage ? spent({ usage: usage.total, priced: usage.priced, unpriced: usage.unpriced }) : money.format(0) }}</span>
                 <span class="total-name">{{ t("context.usage.cost") }}</span>
               </div>
               <div class="total">
@@ -2701,6 +2713,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 <span class="total-name">{{ t("set.usageTurns") }}</span>
               </div>
             </div>
+            <p v-if="usage?.priced && usage.unpriced" class="line-sub" data-usage-partly-priced>{{ t("set.usagePartlyPriced") }}</p>
           </div>
 
           <h3>{{ t("set.usageByDay", { n: String(usage?.days ?? 14) }) }}</h3>
@@ -2717,7 +2730,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 />
               </span>
               <span class="day-value">{{ tokens(day.usage.input + day.usage.output) }}</span>
-              <span class="day-cost">{{ money.format(day.usage.cost) }}</span>
+              <span class="day-cost">{{ spent(day) }}</span>
             </div>
             <p v-if="usage && !usage.byDay.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>
@@ -2732,7 +2745,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   {{ tokens(entry.usage.input + entry.usage.output) }}
                 </div>
               </div>
-              <span class="total-value small">{{ money.format(entry.usage.cost) }}</span>
+              <span class="total-value small" data-usage-model-cost>{{ spent(entry) }}</span>
             </div>
             <p v-if="usage && !usage.byModel.length" class="line-sub">{{ t("set.usageNone") }}</p>
           </div>
@@ -3104,7 +3117,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <ProviderIcon :id="provider.id" :name="provider.name" />
               <div class="ptext">
                 <div class="pname">
-                  {{ provider.name }}
+                  {{ providerLabel(provider) }}
                   <span v-if="provider.custom" class="tag">{{ t("settings.providers.tag.custom") }}</span>
                   <span v-else-if="fromEnvironment(provider)" class="tag">
                     {{ t("provider.environment") }}
@@ -3152,7 +3165,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                   <button
                     class="ctl-btn danger-hover"
                     :data-provider-remove="provider.id"
-                    @click="removing = { id: provider.id, name: provider.name, custom: Boolean(provider.custom) }"
+                    @click="removing = { id: provider.id, name: providerLabel(provider), custom: Boolean(provider.custom) }"
                   >
                     {{ provider.custom ? t("set.models.remove") : t("set.disconnect") }}
                   </button>
@@ -4363,7 +4376,8 @@ h3 {
  * MiMo's custom instructions: a heading, a line with an inline 了解更多 that
  * opens three lines of help, a 200px box on the page itself, and Save below.
  */
-.page-sub.ci-sub {
+.page-sub.ci-sub,
+.page-sub.usage-window {
   margin-top: 0;
 }
 

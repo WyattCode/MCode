@@ -11,6 +11,7 @@
     "predev": "node scripts/soundfont.mjs --optional",
     "dev": "electron-vite dev",
     "soundfont": "node scripts/soundfont.mjs",
+    "models-snapshot": "node scripts/models-snapshot.mjs",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "typecheck": "vue-tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.node.json",

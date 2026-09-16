@@ -269,7 +269,20 @@
   - 暂缓（用户定）：N9-7 / N9-19（公开服务器）、N9-8（签名证书；electron-updater 的发布者校验在 `app-update.yml` 有 `publisherName` 时才生效）、N9-20。N9-17 由另一路删除。
   - 体积（同机、同 v2.0 基线打包）：安装包 148,324,330 → 237,393,303 字节（0.2.5 → 0.2.7），win-unpacked 469,223,699 → 839,248,709，其中运行时 373,068,598（node 105.6 MB / python 263.2 MB / ripgrep 4.3 MB，共 9,963 个文件，逐字节与源树一致）；app.asar 62,426,742 → 60,050,911（去掉 xterm 插件 2.95 MB，且不再收 check 打包文件）。
   - 验证（合并 v2.0、Electron 41.7.2 后）：十三项检查全过，build 通过，smoke **3136 全过**（新 `scripts/smoke-round9-windows.ts` 103 条，删去旧 JSON 更新源的 15 条）；每组新检查都在改坏代码后确认会失败。探针 `mcode-round9-windows.cjs` 8 项全过、0 报错（注册表环境、四个运行时实际运行、本地转储、窗口状态、中断提示、IPC、真实 electron-updater 对本地更新源端到端、退出时的窗口状态），改坏代码后 8 项全部失败。
-- 进行中：服务商与提示词、MCP 两路构建。
+- **服务商与提示词这一路已完成**（`round9-providers.md` 除 MCP 各项，worktree 分支 8b18f72 … 2c77395），MiMo 仍是 26.914.142245：
+  - **所有模型同一份系统提示词**（8b18f72）：核实 MiMo 桌面端把「claude.txt + desktop-base.md」（计划模式再加 `plan-addendum.md`）写进引擎配置给 build / plan / compose，所以桌面端从不按家族选；`session/prompts.ts` 改为一份（通用部分 9.7KB 照 claude.txt 的章节，桌面部分 11.3KB 照 desktop-base 的章节，MCode 没有的内容——交互小组件、随包运行时——换成 MCode 实有的说明；计划模式段 0.8KB 照 plan-addendum），文字自写，与 MiMo 四个文件逐 6 词比对 0 处重合。删掉十份家族提示词、`promptFamily`、`scripts/smoke-round9.ts` 与第八轮的家族断言；请求层的家族差异（Gemini / Kimi 工具参数整形、Kimi K2.5 思考）核实在 MiMo 引擎的 provider 层照常生效，保留，检查移到 `scripts/smoke-round9-providers.ts`。局域网 `qwen38-nvfp4` 一次性 profile 实测：调 read 读 README、答出暗号、两轮前缀逐字节相同、不发 reasoning_effort、只发 `top_p: 1`。
+  - P9-1 强度子菜单照 MiMo 桌面的规则（`shared/effort-menu.ts`，按 id + 显示名：Claude 的 3.7 / 4.x / Sonnet 5 / Fable / Mythos 给五 / 四 / 三档，GPT-5 与 Codex 除 chat、5-Pro 外三档，5.2 起加 xhigh，5.6 再加 max；其余一律没有，且回合不发强度，菜单没有的档位就近夹到 medium）。服务端 `variants` 仍只负责把档位翻译成请求参数。
+  - P9-2 自定义服务商保存时（和读取已存的）去掉地址末尾斜杠与 `/chat/completions`、`/completions`，模型 id 去掉所有空白；表单失焦时显示整理后的值。
+  - P9-3 / P9-4 对话的模型不在了（服务商删除 / 断开、模型从列表消失）时，下一回合改用全局模型，全局模型也不在就按 MiMo 的回落（先 MiMo Pro 类，再第一个；刚连接的服务商优先），一个都没有报 `error.noModel`；窗口里这类对话显示全局模型；出厂默认模型留空，芯片显示「选择模型」。连接后列表为空的服务商不做模型 id 核对。
+  - P9-5 快速添加只有 MiMo 的 7 家（Xiaomi MiMo API、MiMo Token Plan、DeepSeek、Kimi / Moonshot、智谱 GLM、千问、MiniMax）+ 自定义；连接弹窗也只列这些，外加 MCode 保留的 ChatGPT 订阅登录；其余内置厂商与本地运行时经「自定义」添加，已连接的照常列在「已添加」。MiniMax 改为 `api.minimaxi.com`（已存的地址覆盖不动）。
+  - P9-8 保存自定义模型时，图片输入为默认且 models.dev 里同名条目全都收图，就记为收图（只开不关，显式选择不动）。
+  - P9-9 服务商相关报错改为错误码（可带参数），窗口按 18 张表说；回合级 `session.error` 也带码。
+  - P9-10 models.dev：照 MiMo 启动即刷新（缓存不足 5 分钟不取）、之后每小时、10 秒超时，下载原子写入 `<数据目录>/cache/models.json`，叠在随包快照上（快照只补下载缺的字段）；失败只记日志。随包快照 `resources/models-snapshot.json`（2.6MB，217 家 7823 个模型，只留 MCode 读的字段；MiMo 把 4.7MB 的快照直接打进引擎，所以这里也提交进仓库，`npm run models-snapshot` 手动更新，打包时按需加载成独立 chunk）。内置服务商按 `MODELS_DEV_IDS` 对应 models.dev 的服务商，上下文、输出上限、价格、能力、输入模态、强度选项以 models.dev 为准，名称仍用自己的表；自定义服务商不套。`MCODE_DISABLE_MODELS_FETCH` 关网（smoke 与探针都设了），`MCODE_MODELS_URL` 换源。新事件 `providers.updated`。
+  - P9-12 ChatGPT 续期被拒时发 `auth.expired`，窗口常驻提示「{name} 登录已过期，请重新登录」并带「重新登录」（打开该服务商的连接弹窗）；回合遇到同样情况报同一句。
+  - P9-13 使用情况页三块统一为最近 14 天、按本机时区分日；没有价格的用量显示「—」，部分有价时注明；标题、Smart 路由、上下文压缩、命令审查这些后台请求的用量记入 `storage/usage-background.json`，算花费不算回合。
+  - 新文案 12 个键进 18 张表。验证（合并 v2.0 的 Electron 41.7.2 与设置一路之后）：十三项检查全过，build 通过，smoke **3075 全过**（`smoke-round9-providers.ts` 115 条；另把 round9-settings 里「坏模型回到默认 claude-opus-5」的预期改为空默认）；每条新检查都在改坏代码后确认会失败。探针 `mcode-round9-providers.cjs` 7 项全过（截图 home-empty / quick-add / custom-form / model-menu / expired-notice / expired-connect / connect-browse / usage），改坏构建后 6 项失败、单改「重新登录」链接后 V6 失败；回归 round8-model 9、round3-settings 38、round9-settings 13 全过。`mcode-round3-composer.cjs` 仍读已在第八轮删除的 `SessionTabs.vue`，中途报错，属探针过期。
+  - 未做（归另一路）：P9-14 … P9-18 与 MCP 各行。
+- 进行中：MCP 一路构建（服务商与提示词、Windows 发行已合并）。
 
 用户决定不做（不要再主动提）：
 
@@ -287,6 +300,9 @@
 - 侧栏内容（字标以下）整体下移 4px。
 - 首页保留 MCode 自己的静态字标，不做 MiMo 的可换图标按钮（做过后撤销，`18d888b` → `6c32812`）；点击字标会跳动一下（`ea62985`）。
 - 「帮助与反馈」暂不做。
+- 服务商预设连接后自动拉 `/models` 发现模型（MiMo 的预设是「填 Key + 手填模型名」的单模型表单）；「已添加」按服务商列行并保留刷新与地址编辑（第九轮 P9-6，2026-09-17 用户决定保留）。
+- 自定义表单保留「接口协议」（OpenAI / Anthropic）选项（MiMo 新建自定义只能是 OpenAI 兼容，P9-7）。
+- 保留 ChatGPT Pro/Plus 订阅登录（MiMo 桌面只有小米账号登录，P9-11）；入口在连接弹窗（模型菜单 / 命令面板打开的那个），设置页快速添加里没有。
 
 ## 本会话完成的轮次（新到旧）
 

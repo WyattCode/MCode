@@ -17,6 +17,8 @@ import type {
 import { access, mkdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
+import { effortToSend, menuEfforts } from "@shared/effort-menu"
+import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
@@ -33,7 +35,7 @@ import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
 import { retryDecision, waitFor, withRequestRetry } from "./retry"
-import { CodedError } from "@shared/errors"
+import { CodedError, codeOf, paramsOf } from "@shared/errors"
 import { AnthropicAdapter, describeAnthropicError } from "../provider/anthropic"
 import { OpenAICompatible } from "../provider/openai"
 import { ChatGPTSubscription } from "../provider/chatgpt"
@@ -64,6 +66,8 @@ import { forWire } from "../provider/wire-ids"
 import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
+import { BackgroundUsage, type BackgroundUse } from "./background-usage"
+import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
@@ -312,6 +316,8 @@ export class SessionRunner {
 
   /** Where the per-project shadow repositories that back undo are kept. */
   private readonly snapshots: Snapshots
+  /** What background requests spent; the usage page counts it with the turns. */
+  readonly backgroundUsage: BackgroundUsage
 
   /**
    * The undo stores, for the two things outside a turn that have to reach them:
@@ -381,6 +387,7 @@ export class SessionRunner {
     storage: Storage,
   ) {
     this.snapshots = new Snapshots(storage.folder("snapshot"))
+    this.backgroundUsage = new BackgroundUsage(storage)
     // Complete outputs the shared cap cut, kept a week, as MiMo keeps them.
     this.toolOutputs = new ToolOutputs(storage.folder("tool-output"))
     this.toolOutputs.start()
@@ -485,6 +492,7 @@ export class SessionRunner {
         },
       )
       calls = outcome.toolCalls
+      this.noteBackground(session.id, session.model, outcome.usage, "review")
     } catch {
       return false
     } finally {
@@ -1314,7 +1322,7 @@ export class SessionRunner {
     if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
 
     const definition = this.config.definition(session.model.provider)
-    if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
+    if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
     const adapter: ProviderAdapter =
       definition.kind === "anthropic"
         ? AnthropicAdapter
@@ -1376,6 +1384,7 @@ export class SessionRunner {
         },
       )
       if (outcome.toolCalls.length) called = true
+      this.noteBackground(session.id, session.model, outcome.usage, "compaction")
     } catch (failure) {
       if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
       throw failure
@@ -1646,7 +1655,7 @@ export class SessionRunner {
       const timer = setTimeout(() => controller.abort(), SMART_TIMEOUT_MS)
       let answer = ""
       try {
-        await adapter.stream(
+        const outcome = await adapter.stream(
           {
             apiKey: tokens?.access ?? apiKey,
             model: main,
@@ -1675,6 +1684,7 @@ export class SessionRunner {
             if (event.type === "text.delta") answer += event.text
           },
         )
+        this.noteBackground(session.id, main, outcome.usage, "smart")
         reading = readTask(answer)
       } catch {
         reading = undefined
@@ -1685,6 +1695,31 @@ export class SessionRunner {
     }
     const route = smartRoute(reading)
     return this.store.update(session.id, { model: route === "fast" ? fast : main, smartRoute: route })
+  }
+
+  /** Records what a request outside the turns spent, priced as a turn on that model would be. */
+  private noteBackground(sessionID: string, model: ModelRef, usage: TurnUsage | undefined, kind: BackgroundUse["kind"]): void {
+    if (!usage) return
+    const priced = { ...usage, cost: costOf(usage, this.config.modelEntry(model)) }
+    if (!priced.input && !priced.output && !priced.reasoning && !priced.cacheRead && !priced.cacheWrite) return
+    void this.backgroundUsage.add({ at: Date.now(), sessionID, model, usage: priced, kind })
+  }
+
+  /**
+   * MiMo's answer to a model that has gone - its provider removed or signed
+   * out, or the model dropped from the provider's list: the conversation
+   * follows the app's model instead, or MiMo's fallback when that has gone
+   * too. Without this the next message failed with a provider error that did
+   * not say why. With no model left at all, the turn is refused in words the
+   * window can show.
+   */
+  private async withAvailableModel(session: SessionInfo): Promise<SessionInfo> {
+    const providers = this.config.providers()
+    if (modelAvailable(providers, session.model)) return session
+    const chosen = this.config.get().model
+    const next = modelAvailable(providers, chosen) ? chosen : fallbackModel(availableModels(providers))
+    if (!next) throw new CodedError("No model is available. Connect a provider or add a model in Settings.", "error.noModel")
+    return this.store.update(session.id, { model: next })
   }
 
   private async begin(
@@ -1709,6 +1744,9 @@ export class SessionRunner {
     // Smart picks its model from the first message, before anything is checked against it.
     if (session.smart && !session.smartRoute && input.text.trim()) session = await this.routeSmart(session, input.text)
 
+    // A conversation whose model has gone since it last ran moves to one that is there.
+    session = await this.withAvailableModel(session)
+
     /*
      * The project is photographed from here rather than from the first tool
      * call, so that on a large project the scan runs while the model is still
@@ -1723,15 +1761,6 @@ export class SessionRunner {
     // A subscription is authorised by stored tokens, so it has no API key to
     // check here - the bearer is resolved (and refreshed) at turn time.
     const apiKey = this.config.apiKey(session.model.provider) ?? ""
-    /*
-     * `usable` rather than a key check, so a custom provider that carries its
-     * credential in a header - which its own form invites - is not refused
-     * here. Without this the picker offers the model and every prompt against
-     * it comes back "No API key configured".
-     */
-    if (!this.config.usable(session.model.provider)) {
-      throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
-    }
 
     // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
     const stored = await this.store.messages(session.id)
@@ -1849,7 +1878,7 @@ export class SessionRunner {
     let answer = ""
     try {
       // MiMo's request budget for a call that is not a turn: four quick tries, then the fallback stands.
-      await withRequestRetry(() => {
+      const outcome = await withRequestRetry(() => {
         // Each attempt starts its own answer; a retry must not continue the last one's text.
         answer = ""
         return adapter.stream(
@@ -1886,6 +1915,7 @@ export class SessionRunner {
           },
         )
       }, controller.signal)
+      this.noteBackground(sessionID, model, outcome.usage, "title")
     } catch {
       return
     } finally {
@@ -1993,7 +2023,8 @@ export class SessionRunner {
       .catch((err) => {
         // A failure recorded on the message is already in front of the user.
         if (err instanceof Shown) return
-        this.bus.publish({ type: "session.error", sessionID, error: describe(err) })
+        const code = codeOf(err)
+        this.bus.publish({ type: "session.error", sessionID, error: describe(err), ...(code ? { errorCode: code, errorParams: paramsOf(err) } : {}) })
       })
       .finally(async () => {
         /*
@@ -2046,7 +2077,7 @@ export class SessionRunner {
     // MiMo's MCP rule: the servers this conversation started with, read back from disk after a restart.
     await this.rememberMcpServers(session)
     const definition = this.config.definition(session.model.provider)
-    if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
+    if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
     const adapter: ProviderAdapter =
       definition.kind === "anthropic"
         ? AnthropicAdapter
@@ -2055,6 +2086,7 @@ export class SessionRunner {
           : OpenAICompatible
     // A subscription carries no API key; the bearer is a refreshed access token.
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    if (definition.kind === "chatgpt" && !tokens) throw new CodedError(`The ${definition.name} sign-in has expired`, "auth.expired", { name: definition.name })
     const config = this.config.get()
     // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
     const { system, systemTail } = await this.systemFor(session)
@@ -2159,8 +2191,11 @@ export class SessionRunner {
         session.model,
       )
 
-      // MiMo's effort is one app-wide value, not a conversation's own.
-      const effort = config.effort
+      /*
+       * MiMo's effort is one app-wide value, not a conversation's own, and it
+       * is sent only for a model whose menu offers levels - clamped to them.
+       */
+      const effort = effortToSend(menuEfforts(session.model.model, this.config.modelEntry(session.model)?.name), config.effort)
 
       const assistant: AssistantMessage = {
         id: Identifier.message(),
@@ -2245,7 +2280,7 @@ export class SessionRunner {
               ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
-        effort,
+        effort: effort ?? "",
         // MiMo draws no reasoning, so none is asked for.
         showReasoning: false,
         signal: controller.signal,
@@ -2261,9 +2296,10 @@ export class SessionRunner {
          * adapter sends `reasoning_effort` for every model, including the ones
          * whose variants list is empty, so hiding the composer's effort pill
          * would only stop the user choosing a level - the wire would still
-         * carry one the provider rejects.
+         * carry one the provider rejects. With no level to send, the list is
+         * empty, which withholds the field everywhere.
          */
-        variants: this.config.variants(session.model),
+        variants: effort ? this.config.variants(session.model) : [],
         accountId: tokens?.accountId,
         maxOutput: maxOutputTokens(session.model, this.config.modelEntry(session.model)),
         outputLimit: this.config.modelEntry(session.model)?.maxOutput,
