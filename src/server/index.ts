@@ -23,6 +23,7 @@ import { startHistory, stopHistory } from "./history/service"
 import { startScheduler } from "./cron/start"
 import { startAutomations } from "./automation/start"
 import { protectAppData } from "./tool/app-data"
+import { frameForWindow } from "./config-view"
 import { newSocketSecret, refusalOf, SOCKET_PROTOCOL } from "./socket-guard"
 
 export interface Runtime {
@@ -168,7 +169,8 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   const clients = new Set<WebSocket>()
 
   bus.subscribe((event) => {
-    const frame: ServerFrame = { kind: "event", event }
+    // Settings leave with their secrets masked (config-view.ts).
+    const frame = frameForWindow({ kind: "event", event })
     const payload = JSON.stringify(frame)
     for (const client of clients) {
       if (client.readyState === client.OPEN) client.send(payload)
@@ -198,7 +200,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       if (frame.kind !== "request") return
 
       const reply = (response: ServerFrame) => {
-        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(response))
+        if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(frameForWindow(response)))
       }
 
       try {

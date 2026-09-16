@@ -26,6 +26,9 @@ import { handle } from "../src/server/handlers"
 import type { Request } from "../src/shared/protocol"
 import { OFFICE_BYTES_LIMIT, OFFICE_SCHEMAS, officeRefusal } from "../src/main/office-guard"
 import { protectAppData } from "../src/server/tool/app-data"
+import { MASK, redactCommand, redactString } from "../src/shared/mcp-redact"
+import { scanMcpImports } from "../src/server/mcp-import"
+import { redactSecrets } from "../src/main/log-file"
 
 type Section = (name: string) => void
 
@@ -68,6 +71,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
     await appDataChecks(check, section, root)
     await fileRequestChecks(check, section, root)
     await officeChannelChecks(check, section, root)
+    await maskingChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -385,4 +389,120 @@ async function officeChannelChecks(check: Check, section: Section, root: string)
   check("writing a spreadsheet in the project passes", (await refused("mcode:write-file-bytes", project, "book.xlsx", small)) === undefined)
   check("recording and restoring a project document passes", (await refused("mcode:office-version-record", docx, small, "ai", "note")) === undefined && (await refused("mcode:office-version-restore", docx, "vlk2x9ab12")) === undefined)
   check("an init with no note passes", (await refused("mcode:office-version-init", docx, small, true)) === undefined)
+}
+
+// ------------------------------------------------------------------- X8
+async function maskingChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 8 (X8): MCP secrets are masked wherever they are shown or logged")
+  // Made-up values shaped like secrets; no detail below prints them.
+  const fakeKey = "sk-fake0000000000000000"
+  const fakeToken = "tok-fake-1111111111"
+  const fakeBearer = "fake-bearer-2222222222"
+  const fakeEnv = "fake-env-3333333333"
+  const fakeClient = "fake-client-4444444444"
+  const fakeHeader = "fake-header-5555555555"
+  const secrets = [fakeKey, fakeToken, fakeBearer, fakeEnv, fakeClient, fakeHeader]
+  const leaks = (text: string) => secrets.filter((value) => text.includes(value)).length
+
+  check("a bearer value is masked", redactString(`Bearer ${fakeBearer}`) === `Bearer ${MASK}`)
+  check("a credential query parameter is masked, the rest kept", redactString(`https://x.example/mcp?region=eu&access_token=${fakeToken}`) === `https://x.example/mcp?region=eu&access_token=${MASK}`)
+  check("a key=value argument is masked", redactString(`--header=apikey=${fakeKey}`).endsWith(`apikey=${MASK}`))
+  check("the value after a credential flag is masked", redactCommand(["npx", "server", "--api-key", fakeKey, "--port", "3000"]).join(" ") === `npx server --api-key ${MASK} --port 3000`)
+  check("an ordinary command is left alone", redactCommand(["node", "server.js", "--verbose"]).join(" ") === "node server.js --verbose")
+  check("the log masks a credential flag's value", leaks(redactSecrets(`spawn failed: npx server --api-key ${fakeKey}`)) === 0)
+  check("...and the same in a logged JSON array", leaks(redactSecrets(JSON.stringify(["--token", fakeToken]))) === 0)
+  check("...and a credential query parameter of any name", leaks(redactSecrets(`GET https://x.example/mcp?access_token=${fakeToken}`)) === 0)
+
+  const home = path.join(root, "x8-home")
+  await fs.mkdir(home, { recursive: true })
+  await fs.writeFile(
+    path.join(home, ".claude.json"),
+    JSON.stringify({
+      mcpServers: {
+        local: { command: "npx", args: ["server", "--token", fakeToken] },
+        remote: { url: `https://x.example/mcp?api_key=${fakeKey}`, headers: { Authorization: `Bearer ${fakeBearer}` } },
+      },
+    }),
+  )
+  const previousHome = process.env.MCODE_IMPORT_HOME
+  process.env.MCODE_IMPORT_HOME = home
+  try {
+    const found = await scanMcpImports({})
+    check("the import list shows both servers", found.length === 2, found.length)
+    check("...with their tokens masked in what it shows", found.every((item) => leaks(item.summary) === 0) && found.some((item) => item.summary.includes(MASK)))
+  } finally {
+    if (previousHome === undefined) delete process.env.MCODE_IMPORT_HOME
+    else process.env.MCODE_IMPORT_HOME = previousHome
+  }
+
+  // The window's own view of the settings, over a real socket.
+  const data = path.join(root, "x8-data")
+  await fs.mkdir(path.join(data, "storage"), { recursive: true })
+  await fs.writeFile(path.join(data, "storage", "config.json"), "{}")
+  const backend = await startBackend(data)
+  const opened = await dial(`ws://127.0.0.1:${backend.port}`, socketProtocols(backend.secret ?? ""))
+  const socket = opened.socket
+  if (!socket) {
+    check("a socket to the backend opens", false)
+    await backend.close()
+    return
+  }
+  const seen: string[] = []
+  socket.on("message", (raw) => seen.push(raw.toString()))
+  try {
+    const servers = {
+      tool: {
+        type: "local" as const,
+        command: ["npx", "server", "--api-key", fakeKey],
+        environment: { SERVICE_KEY: fakeEnv },
+        enabled: false,
+      },
+      web: {
+        type: "remote" as const,
+        url: `https://x.example/mcp?token=${fakeToken}`,
+        headers: { Authorization: `Bearer ${fakeBearer}` },
+        oauth: { clientId: "id", clientSecret: fakeClient },
+        enabled: false,
+      },
+    }
+    await backend.runtime.config.set({
+      mcpServers: servers,
+      customProviders: [{ id: "gw", name: "Gateway", baseURL: "https://gw.example/v1", headers: { "x-api-key": fakeHeader, "x-route": "eu" }, models: [{ id: "m", name: "M" }] }],
+    })
+    const got = await ask(socket, { type: "config.get" })
+    const text = JSON.stringify(got.data)
+    check("config.get reaches the window with no secret in it", got.ok && leaks(text) === 0, leaks(text))
+    const config = (got.data as { config: { mcpServers: typeof servers; customProviders: { headers?: Record<string, string> }[] } }).config
+    check("the command keeps its shape with the key masked", config.mcpServers.tool.command.join(" ") === `npx server --api-key ${MASK}`)
+    check("the header and variable names are still there", Object.keys(config.mcpServers.web.headers).join() === "Authorization" && Object.keys(config.mcpServers.tool.environment).join() === "SERVICE_KEY")
+    check("a routing header of a custom provider is still shown", config.customProviders[0]?.headers?.["x-route"] === "eu")
+
+    // The page's own toggle sends the entries back as it was shown them.
+    const toggled = { ...config.mcpServers, web: { ...config.mcpServers.web, enabled: true, url: config.mcpServers.web.url } }
+    toggled.web.enabled = false
+    const set = await ask(socket, { type: "config.set", patch: { mcpServers: toggled, customProviders: config.customProviders } })
+    check("a settings save answers masked too", set.ok && leaks(JSON.stringify(set.data)) === 0)
+    const stored = backend.runtime.config.get()
+    check("...and what the window sent back masked keeps the stored secrets", leaks(JSON.stringify(stored.mcpServers)) === 5 && leaks(JSON.stringify(stored.customProviders)) === 1, leaks(JSON.stringify(stored)))
+    check("no masked text was written into the stored settings", !JSON.stringify(stored.mcpServers).includes(MASK) && !JSON.stringify(stored.customProviders).includes(MASK))
+
+    // The MCP form's own save: the command line and arguments as shown.
+    const saved = await ask(socket, {
+      type: "mcp.save",
+      name: "tool",
+      entry: { type: "local", command: ["npx", "server", "--api-key", MASK, "--extra"], environment: { SERVICE_KEY: "" }, enabled: false },
+      keep: { env: ["SERVICE_KEY"] },
+    })
+    const tool = backend.runtime.config.get().mcpServers.tool
+    check("an MCP edit that leaves the masked key keeps the stored one", saved.ok && tool?.command?.join(" ") === `npx server --api-key ${fakeKey} --extra`)
+    check("...and its kept variable", tool?.environment?.SERVICE_KEY === fakeEnv)
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    const events = seen.filter((line) => line.includes('"config.updated"'))
+    check("every settings event sent to the window is masked", events.length > 0 && events.every((line) => leaks(line) === 0), events.length)
+    check("nothing the window was sent holds a secret", seen.every((line) => leaks(line) === 0), seen.length)
+  } finally {
+    socket.close()
+    await backend.close()
+  }
 }

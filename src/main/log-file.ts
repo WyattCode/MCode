@@ -64,6 +64,9 @@ const SECRET_SHAPES: [RegExp, string][] = [
     "$1[redacted]",
   ],
   [/([?&](?:key|sig|signature|code)=)[^&\s"']+/gi, "$1[redacted]"],
+  // MiMo's MCP shapes: a query parameter whose name holds a credential word, and the value after such a flag.
+  [/([?&][^=\s&"']*(?:authorization|token|api[_-]?key|apikey|secret|password|credential)[^=\s&"']*=)(?!\[redacted\])[^&\s"']+/gi, "$1[redacted]"],
+  [/((?:^|[\s"',[])--?[\w-]*(?:token|api[_-]?key|apikey|secret|password|credential|authorization)[\w-]*["']?[\s,]+["']?)(?![-[])[^\s"',\]]+/gi, "$1[redacted]"],
 ]
 
 export function redactSecrets(text: string): string {

@@ -23,6 +23,7 @@ import type { Runtime } from "./index"
 import { customModelOf } from "./config"
 import { IGNORED, resolveInside } from "./tool/fs-util"
 import { readableFile, writableFile } from "./file-access"
+import { restoreHeaders, restoreMasked, restoreServer } from "./config-view"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
@@ -659,7 +660,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       } satisfies Handled<"config.get">
 
     case "config.set": {
-      const config = await runtime.config.set(request.patch)
+      // The window was sent masked secrets; one it sends back unchanged keeps the stored value.
+      const config = await runtime.config.set(restoreMasked(runtime.config.get(), request.patch))
       if (request.patch.allowFullAccess === false) await runtime.sessions.dropFullAccess()
       return { config } satisfies Handled<"config.set">
     }
@@ -1053,6 +1055,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           .map(([key, value]) => [key.trim(), value.trim()])
           .filter(([key, value]) => key && value),
       )
+      // A credential header was shown masked; left as shown, it keeps what is stored.
+      const keptHeaders = restoreHeaders(headers, existing.headers) ?? {}
       const before = runtime.config.models(request.id).map((model) => model.id)
       const keptEnvironment = environment ?? (!typed ? existing.environment : undefined)
       await runtime.config.set({
@@ -1062,7 +1066,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
                 id: entry.id,
                 name: request.name.trim(),
                 baseURL: request.baseURL.trim(),
-                ...(Object.keys(headers).length ? { headers } : {}),
+                ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),
                 ...(request.protocol === "anthropic" ? { protocol: "anthropic" as const } : {}),
@@ -1490,7 +1494,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "mcp.save": {
       // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.
       const servers = runtime.config.get().mcpServers ?? {}
-      const entry = mergeMcpSecrets(servers[request.name], request.entry, request.keep)
+      const entry = mergeMcpSecrets(servers[request.name], restoreServer(request.entry, servers[request.name]), request.keep)
       const config = await runtime.config.set({ mcpServers: { ...servers, [request.name]: entry } })
       return { config } satisfies Handled<"mcp.save">
     }
