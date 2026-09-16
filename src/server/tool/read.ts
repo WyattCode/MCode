@@ -142,8 +142,21 @@ async function linesOf(file: string, offset: number, limit: number) {
 
 export const ReadTool: ToolDefinition = {
   name: "read",
-  description:
-    "Read a file or list a folder. A file comes back as numbered lines, each written `N: text` - the text after that prefix is what the edit tool expects you to quote back. Long files are read in parts: pass offset (the line to start at) and limit. Output stops at 2,000 lines or 50 KB and says where to continue.",
+  description: [
+    "Read a file, or list a folder, from this machine.",
+    "",
+    "A file comes back as numbered lines, each written `N: text`. The number and the colon are not part of the file: what follows the prefix is the line, and that is what edit expects you to quote back. A line longer than about 2,000 characters is cut, so do not treat a read as proof of a long line's exact tail.",
+    "",
+    "Long files are read in parts. offset is the line to start at, counting from 1, and limit is how many lines to return; without them you get the start of the file. One read stops at 2,000 lines or 50 KB, whichever comes first, and says where to continue from.",
+    "",
+    "How to use it well",
+    "- Read a generous window rather than a series of 30-line slices of the same file: each call costs a round trip, and the small ones rarely tell you enough to act.",
+    "- When you already know you need several files, read them in one step rather than one after another.",
+    "- Prefer it to `cat`, `head` or `type` through bash; the numbered output is what the edit tool matches against.",
+    "- A path that does not exist comes back as an error rather than an empty file, so a read that succeeds is evidence the file is there.",
+    "",
+    "Images and PDFs come back as attachments the model can look at directly, where the model reads that kind of file; pointed at a folder, it lists what is in it instead.",
+  ].join("\n"),
   permission: "read",
   parameters: {
     type: "object",

@@ -2,7 +2,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 import { pathToFileURL } from "node:url"
-import { recentCommits, status } from "../git"
+import { defaultBranch, gitUser, recentCommits, status } from "../git"
 import { globToRegExp } from "../tool/ignore"
 import { foldersUp } from "./worktree"
 import { modelInvocable, type SkillInfo } from "../skill"
@@ -52,6 +52,16 @@ export interface PromptContext {
   skills?: SkillInfo[]
   /** memory: the memory files a top-level conversation keeps; absent for a subagent. */
   memory?: { project: string; global: string; notes: string }
+  /** Which model this is, so the environment block can say so (MiMo names it there). */
+  model?: PromptModel
+}
+
+/** The model as the environment block names it. */
+export interface PromptModel {
+  /** Its display name, where the catalog knows one. */
+  name?: string
+  provider: string
+  id: string
 }
 
 /*
@@ -166,7 +176,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
    * (session/context.ts) and this prompt stays the same for the conversation,
    * as MiMo freezes its own.
    */
-  sections.push(await environment(context.directory))
+  sections.push(await environment(context.directory, context.model))
 
   // memory: names this conversation's own notes file, so last - where a request carries it, outside the cached prefix.
   if (context.memory) sections.push(memorySection(context.memory))
@@ -326,7 +336,30 @@ async function projectInstructions(
   return [...local, ...remote].join("\n\n")
 }
 
-async function environment(directory: string): Promise<string> {
+/**
+ * The environment block, memoised for the day.
+ *
+ * MiMo caches its own per (directory, date, provider, model id) and this does
+ * the same: everything here is a fact that holds for a day at a time - which
+ * model this is, whether the folder is a repository, which branch a pull
+ * request should target, who git will credit - so rebuilding it per turn would
+ * only spend a `git` call to print the same words.
+ *
+ * What genuinely moves while the conversation runs - the current branch, what
+ * is dirty, the recent commits, the date - is deliberately NOT here. It travels
+ * with each prompt instead (`repositoryState`, session/context.ts), so the
+ * cached prefix stays byte-identical across a turn while the model still reads
+ * a current working tree. MiMo folds the volatile half in here too and lets it
+ * go stale, telling the model in so many words that it is "a snapshot in time";
+ * MCode keeps the fresher answer.
+ */
+const environments = new Map<string, string>()
+
+async function environment(directory: string, model?: PromptModel, today = new Date().toISOString().slice(0, 10)): Promise<string> {
+  const key = [path.resolve(directory), today, model?.provider ?? "", model?.id ?? ""].join("|")
+  const cached = environments.get(key)
+  if (cached !== undefined) return cached
+
   const entries = await fs
     .readdir(directory, { withFileTypes: true })
     .then((list) =>
@@ -338,13 +371,28 @@ async function environment(directory: string): Promise<string> {
     )
     .catch(() => "(unreadable)")
 
-  return `## Environment
+  const repo = (await status(directory).catch(() => undefined))?.repo === true
+  const [trunk, who] = repo
+    ? await Promise.all([defaultBranch(directory).catch(() => undefined), gitUser(directory).catch(() => undefined)])
+    : [undefined, undefined]
 
-Project directory: ${directory}
-Platform: ${process.platform} (${os.release()})
-Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || "/bin/bash"}
+  const lines = [
+    "## Environment",
+    "",
+    `Project directory: ${directory}`,
+    `Is a git repository: ${repo}`,
+    `Platform: ${process.platform} (${os.release()})`,
+    `Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || "/bin/bash"}`,
+  ]
+  // Which model this is: without it a model cannot answer "which model am I".
+  if (model) lines.push(`Model: ${model.name ? `${model.name}, ` : ""}${model.provider}/${model.id}`)
+  if (trunk) lines.push(`Default branch: ${trunk}. Target a pull request at this branch unless the user asks for another.`)
+  if (who) lines.push(`Git user: ${who}`)
+  lines.push("", `Top level of the project: ${entries}`)
 
-Top level of the project: ${entries}`
+  const block = lines.join("\n")
+  environments.set(key, block)
+  return block
 }
 
 /**

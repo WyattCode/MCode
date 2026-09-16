@@ -93,8 +93,21 @@ export function isOverflowByCount(
 ): boolean {
   const usable = usableContext(entry)
   if (usable === 0) return false
-  const total = tokens.input + tokens.output + (tokens.reasoning ?? 0) + tokens.cacheRead + tokens.cacheWrite
-  return total >= usable
+  return contextCount(tokens) >= usable
+}
+
+/**
+ * How much of the window a step's report accounts for: fresh input, output,
+ * reasoning and both cache figures, which together are the provider's total.
+ *
+ * One definition, used by the overflow trigger above and by the graded pressure
+ * level pruning reads (session/prune.ts), so the two can never drift apart.
+ * MiMo folds reasoning into output when it reads a usage frame and so does not
+ * add it separately here; MCode keeps it apart and therefore counts it, which
+ * makes it compact marginally sooner on a reasoning model.
+ */
+export function contextCount(tokens: { input: number; output: number; reasoning?: number; cacheRead: number; cacheWrite: number }): number {
+  return tokens.input + tokens.output + (tokens.reasoning ?? 0) + tokens.cacheRead + tokens.cacheWrite
 }
 
 /** The reference's `patterns`, verbatim. */
