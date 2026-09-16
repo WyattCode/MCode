@@ -960,7 +960,7 @@ function onError(event: Event) {
 }
 
 .text code.md-path[role="button"]:focus-visible {
-  outline: 2px solid #2f6fed;
+  outline: 2px solid var(--interactive);
   outline-offset: 1px;
 }
 

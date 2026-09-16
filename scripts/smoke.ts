@@ -6818,12 +6818,133 @@ async function main() {
   await commandTemplateChecks(root)
   await historyMemoryCronChecks(root, project)
   await automationChecks(root, project)
+  await roundSixVisualChecks()
   // round 5: the turn loop, providers, context and prompt, in their own file; its provider answers title requests apart.
   delete process.env.MCODE_GENERATE_TITLES
   await roundFiveChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/**
+ * round 6 (visual): the drawn workspace against MiMo's own numbers.
+ *
+ * These are read out of the stylesheets rather than measured in a window, which
+ * is what makes them a guard rather than a screenshot: a breakpoint, a blur or a
+ * corner put back by hand fails here, in the same run as everything else. The
+ * window measurements live in the round-6 probe beside them.
+ */
+async function roundSixVisualChecks() {
+  section("Round 6: the drawn workspace (MiMo's measurements)")
+  const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
+  /*
+   * One top-level CSS rule's body. Every rule read here is written at the start
+   * of a line with indented declarations, so the first `\n}` closes it - no
+   * brace matching, which a comment carrying a brace would defeat.
+   */
+  const rule = (source: string, selector: string) => {
+    const at = source.indexOf(`\n${selector} {\n`)
+    return at === -1 ? "" : source.slice(at, source.indexOf("\n}", at + 1))
+  }
+
+  // V1: one flush plane, not two rounded cards on a darker frame.
+  const app = await read("src/renderer/src/App.vue")
+  const body = rule(app, ".body")
+  check("the workspace row has no inset and no gutter", Boolean(body) && !body.includes("margin:") && !body.includes("gap:"), body)
+  const plane = rule(app, ".body > .main")
+  check(
+    "the conversation plane is flush, divided by a hairline instead of rounded off",
+    plane.includes("border-inline-start: 1px solid") && !plane.includes("border-radius"),
+    plane,
+  )
+  check("nothing still addresses the side panel as a floating card", !app.includes("panel-host"), "")
+
+  // V6: MiMo warms the light theme on Windows and Linux, and only there.
+  const tint = app.slice(app.indexOf('.app[data-platform="win32"] .side-panel-toggle'))
+  check(
+    "Windows and Linux get MiMo's warm light column and warm lines",
+    tint.includes("--surface-base: #f8f7f5") && tint.includes("--border-weak: #f0ebe5") && tint.includes('.app[data-platform="linux"]'),
+    "",
+  )
+  check(
+    "the warm tint is light-only, so dark is untouched",
+    tint.includes(':root[data-theme="light"] .app[data-platform="win32"]') && tint.includes("@media (prefers-color-scheme: light)"),
+    "",
+  )
+
+  // V2 / V9: 2000px is the only breakpoint MiMo has.
+  const stream = await read("src/renderer/src/components/MessageStream.vue")
+  const composer = await read("src/renderer/src/components/Composer.vue")
+  const hero = await read("src/renderer/src/components/HomeHero.vue")
+  for (const [what, source] of [["transcript", stream], ["composer", composer], ["home hero", hero]] as const) {
+    check(`the ${what} widens at 2000px and at no other width`, source.includes("@media (min-width: 2000px)") && !source.includes("1536px"), what)
+  }
+  check(
+    "the reading column is 764 on 28, and 996 past 2000px - MiMo's thread, not its home layout",
+    rule(stream, ".inner").includes("max-width: 764px") &&
+      rule(stream, ".inner").includes("padding: 12px 28px 16px") &&
+      stream.includes("@media (min-width: 2000px) {\n  .inner {\n    max-width: 996px;") &&
+      !stream.includes("max-width: 800px"),
+    rule(stream, ".inner"),
+  )
+  check(
+    "the composer column is 712, and 944 past 2000px - the inside of MiMo's 1000 wrapper",
+    composer.includes("max-width: 712px") && composer.includes("@media (min-width: 2000px) {\n  .shell {\n    max-width: 944px;"),
+    "",
+  )
+
+  // V4: MiMo blurs the search overlay and nothing else.
+  const base = await read("src/renderer/src/styles/base.css")
+  const overlay = rule(base, ".overlay")
+  check("the shared dialog scrim does not blur", Boolean(overlay) && !overlay.includes("backdrop-filter"), overlay)
+  const search = await read("src/renderer/src/components/SearchOverlay.vue")
+  check("the search overlay still blurs at 8px, as MiMo's does", search.includes("backdrop-filter: blur(8px)"), "")
+
+  // V3: MiMo's menu panel and its pill rows.
+  const menu = await read("src/renderer/src/components/ContextMenu.vue")
+  const panel = rule(menu, ".menu")
+  check(
+    "the menu panel is a 12px corner on a 1px line, 200 at its narrowest, 5 of padding",
+    panel.includes("border-radius: 12px") && panel.includes("border: 1px solid var(--border-weak)") && panel.includes("min-width: 200px") && panel.includes("--pad: 5px"),
+    panel,
+  )
+  check(
+    "the menu pops open over .18s",
+    panel.includes("animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
+    "",
+  )
+  const row = rule(menu, ".item")
+  check(
+    "a menu row is a 14px pill, 6 by 10 on an 8px corner with 9 to its glyph",
+    row.includes("border-radius: 8px") && row.includes("padding: 6px 10px") && row.includes("font-size: calc(14px") && row.includes("gap: 9px"),
+    row,
+  )
+  check("a menu divider is inset rather than full-bleed", rule(menu, ".rule").includes("margin: 4px 6px"), rule(menu, ".rule"))
+
+  // V7: one focus-ring blue, MiMo's --color-blue, not its link blue.
+  const ringFiles = [
+    "PermissionDialog.vue",
+    "QuestionDock.vue",
+    "parts/DiagramBlock.vue",
+    "parts/LocalMedia.vue",
+    "parts/MediaCoverflow.vue",
+    "parts/MediaStrip.vue",
+    "parts/QuestionForm.vue",
+    "parts/SubagentActivity.vue",
+    "parts/SvgFileCard.vue",
+    "parts/TextPart.vue",
+    "right/RpSubagents.vue",
+  ]
+  const rings = await Promise.all(ringFiles.map((name) => read(`src/renderer/src/components/${name}`)))
+  const stray = ringFiles.filter((_, index) =>
+    /outline: 2px solid (?:#3295fb|var\(--text-interactive\)|var\(--border-selected\)|var\(--border-focus)/.test(rings[index]),
+  )
+  check("every focus ring is the one interactive blue", stray.length === 0, stray)
+
+  // V12: a token nothing read.
+  const tokens = await read("src/renderer/src/styles/tokens.css")
+  check("the dead --sidebar-width token is gone", !tokens.includes("--sidebar-width"), "")
 }
 
 /** commands: MiMo's template rules - shell placeholders, `@file`, folders and model tiers. */

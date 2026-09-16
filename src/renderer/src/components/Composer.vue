@@ -3543,23 +3543,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .shell {
-  max-width: 776px;
   margin: 0 auto;
-}
-
-/*
- * A wider reading column on a wide screen.
- *
- * The reference carries `2xl:max-w-[1000px]` alongside its `md:max-w-200` on
- * both the turn and the composer (main-Db9FY8Yb.js), so past 1536px the pair
- * grows together and the transcript stops leaving two thirds of a large
- * monitor empty. Without it the column stayed at 800 at every size.
- */
-@media (min-width: 1536px) {
-  .shell {
-    /* 1000 less the twelve of padding each side, the way 776 comes off 800. */
-    max-width: 976px;
-  }
 }
 
 /*
@@ -4747,16 +4731,19 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-width: 712px;
 }
 
-@media (min-width: 1536px) {
-  .shell {
-    max-width: 712px;
-  }
-}
-
-/* MiMo's wide window: a 1000 column for the dock, and a 70px floor for a box that fits its text. */
+/*
+ * MiMo's wide window: past 2000px the dock's column goes 712 -> 944, and a box
+ * that fits its text gets a 70px floor.
+ *
+ * 944, not 1000: MiMo's `.composer-wrap` is `max-width: 768px` with
+ * `padding: 0 28px 14px`, so its inner column is 712, and at 2000px the wrapper
+ * goes to 1000 - leaving 944 inside. `.shell` here is that inner column (it
+ * carries no padding of its own), so it takes the inner figure, the way
+ * `.composer-tray` and the home hero's own 944 do.
+ */
 @media (min-width: 2000px) {
   .shell {
-    max-width: 1000px;
+    max-width: 944px;
   }
 
   .box:not(.resized) .input {

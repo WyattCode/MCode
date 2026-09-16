@@ -4086,7 +4086,6 @@ onBeforeUnmount(() => {
     <div
       class="body"
       :class="{
-        blank: !isHome && !onboarding && empty && !app.error,
         /* The side panel expanded over the main column. */
         'panel-full': rp.open && rp.fullscreen,
       }"
@@ -4617,64 +4616,37 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The workspace is a single raised panel, inset from all three free edges and
- * from the title bar above it. Everything the session is made of - the side
- * panels included - lives on this one plane, which is what leaves the window
- * reading as a frame around the work rather than as more of the same colour.
- */
-/*
- * Two cards with a gutter between them, not one card with a divider in it.
+ * One flush plane, not cards floating on a frame.
  *
- * Measured on the reference with its review panel open: its conversation is a
- * card at `8,44 600x861` and its panel another at `616,44 829x861` - both on a
- * 10px radius over rgb(22,22,22), both inset 8 from the window, and 8 apart.
- * This was a single card that the panel divided with a 1px line, so the two
- * regions read as halves of one sheet rather than as two surfaces.
- *
- * The row itself now paints nothing; the fill and the corners belong to the
- * regions inside it, which is what lets the gutter show through.
+ * MiMo's `<main>` is `flex min-w-0 flex-1 flex-col overflow-hidden bg-panel
+ * shadow-[var(--shadow-panel)]` with no margin, no radius and no gutter, and
+ * `--shadow-panel` is `none` in both schemes - so the workspace never lifts off
+ * the window at all. What divides it from the side column is a single hairline:
+ * main carries `border-left: 1px solid var(--color-line-soft)`, and the side
+ * panel beyond it carries its own leading border. The only rounding left
+ * anywhere is the side panel's own full-screen state.
  */
 .body {
   position: relative;
   display: flex;
   flex: 1;
-  gap: 8px;
   min-height: 0;
-  margin: 8px;
-}
-
-/* Each region is its own card. */
-.body > .main,
-.body > .panel-host {
-  overflow: hidden;
-  background: var(--surface-raised);
-  border-radius: 10px;
 }
 
 /*
- * Only the panel is raised, and its shadow is elevation/raised - measured layer
- * for layer on the reference, whose conversation card computes `box-shadow:
- * none` while its review panel carries the full four. The asymmetry is the part
- * that could not have been guessed: the panel sits above the conversation
- * rather than the two lying in the same plane.
+ * The conversation's plane, flush to the column beside it. The hairline is
+ * MiMo's `--color-line-soft` - fainter than the lines inside the panel, because
+ * it separates two surfaces rather than two rows.
  */
-.body > .panel-host {
-  box-shadow: var(--shadow-md);
+.body > .main {
+  overflow: hidden;
+  background: var(--surface-raised);
+  border-inline-start: 1px solid var(--border-muted);
 }
 
 /* The docked terminal keeps the height it was dragged to; the transcript gives way. */
 .main > .drawer {
   flex: none;
-}
-
-/*
- * A session with nothing in it is set down rather than lifted. The plane itself
- * is the same one a transcript sits on - the reference changes only the
- * elevation, and painting the panel the frame's own colour instead left the
- * composer's fill showing as a band across the foot of an empty session.
- */
-.body.blank {
-  box-shadow: none;
 }
 
 .main {
@@ -4885,6 +4857,35 @@ onBeforeUnmount(() => {
 .app[data-platform="win32"] .home-bottom svg {
   width: 12px;
   height: 12px;
+}
+
+/*
+ * MiMo warms its light theme on Windows and Linux, and only there:
+ * `html:not([data-theme=dark]) #app.plat-win32, ... #app.plat-linux` sets a
+ * warm-grey side column (#f8f7f5) against the white main plane, with warm
+ * lines (#f0ebe5) instead of neutral ones. macOS keeps the neutral set, and
+ * dark is untouched in every platform.
+ *
+ * Written as the positive light condition rather than `:not(dark)`, and hung on
+ * `.app` rather than `:root`: the palette is written inline onto <html> at boot,
+ * so only a rule matching a descendant of it can win.
+ */
+:root[data-theme="light"] .app[data-platform="win32"],
+:root[data-theme="light"] .app[data-platform="linux"] {
+  --surface-base: #f8f7f5;
+  --surface-hover: #f1f0ec;
+  --surface-selected: #eeedec;
+  --border-weak: #f0ebe5;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .app[data-platform="win32"],
+  :root:not([data-theme="dark"]) .app[data-platform="linux"] {
+    --surface-base: #f8f7f5;
+    --surface-hover: #f1f0ec;
+    --surface-selected: #eeedec;
+    --border-weak: #f0ebe5;
+  }
 }
 
 .side-panel-toggle:hover,
