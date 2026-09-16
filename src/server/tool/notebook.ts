@@ -74,7 +74,7 @@ export const NotebookEditTool: ToolDefinition = {
     const cellType = typeof input.cell_type === "string" ? input.cell_type : undefined
     if (mode === "insert" && !cellType) throw new ToolError("cell_type is required to insert a cell")
 
-    const target = await resolvePath(context, given)
+    const target = await resolvePath(context, given, "write")
     const display = relative(context.directory, target)
     // plan: planning writes its plan file and nothing else.
     guardPlanWrite(context, target, display)

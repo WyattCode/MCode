@@ -184,9 +184,15 @@ export function simpleCommands(command: string, powershell: boolean): SimpleComm
       const operator = command.slice(i, j)
       while (command[j] === " " || command[j] === "\t") j++
       const from = j
-      while (j < command.length && !/[\s;&|]/.test(command[j])) j++
+      // A quoted target runs to its closing quote: `> "C:\a b\c.json"` names that file, not `"C:\a`.
+      if (command[j] === '"' || command[j] === "'") {
+        const close = command.indexOf(command[j]!, j + 1)
+        j = close === -1 ? command.length : close + 1
+      } else {
+        while (j < command.length && !/[\s;&|]/.test(command[j]!)) j++
+      }
       // A redirection that writes names a file the command changes; `<` only reads one.
-      if (operator.includes(">") && j > from) redirects.push(command.slice(from, j))
+      if (operator.includes(">") && j > from) redirects.push(unquote(command.slice(from, j)))
       i = j - 1
       continue
     }
@@ -392,6 +398,13 @@ export interface MutationTargets {
   paths: string[]
   /** Whether it runs a git subcommand that changes a repository. */
   gitMutate: boolean
+  /**
+   * Every file the command names as written, read as generously as a path can
+   * be known: quoted names with spaces, `~` and environment variables included.
+   * What the guard on the app's own data folder checks, where a name slipping
+   * past matters more than one counted too many.
+   */
+  written: string[]
 }
 
 /**
@@ -409,7 +422,12 @@ export function collectMutationTargets(command: string, cwd: string, powershell:
   let effective = path.resolve(cwd)
   const stack: string[] = []
   const paths: string[] = []
+  const written: string[] = []
   let gitMutate = false
+  const name = (raw: string) => {
+    const resolved = argPath(raw, effective, powershell)
+    if (resolved) written.push(resolved)
+  }
   const add = (raw: string, base: string) => {
     paths.push(path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(base, raw))
   }
@@ -436,16 +454,21 @@ export function collectMutationTargets(command: string, cwd: string, powershell:
       gitMutate = true
       for (const dir of gitTargetDirs(tokens, powershell)) add(dir, effective)
     }
-    for (const target of redirects) add(target, effective)
+    for (const target of redirects) {
+      add(target, effective)
+      name(target)
+    }
     if (WRITE_COMMANDS.has(head) || isSedInPlace(tokens, powershell)) {
       for (const arg of mutationPathArgs(tokens, head)) add(arg, effective)
+      const args = tokens.slice(1).filter((token) => !token.startsWith("-"))
+      for (const arg of COPY_DEST_ONLY.has(head) ? args.slice(-1) : args) name(arg)
     }
   }
   if (paths.length > 0 || gitMutate) {
     paths.push(effective)
     paths.push(path.resolve(cwd))
   }
-  return { paths: [...new Set(paths)], gitMutate }
+  return { paths: [...new Set(paths)], gitMutate, written: [...new Set(written)] }
 }
 
 export interface BashScan {

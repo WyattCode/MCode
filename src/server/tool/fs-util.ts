@@ -2,6 +2,7 @@ import path from "node:path"
 import fs from "node:fs/promises"
 import { ToolError, type ToolContext } from "./types"
 import { isMemoryPath } from "../history/service"
+import { guardAppData } from "./app-data"
 
 /**
  * Resolves a model-supplied path against the session directory and refuses
@@ -83,10 +84,15 @@ async function truePath(target: string): Promise<string> {
   }
 }
 
-export async function resolvePath(context: ToolContext, target: string): Promise<string> {
+/**
+ * `access` says what the caller will do with the path: the app's own data
+ * folder is never written by a tool, and its saved sign-ins never read.
+ */
+export async function resolvePath(context: ToolContext, target: string, access: "read" | "write" = "read"): Promise<string> {
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
     : path.resolve(context.directory, target)
+  await guardAppData(resolved, access, target)
   // A cut output's saved file is the model's to read, as MiMo allows its truncation folder outright.
   if (context.toolOutputs?.holds(resolved)) return resolved
   /*

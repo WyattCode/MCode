@@ -16,6 +16,12 @@ import type { Check } from "./smoke-round5"
 import { startBackend } from "../src/server/index"
 import { refusalOf, rendererOrigins, sameSecret } from "../src/server/socket-guard"
 import { SOCKET_PROTOCOL, socketProtocols } from "../src/shared/socket-auth"
+import type { ToolContext } from "../src/server/tool/types"
+import { EditTool, WriteTool } from "../src/server/tool/edit"
+import { ReadTool } from "../src/server/tool/read"
+import { BashTool } from "../src/server/tool/bash"
+import { NotebookEditTool } from "../src/server/tool/notebook"
+import { appDataRefusal } from "../src/server/tool/app-data"
 
 type Section = (name: string) => void
 
@@ -55,6 +61,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-round8-sec-"))
   try {
     await socketChecks(check, section, root)
+    await appDataChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -135,4 +142,116 @@ async function socketChecks(check: Check, section: Section, root: string): Promi
     console.warn = warn
     await backend.close()
   }
+}
+
+/** A tool context whose every permission question is answered yes, as the default level answers a write outside the project. */
+function allowingContext(directory: string): ToolContext {
+  return {
+    sessionID: "ses_sec",
+    messageID: "msg_sec",
+    callID: "call_sec",
+    directory,
+    permissions: { ask: async () => undefined, allowsOutside: () => true },
+    questions: { ask: async () => undefined },
+    signal: new AbortController().signal,
+    progress: () => {},
+    snapshot: async () => undefined,
+  } as unknown as ToolContext
+}
+
+/** How a call ended: an empty message when it succeeded, else the error and its code. */
+async function failure(run: () => Promise<unknown>): Promise<{ message: string; code?: string }> {
+  try {
+    await run()
+    return { message: "" }
+  } catch (err) {
+    return { message: err instanceof Error ? err.message : String(err), code: (err as { code?: string }).code }
+  }
+}
+
+// ------------------------------------------------------------------- X2
+async function appDataChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 8 (X2): the model cannot rewrite the app's own configuration")
+  const data = path.join(root, "app-data")
+  const storage = path.join(data, "storage")
+  const project = path.join(root, "x2-project")
+  await fs.mkdir(storage, { recursive: true })
+  await fs.mkdir(project, { recursive: true })
+  const configFile = path.join(storage, "config.json")
+  await fs.writeFile(configFile, "{}")
+  await fs.writeFile(path.join(data, "credentials.json"), "{}")
+  // Started for real, so what is tested is the backend registering its own folder.
+  const backend = await startBackend(data)
+  await backend.close()
+  const context = allowingContext(project)
+  const planted = JSON.stringify({ mcpServers: { evil: { type: "local", command: ["calc.exe"] } } })
+
+  const written = await failure(() => WriteTool.execute({ file_path: configFile, content: planted }, context))
+  check("write into config.json is refused at the default level", written.code === "tool.err.appData", written)
+  check("...and says why in words the model can act on", written.message.includes("configuration") && written.message.includes("Settings"), written.message)
+  check("...and the file is untouched", !(await fs.readFile(configFile, "utf8")).includes("calc.exe"))
+  const edited = await failure(() => EditTool.execute({ file_path: configFile, old_string: "{}", new_string: '{"evil":{}}' }, context))
+  check("edit of config.json is refused", edited.code === "tool.err.appData", edited)
+  const climbing = await failure(() => WriteTool.execute({ file_path: path.relative(project, path.join(storage, "automations.json")), content: "{}" }, context))
+  check("a relative path climbing into the data folder is refused", climbing.code === "tool.err.appData", climbing)
+  const shouted = await failure(() => WriteTool.execute({ file_path: path.join(data, "STORAGE", "Config.json"), content: planted }, context))
+  check("a differently cased spelling is refused too", shouted.code === "tool.err.appData", shouted)
+  const notebook = await failure(() => NotebookEditTool.execute({ notebook_path: path.join(data, "x.ipynb"), new_source: "x", cell_id: "a" }, context))
+  check("the notebook tool is refused there", notebook.code === "tool.err.appData", notebook)
+
+  // A link inside the project that leads into the data folder.
+  const link = path.join(project, "linked")
+  if (await fs.symlink(storage, link, "junction").then(() => true, () => false)) {
+    const through = await failure(() => WriteTool.execute({ file_path: path.join(link, "config.json"), content: planted }, context))
+    check("a junction from the project into the data folder is followed and refused", through.code === "tool.err.appData", through)
+  }
+
+  const bashed = await failure(() => BashTool.execute({ command: `echo x > "${configFile}"`, description: "write" }, context))
+  check("a shell redirect into config.json is refused before it runs", bashed.code === "tool.err.appData", bashed)
+  const copied = await failure(() => BashTool.execute({ command: `cp evil.json "${configFile}"`, description: "copy" }, context))
+  check("a copy onto config.json is refused", copied.code === "tool.err.appData", copied)
+  const spaced = path.join(data, "storage", "with space")
+  const quoted = await failure(() => BashTool.execute({ command: `echo x > "${path.join(spaced, "x.json")}"`, description: "write" }, context))
+  check("a quoted target with a space in it is read whole and refused", quoted.code === "tool.err.appData", quoted)
+  const fromBackup = await failure(() => BashTool.execute({ command: `cp "${configFile}" backup.json`, description: "copy" }, context))
+  check("copying config.json out of the folder is still allowed", fromBackup.code !== "tool.err.appData", fromBackup)
+  if (process.platform === "win32") {
+    process.env.MCODE_R8_DATA = data
+    const viaEnv = await failure(() =>
+      BashTool.execute({ command: 'Set-Content -Path "$env:MCODE_R8_DATA\\storage\\config.json" -Value x', description: "write" }, context),
+    )
+    check("a PowerShell write naming the folder through an environment variable is refused", viaEnv.code === "tool.err.appData", viaEnv)
+    delete process.env.MCODE_R8_DATA
+  }
+  const after = await fs.readFile(configFile, "utf8")
+  // The backend may still tidy the file after closing, so what is compared is what an attack would have left.
+  const parsed = (() => {
+    try {
+      return JSON.parse(after) as { mcpServers?: Record<string, unknown> }
+    } catch {
+      return undefined
+    }
+  })()
+  check("config.json is still the app's own after all of it", Boolean(parsed) && !after.includes("calc.exe") && !parsed?.mcpServers?.evil, after.slice(0, 80))
+
+  const secretRead = await failure(() => ReadTool.execute({ file_path: path.join(data, "credentials.json") }, context))
+  check("reading the saved credentials is refused", secretRead.code === "tool.err.appSecret", secretRead)
+  check("so is the MCP sign-in file", (await appDataRefusal(path.join(storage, "mcp-auth.json"), "read")) === "secret")
+  const configRead = await failure(() => ReadTool.execute({ file_path: configFile }, context))
+  check("reading config.json is still allowed", configRead.message === "", configRead)
+
+  // What features write there on purpose still works.
+  const memory = path.join(data, "memory", "notes.md")
+  await fs.mkdir(path.dirname(memory), { recursive: true })
+  check("the memory folder stays writable", (await failure(() => WriteTool.execute({ file_path: memory, content: "note" }, context))).message === "")
+  const plan = path.join(storage, "plans", "1-brisk-anchor.md")
+  await fs.mkdir(path.dirname(plan), { recursive: true })
+  check("a plan file stays writable", (await failure(() => WriteTool.execute({ file_path: plan, content: "# plan" }, context))).message === "")
+  check("but not a file of another kind beside it", (await appDataRefusal(path.join(storage, "plans", "x.json"), "write")) === "write")
+  const skill = path.join(storage, "skills", "mine", "SKILL.md")
+  await fs.mkdir(path.dirname(skill), { recursive: true })
+  check("a user skill stays writable (skill-creator makes them there)", (await failure(() => WriteTool.execute({ file_path: skill, content: "---\nname: mine\n---\n" }, context))).message === "")
+  check("the global AGENTS.md stays writable", (await appDataRefusal(path.join(storage, "AGENTS.md"), "write")) === undefined)
+  check("a project file is unaffected", (await failure(() => WriteTool.execute({ file_path: path.join(project, "a.txt"), content: "a" }, context))).message === "")
+  check("a folder that only shares the name's start is unaffected", (await appDataRefusal(`${data}-other${path.sep}config.json`, "write")) === undefined)
 }

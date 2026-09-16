@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
+import { guardAppData } from "./app-data"
 import { collectMutationTargets, scanCommand } from "./bash-scan"
 import { mainWorktreeRoots } from "../session/worktree"
 
@@ -338,7 +339,10 @@ export const BashTool: ToolDefinition = {
      * would write to, and the runner raises the notice for one that then
      * exited cleanly.
      */
-    const worktreeHits = await mainWorktreeRoots(collectMutationTargets(command, cwd, powershell).paths)
+    const mutations = collectMutationTargets(command, cwd, powershell)
+    // A command that would write into the app's own data folder is refused like a write tool's call.
+    for (const target of mutations.written) await guardAppData(target, "write")
+    const worktreeHits = await mainWorktreeRoots(mutations.paths)
     for (const dir of scan.dirs) await resolvePath(context, dir)
     const question = {
       sessionID: context.sessionID,

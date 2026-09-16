@@ -22,6 +22,7 @@ import { bindDesktopSettings } from "./tool/desktop-settings"
 import { startHistory, stopHistory } from "./history/service"
 import { startScheduler } from "./cron/start"
 import { startAutomations } from "./automation/start"
+import { protectAppData } from "./tool/app-data"
 import { newSocketSecret, refusalOf, SOCKET_PROTOCOL } from "./socket-guard"
 
 export interface Runtime {
@@ -46,6 +47,11 @@ export interface Backend {
   close(): Promise<void>
 }
 
+export interface BackendOptions {
+  /** Browser origins allowed to connect: the renderer page's own. None means only non-browser clients. */
+  origins?: readonly string[]
+}
+
 /**
  * Boots the backend and binds it to a loopback WebSocket.
  *
@@ -54,17 +60,14 @@ export interface Backend {
  * run side by side. The socket is bound to 127.0.0.1 only: this speaks for the
  * user's filesystem and must never be reachable from the network.
  */
-export interface BackendOptions {
-  /** Browser origins allowed to connect: the renderer page's own. None means only non-browser clients. */
-  origins?: readonly string[]
-}
-
 export async function startBackend(dataDirectory: string, options: BackendOptions = {}): Promise<Backend> {
   const storage = new Storage(path.join(dataDirectory, "storage"))
   const bus = new Bus()
   const config = new Config(storage, bus, path.join(dataDirectory, "credentials.json"))
   const auth = new AuthManager(config, bus)
   await config.load()
+  // The model's file tools never write here: config.json there decides what starts at launch.
+  protectAppData(dataDirectory)
   // Hand edits to config.json take effect without reopening the app, as MiMo's do.
   config.watch()
   // The desktop settings tools change settings through this config's own patch path.
