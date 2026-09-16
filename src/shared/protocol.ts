@@ -583,6 +583,13 @@ export interface TurnRevertResult {
   failed: number
   /** Paths outside the project, skipped. */
   outside: number
+  /**
+   * The project is not in a repository, so nothing was touched.
+   *
+   * Taking a turn back goes through git, as MiMo's does, and MiMo refuses
+   * outright rather than writing to files it cannot put back.
+   */
+  noRepo?: boolean
 }
 
 export type Message = UserMessage | AssistantMessage

@@ -138,7 +138,7 @@ import {
   toggleChoice,
 } from "../src/renderer/src/lib/confirm-queue"
 import type { PermissionRequest, QuestionRequest } from "../src/shared/protocol"
-import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
+import { parseUnifiedDiff, recountedSection, reverseSection, sectionPatch } from "../src/shared/unified-diff"
 import { annotationsBlock } from "../src/shared/annotations"
 import { revertTurnFiles } from "../src/server/session/turn-revert"
 import { branchTitle } from "../src/server/session/store"
@@ -1966,10 +1966,83 @@ async function main() {
       ],
       time: { created: 0 },
     }
-    const reverted = await revertTurnFiles(root, [turnMessage])
-    check("a turn revert restores, removes and skips outside", reverted.restored === 1 && reverted.removed === 1 && reverted.outside === 1 && reverted.failed === 0, reverted)
-    check("the edited file is back to the turn's start", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\n2\nthree\n")
-    check("the created file is gone", !(await exists(path.join(root, "made.txt"))))
+    /*
+     * Taking a turn back goes through git, as MiMo's does. Outside a
+     * repository it refuses and writes nothing; inside one it reverse-applies
+     * the turn's patches, recomputes a patch whose hunk later edits have
+     * moved, and falls back to `git checkout --` for a tracked file whose
+     * lines are gone altogether.
+     */
+    const refused = await revertTurnFiles(root, [turnMessage])
+    check("outside a repository a revert refuses and touches nothing", refused.noRepo === true && refused.restored === 0 && refused.removed === 0, refused)
+    check("the file the refusal did not touch is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
+    check("the file the refusal did not touch is still there", await exists(path.join(root, "made.txt")))
+
+    const repo = path.join(project, "turn-revert-repo")
+    await fs.mkdir(repo, { recursive: true })
+    const inRepo = async (...args: string[]) => await promisify(execFile)("git", args, { cwd: repo })
+    await inRepo("init", "-q")
+    await inRepo("config", "user.email", "smoke@example.invalid")
+    await inRepo("config", "user.name", "Smoke")
+    await fs.writeFile(path.join(repo, "kept.txt"), "one\ntwo\nthree\n")
+    await fs.writeFile(path.join(repo, "moved.txt"), "alpha\nbeta\ngamma\n")
+    await fs.writeFile(path.join(repo, "gone.txt"), "first\nsecond\n")
+    await inRepo("add", "-A")
+    await inRepo("commit", "-qm", "before the turn")
+    /* What the turn did: an edit in each file, and one file it created. */
+    await fs.writeFile(path.join(repo, "kept.txt"), "one\n2\nthree\n")
+    await fs.writeFile(path.join(repo, "moved.txt"), "alpha\nBETA\ngamma\n")
+    await fs.writeFile(path.join(repo, "gone.txt"), "first\nSECOND\n")
+    await fs.writeFile(path.join(repo, "made.txt"), "brand new\n")
+    const repoTurn = {
+      ...turnMessage,
+      parts: [
+        tool("g1", "edit", { path: "kept.txt", diff: unifiedDiff("kept.txt", "one\ntwo\nthree\n", "one\n2\nthree\n") }),
+        tool("g2", "edit", { path: "moved.txt", diff: unifiedDiff("moved.txt", "alpha\nbeta\ngamma\n", "alpha\nBETA\ngamma\n") }),
+        tool("g3", "edit", { path: "gone.txt", diff: unifiedDiff("gone.txt", "first\nsecond\n", "first\nSECOND\n") }),
+        tool("g4", "write", { path: "made.txt", created: true, diff: unifiedDiff("made.txt", "", "brand new\n") }),
+        tool("g5", "write", { path: "../escape.txt", diff: unifiedDiff("../escape.txt", "", "x\n") }),
+      ],
+    }
+    /* Since the turn: lines added above one file's hunk, and another rewritten past recognising. */
+    await fs.writeFile(path.join(repo, "moved.txt"), "header\nlines\nadded\nalpha\nBETA\ngamma\n")
+    await fs.writeFile(path.join(repo, "gone.txt"), "nothing the turn wrote is here\n")
+    const throughGit = await revertTurnFiles(repo, [repoTurn])
+    check(
+      "inside a repository the turn's edits go back and the file it made is deleted",
+      throughGit.noRepo === undefined && throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
+      throughGit,
+    )
+    const back = async (name: string) => (await fs.readFile(path.join(repo, name), "utf8")).replace(/\r\n/g, "\n")
+    check("a plain edit is reverse-applied", (await back("kept.txt")) === "one\ntwo\nthree\n", await back("kept.txt"))
+    check(
+      "a hunk later edits moved is found and only that hunk is taken back",
+      (await back("moved.txt")) === "header\nlines\nadded\nalpha\nbeta\ngamma\n",
+      await back("moved.txt"),
+    )
+    check("a tracked file whose lines are gone falls back to git checkout", (await back("gone.txt")) === "first\nsecond\n", await back("gone.txt"))
+    check("the created file is gone", !(await exists(path.join(repo, "made.txt"))))
+    check("a path outside the project is never written", !(await exists(path.join(project, "escape.txt"))))
+
+    /* An untracked file the turn edited has no index to fall back on, so a lost hunk fails rather than being invented. */
+    await fs.writeFile(path.join(repo, "loose.txt"), "kept as it is\n")
+    const looseTurn = {
+      ...turnMessage,
+      parts: [tool("g6", "edit", { path: "loose.txt", diff: unifiedDiff("loose.txt", "was\n", "now\n") })],
+    }
+    const loose = await revertTurnFiles(repo, [looseTurn])
+    check("an untracked file whose hunk is gone is counted as failed and left alone", loose.failed === 1 && loose.restored === 0, loose)
+    check("that file still reads exactly as it did", (await fs.readFile(path.join(repo, "loose.txt"), "utf8")) === "kept as it is\n")
+
+    /* The pure halves, so the patch writer and the recount are covered without a repository. */
+    const oneSection = parseUnifiedDiff(unifiedDiff("x.txt", "a\nb\n", "a\nB\n"))[0]!
+    const written = sectionPatch(oneSection)
+    check("a section writes back out as a patch git can read", written.startsWith("--- a/x.txt\n+++ b/x.txt\n@@ ") && written.includes("-b") && written.includes("+B"), written)
+    /* The file's final newline must not become a context line past the end of the file, or git apply refuses the hunk. */
+    check("a patch does not ask git to match a line past the end of the file", written.includes("@@ -1,2 +1,2 @@") && !written.endsWith("\n \n"), written)
+    const shifted = recountedSection("pad\npad\na\nB\n", oneSection)
+    check("a recount moves the hunk to where its lines now stand", shifted?.hunks[0]?.newStart === 3, shifted?.hunks[0])
+    check("a recount of lines that are gone answers nothing", recountedSection("unrelated\n", oneSection) === undefined)
   }
 
   // ------------------------------------------------------------------- units
