@@ -156,63 +156,6 @@ export function bracketPlurals(tables: Tables): string[] {
 }
 
 /*
- * W5: forking a conversation is not a git branch.
- *
- * The reply row's fork button sits pixels from the git branch chip, and both
- * used to read 分支 / "Branch". Each table names the git branch with one word;
- * none of the fork strings may use it. (MiMo itself writes 分支 for both, so this
- * is MCode's own separation.)
- */
-const GIT_BRANCH: Record<string, RegExp> = {
-  zhCN: /分支/,
-  zhTW: /分支/,
-  en: /branch/i,
-  ar: /فرع|فروع/,
-  bs: /gran[aeiu]/i,
-  da: /gren/i,
-  de: /branch/i,
-  es: /(^|\s)ramas?(\s|$|[,.])/i,
-  fr: /branche/i,
-  ja: /ブランチ/,
-  ko: /브랜치/,
-  nb: /gren/i,
-  pl: /gałąź|gałęz/i,
-  ptBR: /branch/i,
-  ru: /ветк/i,
-  th: /บรานช์|สาขา/,
-  tr: /(^|\s)dal/i,
-  uk: /гілк|гілок/i,
-}
-export const FORK_KEYS = [
-  "stream.replyFork",
-  "menu.fork",
-  "stream.forkedFrom",
-  "stream.forkedFromHere",
-  "stream.forkedFromCurrent",
-  "stream.forkFailed",
-  "stream.forkNeedsMessage",
-  "key.label.fork-chat",
-  "key.desc.fork-chat",
-]
-
-export function forkSaysBranch(tables: Tables): string[] {
-  const found: string[] = []
-  for (const [name, entries] of Object.entries(tables)) {
-    const word = GIT_BRANCH[name]
-    if (!word) {
-      found.push(`${name} has no git-branch word to check against`)
-      continue
-    }
-    for (const key of FORK_KEYS) {
-      const value = entries[key]
-      if (value === undefined) found.push(`${name} ${key} (missing)`)
-      else if (word.test(value)) found.push(`${name} ${key} (${value})`)
-    }
-  }
-  return found
-}
-
-/*
  * W4: one name for a conversation.
  *
  * MiMo's centre is 对话 / "conversation" for the thing the user talks in, with
@@ -223,7 +166,8 @@ export function forkSaysBranch(tables: Tables): string[] {
  * 会话 / "session" only in those engine rows and in the locked reference keys -
  * which are no longer what any screen draws.
  */
-const MIMO_CHAT_KEYS = new Set(["toast.noConvosToArchive", "set.codeFontSizeSub", "key.label.conv-archive", "key.desc.conv-archive"])
+// The fork shortcut row is MiMo's own 分叉聊天 / "Fork chat" again, since W5 was reverted to MiMo's wording.
+const MIMO_CHAT_KEYS = new Set(["toast.noConvosToArchive", "set.codeFontSizeSub", "key.label.conv-archive", "key.desc.conv-archive", "key.label.fork-chat", "key.desc.fork-chat"])
 const ENGINE_SESSION_KEYS = new Set([
   "stream.chatSourceGone",
   "share.session",
@@ -447,22 +391,6 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
     check(
       "the rule catches a second family and a second English spelling",
       caught.includes("zhCN art.timeM is a second relative-time string") && caught.includes("en art.timeM is a second relative-time string") && caught.some((line) => line.startsWith("en time.hoursAgo reads")),
-      caught,
-    )
-  }
-
-  section("Round 8 (W5): forking a conversation never borrows the git branch's word")
-  {
-    const clashes = forkSaysBranch(tables)
-    check("no fork string in any table uses that table's word for a git branch", clashes.length === 0, clashes.slice(0, 8))
-    check("and each table's git branch label does use it, so the words checked are the real ones", Object.keys(tables).every((name) => GIT_BRANCH[name]?.test(tables[name]["home.branchLabel"] ?? "") || GIT_BRANCH[name]?.test(tables[name]["info.branchSwitchFailed"] ?? "")))
-    const broken = clone(tables)
-    broken.zhCN["stream.replyFork"] = "分支"
-    broken.es["stream.forkFailed"] = "No se pudo crear la rama, inténtalo de nuevo"
-    const caught = forkSaysBranch(broken)
-    check(
-      "the rule catches 分支 on the reply row and a Spanish rama",
-      caught.some((line) => line.startsWith("zhCN stream.replyFork")) && caught.some((line) => line.startsWith("es stream.forkFailed")),
       caught,
     )
   }
