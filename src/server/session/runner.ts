@@ -46,7 +46,7 @@ import { Snapshots, decode, readSnapshotFile } from "./snapshot"
 import { isOverflowByCount, isOverflowError, maxOutputTokens } from "./overflow"
 // MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
 import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
-import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
+import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, shrinkLargeToolResults, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
@@ -1243,8 +1243,14 @@ export class SessionRunner {
     const apiKey = this.config.apiKey(definition.id) ?? ""
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
     const entry = this.config.modelEntry(session.model)
-    const replay =
-      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map())
+    /*
+     * MiMo's shrink: the summary request is sent exactly when the conversation
+     * has outgrown its model, so replaying every large tool result in full made
+     * the request most likely to be refused for length the largest one sent.
+     */
+    const replay = shrinkLargeToolResults(
+      trigger === "provider-overflow" ? withoutAttachments(context) : await withAttachmentData(context, session.directory, new Map()),
+    )
     const instruction: UserMessage = {
       id: `${session.id}:compaction`,
       sessionID: session.id,

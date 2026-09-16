@@ -14,6 +14,8 @@ import { execFileSync } from "node:child_process"
 import { Identifier } from "../src/shared/id"
 // M2: the environment block, and what it now names.
 import { systemPrompt } from "../src/server/session/prompt"
+// M9: standing down the largest tool results before the summary request replays them.
+import { COMPACTION_TOOL_RESULT_LIMIT, shrinkLargeToolResults } from "../src/server/session/summary"
 import type { AssistantMessage, Message, ToolPart, UserMessage } from "../src/shared/protocol"
 import type { Check } from "./smoke-round5"
 import { engine, say } from "./smoke-round5"
@@ -408,6 +410,44 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
     } finally {
       await fs.rm(root, { recursive: true, force: true }).catch(() => {})
       await fs.rm(plain, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+
+  // ------------------------------------------------------------------ M9
+  section("Round 7 (M9): compaction stands down the largest tool results")
+  {
+    const s = "s9"
+    const huge = "q".repeat(COMPACTION_TOOL_RESULT_LIMIT * CHARS_PER_TOKEN + 40_000)
+    const small = "still small"
+    const history: Message[] = [
+      user(s, "look at it", 1),
+      assistant(s, [toolPart("bash", huge), toolPart("read", small)], 2),
+    ]
+    const shrunk = shrinkLargeToolResults(history)
+    const parts = (shrunk[1] as AssistantMessage).parts.filter((p): p is ToolPart => p.type === "tool")
+    check("a result over the limit is stood down", parts[0]?.output !== huge && (parts[0]?.output ?? "").includes("left this bash result out"), parts[0]?.output?.slice(0, 90))
+    check("the line says roughly what it cost", (parts[0]?.output ?? "").includes(String(estimateTokens(huge))))
+    check("one under the limit is replayed as it was", parts[1]?.output === small)
+    check("the user's own words are never touched", (shrunk[0] as Message).role === "user" && JSON.stringify(shrunk[0]) === JSON.stringify(history[0]))
+
+    /* Only completed results: a failure's message is short, and is usually the thing worth summarising. */
+    const failed: Message[] = [user(s, "x", 1), assistant(s, [{ ...toolPart("bash", huge), status: "error" as const }], 2)]
+    check("a failed call is left alone however long it is", JSON.stringify(shrinkLargeToolResults(failed)) === JSON.stringify(failed))
+
+    // On the wire: the summary request is what this item exists to shrink.
+    const e = await engine({ custom: { models: [{ id: "m", name: "M", limit: { context: 200_000 } }] } })
+    try {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      const now = Date.now()
+      await e.store.saveMessage(user(session.id, "read the big one", now))
+      await e.store.saveMessage(assistant(session.id, [toolPart("bash", huge)], now, 10))
+      await e.runner.compact(session.id)
+      const asked = JSON.stringify(e.summaryBodies.at(-1) ?? {})
+      check("the summary request no longer replays the whole result", !asked.includes("q".repeat(5_000)), asked.length)
+      check("it carries the shrink note instead", asked.includes("left this bash result out of the compaction"))
+      check("and still asks for the summary", asked.includes("about to be compacted"))
+    } finally {
+      await e.close()
     }
   }
 }
