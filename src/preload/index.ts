@@ -206,6 +206,14 @@ const api = {
   },
   exitFullscreen: (): void => ipcRenderer.send("mcode:exit-fullscreen"),
 
+  /** Whether assistive technology is reading the window, and every change to that. */
+  screenReader: (): Promise<boolean> => ipcRenderer.invoke("mcode:screen-reader"),
+  onScreenReader: (handler: (enabled: boolean) => void): (() => void) => {
+    const listener = (_event: unknown, enabled: boolean) => handler(enabled)
+    ipcRenderer.on("mcode:screen-reader", listener)
+    return () => ipcRenderer.off("mcode:screen-reader", listener)
+  },
+
   zoom: (action: "in" | "out" | "reset"): void => ipcRenderer.send("mcode:zoom", action),
 
   /*
