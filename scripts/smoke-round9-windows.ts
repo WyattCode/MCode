@@ -9,6 +9,7 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { APP_NAME, noticeTitle, pinnedProfile, readSavedWindow, windowStateToSave } from "../src/main/desktop-rules"
+import { PRUNE_DELAY_MS, prunableDumps, pruneCrashDumps, startLocalCrashDumps } from "../src/main/crash-dumps"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
 async function sources(root: string): Promise<Map<string, string>> {
@@ -138,6 +139,77 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
       !/\.on\("(resize|move|maximize|unmaximize|enter-full-screen|leave-full-screen)"/.test(state) &&
         /if \(isLast\(\)\) saveWindowState\(window\)/.test(state) &&
         /before-quit[\s\S]{0,400}for \(const window of windows\) saveWindowState\(window\)/.test(main),
+    )
+  }
+
+  section("Round 9 (Windows): native crashes leave a local dump and nothing is uploaded")
+  {
+    const started: unknown[] = []
+    const folders: string[] = []
+    const logged: string[] = []
+    const folder = startLocalCrashDumps({
+      reporter: { start: (options) => void started.push(options) },
+      setCrashFolder: (where) => void folders.push(where),
+      profile: path.join("C:", "profile"),
+      log: (line) => void logged.push(line),
+    })
+    check(
+      "the reporter starts with uploads off, writing into the profile's Crashpad folder, and says where",
+      JSON.stringify(started) === JSON.stringify([{ uploadToServer: false }]) &&
+        folder === path.join("C:", "profile", "Crashpad") &&
+        folders[0] === folder &&
+        logged.some((line) => line.includes(folder!)),
+      { started, folders, logged },
+    )
+    const failed = startLocalCrashDumps({
+      reporter: {
+        start: () => {
+          throw new Error("no crashpad")
+        },
+      },
+      setCrashFolder: () => {},
+      profile: "p",
+      log: () => {},
+    })
+    check("a reporter that will not start is logged and the app goes on", failed === undefined)
+    const day = 24 * 60 * 60 * 1000
+    const now = 100 * day
+    const dump = (name: string, ageDays: number, size = 4096) => ({ relativePath: name, sizeBytes: size, mtimeMs: now - ageDays * day })
+    const recent = Array.from({ length: 12 }, (_, index) => dump(`reports/r${index}.dmp`, index / 10))
+    const pruned = prunableDumps([...recent, dump("reports/old.dmp", 15), dump("reports/tiny.dmp", 1, 8), dump("reports/huge.dmp", 1, 200 * 1024 * 1024), dump("settings.dat", 90), dump("metadata", 90)], now).map((entry) => entry.relativePath)
+    check(
+      "pruning keeps MiMo's newest ten, drops dumps older than 14 days or implausibly small or large, and never touches Crashpad's own files",
+      pruned.sort().join(",") === ["reports/huge.dmp", "reports/old.dmp", "reports/r10.dmp", "reports/r11.dmp", "reports/tiny.dmp"].join(","),
+      pruned,
+    )
+    const removedFiles: string[] = []
+    const tree: Record<string, { name: string; dir: boolean; size?: number; mtimeMs?: number }[]> = {
+      [path.join("root")]: [
+        { name: "reports", dir: true },
+        { name: "settings.dat", dir: false, size: 40, mtimeMs: 0 },
+      ],
+      [path.join("root", "reports")]: [
+        { name: "a.dmp", dir: false, size: 4096, mtimeMs: now },
+        { name: "b.dmp", dir: false, size: 4096, mtimeMs: now - 20 * day },
+      ],
+    }
+    const removed = await pruneCrashDumps(
+      "root",
+      {
+        readdir: async (directory) => (tree[directory] ?? []).map((entry) => ({ name: entry.name, isDirectory: () => entry.dir, isFile: () => !entry.dir })),
+        stat: async (file) => {
+          const entry = tree[path.dirname(file)]?.find((candidate) => candidate.name === path.basename(file))
+          return { size: entry?.size ?? 0, mtimeMs: entry?.mtimeMs ?? 0 }
+        },
+        unlink: async (file) => void removedFiles.push(file),
+      },
+      now,
+    )
+    check("the sweep walks Crashpad's folders and deletes only what the rule picks", JSON.stringify(removed) === JSON.stringify(["reports/b.dmp"]) && removedFiles.length === 1, { removed, removedFiles })
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    check(
+      "the main process starts it before the app is ready and sweeps ten seconds after",
+      PRUNE_DELAY_MS === 10_000 && /startLocalCrashDumps\(\{\s*reporter: crashReporter/.test(main) && main.indexOf("startLocalCrashDumps({") < main.indexOf("app.whenReady().then(async") && !/uploadToServer: true/.test(main),
     )
   }
 }

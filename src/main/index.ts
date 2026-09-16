@@ -4,8 +4,9 @@ import { execFile } from "node:child_process"
 import path from "node:path"
 import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, crashReporter, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { PowerHold } from "./power"
+import { PRUNE_DELAY_MS, pruneCrashDumps, startLocalCrashDumps } from "./crash-dumps"
 import { DailyLog, LOG_DIR } from "./log-file"
 import { BOOT_DEFAULTS, BOOT_PREFS_FILE, readBootPrefs, themePref, windowBackground, writeBootPrefs, type BootPrefs } from "./boot-prefs"
 import { startBackend, type Backend } from "../server/index"
@@ -136,6 +137,27 @@ captureConsole(logs)
 app.on("will-quit", () => void logs.close())
 process.on("uncaughtException", (error) => recordProcessError("uncaught exception", error))
 process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))
+
+/*
+ * MiMo's local crash dumps: Crashpad writes a minidump for a native crash and
+ * uploads nothing; ten seconds after launch the old ones are pruned.
+ */
+const crashFolder = startLocalCrashDumps({
+  reporter: crashReporter,
+  setCrashFolder: (folder) => app.setPath("crashDumps", folder),
+  profile: app.getPath("userData"),
+  log: (line) => console.info(line),
+})
+if (crashFolder) {
+  void app.whenReady().then(() => {
+    setTimeout(() => {
+      const files = { readdir: (directory: string) => fs.readdir(directory, { withFileTypes: true }), stat: fs.stat, unlink: fs.unlink }
+      void pruneCrashDumps(crashFolder, files).then((removed) => {
+        if (removed.length) console.info(`[crash] pruned ${removed.length} old crash dump(s)`)
+      })
+    }, PRUNE_DELAY_MS).unref()
+  })
+}
 
 /*
  * MiMo's native theme at boot: the saved app theme is applied before any
