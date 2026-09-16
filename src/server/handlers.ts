@@ -23,7 +23,7 @@ import type { Runtime } from "./index"
 import { customModelOf } from "./config"
 import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
 import { readableFile, workingRoots, writableFile } from "./file-access"
-import { restoreHeaders, restoreMasked, restoreServer } from "./config-view"
+import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./config-view"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
@@ -1083,7 +1083,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
             ? {
                 id: entry.id,
                 name: request.name.trim(),
-                baseURL: request.baseURL.trim(),
+                // An address shown with its secret parts masked, left as shown, keeps what is stored.
+                baseURL: restoreUrl(request.baseURL.trim(), existing.baseURL),
                 ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : {}),
                 models,
                 ...(keptEnvironment ? { environment: keptEnvironment } : {}),

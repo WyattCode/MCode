@@ -1,5 +1,5 @@
-import type { AppConfig, CustomProvider, McpServerConfig, ServerFrame } from "@shared/protocol"
-import { MASK, isSensitiveName, redactCommand, redactString } from "@shared/mcp-redact"
+import type { AppConfig, CustomProvider, McpServerConfig, ProviderStatus, ServerFrame } from "@shared/protocol"
+import { MASK, isSensitiveName, redactCommand, redactUrl } from "@shared/mcp-redact"
 
 /**
  * The settings as the window is sent them.
@@ -20,35 +20,64 @@ const maskValues = (record: Record<string, string> | undefined, only?: (name: st
 function maskServer(entry: McpServerConfig): McpServerConfig {
   const out: McpServerConfig = { ...entry }
   if (entry.command) out.command = redactCommand(entry.command)
-  if (entry.url) out.url = redactString(entry.url)
+  if (entry.url) out.url = redactUrl(entry.url)
   if (entry.environment) out.environment = maskValues(entry.environment)
   if (entry.headers) out.headers = maskValues(entry.headers)
   if (entry.oauth && entry.oauth.clientSecret) out.oauth = { ...entry.oauth, clientSecret: MASK }
   return out
 }
 
-/* A provider's address is left as it is: the provider list and the endpoint field show and compare it as typed. */
+/*
+ * A provider's address (round 9): only its secret parts are masked - the user
+ * name and password before the host, and secret-looking query values. An
+ * address with none is sent exactly as typed, so the provider list and the
+ * endpoint field still show and compare it as they did.
+ */
 function maskProvider(entry: CustomProvider): CustomProvider {
-  return entry.headers ? { ...entry, headers: maskValues(entry.headers, isSensitiveName) } : entry
+  return {
+    ...entry,
+    baseURL: redactUrl(entry.baseURL),
+    ...(entry.headers ? { headers: maskValues(entry.headers, isSensitiveName) } : {}),
+  }
 }
+
+const maskEndpoints = (endpoints: Record<string, string> | undefined) =>
+  Object.fromEntries(Object.entries(endpoints ?? {}).map(([id, url]) => [id, redactUrl(url)]))
 
 export function configForWindow(config: AppConfig): AppConfig {
   return {
     ...config,
     mcpServers: Object.fromEntries(Object.entries(config.mcpServers ?? {}).map(([name, entry]) => [name, maskServer(entry)])),
     customProviders: (config.customProviders ?? []).map(maskProvider),
+    providerEndpoints: maskEndpoints(config.providerEndpoints),
   }
 }
 
-/** A frame about to leave for a window, with any settings document in it masked. */
+/** The provider list as the window is sent it: each endpoint in force, masked the same way. */
+function providersForWindow(providers: ProviderStatus[]): ProviderStatus[] {
+  return providers.map((entry) => (entry.baseURL ? { ...entry, baseURL: redactUrl(entry.baseURL) } : entry))
+}
+
+/** A frame about to leave for a window, with any settings document or provider list in it masked. */
 export function frameForWindow(frame: ServerFrame): ServerFrame {
   if (frame.kind === "event") {
-    return frame.event.type === "config.updated" ? { ...frame, event: { ...frame.event, config: configForWindow(frame.event.config) } } : frame
+    if (frame.event.type === "config.updated") return { ...frame, event: { ...frame.event, config: configForWindow(frame.event.config) } }
+    if (frame.event.type === "auth.completed") return { ...frame, event: { ...frame.event, providers: providersForWindow(frame.event.providers) } }
+    return frame
   }
-  if (frame.kind === "response" && frame.ok && isConfigHolder(frame.data)) {
-    return { ...frame, data: { ...frame.data, config: configForWindow(frame.data.config) } }
+  if (frame.kind === "response" && frame.ok) {
+    let data = frame.data
+    if (isConfigHolder(data)) data = { ...data, config: configForWindow(data.config) }
+    if (isProviderHolder(data)) data = { ...data, providers: providersForWindow(data.providers) }
+    return data === frame.data ? frame : { ...frame, data }
   }
   return frame
+}
+
+function isProviderHolder(data: unknown): data is { providers: ProviderStatus[] } {
+  if (!data || typeof data !== "object") return false
+  const providers = (data as { providers?: unknown }).providers
+  return Array.isArray(providers) && providers.every((entry) => Boolean(entry) && typeof entry === "object" && "authMethods" in entry && "configured" in entry)
 }
 
 function isConfigHolder(data: unknown): data is { config: AppConfig } {
@@ -82,7 +111,7 @@ export function restoreServer(incoming: McpServerConfig, stored: McpServerConfig
   if (!stored) return incoming
   const out: McpServerConfig = { ...incoming }
   if (incoming.command) out.command = keepCommand(incoming.command, stored.command)
-  if (incoming.url && stored.url && incoming.url === redactString(stored.url)) out.url = stored.url
+  if (incoming.url && stored.url && incoming.url === redactUrl(stored.url)) out.url = stored.url
   if (incoming.environment) out.environment = keepRecord(incoming.environment, stored.environment)
   if (incoming.headers) out.headers = keepRecord(incoming.headers, stored.headers)
   if (incoming.oauth && incoming.oauth.clientSecret === MASK && stored.oauth) out.oauth = { ...incoming.oauth, clientSecret: stored.oauth.clientSecret }
@@ -90,13 +119,27 @@ export function restoreServer(incoming: McpServerConfig, stored: McpServerConfig
 }
 
 function restoreProvider(incoming: CustomProvider, stored: CustomProvider | undefined): CustomProvider {
-  if (!stored || !incoming.headers) return incoming
-  return { ...incoming, headers: keepRecord(incoming.headers, stored.headers) }
+  if (!stored) return incoming
+  return {
+    ...incoming,
+    baseURL: restoreUrl(incoming.baseURL, stored.baseURL),
+    ...(incoming.headers ? { headers: keepRecord(incoming.headers, stored.headers) } : {}),
+  }
+}
+
+/** An address the window sent back exactly as it was shown takes the stored one it was made from. */
+export function restoreUrl(incoming: string, stored: string | undefined): string {
+  return stored !== undefined && incoming !== stored && incoming === redactUrl(stored) ? stored : incoming
 }
 
 /** A settings patch from the window, with masked values put back as stored. */
 export function restoreMasked(stored: AppConfig, patch: Partial<AppConfig>): Partial<AppConfig> {
   const out = { ...patch }
+  if (patch.providerEndpoints) {
+    out.providerEndpoints = Object.fromEntries(
+      Object.entries(patch.providerEndpoints).map(([id, url]) => [id, restoreUrl(url, stored.providerEndpoints?.[id])]),
+    )
+  }
   if (patch.mcpServers) {
     out.mcpServers = Object.fromEntries(Object.entries(patch.mcpServers).map(([name, entry]) => [name, restoreServer(entry, stored.mcpServers?.[name])]))
   }

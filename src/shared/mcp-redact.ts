@@ -29,6 +29,20 @@ export function redactString(input: string): string {
     .replace(new RegExp(`(${NAMES}=)[^\\s&]+`, "gi"), `$1${MASK}`)
 }
 
+/**
+ * An address with its secret parts masked: the user name and password before
+ * the host (`https://user:pass@host`), and the secret-looking parts
+ * `redactString` finds. Everything else stays exactly as typed, so an address
+ * with nothing secret in it comes back unchanged and compares equal.
+ *
+ * Round 9, beyond MiMo: its engine masks MCP addresses the `redactString` way
+ * but leaves the user-info part, and does not mask a provider's base URL.
+ */
+export function redactUrl(input: string): string {
+  // Greedy up to the authority's last "@": a password typed with a bare "@" in it is still all masked.
+  return redactString(input.replace(/^(\s*[a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/i, `$1${MASK}@`))
+}
+
 /** A split command with the value after a credential-looking flag masked, and every part redacted. */
 export function redactCommand(parts: readonly string[]): string[] {
   return parts.map((part, index) => {

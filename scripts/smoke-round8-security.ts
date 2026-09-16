@@ -27,7 +27,7 @@ import { appDataRefusal, protectAppData } from "../src/server/tool/app-data"
 import { handle } from "../src/server/handlers"
 import type { Request } from "../src/shared/protocol"
 import { OFFICE_BYTES_LIMIT, OFFICE_SCHEMAS, officeRefusal } from "../src/main/office-guard"
-import { MASK, redactCommand, redactString } from "../src/shared/mcp-redact"
+import { MASK, redactCommand, redactString, redactUrl } from "../src/shared/mcp-redact"
 import { scanMcpImports } from "../src/server/mcp-import"
 import { redactSecrets } from "../src/main/log-file"
 import { renderReply } from "../src/renderer/src/lib/markdown"
@@ -523,6 +523,45 @@ async function maskingChecks(check: Check, section: Section, root: string): Prom
     const tool = backend.runtime.config.get().mcpServers.tool
     check("an MCP edit that leaves the masked key keeps the stored one", saved.ok && tool?.command?.join(" ") === `npx server --api-key ${fakeKey} --extra`)
     check("...and its kept variable", tool?.environment?.SERVICE_KEY === fakeEnv)
+
+    /*
+     * Round 9: a provider's address is masked the same way - its user name and
+     * password, and secret-looking query values - in what the window is sent,
+     * and an address sent back as shown keeps the stored one. MiMo shows it as
+     * typed; this is stricter and changes nothing for an address without secrets.
+     */
+    check("round 9: an address's user info and credential query values are masked, the rest kept", redactUrl(`https://me:${fakeKey}@gw.example/v1?region=eu&api_key=${fakeHeader}`) === `https://${MASK}@gw.example/v1?region=eu&api_key=${MASK}`)
+    const splitPassword = redactUrl(`https://me:${fakeKey.slice(0, 8)}@${fakeKey.slice(8)}@gw.example/v1`)
+    check("round 9: ...a password with a bare @ in it is masked whole", splitPassword === `https://${MASK}@gw.example/v1`, splitPassword.length)
+    check("round 9: ...and an address with nothing secret comes back exactly as typed", redactUrl("http://localhost:11434/v1/") === "http://localhost:11434/v1/" && redactUrl("https://api.example.com") === "https://api.example.com")
+    check("round 9: the log masks an address's user info", leaks(redactSecrets(`POST https://me:${fakeToken}@gw.example/v1/chat/completions failed`)) === 0)
+    const secretBase = `https://me:${fakeToken}@gw2.example/v1?api_key=${fakeKey}&region=eu`
+    const secretLocal = `http://me:${fakeBearer}@127.0.0.1:11434/v1`
+    await backend.runtime.config.set({
+      customProviders: [{ id: "gw2", name: "Gateway 2", baseURL: secretBase, models: [{ id: "m", name: "M" }] }],
+      providerEndpoints: { ollama: secretLocal },
+    })
+    const shown = await ask(socket, { type: "config.get" })
+    const shownConfig = (shown.data as { config: { customProviders: { baseURL: string }[]; providerEndpoints: Record<string, string> } }).config
+    check("round 9: a provider's base URL reaches the window masked", shown.ok && leaks(JSON.stringify(shown.data)) === 0 && shownConfig.customProviders[0]?.baseURL === `https://${MASK}@gw2.example/v1?api_key=${MASK}&region=eu`, shownConfig.customProviders[0]?.baseURL)
+    check("round 9: ...and so does a built-in provider's endpoint override", shownConfig.providerEndpoints.ollama === `http://${MASK}@127.0.0.1:11434/v1`, shownConfig.providerEndpoints.ollama)
+    const listed = await ask(socket, { type: "provider.list" })
+    const listedProviders = (listed.data as { providers: { id: string; baseURL?: string }[] }).providers
+    check(
+      "round 9: the provider list carries the endpoints masked",
+      listed.ok && leaks(JSON.stringify(listed.data)) === 0 && listedProviders.find((entry) => entry.id === "gw2")?.baseURL?.includes(MASK) === true && listedProviders.find((entry) => entry.id === "ollama")?.baseURL?.includes(MASK) === true,
+    )
+    await ask(socket, { type: "config.set", patch: { customProviders: shownConfig.customProviders as never, providerEndpoints: shownConfig.providerEndpoints } })
+    const keptConfig = backend.runtime.config.get()
+    check(
+      "round 9: settings sent back as shown keep the stored addresses",
+      keptConfig.customProviders[0]?.baseURL === secretBase && keptConfig.providerEndpoints.ollama === secretLocal,
+      leaks(JSON.stringify(keptConfig.customProviders)) + leaks(JSON.stringify(keptConfig.providerEndpoints)),
+    )
+    const edited = await ask(socket, { type: "provider.updateCustom", id: "gw2", name: "Gateway 2b", baseURL: shownConfig.customProviders[0]!.baseURL, apiKey: "", models: [{ id: "m", name: "M" }] })
+    check("round 9: the provider form saved with the address as shown keeps the stored one", edited.ok && backend.runtime.config.get().customProviders[0]?.baseURL === secretBase && leaks(JSON.stringify(edited.data)) === 0)
+    await ask(socket, { type: "provider.updateCustom", id: "gw2", name: "Gateway 2c", baseURL: "https://gw3.example/v1", apiKey: "", models: [{ id: "m", name: "M" }] })
+    check("round 9: ...while a newly typed address replaces it", backend.runtime.config.get().customProviders[0]?.baseURL === "https://gw3.example/v1")
 
     await new Promise((resolve) => setTimeout(resolve, 100))
     const events = seen.filter((line) => line.includes('"config.updated"'))
