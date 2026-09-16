@@ -644,16 +644,15 @@ app.whenReady().then(async () => {
    * The renderer has no Node access; this is how it learns where to connect.
    * It is the one channel that has to wait for the backend, and it waits with
    * the window already up and its connecting state on screen.
+   *
+   * The socket secret goes only to the top frame of one of the app's own
+   * windows. No other frame holds the preload, but the check costs nothing and
+   * keeps the secret from ever reaching a page that found a way to ask.
    */
   ipcMain.handle("mcode:bootstrap", async (event) => {
-    /*
-     * The socket secret goes only to the top frame of one of the app's own
-     * windows. No other frame holds the preload, but the check costs nothing
-     * and keeps the secret from ever reaching a page that found a way to ask.
-     */
+    const started = await starting
     const owner = BrowserWindow.fromWebContents(event.sender)
     if (!owner || !windows.has(owner) || event.senderFrame !== event.sender.mainFrame) throw new Error("not the app window")
-    const started = await starting
     return {
       port: started.port,
       secret: started.secret,
