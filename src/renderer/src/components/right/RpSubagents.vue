@@ -49,7 +49,16 @@ function timeOf(item: SubagentItem): string {
   return count === undefined ? t(key) : t(key, { count })
 }
 
+/**
+ * A row opens its transcript - once there is one.
+ *
+ * MiMo's detail view needs the subagent's own conversation id and stays on the
+ * overview until the row has one (`p?.agentId ? transcript : overview`), so a
+ * pill pressed the moment work starts does nothing rather than opening a page
+ * with a back button and no content.
+ */
 function open(key?: string) {
+  if (key && !items.value.find((item) => item.key === key)?.sessionID) return
   rp.update(props.tab.id, { subagentKey: key })
 }
 

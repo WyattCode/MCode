@@ -1114,7 +1114,8 @@ defineExpose({ stepMessage, scroller })
         </div>
 
         <!-- subagents: a turn started by news of background subagents opens with their pills, as MiMo draws its actor notifications. -->
-        <div v-if="!latest && turn.notices?.length" class="subagent-notices" data-subagent-notices>
+        <!-- Drawn in the floating card too, as MiMo's harness row draws its actor notifications wherever the row is. -->
+        <div v-if="turn.notices?.length" class="subagent-notices" data-subagent-notices>
           <SubagentActivity :notices="turn.notices" />
         </div>
 
@@ -1195,7 +1196,7 @@ defineExpose({ stepMessage, scroller })
                     <video :src="videoUrl(item)" muted playsinline preload="metadata" />
                   </button>
                   <span v-else class="sent-tile file">
-                    <span class="sent-name">{{ item.path }}</span>
+                    <span class="sent-name">{{ item.path.split(/[\\/]/).pop() || item.path }}</span>
                   </span>
                 </template>
               </div>
