@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue"
-import type { HomeSuggestion } from "@shared/protocol"
 import { useApp } from "../stores/app"
-import { language, t } from "../lib/i18n"
+import { t } from "../lib/i18n"
 import { notify, notifyFailure } from "../lib/toast"
-import { SUGGESTION_ICON_PATHS, builtinSuggestions, rememberedSuggestions } from "../lib/home-suggestions"
+import { SUGGESTION_ICON_PATHS, builtinSuggestions, type HomeSuggestion } from "../lib/home-suggestions"
 import ProjectPicker from "./ProjectPicker.vue"
 import type { PickerProject } from "./ProjectPicker.vue"
 import NewProjectDialog from "./NewProjectDialog.vue"
@@ -231,35 +230,13 @@ const box = ref<InstanceType<typeof Composer>>()
 watch(chosen, (next) => next && next !== NO_PROJECT && void app.refreshCommands(next), { immediate: true })
 
 /*
- * MiMo's example tasks under the tray: shown only once a project is chosen.
- * MCode's own three are there at once; the three the model writes for that
- * project (asked once per project) replace them when they arrive, and if none
- * come the built-in ones stay. A click puts the task's request into the box
- * without sending it.
+ * MiMo's example tasks under the tray: its own built-in cases, shown only once
+ * a project is chosen, and nothing is asked of a model or sent anywhere to show
+ * them. A click puts the task's request into the box without sending it.
  */
 const hasProject = computed(() => Boolean(chosen.value) && chosen.value !== NO_PROJECT)
-const suggestions = ref<HomeSuggestion[]>([])
-
-watch(
-  () => [chosen.value, language.value, Boolean(app.client)] as const,
-  async ([directory, lang]) => {
-    if (!directory || directory === NO_PROJECT) {
-      suggestions.value = []
-      return
-    }
-    suggestions.value = builtinSuggestions((key) => t(key))
-    const client = app.client
-    if (!client) return
-    const rows = await rememberedSuggestions(directory, lang, async () => {
-      const result = await client.request({ type: "home.suggest", directory, language: lang })
-      return result.suggestions
-    })
-    // A newer pick may have overtaken this answer.
-    if (chosen.value !== directory || language.value !== lang) return
-    if (rows.length) suggestions.value = rows
-  },
-  { immediate: true },
-)
+// `t` reads the current language, so the rows are reworded when it changes.
+const suggestions = computed<HomeSuggestion[]>(() => (hasProject.value ? builtinSuggestions((key) => t(key)) : []))
 
 function start(suggestion: HomeSuggestion) {
   // A task's request names no files, so it carries no chips and no mentions.

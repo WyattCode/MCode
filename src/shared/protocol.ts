@@ -2033,8 +2033,6 @@ export type Request =
   | { type: "file.defaultDir" }
   /* Carries on the conversation's interrupted last turn, with no new message from the user. */
   | { type: "session.resume"; sessionID: string }
-  /* Three example tasks for a project on the home screen, from the default model; empty when it cannot answer. */
-  | { type: "home.suggest"; directory: string; language?: string }
   /*
    * `preview`: the files tab's reading, as MiMo's readFileText has it - text over
    * 512 KiB or holding a NUL byte is refused, a video is named as one, and media
@@ -2105,17 +2103,6 @@ export interface FileHit {
   name: string
   rel: string
   dir: string
-}
-
-/* The marks a home suggestion can carry; anything else a model answers becomes "idea". */
-export const SUGGESTION_ICONS = ["code", "bug", "test", "doc", "chart", "idea"] as const
-export type SuggestionIcon = (typeof SUGGESTION_ICONS)[number]
-
-/* An example task on the home screen: its row title, and the request that goes into the box. */
-export interface HomeSuggestion {
-  title: string
-  query: string
-  icon: SuggestionIcon
 }
 
 export interface ResponseMap {
@@ -2238,8 +2225,6 @@ export interface ResponseMap {
   "file.defaultDir": { directory: string }
   /* The user message whose turn is being carried on. */
   "session.resume": { messageID: string }
-  /* `generated` is false when no model answered, and the list is then empty. */
-  "home.suggest": { suggestions: HomeSuggestion[]; generated: boolean }
   /**
    * One file, ready to show.
    *

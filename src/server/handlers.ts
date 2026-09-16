@@ -43,7 +43,6 @@ import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { revertTurnFiles } from "./session/turn-revert"
 import { turnFileDiffs } from "./session/turn-diff"
-import { suggestTasks } from "./home-suggest"
 import type { ShellOwner } from "./shell"
 
 type Handled<T extends Request["type"]> = ResponseMap[T]
@@ -1322,9 +1321,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     /* 继续: the interrupted last turn runs on, with no new message. */
     case "session.resume":
       return { messageID: await runtime.runner.resumeTurn(request.sessionID) } satisfies Handled<"session.resume">
-
-    case "home.suggest":
-      return (await suggestTasks(runtime, request.directory, request.language)) satisfies Handled<"home.suggest">
 
     case "file.read": {
       // MiMo's shape: a root and a path inside it. See file-access.ts for what may be read.

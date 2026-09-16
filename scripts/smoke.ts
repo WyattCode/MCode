@@ -186,7 +186,6 @@ import { filterMenu } from "../src/renderer/src/lib/menu"
 import { arbitratePanel, boundChord, clampSideWidth, sideFits, sideWidthMax, toolHints } from "../src/renderer/src/lib/right-tools"
 import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
 import { capDiff, normalizeLayout, parseDiffFiles, reviewRows, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
-import { forgetSuggestions, parseSuggestions } from "../src/server/home-suggest"
 import { interruptedTurn } from "../src/shared/resume"
 import { detectCodeLanguage, insertFence } from "../src/renderer/src/lib/paste-code"
 import {
@@ -5089,57 +5088,6 @@ async function main() {
     await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
     await call({ type: "config.set", patch: { providerEndpoints: {} } })
     flaky.close()
-  }
-
-  section("Home suggestions")
-  {
-    const rows = parseSuggestions(
-      'Here you go:\n```json\n[{"title":"Fix the login bug","query":"Find why login fails","icon":"bug"},{"title":"Add tests","query":"Cover run()","icon":"rocket"},{"title":"Fix the login bug","query":"again"},{"title":"No request"},{"title":"Write docs","query":"Document the API","icon":"doc"},{"title":"Fourth","query":"one too many"}]\n```',
-    )
-    check("three rows are read out of a fenced answer", rows.map((row) => row.title).join("|") === "Fix the login bug|Add tests|Write docs", rows)
-    check("an icon outside the set becomes idea", rows[1]?.icon === "idea", rows[1])
-    check("prose is no rows", parseSuggestions("Sorry, I can't help with that.").length === 0)
-    check("a broken array is no rows", parseSuggestions('[{"title": "x",').length === 0)
-
-    forgetSuggestions()
-    const asked: string[] = []
-    const answer = JSON.stringify([
-      { title: "整理 hello.ts", query: "把 hello.ts 里的常量整理成一个对象导出", icon: "code" },
-      { title: "补测试", query: "为 src/app.ts 的 run 写单元测试", icon: "test" },
-      { title: "写说明", query: "根据 AGENTS.md 写一份 README", icon: "doc" },
-    ])
-    const stub = createServer((request, response) => {
-      if ((request.url ?? "").includes("/models")) {
-        response.writeHead(200, { "content-type": "application/json" })
-        response.end(JSON.stringify({ data: [{ id: "qwen/qwen3.8-27b" }] }))
-        return
-      }
-      let raw = ""
-      request.on("data", (chunk) => (raw += chunk))
-      request.on("end", () => {
-        asked.push(raw)
-        response.writeHead(200, { "content-type": "text/event-stream" })
-        response.end(`data: ${JSON.stringify({ choices: [{ delta: { content: answer }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`)
-      })
-    })
-    await new Promise<void>((resolve) => stub.listen(8812, "127.0.0.1", resolve))
-    const modelBefore = (await call({ type: "config.get" })).config.model
-    await call({ type: "config.set", patch: { providerEndpoints: { lmstudio: "http://127.0.0.1:8812/v1" } } })
-    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "local" })
-    await call({ type: "config.set", patch: { model: { provider: "lmstudio", model: "qwen/qwen3.8-27b" } } })
-
-    const first = await call({ type: "home.suggest", directory: project, language: "zh-CN" })
-    check("the model's three tasks come back", first.generated === true && first.suggestions.length === 3 && first.suggestions[1]?.icon === "test", first)
-    check("the project listing and the language reach the model", asked.length === 1 && asked[0].includes("hello.ts") && asked[0].includes("zh-CN"), asked.length)
-    const second = await call({ type: "home.suggest", directory: project, language: "zh-CN" })
-    check("a second ask for the project is answered from memory", asked.length === 1 && second.suggestions.length === 3, asked.length)
-
-    await call({ type: "provider.auth", provider: "lmstudio", apiKey: "" })
-    const unusable = await call({ type: "home.suggest", directory: path.join(root, "another-project"), language: "en" })
-    check("with no usable model the area stays empty", unusable.generated === false && unusable.suggestions.length === 0, unusable)
-
-    await call({ type: "config.set", patch: { model: modelBefore, providerEndpoints: {} } })
-    stub.close()
   }
 
   section("Files tab requests (MiMo's tree, name search and preview reads)")
