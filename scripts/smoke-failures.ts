@@ -13,6 +13,7 @@ import type { SessionInfo } from "../src/shared/protocol"
 import { Snapshots } from "../src/server/session/snapshot"
 import { AutomationService } from "../src/server/automation/service"
 import { SessionStore } from "../src/server/session/store"
+import { SessionChat } from "../src/server/session/chat"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
@@ -493,6 +494,65 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     await early.scheduler.tick()
     check("a task whose next time is still ahead does not run early", early.fired.length === 0, early.fired)
     await early.scheduler.stop()
+  }
+
+  // ------------------------------------------------------------------- F9
+  section("Round 6 (F9): a message between conversations survives the quit")
+  {
+    const storageRoot = path.join(root, "chat-queue", "storage")
+    const storage = new Storage(storageRoot)
+    const bus = new Bus()
+    const store = new SessionStore(storage, bus)
+    const model = { provider: "p", model: "m" }
+    const first = await store.create({ directory: root, title: "Caller", model })
+    const second = await store.create({ directory: root, title: "Target", model })
+
+    const prompted: { sessionID: string; text: string }[] = []
+    let targetBusy = true
+    const turns = {
+      isRunning: (sessionID: string) => sessionID === second.id && targetBusy,
+      prompt: async (input: { sessionID: string; text: string }) => {
+        prompted.push(input)
+        return "msg_probe"
+      },
+      create: async () => first,
+    }
+    const queueFile = path.join(storageRoot, "chat-queue.json")
+
+    const chat = new SessionChat(store, bus, turns as never, 50, storage)
+    const sent = await chat.talk({ from: first.id, contactID: second.id, message: "PROBE please look", mode: "async" })
+    check("a message to a conversation that is working is queued", sent.status === "queued", sent)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const saved = await parsedOrNothing<{ entries?: { text?: string; state?: string }[] }>(queueFile)
+    check("and is written down rather than living only in memory", saved?.entries?.[0]?.text === "PROBE please look", saved)
+    check("with the state it was in", saved?.entries?.[0]?.state === "waiting", saved?.entries?.[0])
+
+    /* The app goes away here, and a later run reads what was in flight. */
+    targetBusy = false
+    const later = new SessionChat(store, bus, turns as never, 50, storage)
+    await later.restore()
+    check("a message that never started is delivered on the next run", prompted.some((entry) => entry.sessionID === second.id && entry.text === "PROBE please look"), prompted)
+
+    /* One that was already being worked on cannot be resumed: its caller is told. */
+    prompted.length = 0
+    await storage.write("chat-queue", {
+      entries: [{ target: second.id, targetTitle: "Target", from: first.id, fromTitle: "Caller", text: "PROBE was running", hop: 1, kind: "request", state: "running", at: Date.now() }],
+    })
+    const third = new SessionChat(store, bus, turns as never, 50, storage)
+    await third.restore()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    check("a message whose turn the app outlived comes back to its caller", prompted.some((entry) => entry.sessionID === first.id && entry.text.includes("No reply could be fetched")), prompted)
+    check("and says the app closed rather than blaming the other conversation", prompted.some((entry) => entry.text.includes("The app closed while the other session was working")), prompted)
+
+    /* A message older than a day is not delivered out of the blue. */
+    prompted.length = 0
+    await storage.write("chat-queue", {
+      entries: [{ target: second.id, targetTitle: "Target", from: first.id, fromTitle: "Caller", text: "PROBE stale", hop: 1, kind: "request", state: "waiting", at: Date.now() - 48 * 60 * 60 * 1000 }],
+    })
+    const fourth = new SessionChat(store, bus, turns as never, 50, storage)
+    await fourth.restore()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    check("a day-old message is left alone rather than sent out of the blue", !prompted.some((entry) => entry.text.includes("PROBE stale")), prompted)
   }
 
   // ------------------------------------------------------------------- F7

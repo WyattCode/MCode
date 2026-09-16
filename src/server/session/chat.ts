@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path"
 import type { AssistantMessage, ChatLink, ChatTaskStatus, Message, MessageSource, SessionInfo, TextPart } from "@shared/protocol"
 import type { Bus } from "../bus"
 import type { SessionStore } from "./store"
+import type { Storage } from "../storage"
 
 /*
  * session chat: one conversation messaging another, as MiMo's session-chat
@@ -67,6 +68,12 @@ export type ChatChange = { ok: true; session: SessionInfo } | { ok: false; error
 const SELF = "A session cannot message itself."
 const HOPS = `This chain of calls between sessions has reached its limit of ${CHAT_HOPS} hops, so it was refused to prevent a loop. Answer with what you already have instead of calling another session.`
 const GONE = "The target session no longer exists; it may have been deleted."
+/** What the caller is told about a message whose turn the app outlived. */
+const INTERRUPTED = "The app closed while the other session was working on this message, so no reply came back. Send it again if it still matters."
+/** Where the queue is kept between runs. */
+const QUEUE_KEY = "chat-queue"
+/** Older than this and a message is not delivered on a later start: it is no longer what anyone asked for. */
+const RESTORE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const TIMEOUT = `The target could not start on the message within ${CHAT_WAIT_MS / 1000}s. Try again later, or send it with mode "async".`
 
 interface Entry {
@@ -82,12 +89,27 @@ interface Entry {
   messageID?: string
   /** The sender was deleted: nothing to link back to and nowhere to deliver a reply. */
   fromGone?: boolean
+  /** When it joined the queue, so a restart can leave a stale message alone. */
+  at?: number
   /** A waiting call has had its answer, or there never was one waiting. */
   settled: boolean
   resolve?: (result: TalkResult) => void
   onReply?: (outcome: ChatOutcome) => void
   timer?: ReturnType<typeof setTimeout>
   release?: () => void
+}
+
+/** One queued message as it is kept on disk; the promises and timers a live entry holds cannot be. */
+interface StoredEntry {
+  target: string
+  targetTitle: string
+  from: string
+  fromTitle: string
+  text: string
+  hop: number
+  kind: "request" | "reply"
+  state: "waiting" | "running"
+  at: number
 }
 
 /** Who can be messaged: conversations the side column lists, not subagents, side chats or archived ones. */
@@ -146,6 +168,8 @@ export class SessionChat {
     private readonly bus: Bus,
     private readonly turns: ChatTurns,
     private readonly waitMs = CHAT_WAIT_MS,
+    /** Where the queue is kept, so a message in flight survives a quit. Absent in checks that do not need it. */
+    private readonly storage?: Storage,
   ) {
     bus.subscribe((event) => {
       if (event.type === "session.idle") void this.turnEnded(event.sessionID)
@@ -329,10 +353,89 @@ export class SessionChat {
     queueMicrotask(() => {
       this.announcing = false
       this.bus.publish({ type: "session.chatLinks", links: this.links() })
+      this.persist()
     })
   }
 
+  /**
+   * The queue as it stands, written where a later run can find it.
+   *
+   * The queue itself is memory - a waiting call cannot outlive the process it
+   * is waiting in - but the fact that a message was in flight can, and used to
+   * not: quit while B was answering and A's tool call died with the process,
+   * with nothing on disk to say a message had ever been sent. Both sides were
+   * left without a trace. Written from the one place every change already
+   * passes through.
+   */
+  private persist(): void {
+    if (!this.storage) return
+    const entries: StoredEntry[] = []
+    for (const queue of this.queues.values()) {
+      for (const entry of queue) {
+        entries.push({
+          target: entry.target,
+          targetTitle: entry.targetTitle,
+          from: entry.from,
+          fromTitle: entry.fromTitle,
+          text: entry.text,
+          hop: entry.hop,
+          kind: entry.kind,
+          state: entry.state,
+          at: entry.at ?? Date.now(),
+        })
+      }
+    }
+    void this.storage.write(QUEUE_KEY, { entries }).catch(() => undefined)
+  }
+
+  /**
+   * What was in flight when the app went away.
+   *
+   * A message that had not started yet is sent now - that is what the caller
+   * asked for, and nothing else would ever send it. One that was already being
+   * worked on cannot be resumed, so its caller is told, in the same marked
+   * message an unwaited-for reply would have arrived in. Anything older than a
+   * day is left alone: it is no longer what anyone meant to send.
+   */
+  async restore(): Promise<void> {
+    if (!this.storage) return
+    const saved = await this.storage.read<{ entries?: StoredEntry[] }>(QUEUE_KEY).catch(() => undefined)
+    const entries = (saved?.entries ?? []).filter((entry) => entry && typeof entry.text === "string" && entry.target && entry.from)
+    if (!entries.length) return
+    // Taken off the file first: a delivery that fails must not be tried again on every start.
+    await this.storage.write(QUEUE_KEY, { entries: [] }).catch(() => undefined)
+    const now = Date.now()
+    for (const stored of entries) {
+      if (now - (stored.at ?? 0) > RESTORE_MAX_AGE_MS) continue
+      const caller = await this.store.get(stored.from).catch(() => undefined)
+      if (stored.state === "running") {
+        if (caller && stored.kind === "request") {
+          await this.replyTo(stored.from, { id: stored.target, title: stored.targetTitle }, stored.hop, { ok: false, error: INTERRUPTED })
+        }
+        continue
+      }
+      const target = await this.store.get(stored.target).catch(() => undefined)
+      if (!target || !caller) continue
+      const peer = { id: target.id, title: target.title }
+      this.enqueue({
+        target: target.id,
+        targetTitle: target.title,
+        from: caller.id,
+        fromTitle: caller.title,
+        text: stored.text,
+        hop: stored.hop,
+        kind: stored.kind,
+        state: "waiting",
+        at: stored.at,
+        settled: true,
+        // Nobody is waiting on a promise any more, so the reply comes back as a message, as an async call's does.
+        ...(stored.kind === "request" ? { onReply: (outcome: ChatOutcome) => void this.replyTo(caller.id, peer, stored.hop, outcome) } : {}),
+      })
+    }
+  }
+
   private enqueue(entry: Entry): void {
+    entry.at ??= Date.now()
     const queue = this.queues.get(entry.target) ?? []
     queue.push(entry)
     this.queues.set(entry.target, queue)
