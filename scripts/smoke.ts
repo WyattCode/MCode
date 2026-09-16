@@ -287,6 +287,7 @@ import { roundSevenChecks } from "./smoke-round7"
 import { roundEightAccessChecks } from "./smoke-round8-access"
 // Round 8: the wording rules the eighteen language tables keep.
 import { wordingChecks } from "./smoke-wording"
+import { roundEightChecks } from "./smoke-round8"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -3752,7 +3753,12 @@ async function main() {
     const planPrompt = await systemPrompt({ directory: project, agent: "plan" })
     const buildPrompt = await systemPrompt({ directory: project, agent: "build" })
     check("plan is told what mode it is in", planPrompt.includes("plan mode"), planPrompt.slice(0, 80))
-    check("build is not", !buildPrompt.includes("plan mode"))
+    /*
+     * Round 8: the general agent prompt describes both modes, as MiMo's
+     * default prompt does, so "plan mode" appearing at all proves nothing. What
+     * build must not carry is the section that says it is planning.
+     */
+    check("build is not", !buildPrompt.includes("You are in plan mode") && !buildPrompt.includes("## Planning only"))
     // plan: the prompt says how planning ends and what it may write; the per-turn note carries the path.
     check("plan is told how the mode ends", planPrompt.includes("plan_exit"), planPrompt.slice(0, 200))
     check("and that one file is writable rather than that nothing is", planPrompt.includes("except this conversation's plan file") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
@@ -7085,6 +7091,7 @@ async function main() {
   await roundSevenChecks(check, section)
   await roundEightAccessChecks(check, section)
   wordingChecks(check, section)
+  await roundEightChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
@@ -7629,8 +7636,8 @@ async function skillChecks(root: string) {
     "skill and skill_search are offered, appended, and change nothing",
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
-      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
-      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name)) &&
+      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit, multiedit and speak) come after them.
+      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit", "multiedit", "speak"].includes(tool.name)) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
     TOOLS.map((tool) => tool.name),
@@ -8792,8 +8799,8 @@ async function sessionChatChecks(root: string, project: string) {
         // notebook_edit sits between the window tools and them.
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
-        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name))
+        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit, multiedit and speak) come after them.
+        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "multiedit", "speak"].includes(tool.name))
       )
     })(),
     TOOLS.map((tool) => tool.name),

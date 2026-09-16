@@ -168,7 +168,14 @@ export function firstPlanNote(plan: string, exists: boolean): string {
       : `- No plan file exists yet. Write your plan to ${plan} with the write tool.`,
     "- It is the only file you may write. Build the plan up as you go rather than leaving all of it to the end.",
     "",
-    "End this turn in one of two ways: ask the user what you need to know with the question tool, or - once the plan is written and nothing is left to ask - call plan_exit to put it to them for approval.",
+    "How to work through it",
+    "1. Understand the request. Read the code it touches. Send explore subagents for the looking - up to three, started together in one step, and usually one is enough. Use more only when the scope is genuinely unclear or several parts of the project are involved, and give each one its own area so they do not read the same files. Then put whatever is still ambiguous to the user with the question tool, before designing anything.",
+    "2. Design the approach. One general subagent, at most, to work an approach out against what stage 1 found; skip it for a change small enough that the design is obvious. Its prompt has to carry the background - the file paths, the call path you traced, the constraints and what the user actually asked for - because it starts knowing none of it. What comes back is a proposal, not a decision.",
+    "3. Review what you have. Read the files a subagent called critical yourself rather than trusting the summary, check the approach against what the user asked for rather than against what would be interesting to build, and ask them about anything still open.",
+    "4. Write the final plan into the plan file: the approach you recommend and not the alternatives you rejected, the paths of the files that would change, the order of the work, and a verification section saying how someone would check it end to end - which commands, which tests, what they should see. Short enough to scan, complete enough to carry out.",
+    "5. Call plan_exit.",
+    "",
+    "End this turn in one of two ways, and no other: ask the user what you need to know with the question tool, or - once the plan is written and nothing is left to ask - call plan_exit to put it to them for approval. Do not use the question tool to ask whether the plan is acceptable; that is what plan_exit is for.",
   ].join("\n")
 }
 

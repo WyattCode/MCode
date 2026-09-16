@@ -70,6 +70,8 @@ export const CronTool: ToolDefinition = {
     "- delete (or cancel): remove a job by id.",
     "- rename: replace a job's prompt.",
     'Examples: {"operation":{"action":"schedule","cron":"*/10 * * * *","prompt":"check the build"}} {"operation":{"action":"loop","delay_seconds":300,"prompt":"watch the deploy"}} {"operation":{"action":"delete","id":"a1b2c3d4"}}',
+    "Which to use: schedule for work that belongs to a time - every morning, every ten minutes, once at a named hour. loop for work that paces itself, where each run decides whether there is any point in the next one; a loop that is no longer needed is ended simply by not calling it again.",
+    "Write the prompt as an instruction to carry out, not as a note to yourself: the run that fires it starts from it and has none of this conversation's context, so name the project, the file or the command it is about.",
     "Tell the user the job id so they can cancel it; the list itself need not be repeated in your reply.",
   ].join("\n"),
   parameters: {

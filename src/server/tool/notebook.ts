@@ -44,8 +44,16 @@ function buildCell(type: string, source: string, id: string): NotebookCell {
 
 export const NotebookEditTool: ToolDefinition = {
   name: "notebook_edit",
-  description:
-    "Change one cell of a Jupyter notebook (.ipynb): replace its source, insert a new cell after it, or delete it. Name the cell by its id, or by its position as #N counting from 0. Replacing a code cell keeps its outputs.",
+  description: [
+    "Change one cell of a Jupyter notebook (.ipynb).",
+    "",
+    "- edit_mode replace (the default) puts new_source in place of the cell's source. A code cell keeps its outputs and its execution count, so the notebook still shows what was last run - which is also why the outputs on screen may no longer match the code.",
+    "- edit_mode insert adds a cell after cell_id, or as the first cell when cell_id is left out. cell_type is required here: code or markdown.",
+    "- edit_mode delete removes the cell, with its outputs.",
+    "",
+    "Name the cell by its id, or by position as `#N` counting from 0. Read the notebook first: ids are not the order, and the numbering shifts as soon as you insert or delete.",
+    "new_source is the cell's source as plain text, with real newlines - not the JSON array a notebook stores it as. Do not edit a .ipynb with the write or edit tools: they would have you rewrite the JSON by hand, and one mistake makes the notebook unopenable.",
+  ].join("\n"),
   permission: "edit",
   parameters: {
     type: "object",

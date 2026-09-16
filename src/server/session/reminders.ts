@@ -107,6 +107,44 @@ export function repeatNoteFor(text: string, used: number): string | undefined {
   return used === 0 ? REPEAT_NOTE : REPEAT_REPLAN_NOTE
 }
 
+/** How much new text is written before the monitor looks again; MiMo's own appends per delta. */
+export const LOOP_CHECK_CHARS = 400
+
+/** The finish reason a step carries when the stream was cut for repeating itself. */
+export const LOOP_FINISH = "text_loop"
+
+/** What the finished reply says when the same wording would not stop coming. */
+export const LOOP_ENDED = "The model repeated the same wording until the reply was stopped, twice over, and did not recover."
+export const LOOP_ENDED_CODE = "error.replyLoop"
+
+/**
+ * The monitor that watches a reply as it streams, so a loop is cut rather than
+ * paid for to the output limit.
+ *
+ * MiMo runs one over its own stream and ends it the moment it fires
+ * (`takeUntil(() => textNgramRepeat)`), which is the half MCode was missing:
+ * the same n-gram test was only applied once the reply had finished, so a model
+ * talking in circles wrote its full output budget first and was told to stop
+ * afterwards. Once it has fired it stays fired, and the text is only re-tested
+ * every `LOOP_CHECK_CHARS` characters - the test walks the tail on each call,
+ * and a delta is often a single token.
+ */
+export function createLoopMonitor(): { append(text: string): boolean } {
+  let buffer = ""
+  let checked = 0
+  let fired = false
+  return {
+    append(text: string): boolean {
+      if (fired) return true
+      buffer += text
+      if (buffer.length - checked < LOOP_CHECK_CHARS) return false
+      checked = buffer.length
+      fired = repeatsText(buffer)
+      return fired
+    },
+  }
+}
+
 /** One step's calls as a signature: each call's name and its input with keys sorted. */
 function signature(message: AssistantMessage): string {
   const stable = (value: unknown): unknown =>
