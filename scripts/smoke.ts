@@ -70,6 +70,8 @@ import { LIMIT_PRESETS, limitOf, validEndpoint } from "../src/renderer/src/lib/c
 import { mergeMcpSecrets } from "../src/server/mcp-save"
 // round 5: MCP names, folder, server messages, results, transports and sampling.
 import { McpRequestError, McpServers, mcpToolOutput, mcpToolSchema } from "../src/server/mcp"
+// round 6: MiMo's n-gram check on a reply that repeats its own wording.
+import { NGRAM_BLOCK, REPEAT_RECOVERIES, REPEAT_THRESHOLD, WINDOW_TOKENS, repeatNoteFor, repeatTokens, repeatsBlock, repeatsText } from "../src/server/session/reminders"
 import { createSampler, samplingPolicy, samplingRequest } from "../src/server/mcp-sampling"
 import type { McpServerConfig } from "../src/shared/protocol"
 import { ToolOutputs } from "../src/server/tool/truncate"
@@ -519,6 +521,36 @@ async function main() {
   check("a camelCase word matches by its parts", wordMatch("hardwareAcceleration", "accel") && wordMatch("MCPServers", "servers") && wordMatch("MCPServers", "mcp"))
   check("a Chinese query matches anywhere", wordMatch("硬件加速 GPU", "加速") && !wordMatch("硬件加速", "减速"))
   check("a settings query ignores case and an empty one matches all", wordMatch("GPU rendering", "gpu") && wordMatch("anything", "  "))
+
+  /*
+   * L1: MiMo's n-gram check on a reply that has fallen into repeating its own
+   * wording - a block of words repeated back to back inside the last window.
+   */
+  const looped = (times: number) => Array.from({ length: times }, () => "alpha beta gamma delta").join(" ")
+  check("a reply's words are folded to lower case and each CJK character is a word of its own", repeatTokens("Hi  There 你好").join("|") === "hi|there|你|好")
+  /* Written as the figures measured from MiMo, not as whatever the constants happen to say, so moving one is a failure rather than a new goalpost. */
+  check(
+    "the figures are the ones measured from MiMo: a block of 4 words, 20 repeats, a window of 500",
+    NGRAM_BLOCK === 4 && REPEAT_THRESHOLD === 20 && WINDOW_TOKENS === 500,
+    { NGRAM_BLOCK, REPEAT_THRESHOLD, WINDOW_TOKENS },
+  )
+  check("a block of 4 words repeated 20 times over is a repeat, and 19 times over is not", repeatsText(looped(20)) && !repeatsText(looped(19)))
+  check("the same word over and over is not, because the repeated block holds too few distinct words", !repeatsText("x ".repeat(REPEAT_THRESHOLD * NGRAM_BLOCK)))
+  check(
+    "how many distinct words the block must hold is what decides it",
+    repeatsBlock(repeatTokens(looped(REPEAT_THRESHOLD)), NGRAM_BLOCK, REPEAT_THRESHOLD, 4) &&
+      !repeatsBlock(repeatTokens(looped(REPEAT_THRESHOLD)), NGRAM_BLOCK, REPEAT_THRESHOLD, 5),
+  )
+  check(
+    `only the last ${WINDOW_TOKENS} words are looked at, so a repeat already left behind is not one`,
+    !repeatsText(`${looped(REPEAT_THRESHOLD)} ${Array.from({ length: WINDOW_TOKENS }, (_unused, at) => `w${at}`).join(" ")}`),
+  )
+  check(
+    "a repeating reply is told once, told again more firmly, and then left to finish",
+    repeatNoteFor(looped(REPEAT_THRESHOLD), 0) !== repeatNoteFor(looped(REPEAT_THRESHOLD), 1) &&
+      repeatNoteFor(looped(REPEAT_THRESHOLD), REPEAT_RECOVERIES) === undefined &&
+      repeatNoteFor("nothing repeats here at all", 0) === undefined,
+  )
 
   // The reconnecting row's reason: one line, or nothing at all.
   check("a retry's reason is drawn on one line", retryReason("  overloaded\n  try later ") === "overloaded try later")

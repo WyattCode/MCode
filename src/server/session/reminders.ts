@@ -28,6 +28,85 @@ export function repeatsCall(parts: readonly AssistantPart[], call: ToolPart): bo
   )
 }
 
+/**
+ * MiMo's text repetition check, as its engine runs one over a reply while it
+ * streams (`session/prompt/text-ngram-detection.ts`): a block of at least
+ * NGRAM_BLOCK words repeated REPEAT_THRESHOLD times back to back, within the
+ * last WINDOW_TOKENS words, is a model talking in circles. The block has to
+ * hold a few distinct words of its own, so a run of the same bullet or the
+ * same separator is not mistaken for one.
+ */
+export const NGRAM_BLOCK = 4
+export const REPEAT_THRESHOLD = 20
+export const WINDOW_TOKENS = 500
+const MIN_DISTINCT = 3
+
+/** How many times one turn is told to stop repeating before it is left to finish. */
+export const REPEAT_RECOVERIES = 2
+
+/** The words a reply is compared by: folded to lower case, with every CJK character a word of its own. */
+export function repeatTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/([　-ヿ㐀-䶿一-鿿豈-﫿＀-￯])/g, " $1 ")
+    .trim()
+    .split(" ")
+    .filter(Boolean)
+}
+
+/** Whether any block of `minBlockSize` words or more repeats `threshold` times in a row. */
+export function repeatsBlock(
+  tokens: readonly string[],
+  minBlockSize = NGRAM_BLOCK,
+  threshold = REPEAT_THRESHOLD,
+  minDistinct = MIN_DISTINCT,
+): boolean {
+  if (threshold < 2 || tokens.length < minBlockSize * threshold) return false
+  const maxPeriod = Math.floor(tokens.length / threshold)
+  for (let period = minBlockSize; period <= maxPeriod; period++) {
+    let run = 0
+    for (let at = 0; at <= tokens.length - period - 1; at++) {
+      if (tokens[at] !== tokens[at + period]) {
+        run = 0
+        continue
+      }
+      run++
+      if (run < period * (threshold - 1)) continue
+      const start = at - run + 1
+      if (new Set(tokens.slice(start, start + period)).size >= minDistinct) return true
+      run = 0
+    }
+  }
+  return false
+}
+
+/** Whether the end of a reply has fallen into repeating itself. */
+export function repeatsText(text: string): boolean {
+  const all = repeatTokens(text)
+  return repeatsBlock(all.length > WINDOW_TOKENS ? all.slice(-WINDOW_TOKENS) : all)
+}
+
+const REPEAT_NOTE = [
+  "Your last reply repeated the same wording over and over instead of moving on.",
+  "Stop repeating it: say the next thing in different words, make a different call, or say plainly what is blocking you.",
+].join(" ")
+
+const REPEAT_REPLAN_NOTE = [
+  "Your reply is repeating itself again, after being told once already.",
+  "The approach you are on is stuck. Say what you were trying to do, why it did not work, and what you will do instead - then do that, without reusing the wording from before.",
+].join(" ")
+
+/**
+ * What a repeating reply is answered with, in MCode's own words: one note the
+ * first time and a firmer one the second, as MiMo escalates its two, and
+ * nothing after that.
+ */
+export function repeatNoteFor(text: string, used: number): string | undefined {
+  if (used >= REPEAT_RECOVERIES || !repeatsText(text)) return undefined
+  return used === 0 ? REPEAT_NOTE : REPEAT_REPLAN_NOTE
+}
+
 /** One step's calls as a signature: each call's name and its input with keys sorted. */
 function signature(message: AssistantMessage): string {
   const stable = (value: unknown): unknown =>

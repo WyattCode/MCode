@@ -62,7 +62,7 @@ import { hasLinkedWorktrees, worktreeNotice, worktreeTop } from "./worktree"
 import type { ModelModalities } from "@shared/protocol"
 import { costOf } from "./usage"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, continuationFor, frameSteered, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
+import { LOOP_ANSWERS, continuationFor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { SessionChat, withChatHeaders } from "./chat"
@@ -1835,6 +1835,8 @@ export class SessionRunner {
     /* MiMo's continuations this turn: notes kept in the request after the reply they answer, and how many of each were used. */
     const notes = new Map<string, string[]>()
     const continued = { length: 0, textTool: 0, empty: 0 }
+    /* MiMo's n-gram check: how many times this turn has been told to stop repeating itself. */
+    let repeated = 0
     /* Files attached by path, read once for this turn. */
     const attachmentData: AttachmentCache = new Map()
     for (let step = 0; ; step++) {
@@ -2033,6 +2035,19 @@ export class SessionRunner {
         return
       }
 
+      /*
+       * MiMo's n-gram check: a reply that has fallen into repeating its own
+       * wording is told to change tack, twice at most. Request only, as the
+       * continuation notes are, and it never ends a turn by itself - a step
+       * that called tools carries on regardless.
+       */
+      const replied = assistant.parts.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("")
+      const repeatNote = repeatNoteFor(replied, repeated)
+      if (repeatNote) {
+        repeated += 1
+        notes.set(assistant.id, [...(notes.get(assistant.id) ?? []), repeatNote])
+      }
+
       const pending = assistant.parts.filter((part): part is ToolPart => part.type === "tool")
       if (outcome.stop !== "tool_use" || pending.length === 0) {
         const next = continuationFor(assistant, outcome.stop, outcome.finishReason, session.model.model, continued)
@@ -2044,7 +2059,7 @@ export class SessionRunner {
         assistant.finish = outcome.stop === "max_tokens" ? "max_tokens" : next.error ? "error" : "end_turn"
         assistant.time.completed = Date.now()
         await this.store.saveMessage(assistant)
-        if (next.note && !lastStep) {
+        if ((next.note || repeatNote) && !lastStep) {
           if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
           continue
         }
