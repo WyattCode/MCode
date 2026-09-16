@@ -1452,9 +1452,10 @@ export interface AppConfig {
    */
   importOnboarded: boolean
   /**
-   * MiMo's 标题生成模型: which model names a conversation after its first
-   * message. Absent - and MiMo's 跟随当前模型 - is the conversation's own model,
-   * which is also where an unusable choice falls back to.
+   * Which model names a conversation after its first message - MiMo's engine
+   * `small_model`, and like it set only in the config file: MiMo's settings
+   * have no row for it. Absent is the conversation's own model, which is also
+   * where an unusable choice falls back to.
    */
   titleModel?: ModelRef
   /** OpenAI-compatible providers the user added by base URL. */

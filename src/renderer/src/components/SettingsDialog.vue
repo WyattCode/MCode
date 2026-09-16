@@ -93,28 +93,6 @@ const section = computed<Section>({
 const { options: openOptions, choice: openChoice, choose: chooseOpen } = useOpenWith(() => app.platform)
 
 /*
- * MiMo's 标题生成模型: 跟随当前模型, then every model a connected provider
- * offers. Naming a cheap model here keeps the one title request a new
- * conversation makes off the working model.
- */
-const titleModelOptions = computed(() => [
-  { value: "", label: t("set.titleModelFollow") },
-  ...app.providers
-    .filter((provider) => provider.configured)
-    .flatMap((provider) => provider.models.map((model) => ({ value: `${provider.id}/${model.id}`, label: `${model.name} · ${provider.name}` }))),
-])
-
-const titleModelValue = computed(() => {
-  const chosen = app.config?.titleModel
-  return chosen ? `${chosen.provider}/${chosen.model}` : ""
-})
-
-function chooseTitleModel(value: string) {
-  const cut = value.indexOf("/")
-  void app.patchConfig({ titleModel: cut > 0 ? { provider: value.slice(0, cut), model: value.slice(cut + 1) } : undefined })
-}
-
-/*
  * Standing instructions are edited in a box and saved on purpose rather than
  * on every keystroke: this text goes into the prompt of every session, and a
  * half-typed sentence saved mid-word would reach the next turn.
@@ -1880,15 +1858,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :model-value="app.config?.language ?? ''"
                 @update:model-value="app.patchConfig({ language: $event })"
               />
-            </div>
-
-            <!-- MiMo's 标题生成模型: which model writes a conversation's title, falling back to the working one. -->
-            <div class="line" data-title-model-row>
-              <div class="line-text">
-                <div class="line-title">{{ t("set.titleModel") }}</div>
-                <div class="line-sub">{{ t("set.titleModelSub") }}</div>
-              </div>
-              <SelectMenu :model-value="titleModelValue" :options="titleModelOptions" :width="240" @update:model-value="chooseTitleModel($event)" />
             </div>
 
             <!-- MiMo's 显示服务器, Linux only: 自动 names the backend in use; a change takes a restart. -->

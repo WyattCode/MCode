@@ -140,4 +140,14 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const old = await loaded({ openTabs: ["a", "b"] })
     check("a stored tab list is dropped on load", !("openTabs" in (old.config.get() as object)) && !("openTabs" in (await old.disk())))
   }
+
+  section("Round 9 (S9-4): the title model is a config-file key, with no row")
+  {
+    const dialog = read("src/renderer/src/components/SettingsDialog.vue")
+    check("the settings draw no title model row", !/titleModel|data-title-model-row|set\.titleModel/.test(dialog))
+    check("its three strings are gone from every table", !/"set\.titleModel/.test(read("src/renderer/src/lib/i18n.ts")))
+    check("while the engine still reads the key", /this\.config\.get\(\)\.titleModel/.test(read("src/server/session/runner.ts")))
+    const kept = await loaded({ titleModel: { provider: "p", model: "small" } })
+    check("and a stored choice is kept", kept.config.get().titleModel?.model === "small")
+  }
 }
