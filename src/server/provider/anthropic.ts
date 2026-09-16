@@ -8,6 +8,7 @@ import { anthropicAdaptive, anthropicOpus45 } from "./variants"
 import { guarded, stallGuard } from "./stall"
 import { costOf } from "../session/usage"
 import { requestHistory } from "./history"
+import { schemaFor } from "./tool-schema"
 
 /**
  * A Messages client, for Anthropic itself or a gateway that speaks its API.
@@ -27,11 +28,12 @@ export function createClient(apiKey: string, maxRetries = 2, baseURL?: string, h
   })
 }
 
-export function toolSchemas(tools: ToolDefinition[]): Anthropic.Tool[] {
+function toolSchemas(tools: ToolDefinition[], model: ModelRef): Anthropic.Tool[] {
   return tools.map((tool) => ({
     name: tool.name,
     description: tool.description,
-    input_schema: tool.parameters as Anthropic.Tool.InputSchema,
+    // A Kimi or Gemini model reached over this protocol still wants its family's schema shape.
+    input_schema: schemaFor(model, tool.parameters) as Anthropic.Tool.InputSchema,
   }))
 }
 
@@ -191,8 +193,16 @@ export function reasoningRequest(
   maxTokens: number,
   outputLimit = maxTokens,
 ): AnthropicReasoning {
-  if (variants && !variants.includes(effort)) return {}
   const id = model.toLowerCase()
+  if (variants && !variants.includes(effort)) {
+    /*
+     * Kimi K2.5 takes no effort level, but MiMo turns its thinking on over this
+     * protocol anyway, with the high budget (`transform.options`). The field
+     * is the API's own shape; `display` is Anthropic's and is left off.
+     */
+    const kimi = ["k2p5", "kimi-k2.5", "kimi-k2p5"].some((mark) => id.includes(mark))
+    return kimi ? { thinking: { type: "enabled", budget_tokens: budget("high", outputLimit, maxTokens) } } : {}
+  }
   /*
    * The reference sets `display: "summarized"` on 4.7-and-later and leaves the
    * field off 4.6, where the API's own default is summarized anyway. Setting it
@@ -253,7 +263,7 @@ export function messagesRequest(request: TurnRequest): MessagesBody {
   const wanted = request.maxOutput ?? MAX_TOKENS
   const maxTokens = limit ? Math.min(wanted, limit) : wanted
   const mark: CacheMark = { type: "ephemeral", ...(request.cacheTTL === "1h" ? { ttl: "1h" as const } : {}) }
-  const tools = toolSchemas(request.tools)
+  const tools = toolSchemas(request.tools, request.model)
   if (tools.length) tools[tools.length - 1] = { ...tools[tools.length - 1]!, cache_control: mark }
   const messages = toProviderMessages(request.history, request.inputs, request.model)
   for (const message of messages.slice(-2)) markLast(message, mark)
