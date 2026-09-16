@@ -66,8 +66,21 @@ export function closestMatch(content: string, find: string): string | undefined 
 
 export const WriteTool: ToolDefinition = {
   name: "write",
-  description:
-    "Write a complete file, creating it or replacing its contents. Prefer the edit tool for changes to an existing file - write replaces everything and is easy to get wrong on a file you have not read.",
+  description: [
+    "Write a file: create it, or replace everything that was in it.",
+    "",
+    "Before using it",
+    "- On a file that already exists, read it first. write replaces the whole file, so anything you did not know was there is gone.",
+    "- For a change to part of a file, use edit instead. Rewriting a file wholesale to change three lines loses whatever you had not noticed and makes the change unreadable to the user.",
+    "- For a Jupyter notebook (.ipynb), use notebook_edit: writing the JSON by hand loses outputs and cell ids.",
+    "",
+    "Writing it",
+    "- file_path is absolute, or relative to the project root. Missing folders on the way to it are created.",
+    "- content is the file as it should end up, in full, with the line endings and final newline the rest of the project uses.",
+    "- Write only the files the work needs. Do not add a README, a summary of what you did, a licence header or a test file nobody asked for.",
+    "- Follow the project's own conventions - imports, naming, formatting - rather than the ones you would choose on a blank page. Read a file beside it first when you are not sure what they are.",
+    "The result is a diff of what changed, and the user sees it; there is no need to repeat the file back in your reply.",
+  ].join("\n"),
   permission: "write",
   parameters: {
     type: "object",
@@ -116,8 +129,24 @@ export const WriteTool: ToolDefinition = {
 
 export const EditTool: ToolDefinition = {
   name: "edit",
-  description:
-    "Replace exact text in a file. old_string has to appear exactly once unless replace_all is set - include enough surrounding lines to make it unique, and quote it as the read tool showed it, without the `N: ` line prefix. An empty old_string writes new_string as the whole file, creating it if needed.",
+  description: [
+    "Replace one exact piece of text in a file with another.",
+    "",
+    "Before using it",
+    "Read the file first, in this conversation. The text you quote has to match the file byte for byte, and a file you have not read is one you are quoting from memory.",
+    "",
+    "Quoting old_string",
+    "- Copy it from the read tool's output with the `N: ` line-number prefix removed. The number and colon are the tool's, not the file's.",
+    "- Keep the indentation exactly as it is - tabs where the file has tabs - and do not normalise whitespace or line endings.",
+    "- It has to appear exactly once in the file. If it does not, the call fails and nothing is written: take more of the surrounding lines until the quote is unique, rather than guessing.",
+    "- Set replace_all to change every occurrence instead. That is the way to rename a symbol through a file; it is the wrong way to change one of several similar-looking lines.",
+    "",
+    "What it does",
+    "- new_string has to differ from old_string, and is written exactly as given - it is not reindented for you.",
+    "- An empty old_string writes new_string as the whole file, creating it when it is not there. Use write for that instead unless you are creating a small file in passing.",
+    "- One call changes one place in one file. Several changes to the same file are several calls, each quoting what the file looks like after the ones before it.",
+    "- The result is a diff, and the user sees it. Do not paste the changed lines back into your reply.",
+  ].join("\n"),
   permission: "edit",
   parameters: {
     type: "object",
