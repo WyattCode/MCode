@@ -11,6 +11,8 @@ export type OfficeVersionResult = { ok: true; state: OfficeVersionState } | { ok
 export interface UpdateStatus {
   phase: "idle" | "checking" | "downloading" | "ready"
   ready: { version: string; notes: string } | null
+  /** MiMo's update transaction: the last install did not finish. Given once. */
+  interrupted?: { targetVersion: string; error: string }
 }
 
 /**
@@ -137,8 +139,8 @@ const api = {
    */
   updateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke("mcode:update-status"),
 
-  /** MiMo's updateCheckNow: checks now, downloading a newer installer, and answers how it went. */
-  updateCheckNow: (): Promise<UpdateStatus & { outcome: "no-feed" | "current" | "no-installer" | "ready" | "failed" | "busy"; version?: string; error?: string; during?: "check" | "download" }> =>
+  /** MiMo's updateCheckNow: checks now, downloading and verifying a newer installer, and answers how it went. */
+  updateCheckNow: (): Promise<UpdateStatus & { outcome: "no-feed" | "current" | "ready" | "failed" | "busy"; version?: string; error?: string; during?: "check" | "download" }> =>
     ipcRenderer.invoke("mcode:update-check"),
 
   /** Every phase change of the updater; `ready` names the downloaded version (MiMo's updateReady). */
@@ -149,7 +151,7 @@ const api = {
   },
 
   /**
-   * Runs the installer that was fetched, and quits.
+   * Quits and, once the backend has closed, runs the installer that was fetched and verified.
    *
    * Takes no path: the window asks to install what was downloaded, and the main
    * process is the only thing that knows what that was.

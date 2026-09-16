@@ -75,9 +75,82 @@ export function readTaskNotice(raw: unknown): TaskNotice {
   }
 }
 
-/** MiMo's title: "project · conversation", or whichever exists, cut at 40; the app name when neither does. */
-export function noticeTitle(appName: string, notice: { title?: string; project?: string }): string {
-  const fallback = appName.trim() || "MCode"
+interface Box {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** What window.json holds: the normal bounds and whether the window was maximised. Never full screen, as MiMo. */
+export interface SavedWindow {
+  bounds: Box
+  maximized: boolean
+}
+
+/**
+ * window.json as read back. A `fullScreen` an earlier release wrote is ignored:
+ * MiMo never reopens full screen, where Windows shows no caption buttons.
+ */
+export function readSavedWindow(raw: unknown): SavedWindow | undefined {
+  const value = raw && typeof raw === "object" ? (raw as { bounds?: Partial<Box>; maximized?: unknown }) : undefined
+  const { x, y, width, height } = value?.bounds ?? {}
+  if (![x, y, width, height].every((side) => Number.isFinite(side))) return undefined
+  return { bounds: { x: x!, y: y!, width: width!, height: height! }, maximized: value?.maximized === true }
+}
+
+/**
+ * How far the measured window may sit from what was asked for before it counts
+ * as the user having resized it. Restoring bounds does not reproduce them
+ * exactly - fractional display scaling rounds the round-trip by a pixel or three -
+ * and saving the measured value fed that error back in, so the window grew a
+ * little on every launch.
+ */
+export const WINDOW_JITTER = 4
+
+/**
+ * MiMo's save rule: nothing is written for a minimised or full-screen window -
+ * what is on disk from before stands - and otherwise the normal bounds and the
+ * maximised flag. `baseline` is what is on disk; a measurement within the jitter
+ * of it keeps it. Undefined means "write nothing".
+ */
+export function windowStateToSave(
+  window: { minimized: boolean; fullScreen: boolean; maximized: boolean; normalBounds: Box },
+  baseline: Box,
+): SavedWindow | undefined {
+  if (window.minimized || window.fullScreen) return undefined
+  const measured = window.normalBounds
+  const settled = (["x", "y", "width", "height"] as const).every((side) => Math.abs(measured[side] - baseline[side]) <= WINDOW_JITTER)
+  return { bounds: settled ? { ...baseline } : { ...measured }, maximized: window.maximized }
+}
+
+/**
+ * The product name the tray and notifications show. A constant, as MiMo's tray
+ * uses its brand constant: `app.getName()` is whatever the running package.json
+ * says, which for an unpackaged run is not the product at all.
+ */
+export const APP_NAME = "MCode"
+
+/**
+ * The profile folder under the OS application-data folder: `mcode`, the name
+ * every MCode release has used. Electron derives its default from the product
+ * name, which is now `MCode`; on Windows and a default macOS volume the two
+ * spellings are one folder, but Linux (and a case-sensitive macOS volume) would
+ * start an empty profile beside the old one. So the default is pinned back to
+ * the old folder - and only the default: a profile chosen on purpose
+ * (`--user-data-dir`, or `app.setPath` before the main module runs) is left
+ * alone. Returns the folder to set, or undefined to leave userData as it is.
+ */
+export const PROFILE_FOLDER = "mcode"
+export function pinnedProfile(current: string, appData: string, appName: string, join: (...parts: string[]) => string): string | undefined {
+  if (current !== join(appData, appName)) return undefined
+  const pinned = join(appData, PROFILE_FOLDER)
+  return pinned === current ? undefined : pinned
+}
+
+/** MiMo's title: "project · conversation", or whichever exists, cut at 40; the product name when neither does. */
+export function noticeTitle(notice: { title?: string; project?: string }): string {
+  const fallback = APP_NAME
   const title = (notice.title ?? "").trim()
   const project = (notice.project ?? "").trim()
   const joined = project && title ? `${project} · ${title}` : title || project

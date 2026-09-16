@@ -8,6 +8,13 @@ aliases:
 
 # Spreadsheets
 
+**Which Python.** When the `MCODE_PYTHON` environment variable is set, use that
+interpreter wherever this skill says `python`: `"$MCODE_PYTHON" scripts/...` in
+bash, `& $env:MCODE_PYTHON scripts/...` in PowerShell. MCode ships it with
+python-docx, python-pptx, openpyxl, pandas, pypdf, pypdfium2, reportlab, lxml and
+Pillow installed, so the install checks below can be skipped. It has no pip
+console scripts; run tools as modules (`-m`).
+
 Read a workbook before changing it, keep calculations as formulas, and check the
 file you produce.
 

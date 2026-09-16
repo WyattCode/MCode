@@ -19,8 +19,12 @@ extraResources:
   - from: resources/soundfont
     to: soundfont
 
+# The three build outputs only: the checks bundle themselves into out/ too
+# (smoke.mjs and friends, about 11 MB), and those are not part of the app.
 files:
-  - out/**/*
+  - out/main/**/*
+  - out/preload/**/*
+  - out/renderer/**/*
   - package.json
 # The backend runs in the main process, so only its runtime deps ship.
 # node-pty is the one native dependency. Its .node binaries, and the
@@ -39,18 +43,47 @@ win:
     - nsis
   icon: build/icon.ico
   artifactName: ${productName}-${version}-${arch}.${ext}
+  # MiMo's bundled runtimes - Node.js, Python with its document libraries,
+  # ripgrep - placed and verified by scripts/runtimes.mjs before a Windows
+  # package build; the main process names them to child processes
+  # (src/main/runtimes.ts). Windows x64 only for now.
+  extraResources:
+    - from: resources/runtimes/win32-x64
+      to: runtimes/win32-x64
+      filter:
+        - "**/*"
+        - "!.mcode-runtimes.json"
 
+# MiMo's installer: one click, for the current user, no pages. A first install
+# goes to %LOCALAPPDATA%\Programs\MCode; an existing per-user install (its folder
+# is in HKCU) is upgraded where it is. build/installer.nsh adds the folder name
+# and what an uninstall also removes (the mcode: link handler, the updater cache).
 nsis:
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+  oneClick: true
+  perMachine: false
+  include: build/installer.nsh
   installerIcon: build/icon.ico
-  uninstallerIcon: build/icon.ico
   # Shown in Add/Remove Programs.
+  uninstallerIcon: build/icon.ico
+  # Above the one-click progress bar.
   installerHeaderIcon: build/icon.ico
+
+# electron-updater (src/main/updater.ts) reads app-update.yml beside the asar
+# for its cache folder name (mcode-updater), and a release needs the latest.yml
+# and .blockmap electron-builder writes beside the installer. Neither needs a
+# real address: MCode has no update server yet, so the feed is set at run time
+# from the settings row (or MCODE_UPDATE_URL), and this one is a reserved name
+# that can never resolve. Nothing is ever uploaded (package.mjs passes
+# --publish never).
+publish:
+  provider: generic
+  url: https://updates.invalid/mcode/
 
 mac:
   target:
     - dmg
+    # electron-updater replaces a macOS app from the zip (and needs the app signed).
+    - zip
   icon: build/icon.icns
   category: public.app-category.developer-tools
 
