@@ -22,17 +22,21 @@ import { EditTool, WriteTool } from "../src/server/tool/edit"
 import { ReadTool } from "../src/server/tool/read"
 import { BashTool } from "../src/server/tool/bash"
 import { NotebookEditTool } from "../src/server/tool/notebook"
-import { appDataRefusal } from "../src/server/tool/app-data"
+import { appDataRefusal, protectAppData } from "../src/server/tool/app-data"
 import { handle } from "../src/server/handlers"
 import type { Request } from "../src/shared/protocol"
 import { OFFICE_BYTES_LIMIT, OFFICE_SCHEMAS, officeRefusal } from "../src/main/office-guard"
-import { protectAppData } from "../src/server/tool/app-data"
 import { MASK, redactCommand, redactString } from "../src/shared/mcp-redact"
 import { scanMcpImports } from "../src/server/mcp-import"
 import { redactSecrets } from "../src/main/log-file"
 import { renderReply } from "../src/renderer/src/lib/markdown"
 import { linkOnlyCard } from "../src/shared/media-platform"
 import { enrichMedia } from "../src/renderer/src/lib/media-embed"
+import { scanCommand, simpleCommands } from "../src/server/tool/bash-scan"
+import { Permissions, namesAskingFile } from "../src/server/permission"
+import { Storage } from "../src/server/storage"
+import { Bus } from "../src/server/bus"
+import { Config } from "../src/server/config"
 
 type Section = (name: string) => void
 
@@ -77,6 +81,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
     await officeChannelChecks(check, section, root)
     await maskingChecks(check, section, root)
     await egressChecks(check, section, root)
+    await approvalChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -600,4 +605,77 @@ async function egressChecks(check: Check, section: Section, root: string): Promi
     check("a new profile has the lookups on", backend.runtime.config.get().videoCardDetails !== false)
     await backend.close()
   }
+}
+
+
+// --------------------------------------------------------------- X6, X7
+async function approvalChecks(check: Check, section: Section, root: string): Promise<void> {
+  section('Round 8 (X6): an "always" keeps no more than was approved')
+  const project = path.join(root, "x6-project")
+  await fs.mkdir(project, { recursive: true })
+  const alwaysOf = async (command: string) => (await scanCommand(command, project, project, false)).always
+  check("an interpreter's always keeps its script", (await alwaysOf("node build.js --prod")).join() === "node build.js *", await alwaysOf("node build.js --prod"))
+  check("inline code is remembered only exactly", (await alwaysOf('node -e "console.log(1)"')).join() === 'node -e "console.log(1)"', await alwaysOf('node -e "console.log(1)"'))
+  check("so is python -c", (await alwaysOf("python -c 'print(1)'")).join() === "python -c 'print(1)'")
+  check("inline code holding a wildcard character is not remembered at all", (await alwaysOf('node -e "a*b"')).length === 0)
+  check("MiMo's arities are unchanged elsewhere", (await alwaysOf("npm run build")).join() === "npm run build *" && (await alwaysOf("myscript a")).join() === "myscript *")
+
+  const dataRoot = path.join(root, "x6-data")
+  const storage = new Storage(path.join(dataRoot, "storage"))
+  const bus = new Bus()
+  const config = new Config(storage, bus, path.join(dataRoot, "credentials.json"))
+  await storage.write("config", {})
+  await config.load()
+  await config.set({ accessLevel: "ask", permissions: { bash: "ask" } })
+  const gate = new Permissions(bus, config)
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 20))
+  const settle = async (running: Promise<string>, answer: "always" | "reject") => {
+    await pause()
+    const parked = gate.outstanding()[0]
+    if (parked) gate.respond(parked.id, answer)
+    return { asked: Boolean(parked), outcome: await running }
+  }
+  const attempt = (sessionID: string, subject: string, patterns: string[], always: string[], patternAsks = false) =>
+    gate
+      .ask({ sessionID, messageID: "m", callID: `c${Math.random()}`, kind: "bash", title: "t", subject, patterns, always, directory: project, patternAsks })
+      .then(
+        () => "allowed",
+        (err: Error) => `refused: ${err.message.slice(0, 30)}`,
+      )
+  const ask = async (sessionID: string, command: string, answer: "always" | "reject") => {
+    const scan = await scanCommand(command, project, project, false)
+    return settle(attempt(sessionID, command, scan.patterns, scan.always, namesAskingFile(command)), answer)
+  }
+  await ask("ses_x6", "node build.js", "always")
+  const again = await ask("ses_x6", "node build.js --watch", "reject")
+  check("the approved script runs again unasked", !again.asked && again.outcome === "allowed", again)
+  const payload = await ask("ses_x6", "node -e \"require('child_process').exec('calc')\"", "reject")
+  check("but node -e with anything in it is asked", payload.asked, payload)
+
+  // A background subagent and a remembered prefix.
+  await settle(attempt("ses_x6", "xargs echo", ["xargs echo"], ["xargs *"]), "always")
+  gate.markBackground("ses_bg", "ses_x6")
+  const risky = await settle(attempt("ses_bg", "xargs rm -rf .", ["xargs rm -rf ."], ["xargs *"]), "reject")
+  check("a background subagent does not ride a remembered prefix into a dangerous command", !risky.asked && risky.outcome.startsWith("refused"), risky)
+  const benign = await settle(attempt("ses_bg", "node build.js", ["node build.js"], ["node build.js *"]), "reject")
+  check("...while an ordinary remembered command still runs there", benign.outcome === "allowed", benign)
+  gate.markBackground("ses_bg", undefined)
+
+  section("Round 8 (X7): the read-only allowlist no longer reads past the project or into .env")
+  const outside = path.join(root, "x7-outside")
+  await fs.mkdir(outside, { recursive: true })
+  const grep = await scanCommand(`grep -r token "${outside}"`, project, project, false)
+  check("grep naming a folder outside the project puts it up for the outside question", grep.dirs.some((dir) => path.resolve(dir) === path.resolve(outside)), grep.dirs)
+  const typed = await scanCommand(`Get-Content "${path.join(outside, "id_rsa")}"`, project, project, true)
+  check("so does a PowerShell read", typed.dirs.some((dir) => path.resolve(dir) === path.resolve(outside)), typed.dirs)
+  check("a head of a file inside the project asks nothing extra", (await scanCommand("head -n 5 src/app.ts", project, project, false)).dirs.length === 0)
+  check("a .env named on a command line is recognised", namesAskingFile("type .env") && namesAskingFile('cat "C:\\p\\.env.local"') && !namesAskingFile("cat .env.example") && !namesAskingFile("cat notes.md"))
+  const envRead = await ask("ses_x7", "cat .env", "reject")
+  check("reading .env through the allowlist is asked", envRead.asked, envRead)
+  const plainRead = await ask("ses_x7", "cat README.md", "reject")
+  check("reading an ordinary file through it is not", !plainRead.asked && plainRead.outcome === "allowed", plainRead)
+  await config.set({ accessLevel: "auto" })
+  const autoEnv = await ask("ses_x7b", "cat .env", "reject")
+  check("at the middle level a .env on the command line is not waved through", autoEnv.outcome !== "allowed", autoEnv)
+  check("the command parser still reads the line the same way", simpleCommands("cat .env", false)[0]?.tokens.join(" ") === "cat .env")
 }

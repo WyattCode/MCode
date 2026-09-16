@@ -37,6 +37,13 @@ const CWD = new Set(["cd", "push-location", "set-location"])
 const FILES = new Set([
   ...CWD, "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat",
   "get-content", "set-content", "add-content", "copy-item", "move-item", "remove-item", "new-item", "rename-item",
+  /*
+   * The read-only allowlist runs these without a question, so their file
+   * arguments have to be looked at too, or `grep -r . ~/.ssh` would read past
+   * the project with nothing asked (round 8, X7).
+   */
+  "head", "tail", "wc", "grep", "rg", "type", "stat", "file", "tree", "du", "ls", "dir", "less", "more", "findstr",
+  "select-string", "get-item", "get-childitem", "test-path", "resolve-path", "gc", "gci", "sls",
 ])
 /** PowerShell parameters that take a path next, and switches that take nothing. */
 const PATH_FLAGS = new Set(["-destination", "-literalpath", "-path"])
@@ -224,6 +231,43 @@ export function arityPrefix(tokens: string[]): string[] {
     if (arity !== undefined) return tokens.slice(0, arity)
   }
   return tokens.slice(0, 1)
+}
+
+/*
+ * Interpreters, and the flags that hand them code on the command line.
+ *
+ * The arity table keeps one word for a command it does not list, so a single
+ * "always" for `node build.js` used to save `node *` - and with it every
+ * `node -e "<anything>"` after. An interpreter's "always" keeps its script as
+ * well, and a line that carries its code inline is remembered only exactly as
+ * it was approved.
+ */
+const INTERPRETERS = new Set([
+  "node", "nodejs", "python", "python3", "py", "perl", "ruby", "php", "deno", "bun", "bash", "sh", "zsh", "dash", "fish",
+  "pwsh", "powershell", "cmd", "osascript", "lua", "rscript", "tsx", "ts-node",
+])
+const INLINE_FLAGS = new Set([
+  "-e", "-p", "-c", "-r", "--eval", "--print", "-command", "/c", "/k", "-encodedcommand", "-enc", "-ec", "eval",
+])
+
+const programName = (token: string) => (token.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.(exe|cmd|bat)$/, "")
+
+/** Whether a command runs code written on its own command line, rather than a named script. */
+export function runsInlineCode(tokens: string[]): boolean {
+  if (!INTERPRETERS.has(programName(tokens[0] ?? ""))) return false
+  return tokens.slice(1).some((token) => INLINE_FLAGS.has(token.toLowerCase()) || /^-(?:e|c|p)\S/.test(token) || /^--eval=/.test(token))
+}
+
+/**
+ * What an "always" for this command keeps: MiMo's arity prefix, narrowed for
+ * interpreters; undefined when nothing can be kept safely - inline code holding
+ * `*` or `?`, which a saved rule would read as wildcards.
+ */
+export function rememberedPattern(tokens: string[], source: string): string | undefined {
+  if (runsInlineCode(tokens)) return /[*?]/.test(source) ? undefined : source.trim()
+  const prefix = arityPrefix(tokens)
+  if (prefix.length === 1 && INTERPRETERS.has(programName(tokens[0] ?? "")) && tokens[1]) return `${tokens.slice(0, 2).join(" ")} *`
+  return `${prefix.join(" ")} *`
 }
 
 const headOf = (tokens: string[], powershell: boolean) => (powershell ? tokens[0]?.toLowerCase() : tokens[0])
@@ -482,6 +526,8 @@ export interface BashScan {
   tempOnlyDeletes: boolean
   /** Folders outside the project that file commands name. */
   dirs: string[]
+  /** Every file or folder a file command names, inside the project or not. */
+  files: string[]
 }
 
 export async function scanCommand(command: string, cwd: string, project: string, powershell: boolean): Promise<BashScan> {
@@ -489,12 +535,14 @@ export async function scanCommand(command: string, cwd: string, project: string,
   const always = new Set<string>()
   const deletes = new Set<string>()
   const dirs = new Set<string>()
+  const files = new Set<string>()
   let tempOnly = true
   for (const { tokens, source } of simpleCommands(command, powershell)) {
     const head = headOf(tokens, powershell)
     if (head && FILES.has(head)) {
       for (const arg of pathArgs(tokens, powershell)) {
         const resolved = argPath(arg, cwd, powershell)
+        if (resolved) files.add(resolved)
         if (!resolved || inside(project, resolved)) continue
         const isDir = await fs.stat(resolved).then((stat) => stat.isDirectory(), () => false)
         dirs.add(isDir ? resolved : path.dirname(resolved))
@@ -502,7 +550,8 @@ export async function scanCommand(command: string, cwd: string, project: string,
     }
     if (!head || !CWD.has(head)) {
       patterns.add(source)
-      always.add(`${arityPrefix(tokens).join(" ")} *`)
+      const remembered = rememberedPattern(tokens, source)
+      if (remembered) always.add(remembered)
     }
     if (isDelete(tokens, powershell)) {
       deletes.add(source)
@@ -514,5 +563,5 @@ export async function scanCommand(command: string, cwd: string, project: string,
       }
     }
   }
-  return { patterns: [...patterns], always: [...always], deletes: [...deletes], tempOnlyDeletes: deletes.size > 0 && tempOnly, dirs: [...dirs] }
+  return { patterns: [...patterns], always: [...always], deletes: [...deletes], tempOnlyDeletes: deletes.size > 0 && tempOnly, dirs: [...dirs], files: [...files] }
 }

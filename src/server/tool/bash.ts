@@ -4,6 +4,7 @@ import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
 import { guardAppData } from "./app-data"
+import { namesAskingFile } from "../permission"
 import { collectMutationTargets, scanCommand } from "./bash-scan"
 import { mainWorktreeRoots } from "../session/worktree"
 
@@ -343,6 +344,8 @@ export const BashTool: ToolDefinition = {
     // A command that would write into the app's own data folder is refused like a write tool's call.
     for (const target of mutations.written) await guardAppData(target, "write")
     const worktreeHits = await mainWorktreeRoots(mutations.paths)
+    // The saved sign-ins are not read through a shell either.
+    for (const file of scan.files) await guardAppData(file, "read")
     for (const dir of scan.dirs) await resolvePath(context, dir)
     const question = {
       sessionID: context.sessionID,
@@ -353,6 +356,8 @@ export const BashTool: ToolDefinition = {
       title: description || "Run command",
       subject: command,
       preview: command,
+      // A `.env` named on the line asks where its bucket would allow it, as a read of one does.
+      patternAsks: namesAskingFile(command),
     }
     if (scan.deletes.length && !scan.tempOnlyDeletes) {
       await context.permissions.ask({ ...question, patterns: scan.deletes, always: [], forced: true })
