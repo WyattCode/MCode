@@ -1401,6 +1401,12 @@ export interface AppConfig {
    * this, and a profile that predates the question is marked as already asked.
    */
   importOnboarded: boolean
+  /**
+   * MiMo's 标题生成模型: which model names a conversation after its first
+   * message. Absent - and MiMo's 跟随当前模型 - is the conversation's own model,
+   * which is also where an unusable choice falls back to.
+   */
+  titleModel?: ModelRef
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**
