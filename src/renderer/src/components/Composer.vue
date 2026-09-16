@@ -4994,6 +4994,14 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   border-radius: 50%;
 }
 
+/* High contrast drops the fill, so the send button keeps a system outline there; nothing changes outside that mode. */
+@media (forced-colors: active) {
+  .send {
+    outline: 1px solid ButtonText;
+    outline-offset: -1px;
+  }
+}
+
 .send:hover:not(:disabled) {
   filter: none;
   opacity: 0.85;

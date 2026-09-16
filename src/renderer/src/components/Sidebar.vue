@@ -2019,6 +2019,18 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
   background: var(--surface-selected);
 }
 
+/*
+ * Windows high contrast paints every row as Canvas, which hid the open one:
+ * there it keeps a system-highlight outline. Nothing changes outside that mode.
+ */
+@media (forced-colors: active) {
+  .row.on,
+  .quick-convo.on {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
 .row-ico {
   flex-shrink: 0;
 }

@@ -86,6 +86,13 @@ body {
   outline-offset: -2px;
 }
 
+/* In Windows high contrast the ring takes the system highlight. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
+
 /* MiMo's text selection colour, light and dark. */
 ::selection {
   background: #b3d7ff;
