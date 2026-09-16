@@ -22,6 +22,16 @@ import { startBackend } from "../src/server/index"
 import { handle } from "../src/server/handlers"
 import type { Request } from "../src/shared/protocol"
 
+/** How a handler call failed: its code and the values its sentence fills in. */
+async function refusal(run: () => Promise<unknown>): Promise<{ code?: string; params?: Record<string, unknown> }> {
+  try {
+    await run()
+    return {}
+  } catch (err) {
+    return { code: (err as { code?: string }).code, params: (err as { params?: Record<string, unknown> }).params }
+  }
+}
+
 export async function roundNineProviderChecks(check: Check, section: (name: string) => void): Promise<void> {
   section("Round 9 (P9-1): the effort submenu appears only where MiMo's desktop shows it")
   {
@@ -152,6 +162,29 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
       const edited = backend.runtime.config.get().customProviders.find((entry) => entry.id === "gw")
       check("and so does editing it", edited?.baseURL === "https://gw.example/v2" && edited?.models?.[0]?.id === "gpt-5", edited)
 
+      /* P9-9: the refusals are named, so the window says them in its own language. */
+      const request = (body: Record<string, unknown>) => () => handle(backend.runtime, body as unknown as Request)
+      const bad = await refusal(request({ type: "provider.addCustom", id: "Bad Id", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [{ id: "m", name: "m" }] }))
+      check("(P9-9) a bad provider id is refused by code", bad.code === "provider.custom.error.providerID.format", bad)
+      const taken = await refusal(request({ type: "provider.addCustom", id: "gw", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [{ id: "m", name: "m" }] }))
+      check("(P9-9) so is a taken one", taken.code === "provider.custom.error.providerID.exists", taken)
+      const empty = await refusal(request({ type: "provider.addCustom", id: "gw2", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [] }))
+      check("(P9-9) and a provider with no model", empty.code === "provider.needsModel", empty)
+      const limit = await refusal(request({ type: "provider.addCustom", id: "gw3", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [{ id: "m", name: "m", limit: { context: -1 } }] }))
+      check("(P9-9) and a bad limit", limit.code === "provider.custom.limitInvalid", limit)
+      const typed = await refusal(request({ type: "provider.discover", provider: "gw" }))
+      check("(P9-9) refreshing hand-entered models names the provider", typed.code === "provider.nothingToDiscover" && typed.params?.name === "Gateway", typed)
+      const missing = await refusal(request({ type: "provider.updateCustom", id: "nope", name: "x", baseURL: "https://a.example/v1", apiKey: "", models: [{ id: "m", name: "m" }] }))
+      check("(P9-9) editing a provider that is gone", missing.code === "provider.notFound", missing)
+      const before = process.env.DEEPSEEK_API_KEY
+      process.env.DEEPSEEK_API_KEY = "from-the-shell"
+      try {
+        const env = await refusal(request({ type: "provider.auth", provider: "deepseek", apiKey: "" }))
+        check("(P9-9) disconnecting a provider the shell connects names the variable", env.code === "provider.envConnected" && env.params?.variable === "DEEPSEEK_API_KEY", env)
+      } finally {
+        if (before === undefined) delete process.env.DEEPSEEK_API_KEY
+        else process.env.DEEPSEEK_API_KEY = before
+      }
     } finally {
       await backend.close()
       await fs.rm(data, { recursive: true, force: true }).catch(() => undefined)

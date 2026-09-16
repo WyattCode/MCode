@@ -1,7 +1,7 @@
 import path from "node:path"
 import { WebSocketServer, type WebSocket } from "ws"
 import type { ClientFrame, ServerFrame } from "@shared/protocol"
-import { codeOf } from "@shared/errors"
+import { codeOf, paramsOf } from "@shared/errors"
 import { Storage } from "./storage"
 import { Bus } from "./bus"
 import { Config } from "./config"
@@ -219,6 +219,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
           error: err instanceof Error ? err.message : String(err),
           // Named where it can be, so the window says it in the reader's language.
           ...(codeOf(err) ? { errorCode: codeOf(err) } : {}),
+          ...(paramsOf(err) ? { errorParams: paramsOf(err) } : {}),
         })
       }
     })

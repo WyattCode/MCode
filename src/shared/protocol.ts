@@ -2376,7 +2376,7 @@ export type ResponseEnvelope =
    * where this app can name one, the window phrases it and keeps `error` as
    * the detail.
    */
-  | { kind: "response"; id: string; ok: false; error: string; errorCode?: string }
+  | { kind: "response"; id: string; ok: false; error: string; errorCode?: string; errorParams?: Record<string, string | number> }
 
 export interface EventEnvelope {
   kind: "event"

@@ -107,7 +107,7 @@ export class Client {
        * The sentence comes from the tables; the raw text stays on the error
        * for anything that logs it.
        */
-      else waiter.reject(frame.errorCode ? new Error(t(frame.errorCode)) : new Error(frame.error))
+      else waiter.reject(frame.errorCode ? new Error(t(frame.errorCode, frame.errorParams)) : new Error(frame.error))
     })
 
     socket.addEventListener("close", () => {

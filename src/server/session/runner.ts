@@ -1316,7 +1316,7 @@ export class SessionRunner {
     if (!last || !context.some((message) => message.role === "user")) throw new Error("Nothing to compact yet")
 
     const definition = this.config.definition(session.model.provider)
-    if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
+    if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
     const adapter: ProviderAdapter =
       definition.kind === "anthropic"
         ? AnthropicAdapter
@@ -2059,7 +2059,7 @@ export class SessionRunner {
     // MiMo's MCP rule: the servers this conversation started with, read back from disk after a restart.
     await this.rememberMcpServers(session)
     const definition = this.config.definition(session.model.provider)
-    if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
+    if (!definition) throw new CodedError(`No provider called ${session.model.provider} is set up`, "error.noModel")
     const adapter: ProviderAdapter =
       definition.kind === "anthropic"
         ? AnthropicAdapter

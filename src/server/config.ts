@@ -334,8 +334,8 @@ export function customModelOf(model: CustomModelEntry): CustomModelEntry {
   const context = model.limit?.context
   const output = model.limit?.output
   const invalid = "A model limit must be a positive whole number, and an output limit needs an input limit"
-  if (context !== undefined && !positive(context)) throw new Error(invalid)
-  if (output !== undefined && (!positive(output) || context === undefined)) throw new Error(invalid)
+  if (context !== undefined && !positive(context)) throw new CodedError(invalid, "provider.custom.limitInvalid")
+  if (output !== undefined && (!positive(output) || context === undefined)) throw new CodedError(invalid, "provider.custom.limitInvalid")
   if (positive(context)) out.limit = positive(output) ? { context, output } : { context }
   // MiMo's other model fields, kept when a config file states them.
   const inputs = Object.fromEntries((["pdf", "audio", "video"] as const).flatMap((key) => (typeof model.inputs?.[key] === "boolean" ? [[key, model.inputs[key]]] : [])))
