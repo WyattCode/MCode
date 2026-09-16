@@ -114,6 +114,14 @@ export async function resolvePath(context: ToolContext, target: string, access: 
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
     : path.resolve(context.directory, target)
+  /*
+   * A colon past the drive names an alternate data stream on Windows
+   * (`notes.txt:hidden`): a place to keep bytes that no listing, diff or git
+   * status ever shows (round 8, X19).
+   */
+  if (process.platform === "win32" && resolved.slice(path.parse(resolved).root.length).includes(":")) {
+    throw new ToolError(`Refused: ${target} names an alternate data stream (a colon after the drive), which tools do not read or write.`)
+  }
   await guardAppData(resolved, access, target)
   // A cut output's saved file is the model's to read, as MiMo allows its truncation folder outright.
   if (context.toolOutputs?.holds(resolved)) return resolved

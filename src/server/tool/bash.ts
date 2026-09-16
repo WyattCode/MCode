@@ -1,5 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs/promises"
+import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
 import { resolvePath } from "./fs-util"
@@ -342,7 +343,13 @@ export const BashTool: ToolDefinition = {
      */
     const mutations = collectMutationTargets(command, cwd, powershell)
     // A command that would write into the app's own data folder is refused like a write tool's call.
-    for (const target of mutations.written) await guardAppData(target, "write")
+    for (const target of mutations.written) {
+      await guardAppData(target, "write")
+      // An alternate data stream (`> notes.txt:hidden`) is a place no listing or diff shows (round 8, X19).
+      if (process.platform === "win32" && target.slice(path.parse(target).root.length).includes(":")) {
+        throw new ToolError(`Refused: ${target} names an alternate data stream (a colon after the drive), which commands here may not write.`)
+      }
+    }
     const worktreeHits = await mainWorktreeRoots(mutations.paths)
     // The saved sign-ins are not read through a shell either.
     for (const file of scan.files) await guardAppData(file, "read")
