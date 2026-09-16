@@ -4290,11 +4290,20 @@ onBeforeUnmount(() => {
           has it: the full width of this column, under the composer, with its
           own edge to drag. Not in the right-hand column, which is the review's.
         -->
-        <!-- The drawer styles bp-enter/leave itself; out-in so a new home folder closes one drawer before opening the next. -->
-        <Transition name="bp" mode="out-in">
+        <!--
+          The drawer styles bp-enter/leave itself. Deliberately unkeyed: MiMo
+          keeps one bottom panel whose tabs outlive the view, so stepping from
+          the home screen into a conversation must not remount it. It used to
+          be keyed by view and folder, which threw the tab list away - a dev
+          server started at home vanished from the drawer the moment a
+          conversation opened, still running with nothing attached to it. The
+          drawer already answers a change of folder by itself: an untouched
+          terminal is restarted in the new one and a used one gets MiMo's
+          notice above it.
+        -->
+        <Transition name="bp">
           <TerminalDrawer
             v-if="terminalUp"
-            :key="isHome ? `home:${homeShellDirectory}` : 'session'"
             ref="drawer"
             :sessionID="isHome ? undefined : app.currentID"
             :directory="isHome ? homeShellDirectory : undefined"
