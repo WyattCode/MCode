@@ -75,4 +75,16 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     check("Tab sets the mark and a pointer press clears it", /"Tab"\) root\.dataset\.focusKey = ""/.test(tracker) && /"pointerdown", \(\) => delete root\.dataset\.focusKey/.test(tracker))
     check("the mark is installed at start", /installFocusRing\(\)/.test(read("main.ts")))
   }
+
+  section("round 8 access: a permission request is announced (A2)")
+  {
+    const dock = read("components/QuestionDock.vue")
+    check("the dock is an alertdialog named by its card's title", /role="alertdialog"/.test(dock) && /:aria-labelledby="LABELLED_BY\.join/.test(dock) && /:aria-describedby="DESCRIBED_BY\.join/.test(dock))
+    check("a new request is spoken assertively", /announce\(textOf\(\[\.\.\.LABELLED_BY, \.\.\.DESCRIBED_BY\]\), "assertive"\)/.test(dock))
+    const perm = read("components/PermissionDialog.vue")
+    const form = read("components/parts/QuestionForm.vue")
+    check("the permission card and the question name the title and subject the dock points at", ['id="confirm-dock-title"', 'id="confirm-dock-desc"'].every((id) => perm.includes(id) && form.includes(id) && dock.includes(id)))
+    const announcer = read("lib/announce.ts")
+    check("the live regions exist before anything is said", /installAnnouncer\(\)/.test(read("main.ts")) && /aria-live", urgency\)/.test(announcer))
+  }
 }
