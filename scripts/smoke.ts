@@ -283,6 +283,7 @@ import { roundFiveChecks } from "./smoke-round5"
 import { roundSixChecks } from "./smoke-round6"
 // Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
 import { roundSevenChecks } from "./smoke-round7"
+import { roundEightChecks } from "./smoke-round8"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -3748,7 +3749,12 @@ async function main() {
     const planPrompt = await systemPrompt({ directory: project, agent: "plan" })
     const buildPrompt = await systemPrompt({ directory: project, agent: "build" })
     check("plan is told what mode it is in", planPrompt.includes("plan mode"), planPrompt.slice(0, 80))
-    check("build is not", !buildPrompt.includes("plan mode"))
+    /*
+     * Round 8: the general agent prompt describes both modes, as MiMo's
+     * default prompt does, so "plan mode" appearing at all proves nothing. What
+     * build must not carry is the section that says it is planning.
+     */
+    check("build is not", !buildPrompt.includes("You are in plan mode") && !buildPrompt.includes("## Planning only"))
     // plan: the prompt says how planning ends and what it may write; the per-turn note carries the path.
     check("plan is told how the mode ends", planPrompt.includes("plan_exit"), planPrompt.slice(0, 200))
     check("and that one file is writable rather than that nothing is", planPrompt.includes("except this conversation's plan file") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
@@ -7079,6 +7085,7 @@ async function main() {
   await roundFiveChecks(check, section)
   await roundSixChecks(check, section)
   await roundSevenChecks(check, section)
+  await roundEightChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
