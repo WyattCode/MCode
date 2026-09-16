@@ -12,6 +12,8 @@ export class CodedError extends Error {
   constructor(
     message: string,
     readonly code: string,
+    /** Values the code's sentence names, filled into its `{placeholders}`. */
+    readonly params?: Record<string, string | number>,
   ) {
     super(message)
     this.name = "CodedError"
@@ -21,6 +23,11 @@ export class CodedError extends Error {
 /** The code a failure names, when it names one. */
 export function codeOf(err: unknown): string | undefined {
   return err instanceof CodedError ? err.code : undefined
+}
+
+/** What that code's sentence fills in, when it has anything to fill. */
+export function paramsOf(err: unknown): Record<string, string | number> | undefined {
+  return err instanceof CodedError ? err.params : undefined
 }
 
 /** Disk failures MiMo gathers into one class ("artifact could not be written: <code>"). */

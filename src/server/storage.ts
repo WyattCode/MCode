@@ -236,6 +236,34 @@ export class Storage {
     }
   }
 
+  /** A document's text as it sits on disk, or undefined when there is none. */
+  async readText(key: string): Promise<string | undefined> {
+    try {
+      return await fs.readFile(this.file(key), "utf8")
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      throw err
+    }
+  }
+
+  /**
+   * Writes whatever `render` makes of the file as it stands at the moment of
+   * writing, in this key's queue - for a document edited in place rather than
+   * replaced, whose current text has to be read after any earlier save landed.
+   */
+  async writeText(key: string, render: (current: string | undefined) => string): Promise<void> {
+    const previous = this.queued.get(key) ?? Promise.resolve()
+    const next = previous
+      .catch(() => {})
+      .then(async () => writeAtomic(this.file(key), render(await this.readText(key)), 0o600))
+    this.queued.set(key, next)
+    try {
+      await next
+    } finally {
+      if (this.queued.get(key) === next) this.queued.delete(key)
+    }
+  }
+
   private async writeNow(key: string, value: unknown): Promise<void> {
     /*
      * Owner-only, as the credential file is: config.json holds MCP bearer

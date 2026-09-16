@@ -36,6 +36,7 @@ import { CodedError } from "@shared/errors"
 import { conversational } from "./provider/discover"
 import { modelVariants } from "./provider/variants"
 import type { OAuthTokens } from "./auth/oauth"
+import { parseJsonc, renderJsonc } from "./jsonc"
 
 export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-opus-5" }
 
@@ -476,7 +477,7 @@ export class Config {
      * The damaged file is kept rather than written over, under a name of its
      * own, so the settings in it can still be got back by hand.
      */
-    const read = await this.storage.readOrCorrupt<Partial<AppConfig>>("config")
+    const read = await this.readStored()
     const stored = read.value
     if (read.corrupt) {
       const aside = await this.storage.quarantine("config")
@@ -501,7 +502,7 @@ export class Config {
      */
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
-    if (this.migrate() && !this.fromNewerVersion) await this.storage.write("config", this.current)
+    if (this.migrate() && !this.fromNewerVersion) await this.persist()
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
@@ -531,6 +532,34 @@ export class Config {
    * opening it once cannot strip the fields the newer one had added.
    */
   fromNewerVersion = false
+
+  /**
+   * config.json as stored: JSONC, so a hand edit may carry comments and
+   * trailing commas. A file that does not parse is reported with where it broke.
+   */
+  private async readStored(): Promise<{ value?: Partial<AppConfig>; corrupt?: string }> {
+    let text: string | undefined
+    try {
+      text = await this.storage.readText("config")
+    } catch (err) {
+      return { corrupt: err instanceof Error ? err.message : String(err) }
+    }
+    if (text === undefined) return {}
+    const read = parseJsonc(text)
+    if (read.problem) {
+      return { corrupt: `config.json is not valid JSON near line ${read.problem.line}, column ${read.problem.column} (${read.problem.reason})` }
+    }
+    if (read.value === undefined) return {}
+    if (!read.value || typeof read.value !== "object" || Array.isArray(read.value)) return { corrupt: "config.json does not hold an object" }
+    return { value: read.value as Partial<AppConfig> }
+  }
+
+  /** Writes the settings key by key into the file as it stands, refusing one that no longer parses. */
+  private persist(): Promise<void> {
+    const file = this.storage.fileOf("config")
+    const value = this.current
+    return this.storage.writeText("config", (current) => renderJsonc(file, current, value))
+  }
 
   /** The last credential write, so two of them cannot interleave. */
   private persisting: Promise<void> = Promise.resolve()
@@ -600,8 +629,9 @@ export class Config {
   }
 
   private async reloadFromDisk(): Promise<void> {
-    const stored = await this.storage.read<Partial<AppConfig>>("config").catch(() => undefined)
-    if (!stored || typeof stored !== "object") return
+    // A file that stopped parsing is left alone: the next save refuses and says where it broke.
+    const stored = (await this.readStored()).value
+    if (!stored) return
     if (JSON.stringify(stored) === JSON.stringify(this.current)) return
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     this.current.autoApprove = allowed(this.current.permissions)
@@ -609,6 +639,17 @@ export class Config {
   }
 
   async set(patch: Partial<AppConfig>): Promise<AppConfig> {
+    const previous = this.current
+    try {
+      return await this.apply(patch)
+    } catch (err) {
+      // A save that could not be written leaves the settings as they were, so memory never runs ahead of the file.
+      this.current = previous
+      throw err
+    }
+  }
+
+  private async apply(patch: Partial<AppConfig>): Promise<AppConfig> {
     const before = this.current.permissions
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
@@ -646,8 +687,8 @@ export class Config {
     if (this.fromNewerVersion) {
       throw new CodedError("The stored settings were written by a newer version of this app", "error.configNewer")
     }
-    this.current.schemaVersion = CONFIG_SCHEMA_VERSION
-    await this.storage.write("config", this.current)
+    this.current = { ...this.current, schemaVersion: CONFIG_SCHEMA_VERSION }
+    await this.persist()
     this.bus.publish({ type: "config.updated", config: this.current })
     return this.current
   }

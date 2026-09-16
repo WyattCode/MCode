@@ -379,8 +379,9 @@ async function saveMcp() {
     const result = await app.client?.request({ type: "mcp.save", name, entry, keep })
     if (!result) throw new Error("not connected")
     app.config = result.config
-  } catch {
-    notifyFailure(t("set.mcpForm.saveFailed"))
+  } catch (err) {
+    // As MiMo's form: the reason when there is one (a config file that no longer parses says where), else the plain failure.
+    notifyFailure(err instanceof Error && err.message ? err.message : t("set.mcpForm.saveFailed"))
     return
   }
   delete mcpTools.value[name]
@@ -392,9 +393,9 @@ async function setMcpEnabled(name: string, enabled: boolean) {
   const entry = app.config?.mcpServers?.[name]
   if (!entry) return
   try {
-    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: { ...entry, enabled } } })
-  } catch {
-    notifyFailure(t("set.mcp.toggleFailed"))
+    await app.patchConfig({ mcpServers: { ...(app.config?.mcpServers ?? {}), [name]: { ...entry, enabled } } }, { quiet: true })
+  } catch (err) {
+    notifyFailure(t("set.mcp.toggleFailed"), reasonText(err))
   }
   delete mcpTools.value[name]
 }
@@ -419,7 +420,12 @@ async function authorizeMcp(name: string) {
 async function removeMcp(name: string) {
   const servers = { ...(app.config?.mcpServers ?? {}) }
   delete servers[name]
-  await app.patchConfig({ mcpServers: servers })
+  try {
+    await app.patchConfig({ mcpServers: servers }, { quiet: true })
+  } catch (err) {
+    notifyFailure(reasonText(err))
+    return
+  }
   if (mcpToolsOpen.value === name) mcpToolsOpen.value = undefined
   delete mcpTools.value[name]
   notify(t("set.mcp.removed") + name)
