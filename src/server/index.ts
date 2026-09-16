@@ -10,6 +10,7 @@ import { Permissions } from "./permission"
 import { SessionStore } from "./session/store"
 import { migrateCheckpoints } from "./session/checkpoint-migrate"
 import { ArtifactStore } from "./artifact/store"
+import { readStorageLayout } from "./storage-layout"
 import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
@@ -89,6 +90,13 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   const artifacts = ArtifactStore.open(path.join(dataDirectory, "storage", "artifacts.db"))
   void (async () => {
     try {
+      /*
+       * Which build's layout this profile holds. Read before anything is
+       * migrated: a profile written by a newer build is left exactly as it is,
+       * since this build cannot know what its documents mean.
+       */
+      const layout = await readStorageLayout(storage)
+      if (layout.fromNewerVersion) return
       await migrateCheckpoints(storage, runner.checkpoints, config)
       await runner.checkpoints.sweep((await sessions.list()).map((session) => session.directory))
       // Brings the store up to date with the transcripts and re-checks what is still on disk.
