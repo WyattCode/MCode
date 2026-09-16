@@ -212,4 +212,15 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const wiring = read("scripts/wiring-check.ts")
     check("the wiring check blanks dotted string keys before looking", wiring.includes("readers.replace(keyLike") && !/new RegExp\(WORD \+ field \+ WORD\)/.test(wiring))
   }
+
+  section("Round 9 (S9-12, S9-13): the environment name notice, and no list of remembered approvals")
+  {
+    const dialog = read("src/renderer/src/components/SettingsDialog.vue")
+    check("a name another project has is an ordinary notice, as MiMo words it", /\bnotify\(t\("set\.envSavedNameTaken"/.test(dialog) && !/notifyFailure\(t\("set\.envSavedNameTaken"/.test(dialog))
+    check("and names stay where MCode keeps them, in the config", /patchConfig\(\{ projectNames:/.test(dialog) && !/\.mimo|env\.json/.test(dialog))
+    check("the permissions section lists no remembered approvals", !/savedRules|forgetRule|permission\.rules|permission\.forget/.test(dialog))
+    const protocol = read("src/shared/protocol.ts")
+    check("and the backend offers no way to list or withdraw them", !/"permission\.rules"|"permission\.forget"|interface SavedRule/.test(protocol) && !/savedRules\(\)/.test(read("src/server/permission.ts")))
+    check("while a deleted conversation still takes its own with it", /permissions\.forgetSession\(request\.sessionID\)/.test(read("src/server/handlers.ts")))
+  }
 }

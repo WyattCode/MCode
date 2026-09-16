@@ -284,18 +284,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { session } satisfies Handled<"session.importFile">
     }
 
-    case "permission.rules":
-      return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.rules">
-
-    case "permission.forget":
-      await runtime.permissions.forget({
-        directory: request.directory,
-        sessionID: request.sessionID,
-        kind: request.kind,
-        pattern: request.pattern,
-      })
-      return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.forget">
-
     case "artifact.list": {
       /*
        * Answered from the store when there is one: it is de-duplicated by
@@ -454,7 +442,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * app's deletion did not reach, while MiMo's own store cascades.
        */
       // Anything remembered for this conversation alone goes with it; a project's rules stay.
-      await runtime.permissions.forget({ sessionID: request.sessionID })
+      await runtime.permissions.forgetSession(request.sessionID)
       /*
        * The files it produced are not deleted with it. They are still on disk,
        * and losing the only record of where they came from was the thing the
