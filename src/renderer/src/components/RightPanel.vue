@@ -388,7 +388,7 @@ defineExpose({
           <RpReview v-if="tab.type === 'review'" :root="directory" />
           <RpFiles
             v-else-if="tab.type === 'files'"
-            :root="directory"
+            :root="tab.fileRoot || directory"
             :viewFile="tab.viewFile"
             @view="(file: string) => rp.update(tab.id, { viewFile: file, name: file.split('/').pop() })"
           />

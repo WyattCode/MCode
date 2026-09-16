@@ -33,6 +33,14 @@ export interface RightTab {
   name?: string
   /** Files: the file on show, relative to the project. */
   viewFile?: string
+  /**
+   * Files: a root of its own, for a file outside the project.
+   *
+   * MiMo opens such a file in the files tab with the file's own folder as the
+   * root (`openFileInViewer(folder, name)`), rather than refusing it; absent
+   * means the conversation's project, which is the ordinary case.
+   */
+  fileRoot?: string
   /** Side chat: the conversation it holds, once there is one. */
   convoId?: string
   /** Browser: the main process's id for this tab's page. */
