@@ -3170,7 +3170,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     :class="{ picking: selecting }"
                     :role="selecting ? 'checkbox' : undefined"
                     :aria-checked="selecting ? pickedLive.includes(session.id) : undefined"
+                    :tabindex="selecting ? 0 : undefined"
                     @click="selecting && togglePick(session.id)"
+                    @keydown.space.prevent="selecting && togglePick(session.id)"
                   >
                     <span v-if="selecting" class="check" :class="{ on: pickedLive.includes(session.id) }" aria-hidden="true">
                       <svg v-if="pickedLive.includes(session.id)" width="12" height="12" viewBox="0 0 12 12" fill="none">

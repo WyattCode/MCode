@@ -240,7 +240,16 @@ onMounted(() => {
 
       <div class="list">
         <!-- The backend this app started. Always present, never removable. -->
-        <div v-if="localMatches" class="row" :class="{ live: !connectedURL }" @click="choose('')">
+        <div
+          v-if="localMatches"
+          class="row"
+          :class="{ live: !connectedURL }"
+          role="button"
+          tabindex="0"
+          :aria-current="!connectedURL || undefined"
+          @click="choose('')"
+          @keydown.enter.space.self.prevent="choose('')"
+        >
           <span class="dot" :class="{ off: !app.connected || connectedURL }" />
           <span class="text">
             <span class="name">{{ localLabel }}</span>
@@ -258,7 +267,14 @@ onMounted(() => {
           @click="choose(entry.url)"
         >
           <span class="dot" :class="{ off: connectedURL !== entry.url || !app.connected }" />
-          <span class="text">
+          <!-- The keyboard's way in is the name, since the row also holds its own menu button. -->
+          <span
+            class="text"
+            role="button"
+            tabindex="0"
+            :aria-current="connectedURL === entry.url || undefined"
+            @keydown.enter.space.prevent="choose(entry.url)"
+          >
             <span class="name">{{ label(entry) }}</span>
             <span class="where">{{ entry.url }}</span>
           </span>

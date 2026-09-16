@@ -128,7 +128,8 @@ const diffstat = computed(() => {
 const openable = computed(() => opensPath(props.part.name) && Boolean(title.value))
 const codeTip = computed(() => (openable.value ? `${title.value}\n${t("stepList.cmdClickOpen")}` : title.value))
 
-function onTitleClick(event: MouseEvent) {
+/* Ctrl or Cmd with a click on the path, or with Enter on the head from the keyboard (the path sits inside the head's button). */
+function onTitleClick(event: MouseEvent | KeyboardEvent) {
   if (!openable.value || !(event.metaKey || event.ctrlKey)) return
   event.preventDefault()
   event.stopPropagation()
@@ -173,6 +174,7 @@ const avatarSeed = computed(() => {
         :aria-expanded="expandable ? open : undefined"
         data-step-head
         @click="toggle"
+        @keydown.enter="onTitleClick"
       >
         <span class="hs-ic" :class="{ 'hs-ic-avatar': avatarSeed }">
           <SubagentAvatar v-if="avatarSeed" :seed="avatarSeed" compact />

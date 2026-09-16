@@ -231,7 +231,16 @@ function onEditKey(event: KeyboardEvent) {
               @keydown="onEditKey"
               @click.stop
             />
-            <span v-else class="ann-note ann-note-edit" :data-ann-edit="entry.index" :title="t('annotations.editHint')" @click.stop="startEdit(entry)">
+            <span
+              v-else
+              class="ann-note ann-note-edit"
+              role="button"
+              tabindex="0"
+              :data-ann-edit="entry.index"
+              :title="t('annotations.editHint')"
+              @click.stop="startEdit(entry)"
+              @keydown.enter.space.self.stop.prevent="startEdit(entry)"
+            >
               <template v-if="entry.note.text">{{ entry.note.text }}</template>
               <span v-else class="ann-muted">{{ t("annotations.editHint") }}</span>
             </span>

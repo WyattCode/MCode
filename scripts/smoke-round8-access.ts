@@ -122,4 +122,29 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
       check(`${path.basename(file)}'s more button is named`, /class="md-diagram-more"[^>]*:aria-label="t\('svgMenu\.actions'\)"/.test(read(file)))
     }
   }
+
+  section("round 8 access: click targets that the keyboard reaches too (A9)")
+  {
+    /** The opening tag that carries `marker`, so a check reads one element's attributes. */
+    const tagWith = (source: string, marker: string) => {
+      const at = source.indexOf(marker)
+      if (at < 0) return ""
+      return source.slice(source.lastIndexOf("<", at), source.indexOf(">", at) + 1)
+    }
+    const operable = (tag: string, keys: RegExp) => /role="button"|:role="[^"]*'button'/.test(tag) && /tabindex/.test(tag) && keys.test(tag)
+    const composer = read("components/Composer.vue")
+    const tiles = [...composer.matchAll(/<(img|video)\b[^>]*class="att-thumb"[^>]*>/g)].map((match) => match[0])
+    check("a picture or video waiting to be sent opens its preview from the keyboard, as MiMo's does", tiles.length === 2 && tiles.every((tag) => operable(tag, /@keydown\.enter\.space\.prevent="onTileClick/)))
+    check("a file waiting to be sent opens from the keyboard", operable(tagWith(composer, 'class="att-file"'), /@keydown\.enter\.space\.self\.prevent="onTileClick/))
+    const servers = read("components/ServersDialog.vue")
+    check("the local server is chosen from the keyboard", operable(tagWith(servers, `@click="choose('')"`), /@keydown\.enter\.space\.self\.prevent="choose\(''\)"/))
+    check("a saved server is chosen from the keyboard through its name", operable(tagWith(servers, `@keydown.enter.space.prevent="choose(entry.url)"`), /choose\(entry\.url\)/))
+    check("a sent file opens from the keyboard", operable(tagWith(read("components/MessageStream.vue"), "data-sent-file"), /@keydown\.enter\.space\.prevent="item\.path && openSentFile/))
+    check("an annotation's note is edited from the keyboard", operable(tagWith(read("components/AnnotationChips.vue"), 'class="ann-note ann-note-edit"'), /@keydown\.enter\.space\.self\.stop\.prevent="startEdit/))
+    check("an archived conversation is picked with Space", /:role="selecting \? 'checkbox' : undefined"[\s\S]{0,160}:tabindex="selecting \? 0 : undefined"[\s\S]{0,120}@keydown\.space\.prevent="selecting && togglePick/.test(read("components/SettingsDialog.vue")))
+    check("Ctrl+Enter on a step's head opens its path, as Ctrl+click on the path does", /data-step-head[\s\S]{0,60}@keydown\.enter="onTitleClick"/.test(read("components/parts/ToolPart.vue")))
+    const media = read("components/parts/LocalMedia.vue")
+    check("a voice clip seeks from the keyboard", /@keydown\.self="nudge"/.test(media) && /function nudge[\s\S]*ArrowLeft[\s\S]*Home/.test(media))
+    check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="openImagePreview/))
+  }
 }

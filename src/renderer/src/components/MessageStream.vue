@@ -1023,8 +1023,11 @@ defineExpose({ stepMessage, scroller })
                 class="sent-tile file"
                 :class="{ openable: Boolean(item.path) }"
                 v-tip="item.path ? t('stream.previewTip') : ''"
+                :role="item.path ? 'button' : undefined"
+                :tabindex="item.path ? 0 : undefined"
                 data-sent-file
                 @click="item.path && openSentFile(item.path)"
+                @keydown.enter.space.prevent="item.path && openSentFile(item.path)"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path
