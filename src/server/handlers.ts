@@ -1311,7 +1311,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { shells: runtime.shells.list((await shellGroup(runtime, request)).key, owner) } satisfies Handled<"shell.list">
 
     case "shell.attach": {
-      const found = runtime.shells.attach(request.shellID)
+      const found = runtime.shells.attach(request.shellID, owner)
       // A shell that is not there reads as an empty, finished one rather than
       // an error: the drawer's job is to draw what is left, not to complain.
       return (found ?? { data: "", alive: false, used: false }) satisfies Handled<"shell.attach">

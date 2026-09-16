@@ -74,10 +74,27 @@ interface Running {
   alive: boolean
   /** Something was typed into it; kept past its exit, as MiMo's userInteracted is. */
   used: boolean
+  /** Running while it waits to be claimed by a replacement window; it is killed when this fires. */
+  orphanTimer?: ReturnType<typeof setTimeout>
 }
 
 /** Time between two kills in a row; see queueKill. */
 const KILL_SPACING_MS = 400
+
+/**
+ * How long a shell outlives the window that opened it.
+ *
+ * A renderer that crashes drops its socket exactly as a reload does, so the
+ * sweep below used to kill every terminal in that window - a long build in the
+ * bottom panel died with the renderer even though the backend, and the model's
+ * turn, carried on, and the replacement window opened with no tabs at all.
+ * Keeping shells alive past a socket close would bring back the orphan the
+ * sweep was added to remove, so instead the shell is set loose for this long:
+ * the window that comes back claims it when it asks what is there, and one
+ * nobody claims is killed as before. The replacement window is up in a second
+ * or two, so this is several times the wait it needs.
+ */
+const ORPHAN_GRACE_MS = 15_000
 
 export class Shells {
   private readonly shells = new Map<string, Running>()
@@ -86,7 +103,11 @@ export class Shells {
   /** Whoever is waiting for a shell to have ended, by shell id. */
   private readonly exitWaiters = new Map<string, () => void>()
 
-  constructor(private readonly bus: Bus) {}
+  constructor(
+    private readonly bus: Bus,
+    /** How long an unclaimed shell waits before it is swept; short in the checks. */
+    private readonly graceMs = ORPHAN_GRACE_MS,
+  ) {}
 
   open(sessionID: string, cwd: string, chosen?: string, size?: ShellSize, owner?: ShellOwner): string {
     const shellID = Identifier.shell()
@@ -198,6 +219,7 @@ export class Shells {
   close(shellID: string): void {
     const found = this.shells.get(shellID)
     if (!found) return
+    if (found.orphanTimer) clearTimeout(found.orphanTimer)
     this.shells.delete(shellID)
     const queued = this.exited.indexOf(shellID)
     if (queued >= 0) this.exited.splice(queued, 1)
@@ -270,16 +292,30 @@ export class Shells {
     for (const [shellID, entry] of this.shells) {
       if (entry.sessionID !== sessionID) continue
       if (owner && entry.owner && entry.owner !== owner) continue
+      // Asking what is there is how a window comes back to its terminals, so it
+      // is also where one left loose by a crashed window is taken over.
+      this.claim(entry, owner)
       found.push({ shellID, cwd: entry.cwd, alive: entry.alive, used: entry.used })
     }
     return found
   }
 
   /** Everything a shell has printed, for a pane that has to redraw itself. */
-  attach(shellID: string): { data: string; alive: boolean; used: boolean } | undefined {
+  attach(shellID: string, owner?: ShellOwner): { data: string; alive: boolean; used: boolean } | undefined {
     const found = this.shells.get(shellID)
     if (!found) return undefined
+    this.claim(found, owner)
     return { data: found.output.join(""), alive: found.alive, used: found.used }
+  }
+
+  /** A window takes over a shell nobody owns, and the sweep waiting on it is called off. */
+  private claim(entry: Running, owner?: ShellOwner): void {
+    if (!owner || entry.owner) return
+    entry.owner = owner
+    if (entry.orphanTimer) {
+      clearTimeout(entry.orphanTimer)
+      entry.orphanTimer = undefined
+    }
   }
 
   /** Keeps the tail of what a shell printed, dropping the oldest first. */
@@ -303,7 +339,17 @@ export class Shells {
    */
   closeOwnedBy(owner: ShellOwner): void {
     for (const [shellID, entry] of [...this.shells.entries()]) {
-      if (entry.owner === owner) this.close(shellID)
+      if (entry.owner !== owner) continue
+      /*
+       * Set loose rather than killed: a crash and a reload look the same from
+       * here, and in both cases a window is on its way back. What must not
+       * happen is a shell that outlives every window, so the sweep still runs -
+       * just after the grace period, and only if nobody has claimed it.
+       */
+      entry.owner = undefined
+      if (entry.orphanTimer) clearTimeout(entry.orphanTimer)
+      entry.orphanTimer = setTimeout(() => this.close(shellID), this.graceMs)
+      entry.orphanTimer.unref?.()
     }
   }
 }

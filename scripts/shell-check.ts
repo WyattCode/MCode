@@ -147,6 +147,39 @@ async function main(): Promise<void> {
     check("closing it ends the process", await until(() => seen.exited(id)))
   }
 
+  console.log("\nThe window goes away, and the one that comes back")
+  {
+    /*
+     * F8: a renderer that crashes drops its socket exactly as a reload does, so
+     * the sweep used to kill every terminal in that window before the
+     * replacement could connect - a long build died with the renderer even
+     * though the backend, and the model's turn, carried on. The shell is set
+     * loose for a grace period instead; the check uses a short one.
+     */
+    const loose = new Shells(bus, 600)
+    const gone = {}
+    const replacement = {}
+
+    const kept = loose.open(SESSION, os.tmpdir(), undefined, { cols: 100, rows: 30 }, gone)
+    await until(() => visible(seen.text(kept)).length > 0)
+    loose.closeOwnedBy(gone)
+    const offered = loose.list(SESSION, replacement).map((entry) => entry.shellID)
+    check("a shell whose window died is offered to the window that replaces it", offered.includes(kept), offered.join(","))
+    await wait(1400)
+    check(
+      "and once that window has it, the sweep does not take it",
+      !seen.exited(kept) && loose.list(SESSION, replacement).some((entry) => entry.shellID === kept),
+    )
+    loose.close(kept)
+    check("closing it still ends it", await until(() => seen.exited(kept)))
+
+    /* And the orphan the sweep was added for is still swept. */
+    const dropped = loose.open(SESSION, os.tmpdir(), undefined, { cols: 100, rows: 30 }, gone)
+    await until(() => visible(seen.text(dropped)).length > 0)
+    loose.closeOwnedBy(gone)
+    check("a shell nobody comes back for is killed after the grace period", await until(() => seen.exited(dropped), 12_000))
+  }
+
   console.log("\nBeing told how big the screen is")
   {
     const id = shells.open(SESSION, os.tmpdir(), undefined, { cols: 100, rows: 24 })
