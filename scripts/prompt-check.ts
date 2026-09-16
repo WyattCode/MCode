@@ -21,7 +21,7 @@ import { clampEffort, cycleVariant, isLatest, withoutLatest } from "../src/rende
 import { createPinia, setActivePinia } from "pinia"
 import { useRightPanel } from "../src/renderer/src/stores/right-panel"
 import { locateOffset } from "../src/renderer/src/lib/find"
-import { FAMILY_PROMPTS, promptFamily } from "../src/server/session/prompts"
+import { PLAN_SECTION, agentPrompt } from "../src/server/session/prompts"
 
 let passed = 0
 const problems: string[] = []
@@ -279,175 +279,55 @@ console.log("\nfind-in-view maps an offset back onto a node")
 }
 
 /*
- * The agent prompts, section by section.
+ * The agent prompt, section by section.
  *
- * MiMo's engine keeps ten prompt files and picks one by model id; MCode keeps
- * one per family too, and this is what says so. The expected families and the
- * sections are listed here by hand rather than read off the prompt, so a
- * changed rule or a section cut out of `session/prompts.ts` fails here instead
- * of quietly agreeing with itself. Add to this list deliberately when a prompt
- * gains a section that later work must not lose.
+ * MiMo's desktop app gives every model one prompt: a general part, then a
+ * desktop part, then - in plan mode only - a planning section. MCode does the
+ * same, and this is what says so. The headings are listed here by hand, in
+ * order, rather than read off the prompt, so a section cut out of
+ * `session/prompts.ts` or a family split creeping back fails here instead of
+ * quietly agreeing with itself.
  */
-console.log("\nThe agent prompt each model family reads")
+console.log("\nThe one agent prompt every model reads")
 {
-  const ids = [
-    "claude-opus-4-6",
-    "gpt-5.1",
-    "o3-mini",
-    "gemini-3-pro",
-    "kimi-k2-thinking",
-    "deepseek-chat",
-    "glm-4.7",
-    "MiniMax-M2.5",
-    "trinity-mini",
-    "qwen3",
-    "gpt-oss-120b",
-    "codex-mini",
-    "Claude-3",
-  ]
-  check(
-    "each id reads the family MiMo's engine picks for it",
-    ids.map((id) => promptFamily({ id })),
-    ["anthropic", "gpt", "beast", "gemini", "kimi", "deepseek", "glm", "minimax", "trinity", "general", "general", "general", "general"],
-  )
-  check("a turn that names no model reads the general one", promptFamily(undefined), "general")
-
-  const sections: Record<keyof typeof FAMILY_PROMPTS, string[]> = {
-    anthropic: ["# Harness", "# Session-specific guidance", "# Context management", "# Delivering work", "# Corrections"],
-    gpt: [
-      "# Personality",
-      "## Writing style",
-      "## Technical communication",
-      "# Working with the user",
-      "## Intermediate commentary",
-      "## Final answer",
-      "### Formatting rules",
-      "### Visualisations",
-      "# Rules for getting work done",
-      "## File editing constraints",
-      "## Autonomy and persistence",
-      "# Destructive actions",
-      "# Using skills",
-      "# MCode runtime",
-    ],
-    general: [
-      "## How this works",
-      "## Doing tasks",
-      "## Executing actions with care",
-      "## Agents and modes",
-      "## Permissions",
-      "## Using your tools",
-      "## Skills",
-      "## Notes kept between conversations",
-      "## Where instructions come from",
-      "## Tone and style",
-    ],
-    beast: [
-      "# Workflow",
-      "## 1. Read what the user pointed at",
-      "## 2. Understand the problem",
-      "## 3. Investigate the code",
-      "## 4. Check current documentation",
-      "## 5. Plan in the task list",
-      "## 6. Change the code",
-      "## 7. Debug",
-      "# Talking to the user",
-      "# Memory",
-      "# Reading files and folders",
-      "# Writing prompts",
-      "# Git",
-      "# Safety limits on autonomy",
-    ],
-    gemini: [
-      "# Core mandates",
-      "# Main workflows",
-      "## Engineering tasks",
-      "## New applications",
-      "# Operating guidelines",
-      "## Tone and style",
-      "## Security and safety",
-      "## Tool use",
-      "## Interaction details",
-      "# Examples",
-      "# Final reminder",
-    ],
-    kimi: [
-      "# Prompts and tool use",
-      "# Coding guidelines",
-      "# Research and data work",
-      "# Working environment",
-      "## Operating system",
-      "## Working directory",
-      "# Project information",
-      "# Final reminders",
-    ],
-    deepseek: [
-      "# Core principles",
-      "# Tools",
-      "# Tracking work with `task`",
-      "# Subagents with `actor`",
-      "# Workflow",
-      "# Code standards",
-      "# Safety",
-      "# Git safety",
-      "# Communication style",
-      "# Reminders",
-    ],
-    glm: ["# Harness", "# Session-specific guidance", "# Context management", "# Core principles", "# Tools"],
-    minimax: [
-      "# How you work",
-      "# Tools",
-      "# Tracking work with `task`",
-      "# Subagents with `actor`",
-      "# Workflow",
-      "# How you report",
-      "# Code quality",
-      "# Safety",
-      "# Git safety",
-      "# When you are stuck",
-      "# Reminders",
-      "# What you do not do",
-    ],
-    trinity: [
-      "# Tone and style",
-      "# Proactiveness",
-      "# Following conventions",
-      "# Code style",
-      "# Doing tasks",
-      "# Tool usage policy",
-      "# Code references",
-    ],
-  }
-  for (const [family, headings] of Object.entries(sections) as [keyof typeof FAMILY_PROMPTS, string[]][]) {
-    const prompt = FAMILY_PROMPTS[family]
-    const missing = headings.filter((heading) => !prompt.includes(`\n${heading}\n`))
-    check(`the ${family} prompt keeps every section it covers`, missing, [])
-  }
-
-  /* At least half of the MiMo file each one answers, the long GPT and default ones aside (about a third). */
-  const floors: Record<keyof typeof FAMILY_PROMPTS, number> = {
-    anthropic: 3_000,
-    gpt: 7_000,
-    general: 5_000,
-    beast: 6_000,
-    gemini: 7_400,
-    kimi: 4_300,
-    deepseek: 5_300,
-    glm: 2_400,
-    minimax: 5_500,
-    trinity: 3_800,
-  }
-  check(
-    "each is in the length class of the MiMo file it answers",
-    Object.entries(floors).filter(([family, floor]) => FAMILY_PROMPTS[family as keyof typeof FAMILY_PROMPTS].length < floor),
-    [],
-  )
-  check("and the ten are genuinely ten texts", new Set(Object.values(FAMILY_PROMPTS)).size, 10)
-  check(
-    "every one of them names this app rather than the reference",
-    Object.values(FAMILY_PROMPTS).filter((prompt) => !prompt.startsWith("You are MCode") || /MiMo/i.test(prompt)).length,
-    0,
-  )
+  const build = agentPrompt("build")
+  const headings = build.split("\n").filter((line) => /^#{1,3} /.test(line))
+  check("its sections, in the desktop prompt's order", headings, [
+    "# System",
+    "# Doing tasks",
+    "# Executing actions with care",
+    "# Using your tools",
+    "# Tone and style",
+    "# Text output (not tool calls)",
+    "# Session-specific guidance",
+    "# MCode desktop",
+    "## Reply language",
+    "## Tone and formatting",
+    "## Visual explanations",
+    "## Asking clarifying questions",
+    "## Task management",
+    "## Doing tasks",
+    "## Files you produce",
+    "### A file, or an answer?",
+    "### present_files",
+    "### Images and video",
+    "### Web pages",
+    "### Office documents and PDF",
+    "## Tools on this machine",
+    "# Code references",
+    "## Web page work",
+    "### Slide decks",
+  ])
+  /* The desktop's general part is about 12KB and its desktop part about 16.5KB; MCode leaves out what it does not have. */
+  const split = build.indexOf("\n\n# MCode desktop\n")
+  check("the general part is in the length class of the one it answers", split > 8_000 && split < 14_000, true)
+  check("and so is the desktop part", build.length - split > 9_000 && build.length - split < 18_000, true)
+  check("every agent but plan reads exactly the same text", [agentPrompt("compose"), agentPrompt(undefined), agentPrompt("general")].every((text) => text === build), true)
+  const plan = agentPrompt("plan")
+  check("plan mode reads the same text with one section after it", plan.startsWith(build + "\n\n# Plan mode\n") && plan === `${build}\n\n${PLAN_SECTION}`, true)
+  check("that section is short, as the one it answers is", PLAN_SECTION.length > 400 && PLAN_SECTION.length < 1_500, true)
+  check("it asks for a stepwise plan, recorded with task, put to the user with plan_exit", ["plan in steps", "`task` tool", "plan_exit"].filter((part) => !PLAN_SECTION.includes(part)), [])
+  check("the prompt names this app and never the reference", plan.startsWith("You are MCode") && !/mimo/i.test(plan), true)
 }
 
 if (problems.length) {
