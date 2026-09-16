@@ -87,6 +87,18 @@ export function planWritable(target: string, folders: readonly string[]): boolea
   })
 }
 
+/**
+ * plan: the agent a subagent runs as.
+ *
+ * An explore subagent only ever reads. Anything else builds - even when the
+ * conversation that started it is still planning, because a subagent is an
+ * agent of its own rather than a continuation of the planning turn, as MiMo's
+ * are (the user's 2026-09-16 decision).
+ */
+export function subagentAgent(type: "general" | "explore"): "plan" | "build" {
+  return type === "explore" ? "plan" : "build"
+}
+
 /** What a write outside the plan file is refused with. The model reads it, so it says what to do instead. */
 export function planRefusal(display: string, plan: string): string {
   return (

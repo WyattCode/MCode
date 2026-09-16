@@ -1429,8 +1429,9 @@ export interface AppConfig {
   /**
    * MiMo's `instructions` setting: more instruction files to read into every
    * conversation, as paths or globs (`docs/*.md`, `~/notes/rules.md`), each
-   * looked for from the working folder up to the repository's top. Web
-   * addresses are not fetched. Set in the config file; the settings have no row for it.
+   * looked for from the working folder up to the repository's top, or as web
+   * addresses, which are fetched as MiMo fetches them - five seconds each, and
+   * left out when that fails. Set in the config file; the settings have no row for it.
    */
   instructionFiles?: string[]
   /** How spoken input is written down. */
@@ -1796,6 +1797,13 @@ export type Request =
    * and the files it names with `@` returned for the window to attach.
    */
   | { type: "command.expand"; directory: string; name: string; arguments: string }
+  /*
+   * A template the window filled in itself - an MCP server's prompt, or the
+   * line typed after a skill - with its ``!`cmd` `` placeholders run in
+   * `directory`, as MiMo runs a template's commands whatever its source (the
+   * user's 2026-09-16 decision).
+   */
+  | { type: "command.shell"; directory: string; text: string }
   | { type: "config.get" }
   | { type: "config.set"; patch: Partial<AppConfig> }
   | { type: "provider.list" }
@@ -2039,6 +2047,7 @@ export interface ResponseMap {
   "command.list": { commands: CommandInfo[] }
   /* `files` are the existing files the prompt names with `@`: `name` as written, `path` absolute. */
   "command.expand": { prompt: string; files: { name: string; path: string }[] }
+  "command.shell": { text: string }
   "config.get": { config: AppConfig }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }

@@ -23,6 +23,7 @@ import EditedFilesCard from "./EditedFilesCard.vue"
 import DeliveredFilesCard from "./DeliveredFilesCard.vue"
 import MediaStrip from "./parts/MediaStrip.vue"
 import { followDeliveries } from "../lib/delivered"
+import { followSpoken } from "../lib/speak-part"
 import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
@@ -88,6 +89,12 @@ followDeliveries({
   session: () => shownID.value,
   messages: () => shownMessages.value,
   directory: () => shownDirectory.value,
+})
+/* speak: a completed call of the speak tool is read aloud, with the machine's own voice. */
+followSpoken({
+  enabled: () => !props.side && !props.latest && !props.subagent,
+  session: () => shownID.value,
+  messages: () => shownMessages.value,
 })
 const scroller = ref<HTMLElement>()
 

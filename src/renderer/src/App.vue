@@ -62,7 +62,6 @@ import { arbitratePanel, boundChord, clampSideWidth, sideFits, toolHints } from 
 import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
-import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
 import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
@@ -3786,9 +3785,8 @@ function flushNotices() {
   }
 }
 
-/* Coming back to the window cuts off whatever was being read out; leaving it sends what was held. */
+/* Leaving the window sends what was held. */
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) hush()
   flushNotices()
 })
 watch([() => app.currentID, isHome], flushNotices)
@@ -3808,8 +3806,6 @@ watch(
     if (choice !== "off" && longTask(turn.elapsed)) chime(choice)
     const about = noticeAbout(turn.sessionID)
     recordLog("INFO", about.title ?? turn.sessionID)
-    // A short phrase read aloud is for someone who has looked away.
-    if (app.config?.voiceFeedback && document.hidden) speak(t("voice.said.agent"), language.value)
     if (app.config?.notifyAgent === false) return
     // automation: a scheduled task's run is told about by its own policy, below.
     if (app.automationRuns.has(turn.sessionID)) return
@@ -3870,10 +3866,9 @@ watch(
   },
   (message) => {
     if (!message) return
-    // Logged, with its cue and spoken line if they are on; MiMo sends no notification for a failure.
+    // Logged, with its cue if that is on; MiMo sends no notification for a failure.
     recordLog("ERROR", message)
     if (app.config?.soundError) play("error")
-    if (app.config?.voiceFeedback && document.hidden) speak(t("voice.said.error"), language.value)
   },
 )
 

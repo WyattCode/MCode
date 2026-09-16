@@ -25,7 +25,7 @@ import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, ve
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, reachOf, repairableNames, toolsFor } from "../tool/registry"
+import { findTool, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
@@ -47,7 +47,7 @@ import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflo
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
-import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf } from "./plan"
+import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
@@ -460,7 +460,8 @@ export class SessionRunner {
    * plan. An explore subagent is still offered only its own few.
    */
   private tools(agent: string, conversation: string): ToolDefinition[] {
-    const own = toolsFor(agent)
+    // speak rides on the voice feedback setting; the rule itself lives with the registry.
+    const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
     if (agent === "explore") return own
     let servers = this.mcpServersAt.get(conversation)
     if (!servers) {
@@ -2613,8 +2614,8 @@ export class SessionRunner {
     this.numbering.set(counted, number)
     const name = `${type}-${number}`
 
-    // An explore subagent only reads, and nothing started from Plan may change anything either.
-    const agent: AgentName = type === "explore" || parent.agent === "plan" ? "plan" : "build"
+    // plan: an explore subagent only reads; anything else builds, even started from a planning turn (see subagentAgent).
+    const agent: AgentName = subagentAgent(type)
     const child = await this.store.create({
       directory: parent.directory,
       model,
