@@ -433,6 +433,7 @@ function startResize(event: PointerEvent) {
   font-weight: 400;
   line-height: 18px;
   /* What the button it used to be gave it. */
+  text-align: center;
   cursor: pointer;
 }
 
