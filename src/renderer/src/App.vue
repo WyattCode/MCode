@@ -1329,9 +1329,14 @@ function reloadBrowser(force = false) {
   void rightPanel.value?.reloadTarget()?.reload(force)
 }
 
-/* Ctrl+period is MiMo's annotate while a browser tab shows a page, and nothing anywhere else. */
+/*
+ * Ctrl+period is MiMo's annotate while a browser tab shows a page. A blank tab
+ * has nothing to mark, so `toggleAnnotate` says no and the chord falls back to
+ * stepping the agent, as it does everywhere else.
+ */
 function annotateBrowser() {
-  if (browserShowing.value) rightPanel.value?.activeBrowser()?.toggleAnnotate()
+  const annotated = browserShowing.value ? rightPanel.value?.activeBrowser()?.toggleAnnotate() : false
+  if (!annotated && app.currentID) void cycleAgent(1)
 }
 
 /*
