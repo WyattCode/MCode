@@ -32,7 +32,9 @@ const SHIFTED: Record<string, string> = {
 
 /**
  * The default chords round five dropped because MiMo's table has none, by the
- * command that carried them. The commands stay; only the chord went.
+ * command that carried them. Most commands stayed and only the chord went;
+ * round nine deleted a few of them too (reopen tab, auto-accept, the scheme
+ * cycle), and a saved default for those is dropped all the same.
  */
 export const RETIRED_DEFAULTS: Readonly<Record<string, string>> = {
   "permissions.autoaccept": "Ctrl+Shift+A",

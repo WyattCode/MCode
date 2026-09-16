@@ -660,13 +660,11 @@ async function main(): Promise<void> {
    * instruction to summarise, and the turn ends in words.
    */
   /*
-   * 2.0's theme reaches documents that already exist. Every document carries
-   * a themeID, since the default is written in with the rest, so changing
-   * the default alone would leave everyone who never chose a theme looking at
-   * 0.x. The untouched default moves once; a theme picked on purpose stays,
-   * and going back to OC-2 afterwards sticks.
+   * Round nine: there is no palette to choose any more (MiMo has only the
+   * scheme), so a stored palette - picked on purpose or not - is dropped when
+   * the document loads, and the window draws with MCode 2.0.
    */
-  console.log("the 2.0 theme reaches documents that already exist")
+  console.log("a stored palette is dropped, as MiMo has none")
   {
     const load = async (stored: Record<string, unknown>) => {
       const dir = path.join(root, `migrate-${Math.random().toString(36).slice(2)}`)
@@ -674,15 +672,11 @@ async function main(): Promise<void> {
       await store.write("config", stored)
       const loaded = new Config(store, new Bus(), path.join(dir, "credentials.json"))
       await loaded.load()
-      return loaded.get()
+      return loaded.get() as unknown as Record<string, unknown>
     }
-    const untouched = await load({ themeID: "oc-2" })
-    check("an untouched default moves to MCode 2.0", untouched.themeID === "mcode-2", String(untouched.themeID))
-    check("and the move is recorded", (untouched.migrations ?? []).includes("theme-mcode-2"))
-    const chosen = await load({ themeID: "dracula" })
-    check("a theme chosen on purpose stays", chosen.themeID === "dracula", String(chosen.themeID))
-    const back = await load({ themeID: "oc-2", migrations: ["theme-mcode-2"] })
-    check("OC-2 picked again after the move sticks", back.themeID === "oc-2", String(back.themeID))
+    const chosen = await load({ themeID: "dracula", theme: "dark" })
+    check("a palette chosen on purpose is gone", !("themeID" in chosen), String(chosen.themeID))
+    check("while the scheme stays", chosen.theme === "dark", String(chosen.theme))
   }
 
   console.log("a turn at its step limit answers in words")
@@ -1866,7 +1860,12 @@ async function main(): Promise<void> {
   {
     const older = path.join(root, "older")
     const storageOld = new Storage(path.join(older, "storage"))
-    await storageOld.write("config", { autoApprove: ["bash", "outside"] })
+    /*
+     * Marked as past round nine's reset (S9-1), which otherwise puts every
+     * per-tool answer back to what the access level writes: this is about how
+     * the old vocabulary is read, which the store still does.
+     */
+    await storageOld.write("config", { autoApprove: ["bash", "outside"], migrations: ["orphans-r9"] })
     const configOld = new Config(storageOld, new Bus(), path.join(older, "credentials.json"))
     await configOld.load()
     const kept = configOld.get().permissions
@@ -1882,6 +1881,14 @@ async function main(): Promise<void> {
      */
     check("a bucket that never asked still does not", kept.read === "allow", String(kept.read))
     check("the old list still reads back", configOld.get().autoApprove.includes("bash"))
+
+    // Not yet through round nine's reset, the same document lands on the default level's answers.
+    const unmarked = path.join(root, "older-unmarked")
+    const storageUnmarked = new Storage(path.join(unmarked, "storage"))
+    await storageUnmarked.write("config", { autoApprove: ["bash", "outside"] })
+    const configUnmarked = new Config(storageUnmarked, new Bus(), path.join(unmarked, "credentials.json"))
+    await configUnmarked.load()
+    check("before round nine's reset it runs, the reset puts the approvals back to asking", configUnmarked.get().permissions.bash === "ask" && configUnmarked.get().permissions.read === "allow")
 
     // A config from before any of this, which is most of them.
     const bare = path.join(root, "bare")

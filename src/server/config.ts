@@ -21,6 +21,8 @@ import {
   type PermissionKind,
 } from "@shared/protocol"
 import { adoptedProjects, reconciledProjects } from "@shared/projects"
+import { sanitizeConfig } from "./config-sanitize"
+import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
 import { writeAtomic } from "./storage"
 import type { Bus } from "./bus"
@@ -59,11 +61,6 @@ export const CONFIG_SCHEMA_VERSION = 1
 
 export type { ModelEntry }
 
-/** "provider/model" - the key models are enabled and looked up by. */
-export function modelKey(ref: ModelRef): string {
-  return `${ref.provider}/${ref.model}`
-}
-
 /**
  * One catalog entry as the window sees it.
  *
@@ -101,22 +98,16 @@ function defaults(): AppConfig {
   return {
     model: DEFAULT_MODEL,
     theme: "system",
-    themeID: "mcode-2",
     mcpServers: {},
     pinnedTabs: [],
     pinnedProjects: [],
     projectOrder: [],
     taskOrder: {},
     keybinds: {},
-    serverURL: "",
-    servers: [],
-    defaultServer: "",
     updateFeed: "",
     taskDoneSound: "bloom",
     spineSound: true,
     projectRoot: "",
-    soundPermission: false,
-    soundError: false,
     /*
      * Empty means nobody has chosen yet, which the window answers by reading
      * the machine's own preference. A real value here would be indistinguishable
@@ -141,15 +132,9 @@ function defaults(): AppConfig {
     effort: "medium",
     agent: "build",
     staged: false,
-    openTabs: [],
     importOnboarded: false,
-    expandShell: false,
-    expandEdits: false,
-    uiFont: "",
-    codeFont: "",
     uiFontSize: 14,
     codeFontSize: 12,
-    terminalFont: "",
     instructions: "",
     tray: true,
     voiceMode: "smart",
@@ -160,19 +145,7 @@ function defaults(): AppConfig {
     pointerCursor: true,
     reduceMotion: "system",
     diffMarks: "color",
-    notifyAgent: true,
-    notifyPermission: true,
-    /*
-     * Off, which is opencode's. Its own getter is
-     * `getStore().get(PINCH_ZOOM_ENABLED_KEY) === true`, so an unset store
-     * reads false - the gesture is opted into, not out of. Read from the main
-     * process rather than the settings UI, whose switch shows whatever the
-     * reader last chose.
-     */
-    pinchZoom: false,
-    releaseNotes: true,
     migrations: [],
-    showTerminal: true,
     shell: "",
     customProviders: [],
     /*
@@ -187,13 +160,69 @@ function defaults(): AppConfig {
      */
     commands: {},
     providerEndpoints: {},
-    /**
-     * Which models appear in the composer picker. Empty means "not chosen yet",
-     * and the picker falls back to showing everything a connected provider
-     * offers - otherwise connecting a provider would appear to do nothing.
-     */
-    enabledModels: [],
   }
+}
+
+/**
+ * Fields earlier builds stored and this one no longer has.
+ *
+ * Each was a setting whose row is gone because MiMo has no such setting; the
+ * behaviour is now MiMo's fixed one. A stored value would otherwise ride along
+ * in every write for ever, so it is dropped on every read - MiMo's own settings
+ * store deletes its retired keys the same way each time it loads.
+ */
+export const RETIRED_FIELDS: readonly string[] = [
+  // Round nine (S9-1): notifications always on, no permission or failure cue,
+  // no Ctrl+wheel zoom in the main window, tool rows always start closed.
+  "notifyAgent",
+  "notifyPermission",
+  "soundPermission",
+  "soundError",
+  "pinchZoom",
+  "expandShell",
+  "expandEdits",
+  // S9-2: the picker's curation list, whose switches round three removed; every model shows.
+  "enabledModels",
+  // S9-3: the hidden tab list; the numbered shortcuts count along the side column now.
+  "openTabs",
+  // S9-5: the three typeface boxes; MiMo deletes its stored faces the same way on every load.
+  "uiFont",
+  "codeFont",
+  "terminalFont",
+  // S9-6: the palette choice; MiMo has only the scheme, and MCode draws with its one palette.
+  "themeID",
+  // S9-7: the post-update notes window's switch; MiMo has no such window.
+  "releaseNotes",
+  // S9-9: the bar's terminal toggle switch, which nothing ever read.
+  "showTerminal",
+  // S9-14: the remote-backend connection MiMo does not have; the window only ever talks to its own backend.
+  "serverURL",
+  "servers",
+  "defaultServer",
+]
+
+/** Takes the retired fields out of a document; answers whether any was there. */
+function dropRetired(document: object): boolean {
+  const record = document as Record<string, unknown>
+  let dropped = false
+  for (const field of RETIRED_FIELDS) {
+    if (!(field in record)) continue
+    delete record[field]
+    dropped = true
+  }
+  return dropped
+}
+
+/**
+ * The permission map MiMo's three levels leave behind, at `level`.
+ *
+ * MiMo has no per-tool answers, only the level; the map is how this app stores
+ * the level. So full access is every bucket allowed, and the other two levels
+ * are the defaults - the middle one is applied on top of them by `accessLevel`.
+ */
+export function levelMap(level: Access): Record<PermissionKind, PermissionAction> {
+  if (level !== "full") return { ...DEFAULT_PERMISSIONS }
+  return Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
 }
 
 /** MiMo's defaults when nothing is stored: the middle level, and the full access switch on. */
@@ -376,18 +405,6 @@ export class Config {
     }
 
     /*
-     * 2.0 draws with its own theme, MCode 2.0. Changing the default only
-     * reaches new documents, and every document already carries a themeID -
-     * the default is written in with the rest - so anyone who never chose a
-     * theme would open 2.0 looking exactly like 0.x. Only the untouched
-     * default moves; a theme that was picked on purpose stays, and picking
-     * OC-2 again afterwards sticks, because the name is recorded either way.
-     */
-    once("theme-mcode-2", () => {
-      if (this.current.themeID === "oc-2") this.current.themeID = "mcode-2"
-    })
-
-    /*
      * Round three renamed several commands to MiMo's ids. A chord someone bound
      * under the old id would otherwise stop working without a word; it moves to
      * the new id unless that one already has a binding. Commands that are gone
@@ -460,11 +477,24 @@ export class Config {
     })
 
     /*
+     * Round nine (S9-1): the per-tool answers had no row left to change them,
+     * yet a stored "deny" still refused a tool at every level and a stored
+     * "allow" still skipped a question at the default one. MiMo has only the
+     * three levels, so the map goes back to what the level the user is on
+     * writes, and the set-aside map full access kept goes with it. The level
+     * itself - and the full access switch - are the user's and stay.
+     */
+    once("orphans-r9", () => {
+      this.current.permissions = levelMap(defaultAccess(this.current))
+      delete this.current.accessBefore
+    })
+
+    /*
      * Round nine: MCP tool calls stop asking by default, as in MiMo (the
-     * user's decision of 2026-09-17). Every stored config carries the old
-     * default written out, which cannot be told from a choice, so an "ask" on
-     * the MCP bucket moves to the new default once; a refusal stays, and
-     * setting it back to ask afterwards sticks.
+     * user's decision of 2026-09-17). A document that went through the reset
+     * above before the default changed still says "ask" for MCP, which
+     * cannot be told from a choice, so it moves to the new default once; a
+     * refusal stays.
      */
     once("mcp-allow-r9", () => {
       const map = this.current.permissions
@@ -506,6 +536,9 @@ export class Config {
     // Read before anything is merged: what follows must not write over a newer document.
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    const retired = dropRetired(this.current)
+    // Before the migrations, which read these values as the types they claim to be.
+    const cleaned = sanitizeConfig(this.current, defaults())
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
      * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
@@ -517,7 +550,7 @@ export class Config {
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     const migrated = this.migrate()
     this.current.autoApprove = allowed(this.current.permissions)
-    if (migrated && !this.fromNewerVersion) await this.persist()
+    if ((migrated || retired || cleaned) && !this.fromNewerVersion) await this.persist()
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))
@@ -643,14 +676,42 @@ export class Config {
     }
   }
 
-  private async reloadFromDisk(): Promise<void> {
+  /** Told after a hand edit has been taken in, with the settings before and after it. */
+  private reloadListeners: ((before: AppConfig, after: AppConfig) => void | Promise<void>)[] = []
+
+  onReload(listener: (before: AppConfig, after: AppConfig) => void | Promise<void>): void {
+    this.reloadListeners.push(listener)
+  }
+
+  /**
+   * A hand edit, taken in under the same rules as a launch and a change made in
+   * the window.
+   *
+   * It used to be spread over the defaults and nothing else: a document marked
+   * as written by a later build was then written over by the next change, a
+   * custom provider deleted from the file was simply gone rather than disabled,
+   * and turning full access off left every conversation already at full access
+   * there until its next question.
+   */
+  async reloadFromDisk(): Promise<void> {
     // A file that stopped parsing is left alone: the next save refuses and says where it broke.
     const stored = (await this.readStored()).value
     if (!stored) return
     if (JSON.stringify(stored) === JSON.stringify(this.current)) return
-    this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
-    this.current.autoApprove = allowed(this.current.permissions)
+    const before = this.current
+    // As load reads it: a later build's document is taken in but never written back over.
+    this.fromNewerVersion = typeof stored.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
+    let next: AppConfig = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    dropRetired(next)
+    sanitizeConfig(next, defaults())
+    // As set keeps it: a custom provider taken out of the file is disabled, not lost.
+    if (JSON.stringify(next.customProviders) !== JSON.stringify(before.customProviders)) {
+      next = { ...next, ...customProviderWrite(before.customProviders, next) }
+    }
+    next.autoApprove = allowed(next.permissions)
+    this.current = next
     this.bus.publish({ type: "config.updated", config: this.current })
+    for (const listener of this.reloadListeners) await Promise.resolve(listener(before, next)).catch(() => undefined)
   }
 
   async set(patch: Partial<AppConfig>): Promise<AppConfig> {
@@ -669,6 +730,7 @@ export class Config {
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
+    dropRetired(this.current)
     if (patch.customProviders) {
       this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
     }
@@ -981,16 +1043,12 @@ export class Config {
     }))
   }
 
-  /** Models offered in the composer picker, honouring the enabled list. */
+  /** Models offered in the composer picker: every model of every usable provider, as MiMo lists them. */
   enabled(): { provider: string; model: ModelEntry }[] {
-    const chosen = new Set(this.current.enabledModels)
     const out: { provider: string; model: ModelEntry }[] = []
     for (const provider of this.definitions()) {
       if (!this.usable(provider.id)) continue
-      for (const model of this.models(provider.id)) {
-        const key = modelKey({ provider: provider.id, model: model.id })
-        if (chosen.size === 0 || chosen.has(key)) out.push({ provider: provider.id, model })
-      }
+      for (const model of this.models(provider.id)) out.push({ provider: provider.id, model })
     }
     return out
   }

@@ -1,24 +1,14 @@
 /**
  * The sounds the app makes.
  *
- * Synthesised rather than shipped as files: they are three short tones, and a
+ * Synthesised rather than shipped as files: they are short figures, and a
  * few oscillators describe them more precisely than an audio asset would
  * while adding nothing to the bundle. The context is created on first use
  * because a browser will not let one start before the page has been touched.
  */
 import type { ChimeName } from "@shared/chime"
 
-export type Cue = "permission" | "error"
-
 let context: AudioContext | undefined
-
-/** Each cue as a shape: a note, a fall, and how long it takes. */
-const CUES: Record<Cue, { from: number; to: number; seconds: number; gain: number }> = {
-  // Asking: two even notes, so it reads as a question rather than a result.
-  permission: { from: 520, to: 520, seconds: 0.22, gain: 0.06 },
-  // Failed: a fall, which is what everything that goes wrong sounds like.
-  error: { from: 400, to: 240, seconds: 0.26, gain: 0.06 },
-}
 
 /** One oscillator: a pitch (gliding to `to` if given), when it starts, how long it rings. */
 interface Voice {
@@ -116,16 +106,6 @@ function sound(ctx: AudioContext, voice: Voice, out: AudioNode = ctx.destination
   oscillator.stop(start + voice.seconds + 0.02)
 }
 
-export function play(cue: Cue): void {
-  try {
-    const shape = CUES[cue]
-    sound(audio(), { from: shape.from, to: shape.to, at: 0, seconds: shape.seconds, gain: shape.gain })
-  } catch {
-    // No audio device, or a context the browser refused: a missing sound is
-    // never worth interrupting anything for.
-  }
-}
-
 /*
  * The chimes share one small room: a reverb whose impulse is MCode's own noise
  * dying away, so each figure rings out a little instead of stopping dry. Built
@@ -168,7 +148,7 @@ export function chime(name: ChimeName): void {
     const out = chimeRoom(ctx)
     for (const voice of CHIME_VOICES[name]) sound(ctx, voice, out)
   } catch {
-    // As above: silence is the right failure.
+    // No audio device, or a context the browser refused: silence is the right failure.
   }
 }
 
