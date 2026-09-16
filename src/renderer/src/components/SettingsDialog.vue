@@ -254,8 +254,35 @@ function blankMcpForm(): McpForm {
 }
 
 /*
- * MiMo's pills: 已禁用 when off; 检测中… while an enabled server has no answer
- * yet; its known states by name; anything else 未知.
+ * MiMo's status pass: read the report, and connect now any server switched on
+ * in the config that the report does not know yet - one added since the
+ * servers were last read. Every other saved change waits for the next
+ * conversation. Counted, so overlapping passes keep 检测中… until the last ends.
+ */
+const mcpChecking = ref(0)
+
+async function refreshMcp() {
+  const client = app.client
+  if (!client) return
+  mcpChecking.value++
+  try {
+    let servers = (await client.request({ type: "mcp.list" }).catch(() => undefined))?.servers
+    if (!servers) return
+    const known = new Set(servers.map((server) => server.name))
+    const missing = Object.entries(app.config?.mcpServers ?? {})
+      .filter(([name, entry]) => entry.enabled !== false && !known.has(name))
+      .map(([name]) => name)
+    const registered = await Promise.all(missing.map((name) => client.request({ type: "mcp.register", name }).catch(() => undefined)))
+    for (const result of registered) if (result) servers = result.servers
+    app.mcpServers = servers
+  } finally {
+    mcpChecking.value--
+  }
+}
+
+/*
+ * MiMo's pills: 已禁用 when off; 检测中… on every enabled server while a status
+ * pass runs; its known states by name; anything the report does not know 未知.
  */
 const mcpRows = computed(() =>
   Object.entries(app.config?.mcpServers ?? {})
@@ -265,9 +292,9 @@ const mcpRows = computed(() =>
       const enabled = entry.enabled !== false
       const status: McpStatus | "checking" | "unknown" = !enabled
         ? "disabled"
-        : !state
+        : mcpChecking.value
           ? "checking"
-          : state.status in MCP_TONE
+          : state && state.status in MCP_TONE
             ? state.status
             : "unknown"
       return {
@@ -387,6 +414,7 @@ async function saveMcp() {
   delete mcpTools.value[name]
   notify(t("set.mcpForm.saved", { name }))
   mcpView.value = "list"
+  void refreshMcp()
 }
 
 async function setMcpEnabled(name: string, enabled: boolean) {
@@ -398,6 +426,7 @@ async function setMcpEnabled(name: string, enabled: boolean) {
     notifyFailure(t("set.mcp.toggleFailed"), reasonText(err))
   }
   delete mcpTools.value[name]
+  void refreshMcp()
 }
 
 /* MiMo's 授权 on a remote server that answered 401: the browser sign-in, then the row reconnects. */
@@ -413,6 +442,7 @@ async function authorizeMcp(name: string) {
   } finally {
     mcpAuthorizing.value = undefined
     delete mcpTools.value[name]
+    void refreshMcp()
   }
 }
 
@@ -429,6 +459,7 @@ async function removeMcp(name: string) {
   if (mcpToolsOpen.value === name) mcpToolsOpen.value = undefined
   delete mcpTools.value[name]
   notify(t("set.mcp.removed") + name)
+  void refreshMcp()
 }
 
 async function loadMcpTools(name: string) {
@@ -498,6 +529,7 @@ async function finishMcpImport() {
     const result = await app.client?.request({ type: "mcp.importApply", items })
     notify(t("set.mcp.importDone", { n: String(result?.imported.length ?? 0) }))
     mcpView.value = "list"
+    void refreshMcp()
   } catch (err) {
     notifyFailure(t("set.mcp.importFailed") + (err instanceof Error ? err.message : String(err)))
   } finally {
@@ -657,6 +689,7 @@ watch(
     if (next === "files" || next === "models" || next === "mcp") void loadPaths()
     if (next === "files") void loadAgents()
     if (next !== "mcp") mcpView.value = "list"
+    else void refreshMcp()
     if (next === "environment") void loadTrees()
     else configuring.value = undefined
     if (next === "usage") void loadUsage()

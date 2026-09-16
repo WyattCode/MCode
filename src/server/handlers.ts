@@ -393,6 +393,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * never sees the conversation without its project.
        */
       if (!request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory])
+      // MiMo's rule for saved MCP changes: a new conversation is when they take effect, for every conversation.
+      // Not waited for: the conversation's first turn waits for its project's servers itself.
+      void runtime.mcp.commitIfDirty()
       const session = await runtime.sessions.create({
         directory,
         ...(request.scratch ? { scratch: true } : {}),
@@ -1479,6 +1482,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "mcp.authenticate":
       await runtime.mcp.authenticate(request.name)
       return { servers: runtime.mcp.list() } satisfies Handled<"mcp.authenticate">
+
+    case "mcp.register":
+      await runtime.mcp.register(request.name)
+      return { servers: runtime.mcp.list() } satisfies Handled<"mcp.register">
 
     case "mcp.importScan": {
       const found = await scanMcpImports(runtime.config.get().mcpServers ?? {})

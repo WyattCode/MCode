@@ -28,16 +28,6 @@ export interface SessionInfo {
   titleSource?: "fallback" | "generated" | "user"
   /** MiMo's `auto_worktree_hint_sent`: the one note about changing a repository's main worktree has gone to the model. */
   worktreeNotice?: boolean
-  /**
-   * The MCP servers this conversation was offered at its first turn.
-   *
-   * MiMo's MCP page says a saved change applies from the next conversation, so
-   * the list is kept with the conversation and read back on the next run: a
-   * server added or switched on later reaches new conversations only. Absent
-   * on conversations stored before this, which take whatever is configured at
-   * their next turn and keep that.
-   */
-  mcpServers?: string[]
   /** Absolute path of the project directory this session operates in. */
   directory: string
   model: ModelRef
@@ -2074,6 +2064,8 @@ export type Request =
   | { type: "mcp.tools"; name: string }
   /* 授权: the browser sign-in for a remote server that answered 401; resolves when it has finished. */
   | { type: "mcp.authenticate"; name: string }
+  /** An enabled server the status report does not know yet: connect it now, as MiMo's page registers one. */
+  | { type: "mcp.register"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
   /* 导入: what other AI apps on this machine hold, and taking the chosen ones in. Read-only towards them. */
@@ -2279,6 +2271,7 @@ export interface ResponseMap {
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */
   "mcp.tools": { tools?: McpToolInfo[]; error?: string }
   "mcp.authenticate": { servers: McpServerState[] }
+  "mcp.register": { servers: McpServerState[] }
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }

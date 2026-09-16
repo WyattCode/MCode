@@ -334,19 +334,6 @@ export class SessionStore {
     )
   }
 
-  /*
-   * The MCP servers a conversation was offered at its first turn.
-   *
-   * MiMo's MCP page says a saved change applies from the next conversation, so
-   * this is kept with the conversation rather than in memory alone - after a
-   * restart it must still be offered the same servers. Written without
-   * touching `updated`, as the access level is: recording it is not activity
-   * and must not move the conversation up the side column.
-   */
-  async setMcpServers(sessionID: string, names: readonly string[]): Promise<void> {
-    await this.exclusive(this.infoKey(sessionID), () => this.writeInfo(sessionID, (session) => ({ ...session, mcpServers: [...names] })))
-  }
-
   /** Turning off full access puts every conversation that was at it back on the default, as MiMo does. */
   async dropFullAccess(): Promise<void> {
     for (const session of await this.list()) {

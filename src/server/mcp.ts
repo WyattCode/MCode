@@ -912,6 +912,15 @@ export class McpServers {
    * because someone picked a colour would be absurd.
    */
   private fingerprint = ""
+  /*
+   * MiMo's "next conversation" rule. A saved change only marks the servers
+   * out of date; starting a conversation turns that into a pending reload,
+   * which is carried out as soon as no turn is running anywhere - so a server
+   * removed or edited never disappears from under a turn that is using it.
+   */
+  private dirty = false
+  private pending = false
+  private busy: () => boolean = () => false
 
   private readonly oauth?: McpAuthStore
   /** Servers whose sign-in is under way, so a second press does not start another. */
@@ -928,12 +937,65 @@ export class McpServers {
     this.oauth = storage ? new McpAuthStore(storage) : undefined
     this.fingerprint = JSON.stringify(this.config.get().mcpServers ?? {})
     this.bus.subscribe((event) => {
+      if (event.type === "session.idle") {
+        if (this.pending) void this.applyPending()
+        return
+      }
       if (event.type !== "config.updated") return
       const next = JSON.stringify(event.config.mcpServers ?? {})
       if (next === this.fingerprint) return
       this.fingerprint = next
-      void this.refresh()
+      this.dirty = true
     })
+  }
+
+  /** Whether any turn is running; a pending reload waits until none is. */
+  useBusy(busy: () => boolean): void {
+    this.busy = busy
+  }
+
+  /**
+   * A new conversation is starting: a configuration saved since the last one
+   * is applied to every project's servers, now if nothing is running, else as
+   * soon as the last running turn ends.
+   */
+  commitIfDirty(): Promise<void> {
+    if (!this.dirty) return Promise.resolve()
+    this.dirty = false
+    this.pending = true
+    return this.applyPending()
+  }
+
+  private async applyPending(): Promise<void> {
+    if (!this.pending || this.busy()) return
+    this.pending = false
+    await this.refresh()
+  }
+
+  /**
+   * The settings page's answer to a server it lists as on but the report does
+   * not know yet - one added since the servers were last read: it is
+   * connected now, in the directory the page reports on, as MiMo's page
+   * registers it with its engine.
+   */
+  async register(name: string): Promise<void> {
+    const stored = this.config.get().mcpServers?.[name]
+    if (!stored) throw new Error(`no MCP server named ${name} is configured`)
+    await this.ready(this.viewDirectory())
+    const group = this.group()
+    if (!group || group.connections.has(name)) return
+    const [entry] = await resolveServers({ servers: { [name]: stored }, configFile: this.configFile(), home: this.home })
+    if (!entry) throw new Error(`the MCP server ${name} has no type`)
+    if (group.connections.has(name)) return
+    group.entries = [...group.entries, entry]
+    const connection = this.connection(group, entry)
+    if (entry.config?.enabled === false) {
+      this.publish()
+      return
+    }
+    this.publish()
+    await connection.connect()
+    this.publish()
   }
 
   /** How a server's sampling requests are answered; the backend hands this over once the models are reachable. */
@@ -1025,13 +1087,16 @@ export class McpServers {
     return this.ready(this.viewDirectory())
   }
 
-  /** Every group reads the configuration again and reconnects what changed. */
+  /** Every group reads the configuration again: what changed or failed is connected again, what went is closed. */
   private async refresh(): Promise<void> {
+    // Each group's `ready` is replaced at once, so a turn that starts meanwhile waits for the new set.
     await Promise.all(
-      [...this.groups.values()].map(async (group) => {
-        await group.ready.catch(() => {})
-        group.ready = this.resolve(group.directory).then((entries) => this.reconcile(group, entries))
-        await group.ready
+      [...this.groups.values()].map((group) => {
+        group.ready = group.ready
+          .catch(() => {})
+          .then(() => this.resolve(group.directory))
+          .then((entries) => this.reconcile(group, entries))
+        return group.ready
       }),
     )
   }

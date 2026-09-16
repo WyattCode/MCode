@@ -17,7 +17,9 @@ import { parseJsonc, renderJsonc } from "../src/server/jsonc"
 import { CodedError, paramsOf } from "../src/shared/errors"
 import { McpServers } from "../src/server/mcp"
 import { checkEntry, claudeServers, projectFiles, resolveServers, substituteEntry } from "../src/server/mcp-sources"
-import type { AppConfig, McpServerConfig } from "../src/shared/protocol"
+import type { AppConfig, McpServerConfig, Request } from "../src/shared/protocol"
+import { startBackend } from "../src/server/index"
+import { handle } from "../src/server/handlers"
 
 type Section = (name: string) => void
 
@@ -268,12 +270,121 @@ async function perProject(check: Check, section: Section): Promise<void> {
   }
 }
 
+async function until(test: () => boolean | Promise<boolean>, ms = 15_000): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (await test()) return true
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return false
+}
+
+/** M-1, M-2: a saved change reaches every conversation when the next one starts, never under a running turn. */
+async function nextConversation(check: Check, section: Section): Promise<void> {
+  section("Round 9: saved MCP changes apply from the next conversation (M-1, M-2)")
+  const dir = await temporary("mcode-r9-next-")
+  const bus = new Bus()
+  const project = path.join(dir, "project")
+  await fs.mkdir(project, { recursive: true })
+  const pids = path.join(dir, "pids")
+  await fs.mkdir(pids)
+  const life = (tag: string): McpServerConfig => ({ type: "local", command: ["node", fixture(), "--tag", tag, "--pid-file", path.join(pids, `life-${tag}`)] })
+  const config = stubConfig(bus, {
+    mcpServers: {
+      life: life("one"),
+      broken: { type: "local", command: ["node", path.join(dir, "missing-server.cjs")] },
+      gone: { type: "local", command: ["node", fixture(), "--tag", "gone"] },
+    },
+    directory: project,
+  })
+  const mcp = new McpServers(bus, config as never, undefined, path.join(dir, "home"))
+  let busy = false
+  mcp.useBusy(() => busy)
+  const status = (name: string) => mcp.list().find((entry) => entry.name === name)?.status
+  try {
+    await mcp.start()
+    check("to begin with, one server answers and a misspelled one has failed", (await callTool(mcp, project, "life_tag")) === "one" && status("broken") === "failed", mcp.list())
+
+    const servers = () => (config.get() as unknown as { mcpServers: Record<string, McpServerConfig> }).mcpServers
+    await config.set({ mcpServers: { ...servers(), life: life("two"), broken: { type: "local", command: ["node", fixture(), "--tag", "fixed"] } } })
+    await config.set({ theme: "dark" } as Partial<AppConfig>)
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    check("saving only writes the config: a running conversation keeps the servers it had", (await callTool(mcp, project, "life_tag")) === "one" && status("broken") === "failed")
+
+    // A new conversation while a turn is running: noted, not applied.
+    busy = true
+    await mcp.commitIfDirty()
+    await config.set({ mcpServers: Object.fromEntries(Object.entries(servers()).filter(([name]) => name !== "gone")) })
+    await mcp.commitIfDirty()
+    check("a new conversation while another turn runs changes nothing yet", (await callTool(mcp, project, "life_tag")) === "one")
+    check("a server removed meanwhile still answers the running turn", (await callTool(mcp, project, "gone_tag")) === "gone")
+    bus.publish({ type: "session.idle", sessionID: "still-busy" })
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    check("one turn ending while another still runs changes nothing either", (await callTool(mcp, project, "life_tag")) === "one")
+
+    busy = false
+    bus.publish({ type: "session.idle", sessionID: "last" })
+    const applied = await until(async () => (await callTool(mcp, project, "life_tag")) === "two")
+    check("once the last turn ends, the edited command is what runs (M-1)", applied, await callTool(mcp, project, "life_tag"))
+    check("the server whose command was fixed connects this time", await until(() => status("broken") === "connected"), mcp.list())
+    check("and the removed one is gone", !mcp.tools(project).some((tool) => tool.name.startsWith("gone_")) && status("gone") === undefined, mcp.list())
+
+    const pidBefore = await fs.readFile(path.join(pids, "life-two"), "utf8")
+    await config.set({ theme: "light" } as Partial<AppConfig>)
+    await mcp.commitIfDirty()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    check("a conversation after an unrelated setting changed reconnects nothing", (await fs.readFile(path.join(pids, "life-two"), "utf8")) === pidBefore && status("life") === "connected")
+
+    // MiMo's page: a server added since the report was made is connected at once.
+    await config.set({ mcpServers: { ...servers(), added: { type: "local", command: ["node", fixture(), "--tag", "added"] } } })
+    check("a newly added server is not in the report until something asks", status("added") === undefined)
+    await mcp.register("added")
+    check("registering it from the settings page connects it now", status("added") === "connected" && (await callTool(mcp, project, "added_tag")) === "added", mcp.list())
+    await mcp.register("added")
+    check("registering a known server again starts nothing new", mcp.list().filter((entry) => entry.name === "added").length === 1)
+    const unknown = await mcp.register("nobody").then(
+      () => "",
+      (error: Error) => error.message,
+    )
+    check("a name the config does not have is refused", unknown.includes("nobody"), unknown)
+    await mcp.commitIfDirty()
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    check("the next conversation keeps a registered server as it is", status("added") === "connected")
+  } finally {
+    mcp.close()
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+
+  // The backend: a conversation created through the socket's request is the moment.
+  const data = await temporary("mcode-r9-backend-")
+  const home = path.join(data, "project")
+  await write(path.join(data, "storage", "config.json"), JSON.stringify({ directory: home, mcpServers: { life: { type: "local", command: ["node", fixture(), "--tag", "before"] } } }))
+  await fs.mkdir(home, { recursive: true })
+  const backend = await startBackend(data)
+  try {
+    const { runtime } = backend
+    await runtime.mcp.ready(home)
+    await runtime.config.set({ mcpServers: { life: { type: "local", command: ["node", fixture(), "--tag", "after"] } } })
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const before = await callTool(runtime.mcp, home, "life_tag")
+    await handle(runtime, { type: "session.create" } as Request)
+    const after = await until(async () => (await callTool(runtime.mcp, home, "life_tag")) === "after")
+    check("in the app, creating a conversation is what applies a saved change", before === "before" && after, { before })
+  } finally {
+    await backend.close()
+    await fs.rm(data, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
+  // Never the reader's own ~/.claude.json or ~/.mcode: the backend reads servers from both.
+  process.env.MCODE_IMPORT_HOME ??= await temporary("mcode-r9-home-")
   // A part that throws is a failed check, not a crash that hides every part after it.
   const parts: [string, (check: Check, section: Section) => Promise<void>][] = [
     ["M-4", jsoncConfig],
     ["M-5/M-6/M-16", serverSources],
     ["M-7", perProject],
+    ["M-1/M-2", nextConversation],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))

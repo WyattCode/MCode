@@ -104,19 +104,20 @@ check(
   asked.every((entry) => entry.kind === "mcp" && entry.scope === "mcp:probe"),
 )
 
-// Switching a server off has to stop it offering tools, not just grey the row.
+// Switching a server off is saved at once and reaches the servers when the next conversation starts, as in MiMo.
+const probeStatus = () => mcp.list().find((entry) => entry.name === "probe")?.status
 await mcp.toggle("probe")
-check(
-  "toggling off disconnects",
-  mcp.list().find((entry) => entry.name === "probe")?.status === "disabled",
-)
-check("and withdraws its tools", !mcp.tools().some((tool) => tool.name.startsWith("probe_")))
+check("toggling off is saved", config.get().mcpServers.probe?.enabled === false)
+// Long enough for a reconnect that should not happen to have happened.
+await new Promise((resolve) => setTimeout(resolve, 500))
+check("a running conversation keeps the server until the next one starts", probeStatus() === "connected", probeStatus())
+await mcp.commitIfDirty()
+check("the next conversation has it disconnected", probeStatus() === "disabled", probeStatus())
+check("and its tools withdrawn", !mcp.tools().some((tool) => tool.name.startsWith("probe_")))
 
 await mcp.toggle("probe")
-check(
-  "toggling back on reconnects",
-  mcp.list().find((entry) => entry.name === "probe")?.status === "connected",
-)
+await mcp.commitIfDirty()
+check("toggling back on reconnects it for the conversation after", probeStatus() === "connected", probeStatus())
 
 mcp.close()
 

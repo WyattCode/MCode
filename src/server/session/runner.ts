@@ -305,14 +305,6 @@ export class SessionRunner {
    * would make the two impossible to build in either order.
    */
   private mcp?: McpAccess
-  /*
-   * MiMo's MCP page says a saved change applies from the next conversation.
-   * Each conversation keeps the servers that were configured and on at its
-   * first turn in this run; one added or switched on later is offered to new
-   * conversations only. A server removed or switched off is gone at once, since
-   * there is nothing left to call.
-   */
-  private readonly mcpServersAt = new Map<string, ReadonlySet<string>>()
 
   /** Where the per-project shadow repositories that back undo are kept. */
   private readonly snapshots: Snapshots
@@ -503,25 +495,20 @@ export class SessionRunner {
 
   /**
    * The tools for a turn: this app's own, plus whatever the connected MCP
-   * servers offer.
+   * servers of the conversation's project offer. Which servers those are is
+   * the MCP layer's to say: a saved change reaches every conversation once the
+   * next one starts, as MiMo applies it.
    *
    * plan: a planning conversation is offered the MCP ones too, as MiMo offers
    * them - its rule is about writing files, not about which servers are
    * reachable, and a plan written without the project's own tools is a worse
    * plan. An explore subagent is still offered only its own few.
    */
-  private tools(agent: string, conversation: string, directory: string): ToolDefinition[] {
+  private tools(agent: string, directory: string): ToolDefinition[] {
     // speak rides on the voice feedback setting; the rule itself lives with the registry.
     const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
     if (agent === "explore") return own
-    let servers = this.mcpServersAt.get(conversation)
-    if (!servers) {
-      const configured = Object.entries(this.config.get().mcpServers ?? {})
-      servers = new Set(configured.filter(([, entry]) => entry.enabled !== false).map(([name]) => name))
-      this.mcpServersAt.set(conversation, servers)
-    }
-    const kept = servers
-    return [...own, ...(this.mcp?.tools(directory) ?? []).filter((tool) => !tool.server || kept.has(tool.server))]
+    return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
 
   /**
@@ -538,41 +525,6 @@ export class SessionRunner {
     const model = named && this.config.definition(named.provider) && this.config.usable(named.provider) ? named : undefined
     if (!override.agent && !model) return session
     return { ...session, ...(override.agent ? { agent: override.agent } : {}), ...(model ? { model } : {}) }
-  }
-
-  /**
-   * The MCP servers this conversation is offered, fixed at its first turn and
-   * kept with the conversation.
-   *
-   * MiMo's MCP page says a saved change applies from the next conversation.
-   * Holding that in memory alone meant a restart quietly read the config
-   * afresh, so a server switched on meanwhile reached an old conversation
-   * after all. A conversation with a stored list is seeded from it; one
-   * without records whatever is configured now.
-   */
-  private async rememberMcpServers(session: SessionInfo): Promise<void> {
-    // A subagent is offered its parent's servers, so the parent's record is the one that counts.
-    const conversation = session.parentID ?? session.id
-    const owner = conversation === session.id ? session : await this.store.get(conversation)
-    const stored = owner?.mcpServers
-    if (stored) {
-      // The record stands, whatever is configured now and whatever was worked out before it was read.
-      this.mcpServersAt.set(conversation, new Set(stored))
-      return
-    }
-    /*
-     * No record yet. `tools` fixes the set the first time a conversation asks
-     * for its tools, which can happen before this runs, so that set is what
-     * gets written down rather than a second reading of the config.
-     */
-    const known = this.mcpServersAt.get(conversation)
-    const names = known
-      ? [...known]
-      : Object.entries(this.config.get().mcpServers ?? {})
-          .filter(([, entry]) => entry.enabled !== false)
-          .map(([name]) => name)
-    if (!known) this.mcpServersAt.set(conversation, new Set(names))
-    await this.store.setMcpServers(conversation, names).catch(() => undefined)
   }
 
   /**
@@ -1265,7 +1217,7 @@ export class SessionRunner {
       config.instructionFiles ?? [],
       session.model.provider,
       session.model.model,
-      this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id, session.directory).map((tool) => tool.name),
+      this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
       // skills: a skill added or removed changes the list the prompt carries.
       skills.map((skill) => skill.name),
     ])
@@ -1356,7 +1308,7 @@ export class SessionRunner {
           model: session.model,
           ...(await this.systemFor(session)),
           history: [...replay, instruction],
-          tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+          tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
@@ -1801,10 +1753,9 @@ export class SessionRunner {
       ...(first ? { directory: session.directory } : {}),
     })
     if (!first) return [runtime]
-    // The conversation's MCP servers are fixed when it first asks for its tools; its own record comes first.
-    await this.rememberMcpServers(session)
-    this.tools(session.agent, session.id, session.directory)
-    const names = [...(this.mcpServersAt.get(session.id) ?? [])]
+    // The project's MCP servers, as the MCP layer has them for this directory.
+    await this.mcp?.ready(session.directory)
+    const names = this.mcp?.names(session.directory) ?? []
     return [
       sessionNote({
         mcpServers: names,
@@ -2047,8 +1998,6 @@ export class SessionRunner {
     this.turnOverrides.delete(sessionID)
     // plan: what this turn is judged by, however the conversation changes while it runs.
     this.turnAgents.set(sessionID, session.agent)
-    // MiMo's MCP rule: the servers this conversation started with, read back from disk after a restart.
-    await this.rememberMcpServers(session)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     await this.mcp?.ready(session.directory)
     const definition = this.config.definition(session.model.provider)
@@ -2248,7 +2197,7 @@ export class SessionRunner {
         tools: lastStep
           ? []
           : [
-              ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+              ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort,

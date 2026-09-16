@@ -1258,38 +1258,4 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.close()
     }
   }
-
-  section("Round 6: the MCP servers a conversation started with (L5)")
-  {
-    const e = await engine()
-    try {
-      const server = { type: "local" as const, command: ["node", "-e", ""] }
-      const names = async (sessionID: string) => ((await e.store.get(sessionID))?.mcpServers ?? []).slice().sort().join(",")
-      await e.config.set({ mcpServers: { alpha: server, beta: server } })
-      const first = await e.store.create({ directory: e.project, model: e.model })
-      await e.runner.prompt({ sessionID: first.id, text: "MCP one" })
-      await e.idle(first.id)
-      check("a conversation records the servers it was offered at its first turn", (await names(first.id)) === "alpha,beta", await names(first.id))
-
-      await e.config.set({ mcpServers: { alpha: server } })
-      await e.runner.prompt({ sessionID: first.id, text: "MCP two" })
-      await e.idle(first.id)
-      check("a server switched off later leaves that record as it was", (await names(first.id)) === "alpha,beta", await names(first.id))
-
-      const later = await e.store.create({ directory: e.project, model: e.model })
-      await e.runner.prompt({ sessionID: later.id, text: "MCP three" })
-      await e.idle(later.id)
-      check("a conversation started afterwards records what is configured by then", (await names(later.id)) === "alpha", await names(later.id))
-
-      /* The restart: a runner that has never seen these conversations reads each one's record rather than the config. */
-      const restarted = new SessionRunner(e.store, e.bus, e.config, e.permissions, { accessToken: async () => undefined } as never, e.storage)
-      await e.config.set({ mcpServers: { alpha: server, beta: server, gamma: server } })
-      const before = (await e.assistants(first.id)).length
-      await restarted.prompt({ sessionID: first.id, text: "MCP after a restart" })
-      await e.until(async () => (await e.assistants(first.id)).length > before)
-      check("after a restart the conversation keeps its own record instead of the config as it stands", (await names(first.id)) === "alpha,beta", await names(first.id))
-    } finally {
-      await e.close()
-    }
-  }
 }

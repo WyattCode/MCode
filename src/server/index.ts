@@ -132,6 +132,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   const mcp = new McpServers(bus, config, storage)
   mcp.useSampling(createSampler({ config, auth, permissions }))
   runner.useMcp(mcp)
+  mcp.useBusy(() => runner.busySessions().length > 0)
 
   const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp, artifacts }
 
