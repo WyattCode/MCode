@@ -3968,14 +3968,14 @@ async function cycleEffort() {
    * and the keyboard disagreeing about what the control is. A model with no
    * steps at all draws no pill and this does nothing.
    */
-  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
+  const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   const next = cycleVariant(variants, app.config?.effort)
   if (next) await app.setEffort(next)
 }
 
 /** MiMo's decrease and increase rows: one step along this model's efforts, stopping at either end. */
 async function stepEffort(by: 1 | -1) {
-  const variants = findModel(app.providers, app.current?.model ?? app.config?.model)?.variants ?? []
+  const variants = findModel(app.providers, app.shownModel(app.current?.model) ?? app.config?.model)?.variants ?? []
   if (!variants.length) return
   const current = app.config?.effort
   const at = current ? variants.indexOf(current) : -1

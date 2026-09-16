@@ -39,7 +39,7 @@ import { menuEfforts } from "@shared/effort-menu"
 import { normalizeBaseURL, normalizeModelId } from "@shared/custom-endpoint"
 import type { OAuthTokens } from "./auth/oauth"
 
-export const DEFAULT_MODEL: ModelRef = { provider: "anthropic", model: "claude-opus-5" }
+export const DEFAULT_MODEL: ModelRef = { provider: "", model: "" }
 
 /** Recorded in `migrations` once the project list has been filled from conversations. */
 export const PROJECT_LIST_MIGRATION = "projects-list"

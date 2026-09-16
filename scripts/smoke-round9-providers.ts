@@ -16,6 +16,7 @@ import { messagesRequest } from "../src/server/provider/anthropic"
 import { OpenAICompatible } from "../src/server/provider/openai"
 import { menuEfforts } from "../src/shared/effort-menu"
 import { normalizeBaseURL } from "../src/shared/custom-endpoint"
+import { fallbackModel } from "../src/shared/model-fallback"
 import { customModelOf } from "../src/server/config"
 import { startBackend } from "../src/server/index"
 import { handle } from "../src/server/handlers"
@@ -154,6 +155,45 @@ export async function roundNineProviderChecks(check: Check, section: (name: stri
     } finally {
       await backend.close()
       await fs.rm(data, { recursive: true, force: true }).catch(() => undefined)
+    }
+  }
+
+  section("Round 9 (P9-3, P9-4): a conversation whose model has gone moves to one that is there")
+  {
+    const pick = (refs: string[], prefer?: string) => {
+      const found = fallbackModel(refs.map((ref) => ({ provider: ref.split("/")[0]!, model: ref.slice(ref.indexOf("/") + 1) })), prefer)
+      return found ? `${found.provider}/${found.model}` : ""
+    }
+    check("(P9-4) a MiMo Pro model is preferred", pick(["a/qwen3", "xiaomi/mimo-v2.5", "xiaomi/mimo-v2.5-pro"]) === "xiaomi/mimo-v2.5-pro")
+    check("(P9-4) otherwise the first model there is", pick(["a/qwen3", "b/mimo-v2.5"]) === "a/qwen3")
+    check("(P9-4) the words must be whole: promo or mimosa do not count", pick(["a/x", "b/mimosa-promo"]) === "a/x")
+    check("(P9-4) a provider just connected comes first", pick(["xiaomi/mimo-v2.5-pro", "fresh/qwen3"], "fresh") === "fresh/qwen3")
+    check("(P9-4) and its own MiMo Pro before its others", pick(["fresh/qwen3", "fresh/mimo-v2-pro"], "fresh") === "fresh/mimo-v2-pro")
+    check("(P9-4) nothing to pick is nothing", pick([]) === "")
+
+    const e = await engine({ custom: { models: [{ id: "m", name: "M" }, { id: "gone", name: "Gone" }] } })
+    try {
+      await e.config.set({ model: { provider: "fake", model: "m" } })
+      const dropped = await e.store.create({ directory: e.project, model: { provider: "fake", model: "gone" } })
+      const removed = await e.store.create({ directory: e.project, model: { provider: "old-gateway", model: "x" } })
+      const stored = e.config.get().customProviders[0]!
+      await e.config.set({ customProviders: [{ ...stored, models: [{ id: "m", name: "M" }] }] })
+      for (const session of [dropped, removed]) {
+        e.replies.push(say("ok"))
+        await e.runner.prompt({ sessionID: session.id, text: "hello" })
+        await e.idle(session.id)
+        check(`(P9-3) a conversation on ${session.model.provider}/${session.model.model} runs on the app's model`, e.bodies.at(-1)?.model === "m", e.bodies.at(-1)?.model)
+        const after = await e.store.get(session.id)
+        check("(P9-3) and keeps it from then on", after?.model.provider === "fake" && after.model.model === "m", after?.model)
+      }
+      await e.config.set({ customProviders: [{ ...stored, models: [{ id: "m", name: "M" }, { id: "other", name: "O" }] }] })
+      const own = await e.store.create({ directory: e.project, model: { provider: "fake", model: "other" } })
+      e.replies.push(say("ok"))
+      await e.runner.prompt({ sessionID: own.id, text: "hello" })
+      await e.idle(own.id)
+      check("(P9-3) a conversation whose model is still there keeps it", e.bodies.at(-1)?.model === "other" && (await e.store.get(own.id))?.model.model === "other")
+    } finally {
+      await e.close()
     }
   }
 

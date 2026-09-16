@@ -378,7 +378,8 @@ async function main() {
   }
 
   const config = await call({ type: "config.get" })
-  check("config.get returns defaults", config.config.model.model === "claude-opus-5", config.config.model)
+  // P9-4: a fresh profile names no model, so the picker reads "choose a model" rather than a provider nobody set up.
+  check("config.get returns defaults", config.config.model.provider === "" && config.config.model.model === "", config.config.model)
 
   const created = await call({ type: "session.create", directory: project })
   const sessionID: string = created.session.id

@@ -18,6 +18,7 @@ import { access, mkdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
 import { effortToSend, menuEfforts } from "@shared/effort-menu"
+import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import { readTask, smartRoute, type TaskReading } from "@shared/smart"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
@@ -1688,6 +1689,23 @@ export class SessionRunner {
     return this.store.update(session.id, { model: route === "fast" ? fast : main, smartRoute: route })
   }
 
+  /**
+   * MiMo's answer to a model that has gone - its provider removed or signed
+   * out, or the model dropped from the provider's list: the conversation
+   * follows the app's model instead, or MiMo's fallback when that has gone
+   * too. Without this the next message failed with a provider error that did
+   * not say why. With no model left at all, the turn is refused in words the
+   * window can show.
+   */
+  private async withAvailableModel(session: SessionInfo): Promise<SessionInfo> {
+    const providers = this.config.providers()
+    if (modelAvailable(providers, session.model)) return session
+    const chosen = this.config.get().model
+    const next = modelAvailable(providers, chosen) ? chosen : fallbackModel(availableModels(providers))
+    if (!next) throw new CodedError("No model is available. Connect a provider or add a model in Settings.", "error.noModel")
+    return this.store.update(session.id, { model: next })
+  }
+
   private async begin(
     input: PromptInput,
     controller: AbortController,
@@ -1710,6 +1728,9 @@ export class SessionRunner {
     // Smart picks its model from the first message, before anything is checked against it.
     if (session.smart && !session.smartRoute && input.text.trim()) session = await this.routeSmart(session, input.text)
 
+    // A conversation whose model has gone since it last ran moves to one that is there.
+    session = await this.withAvailableModel(session)
+
     /*
      * The project is photographed from here rather than from the first tool
      * call, so that on a large project the scan runs while the model is still
@@ -1724,15 +1745,6 @@ export class SessionRunner {
     // A subscription is authorised by stored tokens, so it has no API key to
     // check here - the bearer is resolved (and refreshed) at turn time.
     const apiKey = this.config.apiKey(session.model.provider) ?? ""
-    /*
-     * `usable` rather than a key check, so a custom provider that carries its
-     * credential in a header - which its own form invites - is not refused
-     * here. Without this the picker offers the model and every prompt against
-     * it comes back "No API key configured".
-     */
-    if (!this.config.usable(session.model.provider)) {
-      throw new Error(`No API key configured for ${session.model.provider}. Add one in Settings.`)
-    }
 
     // MiMo's runtime context rides on what the user sends; a first message also gets the app note and the directory.
     const stored = await this.store.messages(session.id)

@@ -186,8 +186,8 @@ const modelName = computed(() => {
    * because that is the model the task this box creates will run.
    */
   if (smartOn.value) return t("model.smart")
-  const chosen = session.value?.model ?? app.config?.model
-  if (!chosen) return t("model.selectPlaceholder")
+  const chosen = app.shownModel(session.value?.model) ?? app.config?.model
+  if (!chosen?.model) return t("model.selectPlaceholder")
   const provider = app.providers.find((entry) => entry.id === chosen.provider)
   const found = provider?.models.find((entry) => entry.id === chosen.model)
   // "(latest)" is a tag in the reference, not part of the name: its model store
@@ -2039,7 +2039,7 @@ const AGENTS = ["build", "plan"] as const
 
 /** What the session is running on, as the server describes it. */
 const currentModel = computed<ModelInfo | undefined>(() =>
-  findModel(app.providers, session.value?.model ?? app.config?.model),
+  findModel(app.providers, app.shownModel(session.value?.model) ?? app.config?.model),
 )
 
 /**
@@ -2206,7 +2206,7 @@ const SMART_KEY = "action:smart"
 
 const currentKey = computed(() => {
   if (smartOn.value) return SMART_KEY
-  const chosen = session.value?.model ?? app.config?.model
+  const chosen = app.shownModel(session.value?.model) ?? app.config?.model
   return chosen ? modelKey(chosen.provider, chosen.model) : ""
 })
 
