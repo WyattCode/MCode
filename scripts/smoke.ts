@@ -6438,6 +6438,74 @@ async function main() {
       "the package keeps FluidSynth outside the asar and ships the soundfont beside it, which git never holds",
       /asarUnpack:[\s\S]*"out\/renderer\/vendor\/\*\*"/.test(builder) && /from: resources\/soundfont\s+to: soundfont/.test(builder) && /^resources\/soundfont\/$/m.test(ignore),
     )
+
+    /*
+     * The 第三方许可 dialog: every notice the redistributed pieces oblige MCode to
+     * pass on. The entry list is read out of the module's source rather than
+     * imported, because its texts are `?raw` imports the bundler resolves.
+     */
+    const thirdParty = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/third-party.ts"), "utf8")
+    const entryIds = [...thirdParty.matchAll(/^ {4}id: "([^"]+)"/gm)].map((found) => found[1])
+    const textImports = [...thirdParty.matchAll(/import\("([^"]+)\?raw"\)/g)].map((found) => found[1])
+    const licenseFile = (specifier: string) =>
+      specifier.startsWith("@resources/")
+        ? path.join(process.cwd(), "resources", specifier.slice("@resources/".length))
+        : path.join(process.cwd(), "node_modules", specifier)
+    const licenseTexts = await Promise.all(textImports.map((specifier) => fs.readFile(licenseFile(specifier), "utf8").catch(() => "")))
+    const licenseText = (specifier: string) => licenseTexts[textImports.indexOf(specifier)] ?? ""
+    const shippedNames = await fs.readdir(path.join(process.cwd(), "resources/licenses"))
+    check(
+      "the dialog lists every component MCode redistributes, each with a licence text that is a real file",
+      JSON.stringify(entryIds) === JSON.stringify(["fluidsynth", "codecs", "js-synthesizer", "abcjs", "musescore-general"]) &&
+        textImports.length === entryIds.length && licenseTexts.every((text) => text.length > 500) &&
+        shippedNames.every((name) => textImports.includes(`@resources/licenses/${name}`)),
+      { entryIds, missing: textImports.filter((specifier, index) => licenseTexts[index].length <= 500), shippedNames },
+    )
+    const lgpl = licenseText("js-synthesizer/externals/LICENSE.fluidsynth.txt")
+    check(
+      "FluidSynth's entry carries the LGPL-2.1 text, the replaceable-file note and its source address, and that licence ships beside the glue",
+      lgpl.includes("GNU LESSER GENERAL PUBLIC LICENSE") && lgpl.includes("Version 2.1") && viteConfig.includes('"LICENSE.fluidsynth.txt"') &&
+        /unmodified/.test(thirdParty) && /You may replace that file/.test(thirdParty) && thirdParty.includes("https://github.com/jet2jet/fluidsynth-emscripten") &&
+        licenseText("js-synthesizer/LICENSE").includes("Copyright (C) 2018 jet") && licenseText("abcjs/LICENSE.md").includes("Paul Rosen"),
+    )
+    const soundfontLicense = licenseText("@resources/licenses/musescore-general.txt")
+    // The soundfont's licence asks for these by name; none may be summarised away.
+    const acknowledgements = [
+      "FluidR3 (original version) by Frank Wen Copyright (c) 2000-02",
+      "Mono conversion (FluidR3Mono) by Michael Cowgill Copyright (c) 2014-17",
+      "Adaptation for MuseScore_General.sf2 by S. Christian Collins Copyright (c) 2018-19",
+      "Temple Blocks instrument provided by Ethan Winer Copyright (c) 2002",
+      "Drumline Cymbals provided by Michael Schorsch Copyright (c) 2016",
+      "Copyright (c) 2000-2002, 2008 Frank Wen",
+      "Mono version:  Copyright (c) 2014-16 Michael Cowgill",
+    ]
+    check(
+      "the soundfont's licence keeps every acknowledgement and copyright notice it requires, and the MIT grant",
+      acknowledgements.every((line) => soundfontLicense.includes(line)) &&
+        /The acknowledgements and copyright notices above must be included in any\s+derivative work\./.test(soundfontLicense) &&
+        soundfontLicense.includes("Permission is hereby granted, free of charge") && !/to be added|to be included here/i.test(soundfontLicense),
+      acknowledgements.filter((line) => !soundfontLicense.includes(line)),
+    )
+    const codecs = licenseText("@resources/licenses/xiph-codecs.txt")
+    // Each library's own upstream copyright line: libogg's is not libvorbis's, and FLAC's is not Xiph's alone.
+    const codecNotices = [
+      "Copyright (c) 2002, Xiph.org Foundation",
+      "Copyright (c) 2002-2020 Xiph.org Foundation",
+      "Copyright (C) 2000-2009  Josh Coalson",
+      "Copyright (C) 2011-2025  Xiph.Org Foundation",
+      "Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,",
+    ]
+    check(
+      "each codec notice is its own upstream text, with the four disclaimers and Opus's patent addresses",
+      codecNotices.every((line) => codecs.includes(line)) && (codecs.match(/THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS/g) ?? []).length === 4 &&
+        codecs.includes("https://datatracker.ietf.org/ipr/1524/"),
+      codecNotices.filter((line) => !codecs.includes(line)),
+    )
+    check(
+      "the codec versions claimed are the ones the shipped build reports of itself, and libogg's is called unknown rather than guessed",
+      ["libvorbis 1.3.7", "libFLAC 1.3.2", "libopus 1.3.1"].every((version) => codecs.includes(version) && thirdParty.includes(version)) &&
+        /libogg[^\n]*version unknown/i.test(codecs) && /libogg version unknown/.test(thirdParty) && !/libogg 1\./.test(codecs) && !/libogg 1\./.test(thirdParty),
+    )
     }
 
     section("Reply scores and video cards (continued)")
