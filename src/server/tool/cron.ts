@@ -60,7 +60,8 @@ async function ownerOf(scheduler: CronScheduler, context: ToolContext, named: st
 export const CronTool: ToolDefinition = {
   name: "cron",
   description: [
-    "Schedule prompts to run later in this conversation, once or repeatedly. A scheduled prompt starts a turn here when its time comes and the conversation is idle; it waits while a turn is running. Nothing runs while the app is closed.",
+    "Schedule prompts to run later in this project, once or repeatedly. A scheduled prompt starts a turn when its time comes and the conversation it runs in is idle; it waits while a turn is running. Nothing runs while the app is closed.",
+    "A durable job belongs to the project rather than to this conversation: deleting this conversation leaves it scheduled, and it is then carried on in a new conversation in the same project.",
     "Always pass the action inside an operation object.",
     "- schedule: cron (five fields - minute hour day-of-month month day-of-week, in UTC) and prompt. Repeats unless one_shot is true. durable: true keeps it in the project across restarts; only use it when the user asks for the job to last. Avoid :00 and :30 unless the user named that time, e.g. \"57 8 * * *\" for about 9am.",
     `- loop: prompt and delay_seconds (clamped to ${LOOP_MIN_SECONDS}-${LOOP_MAX_SECONDS}) for one more run of a self-paced loop. Call it again on each run to keep going; stop calling it to let the loop end. Always session-only.`,
@@ -107,8 +108,12 @@ export const CronTool: ToolDefinition = {
     }
     const named = text(operation.session_id)
     const owner = await ownerOf(scheduler, context, named)
-    // A job is looked up among this conversation's own unless another was named.
-    const scope = named ? named : owner.id
+    /*
+     * A job is looked up among the project's durable ones - which is where a
+     * schedule now lives - and among the named conversation's own session-only
+     * ones.
+     */
+    const scope = { ownerID: owner.id, directory: owner.directory }
 
     if (action === "schedule") {
       const cron = text(operation.cron)
@@ -144,7 +149,7 @@ export const CronTool: ToolDefinition = {
 
     if (action === "list") {
       const kind = operation.kind === "cron" || operation.kind === "loop" ? operation.kind : undefined
-      const tasks = await scheduler.list({ ownerID: scope, kind, durableOnly: operation.durable_only === true })
+      const tasks = await scheduler.list({ scope, kind, durableOnly: operation.durable_only === true })
       return {
         title: `Jobs: ${tasks.length}`,
         output: tasks.length ? tasks.map((task) => `${task.id} ${task.cron} ${task.kind ?? "cron"} - ${task.prompt.slice(0, 60)}`).join("\n") : "Nothing is scheduled.",
