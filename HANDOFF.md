@@ -242,6 +242,16 @@
   - xterm 读屏：MiMo 从不开 `screenReaderMode`。实测（WebGL 渲染器）开关前后终端区域逐像素相同（静止与拖选后），命中元素、光标与 xterm 各元素计算样式不变，读屏层透明且不接收指针；但它每帧重建逐行 DOM，所以只在 `app.accessibilitySupportEnabled` 为真时开，`accessibility-support-changed` 实时跟随（主进程 `mcode:screen-reader`，`lib/screen-reader.ts`）。新键 `term.tooMuchOutput`（18 张表）。
   - 安全两项（MiMo 都没做，这里更严，不改变正常配置的行为，未加任何审批）：`redactUrl` 遮自定义服务商 baseURL 与内置服务商端点覆盖里的用户信息和凭据样查询参数（设置文档、服务商列表、`auth.completed` 事件），原样传回时保留磁盘值（设置保存与自定义服务商表单都是），MCP 地址也加遮用户信息，日志遮任何地址里的用户信息；`server/oauth-fetch.ts` 让 MCP 登录对服务器指定的元数据 / 注册 / 令牌地址逐个解析一次、非公网即拒、连接钉在检查过的地址（TLS 仍按主机名校验），重定向逐跳检查；服务器自己的主机照旧信任，服务器本身在本机或内网时可指向内网其他主机。
   - 验证：十二项检查（含 mcpcheck）全过，build 通过，smoke **2878 全过**（全量里第五轮 E12 / 推理保留两段对本地假模型的请求偶发 0 次，两次出现、重跑即过，与本轮改动无关）；新增 smoke 检查逐个用变异证明会失败；探针 `mcode-round9-backlog-artifacts` 9、`-xterm` 4、`-security` 4 全过，改坏代码后分别失败 8+1、2+1+1、4 项。
+- 合并两路后（2cbf424）：十三项检查全过，build 通过，smoke **2954 全过**，探针 round9-backlog 三个与 7 个回归全过。随后升级 **Electron 38 → 41.10.7**（MiMo 用 41 大版本，取 41 线最新补丁）并装入 `electron-updater` 6.8.9、`jsonc-parser` 3.3.1（e8834a3，用户批准），smoke 2954 全过。
+- **用户 2026-09-17 第九轮决定**：
+  - 设置：S9-1 已删设置行的旧值一次性重置；删掉 37 套主题配色、「服务器」设置页（连同远程后端功能）、权限里的「已保存的规则」列表；「新功能」弹窗删除。
+  - 服务商：快速添加只留 MiMo 的 7 家；**保留**（故意不同）预设自动拉 `/models`、自定义表单的「协议」选项、ChatGPT 订阅登录。
+  - 系统提示词：MiMo 桌面端实际给所有模型同一份，**改为所有模型同一份**（按家族的工具参数格式与 Kimi 思考属请求层，保留）。
+  - 出网与体积：每小时从 models.dev 刷新模型信息（带离线快照）；读取项目里的 MCP 配置与 `~/.claude.json` 的 `mcpServers`；随包带 Python / Node / ripgrep（不带 LibreOffice）；本地崩溃转储（不上传）。
+  - MCP：改动在下一个新对话统一生效（照 MiMo）；MCP 工具默认不询问；按项目目录各起一套；配置文件支持 JSONC。
+  - 发行：Electron 41；按用户一键安装；改用 electron-updater。
+  - 暂缓：N9-7 / N9-19（需要公开服务器）、N9-8（代码签名证书）、N9-20。
+- 进行中：设置、服务商与提示词、MCP、Windows 发行四路构建。
 
 用户决定不做（不要再主动提）：
 
