@@ -28,7 +28,7 @@ import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
 import { useRestoreDraft } from "../lib/draft"
-import { cardCut, stepPart, stickState, stoppedEmpty } from "./parts/turn-end"
+import { cardCut, interruptedEnd, stepPart, stickState, stoppedEmpty } from "./parts/turn-end"
 import { revealing } from "../lib/stream-reveal"
 
 /**
@@ -812,6 +812,23 @@ function failed(turn: Turn): boolean {
   return Boolean(turn.error) || turn.finish === "error" || turn.finish === "max_tokens" || thinkOnly(turn)
 }
 
+/*
+ * A turn the app was killed in the middle of: no finish was ever written, and
+ * nothing is running now to write one. MiMo has a line for exactly this
+ * (harnessRow.aborted); without it the reply simply stopped mid-sentence and
+ * nothing on the page said why - the only hint was the 继续 button that
+ * appeared in the box.
+ */
+function interrupted(turn: Turn, at: number): boolean {
+  return interruptedEnd(turn, liveTurn(at))
+}
+
+/** Which of the three closing lines a turn that said nothing usable ends on. */
+function finishedNote(turn: Turn, at: number): string {
+  if (interrupted(turn, at)) return t("stream.interrupted")
+  return emptyReply(turn) ? t("stream.noContent") : t("stream.stoppedAfter", { dur: stoppedAfter(turn) })
+}
+
 /* The card's words, cut as MiMo cuts them; nothing at all reads as the model having returned nothing usable. */
 function failureText(turn: Turn): { text: string; clamped: boolean } {
   let said = t("stream.thinkOnlyNoAnswer")
@@ -1258,9 +1275,9 @@ defineExpose({ stepMessage, scroller })
               {{ t("stream.retry") }}
             </button>
           </div>
-          <template v-else-if="!bare && (stoppedEmpty(turn) || emptyReply(turn))">
+          <template v-else-if="!bare && (stoppedEmpty(turn) || emptyReply(turn) || interrupted(turn, at))">
             <div class="note finished" :class="{ empty: emptyReply(turn) }" data-turn-finished>
-              {{ emptyReply(turn) ? t("stream.noContent") : t("stream.stoppedAfter", { dur: stoppedAfter(turn) }) }}
+              {{ finishedNote(turn, at) }}
             </div>
             <div class="retry-row">
               <button

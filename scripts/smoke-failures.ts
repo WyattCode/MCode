@@ -13,12 +13,18 @@ import type { SessionInfo } from "../src/shared/protocol"
 import { Snapshots } from "../src/server/session/snapshot"
 import { AutomationService } from "../src/server/automation/service"
 import { SessionStore } from "../src/server/session/store"
+import { SessionChat } from "../src/server/session/chat"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
 import { isContextOverflow, isOverflowError } from "../src/server/session/overflow"
 import { retryDecision, retryKind } from "../src/server/session/retry"
 import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
+import { interruptedEnd } from "../src/renderer/src/components/parts/turn-end"
+import { BashTool, liveBashCommands, stopBashCommands } from "../src/server/tool/bash"
+import type { ToolContext } from "../src/server/tool/types"
+import { CronScheduler, type SchedulerHost } from "../src/server/cron/scheduler"
+import { writeCronTasks, type CronTask } from "../src/server/cron/tasks"
 import type { Check } from "./smoke-round5"
 
 const exists = (target: string) =>
@@ -301,6 +307,290 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     const tables = (await readOrNothing(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"))) ?? ""
     const defined = (tables.match(/"error\.network":/g) ?? []).length
     check("and that key is defined in all eighteen tables", defined === 18, defined)
+  }
+
+  /**
+   * The source of one function, from its opening line to the next landmark.
+   *
+   * These four failures are all "the promise was let go": what is checked is
+   * that the call site now has somewhere for a rejection to land, which is a
+   * property of the file rather than of a value a test can hold.
+   */
+  const between = (text: string, from: string, to: string): string => {
+    const start = text.indexOf(from)
+    const end = start < 0 ? -1 : text.indexOf(to, start + from.length)
+    return start < 0 || end < 0 ? "" : text.slice(start, end)
+  }
+  const sourceOf = (file: string) => readOrNothing(path.join(process.cwd(), file))
+  const tables = (await sourceOf("src/renderer/src/lib/i18n.ts")) ?? ""
+  const definedIn = (key: string) => tables.split(`"${key}":`).length - 1
+
+  // ----------------------------------------------------------------- F16, F19
+  section("Round 6 (F16, F19): a stop that did not land, and a connection coming back")
+  {
+    const app = (await sourceOf("src/renderer/src/stores/app.ts")) ?? ""
+    const abort = between(app, "async function abort(", "async function resume(")
+    check("a stop is tried again before it is given up on", /ABORT_TRIES = 3/.test(app) && /ABORT_GAP = 400/.test(app))
+    check("the loop is the one the stop runs", abort.includes("attempt <= ABORT_TRIES"), abort.length)
+    check("a stop that never reached the backend is reported rather than dropped", abort.includes('t("error.abortFailed")'))
+    check("its wording exists in all eighteen tables", definedIn("error.abortFailed") === 18, definedIn("error.abortFailed"))
+
+    check("a socket that dropped says the connection is coming back", app.includes('notice.warning(t("error.connectionRecovering")'))
+    check("the notice stays until it is", app.includes("duration: 0"))
+    check("and goes when the socket returns", app.includes("notice.dismiss(RECONNECT_TOAST)"))
+    check("that wording exists in all eighteen tables too", definedIn("error.connectionRecovering") === 18, definedIn("error.connectionRecovering"))
+  }
+
+  // ----------------------------------------------------------------------- F17
+  section("Round 6 (F17): an answer and a blanket approval that failed to send")
+  {
+    const questions = (await sourceOf("src/renderer/src/stores/questions.ts")) ?? ""
+    const reply = between(questions, "async function reply(", "function dismiss(")
+    check("an answer that could not be submitted is reported", reply.includes('t("error.questionReplyFailed")'), reply.length)
+    check("the form is still freed either way", reply.includes("} finally {"))
+    const allow = between(questions, "function allowOnce(", "function allowTask(")
+    check("a blanket approval that did not land is reported", allow.includes('t("error.autoPermissionFailed")'), allow.length)
+    check("and is rolled back so the next pass asks again", allow.includes("autoAnswered.delete(requestID)"))
+    check("both wordings exist in all eighteen tables", definedIn("error.questionReplyFailed") === 18 && definedIn("error.autoPermissionFailed") === 18)
+  }
+
+  // ----------------------------------------------------------------------- F18
+  section("Round 6 (F18): a turn killed mid-stream says so")
+  {
+    const reply = { last: {} }
+    check("a reply whose finish was never written reads as interrupted", interruptedEnd(reply, false))
+    check("but not while the turn is still being worked on", !interruptedEnd(reply, true))
+    check("a turn that ended normally is not", !interruptedEnd({ ...reply, finish: "stop" }, false))
+    check("a stop keeps its own line", !interruptedEnd({ ...reply, finish: "aborted" }, false))
+    check("a failure keeps its card", !interruptedEnd({ ...reply, error: "the provider refused" }, false))
+    check("a question that never got a reply at all is not drawn as one", !interruptedEnd({}, false))
+
+    const stream = (await sourceOf("src/renderer/src/components/MessageStream.vue")) ?? ""
+    check("the conversation draws the line for it", stream.includes("interrupted(turn, at)") && stream.includes("finishedNote(turn, at)"))
+    check("its wording exists in all eighteen tables", definedIn("stream.interrupted") === 18, definedIn("stream.interrupted"))
+  }
+
+  // ------------------------------------------------------------------- F5
+  section("Round 6 (F5): a run the app died in the middle of is not forgotten")
+  {
+    const directory = path.join(root, "automation-runs")
+    await fs.mkdir(directory, { recursive: true })
+    const file = path.join(directory, "automations.json")
+    const caller = { id: "ses_run", directory, model: { provider: "p", model: "m" } } as unknown as SessionInfo
+    /* The rule's hour is the machine's, so the clock is moved by whole days rather than to an hour. */
+    const day = 24 * 60 * 60 * 1000
+    const opened = Date.UTC(2026, 0, 1, 8, 0)
+    let clock = opened
+    const published: { type: string; sessionID: string; phase?: string; notify?: boolean }[] = []
+    const deps = () => ({
+      file,
+      now: () => clock,
+      sessions: { get: async () => caller, create: async () => caller, messages: async () => [] },
+      prompt: async () => undefined,
+      busy: () => false,
+      models: () => [],
+      agent: () => "build" as const,
+      effort: () => undefined,
+      scratch: async () => directory,
+      publish: (event: { type: string; sessionID?: string }) => published.push(event as { type: string; sessionID: string }),
+    })
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 60))
+    const historyOf = async () => {
+      const saved = await parsedOrNothing<{ automations: { runHistory?: { status: string; error?: string; hasNonEmptyReply?: boolean }[] }[] }>(file)
+      return saved?.automations[0]?.runHistory ?? []
+    }
+
+    const first = new AutomationService(deps() as unknown as ConstructorParameters<typeof AutomationService>[0])
+    await first.start({ interval: false })
+    await first.handle({ mode: "create", title: "Daily digest", prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" }, { sessionID: caller.id })
+    clock = opened + 2 * day
+    await first.tick()
+    await settled()
+    check("a run is written down as it starts", (await historyOf())[0]?.status === "running", await historyOf())
+
+    /* The app is killed here: stop() never runs, so the record is left open. */
+    const second = new AutomationService(deps() as unknown as ConstructorParameters<typeof AutomationService>[0])
+    published.length = 0
+    await second.start({ interval: false })
+    await settled()
+    const replayed = await historyOf()
+    check("the next start settles it rather than leaving it hanging", replayed[0]?.status === "skipped", replayed)
+    check("and says why", (replayed[0]?.error ?? "").includes("closed before the run finished"), replayed[0])
+    await second.tick()
+    check("the user is told about the run that did not finish", published.some((event) => event.type === "automation.run" && event.phase === "finished" && event.notify === true), published)
+    await second.tick()
+    check("and told once, not on every check", published.filter((event) => event.phase === "finished").length === 1, published.length)
+
+    /* A run that ends properly settles itself, and is not reported twice. */
+    clock = opened + 3 * day
+    published.length = 0
+    await second.tick()
+    await settled()
+    check("a later run opens a record of its own", (await historyOf()).length === 2, await historyOf())
+    await second.turnEnded(caller.id)
+    await settled()
+    const ended = await historyOf()
+    check("a turn that ended settles its own record", ended[1]?.status === "failed" || ended[1]?.status === "succeeded", ended[1])
+    const third = new AutomationService(deps() as unknown as ConstructorParameters<typeof AutomationService>[0])
+    published.length = 0
+    await third.start({ interval: false })
+    await third.tick()
+    check("a run that finished is not reported again at the next start", published.filter((event) => event.phase === "finished").length === 0, published)
+    await third.stop()
+  }
+
+  // ------------------------------------------------------------------- F6
+  section("Round 6 (F6): a recurring task whose time passed while the app was closed")
+  {
+    const day = 24 * 60 * 60 * 1000
+    const nine = Date.UTC(2026, 0, 10, 9, 0)
+    const owner = { id: "ses_owner", title: "owner", directory: "", agent: "build", created: 0, updated: 0 } as unknown as SessionInfo
+
+    /** One project, one daily task, and a clock the check moves by hand. */
+    const daily = async (name: string, lastFiredAt: number, now: number) => {
+      const project = path.join(root, name)
+      await fs.mkdir(project, { recursive: true })
+      const task: CronTask = { id: "daily", cron: "0 9 * * *", prompt: "Morning digest", createdAt: lastFiredAt, recurring: true, lastFiredAt, createdBySessionId: owner.id }
+      await writeCronTasks(project, [task])
+      const fired: string[] = []
+      let clock = now
+      const host: SchedulerHost = {
+        now: () => clock,
+        fire: async (sessionID) => {
+          fired.push(sessionID)
+        },
+        busy: () => false,
+        session: async (id) => (id === owner.id ? { ...owner, directory: project } : undefined),
+        create: async () => ({ ...owner, directory: project }),
+        directories: async () => [project],
+      }
+      const scheduler = new CronScheduler(host)
+      await scheduler.start({ interval: false })
+      return { fired, scheduler, advance: (by: number) => (clock += by) }
+    }
+
+    /* Yesterday's run happened; today's 09:00 went by with the app closed. */
+    const missed = await daily("cron-missed", nine - day, nine + 5 * 60 * 60 * 1000)
+    await missed.scheduler.tick()
+    check("the occurrence missed while the app was closed is run", missed.fired.length === 1, missed.fired)
+    await missed.scheduler.tick()
+    check("and only the once - the schedule moves on from now", missed.fired.length === 1, missed.fired)
+    /* Tomorrow's 09:00 still comes. */
+    missed.advance(day)
+    await missed.scheduler.tick()
+    check("the next day's run still happens", missed.fired.length === 2, missed.fired)
+    await missed.scheduler.stop()
+
+    /* A fortnight away is still one run, not fourteen. */
+    const long = await daily("cron-fortnight", nine - 14 * day, nine + 5 * 60 * 60 * 1000)
+    await long.scheduler.tick()
+    await long.scheduler.tick()
+    await long.scheduler.tick()
+    check("a fortnight of missed occurrences fires once, not once each", long.fired.length === 1, long.fired)
+    await long.scheduler.stop()
+
+    /* And a task whose time has simply not come does not run early. */
+    const early = await daily("cron-early", nine, nine + 60 * 60 * 1000)
+    await early.scheduler.tick()
+    check("a task whose next time is still ahead does not run early", early.fired.length === 0, early.fired)
+    await early.scheduler.stop()
+  }
+
+  // ------------------------------------------------------------------- F9
+  section("Round 6 (F9): a message between conversations survives the quit")
+  {
+    const storageRoot = path.join(root, "chat-queue", "storage")
+    const storage = new Storage(storageRoot)
+    const bus = new Bus()
+    const store = new SessionStore(storage, bus)
+    const model = { provider: "p", model: "m" }
+    const first = await store.create({ directory: root, title: "Caller", model })
+    const second = await store.create({ directory: root, title: "Target", model })
+
+    const prompted: { sessionID: string; text: string }[] = []
+    let targetBusy = true
+    const turns = {
+      isRunning: (sessionID: string) => sessionID === second.id && targetBusy,
+      prompt: async (input: { sessionID: string; text: string }) => {
+        prompted.push(input)
+        return "msg_probe"
+      },
+      create: async () => first,
+    }
+    const queueFile = path.join(storageRoot, "chat-queue.json")
+
+    const chat = new SessionChat(store, bus, turns as never, 50, storage)
+    const sent = await chat.talk({ from: first.id, contactID: second.id, message: "PROBE please look", mode: "async" })
+    check("a message to a conversation that is working is queued", sent.status === "queued", sent)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    const saved = await parsedOrNothing<{ entries?: { text?: string; state?: string }[] }>(queueFile)
+    check("and is written down rather than living only in memory", saved?.entries?.[0]?.text === "PROBE please look", saved)
+    check("with the state it was in", saved?.entries?.[0]?.state === "waiting", saved?.entries?.[0])
+
+    /* The app goes away here, and a later run reads what was in flight. */
+    targetBusy = false
+    const later = new SessionChat(store, bus, turns as never, 50, storage)
+    await later.restore()
+    check("a message that never started is delivered on the next run", prompted.some((entry) => entry.sessionID === second.id && entry.text === "PROBE please look"), prompted)
+
+    /* One that was already being worked on cannot be resumed: its caller is told. */
+    prompted.length = 0
+    await storage.write("chat-queue", {
+      entries: [{ target: second.id, targetTitle: "Target", from: first.id, fromTitle: "Caller", text: "PROBE was running", hop: 1, kind: "request", state: "running", at: Date.now() }],
+    })
+    const third = new SessionChat(store, bus, turns as never, 50, storage)
+    await third.restore()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    check("a message whose turn the app outlived comes back to its caller", prompted.some((entry) => entry.sessionID === first.id && entry.text.includes("No reply could be fetched")), prompted)
+    check("and says the app closed rather than blaming the other conversation", prompted.some((entry) => entry.text.includes("The app closed while the other session was working")), prompted)
+
+    /* A message older than a day is not delivered out of the blue. */
+    prompted.length = 0
+    await storage.write("chat-queue", {
+      entries: [{ target: second.id, targetTitle: "Target", from: first.id, fromTitle: "Caller", text: "PROBE stale", hop: 1, kind: "request", state: "waiting", at: Date.now() - 48 * 60 * 60 * 1000 }],
+    })
+    const fourth = new SessionChat(store, bus, turns as never, 50, storage)
+    await fourth.restore()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    check("a day-old message is left alone rather than sent out of the blue", !prompted.some((entry) => entry.text.includes("PROBE stale")), prompted)
+  }
+
+  // ------------------------------------------------------------------- F7
+  section("Round 6 (F7): a command still running at quit is ended with it")
+  {
+    /*
+     * A real child, because the whole point is the process tree: the turn's
+     * abort listener and the command's own timeout were the only two things
+     * that ever ended one, and quitting reaches neither.
+     */
+    const context = {
+      sessionID: "ses_bash",
+      messageID: "msg_1",
+      callID: "call_1",
+      directory: root,
+      permissions: { ask: async () => undefined },
+      questions: { ask: async () => undefined },
+      signal: new AbortController().signal,
+      progress: () => {},
+      snapshot: async () => undefined,
+    } as unknown as ToolContext
+
+    const before = liveBashCommands()
+    const run = BashTool.execute({ command: 'node -e "setTimeout(() => {}, 60000)"', timeout: 60_000 }, context)
+    let settled = false
+    const done = run.then(
+      () => (settled = true),
+      () => (settled = true),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 1200))
+    check("a command is held while it runs", liveBashCommands() === before + 1, liveBashCommands())
+    check("and a minute-long one has not ended by itself", !settled)
+
+    const at = Date.now()
+    stopBashCommands()
+    await Promise.race([done, new Promise((resolve) => setTimeout(resolve, 8000))])
+    check("quitting ends it rather than leaving it behind", settled, { settled, ms: Date.now() - at })
+    check("and nothing is left held afterwards", liveBashCommands() === before, liveBashCommands())
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)

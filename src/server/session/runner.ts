@@ -65,7 +65,7 @@ import { ABORTED_TOOL } from "../provider/history"
 import { LOOP_ANSWERS, continuationFor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
-import { SessionChat, withChatHeaders } from "./chat"
+import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
 import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, statusHeader, subagentOutput, type SubagentTimers } from "@shared/subagent"
 import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, structuredOutputTool, structuredResult } from "../tool/subagent"
 import { TASK_ID } from "../tool/task"
@@ -363,15 +363,23 @@ export class SessionRunner {
     this.dataRoot = storage.directory
     this.questions = new Questions(bus)
     // session chat: messages between conversations run through this runner's own prompt.
-    this.chat = new SessionChat(store, bus, {
-      isRunning: (sessionID) => this.running.has(sessionID),
-      prompt: (input) => this.prompt(input),
-      create: async ({ directory, title }) => {
-        const settings = config.get()
-        await config.adoptProjects([directory])
-        return store.create({ directory, title, model: settings.model, agent: settings.agent, staged: settings.staged, ...(settings.smart ? { smart: true } : {}) })
+    this.chat = new SessionChat(
+      store,
+      bus,
+      {
+        isRunning: (sessionID) => this.running.has(sessionID),
+        prompt: (input) => this.prompt(input),
+        create: async ({ directory, title }) => {
+          const settings = config.get()
+          await config.adoptProjects([directory])
+          return store.create({ directory, title, model: settings.model, agent: settings.agent, staged: settings.staged, ...(settings.smart ? { smart: true } : {}) })
+        },
       },
-    })
+      CHAT_WAIT_MS,
+      storage,
+    )
+    // session chat: a message that was in flight when the app went away is sent, or its caller told.
+    void this.chat.restore()
     permissions.useReviewer((input) => this.reviewCommand(input))
     // subagents: anything a working subagent writes is a sign of life to the watchdog.
     bus.subscribe((event) => {

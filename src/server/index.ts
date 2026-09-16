@@ -10,6 +10,7 @@ import { SessionStore } from "./session/store"
 import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
+import { stopBashCommands } from "./tool/bash"
 import { McpServers } from "./mcp"
 import { createSampler } from "./mcp-sampling"
 import { handle } from "./handlers"
@@ -149,6 +150,9 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
     runtime,
     port,
     async close() {
+      // The model's own commands go with the terminals: both are children this
+      // process started, and neither has a window left to stop it.
+      stopBashCommands()
       await shells.closeAll()
       mcp.close()
       await scheduler.stop()

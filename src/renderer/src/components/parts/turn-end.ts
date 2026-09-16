@@ -28,6 +28,19 @@ export function stoppedEmpty(turn: { finish?: string; error?: string; parts: Ass
 }
 
 /*
+ * A turn the app died in the middle of: a reply was started, no finish was ever
+ * written, and nothing is running now that could write one.
+ *
+ * MiMo draws a line for this case (harnessRow.aborted). MCode drew nothing at
+ * all - the failure card wants an error, the empty-reply line and the stopped
+ * line both want a finish - so the reply simply stopped mid-sentence, and the
+ * only hint was the 继续 button appearing in the box.
+ */
+export function interruptedEnd(turn: { finish?: string; error?: string; last?: unknown }, live: boolean): boolean {
+  return !live && turn.finish === undefined && !turn.error && turn.last !== undefined
+}
+
+/*
  * The failure card's words, cut as MiMo cuts them: text carrying its 原始错误
  * marker loses everything from there, and past 600 characters or 6 lines only
  * the first 600 stay, with an ellipsis, under a height cap. Undefined when
