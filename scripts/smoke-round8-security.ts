@@ -48,6 +48,7 @@ import { ensureCallbackServer, stopCallbackServer, trustedDiscoveryUrl } from ".
 import { conversationDocument } from "../src/shared/convo-file"
 import { pageMayNavigate } from "../src/shared/web-address"
 import { createServer as createNetServer } from "node:net"
+import { UnsafeAddressError, checkTarget, oauthFetch, publicAddress } from "../src/server/oauth-fetch"
 
 type Section = (name: string) => void
 
@@ -964,6 +965,88 @@ async function remainingChecks(check: Check, section: Section, root: string): Pr
   check("a callback port another program holds is refused, not given way to", outcome.includes(String(busy)) && outcome !== "started", outcome)
   squatter.close()
   await stopCallbackServer().catch(() => undefined)
+
+﻿
+  /*
+   * Round 9: the addresses a server names are resolved once, refused unless
+   * public, and connected to exactly as checked - a name that answers a
+   * private address (or answers one only later) no longer reaches this machine.
+   */
+  section("Round 9: MCP sign-in resolves what the server names once, and connects only where it checked")
+  {
+    const dns: Record<string, string[]> = {
+      "mcp.example.com": ["93.184.216.34"],
+      "auth.example.org": ["93.184.216.35", "2606:2800:220:1::35"],
+      "rebind.example.org": ["127.0.0.1"],
+      "mixed.example.org": ["93.184.216.36", "10.0.0.7"],
+      "mapped.example.org": ["::ffff:192.168.1.9"],
+      "lan-auth.corp": ["192.168.1.20"],
+      "lan-mcp.corp": ["192.168.1.10"],
+      "127.0.0.1": ["127.0.0.1"],
+    }
+    const lookups: string[] = []
+    const resolve = async (host: string) => {
+      lookups.push(host)
+      const found = dns[host]
+      if (!found) throw new Error("ENOTFOUND")
+      return found.map((address) => ({ address, family: address.includes(":") ? 6 : 4 }))
+    }
+    const outcome = (serverUrl: string, target: string) =>
+      checkTarget(serverUrl, new URL(target), resolve).then(
+        (checked) => checked.pin?.address ?? "own host",
+        (err: Error) => (err instanceof UnsafeAddressError ? "refused" : `error: ${err.message}`),
+      )
+    check("round 9: addresses on this machine or a private network are not public", ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.0.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "::127.0.0.1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:7f00:1"].every((address) => !publicAddress(address)))
+    check("round 9: ...and ordinary internet addresses are", ["93.184.216.34", "8.8.8.8", "2606:2800:220:1::35", "::ffff:8.8.8.8"].every((address) => publicAddress(address)))
+    const server = "https://mcp.example.com/mcp"
+    check("round 9: another host that resolves public is followed, pinned to the address it resolved to", (await outcome(server, "https://auth.example.org/token")) === "93.184.216.35")
+    check("round 9: a public-looking name that resolves to loopback is refused (DNS rebinding)", (await outcome(server, "https://rebind.example.org/.well-known/oauth-authorization-server")) === "refused")
+    check("round 9: ...and so is one whose answers mix public and private", (await outcome(server, "https://mixed.example.org/register")) === "refused")
+    check("round 9: ...and one answering a private address written as IPv6", (await outcome(server, "https://mapped.example.org/token")) === "refused")
+    check("round 9: a name that does not resolve is refused rather than tried again later", (await outcome(server, "https://nowhere.example.org/token")) === "refused")
+    check("round 9: the server's own host needs no check and no pin", (await outcome(server, "https://mcp.example.com/.well-known/x")) === "own host")
+    check("round 9: plain http or credentials to another host are refused", (await outcome(server, "http://auth.example.org/token")) === "refused" && (await outcome(server, "https://u:p@auth.example.org/token")) === "refused")
+    check("round 9: a server on the local network may still name another host there", (await outcome("https://lan-mcp.corp/mcp", "https://lan-auth.corp/token")) === "192.168.1.20")
+
+    // A redirect is checked hop by hop: the server's own host sends the request somewhere it may not go.
+    let hits = 0
+    const own = createServer((request, response) => {
+      hits++
+      if (request.url === "/hop") {
+        response.writeHead(302, { location: "https://rebind.example.org/steal" })
+        response.end()
+        return
+      }
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ ok: true }))
+    })
+    await new Promise<void>((resolve) => own.listen(0, "127.0.0.1", resolve))
+    const ownPort = (own.address() as { port: number }).port
+    dns["127.0.0.1"] = ["93.184.216.40"]
+    const ownServer = `http://127.0.0.1:${ownPort}/mcp`
+    const plain = await oauthFetch(ownServer, new URL(`http://127.0.0.1:${ownPort}/meta`), {}, resolve).then((response) => response.json(), (err: Error) => err.message)
+    check("round 9: a request to the server's own host still goes through", JSON.stringify(plain) === '{"ok":true}', plain)
+    const hopped = await oauthFetch(ownServer, new URL(`http://127.0.0.1:${ownPort}/hop`), {}, resolve).then(() => "followed", (err: Error) => (err instanceof UnsafeAddressError ? "refused" : err.message))
+    check("round 9: a redirect to a name that resolves to loopback is refused at the hop", hopped === "refused", hopped)
+
+    // The pinned connection goes to the checked address; the name is never looked up again (it does not exist).
+    lookups.length = 0
+    dns["pinned.invalid"] = ["127.0.0.1"]
+    dns["127.0.0.1"] = ["127.0.0.1"]
+    const before = hits
+    let connections = 0
+    own.on("connection", () => connections++)
+    const pinned = await oauthFetch(ownServer, new URL(`https://pinned.invalid:${ownPort}/meta`), {}, resolve).then(() => "answered", (err: Error) => err.message)
+    check(
+      "round 9: a pinned request connects to the address that was checked, without looking the name up again",
+      connections === 1 && lookups.filter((host) => host === "pinned.invalid").length === 1 && !/ENOTFOUND|getaddrinfo/.test(pinned),
+      { connections, lookups, pinned, hits: hits - before },
+    )
+    own.close()
+
+    const oauthSource = await read("src/server/mcp-oauth.ts")
+    check("round 9: every request sign-in makes goes through the checked fetch", !/[^.\w]fetch\(/.test(oauthSource) && (oauthSource.match(/oauthFetch\(serverUrl,/g) ?? []).length === 3, (oauthSource.match(/oauthFetch\(serverUrl,/g) ?? []).length)
+  }
 
   section("Round 8 (X17): an imported conversation does not choose its own project")
   const data = path.join(root, "x17-data")

@@ -5,6 +5,7 @@ import { createConnection } from "node:net"
 import { createHash, randomBytes } from "node:crypto"
 import type { McpOAuthConfig } from "@shared/protocol"
 import { writeAtomic, type Storage } from "./storage"
+import { oauthFetch } from "./oauth-fetch"
 
 /**
  * Signing in to a remote MCP server, the way MiMo's engine does it.
@@ -335,7 +336,7 @@ async function authInternal(provider: McpOAuthProvider, options: AuthOptions): P
     if (authorizationCode !== undefined) {
       throw new Error("Existing OAuth client information is required when exchanging an authorization code")
     }
-    client = await registerClient(info.authorizationServerUrl, info.metadata, provider.clientMetadata)
+    client = await registerClient(serverUrl, info.authorizationServerUrl, info.metadata, provider.clientMetadata)
     await provider.saveClientInformation(client)
   }
 
@@ -346,7 +347,7 @@ async function authInternal(provider: McpOAuthProvider, options: AuthOptions): P
       code_verifier: await provider.codeVerifier(),
       redirect_uri: provider.redirectUrl,
     })
-    const tokens = await tokenRequest(info.authorizationServerUrl, info.metadata, params, client, resource)
+    const tokens = await tokenRequest(serverUrl, info.authorizationServerUrl, info.metadata, params, client, resource)
     await provider.saveTokens(tokens)
     return "AUTHORIZED"
   }
@@ -355,7 +356,7 @@ async function authInternal(provider: McpOAuthProvider, options: AuthOptions): P
   if (held?.refresh_token) {
     try {
       const params = new URLSearchParams({ grant_type: "refresh_token", refresh_token: held.refresh_token })
-      const fresh = await tokenRequest(info.authorizationServerUrl, info.metadata, params, client, resource)
+      const fresh = await tokenRequest(serverUrl, info.authorizationServerUrl, info.metadata, params, client, resource)
       await provider.saveTokens({ refresh_token: held.refresh_token, ...fresh })
       return "AUTHORIZED"
     } catch (err) {
@@ -400,11 +401,16 @@ export function wwwAuthenticateParams(response: Response): { resourceMetadataUrl
   return { ...(resourceMetadataUrl ? { resourceMetadataUrl } : {}), ...(scope ? { scope } : {}) }
 }
 
-async function fetchMetadata(url: URL, headers?: Record<string, string>): Promise<Response | undefined> {
+/*
+ * Every request below goes to an address the MCP server named, so each goes
+ * through `oauthFetch` (round 9): resolved once, refused unless public (or the
+ * server's own host), and connected to exactly as checked.
+ */
+async function fetchMetadata(serverUrl: string, url: URL, headers?: Record<string, string>): Promise<Response | undefined> {
   try {
-    return await fetch(url, headers ? { headers } : undefined)
+    return await oauthFetch(serverUrl, url, headers ? { headers } : {})
   } catch (err) {
-    if (err instanceof TypeError) return headers ? fetchMetadata(url, undefined) : undefined
+    if (err instanceof TypeError) return headers ? fetchMetadata(serverUrl, url, undefined) : undefined
     throw err
   }
 }
@@ -424,11 +430,11 @@ async function discoverResourceMetadata(serverUrl: string, metadataUrl?: URL): P
     url = new URL(wellKnownPath("oauth-protected-resource", issuer.pathname), issuer)
     url.search = issuer.search
   }
-  let response = await fetchMetadata(url, headers)
+  let response = await fetchMetadata(serverUrl, url, headers)
   const retry = !response || (response.status >= 400 && response.status < 500 && issuer.pathname !== "/")
   if (!metadataUrl && retry) {
     await response?.body?.cancel().catch(() => {})
-    response = await fetchMetadata(new URL("/.well-known/oauth-protected-resource", issuer), headers)
+    response = await fetchMetadata(serverUrl, new URL("/.well-known/oauth-protected-resource", issuer), headers)
   }
   if (!response || response.status === 404) {
     await response?.body?.cancel().catch(() => {})
@@ -456,10 +462,10 @@ function discoveryUrls(authorizationServerUrl: string): URL[] {
   ]
 }
 
-async function discoverServerMetadata(authorizationServerUrl: string): Promise<ServerMetadata | undefined> {
+async function discoverServerMetadata(serverUrl: string, authorizationServerUrl: string): Promise<ServerMetadata | undefined> {
   const headers = { "MCP-Protocol-Version": PROTOCOL_VERSION, Accept: "application/json" }
   for (const url of discoveryUrls(authorizationServerUrl)) {
-    const response = await fetchMetadata(url, headers)
+    const response = await fetchMetadata(serverUrl, url, headers)
     if (!response) continue
     if (!response.ok) {
       await response.body?.cancel().catch(() => {})
@@ -529,7 +535,7 @@ async function discoverServerInfo(serverUrl: string, hintedMetadataUrl?: URL) {
     // A server without resource metadata is its own authorization server.
   }
   authorizationServerUrl ??= String(new URL("/", serverUrl))
-  const metadata = await discoverServerMetadata(authorizationServerUrl)
+  const metadata = await discoverServerMetadata(serverUrl, authorizationServerUrl)
   return { authorizationServerUrl, metadata, resourceMetadata }
 }
 
@@ -566,6 +572,7 @@ async function errorFrom(response: Response): Promise<OAuthError> {
 }
 
 async function registerClient(
+  serverUrl: string,
   authorizationServerUrl: string,
   metadata: ServerMetadata | undefined,
   clientMetadata: Record<string, unknown>,
@@ -579,7 +586,7 @@ async function registerClient(
   } else {
     url = new URL("/register", authorizationServerUrl)
   }
-  const response = await fetch(url, {
+  const response = await oauthFetch(serverUrl, url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(clientMetadata),
@@ -602,6 +609,7 @@ function clientAuthMethod(client: ClientInformation, supported: string[]): strin
 }
 
 async function tokenRequest(
+  serverUrl: string,
   authorizationServerUrl: string,
   metadata: ServerMetadata | undefined,
   params: URLSearchParams,
@@ -609,17 +617,17 @@ async function tokenRequest(
   resource?: URL,
 ): Promise<TokenSet> {
   const url = metadata?.token_endpoint ? new URL(metadata.token_endpoint) : new URL("/token", authorizationServerUrl)
-  const headers = new Headers({ "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" })
+  const headers: Record<string, string> = { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }
   if (resource) params.set("resource", resource.href)
   const method = clientAuthMethod(client, metadata?.token_endpoint_auth_methods_supported ?? [])
   if (method === "client_secret_basic") {
     if (!client.client_secret) throw new Error("client_secret_basic authentication requires a client_secret")
-    headers.set("Authorization", `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}`)
+    headers.Authorization = `Basic ${Buffer.from(`${client.client_id}:${client.client_secret}`).toString("base64")}`
   } else {
     params.set("client_id", client.client_id)
     if (method === "client_secret_post" && client.client_secret) params.set("client_secret", client.client_secret)
   }
-  const response = await fetch(url, { method: "POST", headers, body: params })
+  const response = await oauthFetch(serverUrl, url, { method: "POST", headers, body: params.toString() })
   if (!response.ok) throw await errorFrom(response)
   const tokens = (await response.json()) as TokenSet
   if (!tokens || typeof tokens.access_token !== "string") throw new Error("The token response carried no access_token")
