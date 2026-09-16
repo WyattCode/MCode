@@ -1732,7 +1732,21 @@ export type Request =
   | { type: "session.model"; sessionID: string; model: ModelRef }
   /** Puts the conversation on Smart, to pick its model from the next first message. */
   | { type: "session.smart"; sessionID: string }
-  | { type: "session.prompt"; sessionID: string; text: string; attachments?: Attachment[]; annotations?: Annotation[]; fileNotices?: FileNotice[] }
+  /*
+   * `agent` and `model` are what a slash command named, and they hold for the
+   * turn this starts and no longer: MiMo runs a command's turn as the agent and
+   * model the command names and leaves the conversation's own settings alone.
+   */
+  | {
+      type: "session.prompt"
+      sessionID: string
+      text: string
+      attachments?: Attachment[]
+      annotations?: Annotation[]
+      fileNotices?: FileNotice[]
+      agent?: AgentName
+      model?: ModelRef
+    }
   | { type: "session.abort"; sessionID: string }
   /*
    * subagents: a slash command marked `subtask`. `text` is the line as typed,

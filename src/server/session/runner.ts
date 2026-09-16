@@ -124,6 +124,9 @@ type PromptInput = {
   fileNotices?: UserMessage["fileNotices"]
   /* session chat: sent by another conversation, marked the way a subagent's follow-up is. */
   inbox?: UserMessage["inbox"]
+  /* What a slash command named, for this turn only: MiMo runs the turn as the agent and model the command names. */
+  agent?: SessionInfo["agent"]
+  model?: SessionInfo["model"]
 }
 
 /**
@@ -334,6 +337,16 @@ export class SessionRunner {
    */
   private readonly turnAgents = new Map<string, string>()
 
+  /**
+   * What a slash command named for the turn it starts: the agent and model to
+   * run that turn as.
+   *
+   * MiMo runs a command's turn that way and leaves the conversation's own
+   * settings alone, so this is taken by the turn that was started for it and
+   * never written to the conversation.
+   */
+  private readonly turnOverrides = new Map<string, { agent?: SessionInfo["agent"]; model?: SessionInfo["model"] }>()
+
   constructor(
     private readonly store: SessionStore,
     private readonly bus: Bus,
@@ -470,6 +483,22 @@ export class SessionRunner {
     }
     const kept = servers
     return [...own, ...(this.mcp?.tools() ?? []).filter((tool) => !tool.server || kept.has(tool.server))]
+  }
+
+  /**
+   * This turn's copy of the conversation, run as the agent and model a slash
+   * command named.
+   *
+   * Never written back, so the next message runs as the conversation is set
+   * again - which is what MiMo's command does. A model whose provider is not
+   * configured is ignored rather than failing the turn with it.
+   */
+  private withCommandTurn(session: SessionInfo, override: { agent?: SessionInfo["agent"]; model?: SessionInfo["model"] } | undefined): SessionInfo {
+    if (!override) return session
+    const named = override.model
+    const model = named && this.config.definition(named.provider) && this.config.usable(named.provider) ? named : undefined
+    if (!override.agent && !model) return session
+    return { ...session, ...(override.agent ? { agent: override.agent } : {}), ...(model ? { model } : {}) }
   }
 
   /**
@@ -1270,6 +1299,10 @@ export class SessionRunner {
 
     if (this.running.has(input.sessionID)) throw new Error("This session is already working on something")
 
+    // A command's agent and model belong to the turn this starts, never to one already running.
+    if (input.agent || input.model) this.turnOverrides.set(input.sessionID, { agent: input.agent, model: input.model })
+    else this.turnOverrides.delete(input.sessionID)
+
     /*
      * Claimed here rather than after the setup below. Everything between the
      * question and the answer is a filesystem round trip, and two prompts
@@ -1801,6 +1834,9 @@ export class SessionRunner {
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
     let session = await this.store.require(sessionID)
+    // A slash command's own agent and model hold for this turn; the conversation keeps its own.
+    session = this.withCommandTurn(session, this.turnOverrides.get(sessionID))
+    this.turnOverrides.delete(sessionID)
     // plan: what this turn is judged by, however the conversation changes while it runs.
     this.turnAgents.set(sessionID, session.agent)
     // MiMo's MCP rule: the servers this conversation started with, read back from disk after a restart.

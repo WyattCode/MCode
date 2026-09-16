@@ -473,6 +473,9 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         attachments: request.attachments,
         annotations: request.annotations,
         fileNotices: request.fileNotices,
+        // What a slash command named, for the turn this starts.
+        agent: request.agent,
+        model: request.model,
       })
       return { messageID } satisfies Handled<"session.prompt">
     }

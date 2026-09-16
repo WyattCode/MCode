@@ -1180,6 +1180,42 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     }
   }
 
+  section("Round 6: a command's agent and model run its turn (L3)")
+  {
+    const e = await engine()
+    try {
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      await e.runner.prompt({ sessionID: session.id, text: "COMMAND on another model", model: { provider: "fake", model: "other" } })
+      await e.idle(session.id)
+      check("the turn runs on the model the command named", e.bodies.at(-1)?.model === "other", e.bodies.at(-1)?.model)
+      check("and the conversation keeps its own", (await e.store.get(session.id))?.model.model === "m", (await e.store.get(session.id))?.model)
+
+      await e.runner.prompt({ sessionID: session.id, text: "COMMAND as another agent", agent: "plan" })
+      await e.idle(session.id)
+      check("the turn runs as the agent the command named", (await e.assistants(session.id)).at(-1)?.agent === "plan", (await e.assistants(session.id)).at(-1)?.agent)
+      check("and the conversation is still the agent it was", (await e.store.get(session.id))?.agent === "build", (await e.store.get(session.id))?.agent)
+
+      await e.runner.prompt({ sessionID: session.id, text: "COMMAND on a provider nobody configured", model: { provider: "nobody", model: "x" } })
+      await e.idle(session.id)
+      /* The request has to be the one this message made: a turn that threw instead would leave the turn before it as the last body. */
+      check(
+        "a model whose provider is not configured is ignored rather than failing the turn",
+        e.bodies.at(-1)?.model === "m" && wireText(e.bodies.at(-1)).includes("nobody configured"),
+        e.bodies.at(-1)?.model,
+      )
+
+      await e.runner.prompt({ sessionID: session.id, text: "PLAIN message naming nothing" })
+      await e.idle(session.id)
+      check(
+        "a message that names neither runs as the conversation is set",
+        e.bodies.at(-1)?.model === "m" && (await e.assistants(session.id)).at(-1)?.agent === "build",
+        { model: e.bodies.at(-1)?.model, agent: (await e.assistants(session.id)).at(-1)?.agent },
+      )
+    } finally {
+      await e.close()
+    }
+  }
+
   section("Round 6: the MCP servers a conversation started with (L5)")
   {
     const e = await engine()

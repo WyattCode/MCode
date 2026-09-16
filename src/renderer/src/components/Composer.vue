@@ -1023,7 +1023,7 @@ async function submit() {
     ? false
     : subtask
       ? await app.subtask(value, subtask)
-      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed)
+      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -1083,10 +1083,11 @@ async function compactFromBox(line: string) {
  * nothing; a skill's `/name` line goes as typed, for the server to load it.
  * The transcript shows the filled-in prompt, as MiMo's does.
  *
- * NOT carried across, because `session.prompt` has nowhere to put them: a
- * command's `agent` and `model`. MiMo runs the turn as whichever agent and
- * model the command names; here it runs as whatever the session is already set
- * to.
+ * A command's `agent` and `model` ride along with the message: MiMo runs the
+ * turn as whichever agent and model the command names, and this does too. They
+ * hold for that one turn - the conversation keeps whatever it was set to - and
+ * the listed command already carries both, so nothing has to be fetched for
+ * them.
  *
  * Undefined when the backend could not fill the command in; the failure has
  * been said and the draft should come back.

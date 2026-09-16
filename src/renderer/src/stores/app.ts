@@ -1309,6 +1309,8 @@ export const useApp = defineStore("app", () => {
     attachments: Attachment[] = [],
     to?: string,
     annotations: import("@shared/protocol").Annotation[] = [],
+    /* What a slash command named, for the turn this starts only. */
+    command?: { agent?: import("@shared/protocol").AgentName; model?: import("@shared/protocol").ModelRef },
   ): Promise<boolean> {
     const target = to ?? currentID.value
     // An attachment, or a place pointed at, with no words is still something to answer.
@@ -1354,6 +1356,8 @@ export const useApp = defineStore("app", () => {
         attachments,
         ...(annotations.length ? { annotations } : {}),
         ...(fileNotices.length ? { fileNotices } : {}),
+        ...(command?.agent ? { agent: command.agent } : {}),
+        ...(command?.model ? { model: command.model } : {}),
       })
       return true
     } catch (err) {
