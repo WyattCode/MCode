@@ -292,6 +292,7 @@ import { wordingChecks } from "./smoke-wording"
 import { roundEightChecks } from "./smoke-round8"
 // Round 9: a prompt for every model family MiMo's engine tells apart, and the family request shaping.
 import { roundNineChecks } from "./smoke-round9"
+import { roundNineSettingsChecks } from "./smoke-round9-settings"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -7058,6 +7059,7 @@ async function main() {
   wordingChecks(check, section)
   await roundEightChecks(check, section)
   await roundNineChecks(check, section)
+  await roundNineSettingsChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)

@@ -1363,9 +1363,6 @@ export interface AppConfig {
    * in the home directory.
    */
   projectRoot: string
-  /** Whether a permission request or a failure also makes a sound. Off by default. */
-  soundPermission: boolean
-  soundError: boolean
   /** Sessions whose tabs survive a close-others and sort to the front. */
   pinnedTabs: string[]
   /** Project folders pinned to the top of the side column's project list. */
@@ -1505,10 +1502,6 @@ export interface AppConfig {
    * has not curated the list yet, and every connected model is offered.
    */
   enabledModels: string[]
-  /** Start shell tool calls expanded in the transcript. */
-  expandShell: boolean
-  /** Start edit, write and patch tool calls expanded in the transcript. */
-  expandEdits: boolean
 
   /*
    * Type. Empty means the built-in stack, which is what almost everyone wants;
@@ -1601,13 +1594,6 @@ export interface AppConfig {
    * asked rather than assumed.
    */
   diffMarks: "color" | "signs"
-
-  /** Desktop notifications, by occasion. */
-  notifyAgent: boolean
-  notifyPermission: boolean
-
-  /** Whether pinch and Ctrl+wheel resize the interface. */
-  pinchZoom: boolean
 
   /**
    * Whether a new version says what changed in it.

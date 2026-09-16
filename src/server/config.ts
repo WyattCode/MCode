@@ -21,6 +21,7 @@ import {
   type PermissionKind,
 } from "@shared/protocol"
 import { adoptedProjects, reconciledProjects } from "@shared/projects"
+import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
 import { writeAtomic } from "./storage"
 import type { Bus } from "./bus"
@@ -114,8 +115,6 @@ function defaults(): AppConfig {
     taskDoneSound: "bloom",
     spineSound: true,
     projectRoot: "",
-    soundPermission: false,
-    soundError: false,
     /*
      * Empty means nobody has chosen yet, which the window answers by reading
      * the machine's own preference. A real value here would be indistinguishable
@@ -142,8 +141,6 @@ function defaults(): AppConfig {
     staged: false,
     openTabs: [],
     importOnboarded: false,
-    expandShell: false,
-    expandEdits: false,
     uiFont: "",
     codeFont: "",
     uiFontSize: 14,
@@ -159,16 +156,6 @@ function defaults(): AppConfig {
     pointerCursor: true,
     reduceMotion: "system",
     diffMarks: "color",
-    notifyAgent: true,
-    notifyPermission: true,
-    /*
-     * Off, which is opencode's. Its own getter is
-     * `getStore().get(PINCH_ZOOM_ENABLED_KEY) === true`, so an unset store
-     * reads false - the gesture is opted into, not out of. Read from the main
-     * process rather than the settings UI, whose switch shows whatever the
-     * reader last chose.
-     */
-    pinchZoom: false,
     releaseNotes: true,
     migrations: [],
     showTerminal: true,
@@ -193,6 +180,50 @@ function defaults(): AppConfig {
      */
     enabledModels: [],
   }
+}
+
+/**
+ * Fields earlier builds stored and this one no longer has.
+ *
+ * Each was a setting whose row is gone because MiMo has no such setting; the
+ * behaviour is now MiMo's fixed one. A stored value would otherwise ride along
+ * in every write for ever, so it is dropped on every read - MiMo's own settings
+ * store deletes its retired keys the same way each time it loads.
+ */
+export const RETIRED_FIELDS: readonly string[] = [
+  // Round nine (S9-1): notifications always on, no permission or failure cue,
+  // no Ctrl+wheel zoom in the main window, tool rows always start closed.
+  "notifyAgent",
+  "notifyPermission",
+  "soundPermission",
+  "soundError",
+  "pinchZoom",
+  "expandShell",
+  "expandEdits",
+]
+
+/** Takes the retired fields out of a document; answers whether any was there. */
+function dropRetired(document: object): boolean {
+  const record = document as Record<string, unknown>
+  let dropped = false
+  for (const field of RETIRED_FIELDS) {
+    if (!(field in record)) continue
+    delete record[field]
+    dropped = true
+  }
+  return dropped
+}
+
+/**
+ * The permission map MiMo's three levels leave behind, at `level`.
+ *
+ * MiMo has no per-tool answers, only the level; the map is how this app stores
+ * the level. So full access is every bucket allowed, and the other two levels
+ * are the defaults - the middle one is applied on top of them by `accessLevel`.
+ */
+export function levelMap(level: Access): Record<PermissionKind, PermissionAction> {
+  if (level !== "full") return { ...DEFAULT_PERMISSIONS }
+  return Object.fromEntries(PERMISSION_KINDS.map((kind) => [kind, "allow"])) as Record<PermissionKind, PermissionAction>
 }
 
 /** MiMo's defaults when nothing is stored: the middle level, and the full access switch on. */
@@ -458,6 +489,19 @@ export class Config {
       if (this.existed) this.current.importOnboarded = true
     })
 
+    /*
+     * Round nine (S9-1): the per-tool answers had no row left to change them,
+     * yet a stored "deny" still refused a tool at every level and a stored
+     * "allow" still skipped a question at the default one. MiMo has only the
+     * three levels, so the map goes back to what the level the user is on
+     * writes, and the set-aside map full access kept goes with it. The level
+     * itself - and the full access switch - are the user's and stay.
+     */
+    once("orphans-r9", () => {
+      this.current.permissions = levelMap(defaultAccess(this.current))
+      delete this.current.accessBefore
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
@@ -491,6 +535,7 @@ export class Config {
     // Read before anything is merged: what follows must not write over a newer document.
     this.fromNewerVersion = typeof stored?.schemaVersion === "number" && stored.schemaVersion > CONFIG_SCHEMA_VERSION
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
+    const retired = dropRetired(this.current)
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
      * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
@@ -501,7 +546,8 @@ export class Config {
      */
     if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
-    if (this.migrate() && !this.fromNewerVersion) await this.storage.write("config", this.current)
+    const migrated = this.migrate()
+    if ((migrated || retired) && !this.fromNewerVersion) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
     try {
       const raw = JSON.parse(await fs.readFile(this.credentialFile, "utf8"))

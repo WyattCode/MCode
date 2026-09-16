@@ -75,7 +75,7 @@ import AnnotationMarkers from "./components/AnnotationMarkers.vue"
 import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind } from "./lib/find"
-import { chime, play } from "./lib/sound"
+import { chime } from "./lib/sound"
 import { announce } from "./lib/announce"
 import { chimeOf, longTask } from "@shared/chime"
 import { themeTokens } from "./lib/theme-engine"
@@ -3772,19 +3772,6 @@ const disabledMenuItems = computed(() => {
   return out
 })
 
-/**
- * Ctrl+wheel is the other way people expect to zoom. preventDefault stops
- * Chromium applying its own page zoom on top of ours.
- */
-function onWheel(event: WheelEvent) {
-  if (!event.ctrlKey && !event.metaKey) return
-  // Turned off, the gesture goes back to being an ordinary scroll.
-  if (app.config?.pinchZoom === false) return
-  event.preventDefault()
-  if (event.deltaY === 0) return
-  window.mcode.zoom(event.deltaY < 0 ? "in" : "out")
-}
-
 /*
  * MiMo's task notifications.
  *
@@ -3796,8 +3783,7 @@ function onWheel(event: WheelEvent) {
  * on, or any confirmation with the chime on. A long finish in the conversation
  * on screen is held while it stays there, and sent once it is left.
  *
- * Sound, banner and spoken line stay separate settings: someone watching the
- * window wants the tone and not the banner; someone away from it the reverse.
+ * MiMo has no switch for either notice, and neither does this.
  */
 const chimeOn = () => chimeOf(app.config?.taskDoneSound) !== "off"
 
@@ -3853,7 +3839,6 @@ watch(
     const done = t("notify.done")
     if (app.currentID === turn.sessionID) announce(done)
     else if (about.title !== undefined) announce(`${about.title} · ${done}`)
-    if (app.config?.notifyAgent === false) return
     // automation: a scheduled task's run is told about by its own policy, below.
     if (app.automationRuns.has(turn.sessionID)) return
     if (chiming && watching(turn.sessionID)) {
@@ -3889,7 +3874,7 @@ watch(
 watch(
   () => app.automationNotice,
   (notice) => {
-    if (!notice || app.config?.notifyAgent === false) return
+    if (!notice) return
     window.mcode.taskNotice({ kind: "done", ...noticeAbout(notice.sessionID), silent: false })
   },
 )
@@ -3909,8 +3894,6 @@ watch(awaitingConfirm, (entries) => {
   for (const entry of entries) {
     if (announcedConfirms.has(entry.id)) continue
     announcedConfirms.add(entry.id)
-    if (app.config?.soundPermission) play("permission")
-    if (app.config?.notifyPermission === false) continue
     window.mcode.taskNotice({ kind: "confirm", ...noticeAbout(entry.sessionID), silent: chimeOn() })
   }
 })
@@ -3934,9 +3917,8 @@ watch(
   },
   (message) => {
     if (!message) return
-    // Logged, with its cue if that is on; MiMo sends no notification for a failure.
+    // Logged; MiMo makes no sound and sends no notification for a failure.
     recordLog("ERROR", message)
-    if (app.config?.soundError) play("error")
   },
 )
 
@@ -4019,7 +4001,6 @@ onMounted(async () => {
   // MiMo re-reads the working tree whenever its window comes back; the review tab reads on this.
   window.addEventListener("focus", app.bumpFsNonce)
   schemeQuery.addEventListener("change", onSchemeChange)
-  window.addEventListener("wheel", onWheel, { passive: false })
   offMenu = window.mcode.onMenu(runMenuCommand)
   // MiMo's zoom notice after every step, and once at load when the window is not at 100%.
   offZoom = window.mcode.onZoomChanged((percent) =>
@@ -4123,7 +4104,6 @@ onBeforeUnmount(() => {
   window.removeEventListener("blur", forgetRecentWalk)
   window.removeEventListener("focus", app.bumpFsNonce)
   schemeQuery.removeEventListener("change", onSchemeChange)
-  window.removeEventListener("wheel", onWheel)
   offMenu?.()
   offZoom?.()
   offQuitHint?.()
