@@ -15,6 +15,9 @@ import { Config } from "../src/server/config"
 import { Storage } from "../src/server/storage"
 import { parseJsonc, renderJsonc } from "../src/server/jsonc"
 import { CodedError, paramsOf } from "../src/shared/errors"
+import { McpServers } from "../src/server/mcp"
+import { checkEntry, claudeServers, projectFiles, resolveServers, substituteEntry } from "../src/server/mcp-sources"
+import type { AppConfig, McpServerConfig } from "../src/shared/protocol"
 
 type Section = (name: string) => void
 
@@ -72,9 +75,206 @@ async function jsoncConfig(check: Check, section: Section): Promise<void> {
   }
 }
 
+const fixture = () => path.join(process.cwd(), "scripts/fixtures/mcp-lifecycle-server.cjs")
+
+async function write(file: string, text: string): Promise<void> {
+  await fs.mkdir(path.dirname(file), { recursive: true })
+  await fs.writeFile(file, text)
+}
+
+/** M-5, M-6, M-16: where a project's servers come from, and what an entry must be. */
+async function serverSources(check: Check, section: Section): Promise<void> {
+  section("Round 9: MCP entries from the app, the project and Claude Code (M-5, M-6, M-16)")
+  const dir = await temporary("mcode-r9-sources-")
+  try {
+    const home = path.join(dir, "home")
+    await write(path.join(dir, "cfg", "token.txt"), "  from-a-file \n")
+    await write(path.join(home, "secret.txt"), "home-secret")
+    process.env.MCODE_R9_PROBE_VAR = "from-env"
+    const filled = (await substituteEntry(
+      {
+        type: "remote",
+        url: "https://x.example/{env:MCODE_R9_PROBE_VAR}",
+        headers: { a: "Bearer {file:token.txt}", b: "{file:~/secret.txt}", c: "[{env:MCODE_R9_UNSET_VAR}]" },
+        command: ["{env:MCODE_R9_PROBE_VAR}"],
+      },
+      path.join(dir, "cfg"),
+      home,
+    )) as { url: string; headers: Record<string, string>; command: string[] }
+    check("{env:NAME} is filled in, in the address and the command", filled.url === "https://x.example/from-env" && filled.command[0] === "from-env", filled)
+    check("{file:path} is the file's trimmed text, counted from the config file's folder", filled.headers.a === "Bearer from-a-file", filled.headers.a)
+    check("~/ in a file path is the home folder", filled.headers.b === "home-secret", filled.headers.b)
+    check("an unset variable is empty", filled.headers.c === "[]", filled.headers.c)
+    const missing = await substituteEntry({ url: "{file:nope.txt}" }, dir, home).then(
+      () => "",
+      (error: Error) => error.message,
+    )
+    check("a file that is not there makes the entry fail, naming it", missing.includes("{file:nope.txt}") && missing.includes("does not exist"), missing)
+
+    check("an entry without a type is skipped", "skip" in checkEntry({ command: ["x"] }) && "skip" in checkEntry("text"))
+    const stringCommand = checkEntry({ type: "local", command: "npx server" })
+    check("a command written as one string is refused, not split", "invalid" in stringCommand, stringCommand)
+    check("an unknown type is refused", "invalid" in checkEntry({ type: "sse", url: "https://x" }))
+    check("a remote entry needs an address", "invalid" in checkEntry({ type: "remote" }))
+    check("environment values must be strings", "invalid" in checkEntry({ type: "local", command: ["x"], environment: { A: 1 } }))
+    check("a well-formed entry passes", "config" in checkEntry({ type: "local", command: ["node", "x.js"], environment: { A: "1" }, timeout: 5000 }))
+
+    // A repository inside a folder that has a config of its own, which the walk must not reach.
+    const outer = path.join(dir, "outer")
+    const repo = path.join(outer, "repo")
+    const sub = path.join(repo, "sub")
+    await write(path.join(outer, "mcode.json"), '{"mcpServers":{"outside":{"type":"local","command":["x"]}}}')
+    await fs.mkdir(path.join(repo, ".git"), { recursive: true })
+    await write(path.join(repo, "mcode.json"), '{"mcpServers":{"shared":{"environment":{"FROM":"repo"}},"proj":{"type":"local","command":["node","{file:tool.js}"]}}}')
+    await write(path.join(repo, "tool.js"), "repo-tool")
+    await write(path.join(sub, "mcode.json"), '{"mcpServers":{"shared":{"environment":{"LEVEL":"sub-json"}}}}')
+    await write(path.join(sub, "mcode.jsonc"), '{\n  // nearest wins\n  "mcpServers": {"shared": {"environment": {"LEVEL": "sub-jsonc"}},},\n}')
+    await write(path.join(sub, ".mcode", "mcode.json"), '{"mcpServers":{"dotted":{"type":"local","command":["y"]}}}')
+    await write(path.join(repo, ".mcode", "mcode.jsonc"), '{"mcpServers":{"typeless":{"command":["z"]},"broken":{"type":"local","command":"z --flag"}}}')
+    await write(path.join(home, ".mcode", "mcode.json"), '{"mcpServers":{}}')
+    const files = (await projectFiles(sub, home)).map((file) => path.relative(dir, file).replaceAll("\\", "/"))
+    check(
+      "project files are merged outermost first up to the repository root, then the .mcode folders, then the home one",
+      JSON.stringify(files) ===
+        JSON.stringify(["outer/repo/mcode.json", "outer/repo/sub/mcode.json", "outer/repo/sub/mcode.jsonc", "outer/repo/sub/.mcode/mcode.json", "outer/repo/.mcode/mcode.jsonc", "home/.mcode/mcode.json"]),
+      files,
+    )
+
+    await write(
+      path.join(home, ".claude.json"),
+      JSON.stringify({
+        // Shaped like a server but outside mcpServers: nothing but that key is taken.
+        decoy: { command: "top-level-not-a-server" },
+        mcpServers: {
+          shared: { command: "claude-would-lose" },
+          fromClaude: { command: "npx", args: ["-y", "pkg"], env: { K: "v" } },
+          web: { type: "http", url: "https://mcp.example/mcp", headers: { A: "b" } },
+          old: { type: "sse", url: "https://mcp.example/sse" },
+          badArgs: { command: "x", args: "not-a-list" },
+          later: { command: "home-version" },
+        },
+      }),
+    )
+    await write(path.join(sub, ".claude.json"), JSON.stringify({ mcpServers: { later: { command: "project-version", disabled: true } } }))
+    const claude = await claudeServers(path.join(home, ".claude.json"))
+    check(
+      "Claude Code's servers are taken from mcpServers only, SSE and malformed ones skipped",
+      JSON.stringify(Object.keys(claude)) === '["shared","fromClaude","web","later"]' &&
+        JSON.stringify(claude.fromClaude) === '{"type":"local","command":["npx","-y","pkg"],"environment":{"K":"v"},"enabled":true}' &&
+        claude.web?.type === "remote" && claude.web.headers?.A === "b",
+      claude,
+    )
+
+    const resolved = await resolveServers({
+      servers: {
+        shared: { type: "local", command: ["node", "app.js"], environment: { FROM: "app" } },
+        appOnly: { type: "remote", url: "https://{env:MCODE_R9_PROBE_VAR}.example/mcp" },
+      },
+      configFile: path.join(dir, "cfg", "config.json"),
+      directory: sub,
+      home,
+    })
+    const byName = Object.fromEntries(resolved.map((entry) => [entry.name, entry]))
+    check(
+      "the servers keep the order their first layer named them: the app's, the project's, then Claude Code's",
+      JSON.stringify(resolved.map((entry) => entry.name)) === '["shared","appOnly","proj","dotted","broken","fromClaude","web","later"]',
+      resolved.map((entry) => entry.name),
+    )
+    check(
+      "a project layer is merged into the app's entry key by key, the nearest file winning",
+      JSON.stringify(byName.shared?.config?.environment) === '{"FROM":"repo","LEVEL":"sub-jsonc"}' && byName.shared?.config?.command?.[1] === "app.js" && byName.shared.origin === "app",
+      byName.shared,
+    )
+    check("{file:…} in a project file counts from that file's folder", byName.proj?.config?.command?.[1] === "repo-tool", byName.proj)
+    check("the app's own entries are filled in too", byName.appOnly?.config?.url === "https://from-env.example/mcp", byName.appOnly)
+    check("a Claude Code server never displaces one of MCode's", byName.shared?.config?.command?.[0] === "node")
+    check("the project's .claude.json wins over the home one", byName.later?.config?.command?.[0] === "project-version" && byName.later.config.enabled === false, byName.later)
+    check("an entry without a type is left out, a malformed one kept with its reason", !byName.typeless && Boolean(byName.broken?.invalid) && !byName.broken?.config, byName.broken)
+    check("the walk stops at the repository root", !byName.outside)
+    const alone = await resolveServers({ servers: { one: { type: "local", command: ["x"] } }, configFile: path.join(dir, "config.json"), home })
+    check("without a project only the app's list is read", JSON.stringify(alone.map((entry) => entry.name)) === '["one"]')
+  } finally {
+    delete process.env.MCODE_R9_PROBE_VAR
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
+/** A stand-in for the settings store: what McpServers reads, and the event a save sends. */
+function stubConfig(bus: Bus, initial: { mcpServers: Record<string, McpServerConfig>; directory: string; mcpTimeout?: number }) {
+  let value = { ...initial }
+  return {
+    get: () => value as unknown as AppConfig,
+    set: async (patch: Partial<AppConfig>) => {
+      value = { ...value, ...(patch as typeof value) }
+      bus.publish({ type: "config.updated", config: value as unknown as AppConfig })
+      return value as unknown as AppConfig
+    },
+  }
+}
+
+const toolContext = (directory: string, asked: unknown[] = []) =>
+  ({
+    sessionID: "ses_r9",
+    messageID: "msg_r9",
+    callID: `call_${Math.random().toString(36).slice(2)}`,
+    directory,
+    permissions: { ask: async (input: unknown) => void asked.push(input) },
+    signal: new AbortController().signal,
+    progress: () => {},
+    snapshot: async () => {},
+  }) as never
+
+async function callTool(mcp: McpServers, directory: string, name: string, input: Record<string, unknown> = {}): Promise<string> {
+  const tool = mcp.tools(directory).find((entry) => entry.name === name)
+  if (!tool) return `NO TOOL ${name}`
+  return tool.execute(input, toolContext(directory)).then(
+    (result) => result.output,
+    (error: Error) => `ERROR ${error.message}`,
+  )
+}
+
+const same = (a: string, b: string) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+
+/** M-7: each project directory has its own servers, started in that directory. */
+async function perProject(check: Check, section: Section): Promise<void> {
+  section("Round 9: MCP servers per project directory (M-7)")
+  const dir = await temporary("mcode-r9-projects-")
+  const bus = new Bus()
+  const first = path.join(dir, "first")
+  const second = path.join(dir, "second")
+  await fs.mkdir(path.join(first, ".git"), { recursive: true })
+  await fs.mkdir(path.join(second, ".git"), { recursive: true })
+  await write(path.join(second, "mcode.json"), JSON.stringify({ mcpServers: { extra: { type: "local", command: ["node", fixture(), "--tag", "second-only"] } } }))
+  const config = stubConfig(bus, { mcpServers: { life: { type: "local", command: ["node", fixture()] } }, directory: first })
+  const mcp = new McpServers(bus, config as never, undefined, path.join(dir, "home"))
+  try {
+    await mcp.start()
+    await mcp.ready(second)
+    const whereFirst = await callTool(mcp, first, "life_where")
+    const whereSecond = await callTool(mcp, second, "life_where")
+    check("a local server starts in its own project's folder", same(whereFirst, first) && same(whereSecond, second), { whereFirst, whereSecond })
+    check("a project's own server is offered only there", (await callTool(mcp, second, "extra_tag")) === "second-only" && !mcp.tools(first).some((tool) => tool.name.startsWith("extra_")))
+    check("the settings page reports on the directory new conversations start in", JSON.stringify(mcp.list().map((entry) => entry.name)) === '["life"]', mcp.list())
+    const statuses: string[] = []
+    const off = bus.subscribe((event) => {
+      if (event.type === "mcp.status") statuses.push(event.servers.map((entry) => entry.name).join(","))
+    })
+    await mcp.ready(path.join(dir, "third"))
+    off()
+    check("a project's servers never show up in that report", statuses.every((names) => names === "life"), statuses)
+  } finally {
+    await mcp.close()
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
   // A part that throws is a failed check, not a crash that hides every part after it.
-  const parts: [string, (check: Check, section: Section) => Promise<void>][] = [["M-4", jsoncConfig]]
+  const parts: [string, (check: Check, section: Section) => Promise<void>][] = [
+    ["M-4", jsoncConfig],
+    ["M-5/M-6/M-16", serverSources],
+    ["M-7", perProject],
+  ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))
   }

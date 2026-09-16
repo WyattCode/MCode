@@ -73,6 +73,10 @@ import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, s
 import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, structuredOutputTool, structuredResult } from "../tool/subagent"
 import { TASK_ID } from "../tool/task"
 import type { TaskControl } from "../tool/types"
+import type { McpServers } from "../mcp"
+
+/** What a turn needs of the MCP layer: a project's servers connected, their tools, and their names. */
+type McpAccess = Pick<McpServers, "ready" | "tools" | "names">
 
 /*
  * What a resumed turn is told at its first step, in MCode's own words. Sent in
@@ -300,7 +304,7 @@ export class SessionRunner {
    * which the runner also holds, and threading it through the constructor
    * would make the two impossible to build in either order.
    */
-  private mcp?: { tools: () => ToolDefinition[] }
+  private mcp?: McpAccess
   /*
    * MiMo's MCP page says a saved change applies from the next conversation.
    * Each conversation keeps the servers that were configured and on at its
@@ -493,7 +497,7 @@ export class SessionRunner {
     return verdictApproves(calls, answer)
   }
 
-  useMcp(mcp: { tools: () => ToolDefinition[] }): void {
+  useMcp(mcp: McpAccess): void {
     this.mcp = mcp
   }
 
@@ -506,7 +510,7 @@ export class SessionRunner {
    * reachable, and a plan written without the project's own tools is a worse
    * plan. An explore subagent is still offered only its own few.
    */
-  private tools(agent: string, conversation: string): ToolDefinition[] {
+  private tools(agent: string, conversation: string, directory: string): ToolDefinition[] {
     // speak rides on the voice feedback setting; the rule itself lives with the registry.
     const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
     if (agent === "explore") return own
@@ -517,7 +521,7 @@ export class SessionRunner {
       this.mcpServersAt.set(conversation, servers)
     }
     const kept = servers
-    return [...own, ...(this.mcp?.tools() ?? []).filter((tool) => !tool.server || kept.has(tool.server))]
+    return [...own, ...(this.mcp?.tools(directory) ?? []).filter((tool) => !tool.server || kept.has(tool.server))]
   }
 
   /**
@@ -1261,7 +1265,7 @@ export class SessionRunner {
       config.instructionFiles ?? [],
       session.model.provider,
       session.model.model,
-      this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).map((tool) => tool.name),
+      this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id, session.directory).map((tool) => tool.name),
       // skills: a skill added or removed changes the list the prompt carries.
       skills.map((skill) => skill.name),
     ])
@@ -1352,7 +1356,7 @@ export class SessionRunner {
           model: session.model,
           ...(await this.systemFor(session)),
           history: [...replay, instruction],
-          tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+          tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
@@ -1799,7 +1803,7 @@ export class SessionRunner {
     if (!first) return [runtime]
     // The conversation's MCP servers are fixed when it first asks for its tools; its own record comes first.
     await this.rememberMcpServers(session)
-    this.tools(session.agent, session.id)
+    this.tools(session.agent, session.id, session.directory)
     const names = [...(this.mcpServersAt.get(session.id) ?? [])]
     return [
       sessionNote({
@@ -2045,6 +2049,8 @@ export class SessionRunner {
     this.turnAgents.set(sessionID, session.agent)
     // MiMo's MCP rule: the servers this conversation started with, read back from disk after a restart.
     await this.rememberMcpServers(session)
+    // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
+    await this.mcp?.ready(session.directory)
     const definition = this.config.definition(session.model.provider)
     if (!definition) throw new Error(`Unknown provider: ${session.model.provider}`)
     const adapter: ProviderAdapter =
@@ -2242,7 +2248,7 @@ export class SessionRunner {
         tools: lastStep
           ? []
           : [
-              ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+              ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort,
@@ -2689,11 +2695,11 @@ export class SessionRunner {
     // subagents: a subagent asked for structured output has one more tool, made from its schema.
     const schema = part.name === STRUCTURED_OUTPUT ? (await this.store.get(input.session.id))?.subagent?.outputSchema : undefined
     const lookup = (name: string) =>
-      findTool(name) ?? (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ?? this.mcp?.tools().find((entry) => entry.name === name)
+      findTool(name) ?? (schema && name === STRUCTURED_OUTPUT ? structuredOutputTool(schema) : undefined) ?? this.mcp?.tools(input.session.directory).find((entry) => entry.name === name)
     let tool = lookup(part.name)
     if (!tool) {
       // MiMo's repair: the name without case, then with dashes, underscores and spaces ignored.
-      const offered = [...repairableNames(), ...(schema ? [STRUCTURED_OUTPUT] : []), ...(this.mcp?.tools().map((entry) => entry.name) ?? [])]
+      const offered = [...repairableNames(), ...(schema ? [STRUCTURED_OUTPUT] : []), ...(this.mcp?.tools(input.session.directory).map((entry) => entry.name) ?? [])]
       const resolved = resolveToolName(part.name, offered)
       const repaired = resolved ? lookup(resolved) : undefined
       if (resolved && repaired) {

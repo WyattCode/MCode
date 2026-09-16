@@ -327,6 +327,11 @@ async function main() {
   // round 5: the earlier sections script their providers reply by reply, and a background title request would take one.
   process.env.MCODE_GENERATE_TITLES = "0"
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-smoke-"))
+  /*
+   * Never the reader's own home: MCP servers are also read from ~/.claude.json
+   * and ~/.mcode, and a check must not start the servers configured there.
+   */
+  process.env.MCODE_IMPORT_HOME ??= path.join(root, "home")
   const dataDirectory = path.join(root, "data")
   const project = path.join(root, "project")
   await fs.mkdir(project, { recursive: true })
@@ -9095,7 +9100,7 @@ async function mcpChecks(project: string) {
     sampled.push({ server: input.server, sessionID: input.sessionID })
     return { role: "assistant", content: { type: "text", text: "sampled" }, model: "fake/m", stopReason: "endTurn" }
   })
-  await mcp.sync()
+  await mcp.start()
   const mcpContext = (callID: string, signal = new AbortController().signal) =>
     ({ sessionID: "ses_mcp", messageID: "msg_mcp", callID, directory: project, permissions: { ask: async () => {} }, signal, progress: () => {}, snapshot: async () => {} }) as never
   const named = (name: string) => mcp.tools().find((tool) => tool.name === name)

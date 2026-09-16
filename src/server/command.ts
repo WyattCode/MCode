@@ -65,7 +65,7 @@ export async function listCommands(deps: Deps, directory: string): Promise<Comma
     commands[name] = fromDefinition(name, entry)
   }
 
-  for (const [name, prompt] of Object.entries(await promptCommands(deps.mcp))) {
+  for (const [name, prompt] of Object.entries(await promptCommands(deps.mcp, directory))) {
     commands[name] = prompt
   }
 
@@ -294,11 +294,11 @@ async function fileCommands(deps: Folders, directory: string, defaultModel?: Mod
  * That substitution is the reference's (@32868400) and it is why an MCP prompt
  * needs no placeholder syntax of its own.
  */
-async function promptCommands(mcp: Deps["mcp"]): Promise<Record<string, CommandInfo>> {
+async function promptCommands(mcp: Deps["mcp"], directory: string): Promise<Record<string, CommandInfo>> {
   const out: Record<string, CommandInfo> = {}
   let listed: Awaited<ReturnType<McpServers["prompts"]>> = {}
   try {
-    listed = await mcp.prompts()
+    listed = await mcp.prompts(directory)
   } catch {
     return out
   }
@@ -310,6 +310,7 @@ async function promptCommands(mcp: Deps["mcp"]): Promise<Record<string, CommandI
         prompt.client,
         prompt.name,
         Object.fromEntries(args.map((argument, index) => [argument.name, `$${index + 1}`])),
+        directory,
       )
     } catch {
       // A prompt that cannot be fetched is still listed, with nothing to send.

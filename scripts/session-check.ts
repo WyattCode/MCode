@@ -261,7 +261,8 @@ async function main(): Promise<void> {
   const auth = { accessToken: async () => undefined } as never
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
   const shells = new Shells(bus)
-  const mcp = new McpServers(bus, config)
+  // A home of its own, so the reader's ~/.claude.json servers are never started here.
+  const mcp = new McpServers(bus, config, undefined, root)
   /*
    * The request handlers are part of what a window sees, so the checks that
    * care about reconnecting drive them rather than the pieces underneath.

@@ -140,7 +140,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
    * hold the whole backend, and the window has nothing to show until the
    * socket is up anyway. Status arrives on the bus as each one answers.
    */
-  void mcp.sync()
+  void mcp.start()
 
   /*
    * Bound to loopback, and still not open to whatever reaches loopback: every

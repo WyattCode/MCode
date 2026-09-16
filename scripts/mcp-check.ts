@@ -7,6 +7,8 @@
  * cannot start, because reporting that clearly is half of what the dialog is
  * for.
  */
+import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
 import { Bus } from "../src/server/bus"
 import { McpServers } from "../src/server/mcp"
@@ -35,6 +37,7 @@ class StubConfig {
   }
   async set(patch: Partial<AppConfig>) {
     this.value = { ...this.value, ...(patch as typeof this.value) }
+    bus.publish({ type: "config.updated", config: this.get() })
     return this.get()
   }
 }
@@ -59,9 +62,11 @@ const context = {
 
 const bus = new Bus()
 const config = new StubConfig()
-const mcp = new McpServers(bus, config as never)
+// A home of its own: the reader's ~/.claude.json servers are never started by a check.
+const home = fs.mkdtempSync(path.join(os.tmpdir(), "mcode-mcpcheck-"))
+const mcp = new McpServers(bus, config as never, undefined, home)
 
-await mcp.sync()
+await mcp.start()
 
 const byName = Object.fromEntries(mcp.list().map((entry) => [entry.name, entry]))
 check(
