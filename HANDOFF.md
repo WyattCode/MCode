@@ -267,7 +267,8 @@
   - 启动环境（N9-11）：`main/shell-env.ts`，模块加载时同步执行（开发服务器模式跳过）。Windows 经 `cmd /c chcp 65001 & reg query` 读 HKLM 与 HKCU 的 Environment（MiMo 直接按 UTF-8 解码 reg.exe 的输出，中文路径会乱码，实测确认），展开 `%VAR%`，PATH 以注册表为先并去重（忽略大小写与结尾斜杠）；macOS / Linux 用 `$SHELL -ilc` / `-lc` 在标记之间打印 `env -0`。只补进程里没有的变量（MiMo 会覆盖，包括 HKLM 里的 `USERNAME=SYSTEM`），3 秒上限，失败不改。
   - 其他：N9-9 `package.json` 加 `productName: "MCode"`，托盘提示、通知兜底标题、macOS 应用菜单用常量；Electron 默认数据目录会随之变成 `MCode`，启动时只在「仍是默认目录」时固定回 `…/mcode`（Windows 上同一目录，Linux 不必迁移；探针或 `--user-data-dir` 指定的目录不动）。N9-14 窗口状态照 MiMo：最后一个窗口关闭 / 隐藏到托盘时和退出时才写，最小化或全屏时不写，不再保存和恢复全屏（旧文件里的 `fullScreen` 忽略）。N9-15 `main/crash-dumps.ts`：`crashReporter.start({ uploadToServer: false })`，转储在 `userData\Crashpad`（启动日志写明位置），启动 10 秒后按 MiMo 的上限清理（最新 10 个、14 天、32 B–128 MB，只动 `.dmp`）。N9-18 三个 xterm 插件改为 devDependencies，其中 `addon-web-links` 没人用，直接删掉；asar 只收 `out/main`、`out/preload`、`out/renderer`（此前检查脚本打出的 `out/*.mjs` 约 11 MB 会被一起打进去）。
   - 暂缓（用户定）：N9-7 / N9-19（公开服务器）、N9-8（签名证书；electron-updater 的发布者校验在 `app-update.yml` 有 `publisherName` 时才生效）、N9-20。N9-17 由另一路删除。
-  - 验证：见本轮收尾一行。
+  - 体积（同机、同 v2.0 基线打包）：安装包 148,324,330 → 237,393,303 字节（0.2.5 → 0.2.7），win-unpacked 469,223,699 → 839,248,709，其中运行时 373,068,598（node 105.6 MB / python 263.2 MB / ripgrep 4.3 MB，共 9,963 个文件，逐字节与源树一致）；app.asar 62,426,742 → 60,050,911（去掉 xterm 插件 2.95 MB，且不再收 check 打包文件）。
+  - 验证（合并 v2.0、Electron 41.7.2 后）：十三项检查全过，build 通过，smoke **3136 全过**（新 `scripts/smoke-round9-windows.ts` 103 条，删去旧 JSON 更新源的 15 条）；每组新检查都在改坏代码后确认会失败。探针 `mcode-round9-windows.cjs` 8 项全过、0 报错（注册表环境、四个运行时实际运行、本地转储、窗口状态、中断提示、IPC、真实 electron-updater 对本地更新源端到端、退出时的窗口状态），改坏代码后 8 项全部失败。
 - 进行中：服务商与提示词、MCP 两路构建。
 
 用户决定不做（不要再主动提）：
