@@ -85,6 +85,15 @@ let offEvents: (() => void) | undefined
 let offTheme: (() => void) | undefined
 let webgl: WebglAddon | undefined
 let scrollTimer: ReturnType<typeof setTimeout> | undefined
+/*
+ * True from open() until xterm's own first timer has run. xterm 5.5's viewport
+ * queues a scroll-area sync on a zero timer as the terminal opens; a pane
+ * unmounted before that timer fires (switching between home and a
+ * conversation twice in quick succession does it) had its renderer torn down
+ * underneath the sync, which threw `Cannot read properties of undefined
+ * (reading 'dimensions')` into the window.
+ */
+let openSyncPending = false
 
 defineExpose({
   focus: () => terminal?.focus(),
@@ -201,6 +210,9 @@ onMounted(async () => {
   terminal.unicode.activeVersion = "11"
 
   terminal.open(host.value)
+  // Queued after xterm's own zero timer, so it clears only once that sync has run.
+  openSyncPending = true
+  setTimeout(() => (openSyncPending = false))
 
   /*
    * The GPU renderer, for the glyphs a font cannot be relied on for.
@@ -432,8 +444,14 @@ onBeforeUnmount(() => {
    * line used to kill a dev server for each. Ending a shell is the tab's
    * close button, and the backend sweeps whatever is left when the window
    * that opened it goes away.
+   *
+   * Still inside the tick that opened it, the terminal is let go on a timer
+   * queued behind xterm's pending sync (see openSyncPending), so that sync
+   * finds its renderer still there.
    */
-  terminal?.dispose()
+  const closing = terminal
+  if (openSyncPending) setTimeout(() => closing?.dispose())
+  else closing?.dispose()
 })
 
 /*
