@@ -232,6 +232,11 @@
 - **两个决定已落地**：删除 `server/tool/schedule-ask.ts` 与 cron（schedule / loop / rename）、automation（create / update / resume）的询问，`perm.schedule` 18 张表各删一行；smoke 改为「命令权限设为拒绝时这六个操作照样执行且不产生询问」，临时换回旧代码 8 条失败 7 条。归档提示五张表恢复 W4 之前的值，`toast.archivedNConvos` 加入 `MIMO_CHAT_KEYS`。
 - **第八轮收尾验证**（638418c 构建）：十一项检查全过，build 通过，smoke **2838 全过**（2834 + 窄窗 5 − X10 换成的新检查净减 1）；探针 round8-narrow 8、round5-history 7、round4-feedback 26、round8-security 18、round8-wording 15、round8-a11y 20、round6-visual 24、round5-main 29、round4-small 21 全过；round3-panel `A16_narrowWindow` 失败是期望过时——它在 1180 宽下拖出 500 的面板，旧规则按拖出宽度要折叠侧栏，新规则按显示宽度（424 ≥ 300）只收窄面板，与 MiMo 一致；探针改到 980 宽（低于 62 + 160 + 480 + 300）后 25 项全过。
 
+**第九轮对照（2026-09-17 起）：进行中。** 一边做第八轮留下的清单，一边再开三个没用过的角度：
+- 构建：**按模型家族细分系统提示词**（核实 MiMo 对哪些家族用不同提示词或请求参数、按什么规则匹配，照做；提示词内容 MCode 自写）；**清单**——产物库记录多个来源对话并做全文搜索（MiMo 的 `artifact_source` 与 FTS）、xterm 读屏模式（鼠标所见不变）、第八轮遗留的两处安全风险（自定义服务商 baseURL 未遮蔽、MCP OAuth 未防 DNS 重绑定；不新增 MiMo 没有的询问）。
+- 只读排查：**每个设置端到端**（默认值、取值范围、存放位置、是否真的生效、是否即时生效，`round9-settings.md`）、**服务商、模型目录、登录与 MCP 生命周期**（`round9-providers.md`）、**作为 Windows 应用与发行内容**（安装卸载、协议与单实例、任务栏与通知、打包内容、自动更新，`round9-windows.md`）。
+- 仍待用户：V10（需要新 token 名）、L14（需要公开仓库地址）、L24–L27（需要 Linux / macOS 设备）。
+
 用户决定不做（不要再主动提）：
 
 | 项目 | 原因 |
