@@ -25,7 +25,7 @@ import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, ve
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, reachOf, repairableNames, toolsFor } from "../tool/registry"
+import { findTool, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
@@ -460,7 +460,8 @@ export class SessionRunner {
    * plan. An explore subagent is still offered only its own few.
    */
   private tools(agent: string, conversation: string): ToolDefinition[] {
-    const own = toolsFor(agent)
+    // speak rides on the voice feedback setting; the rule itself lives with the registry.
+    const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
     if (agent === "explore") return own
     let servers = this.mcpServersAt.get(conversation)
     if (!servers) {

@@ -352,11 +352,3 @@ export function speak(text: string, language: string): boolean {
   }
 }
 
-/** Stops whatever is being read aloud. */
-export function hush(): void {
-  try {
-    window.speechSynthesis?.cancel()
-  } catch {
-    /* A window with no speech engine has nothing to stop. */
-  }
-}
