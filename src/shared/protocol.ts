@@ -1087,6 +1087,13 @@ export interface McpServerConfig {
   timeout?: number
   /** MiMo's per-server `sampling`: whether the server may have a model write for it. Unset asks. */
   sampling?: "deny" | "ask" | "allow"
+  /**
+   * Per-tool rules, by the server's own tool name (`*` and `?` match as in
+   * permission rules; the last matching rule wins): false or "deny" keeps the
+   * tool from the model, "ask" asks before each call even where MCP calls are
+   * allowed, true or "allow" never asks. Written by hand into the config file.
+   */
+  tools?: Record<string, boolean | "allow" | "ask" | "deny">
 }
 
 export interface McpOAuthConfig {
@@ -1372,6 +1379,12 @@ export interface AppConfig {
   taskOrder: Record<string, string[]>
   /** Model Context Protocol servers, by the name they are shown under. */
   mcpServers: Record<string, McpServerConfig>
+  /**
+   * MiMo's `experimental.mcp_timeout`: how long, in milliseconds, a tool call
+   * may take on a server that sets no `timeout` of its own (a minute when
+   * unset). Written by hand into the config file.
+   */
+  mcpTimeout?: number
   /** UI display language. Simplified Chinese is the default. */
   /*
    * A language code the renderer offers. Kept as a plain string here so

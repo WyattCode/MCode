@@ -16,7 +16,8 @@ import { Config } from "../src/server/config"
 import { Storage } from "../src/server/storage"
 import { parseJsonc, renderJsonc } from "../src/server/jsonc"
 import { CodedError, paramsOf } from "../src/shared/errors"
-import { McpServers, TOOLS_UNAVAILABLE } from "../src/server/mcp"
+import { McpServers, TOOLS_UNAVAILABLE, toolRule } from "../src/server/mcp"
+import { mergeMcpSecrets } from "../src/server/mcp-save"
 import { checkEntry, claudeServers, projectFiles, resolveServers, substituteEntry } from "../src/server/mcp-sources"
 import type { AppConfig, McpServerConfig, Request } from "../src/shared/protocol"
 import { startBackend } from "../src/server/index"
@@ -685,6 +686,79 @@ async function failureReports(check: Check, section: Section): Promise<void> {
   }
 }
 
+/** M-14: an app-wide call timeout, and per-tool rules in a server's entry. */
+async function timeoutsAndToolRules(check: Check, section: Section): Promise<void> {
+  section("Round 9: the app-wide MCP call timeout and per-tool rules (M-14)")
+  const rules = { "*": "ask", tag: true, "sl*": false, env: "deny" } as const
+  check(
+    "the last matching rule wins, true and false meaning allow and deny",
+    toolRule(rules, "tag") === "allow" && toolRule(rules, "slow") === "deny" && toolRule(rules, "where") === "ask" && toolRule(rules, "env") === "deny" && toolRule(undefined, "tag") === undefined,
+  )
+  check("a malformed rule makes the entry invalid", "invalid" in checkEntry({ type: "local", command: ["x"], tools: { a: "sometimes" } }))
+  const kept = mergeMcpSecrets({ type: "remote", url: "https://x", tools: { a: false }, oauth: { clientId: "id" } }, { type: "remote", url: "https://y" })
+  check("saving from the form keeps hand-written tool rules and sign-in settings", kept.tools?.a === false && kept.oauth !== false && kept.oauth?.clientId === "id", kept)
+
+  const dir = await temporary("mcode-r9-rules-")
+  const bus = new Bus()
+  const config = stubConfig(bus, {
+    mcpServers: {
+      ruled: { type: "local", command: ["node", fixture()], tools: rules },
+      plain: { type: "local", command: ["node", fixture()] },
+      patient: { type: "local", command: ["node", fixture()], timeout: 5000 },
+    },
+    directory: dir,
+    mcpTimeout: 400,
+  })
+  const mcp = new McpServers(bus, config as never, undefined, path.join(dir, "home"))
+  const questions: { kind: string; title: string }[] = []
+  const permissionConfig = { get: () => ({ permissions: { ...DEFAULT_PERMISSIONS }, accessLevel: "ask", allowFullAccess: false }) }
+  const gate = new Permissions(bus, permissionConfig as never)
+  const asking = new Permissions(bus, { get: () => ({ permissions: { ...DEFAULT_PERMISSIONS, mcp: "ask" }, accessLevel: "ask" }) } as never)
+  bus.subscribe((event) => {
+    if (event.type === "permission.requested") {
+      questions.push({ kind: event.request.kind, title: event.request.title })
+      // Whichever gate raised it answers; the other does not know the id.
+      gate.respond(event.request.id, "once")
+      asking.respond(event.request.id, "once")
+    }
+  })
+  const run = (name: string, permissions: Permissions = gate) => {
+    const tool = mcp.tools(dir).find((entry) => entry.name === name)
+    if (!tool) return Promise.resolve(`NO TOOL ${name}`)
+    const context = { ...(toolContext(dir) as object), permissions } as never
+    return tool.execute({}, context).then(
+      (result) => result.output,
+      (error: Error) => `ERROR ${error.message}`,
+    )
+  }
+  try {
+    await mcp.start()
+    const names = mcp.tools(dir).map((tool) => tool.name)
+    check("a tool its rules deny is not offered to the model", !names.includes("ruled_slow") && !names.includes("ruled_env") && names.includes("ruled_where") && names.includes("plain_slow"), names)
+    await run("plain_tag")
+    check("with no rule, a call runs without a question, MCP calls being allowed", questions.length === 0, questions)
+    await run("plain_tag", asking)
+    check("with MCP calls set to ask, a call asks", questions.length === 1, questions)
+    await run("ruled_tag", asking)
+    check("but a tool its rules allow runs without a question even then", questions.length === 1, questions)
+    questions.length = 0
+    const asked = await run("ruled_where")
+    check("a tool its rules ask about asks, although MCP calls are allowed", questions.length === 1 && questions[0].title === "ruled: where" && same(asked, dir), { questions, asked })
+    const refusing = new Permissions(bus, { get: () => ({ permissions: { ...DEFAULT_PERMISSIONS, mcp: "deny" }, accessLevel: "ask" }) } as never)
+    const refused = await run("ruled_tag", refusing)
+    check("an allowing rule does not get past MCP calls being refused", refused.startsWith("ERROR Refused"), refused)
+
+    const started = Date.now()
+    const timedOut = await run("plain_slow")
+    check("a server with no timeout of its own gets the app-wide one", timedOut === "ERROR tools/call timed out" && Date.now() - started < 1500, { timedOut, ms: Date.now() - started })
+    const patient = await run("patient_slow")
+    check("a server's own timeout wins over it", patient === "(no output)" || patient === "", patient)
+  } finally {
+    await mcp.close()
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
   // Never the reader's own ~/.claude.json or ~/.mcode: the backend reads servers from both.
   process.env.MCODE_IMPORT_HOME ??= await temporary("mcode-r9-home-")
@@ -699,6 +773,7 @@ export async function roundNineMcpChecks(check: Check, section: Section): Promis
     ["M-9", clientRegistration],
     ["M-11", gracefulStop],
     ["M-12/M-13", failureReports],
+    ["M-14", timeoutsAndToolRules],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))

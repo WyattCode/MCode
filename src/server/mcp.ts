@@ -23,6 +23,7 @@ import { ToolError, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
 import { terminate, windowsLaunch } from "./mcp-launch"
 import { probeTools, type ProbeResult } from "./mcp-probe"
+import { wildcardMatch } from "./permission"
 
 /**
  * Talks to Model Context Protocol servers, and offers their tools to the agent.
@@ -267,6 +268,16 @@ async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: str
   line("")
 }
 
+/** What a server's `tools` rules say about one of its tools: the last rule whose pattern matches. */
+export function toolRule(rules: McpServerConfig["tools"], tool: string): "allow" | "ask" | "deny" | undefined {
+  let found: "allow" | "ask" | "deny" | undefined
+  for (const [pattern, rule] of Object.entries(rules ?? {})) {
+    if (!wildcardMatch(tool, pattern)) continue
+    found = rule === true ? "allow" : rule === false ? "deny" : rule
+  }
+  return found
+}
+
 /** A sign-in cannot go ahead because the authorization server will not register a client. */
 function registrationFailure(reason: string): boolean {
   return reason.includes("registration") || reason.includes("client_id")
@@ -288,6 +299,8 @@ interface ConnectionHooks {
   cwd?: () => string | undefined
   /** Set when the entry cannot be started at all; connecting reports it as the failure. */
   invalid?: string
+  /** The app-wide time a tool call may take on a server without a `timeout` of its own. */
+  callTimeout?: () => number | undefined
   /** The connection failed or recovered on its own, outside a connect the owner is waiting on. */
   statusChanged?: () => void
   /** The server said its tools changed, and the new list is in. */
@@ -544,12 +557,13 @@ class Connection {
 
   /**
    * One tool call. The turn's Stop reaches the server as a cancellation, and a
-   * call with no answer inside the server's `timeout` - or a minute, without
-   * one - is given up on.
+   * call with no answer inside the server's `timeout` - or the app-wide
+   * `mcpTimeout`, or a minute, without one - is given up on.
    */
   async call(tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ output: string; attachments: Attachment[] }> {
     // A call that timed out or lost its server is a failure the model reads, not a crash of the app.
-    const result = (await this.request("tools/call", { name: tool, arguments: args }, { timeout: this.config.timeout ?? CALL_TIMEOUT, signal }).catch(
+    const timeout = this.config.timeout ?? this.hooks.callTimeout?.() ?? CALL_TIMEOUT
+    const result = (await this.request("tools/call", { name: tool, arguments: args }, { timeout, signal }).catch(
       (err: unknown) => {
         throw err instanceof ToolError ? err : new ToolError(err instanceof Error ? err.message : String(err))
       },
@@ -1091,6 +1105,10 @@ export class McpServers {
       ...(invalid ? { invalid } : {}),
       toolsChanged: () => this.publish(),
       statusChanged: () => this.publish(),
+      callTimeout: () => {
+        const timeout = this.config.get().mcpTimeout
+        return typeof timeout === "number" && Number.isInteger(timeout) && timeout > 0 ? timeout : undefined
+      },
       sample: (input) => (this.sampler ? this.sampler(input) : Promise.reject(new McpRequestError(METHOD_NOT_FOUND, "Method not found"))),
     }
   }
@@ -1350,6 +1368,9 @@ export class McpServers {
     for (const [name, connection] of this.group(directory)?.connections ?? []) {
       if (connection.status !== "connected") continue
       for (const tool of connection.tools) {
+        const rule = toolRule(connection.config.tools, tool.name)
+        // A tool its server's rules refuse is never offered, as MiMo leaves a denied tool out.
+        if (rule === "deny") continue
         out.push({
           name: mcpToolName(name, tool.name),
           description: tool.description ?? "",
@@ -1360,17 +1381,22 @@ export class McpServers {
           server: name,
           execute: async (input, context) => {
             connection.activeSession = context.sessionID
-            await context.permissions.ask({
-              sessionID: context.sessionID,
-              messageID: context.messageID,
-              callID: context.callID,
-              kind: "mcp",
-              directory: context.directory,
-              title: `${name}: ${tool.name}`,
-              subject: JSON.stringify(input),
-              preview: JSON.stringify(input, null, 2),
-              scope: `mcp:${name}`,
-            })
+            // A tool its rules allow is not asked about, unless MCP calls are refused altogether.
+            if (rule !== "allow" || context.permissions.action("mcp") === "deny") {
+              await context.permissions.ask({
+                sessionID: context.sessionID,
+                messageID: context.messageID,
+                callID: context.callID,
+                kind: "mcp",
+                directory: context.directory,
+                title: `${name}: ${tool.name}`,
+                subject: JSON.stringify(input),
+                preview: JSON.stringify(input, null, 2),
+                scope: `mcp:${name}`,
+                // A tool its rules ask about asks even where MCP calls run without asking.
+                ...(rule === "ask" ? { patternAsks: true } : {}),
+              })
+            }
             const { output, attachments } = await connection.call(tool.name, input, context.signal)
             // MiMo hands a server's pictures and sounds to the model on the result itself.
             return { output, title: `${name}: ${tool.name}`, ...(attachments.length ? { attachments } : {}) }
