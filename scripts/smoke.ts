@@ -34,6 +34,21 @@ import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shar
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
 import { repositoryState, systemPrompt } from "../src/server/session/prompt"
+// plan: where a plan lives, what planning may write, and what each planning turn is told.
+import {
+  buildSwitchNote,
+  carryOutNote,
+  firstPlanNote,
+  guardPlanWrite,
+  laterPlanNote,
+  newSlug,
+  planDisplay,
+  planFile,
+  planFolders,
+  planWritable,
+  slugOf,
+} from "../src/server/session/plan"
+import { PlanExitTool } from "../src/server/tool/plan-exit"
 import { agentsState, deleteAgents, ensureAgents, setAgentsEnabled } from "../src/server/global-agents"
 import { applyVoiceResult, editCue, isClearCommand, micFailure, splitSendWord, transcribeFailure } from "../src/renderer/src/lib/voice"
 import { clampEffort, effortFamily, effortLabelKey, modelFamily } from "../src/renderer/src/lib/model"
@@ -1046,8 +1061,9 @@ async function main() {
     check("only a .ipynb file is taken", (await change({ notebook_path: "notes.txt", cell_id: "#0", new_source: "x" }, "nb-6")).includes(".ipynb"))
     check("an insert needs a cell type", (await change({ notebook_path: "work.ipynb", edit_mode: "insert", new_source: "x" }, "nb-7")).includes("cell_type is required"))
     check(
-      "notebook_edit is withheld from plan and recorded as a file change",
-      !toolsFor("plan").some((tool) => tool.name === "notebook_edit") && toolsFor("build").some((tool) => tool.name === "notebook_edit") && reachOf("notebook_edit") === "reports",
+      // plan: it is offered while planning as well, and refused there by the plan rule rather than by absence.
+      "notebook_edit is offered in both modes and recorded as a file change",
+      toolsFor("plan").some((tool) => tool.name === "notebook_edit") && toolsFor("build").some((tool) => tool.name === "notebook_edit") && reachOf("notebook_edit") === "reports",
     )
     clearInterval(approving)
     await fs.rm(nb, { recursive: true, force: true })
@@ -3359,9 +3375,85 @@ async function main() {
     const planning = toolsFor("plan").map((tool) => tool.name)
     const building = toolsFor("build").map((tool) => tool.name)
     check("build keeps every tool", building.length === TOOLS.length, building)
-    check("plan cannot write", !planning.includes("write") && !planning.includes("edit"), planning)
-    check("plan has no shell either", !planning.includes("bash"), planning)
-    check("plan can still read and search", ["read", "glob", "grep", "list"].every((name) => planning.includes(name)), planning)
+    /*
+     * plan: and so does planning, as MiMo's plan agent does. What holds it to
+     * reading is the rule the write tools enforce, not a shorter list - a plan
+     * mode that could not run `git log` or write the plan down was weaker than
+     * MiMo's at the same promise.
+     */
+    check("planning keeps every tool too", planning.length === TOOLS.length, planning)
+    check("including the shell, the writing tools and the cross-conversation ones", ["bash", "write", "edit", "notebook_edit", "talk_to_session", "create_session", "update_session", "contacts"].every((name) => planning.includes(name)), planning)
+    check("plan_exit is offered in both modes, as MiMo offers it", planning.includes("plan_exit") && building.includes("plan_exit"))
+    check("but never to an explore subagent", !toolsFor("explore").some((tool) => tool.name === "plan_exit"), toolsFor("explore").map((tool) => tool.name))
+
+    // plan: where the plan file goes, and what may be written while planning.
+    const repoPlace = { directory: "/work/app", dataRoot: "/data", repo: true }
+    const looseePlace = { directory: "/work/app", dataRoot: "/data", repo: false }
+    const named = { created: 1758000000000, slug: "steady-lantern" }
+    check(
+      "a repository keeps its plans with the code",
+      planFile(repoPlace, named) === path.join(path.resolve("/work/app"), ".mcode", "plans", "1758000000000-steady-lantern.md"),
+      planFile(repoPlace, named),
+    )
+    check(
+      "a folder that is not one keeps them in the app's own folder",
+      planFile(looseePlace, named) === path.join(path.resolve("/data"), "plans", "1758000000000-steady-lantern.md"),
+      planFile(looseePlace, named),
+    )
+    check("a conversation stored before slugs existed is named by its id", slugOf({ id: "ses_old" }) === "ses_old" && slugOf({ id: "ses_old", slug: "brisk-ferry" }) === "brisk-ferry")
+    check("a fresh slug is two words", /^[a-z]+-[a-z]+$/.test(newSlug()), newSlug())
+
+    const folders = planFolders(repoPlace)
+    check("the plan file itself may be written", planWritable(planFile(repoPlace, named), folders))
+    check("so may another markdown file in either plan folder", planWritable(path.join("/data", "plans", "other.md"), folders) && planWritable(path.join("/work/app", ".mcode", "plans", "older.md"), folders))
+    check("a source file may not", !planWritable(path.join("/work/app", "src", "main.ts"), folders))
+    check("nor anything but markdown in the plan folder", !planWritable(path.join("/work/app", ".mcode", "plans", "notes.txt"), folders))
+    check("nor a path that only looks like it is inside one", !planWritable(path.join("/work/app", ".mcode", "plans-elsewhere", "x.md"), folders))
+    check(
+      "the path is shown relative to the project, and in full from outside it",
+      planDisplay("/work/app", planFile(repoPlace, named)) === ".mcode/plans/1758000000000-steady-lantern.md" &&
+        planDisplay("/work/app", planFile(looseePlace, named)) === planFile(looseePlace, named),
+      [planDisplay("/work/app", planFile(repoPlace, named)), planDisplay("/work/app", planFile(looseePlace, named))],
+    )
+
+    /*
+     * The refusal itself. It happens before the user is asked anything: a
+     * planning turn that could ask its way out of being read-only would not be
+     * read-only, and the user would be answering for a promise the app made.
+     */
+    const planContext = (agent: string) =>
+      ({
+        directory: "/work/app",
+        plan: { agent, file: planFile(repoPlace, named), writable: (target: string) => planWritable(target, folders), approve: async () => {} },
+      }) as never
+    let refused: unknown
+    try {
+      guardPlanWrite(planContext("plan"), path.join("/work/app", "src", "main.ts"), "src/main.ts")
+    } catch (err) {
+      refused = err
+    }
+    check("planning refuses a write outside the plan file", refused instanceof ToolError && (refused as ToolError).code === "tool.err.planOnly", refused)
+    check("and names the plan file in the refusal, so the model knows where to write instead", String((refused as Error)?.message).includes(".mcode/plans/1758000000000-steady-lantern.md"), (refused as Error)?.message)
+    let allowed = true
+    try {
+      guardPlanWrite(planContext("plan"), planFile(repoPlace, named), ".mcode/plans/1758000000000-steady-lantern.md")
+      guardPlanWrite(planContext("build"), path.join("/work/app", "src", "main.ts"), "src/main.ts")
+    } catch {
+      allowed = false
+    }
+    check("the plan file goes through, and building writes anything", allowed)
+
+    // plan: what each turn is told, in this app's own words.
+    const firstNote = firstPlanNote(".mcode/plans/p.md", false)
+    check("the first planning turn is told to write the plan and how the turn may end", firstNote.includes("No plan file exists yet") && firstNote.includes(".mcode/plans/p.md") && firstNote.includes("plan_exit"), firstNote.slice(0, 120))
+    check("and is told to edit it once it is there", firstPlanNote(".mcode/plans/p.md", true).includes("A plan is already written"))
+    check("later turns get one line naming the same file", laterPlanNote(".mcode/plans/p.md").includes(".mcode/plans/p.md") && laterPlanNote(".mcode/plans/p.md").split("\n").length === 1)
+    check("the switch note says the mode changed and that writing is allowed again", buildSwitchNote().includes("plan mode to build mode") && buildSwitchNote().includes("no longer read-only"))
+    check("and the plan is named when one exists", carryOutNote(".mcode/plans/p.md").includes(".mcode/plans/p.md"))
+
+    check("plan_exit takes no arguments, as MiMo's does", JSON.stringify(PlanExitTool.parameters) === JSON.stringify({ type: "object", properties: {}, additionalProperties: false }), PlanExitTool.parameters)
+    const outsidePlan = await PlanExitTool.execute({}, { plan: { agent: "build", file: "x", writable: () => false, approve: async () => {} }, directory: "/work/app" } as never)
+    check("and does nothing in build mode rather than failing", outsidePlan.metadata?.switched === false && outsidePlan.output.includes("not in plan mode"), outsidePlan)
 
     /*
      * The choice has to reach the session, since that is where the turn takes
@@ -3388,6 +3480,9 @@ async function main() {
     const buildPrompt = await systemPrompt({ directory: project, agent: "build" })
     check("plan is told what mode it is in", planPrompt.includes("plan mode"), planPrompt.slice(0, 80))
     check("build is not", !buildPrompt.includes("plan mode"))
+    // plan: the prompt says how planning ends and what it may write; the per-turn note carries the path.
+    check("plan is told how the mode ends", planPrompt.includes("plan_exit"), planPrompt.slice(0, 200))
+    check("and that one file is writable rather than that nothing is", planPrompt.includes("except this conversation's plan file") && !planPrompt.includes("are not available to you"), planPrompt.slice(0, 400))
 
     /*
      * Standing instructions. They are the reader's own rather than the
@@ -6934,8 +7029,8 @@ async function skillChecks(root: string) {
     "skill and skill_search are offered, appended, and change nothing",
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
-      // Only tools added since (history, memory, cron and scheduled tasks) come after them.
-      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update"].includes(tool.name)) &&
+      // Only tools added since (history, memory, cron, scheduled tasks and plan_exit) come after them.
+      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit"].includes(tool.name)) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
     TOOLS.map((tool) => tool.name),
@@ -8097,13 +8192,23 @@ async function sessionChatChecks(root: string, project: string) {
         // notebook_edit sits between the window tools and them.
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools, then history, memory, cron and scheduled tasks) come after them.
-        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update"].includes(tool.name))
+        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks and plan_exit) come after them.
+        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit"].includes(tool.name))
       )
     })(),
     TOOLS.map((tool) => tool.name),
   )
-  check("Plan keeps contacts and loses the three that act", toolsFor("plan").some((tool) => tool.name === "contacts") && !toolsFor("plan").some((tool) => ["talk_to_session", "create_session", "update_session"].includes(tool.name)))
+  /*
+   * plan: MiMo's session-chat extension registers its tools for every agent,
+   * and its plan agent denies none of them, so planning reaches the other
+   * conversations too - what a turn started there does is that conversation's
+   * own business, under its own mode.
+   */
+  check(
+    "Plan keeps all four, as MiMo's plan agent does",
+    ["contacts", "talk_to_session", "create_session", "update_session"].every((name) => toolsFor("plan").some((tool) => tool.name === name)),
+    toolsFor("plan").map((tool) => tool.name),
+  )
   check("none of the four is recorded as touching project files", ["contacts", "talk_to_session", "create_session", "update_session"].every((name) => reachOf(name) === "reads"))
 
   // The runner over a fake provider. create_session gets a folder of its own: earlier sections move the shared project.
