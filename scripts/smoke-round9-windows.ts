@@ -390,7 +390,7 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     const mimo = ["chardet 7.6.0", "defusedxml 0.7.1", "et-xmlfile 2.0.0", "lxml 5.3.0", "numpy 2.5.2", "openpyxl 3.1.5", "pandas 2.2.3", "pillow 11.1.0", "pip 26.1.2", "pypdf 5.1.0", "pypdfium2 5.12.1", "python-dateutil 2.9.0.post0", "python-docx 1.1.2", "python-pptx 1.0.2", "pytz 2026.3.post1", "reportlab 4.2.5", "six 1.17.0", "typing-extensions 4.16.0", "tzdata 2026.3", "xlsxwriter 3.2.0"]
     check("the Python packages are MiMo's twenty, at MiMo's versions, as Windows x64 or pure wheels", JSON.stringify(wheels) === JSON.stringify(mimo) && (runtimesScript.WHEELS as { file: string }[]).every((wheel) => /(cp312-cp312-win_amd64|py3-none-win_amd64|none-any)\.whl$/.test(wheel.file)), wheels)
     check(
-      "Node.js 24.18 (the line Electron 41 runs), Python 3.12.13 (MiMo's), ripgrep 15.1.0 (MiMo's), and no LibreOffice",
+      "Node.js 24.18.1 (its npm 11.16.0 is the one MiMo bundles), Python 3.12.13 (MiMo's), ripgrep 15.1.0 (MiMo's), and no LibreOffice",
       runtimesScript.NODE.version === "24.18.1" && runtimesScript.PYTHON.version === "3.12.13" && runtimesScript.RIPGREP.version === "15.1.0" && !downloads.some((entry) => /libreoffice|soffice/i.test(entry.url)),
     )
 
