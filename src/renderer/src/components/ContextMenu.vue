@@ -396,26 +396,49 @@ onBeforeUnmount(() => {
   z-index: 320;
 }
 
+/*
+ * MiMo's `.menu`, measured: a 12px corner over 5px of padding, 200 at its
+ * narrowest, on a 1px line - and it pops in rather than appearing.
+ */
 .menu {
-  --pad: 2px;
+  --pad: 5px;
   position: fixed;
   z-index: 321;
-  min-width: 160px;
+  min-width: 200px;
   padding: var(--pad);
-  /*
-   * No border at all: the floating shadow ends in a half-pixel light ring, and
-   * that ring is the edge. Drawing one on top of it framed the menu twice.
-   */
   background: var(--surface-menu);
-  border-radius: 6px;
+  border: 1px solid var(--border-weak);
+  border-radius: 12px;
   /*
-   * elevation/floating, not elevation/raised. The reference's own menu measures
-   * `0 8px 16px` over `0 4px 8px` - twice the throw of the shadow this had -
-   * which is the difference between a menu hovering over the window and a card
-   * lying on it. Everything else about the two menus already agreed: 36 fill,
-   * 6px radius, 2px padding, and 28-tall items on `0 12px` at a 4px radius.
+   * MiMo's --shadow-menu written out: one wide soft throw over one tight drop,
+   * and no ring - the border above is the edge. Written literally rather than
+   * as --shadow-lg, whose third layer is a 0.5px ring that framed it twice.
    */
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 8px 30px #0000002e, 0 1px 3px #0000001a;
+  transform-origin: 0 100%;
+  animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+:root[data-theme="dark"] .menu {
+  box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .menu {
+    box-shadow: 0 8px 30px #0009, 0 1px 3px #0006;
+  }
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 /* A child panel scrolls on its own when a long list of projects outgrows the window. */
@@ -471,19 +494,19 @@ onBeforeUnmount(() => {
   margin-inline-end: 4px;
 }
 
+/* MiMo's `.menu-item`: a 14px row 6 by 10 on an 8px corner, 9 from glyph to label. */
 .item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  height: 28px;
-  padding: 0 12px;
+  padding: 6px 10px;
   color: var(--text-strong);
   text-align: start;
-  border-radius: 4px;
-  font-size: calc(13px * var(--ui-font-scale, 1));
-  font-weight: 440;
-  letter-spacing: -0.04px;
+  border-radius: 8px;
+  font-size: calc(14px * var(--ui-font-scale, 1));
+  font-weight: 400;
+  line-height: 20px;
 }
 
 .label {
@@ -513,12 +536,11 @@ onBeforeUnmount(() => {
   outline-offset: -2px;
 }
 
-/* Drawn out past the panel's padding, so it divides the whole menu. */
+/* MiMo's `.menu-div`: inset from both ends rather than drawn full-bleed. */
 .rule {
   height: 1px;
-  width: calc(100% + 2 * var(--pad));
-  margin: 2px calc(-1 * var(--pad));
-  background: var(--border-muted);
+  margin: 4px 6px;
+  background: var(--border-weak);
 }
 
 /* A shortcut beside its row, pushed to the far edge so a column of them lines up. */
@@ -526,14 +548,16 @@ onBeforeUnmount(() => {
   margin-inline-start: auto;
   padding-inline-start: 20px;
   color: var(--text-weak);
-  font-size: calc(12px * var(--ui-font-scale, 1));
+  font-size: calc(11px * var(--ui-font-scale, 1));
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-/* A glyph against every row, as MiMo draws its conversation menu. */
+/* A glyph against every row, as MiMo draws its conversation menu: 17px. */
 .glyph {
   flex-shrink: 0;
+  width: 17px;
+  height: 17px;
   color: var(--text-base);
 }
 
@@ -656,18 +680,12 @@ onBeforeUnmount(() => {
  */
 .menu.side {
   --pad: 4px;
-  border-radius: 12px;
 }
 
 .menu.side .item {
-  gap: 9px;
-  height: auto;
-  min-height: 0;
   padding: 5px 12px;
   border-radius: 14px;
-  font-weight: 400;
-  line-height: 20px;
-  letter-spacing: 0;
+  font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
 .menu.side .glyph {
@@ -676,36 +694,20 @@ onBeforeUnmount(() => {
 }
 
 .menu.side .rule {
-  width: auto;
   margin: 3px 4px;
 }
 
 /*
- * MiMo's tool dropdown, used by the right panel's plus and tab menus: 5px of
- * padding on a 16px corner, 14px rows 6 by 10 on an 11px corner with 9 between
- * glyph and label, 17px glyphs, disabled rows at .4, and each shortcut an 11px
- * key cap in muted ink.
+ * MiMo's tool dropdown, used by the right panel's plus and tab menus: the base
+ * menu's rows on a wider 16px corner, an 11px corner of their own, disabled
+ * rows at .4, and each shortcut an 11px key cap in muted ink.
  */
 .menu.tool {
-  --pad: 5px;
   border-radius: 16px;
 }
 
 .menu.tool .item {
-  gap: 9px;
-  height: auto;
-  min-height: 0;
-  padding: 6px 10px;
   border-radius: 11px;
-  font-size: calc(14px * var(--ui-font-scale, 1));
-  font-weight: 400;
-  line-height: 20px;
-  letter-spacing: 0;
-}
-
-.menu.tool .glyph {
-  width: 17px;
-  height: 17px;
 }
 
 .menu.tool .item:disabled {
@@ -717,7 +719,6 @@ onBeforeUnmount(() => {
   color: color-mix(in srgb, var(--text-strong) 60%, transparent);
   border: 1px solid var(--border-weak);
   border-radius: 5px;
-  font-size: calc(11px * var(--ui-font-scale, 1));
   line-height: normal;
 }
 
