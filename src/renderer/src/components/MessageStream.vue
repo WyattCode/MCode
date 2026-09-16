@@ -389,10 +389,24 @@ function completedAt(turn: Turn): string | undefined {
   return turn.completed === undefined ? undefined : stamp(turn.completed)
 }
 
+/*
+ * The clipboard refuses a document that is not focused - an assistive tool
+ * pressing the button on a window behind others - and an uncaught refusal
+ * would take the whole window to the error page. MiMo answers it with its
+ * "copy failed" notice.
+ */
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    notify(t("stream.replyCopied"))
+  } catch {
+    notifyFailure(t("code.copyFailed"))
+  }
+}
+
 async function copyAsked(turn: Turn) {
   if (!turn.text) return
-  await navigator.clipboard.writeText(turn.text)
-  notify(t("stream.replyCopied"))
+  await copyToClipboard(turn.text)
 }
 
 /** The reply itself, without the tool traffic that produced it. */
@@ -407,8 +421,7 @@ function replyText(turn: Turn): string {
 async function copyReply(turn: Turn) {
   const text = replyText(turn)
   if (!text) return
-  await navigator.clipboard.writeText(text)
-  notify(t("stream.replyCopied"))
+  await copyToClipboard(text)
 }
 
 /*
