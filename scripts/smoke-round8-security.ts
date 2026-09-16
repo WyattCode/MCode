@@ -22,6 +22,8 @@ import { ReadTool } from "../src/server/tool/read"
 import { BashTool } from "../src/server/tool/bash"
 import { NotebookEditTool } from "../src/server/tool/notebook"
 import { appDataRefusal } from "../src/server/tool/app-data"
+import { handle } from "../src/server/handlers"
+import type { Request } from "../src/shared/protocol"
 
 type Section = (name: string) => void
 
@@ -62,6 +64,7 @@ export async function roundEightSecurityChecks(check: Check, section: Section): 
   try {
     await socketChecks(check, section, root)
     await appDataChecks(check, section, root)
+    await fileRequestChecks(check, section, root)
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
   }
@@ -254,4 +257,77 @@ async function appDataChecks(check: Check, section: Section, root: string): Prom
   check("the global AGENTS.md stays writable", (await appDataRefusal(path.join(storage, "AGENTS.md"), "write")) === undefined)
   check("a project file is unaffected", (await failure(() => WriteTool.execute({ file_path: path.join(project, "a.txt"), content: "a" }, context))).message === "")
   check("a folder that only shares the name's start is unaffected", (await appDataRefusal(`${data}-other${path.sep}config.json`, "write")) === undefined)
+}
+
+// ------------------------------------------------------------------- X4
+async function fileRequestChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 8 (X4): the files tab's reads and saves stay where MiMo's do")
+  const data = path.join(root, "x4-data")
+  const project = path.join(root, "x4-project")
+  const elsewhere = path.join(root, "x4-elsewhere")
+  for (const folder of [path.join(data, "storage", "plans"), project, elsewhere]) await fs.mkdir(folder, { recursive: true })
+  await fs.writeFile(path.join(data, "storage", "config.json"), "{}")
+  await fs.writeFile(path.join(data, "credentials.json"), "{}")
+  await fs.writeFile(path.join(data, "storage", "plans", "1-a-b.md"), "# plan\n")
+  await fs.writeFile(path.join(project, "notes.txt"), "project\n")
+  await fs.writeFile(path.join(elsewhere, "private.txt"), "elsewhere\n")
+  const backend = await startBackend(data)
+  const runtime = backend.runtime
+  try {
+    await handle(runtime, { type: "project.add", directory: project })
+    /*
+     * Each attack also names the target the old way, as `path`: a backend that
+     * still honoured it would carry the attack out, so these fail on that code.
+     */
+    const ask = (request: Record<string, unknown>) =>
+      handle(runtime, request as unknown as Request).then(
+        (value) => ({ ok: true, value: value as { content?: string } }),
+        (err: unknown) => ({ ok: false, message: err instanceof Error ? err.message : String(err) }),
+      )
+    const credentials = path.join(data, "credentials.json")
+
+    const oldShape = await ask({ type: "file.read", path: path.join(elsewhere, "private.txt") })
+    check("a read naming only an absolute path is refused", !oldShape.ok, oldShape)
+    const climbing = await ask({ type: "file.read", root: project, rel: "../x4-elsewhere/private.txt", path: path.join(elsewhere, "private.txt") })
+    check("a read climbing out of its root is refused", !climbing.ok && /^outside/.test(climbing.message ?? ""), climbing)
+    const absoluteRel = await ask({ type: "file.read", root: project, rel: path.join(elsewhere, "private.txt"), path: path.join(elsewhere, "private.txt") })
+    check("a read whose relative part is absolute is refused", !absoluteRel.ok, absoluteRel)
+    const secret = await ask({ type: "file.read", root: data, rel: "credentials.json", path: credentials })
+    check("the saved credentials are never read", !secret.ok, secret)
+    const hidden = await ask({ type: "file.read", root: path.join(data, "storage"), rel: "config.json", path: path.join(data, "storage", "config.json") })
+    check("the app's config.json is not shown in the tab", !hidden.ok, hidden)
+    const plan = await ask({ type: "file.read", root: path.join(data, "storage", "plans"), rel: "1-a-b.md", preview: true })
+    check("a plan file in the app's folder still is", plan.ok && plan.value?.content === "# plan\n", plan)
+    const inProject = await ask({ type: "file.read", root: project, rel: "notes.txt", preview: true })
+    check("a project file reads as before", inProject.ok && inProject.value?.content === "project\n", inProject)
+    const outsideView = await ask({ type: "file.read", root: elsewhere, rel: "private.txt", preview: true })
+    check("a file outside every project still opens rooted at its own folder (MiMo's openFileInViewer)", outsideView.ok, outsideView)
+    const link = path.join(project, "out-link")
+    const linked = await fs.symlink(elsewhere, link, "junction").then(() => true, () => false)
+
+    const saveOutside = await ask({ type: "file.write", root: elsewhere, rel: "private.txt", content: "owned", path: path.join(elsewhere, "private.txt") })
+    check("a save outside every project is refused", !saveOutside.ok && /^outside/.test(saveOutside.message ?? ""), saveOutside)
+    check("...and the file is unchanged", (await fs.readFile(path.join(elsewhere, "private.txt"), "utf8")) === "elsewhere\n")
+    if (linked) {
+      const throughLink = await ask({ type: "file.write", root: project, rel: "out-link/private.txt", content: "owned", path: path.join(elsewhere, "private.txt") })
+      check("a save through a junction out of the project is refused", !throughLink.ok, throughLink)
+      const readLink = await ask({ type: "file.read", root: project, rel: "out-link/private.txt", path: path.join(elsewhere, "private.txt") })
+      check("a read through that junction is refused by its root", !readLink.ok, readLink)
+    }
+    const saveConfig = await ask({ type: "file.write", root: data, rel: "storage/config.json", content: '{"mcpServers":{"evil":{}}}', path: path.join(data, "storage", "config.json") })
+    check("a save over the app's config.json is refused", !saveConfig.ok, saveConfig)
+    check("...and it holds no planted server", !(await fs.readFile(path.join(data, "storage", "config.json"), "utf8")).includes("evil"))
+    if (process.platform === "win32") {
+      const stream = await ask({ type: "file.write", root: project, rel: "notes.txt:hidden", content: "x", path: path.join(project, "notes.txt:hidden") })
+      check("a save into an alternate data stream is refused", !stream.ok, stream)
+    }
+    const noText = await ask({ type: "file.write", root: project, rel: "notes.txt", content: 42 })
+    check("a save whose content is not text is refused", !noText.ok, noText)
+    const saved = await ask({ type: "file.write", root: project, rel: "notes.txt", content: "edited\n" })
+    check("a save inside the project works", saved.ok && (await fs.readFile(path.join(project, "notes.txt"), "utf8")) === "edited\n", saved)
+    const savedPlan = await ask({ type: "file.write", root: path.join(data, "storage", "plans"), rel: "1-a-b.md", content: "# edited\n" })
+    check("so does a save to a plan in the app's folder", savedPlan.ok, savedPlan)
+  } finally {
+    await backend.close()
+  }
 }

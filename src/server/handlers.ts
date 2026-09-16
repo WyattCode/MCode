@@ -22,6 +22,7 @@ import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { customModelOf } from "./config"
 import { IGNORED, resolveInside } from "./tool/fs-util"
+import { readableFile, writableFile } from "./file-access"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
@@ -1322,7 +1323,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return (await suggestTasks(runtime, request.directory, request.language)) satisfies Handled<"home.suggest">
 
     case "file.read": {
-      const resolved = path.resolve(request.path)
+      // MiMo's shape: a root and a path inside it. See file-access.ts for what may be read.
+      const resolved = await readableFile(request.root, request.rel)
       /*
        * Read as bytes and decide what they are, rather than as utf8 and hope.
        * `readFile(path, "utf8")` on a PNG succeeds - it just returns a string
@@ -1376,7 +1378,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "file.write": {
       // Only over a file that is already there: the files tab edits, it does not create.
-      const resolved = path.resolve(request.path)
+      if (typeof request.content !== "string") throw new Error("cannot write: no text given")
+      const resolved = await writableFile(runtime, request.root, request.rel)
       const existing = await fs.stat(resolved)
       if (!existing.isFile()) throw new Error(`Not a file: ${resolved}`)
       // MiMo's writeFileText refusals, by the words the tab turns them into.

@@ -2040,9 +2040,9 @@ export type Request =
    * 512 KiB or holding a NUL byte is refused, a video is named as one, and media
    * carries no bytes because the tab plays it from a local address.
    */
-  | { type: "file.read"; path: string; preview?: boolean }
-  /* A text file saved from the right panel's files tab. */
-  | { type: "file.write"; path: string; content: string }
+  | { type: "file.read"; root: string; rel: string; preview?: boolean }
+  /* A text file saved from the right panel's files tab: `rel` inside `root`, which has to be a folder the app works in. */
+  | { type: "file.write"; root: string; rel: string; content: string }
   /*
    * A conversation's shells work in its folder. The home screen's bottom panel
    * has no conversation yet, so it names the project folder it has picked.

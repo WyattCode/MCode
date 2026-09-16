@@ -72,6 +72,8 @@ export function saveFailureKey(message: string): string {
   if (/\btoobig\b/i.test(message)) return "rp.files.errTooBig"
   if (/\bbinary\b/i.test(message)) return "rp.files.errBinary"
   if (/ENOENT|noent/.test(message)) return "rp.files.errNoEnt"
+  // The backend saves only inside a folder the app works in.
+  if (/^outside\b/.test(message)) return "rp.files.errOutside"
   return "rp.files.errCannotWrite"
 }
 

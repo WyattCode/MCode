@@ -70,7 +70,7 @@ function secret(inner: string): boolean {
  * Judged both by the path as written and by where it really leads, so neither
  * a link into the folder nor a differently spelled path gets past it.
  */
-export async function appDataRefusal(target: string, access: "read" | "write"): Promise<"write" | "secret" | undefined> {
+export async function appDataRefusal(target: string, access: "read" | "write" | "view"): Promise<"write" | "secret" | "hidden" | undefined> {
   if (!roots.size) return undefined
   const spelled = path.resolve(target)
   const candidates = [...new Set([spelled, await realOf(spelled)])]
@@ -82,6 +82,8 @@ export async function appDataRefusal(target: string, access: "read" | "write"): 
         if (inner === undefined) continue
         if (secret(inner)) return "secret"
         if (access === "write" && !writable(inner)) return "write"
+        // The window's files tab shows what a feature puts there for the reader, and a cut tool output; nothing else.
+        if (access === "view" && !writable(inner) && !inner.startsWith("storage/tool-output/")) return "hidden"
       }
     }
   }
