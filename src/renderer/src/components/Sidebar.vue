@@ -6,7 +6,7 @@ import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
 import { sessionGroup } from "@shared/session-group"
 import { useApp } from "../stores/app"
-import { language, t } from "../lib/i18n"
+import { language, sessionTitle, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
 import type { MenuItem } from "../lib/menu"
@@ -93,7 +93,12 @@ const groupNote = (session: SessionInfo) => {
   return group ? name(group) : ""
 }
 
-const title = (text?: string) => (text && text.trim() ? text : t("side.newTask"))
+/*
+ * A row's name: the conversation's own, with the engine's placeholder worded as
+ * MiMo words it (未命名对话) rather than shown raw, and 新建任务 for a title that
+ * is empty altogether.
+ */
+const title = (text?: string) => (text && text.trim() ? sessionTitle(text) : t("side.newTask"))
 
 /* What a task row's pin and menu lie over at its end, as MiMo allows for them. */
 const TITLE_COVER = 55
