@@ -55,7 +55,7 @@ import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
-import { providerExtras, samplingFor } from "../provider/sampling"
+import { providerExtras, samplingFor, smallRequest } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
 import { settleAttachments, withAttachmentData, type AttachmentCache } from "./attachments"
 import type { ModelEntry } from "../provider/catalog"
@@ -447,7 +447,8 @@ export class SessionRunner {
             },
           ],
           tools: [VERDICT_TOOL],
-          effort: "",
+          // Out of band; the empty variants list already withholds the level, so this is for the body fields.
+          ...smallRequest(session.model.provider, session.model.model),
           variants: [],
           showReasoning: false,
           signal: controller.signal,
@@ -1272,8 +1273,8 @@ export class SessionRunner {
           ...(await this.systemFor(session)),
           history: [...replay, instruction],
           tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.parentID ?? session.id).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
-          // MiMo's effort is one app-wide value, not a conversation's own.
-          effort: this.config.get().effort,
+          // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
+          ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
           showReasoning: false,
           signal,
@@ -1286,7 +1287,8 @@ export class SessionRunner {
           cacheTTL: entry?.cacheTTL,
           inputs: modelInputs(entry),
           sampling: samplingFor(session.model.model, entry?.temperature === true),
-          extra: providerExtras(session.model.provider, entry?.reasoning === true, session.id),
+          // The provider's own fields, then the cheap profile's on top - the spread above set `extra` and this replaces it.
+          extra: { ...providerExtras(session.model.provider, entry?.reasoning === true, session.id), ...smallRequest(session.model.provider, session.model.model).extra },
         },
         (event) => {
           if (event.type === "text.delta") summary += event.text
@@ -1578,7 +1580,8 @@ export class SessionRunner {
               },
             ],
             tools: [],
-            effort: "low",
+            // Out of band: routing one message is not work a reasoning budget should be spent on.
+            ...smallRequest(main.provider, main.model),
             showReasoning: false,
             signal: controller.signal,
             baseURL: definition.baseURL,
@@ -1762,7 +1765,8 @@ export class SessionRunner {
             },
           ],
           tools: [],
-          effort: "low",
+          // Out of band: MiMo's cheap profile, so naming a conversation does not think for as long as answering it.
+          ...smallRequest(model.provider, model.model),
           variants: this.config.variants(model),
           showReasoning: false,
           signal: controller.signal,

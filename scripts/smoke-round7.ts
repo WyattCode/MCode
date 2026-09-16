@@ -20,7 +20,7 @@ import { COMPACTION_TOOL_RESULT_LIMIT, shrinkLargeToolResults } from "../src/ser
 import { findTool } from "../src/server/tool/registry"
 import type { AssistantMessage, Message, ToolPart, UserMessage } from "../src/shared/protocol"
 import type { Check } from "./smoke-round5"
-import { engine, say } from "./smoke-round5"
+import { calls, engine, say, wireText } from "./smoke-round5"
 // M5: the local token estimate everything else sizes itself with.
 import { CHARS_PER_TOKEN, estimateTokens, formatQuantity, parseQuantity } from "../src/server/session/estimate"
 // M4: trimming what a turn re-sends.
@@ -40,7 +40,7 @@ import {
 } from "../src/server/session/prune"
 import { contextCount } from "../src/server/session/overflow"
 // M10: the per-provider body fields, and the wire they are written onto.
-import { providerExtras } from "../src/server/provider/sampling"
+import { providerExtras, smallRequest } from "../src/server/provider/sampling"
 import { OpenAICompatible } from "../src/server/provider/openai"
 
 /** A finished tool call carrying `output`, as a completed step leaves one. */
@@ -495,6 +495,72 @@ export async function roundSevenChecks(check: Check, section: (name: string) => 
       check("the provider receives the long bash description, not a summary of it", sent.includes("Version control") && sent.length > 1_500, sent.length)
       const askedFor = tools.find((tool) => tool.function?.name === "question")?.function?.description ?? ""
       check("and the rewritten question description", askedFor.includes("multiple flag"), askedFor.length)
+    } finally {
+      await e.close()
+    }
+  }
+
+  // ------------------------------------------------------------------ M12
+  section("Round 7 (M12): an out-of-band request runs on the cheap profile")
+  {
+    check("a Google model over a gateway is switched off rather than levelled", JSON.stringify(smallRequest("openrouter", "google/gemini-3-pro")) === JSON.stringify({ effort: "minimal", extra: { reasoning: { enabled: false } } }))
+    check("another model over the same gateway asks for the lowest level", JSON.stringify(smallRequest("openrouter", "anthropic/claude-sonnet")) === JSON.stringify({ effort: "minimal", extra: {} }))
+    check("GPT-5 is asked for its lowest level and left unstored", JSON.stringify(smallRequest("openai", "gpt-5")) === JSON.stringify({ effort: "minimal", extra: { store: false } }))
+    check("its 5.x and mini variants take low instead of minimal", smallRequest("openai", "gpt-5.1").effort === "low" && smallRequest("openai", "gpt-5-mini").effort === "low")
+    check("anything else simply runs low", JSON.stringify(smallRequest("fake", "m")) === JSON.stringify({ effort: "low", extra: {} }))
+
+    /*
+     * On the wire, read off a field no gating can hide.
+     *
+     * reasoning_effort is withheld whenever the model's variants list does not
+     * carry the level, so asserting on it proves nothing here: the fake model
+     * advertises no levels and the field is absent from every request, which
+     * means such a check passes whether or not the cheap profile is applied.
+     * `store` comes from the profile's own body fields and is sent as-is, so
+     * the ordinary turn carrying none and the out-of-band request carrying
+     * `false` is a difference only this item can produce.
+     */
+    const e = await engine({ custom: { models: [{ id: "gpt-5", name: "GPT5" }] } })
+    try {
+      const model = { provider: "fake", model: "gpt-5" }
+      const session = await e.store.create({ directory: e.project, model })
+      e.replies.push(say("one"))
+      await e.runner.prompt({ sessionID: session.id, text: "FIRST" })
+      await e.idle(session.id)
+      const turn = e.bodies.at(-1)
+      await e.runner.compact(session.id)
+      const summary = e.summaryBodies.at(-1)
+      check("the conversation's own turn is left stored, as an ordinary turn is", turn?.store === undefined, turn?.store)
+      check("but the out-of-band summary request runs on the cheap profile", summary?.store === false, summary?.store)
+    } finally {
+      await e.close()
+    }
+  }
+
+  // ------------------------------------------------------------------ M17
+  section("Round 7 (M17): a nested AGENTS.md reaches the model when a file under it is read")
+  {
+    const e = await engine()
+    try {
+      await fs.mkdir(path.join(e.project, "pkg"), { recursive: true })
+      await fs.writeFile(path.join(e.project, "pkg", "AGENTS.md"), "Package rule: this package indents with tabs.\n")
+      await fs.writeFile(path.join(e.project, "pkg", "x.ts"), "export const x = 1\n")
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "read", input: { file_path: "pkg/x.ts" } }]))
+      e.replies.push(say("read it"))
+      await e.runner.prompt({ sessionID: session.id, text: "read pkg/x.ts" })
+      await e.idle(session.id)
+      const sent = wireText(e.bodies.at(-1))
+      check("the package's own instructions travel with the read", sent.includes("Instructions from") && sent.includes("indents with tabs"), sent.slice(-400))
+
+      /* Once per conversation: reading a second file under the same folder does not send them again. */
+      await fs.writeFile(path.join(e.project, "pkg", "y.ts"), "export const y = 2\n")
+      e.replies.push(calls([{ name: "read", input: { file_path: "pkg/y.ts" } }]))
+      e.replies.push(say("read that too"))
+      await e.runner.prompt({ sessionID: session.id, text: "now pkg/y.ts" })
+      await e.idle(session.id)
+      const second = JSON.stringify(e.bodies.at(-1)?.messages?.at(-1) ?? {})
+      check("and are not repeated for the next file beside them", !second.includes("indents with tabs"), second.slice(0, 300))
     } finally {
       await e.close()
     }

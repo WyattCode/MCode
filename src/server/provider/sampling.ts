@@ -72,6 +72,33 @@ export function samplingFor(modelID: string, takesTemperature: boolean): Samplin
  * @param sessionID the conversation, which is what the cache key is keyed on;
  *   omitted for a request that belongs to no conversation.
  */
+/**
+ * MiMo's `transform.smallOptions`: the cheap profile every out-of-band request
+ * runs under.
+ *
+ * Naming a conversation, routing one message or reviewing a command is not work
+ * a reasoning budget should be spent on, but MCode asked for these at the same
+ * effort as a real turn - so on a reasoning model, titling a conversation could
+ * think for as long as answering it. This turns the thinking off where the
+ * provider has a way of being told to, and asks for the cheapest level
+ * otherwise.
+ *
+ * @returns the effort to ask for, and any body fields that go with it.
+ */
+export function smallRequest(provider: string, modelID: string): { effort: string; extra: Record<string, unknown> } {
+  const id = modelID.toLowerCase()
+  // Reached over a gateway, a Google model takes a switch rather than a level.
+  if ((provider === "openrouter" || provider === "llmgateway") && id.includes("google")) {
+    return { effort: "minimal", extra: { reasoning: { enabled: false } } }
+  }
+  if (provider === "openrouter" || provider === "llmgateway") return { effort: "minimal", extra: {} }
+  // MiMo asks GPT-5 for its lowest level and keeps the request unstored.
+  if (id.includes("gpt-5")) {
+    return { effort: id.includes("5.") || id.includes("5-mini") ? "low" : "minimal", extra: { store: false } }
+  }
+  return { effort: "low", extra: {} }
+}
+
 export function providerExtras(provider: string, reasoning: boolean, sessionID?: string): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   if (provider === "zhipu") out.thinking = { type: "enabled", clear_thinking: false }
