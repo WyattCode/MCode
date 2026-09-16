@@ -145,6 +145,9 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     check("Ctrl+Enter on a step's head opens its path, as Ctrl+click on the path does", /data-step-head[\s\S]{0,60}@keydown\.enter="onTitleClick"/.test(read("components/parts/ToolPart.vue")))
     const media = read("components/parts/LocalMedia.vue")
     check("a voice clip seeks from the keyboard", /@keydown\.self="nudge"/.test(media) && /function nudge[\s\S]*ArrowLeft[\s\S]*Home/.test(media))
+    const shell = read("App.vue")
+    check("a turn that ends is announced, with the conversation's name when it is not on screen (A11)", /if \(app\.currentID === turn\.sessionID\) announce\(done\)\s+else if \(about\.title !== undefined\) announce\(`\$\{about\.title\} · \$\{done\}`\)/.test(shell))
+    check("a background subagent of the conversation on screen is announced when it finishes (A11)", /!session\.subagent\?\.background \|\| !outcome\) continue\s+if \(app\.rootOf\(session\.id\) !== app\.currentID\) continue\s+announce\(/.test(shell))
     check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="openImagePreview/))
   }
 }
