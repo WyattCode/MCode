@@ -282,6 +282,8 @@ import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage }
 import { roundFiveChecks } from "./smoke-round5"
 // round 6: the eight differences the user decided on 2026-09-16 to close.
 import { roundSixChecks } from "./smoke-round6"
+// Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
+import { roundSevenChecks } from "./smoke-round7"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // skills: discovery, frontmatter and the slash list.
@@ -7088,6 +7090,7 @@ async function main() {
   delete process.env.MCODE_GENERATE_TITLES
   await roundFiveChecks(check, section)
   await roundSixChecks(check, section)
+  await roundSevenChecks(check, section)
   await failureChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)

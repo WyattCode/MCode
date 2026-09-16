@@ -44,6 +44,8 @@ import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
 import { isOverflowByCount, isOverflowError, maxOutputTokens } from "./overflow"
+// MiMo's pruning: what a turn re-sends of its older tool output once the prompt cache has gone cold.
+import { pruneLevelFor, prunedHistory, type PruneLevel } from "./prune"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
@@ -1973,6 +1975,16 @@ export class SessionRunner {
     if (!lead) session = await this.compactIfCrossed(session, controller.signal)
 
     /*
+     * MiMo's pruning, decided once for the whole turn rather than per step.
+     *
+     * Per step it would flip: trimming rewrites the prefix, which is only free
+     * while the provider's cache is already cold, and the first request of a
+     * turn warms that cache again - so step 2 would send the untrimmed history
+     * back and undo the saving. One decision per turn keeps the request stable.
+     */
+    const pruneLevel = await this.pruneLevelFor(session)
+
+    /*
      * The step that was last rescued by a compaction. A request the provider
      * refuses as too long is retried once against the compacted transcript,
      * as MiMo does; refused again, the error stands.
@@ -2009,7 +2021,8 @@ export class SessionRunner {
       const stored = await this.store.messages(sessionID)
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
-      const chatted = withAutomationNotes(withChatHeaders(this.contextFor(session, stored)))
+      // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
+      const chatted = withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel)))
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
@@ -2253,6 +2266,28 @@ export class SessionRunner {
       // MiMo compacts a step that crossed the line mid-turn as an overflow, before the model is asked again.
       if (overflowing) session = (await this.compactForOverflow(session, controller.signal)) ?? session
     }
+  }
+
+  /**
+   * How much this turn trims off its own older tool output, read from the last
+   * finished reply: what that step reported, and when it landed.
+   *
+   * MiMo runs the same check after every finished turn and rewrites its stored
+   * parts; MCode decides here and rewrites only the request (session/prune.ts),
+   * so the transcript the user reads keeps every result whole.
+   */
+  private async pruneLevelFor(session: SessionInfo): Promise<PruneLevel> {
+    const live = this.liveMessages(session, await this.store.messages(session.id))
+    const last = [...live]
+      .reverse()
+      .find((message): message is AssistantMessage => message.role === "assistant" && message.usage !== undefined)
+    const entry = this.config.modelEntry(session.model)
+    return pruneLevelFor({
+      tokens: last?.usage,
+      entry,
+      lastAssistantAt: last?.time.completed ?? last?.time.created,
+      ...(entry?.cacheTTL ? { cacheTTL: entry.cacheTTL } : {}),
+    })
   }
 
   /**
