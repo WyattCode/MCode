@@ -13,6 +13,9 @@ import type {
   UsageBucket,
 } from "@shared/protocol"
 import { sessionFiles } from "@shared/session-files"
+import { Identifier } from "@shared/id"
+// A conversation as a file this app can read back, both halves of the pair.
+import { conversationDocument, conversationFileName, parseConversationDocument } from "@shared/convo-file"
 import { addedProject, removedProjects } from "@shared/projects"
 import { localServerOf } from "@shared/browser-page"
 import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
@@ -270,7 +273,66 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
      *
      * Sessions with no writes are left out entirely rather than listed empty.
      */
+    case "session.exportFile": {
+      const session = await runtime.sessions.require(request.sessionID)
+      const messages = await runtime.sessions.messages(request.sessionID)
+      return {
+        name: conversationFileName(session.title, "conversation"),
+        text: JSON.stringify(conversationDocument(session, messages), null, 2),
+      } satisfies Handled<"session.exportFile">
+    }
+
+    case "session.importFile": {
+      const read = parseConversationDocument(request.text)
+      if (!read.file) return { problem: read.problem } satisfies Handled<"session.importFile">
+      const document = read.file
+      const config = runtime.config.get()
+      const session = await runtime.sessions.create({
+        // The folder it worked in, when that folder is named; otherwise this profile's own.
+        directory: document.session.directory || config.directory,
+        model: document.session.model ?? config.model,
+        agent: document.session.agent,
+        title: document.session.title || undefined,
+        // Its title came out of the profile that wrote it, so nothing here may replace it.
+        titleSource: document.session.titleSource ?? "user",
+        created: document.session.created,
+        updated: document.session.updated,
+        ...(document.session.group !== undefined ? { group: document.session.group } : {}),
+      })
+      for (const message of document.messages) {
+        /*
+         * Fresh ids. The conversation being written is a new one in this
+         * profile, and the ids in the file belong to the profile it came from -
+         * keeping them would collide with a conversation already here, or
+         * quietly write over one.
+         */
+        await runtime.sessions.saveMessage({ ...message, id: Identifier.message(), sessionID: session.id }, true)
+      }
+      return { session } satisfies Handled<"session.importFile">
+    }
+
+    case "permission.rules":
+      return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.rules">
+
+    case "permission.forget":
+      await runtime.permissions.forget({
+        directory: request.directory,
+        sessionID: request.sessionID,
+        kind: request.kind,
+        pattern: request.pattern,
+      })
+      return { rules: runtime.permissions.savedRules() } satisfies Handled<"permission.forget">
+
     case "artifact.list": {
+      /*
+       * Answered from the store when there is one: it is de-duplicated by
+       * identity key, carries whether each file is something to hand over, and
+       * still holds the files whose conversations have been deleted - none of
+       * which walking the transcripts can do. The walk below stays as the
+       * fallback for a profile whose store could not be opened.
+       */
+      const kept = runtime.artifacts?.list()
+      if (kept?.length) return { artifacts: kept } satisfies Handled<"artifact.list">
       const sessions = await runtime.sessions.list()
       const artifacts: SessionArtifacts[] = []
       for (const session of sessions) {
@@ -391,15 +453,43 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       } satisfies Handled<"session.revert">
     }
 
-    case "session.delete":
+    case "session.delete": {
       runtime.runner.abort(request.sessionID)
+      // The project it worked in, read before the record goes, so its store can be collected after.
+      const worked = (await runtime.sessions.get(request.sessionID).catch(() => undefined))?.directory
       // subagents: a conversation's subagents go with it, background ones stopped first; nothing else could reach them.
       await runtime.runner.dropSubagents(request.sessionID)
       for (const child of await runtime.sessions.list()) {
         if (child.parentID === request.sessionID) await runtime.sessions.delete(child.id)
       }
       await runtime.sessions.delete(request.sessionID)
+      /*
+       * The shadow repository undo keeps for that project goes with it, once the
+       * last conversation working there has gone. Deleting a conversation used to
+       * leave the store behind for the life of the profile - the one thing this
+       * app's deletion did not reach, while MiMo's own store cascades.
+       */
+      // Anything remembered for this conversation alone goes with it; a project's rules stay.
+      await runtime.permissions.forget({ sessionID: request.sessionID })
+      /*
+       * The files it produced are not deleted with it. They are still on disk,
+       * and losing the only record of where they came from was the thing the
+       * artifact store was built to stop; the rows keep the title this
+       * conversation had.
+       */
+      runtime.artifacts?.orphan(request.sessionID)
+      if (worked) {
+        const place = (directory: string) => {
+          const resolved = path.resolve(directory)
+          return process.platform === "win32" ? resolved.toLowerCase() : resolved
+        }
+        const remaining = await runtime.sessions.list()
+        if (!remaining.some((session) => place(session.directory) === place(worked))) {
+          await runtime.runner.checkpoints.collect(worked)
+        }
+      }
       return {} satisfies Handled<"session.delete">
+    }
 
     case "session.rename":
       // A title the user chose is theirs: the generated one never replaces it.

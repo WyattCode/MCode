@@ -8,6 +8,9 @@ import { Config } from "./config"
 import { AuthManager } from "./auth/manager"
 import { Permissions } from "./permission"
 import { SessionStore } from "./session/store"
+import { migrateCheckpoints } from "./session/checkpoint-migrate"
+import { ArtifactStore } from "./artifact/store"
+import { readStorageLayout } from "./storage-layout"
 import { projectDirectoriesOf } from "@shared/projects"
 import { SessionRunner } from "./session/runner"
 import { Shells } from "./shell"
@@ -30,6 +33,8 @@ export interface Runtime {
   runner: SessionRunner
   shells: Shells
   mcp: McpServers
+  /** Produced files, kept rather than worked out again; absent if the store could not be opened. */
+  artifacts?: ArtifactStore
 }
 
 export interface Backend {
@@ -58,6 +63,8 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   bindDesktopSettings(config)
 
   const permissions = new Permissions(bus, config)
+  // The "always" approvals this profile has remembered, so a restart does not ask again.
+  await permissions.load(storage)
   const sessions = new SessionStore(storage, bus)
   // Each conversation's own access level; a side chat or subagent runs at the level of the conversation it belongs to.
   permissions.useSessions(async (sessionID) => {
@@ -72,6 +79,32 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
+  /*
+   * Undo's own housekeeping, in the background so the window is not held up by
+   * it: an existing profile's inline undo bodies move into the projects'
+   * checkpoint stores, and stores belonging to no conversation any more are
+   * swept. Both are safe to run at every launch - the first only converts what
+   * is still in the old shape, the second only removes what nothing names.
+   */
+  // Produced files, kept in a store of their own so they outlive their conversations.
+  const artifacts = ArtifactStore.open(path.join(dataDirectory, "storage", "artifacts.db"))
+  void (async () => {
+    try {
+      /*
+       * Which build's layout this profile holds. Read before anything is
+       * migrated: a profile written by a newer build is left exactly as it is,
+       * since this build cannot know what its documents mean.
+       */
+      const layout = await readStorageLayout(storage)
+      if (layout.fromNewerVersion) return
+      await migrateCheckpoints(storage, runner.checkpoints, config)
+      await runner.checkpoints.sweep((await sessions.list()).map((session) => session.directory))
+      // Brings the store up to date with the transcripts and re-checks what is still on disk.
+      await artifacts?.reconcile(await sessions.list(), (id) => sessions.messages(id))
+    } catch {
+      // Housekeeping must never be the reason the app fails to open.
+    }
+  })()
   // history: the search index beside the store, filled in the background.
   const history = startHistory(dataDirectory, sessions, storage, bus)
   // cron: scheduled prompts fire into their conversations while the app runs.
@@ -83,7 +116,7 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
   mcp.useSampling(createSampler({ config, auth, permissions }))
   runner.useMcp(mcp)
 
-  const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp }
+  const runtime: Runtime = { storage, bus, config, auth, permissions, sessions, runner, shells, mcp, artifacts }
 
   /*
    * Connecting is not awaited: a server that hangs on start would otherwise
@@ -161,6 +194,7 @@ export async function startBackend(dataDirectory: string): Promise<Backend> {
       await scheduler.stop()
       await automations.stop()
       stopHistory(history)
+      artifacts?.close()
       for (const client of clients) client.terminate()
       await new Promise<void>((resolve) => server.close(() => resolve()))
     },

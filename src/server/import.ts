@@ -49,10 +49,15 @@ interface ImportedEntry {
 }
 
 interface ImportedRecord {
+  /** Which build's idea of this document it is; see `config.ts` for the same bargain. */
+  schemaVersion?: number
   entries: Record<string, ImportedEntry>
 }
 
 const RECORD_KEY = "imported"
+
+/** Raise this only when a change would be misread by a build that predates it. */
+export const IMPORT_SCHEMA_VERSION = 1
 
 function homeDirectory(): string {
   return process.env.MCODE_IMPORT_HOME || os.homedir()
@@ -379,9 +384,13 @@ async function countOpenCode(home: string): Promise<{ available: boolean; sessio
   }
 }
 
-async function record(storage: Storage): Promise<ImportedRecord> {
+async function record(storage: Storage): Promise<ImportedRecord & { fromNewerVersion: boolean }> {
   const stored = await storage.read<Partial<ImportedRecord>>(RECORD_KEY).catch(() => undefined)
-  return { entries: stored?.entries ?? {} }
+  return {
+    entries: stored?.entries ?? {},
+    // A record from a later build is read as far as it goes and never written back.
+    fromNewerVersion: typeof stored?.schemaVersion === "number" && stored.schemaVersion > IMPORT_SCHEMA_VERSION,
+  }
 }
 
 /** What each source holds, and how much of it has already been taken. */
@@ -545,6 +554,14 @@ export async function runImport(deps: ImportDeps, sources: readonly ImportSource
     }
   }
 
-  await deps.storage.write(RECORD_KEY, taken)
+  /*
+   * Not written over a record a later build wrote. The conversations it already
+   * took are still recognised above - the entries are read as usual - but
+   * writing this build's understanding back would drop whatever it had added,
+   * and the next run would import everything again as though it were new.
+   */
+  if (!taken.fromNewerVersion) {
+    await deps.storage.write(RECORD_KEY, { schemaVersion: IMPORT_SCHEMA_VERSION, entries: taken.entries })
+  }
   return out
 }

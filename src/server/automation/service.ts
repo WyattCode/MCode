@@ -80,10 +80,15 @@ interface Receipt {
 }
 
 interface Saved {
+  /** Which build's idea of this document it is; the same bargain `config.json` makes. */
+  schemaVersion?: number
   automations: Automation[]
   seq: number
   receipts: Receipt[]
 }
+
+/** Raise this only when a change would be misread by a build that predates it. */
+export const AUTOMATION_SCHEMA_VERSION = 1
 
 /** MiMo keeps the last 256 operation receipts, so a retried call is answered as it was the first time. */
 const RECEIPTS_KEPT = 256
@@ -134,6 +139,8 @@ export class AutomationService {
   private writing: Promise<void> = Promise.resolve()
   /** Set when the saved tasks could not be read and nothing may be written over them. */
   private blocked: string | undefined
+  /** Set when they were written by a newer build, which nothing here may write over either. */
+  private fromNewerVersion = false
   /** Where an unreadable file was kept, and what to tell anyone who asks. */
   private evidence: string | undefined
   private problem: string | undefined
@@ -150,6 +157,12 @@ export class AutomationService {
           seq: typeof parsed.seq === "number" ? parsed.seq : 0,
           receipts: Array.isArray(parsed.receipts) ? parsed.receipts.slice(-RECEIPTS_KEPT) : [],
         }
+        /*
+         * A document from a later build is read - the tasks in it still run -
+         * but nothing is written back over it, or the fields that build added
+         * would be dropped the first time a task fired.
+         */
+        this.fromNewerVersion = typeof parsed.schemaVersion === "number" && parsed.schemaVersion > AUTOMATION_SCHEMA_VERSION
       } catch (cause) {
         /*
          * A file that will not parse is a blocked load, not an empty one.
@@ -259,7 +272,9 @@ export class AutomationService {
     // Never written over a document that would not parse: what is in it is the
     // user's only copy, and an empty one on top makes the loss permanent.
     if (this.blocked) return this.writing
-    const snapshot = JSON.stringify(this.saved, null, 2)
+    // Nor over one a newer build wrote, for the same reason in a different key.
+    if (this.fromNewerVersion) return this.writing
+    const snapshot = JSON.stringify({ schemaVersion: AUTOMATION_SCHEMA_VERSION, ...this.saved }, null, 2)
     this.writing = this.writing.then(() => writeAtomic(this.deps.file, snapshot)).catch(() => undefined)
     return this.writing
   }

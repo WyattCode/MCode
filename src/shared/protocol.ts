@@ -242,6 +242,31 @@ export interface ArtifactFile {
   exists: boolean
   size?: number
   modified?: number
+  /**
+   * Something to hand over, or a step on the way to it - MiMo's artifact `role`.
+   *
+   * Absent when the answer was worked out from the transcripts rather than read
+   * from the artifact store.
+   */
+  role?: "deliverable" | "intermediate"
+}
+
+/**
+ * One "always" this profile has remembered, as the settings page lists it.
+ *
+ * Granted for a project when the call named one - which is how MiMo keeps them,
+ * `permission(project_id)` - and otherwise for the single conversation it was
+ * answered in.
+ */
+export interface SavedRule {
+  /** The project it was granted for, or empty when it belongs to one conversation. */
+  directory: string
+  /** The conversation it belongs to, when it is not a project's. */
+  sessionID: string
+  /** The bucket it was given for: bash, edit, write, outside, read. */
+  kind: string
+  /** What it covers: a command prefix (`git status *`), a folder (`dir/*`), or the whole kind (`*`). */
+  pattern: string
 }
 
 /** Where a search found its words inside one conversation, as the overlay draws it. */
@@ -1770,6 +1795,17 @@ export type Request =
   | { type: "session.list" }
   /* Every file every stored session has written, for the artifacts page. */
   | { type: "artifact.list" }
+  /*
+   * A conversation as a file, and back again - MiMo's `mimo export` / `mimo
+   * import` pair, over this app's own documents. The Markdown export is a
+   * transcript to read; this is a conversation to reopen.
+   */
+  | { type: "session.exportFile"; sessionID: string }
+  | { type: "session.importFile"; text: string }
+  /* The "always" approvals this profile has remembered, and where each one is kept. */
+  | { type: "permission.rules" }
+  /* Takes one remembered approval back, everything remembered for one place, or the lot. */
+  | { type: "permission.forget"; directory?: string; sessionID?: string; kind?: string; pattern?: string }
   | { type: "session.create"; directory?: string; title?: string; scratch?: boolean; sideOf?: string }
   /* An empty folder for a new project, named by the user. `location` is where it goes, as MiMo's dialog lets it be changed; without one it is the default project location. */
   | { type: "project.createBlank"; name: string; location?: string }
@@ -2103,6 +2139,19 @@ export interface ResponseMap {
     chatLinks: Record<string, ChatLink[]>
   }
   "artifact.list": { artifacts: SessionArtifacts[] }
+  /** The document and the name to suggest for it; the window puts up the save dialog. */
+  "session.exportFile": { name: string; text: string }
+  /**
+   * The conversation that was read back, or why the file was not one.
+   *
+   * A reason rather than a thrown error: every one of them is something the
+   * reader can act on - the wrong file was picked, it is damaged, or it was
+   * written by a newer build - and the window has its own sentence for each.
+   */
+  "session.importFile": { session?: SessionInfo; problem?: "notJson" | "notMCode" | "fromNewer" | "noMessages" }
+  "permission.rules": { rules: SavedRule[] }
+  /* The list as it now stands, so the page redraws from the answer rather than guessing. */
+  "permission.forget": { rules: SavedRule[] }
   "session.create": { session: SessionInfo }
   "project.createBlank": { directory: string }
   /* `existed` is true when the folder was already listed. */

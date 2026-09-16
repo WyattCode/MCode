@@ -20,7 +20,7 @@ import LanguageMenu from "./LanguageMenu.vue"
 import VoiceUsageDialog from "./VoiceUsageDialog.vue"
 import ThirdPartyDialog from "./ThirdPartyDialog.vue"
 import { APP_ICONS, DEFAULT_APP_ICON, appIconSvg } from "@shared/app-icons"
-import type { AgentsFileState, AppPath, AppPaths, UsageSummary } from "@shared/protocol"
+import type { AgentsFileState, AppPath, AppPaths, SavedRule, UsageSummary } from "@shared/protocol"
 import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToolInfo } from "@shared/protocol"
 import classicIcon from "@resources/app-icons/classic.png"
 import { chordOf, formatChord, isBindable } from "../lib/keys"
@@ -1332,6 +1332,59 @@ async function toggleFullAccess() {
   }
 }
 
+/*
+ * S3: the "always" approvals this profile has remembered, and the way to take
+ * one back.
+ *
+ * MiMo persists the same decisions - `permission(project_id)` in its engine's
+ * database, `permByConvo` in its desktop preferences - but shows no list of
+ * them anywhere. This list is MCode's own: an approval that outlives the app
+ * and cannot be withdrawn is worse than one forgotten at quit, because nothing
+ * would ever say what the app had been told it may do.
+ */
+const savedRules = ref<SavedRule[]>([])
+
+async function loadSavedRules() {
+  try {
+    const answer = await app.client?.request({ type: "permission.rules" })
+    if (answer) savedRules.value = answer.rules
+  } catch {
+    /* Nothing to say here: the section simply shows what it last knew. */
+  }
+}
+
+async function forgetRule(rule: SavedRule) {
+  try {
+    const answer = await app.client?.request({
+      type: "permission.forget",
+      directory: rule.directory || undefined,
+      sessionID: rule.sessionID || undefined,
+      kind: rule.kind,
+      pattern: rule.pattern,
+    })
+    if (answer) savedRules.value = answer.rules
+  } catch {
+    notifyFailure(t("common.requestFailed"))
+  }
+}
+
+async function forgetAllRules() {
+  try {
+    const answer = await app.client?.request({ type: "permission.forget" })
+    if (answer) savedRules.value = answer.rules
+  } catch {
+    notifyFailure(t("common.requestFailed"))
+  }
+}
+
+/** Where a rule was granted, as its row reads it: the project's folder, or the one conversation. */
+function ruleWhere(rule: SavedRule): string {
+  if (rule.sessionID) return t("set.savedRuleThisChat")
+  return folderName(rule.directory) || rule.directory
+}
+
+onMounted(() => void loadSavedRules())
+
 /** Where tasks with no project get their folders. Empty is the default under the home folder. */
 async function pickProjectRoot() {
   const [directory] = await window.mcode.pickDirectory(t("set.pickDir"))
@@ -1887,6 +1940,30 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               >
                 <span class="knob" />
               </button>
+            </div>
+            <!-- S3: what "always allow" has remembered, where it is kept, and how to take it back. -->
+            <div class="line">
+              <div class="line-text">
+                <div class="line-title">{{ t("set.savedRules") }}</div>
+                <div class="line-sub">{{ t("set.savedRulesSub") }}</div>
+              </div>
+              <button v-if="savedRules.length" class="ctl-btn" @click="forgetAllRules">{{ t("set.savedRulesForgetAll") }}</button>
+            </div>
+            <div v-if="!savedRules.length" class="line">
+              <div class="line-text">
+                <div class="line-sub">{{ t("set.savedRulesEmpty") }}</div>
+              </div>
+            </div>
+            <div
+              v-for="rule in savedRules"
+              :key="`${rule.directory}|${rule.sessionID}|${rule.kind}|${rule.pattern}`"
+              class="line"
+            >
+              <div class="line-text">
+                <div class="line-title">{{ rule.pattern }}</div>
+                <div class="line-sub">{{ rule.kind }} · {{ ruleWhere(rule) }}</div>
+              </div>
+              <button class="ctl-btn" @click="forgetRule(rule)">{{ t("set.savedRulesForget") }}</button>
             </div>
           </div>
 

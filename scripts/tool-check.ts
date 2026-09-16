@@ -18,6 +18,9 @@ import { Config } from "../src/server/config"
 import { Permissions } from "../src/server/permission"
 import { findTool, TOOLS, toolsFor } from "../src/server/tool/registry"
 import { Questions } from "../src/server/tool/question"
+// plan: the rule the write tools enforce, which is where planning's read-only promise now lives.
+import { guardPlanWrite, planFolders, planWritable } from "../src/server/session/plan"
+import { ToolError } from "../src/server/tool/types"
 import type { ServerEvent } from "../src/shared/protocol"
 import { Shells } from "../src/server/shell"
 
@@ -370,9 +373,48 @@ async function main(): Promise<void> {
     check("every model is given edit and write", build.includes("edit") && build.includes("write"), build.join(","))
     check("and never apply_patch", !build.includes("apply_patch") && findTool("apply_patch") === undefined)
 
+    /*
+     * plan: round six gave planning its tools back, so this checks the promise
+     * where it is now kept.
+     *
+     * What stood here - "plan gets no way to write at all" - described the old
+     * shape, a shorter tool list. MiMo's plan agent keeps every tool and is held
+     * to reading by one rule the write tools enforce (`guardPlanWrite`), which
+     * is what lets a planning turn run `git log` and write the plan down
+     * somewhere the user can keep. The promise is unchanged; taking the tools
+     * away was never what made it true, so asserting their absence was
+     * asserting the implementation rather than the behaviour.
+     */
     const plan = names("plan")
-    check("plan gets no way to write at all", !plan.includes("edit") && !plan.includes("write"))
+    check("plan keeps the write tools, as MiMo's plan agent does", plan.includes("edit") && plan.includes("write"), plan.join(","))
     check("but keeps the question tool", plan.includes("question"))
+
+    const planPath = path.join(project, ".mcode", "plans", "1-clear-beacon.md")
+    const planning = {
+      agent: "plan",
+      switched: false,
+      file: planPath,
+      writable: (target: string) => planWritable(target, planFolders({ directory: project, dataRoot: root, repo: true })),
+      approve: async () => undefined,
+    }
+    /** What the guard refuses a write with, or nothing when it lets it through. */
+    const guarded = (target: string, control: typeof planning): string | undefined => {
+      try {
+        guardPlanWrite({ directory: project, plan: control } as never, target, target)
+        return undefined
+      } catch (failure) {
+        return failure instanceof ToolError ? (failure.code ?? "no code") : "not a ToolError"
+      }
+    }
+    const elsewhere = path.join(project, "src", "app.ts")
+    check("...and the write tools refuse everything but the plan file", guarded(elsewhere, planning) === "tool.err.planOnly", guarded(elsewhere, planning))
+    check("the plan itself is written", guarded(planPath, planning) === undefined, guarded(planPath, planning))
+    check(
+      "a turn that began planning stays read-only after the plan is approved",
+      guarded(elsewhere, { ...planning, switched: true }) === "tool.err.planApproved",
+      guarded(elsewhere, { ...planning, switched: true }),
+    )
+    check("and a building conversation is not held to it", guarded(elsewhere, { ...planning, agent: "build" }) === undefined)
 
     check("the model is never offered the invalid tool", !build.includes("invalid"))
     check("though a call can still be routed to it", findTool("invalid") !== undefined)

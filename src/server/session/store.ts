@@ -26,22 +26,64 @@ const UNDO_DEPTH = 20
 export interface SnapshotFile {
   /** Absolute path, so a snapshot survives a session being reopened elsewhere. */
   path: string
-  /** What the file held, or null when it did not exist. */
-  content: string | null
   /**
-   * Set when `content` is base64 rather than text.
+   * What the file held, as an object in the project's checkpoint store, or null
+   * when it did not exist.
    *
-   * Most of what a turn touches is source, and storing that as text keeps a
+   * MiMo keeps no file bodies in its conversation record at all: the session
+   * row carries a diff summary and a checkpoint reference, and the bytes live
+   * in a store of their own. This is that reference. A turn that regenerates a
+   * tree of code used to put every one of those files, whole, into this
+   * conversation's own document - so an undo document could reach hundreds of
+   * megabytes, and every undo, redo and rollback read and wrote the lot.
+   */
+  blob?: string | null
+  /**
+   * What the file held, inline - the shape written before the checkpoint store.
+   *
+   * Still read, never written. A profile that has not been migrated (or whose
+   * migration could not reach its project's store) keeps working exactly as it
+   * did rather than losing its undo history. `blob` present is what says an
+   * entry is in the new shape, because null is a meaningful value in both.
+   */
+  content?: string | null
+  /**
+   * Set when an inline `content` is base64 rather than text.
+   *
+   * Most of what a turn touches is source, and storing that as text kept a
    * snapshot readable. A file whose bytes are not valid UTF-8 cannot go through
    * a string without every byte the decoder did not understand being replaced,
-   * so those are kept encoded and written back as bytes.
+   * so those were kept encoded and written back as bytes. Checkpoint objects
+   * are bytes already and need none of this.
    */
   base64?: boolean
+}
+
+/** Whether a recorded file points at the checkpoint store rather than carrying its body. */
+export function isCheckpointed(file: SnapshotFile): boolean {
+  return file.blob !== undefined
 }
 
 export interface Snapshot {
   at: number
   files: SnapshotFile[]
+  /**
+   * What the turn changed, in the shape MiMo keeps on its session row
+   * (`summary_files`, `summary_additions`, `summary_deletions`).
+   *
+   * Recorded because the bodies are no longer here to count: anything that
+   * wants to say how big a turn was has to be able to ask without reading the
+   * checkpoint store. Absent on a snapshot written before this existed.
+   */
+  summary?: { files: number; additions?: number; deletions?: number }
+  /**
+   * The project whose checkpoint store holds this turn's objects.
+   *
+   * Kept on the snapshot rather than read from the session, because a
+   * conversation can be moved and its old turns' objects stay where they were
+   * written. Absent on the legacy shape, which needs no store.
+   */
+  directory?: string
   /**
    * The user messages this turn answered, in the order they were sent.
    *
