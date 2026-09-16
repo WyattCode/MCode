@@ -22,7 +22,7 @@ import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { customModelOf } from "./config"
 import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
-import { readableFile, writableFile } from "./file-access"
+import { readableFile, workingRoots, writableFile } from "./file-access"
 import { restoreHeaders, restoreMasked, restoreServer } from "./config-view"
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
@@ -288,9 +288,17 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       if (!read.file) return { problem: read.problem } satisfies Handled<"session.importFile">
       const document = read.file
       const config = runtime.config.get()
+      /*
+       * The folder it worked in, when that is a folder this profile already
+       * works in; otherwise this profile's own. The file is not the authority
+       * on where a conversation's tools may reach: a crafted one could name any
+       * folder on the disk and make it the conversation's project.
+       */
+      const spelling = (folder: string) => (process.platform === "linux" ? path.resolve(folder) : path.resolve(folder).toLowerCase())
+      const named = document.session.directory ? spelling(document.session.directory) : ""
+      const known = named ? (await workingRoots(runtime)).some((root) => spelling(root) === named) : false
       const session = await runtime.sessions.create({
-        // The folder it worked in, when that folder is named; otherwise this profile's own.
-        directory: document.session.directory || config.directory,
+        directory: known ? document.session.directory : config.directory,
         model: document.session.model ?? config.model,
         agent: document.session.agent,
         title: document.session.title || undefined,
