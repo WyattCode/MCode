@@ -541,10 +541,8 @@ async function finishMcpImport() {
 function mcpToolsView(name: string) {
   const entry = mcpTools.value[name]
   if (!entry || entry === "loading") return { kind: "loading", tools: [] as McpToolInfo[], error: "" }
-  if (entry.error !== undefined) {
-    const error = entry.error in MCP_TONE ? t(`set.mcp.status.${entry.error}`) : entry.error
-    return { kind: "error", tools: [] as McpToolInfo[], error }
-  }
+  // The server's own reason, from the page's own probe, as MiMo shows it.
+  if (entry.error !== undefined) return { kind: "error", tools: [] as McpToolInfo[], error: entry.error }
   const tools = entry.tools ?? []
   return { kind: tools.length ? "list" : "empty", tools, error: "" }
 }

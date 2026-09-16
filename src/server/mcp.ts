@@ -21,6 +21,8 @@ import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@sh
 import { redactString } from "@shared/mcp-redact"
 import { ToolError, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
+import { windowsLaunch } from "./mcp-launch"
+import { probeTools, type ProbeResult } from "./mcp-probe"
 
 /**
  * Talks to Model Context Protocol servers, and offers their tools to the agent.
@@ -257,24 +259,6 @@ async function readEvents(body: ReadableStream<Uint8Array>, onEvent: (event: str
   }
   if (buffer) line(buffer.replace(/\r$/, ""))
   line("")
-}
-
-/**
- * How to start a command on this platform.
- *
- * Windows cannot exec a .cmd or .bat directly - npx and most published servers
- * are exactly that - so those go through cmd.exe. What it must not do is hand
- * the shell a concatenated string: this project lives under a path with a
- * space in it, and unquoted arguments would cut the path in half. Each part is
- * quoted here and passed verbatim, so the shell does no splitting of its own.
- */
-function windowsLaunch(command: string, args: string[]) {
-  if (process.platform !== "win32" || !/\.(cmd|bat)$/i.test(command)) {
-    return { command, args, verbatim: false }
-  }
-  const quote = (value: string) => `"${value.replace(/"/g, '\\"')}"`
-  const line = [command, ...args].map(quote).join(" ")
-  return { command: "cmd.exe", args: ["/d", "/s", "/c", `"${line}"`], verbatim: true }
 }
 
 /** What a connection asks of the servers' owner. */
@@ -1220,15 +1204,18 @@ export class McpServers {
   }
 
   /**
-   * One server's tools, for the settings page. Only a connected server has any
-   * to show; otherwise the answer is its status name, or its error when it
-   * failed with one, which the page words for the reader.
+   * One server's tools for the settings page, from a connection of their own
+   * (see mcp-probe.ts) - so a server switched off or failed still answers.
    */
-  toolsOf(name: string): { tools?: { name: string; description?: string }[]; error?: string } {
-    const connection = this.group()?.connections.get(name)
-    if (!connection || connection.status === "disabled") return { error: "disabled" }
-    if (connection.status !== "connected") return { error: connection.error ? redactString(connection.error) : connection.status }
-    return { tools: connection.tools.map((tool) => ({ name: tool.name, description: tool.description })) }
+  async probe(name: string, timeoutMs?: number): Promise<ProbeResult> {
+    const stored = this.config.get().mcpServers?.[name]
+    if (!stored) return { error: "server not found" }
+    const [entry] = await resolveServers({ servers: { [name]: stored }, configFile: this.configFile(), home: this.home })
+    if (!entry) return { error: "unsupported server config" }
+    if (!entry.config) return { error: redactString(`invalid config: ${entry.invalid}`) }
+    const result = await probeTools(entry.config, { cwd: this.viewDirectory(), timeoutMs })
+    // An error may quote the address or the command; shown masked, as the status is.
+    return "error" in result ? { error: redactString(result.error) } : result
   }
 
   private publish(): void {

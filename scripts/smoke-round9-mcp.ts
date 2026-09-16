@@ -7,6 +7,7 @@
  * so what is checked is what a conversation would get.
  */
 import fs from "node:fs/promises"
+import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
@@ -418,6 +419,104 @@ async function noApprovalByDefault(check: Check, section: Section): Promise<void
   }
 }
 
+/** M-8: the 工具 button's own connection. */
+async function toolsProbe(check: Check, section: Section): Promise<void> {
+  section("Round 9: the tools list asks the server itself (M-8)")
+  const dir = await temporary("mcode-r9-probe-")
+  const seen: { path: string; key?: string; body: any }[] = []
+  const server = createServer((request, response) => {
+    let raw = ""
+    request.on("data", (chunk) => (raw += chunk))
+    request.on("end", () => {
+      const body = raw ? JSON.parse(raw) : {}
+      seen.push({ path: request.url ?? "", key: request.headers["x-key"] as string | undefined, body })
+      const url = request.url ?? ""
+      if (url.startsWith("/locked")) {
+        response.writeHead(401, { "www-authenticate": 'Bearer resource_metadata="http://127.0.0.1/.well-known/oauth-protected-resource"' })
+        return response.end()
+      }
+      if (url.startsWith("/legacy")) {
+        response.writeHead(405)
+        return response.end()
+      }
+      if (body.id === undefined) {
+        response.writeHead(202)
+        return response.end()
+      }
+      if (body.method === "initialize") {
+        if (url.startsWith("/refuses")) {
+          response.writeHead(200, { "content-type": "application/json" })
+          return response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32600, message: "not today" } }))
+        }
+        response.writeHead(200, { "content-type": "text/event-stream", "mcp-session-id": "probe-session" })
+        return response.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-11-25", capabilities: {} } })}\n\n`)
+      }
+      const cursor = body.params?.cursor
+      const result = cursor ? { tools: [{ name: "second", description: "page two" }] } : { tools: [{ name: "first" }], nextCursor: "p2" }
+      response.writeHead(200, { "content-type": "application/json" })
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }))
+    })
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
+  const port = (server.address() as { port: number }).port
+  const bus = new Bus()
+  process.env.MCODE_R9_PROBE_KEY = "from-env"
+  const config = stubConfig(bus, {
+    mcpServers: {
+      off: { type: "local", command: ["node", fixture(), "--pages", "5"], enabled: false },
+      crashes: { type: "local", command: ["node", fixture(), "--fail", "3"] },
+      silent: { type: "local", command: ["node", "-e", "setInterval(() => {}, 1000)"] },
+      web: { type: "remote", url: `http://127.0.0.1:${port}/mcp`, headers: { "x-key": "{env:MCODE_R9_PROBE_KEY}" }, enabled: false },
+      locked: { type: "remote", url: `http://127.0.0.1:${port}/locked` },
+      legacy: { type: "remote", url: `http://127.0.0.1:${port}/legacy` },
+      refuses: { type: "remote", url: `http://127.0.0.1:${port}/refuses` },
+      bad: { type: "local", command: "node server.js" } as unknown as McpServerConfig,
+    },
+    directory: dir,
+  })
+  const mcp = new McpServers(bus, config as never, undefined, path.join(dir, "home"))
+  try {
+    const off = await mcp.probe("off")
+    check(
+      "a switched-off local server still lists its tools, every page of them",
+      "tools" in off && off.tools.map((tool) => tool.name).join() === "where,argv,env,tag,slow" && off.tools[0].description === "lifecycle where",
+      off,
+    )
+    const crashes = await mcp.probe("crashes")
+    check("a server that exits says so with its code", "error" in crashes && crashes.error.includes("exited (code 3)"), crashes)
+    const started = Date.now()
+    const silent = await mcp.probe("silent", 600)
+    check("a server that never answers is given up on after the timeout", "error" in silent && silent.error === "no answer within 1s" && Date.now() - started < 3000, silent)
+    const web = await mcp.probe("web")
+    check(
+      "a remote server is asked directly, its pages followed, with the configured header filled in",
+      "tools" in web && web.tools.map((tool) => tool.name).join() === "first,second" && seen.filter((entry) => entry.path === "/mcp").every((entry) => entry.key === "from-env"),
+      { web, seen: seen.map((entry) => [entry.path, entry.key, entry.body.method]) },
+    )
+    const locked = await mcp.probe("locked")
+    check(
+      "a server that wants a sign-in is reported, with no sign-in attempted",
+      "error" in locked && locked.error === "initialize HTTP 401" && !seen.some((entry) => entry.path.includes("well-known")),
+      locked,
+    )
+    const legacy = await mcp.probe("legacy")
+    check("no older transport is tried; the answer says it may be one", "error" in legacy && legacy.error.startsWith("initialize HTTP 405") && seen.filter((entry) => entry.path === "/legacy").length === 1, legacy)
+    const refuses = await mcp.probe("refuses")
+    check("a refused handshake is quoted", "error" in refuses && refuses.error === "initialize: not today", refuses)
+    const bad = await mcp.probe("bad")
+    check("a malformed entry says what is wrong with it", "error" in bad && bad.error.includes("invalid config"), bad)
+    const missing = await mcp.probe("nobody")
+    check("an unknown name is an error, not a crash", "error" in missing)
+    check("probing connects nothing for conversations", mcp.list().length === 0 && mcp.tools(dir).length === 0)
+  } finally {
+    delete process.env.MCODE_R9_PROBE_KEY
+    mcp.close()
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
   // Never the reader's own ~/.claude.json or ~/.mcode: the backend reads servers from both.
   process.env.MCODE_IMPORT_HOME ??= await temporary("mcode-r9-home-")
@@ -428,6 +527,7 @@ export async function roundNineMcpChecks(check: Check, section: Section): Promis
     ["M-7", perProject],
     ["M-1/M-2", nextConversation],
     ["M-3", noApprovalByDefault],
+    ["M-8", toolsProbe],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))
