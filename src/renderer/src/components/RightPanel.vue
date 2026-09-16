@@ -16,7 +16,7 @@ import RpSubagents from "./right/RpSubagents.vue"
 import FloatingChat from "./right/FloatingChat.vue"
 import PaneBoundary from "./right/PaneBoundary.vue"
 import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from "../stores/right-panel"
-import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf } from "../lib/right-tools"
+import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf, panelWidthShown } from "../lib/right-tools"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
 
@@ -112,7 +112,7 @@ watch(
 /* Width: between MiMo's 300 and what leaves the conversation its 480. */
 const viewport = ref(window.innerWidth)
 const maxWidth = computed(() => Math.max(PANEL_MIN_WIDTH, viewport.value - RAIL_WIDTH - props.sidebarWidth - MAIN_MIN_WIDTH))
-const shownWidth = computed(() => Math.min(maxWidth.value, Math.max(PANEL_MIN_WIDTH, rp.width)))
+const shownWidth = computed(() => panelWidthShown(rp.width, viewport.value, props.sidebarWidth, PANEL_MIN_WIDTH))
 const resizing = ref(false)
 
 function onResize() {
@@ -169,7 +169,9 @@ function measure() {
     if (!box || !aside || !rp.open) return
     // MiMo skips mid-slide: below its width less one the pills would turn compact and snap back.
     const width = aside.getBoundingClientRect().width
-    if (rp.fullscreen ? width <= 0 : width < shownWidth.value - 1) return
+    // Settled is the width shown, or less where heavy zoom has the panel give way (its max-width below).
+    const settled = Math.min(shownWidth.value, (aside.parentElement?.clientWidth ?? Infinity) - RAIL_WIDTH - 1)
+    if (rp.fullscreen ? width <= 0 : width < settled - 1) return
     const style = getComputedStyle(box)
     // MiMo's sum: the head's inner width less the plus, the spacer's floor of 0, and two gaps.
     const room = box.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) - 26 - 8
@@ -521,6 +523,15 @@ body.resizing webview {
   background: var(--surface-raised);
   border-inline-start: 1px solid var(--border-weak);
   transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s;
+}
+
+/*
+ * Only where zoom leaves the window narrower than the rail and the 300 floor
+ * together: the panel gives up the difference rather than running past the
+ * window's edge. The 63 is the rail and the conversation's hairline.
+ */
+.right-panel:not(.fullscreen) {
+  max-width: calc(100% - 63px);
 }
 
 .right-panel.hidden {
