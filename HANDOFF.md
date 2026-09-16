@@ -258,6 +258,8 @@
   - 主题：窗口不再运行主题引擎；`tokens.css` 的 41 个引擎 token 在三个块里都换成 MCode 2.0 生成值（运行时本来就是这些值，画面不变），`lib/theme-palettes.ts` 只剩 `MCODE_THEME`；themecheck 改为三个块逐个比对并禁止 App / 设置读配色。
   - wiringcheck（S9-9）：配置字段只认属性访问（`.x`、`?.x`、`["x"]`）和解构，先抹掉带点的字符串键；改完即在 `showTerminal` 上失败（又用删掉 `spineSound` 读取点验证），随后删掉该字段。CSP 检查改为要求 socket 只到本机。
   - 验证：十三项检查全过，build 通过，smoke **3046 全过**（新 `scripts/smoke-round9-settings.ts` 100 条，另改 smoke-storage / round8-security / round8-access / session-check / smoke.ts 里依赖旧行为的检查）；每组新检查都在改坏代码后确认会失败。探针 `mcode-round9-settings.cjs` 13 项全过、0 报错（截图 general / permissions / appearance / environment），在 v2.0 基线构建上 13 项全失败（`PROBE_TEXT_CHORDS=1` 时各项按各自原因失败，否则基线会被 keybinds 里的数字弄崩键盘）。回归探针 round9-backlog-security 4、round8-security 18、round3-settings 38、round2-settings 23、round5-keys 16、round4-small 21 全过；round2-settings 的 G1 / G6 / G14 预期已按 R25、S9-6、W4 更新（探针问题，仓库未改）。
+- **Electron 改锁 41.7.2**（8aad431，MiMo 同一版）：41.10.7 下文件面板在同一文件夹里连续切换文件时主进程卡死（计时器停、调试器也停不下来，属原生代码），round3-files 探针 300 秒超时；同一探针在 38.8.6 与 41.7.2 上跑完，把 `fs.watch` 换成空实现后 41.10.7 也跑完。另：Electron 41 里 `fs.rmSync` 递归删除遇只读文件（git 对象）报 EPERM（系统 Node 24 与 `fs.promises.rm` 不会），MCode 源码只用异步删除不受影响，scratchpad 探针统一加载 `e41-rmfix.cjs`。本机 `%LOCALAPPDATA%\electron\Cache` 有 38.8.6 / 41.7.2 / 41.10.7 等 zip，可解到 scratchpad 对照。
+- 设置合并进 v2.0 后（41.7.2）：十三项检查全过，build 通过，smoke **3048 全过**；探针 round9-settings 13、round3-files 37、round3-settings 38、round5-keys 16、round9-backlog-xterm 4、round3-terminal 27、round3-panel 25、round6-visual 24 全过。
 - 进行中：服务商与提示词、MCP、Windows 发行三路构建。
 
 用户决定不做（不要再主动提）：
