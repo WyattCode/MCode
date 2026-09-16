@@ -18,7 +18,7 @@ import {
   wwwAuthenticateParams,
 } from "./mcp-oauth"
 import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@shared/protocol"
-import { redactString } from "@shared/mcp-redact"
+import { redactCommand, redactString } from "@shared/mcp-redact"
 import { ToolError, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
 import { terminate, windowsLaunch } from "./mcp-launch"
@@ -141,6 +141,12 @@ const CALL_TIMEOUT = 60_000
 
 /** The version MiMo's MCP SDK offers in the handshake; a server answers with the one it speaks. */
 const PROTOCOL_VERSION = "2025-11-25"
+
+/** How much of a local server's stderr is kept to explain a failure: MiMo's tail. */
+export const STDERR_TAIL = 4096
+
+/** What a failed connection says when the handshake worked but the tool list did not come. */
+export const TOOLS_UNAVAILABLE = "Could not get the server's tool list"
 
 /** JSON-RPC's codes for a method this client does not answer and a failure while answering. */
 const METHOD_NOT_FOUND = -32601
@@ -282,6 +288,8 @@ interface ConnectionHooks {
   cwd?: () => string | undefined
   /** Set when the entry cannot be started at all; connecting reports it as the failure. */
   invalid?: string
+  /** The connection failed or recovered on its own, outside a connect the owner is waiting on. */
+  statusChanged?: () => void
   /** The server said its tools changed, and the new list is in. */
   toolsChanged?: () => void
   sample?: McpSampler
@@ -313,6 +321,8 @@ class Connection {
   private buffer = ""
   /** Whatever the server printed, kept apart from the reason it failed. */
   private stderr = ""
+  /** How the local server's process ended, once it has. */
+  private exit?: { code: number | null; signal: NodeJS.Signals | null }
   private nextID = 1
   private readonly pending = new Map<number, Pending>()
   private closed = false
@@ -367,6 +377,7 @@ class Connection {
     this.status = "pending"
     this.error = undefined
     this.stderr = ""
+    this.exit = undefined
     this.sessionID = undefined
     this.signedIn = false
     this.protocolVersion = undefined
@@ -380,12 +391,23 @@ class Connection {
         this.spawn()
         await this.handshake()
       }
-      this.status = "connected"
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
-      const printed = this.stderr.trim()
       this.status = "failed"
-      this.error = printed ? `${reason}: ${printed}` : reason
+      this.error = this.explain(reason)
+      if (this.config.type !== "remote") {
+        // Set by the exit listener meanwhile, which the narrowing above cannot see.
+        const ended = this.exit as { code: number | null; signal: NodeJS.Signals | null } | undefined
+        // MiMo's startup log, with the command masked as it is everywhere else.
+        console.error(`[mcp] ${this.name}: local server failed to start`, {
+          command: redactCommand(this.config.command ?? []),
+          cwd: this.hooks.cwd?.(),
+          error: reason,
+          pid: this.child?.pid ?? null,
+          exitCode: ended?.code ?? null,
+          signal: ended?.signal ?? null,
+        })
+      }
       /*
        * As MiMo's engine sorts it: a server that wants a sign-in waits for
        * 授权, except one that cannot register a client, which needs a client
@@ -401,7 +423,40 @@ class Connection {
         }
       }
       void this.stop()
+      return
     }
+    /*
+     * The tool list comes after the handshake and apart from it, as MiMo's
+     * engine asks for it: a server that answered the handshake but not this is
+     * failed with one plain sentence, and the real reason goes to the log.
+     */
+    try {
+      this.tools = await this.listTools()
+    } catch (err) {
+      console.error(`[mcp] ${this.name}: tool list failed`, err instanceof Error ? err.message : String(err))
+      this.status = "failed"
+      this.error = TOOLS_UNAVAILABLE
+      void this.stop()
+      return
+    }
+    this.status = "connected"
+  }
+
+  /**
+   * A failure as MiMo words it for a local server, in this app's words: the
+   * reason, how the process ended, and the tail of what it printed, joined by
+   * semicolons.
+   */
+  private explain(reason: string): string {
+    const printed = this.stderr.trim()
+    return [
+      reason,
+      this.exit?.code !== null && this.exit?.code !== undefined ? `exit code ${this.exit.code}` : undefined,
+      this.exit?.signal ? `signal ${this.exit.signal}` : undefined,
+      printed || undefined,
+    ]
+      .filter(Boolean)
+      .join("; ")
   }
 
   /**
@@ -443,7 +498,6 @@ class Connection {
     // not answer anything else until they have seen it.
     this.notify("notifications/initialized")
     if (this.transport === "http") void this.openServerStream()
-    this.tools = await this.listTools(timeout)
   }
 
   private async listTools(timeout = this.config.timeout ?? CONNECT_TIMEOUT): Promise<McpTool[]> {
@@ -560,27 +614,37 @@ class Connection {
      */
     child.stderr.on("data", (chunk: Buffer) => {
       if (!mine()) return
-      this.stderr += chunk.toString("utf8")
-      if (this.stderr.length > 2000) this.stderr = this.stderr.slice(-2000)
+      const text = chunk.toString("utf8")
+      this.stderr = (this.stderr + text).slice(-STDERR_TAIL)
+      // Into the app's log, as MiMo logs it; the log masks anything shaped like a secret.
+      console.info(`[mcp] ${this.name} stderr: ${text.trimEnd()}`)
+    })
+    child.once("exit", (code, signal) => {
+      if (mine()) this.exit = { code, signal }
     })
     child.on("error", (err) => {
       if (mine()) this.fail(err.message)
     })
-    child.on("close", (code) => {
+    child.on("close", () => {
       if (this.closed || !mine()) return
-      this.fail(`process exited${code === null ? "" : ` with code ${code}`}`)
+      this.fail("the server exited")
     })
   }
 
   private fail(message: string) {
+    const wasConnected = this.status === "connected"
     this.status = "failed"
-    const printed = this.stderr.trim()
-    this.error = printed ? `${message}: ${printed}` : message
+    this.error = this.explain(message)
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer)
       entry.reject(new Error(message))
     }
     this.pending.clear()
+    // A server that dies while in use is reported at once, not at the next status request.
+    if (wasConnected) {
+      this.tools = []
+      this.hooks.statusChanged?.()
+    }
   }
 
   /** Frames are newline-delimited, and a chunk can hold any fraction of one. */
@@ -1026,6 +1090,7 @@ export class McpServers {
       cwd: () => (existsSync(group.directory) ? group.directory : os.homedir()),
       ...(invalid ? { invalid } : {}),
       toolsChanged: () => this.publish(),
+      statusChanged: () => this.publish(),
       sample: (input) => (this.sampler ? this.sampler(input) : Promise.reject(new McpRequestError(METHOD_NOT_FOUND, "Method not found"))),
     }
   }

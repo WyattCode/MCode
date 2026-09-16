@@ -10,10 +10,12 @@
  *   --pid-file PATH  writes its process id there on start
  *   --end-file PATH  writes there when its stdin closes
  *   --tag TEXT       answers `tag` with TEXT, so a check can tell two starts apart
+ *   --noise N        with --fail, prints N characters to stderr first
+ *   --no-tools       answers tools/list with an error
  *
  * Every tool answers with text: `where` the working directory, `argv` the
  * arguments as JSON, `env` the variable named by its `name` argument, `tag`
- * the tag, `slow` after two seconds.
+ * the tag, `slow` after two seconds. `die` exits with code 5 instead.
  */
 const fs = require("node:fs")
 
@@ -29,15 +31,17 @@ if (pidFile) fs.writeFileSync(pidFile, String(process.pid))
 
 const failCode = option("--fail")
 if (failCode !== undefined) {
-  process.stderr.write("lifecycle fixture: refusing to start on purpose\n")
-  process.exit(Number(failCode))
+  const noise = Number(option("--noise") ?? 0)
+  if (noise) process.stderr.write("n".repeat(noise) + "\n")
+  process.stderr.write("lifecycle fixture: refusing to start on purpose\n", () => process.exit(Number(failCode)))
+  return
 }
 
 if (flag("--stubborn")) process.on("SIGTERM", () => {})
 
 const pages = Number(option("--pages") ?? 1)
 const tag = option("--tag") ?? ""
-const names = ["where", "argv", "env", "tag", "slow"]
+const names = ["where", "argv", "env", "tag", "slow", "die"]
 const tools = names.map((name) => ({ name, description: `lifecycle ${name}`, inputSchema: { type: "object", properties: { name: { type: "string" } } } }))
 
 function page(cursor) {
@@ -73,7 +77,10 @@ process.stdin.on("data", (chunk) => {
     if (method === "initialize") {
       send({ jsonrpc: "2.0", id, result: { protocolVersion: params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "lifecycle", version: "1" } } })
     } else if (method === "tools/list") {
-      send({ jsonrpc: "2.0", id, result: page(params.cursor) })
+      if (flag("--no-tools")) send({ jsonrpc: "2.0", id, error: { code: -32603, message: "tool list unavailable on purpose" } })
+      else send({ jsonrpc: "2.0", id, result: page(params.cursor) })
+    } else if (method === "tools/call" && params.name === "die") {
+      process.stderr.write("lifecycle fixture: dying on request\n", () => process.exit(5))
     } else if (method === "tools/call") {
       const reply = () => send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: answer(params.name, params.arguments ?? {}) }] } })
       if (params.name === "slow") setTimeout(reply, 2000)

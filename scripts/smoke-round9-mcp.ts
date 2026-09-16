@@ -16,7 +16,7 @@ import { Config } from "../src/server/config"
 import { Storage } from "../src/server/storage"
 import { parseJsonc, renderJsonc } from "../src/server/jsonc"
 import { CodedError, paramsOf } from "../src/shared/errors"
-import { McpServers } from "../src/server/mcp"
+import { McpServers, TOOLS_UNAVAILABLE } from "../src/server/mcp"
 import { checkEntry, claudeServers, projectFiles, resolveServers, substituteEntry } from "../src/server/mcp-sources"
 import type { AppConfig, McpServerConfig, Request } from "../src/shared/protocol"
 import { startBackend } from "../src/server/index"
@@ -480,7 +480,7 @@ async function toolsProbe(check: Check, section: Section): Promise<void> {
     const off = await mcp.probe("off")
     check(
       "a switched-off local server still lists its tools, every page of them",
-      "tools" in off && off.tools.map((tool) => tool.name).join() === "where,argv,env,tag,slow" && off.tools[0].description === "lifecycle where",
+      "tools" in off && off.tools.map((tool) => tool.name).join() === "where,argv,env,tag,slow,die" && off.tools[0].description === "lifecycle where",
       off,
     )
     const crashes = await mcp.probe("crashes")
@@ -624,6 +624,67 @@ async function gracefulStop(check: Check, section: Section): Promise<void> {
   }
 }
 
+/** M-12, M-13: how a failing local server is reported, and when. */
+async function failureReports(check: Check, section: Section): Promise<void> {
+  section("Round 9: a failing local server explains itself (M-12, M-13)")
+  const dir = await temporary("mcode-r9-fail-")
+  const bus = new Bus()
+  const events: { name: string; status: string; error?: string }[][] = []
+  bus.subscribe((event) => {
+    if (event.type === "mcp.status") events.push(event.servers.map((entry) => ({ name: entry.name, status: entry.status, error: entry.error })))
+  })
+  const config = stubConfig(bus, {
+    mcpServers: {
+      exits: { type: "local", command: ["node", fixture(), "--fail", "3", "--api-key", "sk-r9secretvalue123456"] },
+      noisy: { type: "local", command: ["node", fixture(), "--fail", "4", "--noise", "10000"] },
+      toolless: { type: "local", command: ["node", fixture(), "--no-tools"] },
+      dies: { type: "local", command: ["node", fixture()] },
+    },
+    directory: dir,
+  })
+  const mcp = new McpServers(bus, config as never, undefined, path.join(dir, "home"))
+  const logged: string[] = []
+  const original = { info: console.info, error: console.error }
+  const capture =
+    (level: "info" | "error") =>
+    (...args: unknown[]) => {
+      logged.push(`${level} ${args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" ")}`)
+    }
+  console.info = capture("info")
+  console.error = capture("error")
+  try {
+    await mcp.start()
+    const state = (name: string) => mcp.list().find((entry) => entry.name === name)
+    const exits = state("exits")
+    check(
+      "a server that exits at start says why, how it ended and what it printed, joined by semicolons",
+      exits?.status === "failed" && exits.error === "the server exited; exit code 3; lifecycle fixture: refusing to start on purpose",
+      exits,
+    )
+    const noisy = state("noisy")?.error ?? ""
+    const tail = noisy.split("; ").at(-1) ?? ""
+    check("only the last 4096 characters of what it printed are kept", tail.length <= 4096 && tail.length > 4000 && tail.endsWith("refusing to start on purpose"), tail.length)
+    check("what a server prints goes to the log, line by line", logged.some((line) => line.startsWith("info [mcp] exits stderr: lifecycle fixture: refusing to start on purpose")), logged.slice(0, 5))
+    const startLog = logged.find((line) => line.startsWith("error [mcp] exits: local server failed to start")) ?? ""
+    check("a failed start is logged with its exit code and the command masked", startLog.includes('"exitCode":3') && !startLog.includes("sk-r9secretvalue123456") && startLog.includes("--api-key"), startLog)
+    const toolless = state("toolless")
+    check("a server that shakes hands but will not list its tools fails with one plain sentence", toolless?.status === "failed" && toolless.error === TOOLS_UNAVAILABLE, toolless)
+    check("and the real reason is in the log", logged.some((line) => line.includes("[mcp] toolless: tool list failed") && line.includes("tool list unavailable on purpose")))
+
+    check("a healthy server is connected before it is told to die", state("dies")?.status === "connected")
+    const before = events.length
+    await callTool(mcp, dir, "dies_die")
+    const reported = await until(() => events.slice(before).some((list) => list.some((entry) => entry.name === "dies" && entry.status === "failed")), 5000)
+    check("a server that dies while in use is reported at once, with its exit code (M-12)", reported && Boolean(state("dies")?.error?.includes("exit code 5")), { reported, dies: state("dies") })
+    check("and its tools are withdrawn", !mcp.tools(dir).some((tool) => tool.name.startsWith("dies_")))
+  } finally {
+    console.info = original.info
+    console.error = original.error
+    await mcp.close()
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export async function roundNineMcpChecks(check: Check, section: Section): Promise<void> {
   // Never the reader's own ~/.claude.json or ~/.mcode: the backend reads servers from both.
   process.env.MCODE_IMPORT_HOME ??= await temporary("mcode-r9-home-")
@@ -637,6 +698,7 @@ export async function roundNineMcpChecks(check: Check, section: Section): Promis
     ["M-8", toolsProbe],
     ["M-9", clientRegistration],
     ["M-11", gracefulStop],
+    ["M-12/M-13", failureReports],
   ]
   for (const [name, part] of parts) {
     await part(check, section).catch((error: unknown) => check(`round 9 ${name} ran to its end`, false, String(error)))
