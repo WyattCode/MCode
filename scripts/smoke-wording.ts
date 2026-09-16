@@ -136,6 +136,25 @@ export function untranslated(tables: Tables, keys: readonly string[] = MUST_TRAN
   return found
 }
 
+/*
+ * W3: a counted word that hedges its own plural - Datei(en), plik(ów),
+ * archivo(s), opis(y/ów), odniesienie(-ia). The tables choose a form instead:
+ * a "Files edited: {n}" label, which needs no agreement, or the plain plural.
+ * The match is a letter glued to a short lowercase ending in brackets.
+ */
+const HEDGE = /\p{L}\((?:[-/]?\p{Ll}{1,4}(?:[-/]\p{Ll}{1,4})?)\)/u
+
+export function bracketPlurals(tables: Tables): string[] {
+  const found: string[] = []
+  for (const [name, entries] of Object.entries(tables)) {
+    for (const [key, value] of Object.entries(entries)) {
+      const hit = HEDGE.exec(value)
+      if (hit) found.push(`${name} ${key} (${hit[0]})`)
+    }
+  }
+  return found
+}
+
 export function wordingChecks(check: Check, section: (name: string) => void): void {
   const source = fs.readFileSync(path.join(process.cwd(), "src/renderer/src/lib/i18n.ts"), "utf8")
   const tables = readTables(source)
@@ -177,5 +196,25 @@ export function wordingChecks(check: Check, section: (name: string) => void): vo
     const broken = clone(tables)
     broken.ru["rp.browser.ctx.reload"] = broken.en["rp.browser.ctx.reload"]
     check("the rule catches an English row in the Russian menu", untranslated(broken).includes("ru rp.browser.ctx.reload"))
+  }
+
+  section("Round 8 (W3): no counted string hedges its plural in brackets")
+  {
+    const hedges = bracketPlurals(tables)
+    check("no table writes Datei(en), plik(ów) or archivo(s)", hedges.length === 0, hedges.slice(0, 8))
+    const broken = clone(tables)
+    broken.de["stream.editedCard"] = "{n} Datei(en) bearbeitet"
+    broken.pl["annotations.chip"] = "{count} opis(y/ów)"
+    broken.pl["annotations.refsMore"] = "+{count} odniesienie(-ia)"
+    const caught = bracketPlurals(broken)
+    check(
+      "the rule catches the German, and both Polish forms",
+      ["de stream.editedCard", "pl annotations.chip", "pl annotations.refsMore"].every((line) => caught.some((hit) => hit.startsWith(line))),
+      caught,
+    )
+    check(
+      "and leaves a bracketed count, a placeholder and an abbreviation alone",
+      bracketPlurals({ x: { a: "Vis flere filer ({n})", b: "{cur}/{total} (+{hidden})", c: "vor {n} Tg. (PDF)" } }).length === 0,
+    )
   }
 }
