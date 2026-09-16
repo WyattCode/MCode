@@ -1233,21 +1233,6 @@ watch(
  * out of a label adds a step without adding a thought, and it is the step
  * people learn to do without reading.
  */
-/*
- * What each font box falls back to, named rather than described.
- *
- * The reference puts the font's own name in the placeholder - measured on the
- * running app, its sans box reads `value: "", placeholder: "System Sans"` - so
- * an unset field still tells you what is actually being used. This said
- * "Default", which says only that you have not chosen. The sans and mono names
- * are its own constants (`sansDefault`, `monoDefault`), and being font names
- * they are the same in every language. MiMo's terminal default is its whole
- * stack rather than one face, so that box has no name to show.
- */
-const FONT_SANS_DEFAULT = "System Sans"
-const FONT_MONO_DEFAULT = "System Mono"
-const FONT_TERMINAL_DEFAULT = ""
-
 /** What the shortcuts page is narrowed to by typing. */
 const keyFilter = ref("")
 
@@ -2322,53 +2307,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               >
                 <span class="knob" />
               </button>
-            </div>
-
-            <!--
-              MCode's own rows after MiMo's. Three faces rather than one, because
-              the jobs differ: prose wants a different face from code, and a
-              terminal wants one whose glyphs are all the same width.
-            -->
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.uiFont") }}</div>
-                <div class="line-sub">{{ t("set.uiFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.uiFont ?? ''"
-                :placeholder="FONT_SANS_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ uiFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.codeFont") }}</div>
-                <div class="line-sub">{{ t("set.codeFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.codeFont ?? ''"
-                :placeholder="FONT_MONO_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ codeFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
-            </div>
-
-            <div class="line">
-              <div class="line-text">
-                <div class="line-title">{{ t("set.terminalFont") }}</div>
-                <div class="line-sub">{{ t("set.terminalFontSub") }}</div>
-              </div>
-              <input
-                class="field font-field"
-                :value="app.config?.terminalFont ?? ''"
-                :placeholder="FONT_TERMINAL_DEFAULT"
-                spellcheck="false"
-                @change="app.patchConfig({ terminalFont: ($event.target as HTMLInputElement).value.trim() })"
-              />
             </div>
           </div>
         </template>

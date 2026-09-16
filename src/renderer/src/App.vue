@@ -1078,31 +1078,6 @@ watch(
   { immediate: true },
 )
 
-/*
- * A chosen typeface goes in front of the built-in stack rather than replacing
- * it: a name that turns out not to be installed then falls through to what was
- * there before instead of dropping the app to Times New Roman. The name is
- * quoted so a face with a space in it - "JetBrains Mono" - survives.
- */
-/* MiMo's terminal stack, the same as tokens.css's --font-terminal, for a chosen face to stand in front of. */
-const TERMINAL_FONT_STACK =
-  '"SF Mono", ui-monospace, Menlo, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Noto Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "Symbols Nerd Font", "MesloLGS NF", "Hack Nerd Font", "JetBrainsMono Nerd Font", "JetBrainsMono Nerd Font Mono", monospace'
-watch(
-  () => [app.config?.uiFont, app.config?.codeFont, app.config?.terminalFont] as const,
-  ([ui, code, terminal]) => {
-    const style = document.documentElement.style
-    const put = (variable: string, chosen: string | undefined, fallback: string) => {
-      const name = (chosen ?? "").trim()
-      if (!name) style.removeProperty(variable)
-      else style.setProperty(variable, `"${name.replace(/"/g, "")}", ${fallback}`)
-    }
-    put("--font-sans", ui, "var(--font-sans-stack)")
-    put("--font-mono", code, "var(--font-mono-stack)")
-    // MiMo's terminal stack, as tokens.css has it: a chosen face goes in front of it.
-    put("--font-terminal", terminal, TERMINAL_FONT_STACK)
-  },
-  { immediate: true },
-)
 
 /*
  * The two sizes on the appearance page, carried the way MiMo carries them: a

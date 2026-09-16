@@ -1492,13 +1492,6 @@ export interface AppConfig {
    */
   commands: Record<string, CommandDefinition>
 
-  /*
-   * Type. Empty means the built-in stack, which is what almost everyone wants;
-   * the override exists because a person who has chosen a face to read code in
-   * has usually chosen it for a reason.
-   */
-  uiFont: string
-  codeFont: string
   /**
    * The base size, in px, of the interface's text and of code in the
    * transcript and diffs. MiMo's defaults, 14 and 12; each becomes a scale on
@@ -1506,7 +1499,6 @@ export interface AppConfig {
    */
   uiFontSize: number
   codeFontSize: number
-  terminalFont: string
 
   /**
    * Standing instructions from the user, added to every session's prompt.

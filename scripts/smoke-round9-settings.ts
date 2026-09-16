@@ -150,4 +150,17 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const kept = await loaded({ titleModel: { provider: "p", model: "small" } })
     check("and a stored choice is kept", kept.config.get().titleModel?.model === "small")
   }
+
+  section("Round 9 (S9-5): no typeface boxes, and stored faces are cleared at start-up")
+  {
+    const faces = ["uiFont", "codeFont", "terminalFont"]
+    const dialog = read("src/renderer/src/components/SettingsDialog.vue")
+    check("the appearance page draws no font rows", !/app\.config\?\.(uiFont|codeFont|terminalFont)\b|set\.(uiFont|terminalFont)Sub|FONT_SANS_DEFAULT/.test(dialog))
+    check("and the window sets no inline face", !/uiFont\b|codeFont\b|terminalFont|--font-sans"|--font-terminal"/.test(read("src/renderer/src/App.vue")))
+    const old = await loaded({ uiFont: "Comic Sans MS", codeFont: "Courier", terminalFont: "Fira Code", uiFontSize: 16 })
+    const disk = await old.disk()
+    check("stored faces are dropped when the settings load", faces.every((field) => !(field in (old.config.get() as object)) && !(field in disk)))
+    check("while the sizes, which MiMo has, stay", old.config.get().uiFontSize === 16)
+    check("and the protocol no longer declares them", faces.every((field) => !new RegExp(`^\\s*${field}\\??:`, "m").test(read("src/shared/protocol.ts"))))
+  }
 }

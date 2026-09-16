@@ -135,11 +135,8 @@ function defaults(): AppConfig {
     agent: "build",
     staged: false,
     importOnboarded: false,
-    uiFont: "",
-    codeFont: "",
     uiFontSize: 14,
     codeFontSize: 12,
-    terminalFont: "",
     instructions: "",
     tray: true,
     voiceMode: "smart",
@@ -192,6 +189,10 @@ export const RETIRED_FIELDS: readonly string[] = [
   "enabledModels",
   // S9-3: the hidden tab list; the numbered shortcuts count along the side column now.
   "openTabs",
+  // S9-5: the three typeface boxes; MiMo deletes its stored faces the same way on every load.
+  "uiFont",
+  "codeFont",
+  "terminalFont",
 ]
 
 /** Takes the retired fields out of a document; answers whether any was there. */
