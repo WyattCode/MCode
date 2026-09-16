@@ -135,6 +135,16 @@ export function clampSideWidth(value: number, viewport: number, panelWidth: numb
   return Math.round(Math.min(sideWidthMax(viewport, panelWidth), Math.max(SIDE_WIDTH_MIN, width)))
 }
 
+/**
+ * The panel's width as shown: the one dragged, narrowed to what leaves the
+ * conversation its 480 beside the side column, but never under MiMo's 300. The
+ * dragged width is kept, so a window that widens again gets it back.
+ */
+export function panelWidthShown(stored: number, viewport: number, sideWidth: number, floor: number): number {
+  const room = Math.max(floor, viewport - RAIL_WIDTH - sideWidth - MAIN_MIN_WIDTH)
+  return Math.min(room, Math.max(floor, stored))
+}
+
 export interface PanelRoom {
   viewport: number
   /** The side column's width past the rail while it is open. */

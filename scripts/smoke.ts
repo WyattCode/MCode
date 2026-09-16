@@ -183,7 +183,7 @@ import {
   type OAuthProvider,
 } from "../src/server/auth/oauth"
 import { filterMenu } from "../src/renderer/src/lib/menu"
-import { arbitratePanel, boundChord, clampSideWidth, sideFits, sideWidthMax, toolHints } from "../src/renderer/src/lib/right-tools"
+import { arbitratePanel, boundChord, clampSideWidth, panelWidthShown, sideFits, sideWidthMax, toolHints } from "../src/renderer/src/lib/right-tools"
 import { crumbsFor, editCounts, fileCategory, relativeTo, rowIndent, saveFailureKey, treeRows } from "../src/renderer/src/lib/files-tab"
 import { capDiff, normalizeLayout, parseDiffFiles, reviewRows, splitPath, splitRows } from "../src/renderer/src/lib/diff-view"
 import { interruptedTurn } from "../src/shared/resume"
@@ -694,6 +694,14 @@ async function main() {
   check("a window beside an open panel narrows the side column's limit", sideWidthMax(1200, 380) === 1200 - 62 - 380 - 480 && clampSideWidth(400, 1200, 380) === 278)
   check("a very narrow window still allows 160", sideWidthMax(700, 380) === 160 && clampSideWidth(300, 700, 380) === 160)
   check("an unreadable stored width is the default 194", clampSideWidth(NaN, 1600, 0) === 194 && clampSideWidth(250.4, 1600, 0) === 250)
+  // A narrow window: the panel is drawn narrower than dragged, down to 300, and gets its width back once there is room.
+  check("a wide window shows the panel as dragged", panelWidthShown(380, 1600, 194, 300) === 380)
+  check("a narrower window narrows the panel toward 300", panelWidthShown(380, 1050, 160, 300) === 348 && panelWidthShown(380, 800, 0, 300) === 300)
+  check("a panel dragged under 300 is drawn at 300", panelWidthShown(120, 1600, 0, 300) === 300)
+  const mimoRoom = { viewport: 1050, sideWidth: clampSideWidth(194, 1050, 380), sideOpen: true, panelOpen: true, panelWidth: panelWidthShown(380, 1050, clampSideWidth(194, 1050, 380), 300), fullscreen: false }
+  check("the narrow-window rule weighs the panel as drawn, keeping both open at 1050", arbitratePanel(mimoRoom, false) === "none" && sideFits(mimoRoom), mimoRoom)
+  const tightRoom = { ...mimoRoom, viewport: 1001, sideWidth: 160, panelWidth: panelWidthShown(380, 1001, 160, 300) }
+  check("the side column folds once 160 and 300 no longer leave 480", arbitratePanel(tightRoom, false) === "collapse-side" && !sideFits(tightRoom), tightRoom)
 
   const noticeOnce = notify("Copied")
   const noticeTwice = notify("Copied")
