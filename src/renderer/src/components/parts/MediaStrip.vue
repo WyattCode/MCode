@@ -114,7 +114,7 @@ function play(url: string) {
 }
 
 .media-card:focus-visible {
-  outline: 2px solid #3295fb;
+  outline: 2px solid var(--interactive);
   outline-offset: 2px;
 }
 

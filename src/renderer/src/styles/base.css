@@ -405,8 +405,12 @@ html[data-motion="on"] ::-webkit-scrollbar-thumb {
   z-index: 100;
   display: flex;
   justify-content: center;
+  /*
+   * No blur. MiMo's `.overlay` is the scrim colour and nothing else; only the
+   * search overlay blurs (8px, over its own darker scrim), and the settings
+   * shell uses a lighter scrim that does not blur either.
+   */
   background: var(--scrim);
-  backdrop-filter: blur(2px);
 }
 
 /*

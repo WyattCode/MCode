@@ -92,6 +92,11 @@ async function revert() {
   reverting.value = true
   try {
     const result = await app.revertTurn(props.sessionId, props.messageIds)
+    // MiMo's refusal: taking a turn back goes through git, and this project has no repository.
+    if (result.noRepo) {
+      notifyFailure(t("stream.revertNoRepo"))
+      return
+    }
     const done = result.restored + result.removed
     if (done === 0) {
       if (result.outside > 0) notifyFailure(t("stream.revertCancelledOutside", { n: result.outside }))
@@ -261,7 +266,8 @@ async function pickMenu(key: string) {
           @click="requestFile(file.path)"
           @contextmenu="openMenu($event, file.path)"
         >
-          <span class="fc-name">{{ file.path }}</span>
+          <!-- MiMo writes each row relative to the project, keeping the whole path for the tooltip. -->
+          <span class="fc-name">{{ relative(file.path) }}</span>
           <span class="fc-stat" data-fc-file-stats>
             <span class="fc-add">+{{ file.add }}</span>
             <span class="fc-del">-{{ file.del }}</span>

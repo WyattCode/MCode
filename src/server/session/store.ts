@@ -141,6 +141,8 @@ export class SessionStore {
     staged?: boolean
     smart?: boolean
     scratch?: boolean
+    /** MiMo's grouping label, carried by a branch so it is listed beside what it came from. */
+    group?: string
     sideOf?: string
     forkOf?: string
     title?: string
@@ -149,6 +151,15 @@ export class SessionStore {
     parentMessageID?: string
     parentCallID?: string
     subagent?: SessionInfo["subagent"]
+    /*
+     * 导入: a conversation taken from another AI app keeps that app's own
+     * clock and the name it had there, so the list reads as the history it is
+     * rather than as a batch of conversations made this minute.
+     */
+    created?: number
+    updated?: number
+    titleSource?: SessionInfo["titleSource"]
+    imported?: SessionInfo["imported"]
   }): Promise<SessionInfo> {
     const now = Date.now()
     const session: SessionInfo = {
@@ -162,14 +173,17 @@ export class SessionStore {
       ...(input.staged ? { staged: true } : {}),
       ...(input.smart ? { smart: true } : {}),
       ...(input.scratch ? { scratch: true } : {}),
+      ...(input.group !== undefined ? { group: input.group } : {}),
       ...(input.sideOf ? { sideOf: input.sideOf } : {}),
       ...(input.forkOf ? { forkOf: input.forkOf } : {}),
       ...(input.parentID ? { parentID: input.parentID } : {}),
       ...(input.parentMessageID ? { parentMessageID: input.parentMessageID } : {}),
       ...(input.parentCallID ? { parentCallID: input.parentCallID } : {}),
       ...(input.subagent ? { subagent: input.subagent } : {}),
-      created: now,
-      updated: now,
+      ...(input.titleSource ? { titleSource: input.titleSource } : {}),
+      ...(input.imported ? { imported: input.imported } : {}),
+      created: input.created ?? now,
+      updated: input.updated ?? now,
       usage: emptyUsage(),
     }
     await this.storage.write(this.infoKey(session.id), session)
@@ -191,7 +205,17 @@ export class SessionStore {
     const ids = await this.storage.listDirectories("session")
     const sessions: SessionInfo[] = []
     for (const id of ids) {
-      const session = await this.get(id)
+      /*
+       * One unreadable record must not cost the whole list.
+       *
+       * This is the guard `messages()` already has, one level up. A single
+       * truncated or hand-edited info.json used to reject `list()` - which is
+       * the side column, cross-conversation search, and everything else that
+       * enumerates conversations - rather than only the damaged one. Asking for
+       * that conversation by id still throws, because a caller that named it
+       * cannot go on without it.
+       */
+      const session = await this.get(id).catch(() => undefined)
       if (session) sessions.push(session)
     }
     // Most recently touched first - matches how the sidebar is read.
@@ -201,6 +225,22 @@ export class SessionStore {
   async update(sessionID: string, patch: Partial<SessionInfo>): Promise<SessionInfo> {
     const session = await this.require(sessionID)
     const next: SessionInfo = { ...session, ...patch, updated: Date.now() }
+    await this.storage.write(this.infoKey(sessionID), next)
+    this.bus.publish({ type: "session.updated", session: next })
+    return next
+  }
+
+  /**
+   * 导入: writes a patch with the time it names rather than with now.
+   *
+   * `update` stamps every write with the current moment, which is right for
+   * anything a turn does and wrong for a conversation being written again from
+   * the app it came from: that one's place in the list belongs to when it was
+   * last touched there.
+   */
+  async stamp(sessionID: string, patch: Partial<SessionInfo> & { updated: number }): Promise<SessionInfo> {
+    const session = await this.require(sessionID)
+    const next: SessionInfo = { ...session, ...patch }
     await this.storage.write(this.infoKey(sessionID), next)
     this.bus.publish({ type: "session.updated", session: next })
     return next
@@ -425,6 +465,8 @@ export class SessionStore {
       // A branch works the way its origin did, and in the same kind of folder.
       staged: origin.staged,
       scratch: origin.scratch,
+      // ...and is filed where its origin is filed, so a branch does not jump out of its project's group.
+      group: origin.group,
       // Named for what it came from, so the pair reads as a pair in the list:
       // the same title, or MiMo's 「(分支)」 after it for a branch off a reply.
       title: titleSuffix ? branchTitle(origin.title) : origin.title,

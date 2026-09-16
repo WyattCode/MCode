@@ -23,6 +23,7 @@ import EditedFilesCard from "./EditedFilesCard.vue"
 import DeliveredFilesCard from "./DeliveredFilesCard.vue"
 import MediaStrip from "./parts/MediaStrip.vue"
 import { followDeliveries } from "../lib/delivered"
+import { followSpoken } from "../lib/speak-part"
 import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
 import { occurrences, registerFoldedCounter } from "../lib/find-folded"
@@ -88,6 +89,12 @@ followDeliveries({
   session: () => shownID.value,
   messages: () => shownMessages.value,
   directory: () => shownDirectory.value,
+})
+/* speak: a completed call of the speak tool is read aloud, with the machine's own voice. */
+followSpoken({
+  enabled: () => !props.side && !props.latest && !props.subagent,
+  session: () => shownID.value,
+  messages: () => shownMessages.value,
 })
 const scroller = ref<HTMLElement>()
 
@@ -302,6 +309,9 @@ const partKey = (turnID: string, index: number) => `${turnID}:${index}`
 function codeFolds(code: string) {
   return askedLines(code) > ASKED_LINES
 }
+
+/* MiMo's chip under a sent message carries the file's name; the whole path is its tooltip. */
+const fileName = (file: string) => file.split(/[\\/]/).pop() || file
 
 /* MiMo's sent file chip: a document opens in the Office tab, anything else in the files tab. */
 function openSentFile(file: string) {
@@ -989,7 +999,7 @@ defineExpose({ stepMessage, scroller })
                   />
                   <path d="M13.4 3.2V9.6H19.8" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" />
                 </svg>
-                <span class="sent-name">{{ item.path }}</span>
+                <span class="sent-name">{{ fileName(item.path) }}</span>
               </span>
             </template>
           </div>
@@ -1107,7 +1117,8 @@ defineExpose({ stepMessage, scroller })
         </div>
 
         <!-- subagents: a turn started by news of background subagents opens with their pills, as MiMo draws its actor notifications. -->
-        <div v-if="!latest && turn.notices?.length" class="subagent-notices" data-subagent-notices>
+        <!-- Drawn in the floating card too, as MiMo's harness row draws its actor notifications wherever the row is. -->
+        <div v-if="turn.notices?.length" class="subagent-notices" data-subagent-notices>
           <SubagentActivity :notices="turn.notices" />
         </div>
 
@@ -1188,7 +1199,7 @@ defineExpose({ stepMessage, scroller })
                     <video :src="videoUrl(item)" muted playsinline preload="metadata" />
                   </button>
                   <span v-else class="sent-tile file">
-                    <span class="sent-name">{{ item.path }}</span>
+                    <span class="sent-name">{{ fileName(item.path) }}</span>
                   </span>
                 </template>
               </div>
@@ -1531,36 +1542,6 @@ defineExpose({ stepMessage, scroller })
   scrollbar-gutter: stable;
 }
 
-.inner {
-  /* The reference caps the reading column here, and the composer below
-     shares it - so a turn and the box you answer it in line up. */
-  max-width: 800px;
-  margin: 0 auto;
-  /*
-   * Twenty each side, not twenty-four: opencode's turn is 800 wide with its
-   * content at 760, and four pixels of difference is four pixels every line
-   * of every answer wraps at.
-   *
-   * Extra room at the true end of the transcript, past the standing gap the
-   * composer holds open below.
-   */
-  padding: 20px 20px 16px;
-}
-
-/*
- * A wider reading column on a wide screen.
- *
- * The reference carries `2xl:max-w-[1000px]` alongside its `md:max-w-200` on
- * both the turn and the composer (main-Db9FY8Yb.js), so past 1536px the pair
- * grows together and the transcript stops leaving two thirds of a large
- * monitor empty. Without it the column stayed at 800 at every size.
- */
-@media (min-width: 1536px) {
-  .inner {
-    max-width: 1000px;
-  }
-}
-
 /*
  * MiMo's rows: the question and the answer each keep 26px below them, with no
  * spacer between turns, so a question stands 26 from its answer and an answer
@@ -1867,12 +1848,28 @@ defineExpose({ stepMessage, scroller })
 
 /*
  * 2.0: MiMo's reading column - 764 wide with 28 each side, so its text runs
- * 708 wide, and it keeps that width on a large screen rather than growing.
- * The composer's 712 sits under it two pixels proud on either side.
+ * 708 wide. The composer's 712 sits under it two pixels proud on either side.
+ * Its thread is `mx-auto w-full min-w-0 max-w-[764px] px-[28px] pt-[12px]`.
  */
 .inner {
   max-width: 764px;
+  margin-inline: auto;
   padding: 12px 28px 16px;
+}
+
+/*
+ * A wider reading column on a wide screen, at MiMo's one and only breakpoint.
+ *
+ * The thread carries `min-[2000px]:max-w-[996px]` - not Tailwind's 1536, and
+ * not the round 1000 its home layout uses. Every companion is gated the same
+ * way: the composer, its tray, the info card's content width and the
+ * suggestion rule all query `min-width: 2000px`, so on a 1440p or 1600p
+ * monitor the transcript is still 764 wide.
+ */
+@media (min-width: 2000px) {
+  .inner {
+    max-width: 996px;
+  }
 }
 
 /* A gutter on both edges, as MiMo keeps: the column then centres on the same
@@ -2032,12 +2029,6 @@ defineExpose({ stepMessage, scroller })
 .asked-expand.code-expand {
   margin-top: 0;
   margin-bottom: 4px;
-}
-
-@media (min-width: 1536px) {
-  .inner {
-    max-width: 764px;
-  }
 }
 
 /*

@@ -239,7 +239,7 @@ const lineEnd = (index: number) => (index < lines.value.length - 1 ? "\n" : "")
 }
 
 .text .md-svg-body img:focus-visible {
-  outline: 2px solid #2f6fed;
+  outline: 2px solid var(--interactive);
   outline-offset: -2px;
 }
 

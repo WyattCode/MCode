@@ -30,9 +30,10 @@ import { AnthropicAdapter } from "./provider/anthropic"
 import { OpenAICompatible } from "./provider/openai"
 import { ChatGPTSubscription } from "./provider/chatgpt"
 import type { ProviderAdapter } from "./provider/types"
-import { expandCommand, listCommands } from "./command"
+import { expandCommand, listCommands, runShellPlaceholders } from "./command"
 import { discoverSkills } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
+import { runImport, scanImports } from "./import"
 import { mergeMcpSecrets } from "./mcp-save"
 import { agentsState, deleteAgents, ensureAgents, globalAgentsPath, setAgentsEnabled } from "./global-agents"
 import { revertTurnFiles } from "./session/turn-revert"
@@ -405,33 +406,30 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return { session: await runtime.sessions.update(request.sessionID, { title: request.title, titleSource: "user" }) }
 
     /*
-     * The conversation stays as it is; only the project it works in changes.
-     * Nothing on disk moves - a session's transcript lives in this app's own
-     * store, not in the project - so this is the one field and nothing else.
-     */
-    /*
-     * Moved into a project, a conversation that had none stops being marked as
-     * having none: it is listed under that project from now on.
+     * MiMo's `moveToProject`: the grouping label, and nothing else.
+     *
+     * The conversation keeps working where it worked. Rewriting `directory`
+     * here - which this used to do - moved the project commands, every
+     * relative path and every per-project approval out from under a
+     * conversation whose owner believed they had only changed a heading in the
+     * side column.
      */
     case "session.move":
       await runtime.config.adoptProjects([request.directory])
       return {
-        session: await runtime.sessions.update(request.sessionID, { directory: request.directory, scratch: undefined }),
+        session: await runtime.sessions.update(request.sessionID, { group: request.directory }),
       } satisfies Handled<"session.move">
 
     /*
-     * MiMo's "move out of project". MCode has no conversation without a folder,
-     * so it gets a fresh one of its own, made the way a task started with no
-     * project gets its folder. Checked first, so a missing session leaves no
-     * empty folder behind.
+     * MiMo's 移出项目, which is the same call with an empty label: listed under
+     * no project, still working in its own folder. It used to make an empty
+     * folder and point the conversation at it, losing the project it was in.
      */
-    case "session.moveOut": {
-      await runtime.sessions.require(request.sessionID)
-      const directory = await scratchDirectory(new Date(), runtime.config.get().projectRoot)
+    case "session.moveOut":
       return {
-        session: await runtime.sessions.update(request.sessionID, { directory, scratch: true }),
+        session: await runtime.sessions.update(request.sessionID, { group: "" }),
       } satisfies Handled<"session.moveOut">
-    }
+
 
     /*
      * A second conversation that starts where this one was, rather than a blank
@@ -523,6 +521,16 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         name: request.name,
         arguments: request.arguments,
       })) satisfies Handled<"command.expand">
+
+    /*
+     * An MCP server's prompt, or the line typed after a skill, whose backtick
+     * placeholders run here for the reason a command's do: the shell the reader
+     * chose and the conversation's folder are both the backend's to know.
+     */
+    case "command.shell":
+      return {
+        text: await runShellPlaceholders(runtime, { directory: request.directory, text: request.text }),
+      } satisfies Handled<"command.shell">
 
     /*
      * Replayed for exactly the reason `session.list` replays permissions:
@@ -1350,6 +1358,25 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "mcp.importApply":
       return { imported: await applyMcpImports(runtime.config, request.items) } satisfies Handled<"mcp.importApply">
+
+    /*
+     * 导入: what other AI apps on this machine hold. Counts only travel to the
+     * window, and `asked` says whether this profile has had the first-run
+     * question - the window asks once and marks it, as MiMo does.
+     */
+    case "import.scan":
+      return {
+        scan: await scanImports(runtime.storage),
+        asked: runtime.config.get().importOnboarded,
+      } satisfies Handled<"import.scan">
+
+    case "import.run": {
+      const result = await runImport(
+        { storage: runtime.storage, sessions: runtime.sessions, model: runtime.config.get().model },
+        request.sources,
+      )
+      return { result } satisfies Handled<"import.run">
+    }
 
     case "mcp.save": {
       // The window was never sent the saved secrets, so blank rows it marks as kept take the stored ones here.

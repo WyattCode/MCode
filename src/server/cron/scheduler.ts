@@ -8,13 +8,22 @@ import { cronFile, missedTasks, readCronTasks, writeCronTasks, type CronTask } f
 
 /**
  * cron: the scheduler behind the `cron` tool, as MiMo's runs it - a check once
- * a second while the app is open, firing at most one due task per check into
- * the conversation that made it, and only while that conversation is idle.
- * A fired prompt runs as an ordinary turn, so permissions ask as they always do.
+ * a second while the app is open, firing at most one due task per check, and
+ * only while the conversation it fires into is idle. A fired prompt runs as an
+ * ordinary turn, so permissions ask as they always do.
  *
- * Session-only tasks live here and end with the app. Durable ones live in the
- * project's `.mcode/scheduled_tasks.json`; a lock file beside it keeps two
- * copies of the app from firing the same task.
+ * A durable task belongs to its project rather than to one conversation, as
+ * MiMo's schedule does (the user's 2026-09-16 decision): it lives in the
+ * project's `.mcode/scheduled_tasks.json`, and deleting the conversation that
+ * made it leaves it running - the next run is adopted by a new conversation in
+ * that project, and the file is rewritten to name it so later runs keep to the
+ * same one. The stored shape does not change, so a file written before this
+ * still reads: `createdBySessionId` simply stops meaning "delete me when that
+ * conversation goes".
+ *
+ * Session-only tasks - and every loop, which MiMo keeps to its session - still
+ * end with their conversation and with the app. A lock file beside a project's
+ * task file keeps two copies of the app from firing the same task.
  */
 
 export interface SchedulerHost {
@@ -23,6 +32,8 @@ export interface SchedulerHost {
   fire(sessionID: string, text: string): Promise<void>
   busy(sessionID: string): boolean
   session(sessionID: string): Promise<SessionInfo | undefined>
+  /** Opens a conversation in a project, for a durable task whose own conversation is gone. */
+  create(directory: string): Promise<SessionInfo>
   /** The project folders whose durable tasks are looked after. */
   directories(): Promise<string[]>
 }
@@ -50,6 +61,9 @@ interface Durable {
 }
 
 export const newTaskID = () => randomUUID().replace(/-/g, "").slice(0, 8)
+
+/** What a conversation opened to carry on a project's schedule is called. */
+export const ADOPTED_TITLE = "Scheduled tasks"
 
 /** What a fired prompt reads as, in the transcript and to the model; the window recognises it by the same words. */
 export function firedText(task: CronTask, at: number): string {
@@ -87,7 +101,8 @@ export class CronScheduler {
     for (const [directory, state] of this.durable) {
       if (!state.owned) continue
       for (const task of missedTasks(state.tasks, now, (entry) => oneShotFireAt(entry.cron, entry.lastFiredAt ?? entry.createdAt, entry.id))) {
-        const owner = task.createdBySessionId ? await this.host.session(task.createdBySessionId) : undefined
+        // A task missed while the app was closed still runs, in a new conversation when its own is gone.
+        const owner = (task.createdBySessionId ? await this.host.session(task.createdBySessionId) : undefined) ?? (await this.host.create(directory).catch(() => undefined))
         if (owner) await this.host.fire(owner.id, firedText(task, now)).catch(() => undefined)
         await this.rewrite(directory, (tasks) => tasks.filter((entry) => entry.id !== task.id))
       }
@@ -187,15 +202,34 @@ export class CronScheduler {
         if (!this.nextFireAt.has(task.id)) this.nextFireAt.set(task.id, this.fireAt(task, task.lastFiredAt ?? task.createdAt))
         if (now < (this.nextFireAt.get(task.id) ?? Number.POSITIVE_INFINITY)) continue
         const ownerID = task.createdBySessionId
-        const owner = ownerID ? await this.host.session(ownerID) : undefined
+        const known = ownerID ? await this.host.session(ownerID) : undefined
+        /*
+         * A durable task outlives the conversation that made it: when that one
+         * is gone a new conversation in the task's own project takes it over,
+         * and the file is rewritten to name it. A session-only task still ends
+         * with its conversation, since it never outlived the app run anyway.
+         */
+        let owner = known
+        let adopted = false
+        if (!owner && directory) {
+          owner = await this.host.create(directory).catch(() => undefined)
+          // Nothing to run it in this time round; the task keeps its place and is tried again.
+          if (!owner) continue
+          adopted = true
+        }
         if (owner && this.host.busy(owner.id)) continue
         this.inFlight.add(task.id)
         try {
           const aged = task.recurring === true && task.permanent !== true && now - task.createdAt >= JITTER.recurringMaxAgeMs
           if (owner) await this.host.fire(owner.id, firedText(task, now)).catch(() => undefined)
           if (owner && task.recurring && !aged) {
+            const taken = adopted ? owner.id : undefined
             this.nextFireAt.set(task.id, this.fireAt(task, now))
-            if (directory) await this.rewrite(directory, (tasks) => tasks.map((entry) => (entry.id === task.id ? { ...entry, lastFiredAt: now } : entry)))
+            if (directory) {
+              await this.rewrite(directory, (tasks) =>
+                tasks.map((entry) => (entry.id === task.id ? { ...entry, lastFiredAt: now, ...(taken ? { createdBySessionId: taken } : {}) } : entry)),
+              )
+            }
           } else {
             // A one-shot has run, a recurring task has aged out, or its conversation is gone: it ends.
             this.nextFireAt.delete(task.id)
@@ -232,17 +266,17 @@ export class CronScheduler {
     return out
   }
 
-  async get(id: string, ownerID?: string): Promise<CronTask | undefined> {
+  async get(id: string, scope?: Scope): Promise<CronTask | undefined> {
     const found = (await this.all()).find((entry) => entry.task.id === id)
-    if (!found || (ownerID && found.task.createdBySessionId && found.task.createdBySessionId !== ownerID)) return undefined
+    if (!found || !reaches(scope, found.task, found.directory)) return undefined
     return found.task
   }
 
-  async list(filter: { ownerID?: string; kind?: "cron" | "loop"; durableOnly?: boolean }): Promise<CronTask[]> {
+  async list(filter: { scope?: Scope; kind?: "cron" | "loop"; durableOnly?: boolean }): Promise<CronTask[]> {
     return (await this.all())
+      .filter((entry) => reaches(filter.scope, entry.task, entry.directory))
       .map((entry) => entry.task)
       .filter((task) => {
-        if (filter.ownerID && task.createdBySessionId !== filter.ownerID) return false
         if (filter.kind === "loop" && task.kind !== "loop") return false
         if (filter.kind === "cron" && task.kind === "loop") return false
         if (filter.durableOnly && task.durable !== true) return false
@@ -250,18 +284,18 @@ export class CronScheduler {
       })
   }
 
-  async remove(id: string, ownerID?: string): Promise<boolean> {
+  async remove(id: string, scope?: Scope): Promise<boolean> {
     const found = (await this.all()).find((entry) => entry.task.id === id)
-    if (!found || (ownerID && found.task.createdBySessionId && found.task.createdBySessionId !== ownerID)) return false
+    if (!found || !reaches(scope, found.task, found.directory)) return false
     this.nextFireAt.delete(id)
     if (this.sessionTasks.delete(id)) return true
     await this.rewrite(found.directory, (tasks) => tasks.filter((task) => task.id !== id))
     return true
   }
 
-  async rename(id: string, prompt: string, ownerID?: string): Promise<boolean> {
+  async rename(id: string, prompt: string, scope?: Scope): Promise<boolean> {
     const found = (await this.all()).find((entry) => entry.task.id === id)
-    if (!found || (ownerID && found.task.createdBySessionId && found.task.createdBySessionId !== ownerID)) return false
+    if (!found || !reaches(scope, found.task, found.directory)) return false
     const session = this.sessionTasks.get(id)
     if (session) {
       this.sessionTasks.set(id, { ...session, prompt })
@@ -360,6 +394,32 @@ export class CronScheduler {
 }
 
 const loopKey = (ownerID: string, prompt: string) => `${ownerID} ${prompt}`
+
+/** Who is asking about a task: the conversation, and the project it works in. */
+export interface Scope {
+  ownerID?: string
+  directory?: string
+}
+
+const samePlace = (a: string, b: string) => {
+  const one = path.resolve(a)
+  const two = path.resolve(b)
+  return process.platform === "win32" ? one.toLowerCase() === two.toLowerCase() : one === two
+}
+
+/**
+ * Whether a scope reaches a task.
+ *
+ * A durable task belongs to its project, so anyone working in that project
+ * reaches it whichever conversation made it - that is what lets a schedule
+ * outlive the conversation (the user's 2026-09-16 decision). A session-only
+ * task is still its own conversation's, since it never outlives the app run.
+ */
+export function reaches(scope: Scope | undefined, task: CronTask, directory: string): boolean {
+  if (!scope || (!scope.ownerID && !scope.directory)) return true
+  if (task.durable === true) return Boolean(scope.directory && samePlace(scope.directory, directory))
+  return !scope.ownerID || task.createdBySessionId === scope.ownerID
+}
 
 function alive(pid: number): boolean {
   try {

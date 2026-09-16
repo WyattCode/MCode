@@ -18,6 +18,7 @@ import { MemoryTool } from "./memory"
 import { CronTool } from "./cron"
 import { AutomationUpdateTool } from "./automation"
 import { PlanExitTool } from "./plan-exit"
+import { SpeakTool } from "./speak"
 
 /**
  * The tool surface offered to the model.
@@ -73,6 +74,8 @@ export const TOOLS: ToolDefinition[] = [
   AutomationUpdateTool,
   // plan: appended after those for the same reason; offered in both modes, and effective only while planning.
   PlanExitTool,
+  // speak: appended last, and only in the turns where voice feedback is on (runner `tools`).
+  SpeakTool,
 ]
 
 /** MiMo's explore subagent: everything is denied but these, the shell among them. */
@@ -94,6 +97,20 @@ const EXPLORE = new Set(["read", "glob", "grep", "list", "bash", "webfetch"])
 export function toolsFor(agent: string): ToolDefinition[] {
   if (agent === "explore") return TOOLS.filter((tool) => EXPLORE.has(tool.name))
   return TOOLS
+}
+
+/**
+ * The tools one turn is offered: an agent's, less the ones a setting withholds.
+ *
+ * speak: offered only while the reader has voice feedback switched on, which is
+ * how the model comes to know it may say anything aloud at all (the user's
+ * 2026-09-16 decision). MiMo keeps its own speech tool in every turn and
+ * refuses the call instead; a tool that is simply absent costs nothing to not
+ * call, and the prompt prefix is keyed on this list, so switching the setting
+ * off takes the tool away from the next turn.
+ */
+export function toolsForTurn(agent: string, options: { voiceFeedback: boolean }): ToolDefinition[] {
+  return toolsFor(agent).filter((tool) => tool.name !== "speak" || options.voiceFeedback)
 }
 
 /**
@@ -153,6 +170,8 @@ const READS = new Set([
   "automation_update",
   // plan: asking to leave plan mode changes the conversation, never a file.
   "plan_exit",
+  // speak: a line read aloud by the window touches nothing.
+  "speak",
 ])
 
 /**

@@ -2,6 +2,7 @@ import { spawn } from "node:child_process"
 import { createHash } from "node:crypto"
 import fs from "node:fs/promises"
 import path from "node:path"
+import { writeAtomic } from "../storage"
 import type { SnapshotFile } from "./store"
 
 /**
@@ -47,6 +48,20 @@ import type { SnapshotFile } from "./store"
  */
 const MAX_FILES = 1000
 const MAX_BYTES = 16 * 1024 * 1024
+
+/** The conversation whose turn last left a file as it stands, and when. */
+interface Writer {
+  session: string
+  at: number
+}
+
+/**
+ * How many files a project's ledger of last writers remembers.
+ *
+ * Only the newest turns can be taken back at all, so an entry older than that
+ * has nothing left to protect and is dropped rather than grown forever.
+ */
+const WRITERS_KEPT = 4000
 
 /** Blob modes git uses for an ordinary file. Anything else is not restorable. */
 const ORDINARY = new Set(["100644", "100755"])
@@ -145,6 +160,28 @@ interface Change {
   to: string
 }
 
+/** How a path is compared, on a filesystem that may not mind the case. */
+function pathKey(target: string): string {
+  const absolute = path.resolve(target)
+  return process.platform === "win32" ? absolute.toLowerCase() : absolute
+}
+
+/**
+ * One boundary in a project's life, and what was going on up to it.
+ *
+ * A project's photographs are shared: every turn recording in the same folder
+ * is photographed at the same instants, because the camera is one repository
+ * with one index. A boundary is taken whenever a turn opens or closes there,
+ * which cuts each turn's life into stretches - and a stretch this turn had to
+ * itself names its own changes, while one shared with another conversation
+ * names changes that could have come from either.
+ */
+interface Point {
+  tree: string
+  /** Another conversation was recording here during the stretch that ended at this tree. */
+  shared: boolean
+}
+
 /** The shadow repository for one project directory. */
 class Repo {
   /**
@@ -155,6 +192,14 @@ class Repo {
    * fail the scan, which would cost both turns their undo.
    */
   private queue: Promise<unknown> = Promise.resolve()
+
+  /**
+   * The turns recording this project right now.
+   *
+   * One index means one set of photographs, so the only way to tell two
+   * conversations' work apart is to know when each of them was watching.
+   */
+  private readonly live = new Set<Recording>()
 
   constructor(
     private readonly gitDir: string,
@@ -171,14 +216,45 @@ class Repo {
     return exec(["--git-dir", this.gitDir, ...args], this.directory, stdin)
   }
 
-  /** The project as it stands, as a tree object. */
-  tree(): Promise<string> {
+  /** The project as it stands, as a tree object. Runs under the lock already held. */
+  private async treeNow(): Promise<string> {
+    const staged = await this.git(["add", "-A"])
+    if (staged.code !== 0) throw new Error(staged.stderr.trim() || "git add failed")
+    const written = await this.git(["write-tree"])
+    if (written.code !== 0) throw new Error(written.stderr.trim() || "git write-tree failed")
+    return written.stdout.toString("utf8").trim()
+  }
+
+  /**
+   * Photographs the project as one turn opens, ending a stretch for every turn
+   * already recording here.
+   *
+   * The photograph and the bookkeeping happen under the same lock, so a turn
+   * cannot open between the picture being taken and the set being changed and
+   * so end up with a stretch nobody marked as shared.
+   */
+  join(recording: Recording): Promise<string> {
     return this.lock(async () => {
-      const staged = await this.git(["add", "-A"])
-      if (staged.code !== 0) throw new Error(staged.stderr.trim() || "git add failed")
-      const written = await this.git(["write-tree"])
-      if (written.code !== 0) throw new Error(written.stderr.trim() || "git write-tree failed")
-      return written.stdout.toString("utf8").trim()
+      const tree = await this.treeNow()
+      const shared = this.live.size >= 2
+      for (const other of this.live) {
+        other.mark(tree, shared)
+        other.overlaps(recording)
+        recording.overlaps(other)
+      }
+      this.live.add(recording)
+      return tree
+    })
+  }
+
+  /** Photographs the project as one turn closes, ending a stretch for everyone here. */
+  leave(recording: Recording): Promise<string> {
+    return this.lock(async () => {
+      const tree = await this.treeNow()
+      const shared = this.live.size >= 2
+      for (const other of this.live) other.mark(tree, shared)
+      this.live.delete(recording)
+      return tree
     })
   }
 
@@ -268,10 +344,19 @@ class Repo {
  */
 export class Recording {
   private readonly opened: Promise<{ repo: Repo; tree: string } | { failed: string }>
+  /** Where each stretch of this turn ended, and whether it was shared. */
+  private readonly points: Point[] = []
+  /** Files this turn's own tools said they wrote, which is what tells two overlapping turns apart. */
+  private readonly told = new Set<string>()
+  /** The other turns that recorded this project while this one was open. */
+  private readonly concurrent = new Set<Recording>()
+  /** Whether anything ran that leaves no account of itself - a shell command, an MCP tool. */
+  private silent = false
+  private settled: Promise<Recorded> | undefined
 
   constructor(opening: Promise<Repo>) {
     this.opened = opening
-      .then(async (repo) => ({ repo, tree: await repo.tree() }))
+      .then(async (repo) => ({ repo, tree: await repo.join(this) }))
       .catch((cause: unknown) => ({
         failed: `This turn could not be recorded for undo (${reason(cause)}), so it cannot be taken back.`,
       }))
@@ -282,31 +367,148 @@ export class Recording {
     await this.opened
   }
 
-  async finish(): Promise<Recorded> {
+  /** The repository, ending a stretch of this turn because another one opened or closed. */
+  mark(tree: string, shared: boolean): void {
+    this.points.push({ tree, shared })
+  }
+
+  /** The repository, naming a turn that was recording at the same time as this one. */
+  overlaps(other: Recording): void {
+    this.concurrent.add(other)
+  }
+
+  /** A tool of this turn's, saying which file it wrote. */
+  claim(target: string): void {
+    this.told.add(pathKey(target))
+  }
+
+  /** Whether this turn's own tools named that file. */
+  claimed(target: string): boolean {
+    return this.told.has(pathKey(target))
+  }
+
+  /** Whether a file changed while two turns were watching is plainly this one's. */
+  private owns(target: string): boolean {
+    return this.claimed(target) && !this.takenByOther(target)
+  }
+
+  /** Whether another turn recording here named the same file. */
+  private takenByOther(target: string): boolean {
+    for (const other of this.concurrent) {
+      if (other.claimed(target)) return true
+    }
+    return false
+  }
+
+  /** Told that something ran which could change a file without saying so. */
+  opaque(): void {
+    this.silent = true
+  }
+
+  /** Whether this turn could have changed a file without any tool reporting it. */
+  get quiet(): boolean {
+    return !this.silent
+  }
+
+  /** Recorded once: a second caller gets the same answer rather than a second scan. */
+  finish(): Promise<Recorded> {
+    this.settled ??= this.gather()
+    return this.settled
+  }
+
+  /**
+   * What this turn changed, stretch by stretch.
+   *
+   * Two conversations can be mid-turn in one project, and the photographs are
+   * shared, so the difference between the first and the last one is not this
+   * turn's work - it is everyone's. Each stretch this turn had to itself is
+   * wholly its own; in a stretch it shared, a change belongs to whichever turn's
+   * tool named the file, and one that no tool named belongs to whichever of the
+   * overlapping turns ran something silent. If that is more than one of them the
+   * file is contested, and the turn is recorded as one that cannot be taken back
+   * rather than as one that would put another conversation's work back too.
+   */
+  private async gather(): Promise<Recorded> {
     const opened = await this.opened
     if ("failed" in opened) return { files: [], unavailable: opened.failed }
     const { repo, tree } = opened
 
-    let after: string
     try {
-      after = await repo.tree()
+      await repo.leave(this)
     } catch (cause) {
       return {
         files: [],
         unavailable: `This turn's changes could not be read back (${reason(cause)}), so it cannot be taken back.`,
       }
     }
-    if (after === tree) return { files: [] }
 
-    let changes: Change[]
-    try {
-      changes = await repo.changes(tree, after)
-    } catch (cause) {
-      return {
-        files: [],
-        unavailable: `This turn's changes could not be read back (${reason(cause)}), so it cannot be taken back.`,
+    /** This turn's own changes, first mode kept so a restore reads the tree it opened on. */
+    const mine = new Map<string, Change>()
+    /** Paths another conversation's turn changed, which this one must not claim. */
+    const foreign = new Set<string>()
+    const contested = new Set<string>()
+    const contest = (target: string) => {
+      contested.add(target)
+      mine.delete(target)
+    }
+
+    let previous = tree
+    for (const point of this.points) {
+      if (point.tree === previous) continue
+      let stretch: Change[]
+      try {
+        stretch = await repo.changes(previous, point.tree)
+      } catch (cause) {
+        return {
+          files: [],
+          unavailable: `This turn's changes could not be read back (${reason(cause)}), so it cannot be taken back.`,
+        }
+      }
+      previous = point.tree
+      for (const change of stretch) {
+        const absolute = path.resolve(repo.directory, change.path)
+        if (point.shared && !this.owns(absolute)) {
+          if (contested.has(change.path)) continue
+          // Named by another turn's tool: theirs, and never this turn's again.
+          if (this.takenByOther(absolute)) {
+            foreign.add(change.path)
+            if (mine.has(change.path)) contest(change.path)
+            continue
+          }
+          // Nobody named it. Whoever could have changed it without saying so did.
+          const silent = [...this.concurrent].filter((other) => !other.quiet)
+          if (this.quiet) {
+            if (silent.length) foreign.add(change.path)
+            if (mine.has(change.path)) contest(change.path)
+            continue
+          }
+          if (silent.length) {
+            contest(change.path)
+            continue
+          }
+        }
+        if (contested.has(change.path) || foreign.has(change.path)) {
+          // Changed by someone else earlier, so the tree this turn opened on no
+          // longer holds the contents that would put only this turn back.
+          contest(change.path)
+          continue
+        }
+        const known = mine.get(change.path)
+        if (known) known.to = change.to
+        else mine.set(change.path, { ...change })
       }
     }
+
+    if (contested.size) {
+      const named = [...contested].sort()
+      const rest = named.length > 1 ? ` (and ${named.length - 1} more)` : ""
+      return {
+        files: [],
+        refused: `Another conversation changed ${named[0]}${rest} while this turn ran, so this turn cannot be taken back on its own.`,
+      }
+    }
+
+    const changes = [...mine.values()]
     if (changes.length === 0) return { files: [] }
     if (changes.length > MAX_FILES) {
       return {
@@ -427,8 +629,86 @@ export function decode(file: SnapshotFile): Buffer {
  */
 export class Snapshots {
   private readonly repos = new Map<string, Promise<Repo>>()
+  /** A project's last writer per file, read once and then kept. */
+  private readonly ledgers = new Map<string, Promise<Record<string, Writer>>>()
+  /** Ledger writes one at a time, so two turns ending together cannot lose one another's entries. */
+  private ledgerQueue: Promise<unknown> = Promise.resolve()
 
   constructor(private readonly root: string) {}
+
+  /** A project's name in this app's storage, the same one its shadow repository has. */
+  private digest(directory: string): string {
+    return createHash("sha1")
+      .update(process.platform === "win32" ? directory.toLowerCase() : directory)
+      .digest("hex")
+  }
+
+  private ledgerFile(directory: string): string {
+    return path.join(this.root, `${this.digest(directory)}.writers.json`)
+  }
+
+  private ledger(directory: string): Promise<Record<string, Writer>> {
+    const file = this.ledgerFile(directory)
+    const held = this.ledgers.get(file)
+    if (held) return held
+    const reading = (async () => {
+      const raw = await fs.readFile(file, "utf8").catch(() => undefined)
+      if (raw === undefined) return {}
+      try {
+        const parsed = JSON.parse(raw) as unknown
+        return parsed && typeof parsed === "object" ? (parsed as Record<string, Writer>) : {}
+      } catch {
+        // Derived from the turns themselves; a file that will not parse is
+        // rebuilt from the next turn rather than standing in anyone's way.
+        return {}
+      }
+    })()
+    this.ledgers.set(file, reading)
+    return reading
+  }
+
+  /** Records that a conversation's turn left these files as they now stand. */
+  async wrote(directory: string, sessionID: string, at: number, files: string[]): Promise<void> {
+    if (!files.length) return
+    const next = this.ledgerQueue.then(
+      () => this.noteWrites(directory, sessionID, at, files),
+      () => this.noteWrites(directory, sessionID, at, files),
+    )
+    this.ledgerQueue = next.catch(() => undefined)
+    await next
+  }
+
+  private async noteWrites(directory: string, sessionID: string, at: number, files: string[]): Promise<void> {
+    const held = await this.ledger(directory)
+    for (const file of files) held[pathKey(file)] = { session: sessionID, at }
+    const names = Object.keys(held)
+    if (names.length > WRITERS_KEPT) {
+      // The oldest go first: an undo only ever reaches back through recent turns.
+      const oldest = names.sort((a, b) => held[a].at - held[b].at).slice(0, names.length - WRITERS_KEPT)
+      for (const name of oldest) delete held[name]
+    }
+    await writeAtomic(this.ledgerFile(directory), JSON.stringify(held)).catch(() => undefined)
+  }
+
+  /**
+   * Which of these files another conversation has written since a given moment.
+   *
+   * This is what lets a refusal be a refusal rather than a guess. A turn's own
+   * later work, and the user's own edits, are still written over - that is what
+   * "take my last turn back" has to mean. Only a file another conversation
+   * wrote afterwards is one this app has no honest way to return, because
+   * putting it back would take that conversation's work with it.
+   */
+  async writtenSince(directory: string, sessionID: string, at: number, files: string[]): Promise<string[]> {
+    if (!files.length) return []
+    const held = await this.ledger(directory)
+    const clashes: string[] = []
+    for (const file of files) {
+      const writer = held[pathKey(file)]
+      if (writer && writer.session !== sessionID && writer.at > at) clashes.push(file)
+    }
+    return clashes.sort()
+  }
 
   private open(directory: string): Promise<Repo> {
     const key = process.platform === "win32" ? directory.toLowerCase() : directory
@@ -479,10 +759,7 @@ export class Snapshots {
      * the same directory shares one index, which is what keeps the scan a stat
      * walk rather than a full read.
      */
-    const key = createHash("sha1")
-      .update(process.platform === "win32" ? directory.toLowerCase() : directory)
-      .digest("hex")
-    const gitDir = path.join(this.root, key)
+    const gitDir = path.join(this.root, this.digest(directory))
 
     /*
      * The attributes file is written last, so its presence is what says the

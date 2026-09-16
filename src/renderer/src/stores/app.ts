@@ -67,6 +67,26 @@ export const useApp = defineStore("app", () => {
   /* automation: conversations whose running turn is a scheduled task's run, and the last run the user should be told about. */
   const automationRuns = ref(new Set<string>())
   const automationNotice = ref<{ sessionID: string; at: number }>()
+  /**
+   * Bumped whenever the window comes back into focus, as MiMo's shell bumps its
+   * `fsNonce`.
+   *
+   * Anything reading the working tree - the review tab - takes it as part of
+   * what it reads on, so coming back from an editor re-reads the files rather
+   * than waiting for the conversation to move.
+   */
+  const fsNonce = ref(0)
+  const bumpFsNonce = () => (fsNonce.value += 1)
+  /**
+   * What the home screen's next task works in, when the reader has said.
+   *
+   * MiMo's 不使用项目 and its project pick are navigation state, so they outlive
+   * the home screen: opening a conversation and coming back finds the same
+   * answer. Held here rather than in HomeHero, which is unmounted the moment a
+   * conversation opens - which is how an explicit 不使用项目 used to be
+   * forgotten, and the next message fell back into the last project.
+   */
+  const homeProject = ref<string>()
 
   /** Starts the clock on turns not seen beginning, and forgets the ones no longer running. */
   function clockTurns(ids: Iterable<string>) {
@@ -1276,10 +1296,13 @@ export const useApp = defineStore("app", () => {
     await api().request({ type: "session.rename", sessionID, title })
   }
 
-  /** Which project a conversation belongs to. The transcript does not move. */
+  /**
+   * Which project the side column files a conversation under, as MiMo's
+   * `moveToProject` does. Nothing else moves - not the transcript, and not the
+   * folder it works in - so the project's commands are still the right ones.
+   */
   async function move(sessionID: string, directory: string) {
     await api().request({ type: "session.move", sessionID, directory })
-    if (directory !== commandsFor && currentID.value === sessionID) void refreshCommands(directory)
   }
 
   /*
@@ -2003,6 +2026,9 @@ export const useApp = defineStore("app", () => {
     setAgent,
     setStaged,
     patchConfig,
+    fsNonce,
+    bumpFsNonce,
+    homeProject,
     modelPick,
     announceModel,
     announceAccess,

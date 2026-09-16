@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process"
 import fs from "node:fs/promises"
+import os from "node:os"
 import path from "node:path"
 import { promisify } from "node:util"
 import type { BranchState, CheckoutResult, CommitResult, CommitState, GitFileLines, GitSummary, PushResult } from "@shared/protocol"
@@ -33,6 +34,72 @@ export interface GitStatus {
   changed: string[]
   /** The same files, carrying the letter git already reported for each. */
   entries: GitChange[]
+}
+
+/**
+ * A git command that is allowed to fail, for the places that ask a question
+ * whose answer may be "no" - is this file tracked, does this patch apply.
+ */
+export async function tryGit(directory: string, args: string[]): Promise<{ ok: boolean; out: string }> {
+  try {
+    return { ok: true, out: await git(directory, args) }
+  } catch {
+    return { ok: false, out: "" }
+  }
+}
+
+/**
+ * The repository the folder sits in, or nothing when it is not in one.
+ *
+ * Answers for a folder that does not exist yet by walking up to the first one
+ * that does, as MiMo's does, so a file the turn created and something has
+ * since deleted still finds its repository.
+ */
+export async function repositoryRoot(directory: string): Promise<string | undefined> {
+  let at = path.resolve(directory)
+  for (let depth = 0; depth < 64; depth++) {
+    const exists = await fs
+      .stat(at)
+      .then((stats) => stats.isDirectory())
+      .catch(() => false)
+    if (exists) break
+    const up = path.dirname(at)
+    if (up === at) return undefined
+    at = up
+  }
+  const answer = await tryGit(at, ["rev-parse", "--show-toplevel"])
+  const root = answer.out.split(/\r?\n/)[0]?.trim()
+  return answer.ok && root ? path.resolve(root) : undefined
+}
+
+/** Whether git has this file in the index, which decides what taking a change back may use. */
+export async function isTracked(root: string, file: string): Promise<boolean> {
+  return (await tryGit(root, ["ls-files", "--error-unmatch", "--", file])).ok
+}
+
+/** `git checkout -- <file>`: MiMo's last resort when a patch will not go back on. */
+export async function checkoutFile(root: string, file: string): Promise<boolean> {
+  return (await tryGit(root, ["checkout", "--", file])).ok
+}
+
+/**
+ * `git apply` of a patch held in a temporary file, with MiMo's own flags.
+ *
+ * `--recount` lets a patch whose counts drifted still apply, and
+ * `--ignore-whitespace` covers the line endings a file picks up on the way
+ * through an editor.
+ */
+export async function applyPatch(root: string, patch: string, reverse: boolean): Promise<boolean> {
+  const file = path.join(os.tmpdir(), `mcode-revert-${Date.now()}-${Math.random().toString(36).slice(2)}.patch`)
+  try {
+    await fs.writeFile(file, patch, "utf8")
+    const args = ["apply", ...(reverse ? ["--reverse"] : []), "-p1", "--recount", "--whitespace=nowarn", "--ignore-whitespace", file]
+    return (await tryGit(root, args)).ok
+  } catch {
+    return false
+  } finally {
+    await fs.rm(file, { force: true }).catch(() => {})
+  }
 }
 
 /**

@@ -340,7 +340,7 @@ onBeforeUnmount(() => {
 }
 
 .text .md-media-image:focus-visible {
-  outline: 2px solid #2f6fed;
+  outline: 2px solid var(--interactive);
   outline-offset: 2px;
 }
 
@@ -405,7 +405,7 @@ onBeforeUnmount(() => {
 }
 
 .text .md-voice:focus-visible {
-  outline: 2px solid #3295fb;
+  outline: 2px solid var(--interactive);
   outline-offset: 2px;
 }
 

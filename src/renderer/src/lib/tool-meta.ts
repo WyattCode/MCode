@@ -30,6 +30,7 @@ export type StepIconName =
   | "question"
   | "reconnect"
   | "alert"
+  | "speaker"
 
 /** How much of a title a row shows; a group of one shows a little more. */
 export const ROW_TITLE_MAX = 90
@@ -41,7 +42,8 @@ export const OUTPUT_CAP = 3000
 /** The tools the tables name in every state. `apply_patch` speaks as an edit. */
 // session chat: `contacts` is the one of its four tools MiMo's step tables name.
 // memory: named in MiMo's tables; history, cron and automation_update are not, and read through the fallbacks.
-const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory"])
+// speak: MCode's own tool for the voice feedback MiMo does in the cloud, so its words are this app's.
+const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory", "speak"])
 const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
@@ -65,6 +67,7 @@ const BUILT_IN = new Set([
   "set_desktop_setting",
   "skill",
   "skill_search",
+  "speak",
 ])
 
 /** MiMo's title for a locate step: the start of the quoted passage. */
@@ -147,6 +150,8 @@ const ICONS: Record<string, StepIconName> = {
   // MiMo's desktop tools: a locate reads a document, a present hands files over, the settings tools fall back.
   pdf_locate: "read",
   present_files: "list",
+  // speak: a line read aloud.
+  speak: "speaker",
 }
 
 /** The 14px mark in front of a step: by name, then by what an unknown name suggests. */

@@ -11,7 +11,7 @@ import { drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
 import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { mentionable, preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
 import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
 import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
@@ -428,6 +428,24 @@ async function onPaste(event: ClipboardEvent) {
     await take(files)
     return
   }
+  /*
+   * MiMo's fallback: the clipboard says it holds a picture but hands the page
+   * no File item (a screenshot from some tools), so the main process reads the
+   * bitmap itself and the picture is attached by path.
+   */
+  const types = [...(event.clipboardData?.types ?? [])]
+  if (types.some((type) => type.startsWith("image/"))) {
+    event.preventDefault()
+    const saved = await window.mcode.saveClipboardImage().catch(() => ({ ok: false as const, error: "" }))
+    if (!saved.ok) {
+      notifyFailure(t("attach.unreadable"), "")
+      return
+    }
+    const data = saved.dataUrl?.split(",")[1] ?? ""
+    attachments.value = [...attachments.value, { path: saved.path, mime: "image/png", data, byPath: true }]
+    notify(t("toast.attachmentsAdded", { count: 1 }))
+    return
+  }
   const pasted = event.clipboardData?.getData("text/plain") ?? ""
   if (pasted.length < PASTE_AS_FILE) {
     // MiMo's code paste: text that reads as code goes in fenced, on lines of its own.
@@ -445,6 +463,17 @@ async function onPaste(event: ClipboardEvent) {
     return
   }
   event.preventDefault()
+  /*
+   * MiMo writes the block to a file in the system temp folder and attaches it
+   * by path, so a log of any size goes with the message and can be opened
+   * afterwards. Only if that write fails does it stay inside the message.
+   */
+  const written = await window.mcode.savePastedText(pasted).catch(() => ({ ok: false as const, error: "" }))
+  if (written.ok) {
+    attachments.value = [...attachments.value, { path: written.path, mime: "text/plain", data: "", byPath: true }]
+    notify(t("composer.pasteAttached"))
+    return
+  }
   const name = `mcode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`
   if (new Blob([pasted]).size > MAX_BYTES) {
     notifyFailure(t("attach.tooLarge"), name)
@@ -530,13 +559,20 @@ async function onDrop(event: DragEvent) {
    * is attached. A folder is named but not carried, as a folder picked in the
    * @ menu is.
    */
+  /*
+   * MiMo only turns a text file into an @mention: the main process fills in a
+   * dropped file's text for text-like names under 256KB, and the drop splits on
+   * that - a text file inside the project becomes a mention, and everything
+   * else (a PDF, a spreadsheet, an archive, a huge log, a folder) becomes a
+   * real attachment by path. MCode read only "not a picture or a video", so a
+   * PDF in the project reached the model as a bare path.
+   */
   const files = [...(event.dataTransfer?.files ?? [])]
   const inside: { rel: string; absolute: string }[] = []
   const attach: File[] = []
   for (const file of files) {
-    const media = file.type.startsWith("image/") || file.type.startsWith("video/")
     const absolute = window.mcode.pathForFile(file)
-    const rel = root && !media ? projectRelative(root, absolute) : undefined
+    const rel = root && mentionable(file) ? projectRelative(root, absolute) : undefined
     if (rel) inside.push({ rel, absolute })
     else attach.push(file)
   }
@@ -1074,6 +1110,26 @@ async function compactFromBox(line: string) {
 }
 
 /**
+ * The ``!`cmd` `` placeholders of a template the window filled in itself, run by
+ * the backend in the conversation's folder.
+ *
+ * MiMo runs a template's backtick commands whatever the template came from, so
+ * an MCP server's prompt and the arguments typed after a skill run theirs as a
+ * project command's do - the user's 2026-09-16 decision. Text with no
+ * placeholder in it never leaves the window, and a backend that could not run
+ * them leaves the text as it was rather than losing what was typed.
+ */
+async function withShell(value: string, root?: string): Promise<string> {
+  if (!root || !app.client || !value.includes("!`")) return value
+  try {
+    const done = await app.client.request({ type: "command.shell", directory: root, text: value })
+    return done.text
+  } catch {
+    return value
+  }
+}
+
+/**
  * What actually goes to the model when the draft is a command line.
  *
  * MiMo sends `session.command` and its engine fills the template in. Here a
@@ -1096,8 +1152,11 @@ async function compactFromBox(line: string) {
 async function fillCommand(value: string, to?: string): Promise<{ text: string; attachments: Attachment[]; command?: CommandInfo } | undefined> {
   const line = splitCommandLine(value)
   const command = line && serverCommand(line.name)
-  if (!line || !command || command.source === "skill") return { text: value, attachments: [] }
   const root = commandRoot(to)
+  // Not a command at all: an ordinary message is text, and nothing in it runs.
+  if (!line || !command) return { text: value, attachments: [] }
+  // A skill's line goes as typed for the server to load it; the backticks in its arguments run, as MiMo runs a template's.
+  if (command.source === "skill") return { text: await withShell(value, root), attachments: [] }
   if (command.source === "mcp" || !root || !app.client) {
     const expanded = expandTemplate(command.template, line.args)
     // An MCP prompt whose fetch failed has no template. Sending nothing would be
@@ -3514,23 +3573,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .shell {
-  max-width: 776px;
   margin: 0 auto;
-}
-
-/*
- * A wider reading column on a wide screen.
- *
- * The reference carries `2xl:max-w-[1000px]` alongside its `md:max-w-200` on
- * both the turn and the composer (main-Db9FY8Yb.js), so past 1536px the pair
- * grows together and the transcript stops leaving two thirds of a large
- * monitor empty. Without it the column stayed at 800 at every size.
- */
-@media (min-width: 1536px) {
-  .shell {
-    /* 1000 less the twelve of padding each side, the way 776 comes off 800. */
-    max-width: 976px;
-  }
 }
 
 /*
@@ -4718,16 +4761,19 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   max-width: 712px;
 }
 
-@media (min-width: 1536px) {
-  .shell {
-    max-width: 712px;
-  }
-}
-
-/* MiMo's wide window: a 1000 column for the dock, and a 70px floor for a box that fits its text. */
+/*
+ * MiMo's wide window: past 2000px the dock's column goes 712 -> 944, and a box
+ * that fits its text gets a 70px floor.
+ *
+ * 944, not 1000: MiMo's `.composer-wrap` is `max-width: 768px` with
+ * `padding: 0 28px 14px`, so its inner column is 712, and at 2000px the wrapper
+ * goes to 1000 - leaving 944 inside. `.shell` here is that inner column (it
+ * carries no padding of its own), so it takes the inner figure, the way
+ * `.composer-tray` and the home hero's own 944 do.
+ */
 @media (min-width: 2000px) {
   .shell {
-    max-width: 1000px;
+    max-width: 944px;
   }
 
   .box:not(.resized) .input {

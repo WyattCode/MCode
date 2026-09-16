@@ -25,7 +25,7 @@ import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, ve
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
 import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, reachOf, repairableNames, toolsFor } from "../tool/registry"
+import { findTool, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
@@ -43,15 +43,15 @@ import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
-import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
+import { isOverflowByCount, isOverflowError, maxOutputTokens } from "./overflow"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
-import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf } from "./plan"
+import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
 import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
-import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titlePrompt } from "./title"
+import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
@@ -473,7 +473,8 @@ export class SessionRunner {
    * plan. An explore subagent is still offered only its own few.
    */
   private tools(agent: string, conversation: string): ToolDefinition[] {
-    const own = toolsFor(agent)
+    // speak rides on the voice feedback setting; the rule itself lives with the registry.
+    const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
     if (agent === "explore") return own
     let servers = this.mcpServersAt.get(conversation)
     if (!servers) {
@@ -736,6 +737,12 @@ export class SessionRunner {
   private async record(sessionID: string, target: string): Promise<void> {
     const turn = this.turn(sessionID)
     const key = pathKey(target)
+    /*
+     * Told to the recording as well as kept here. Two conversations can be
+     * mid-turn in one project, and a file one of their tools named is the one
+     * thing that says which of them changed it.
+     */
+    turn.watching?.claim(target)
     // A path recorded twice keeps its first reading, because the state to
     // return to is the one the turn began from, not the one the last edit did.
     if (turn.told.has(key)) return
@@ -775,8 +782,18 @@ export class SessionRunner {
 
     // A turn that changed nothing does not take up a place in the history.
     if (!blocked && files.size === 0) return
+    const at = Date.now()
+    /*
+     * Which conversation left each file as it now stands. An undo in another
+     * conversation reads this and refuses rather than writing over what this
+     * turn did afterwards - the project has one set of files and several
+     * conversations, and only this says whose work is on top of it.
+     */
+    if (turn.directory && !blocked) {
+      await this.snapshots.wrote(turn.directory, sessionID, at, [...files.values()].map((file) => file.path))
+    }
     await this.store.pushSnapshot(sessionID, {
-      at: Date.now(),
+      at,
       files: blocked ? [] : [...files.values()],
       blocked,
       messages: turn.messages,
@@ -817,10 +834,12 @@ export class SessionRunner {
      * turn did is still on top of them, and would report a file count for it.
      */
     if (snapshot.blocked) throw new Error(snapshot.blocked)
+    await this.guardOthers(sessionID, snapshot.at, snapshot.files)
     // Restore first: if this throws, both stacks are still as they were and the
     // same undo can be tried again.
     const swapped = await this.restore(snapshot)
     await this.store.moveSnapshot(sessionID, "undo", "redo", { at: snapshot.at, files: swapped })
+    await this.noteRestore(sessionID, snapshot.files)
     return snapshot.files.length
   }
 
@@ -894,7 +913,9 @@ export class SessionRunner {
       if (!step) break
       const at = order.get(step.messageID)
       if (at === undefined || at >= target) break
+      await this.guardOthers(sessionID, step.snapshot.at, step.swapped)
       await this.write(step.swapped)
+      await this.noteRestore(sessionID, step.swapped)
       files += step.swapped.length
       for (const id of step.messages) restoredTo = Math.max(restoredTo, (order.get(id) ?? -1) + 1)
       await this.store.putBack(sessionID)
@@ -924,7 +945,9 @@ export class SessionRunner {
       const reaches = snapshot.messages.some((id) => (order.get(id) ?? -1) >= target)
       if (!reaches) break
       if (snapshot.blocked) throw new Error(snapshot.blocked)
+      await this.guardOthers(sessionID, snapshot.at, snapshot.files)
       const swapped = await this.restore(snapshot)
+      await this.noteRestore(sessionID, snapshot.files)
       files += snapshot.files.length
       await this.store.takeBack(sessionID, {
         messageID: snapshot.messages[0],
@@ -1024,8 +1047,10 @@ export class SessionRunner {
     if (this.running.has(sessionID)) throw new Error("Wait for the current turn to finish")
     const snapshot = await this.store.peekSnapshot(sessionID, "redo")
     if (!snapshot) throw new Error("Nothing to redo")
+    await this.guardOthers(sessionID, snapshot.at, snapshot.files)
     const swapped = await this.restore(snapshot)
     await this.store.moveSnapshot(sessionID, "redo", "undo", { at: snapshot.at, files: swapped })
+    await this.noteRestore(sessionID, snapshot.files)
     return snapshot.files.length
   }
 
@@ -1057,6 +1082,43 @@ export class SessionRunner {
       await writeFile(file.path, decode(file))
     }
     return swapped
+  }
+
+  /**
+   * Refuses a restore that would take another conversation's work with it.
+   *
+   * Undo's promise is that the files go back to how the turn found them, and it
+   * keeps that promise over the user's own later edits on purpose. What it
+   * cannot do is keep it over another conversation working in the same project:
+   * that conversation's turn is not on this one's stack, its own card still
+   * offers to take it back, and writing over it here would leave both
+   * transcripts describing a project neither of them matches.
+   */
+  private async guardOthers(sessionID: string, at: number, files: SnapshotFile[]): Promise<void> {
+    const directory = (await this.store.get(sessionID))?.directory
+    if (!directory) return
+    const clashes = await this.snapshots.writtenSince(
+      directory,
+      sessionID,
+      at,
+      files.map((file) => file.path),
+    )
+    if (!clashes.length) return
+    const rest = clashes.length > 1 ? ` (and ${clashes.length - 1} more)` : ""
+    throw new Error(`Another conversation has changed ${clashes[0]}${rest} since this turn, so taking it back would undo that work too`)
+  }
+
+  /** A restore is a write like any other, so the next conversation to look sees it. */
+  private async noteRestore(sessionID: string, files: SnapshotFile[]): Promise<void> {
+    if (!files.length) return
+    const directory = (await this.store.get(sessionID))?.directory
+    if (!directory) return
+    await this.snapshots.wrote(
+      directory,
+      sessionID,
+      Date.now(),
+      files.map((file) => file.path),
+    )
   }
 
   /**
@@ -1211,7 +1273,7 @@ export class SessionRunner {
       )
       if (outcome.toolCalls.length) called = true
     } catch (failure) {
-      if (isContextOverflow(describe(failure))) throw new Error("This conversation is too large to compact")
+      if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
       throw failure
     } finally {
       this.summarising.delete(session.id)
@@ -1547,6 +1609,7 @@ export class SessionRunner {
      * the same permission rules as any other turn's.
      */
     this.pending.delete(session.id)
+    this.turn(session.id).directory = session.directory
     this.turn(session.id).watching = this.snapshots.begin(session.directory)
 
     // A subscription is authorised by stored tokens, so it has no API key to
@@ -1645,12 +1708,18 @@ export class SessionRunner {
     if (process.env.MCODE_GENERATE_TITLES === "0") return
     const session = await this.store.get(sessionID)
     if (!session || session.titleSource !== "fallback") return
-    const definition = this.config.definition(session.model.provider)
-    if (!definition || !this.config.usable(session.model.provider)) return
+    /* MiMo's 标题生成模型: the model named for titles when this install can still reach it, else the conversation's own. */
+    const model = titleModelRef(
+      this.config.get().titleModel,
+      session.model,
+      (ref) => Boolean(this.config.definition(ref.provider)) && this.config.usable(ref.provider) && Boolean(this.config.modelEntry(ref)),
+    )
+    const definition = this.config.definition(model.provider)
+    if (!definition || !this.config.usable(model.provider)) return
     const adapter: ProviderAdapter =
       definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
     const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
-    const entry = this.config.modelEntry(session.model)
+    const entry = this.config.modelEntry(model)
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
     let answer = ""
@@ -1658,7 +1727,7 @@ export class SessionRunner {
       await adapter.stream(
         {
           apiKey: tokens?.access ?? this.config.apiKey(definition.id) ?? "",
-          model: session.model,
+          model,
           system: TITLE_SYSTEM,
           history: [
             {
@@ -1672,16 +1741,16 @@ export class SessionRunner {
           ],
           tools: [],
           effort: "low",
-          variants: this.config.variants(session.model),
+          variants: this.config.variants(model),
           showReasoning: false,
           signal: controller.signal,
           baseURL: definition.baseURL,
           headers: definition.headers,
           accountId: tokens?.accountId,
-          maxOutput: maxOutputTokens(session.model, entry),
+          maxOutput: maxOutputTokens(model, entry),
           outputLimit: entry?.maxOutput,
           // MiMo's title agent runs at 0.5, where the model takes a temperature.
-          sampling: { ...samplingFor(session.model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
+          sampling: { ...samplingFor(model.model, false), ...(entry?.temperature ? { temperature: 0.5 } : {}) },
         },
         (event) => {
           if (event.type === "text.delta") answer += event.text
@@ -1737,6 +1806,7 @@ export class SessionRunner {
       // that was ending as they arrived - a rollback aimed at one of them has
       // to reach this turn's recording, not the previous turn's.
       this.turn(sessionID).messages = stranded
+      this.turn(sessionID).directory = session.directory
       this.turn(sessionID).watching = this.snapshots.begin(session.directory)
       this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller)
     } catch (failure) {
@@ -1770,6 +1840,7 @@ export class SessionRunner {
       this.pending.delete(sessionID)
       // The turn answers the same question the broken one did, so a rollback to it reaches both.
       this.turn(sessionID).messages = [messageID]
+      this.turn(sessionID).directory = session.directory
       this.turn(sessionID).watching = this.snapshots.begin(session.directory)
       this.launch(sessionID, this.config.apiKey(session.model.provider) ?? "", controller, true)
       return messageID
@@ -2067,7 +2138,7 @@ export class SessionRunner {
          * original refusal is left to stand.
          */
         const reason = failure instanceof Shown ? failure.reason : failure
-        if (rescued !== step && !controller.signal.aborted && isContextOverflow(describe(reason))) {
+        if (rescued !== step && !controller.signal.aborted && isOverflowError(reason, describe(reason))) {
           rescued = step
           const compacted = await this.compactForOverflow(session, controller.signal)
           if (!compacted) throw failure
@@ -2267,10 +2338,19 @@ export class SessionRunner {
         } catch (err) {
           if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) throw err
           /*
-           * MiMo retries a step only while replaying it is safe: once a tool
-           * call has started to stream, the attempt is not repeated.
+           * MiMo retries a step while replaying it is safe, and a tool call
+           * that has only begun to stream is still safe: its `retrySafe` turns
+           * false on the assembled `tool-call` event, not on the input-start or
+           * the argument deltas before it.
+           *
+           * This used to give up the moment a tool part had been announced -
+           * which is as soon as the name is known, with the arguments still
+           * streaming - so a socket dropped mid-arguments, the very case
+           * retrying exists for, ended the turn in red instead of being sent
+           * again. Nothing has run at this point either: tools execute after
+           * `stream` returns, and whatever streamed so far is dropped just
+           * below, so replaying the step repeats no side effect.
            */
-          if (assistant.parts.some((part) => part.type === "tool")) throw err
           firstFailure ??= Date.now()
           const decision = retryDecision(err, attempt, Date.now() - firstFailure)
           if (!decision) throw err
@@ -2429,7 +2509,12 @@ export class SessionRunner {
       const turn = this.turn(owner)
       // A shell command and an MCP tool leave no account of themselves, so the
       // turn is only describable if the project can be compared afterwards.
-      if (reach === "opaque") turn.opaque = true
+      if (reach === "opaque") {
+        turn.opaque = true
+        // The recording is told too: a file that changed while two turns were
+        // watching belongs to whichever of them could change one in silence.
+        turn.watching?.opaque()
+      }
       /*
        * Waited for here, and only here. The opening photograph has to be
        * finished before anything writes, or the write lands inside it and the
@@ -2722,8 +2807,8 @@ export class SessionRunner {
     this.numbering.set(counted, number)
     const name = `${type}-${number}`
 
-    // An explore subagent only reads, and nothing started from Plan may change anything either.
-    const agent: AgentName = type === "explore" || parent.agent === "plan" ? "plan" : "build"
+    // plan: an explore subagent only reads; anything else builds, even started from a planning turn (see subagentAgent).
+    const agent: AgentName = subagentAgent(type)
     const child = await this.store.create({
       directory: parent.directory,
       model,
@@ -3281,6 +3366,8 @@ interface Turn {
   told: Map<string, SnapshotFile>
   /** The project scan, when one could be started for this turn. */
   watching?: Recording
+  /** The project the turn ran in, for the ledger of which conversation wrote what. */
+  directory?: string
   /** True once a tool ran whose file changes cannot be seen from here. */
   opaque: boolean
   /**

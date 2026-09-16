@@ -126,7 +126,7 @@ function defaults(): AppConfig {
     agent: "build",
     staged: false,
     openTabs: [],
-    onboarded: false,
+    importOnboarded: false,
     expandShell: false,
     expandEdits: false,
     uiFont: "",
@@ -331,6 +331,8 @@ export class Config {
   private credentials: Record<string, string> = {}
   private oauth: Record<string, OAuthTokens> = {}
   private discovered: Record<string, ModelEntry[]> = {}
+  /** Whether a document was already on disk when this process read it; see the import migration. */
+  private existed = false
 
   constructor(
     private readonly storage: Storage,
@@ -431,20 +433,56 @@ export class Config {
       if (full && !this.current.allowFullAccess) this.current.allowFullAccess = true
     })
 
+    /*
+     * 导入: the one question about conversations in other AI apps belongs to a
+     * new profile's first run. A profile that has been running without it is
+     * marked as already asked, so an upgrade never opens a window over the
+     * conversations it already has - and nothing stored is touched either way.
+     */
+    once("import-prompt-r6", () => {
+      if (this.existed) this.current.importOnboarded = true
+    })
+
     if (moved) this.current.migrations = [...done]
     return moved
   }
 
   async load(): Promise<void> {
-    const stored = await this.storage.read<Partial<AppConfig>>("config")
+    /*
+     * A config that will not parse must not stop the app from opening.
+     *
+     * This used to throw straight out of the backend's start-up, so a half
+     * written or hand-edited config.json left the whole app unopenable with a
+     * syntax error and no interface left to fix it from - the very scenario the
+     * byte-order-mark note in the store describes, fixed there for one cause
+     * only. The reference never throws here either: an absent file is defaults,
+     * an unparseable one is an error it reports and carries on from.
+     *
+     * The damaged file is kept rather than written over, under a name of its
+     * own, so the settings in it can still be got back by hand.
+     */
+    const read = await this.storage.readOrCorrupt<Partial<AppConfig>>("config")
+    const stored = read.value
+    if (read.corrupt) {
+      const aside = await this.storage.quarantine("config")
+      this.unreadable = { problem: read.corrupt, evidence: aside }
+    }
+    /*
+     * A file that could not be read still means a profile that has been used
+     * before: treating it as a first run would offer to import from other apps
+     * on a machine that has been running MCode for months.
+     */
+    this.existed = stored !== undefined || read.corrupt !== undefined
     this.current = { ...defaults(), ...stored, permissions: storedPermissions(stored) }
     /*
      * A first install - no config on disk at all - starts where MiMo's does:
      * 帮我审批, with full access allowed. The user chose these (2026-09-15). Only
      * an absent file counts: a stored config that lacks the fields was written
-     * under the old defaults and keeps meaning them.
+     * under the old defaults and keeps meaning them. A file that is there but
+     * cannot be read is not a first install either - answering one with the
+     * first-install permissions would quietly change what this machine allows.
      */
-    if (stored === undefined) Object.assign(this.current, firstInstall())
+    if (stored === undefined && !read.corrupt) Object.assign(this.current, firstInstall())
     this.current.autoApprove = allowed(this.current.permissions)
     if (this.migrate()) await this.storage.write("config", this.current)
     this.discovered = (await this.storage.read<Record<string, ModelEntry[]>>("models")) ?? {}
@@ -459,6 +497,14 @@ export class Config {
       this.oauth = {}
     }
   }
+
+  /**
+   * Set when the stored config would not parse, with where it was kept.
+   *
+   * The app opens on the defaults either way; this is what lets it say so
+   * rather than leaving the reader to wonder where their settings went.
+   */
+  unreadable: { problem: string; evidence?: string } | undefined
 
   /** The last credential write, so two of them cannot interleave. */
   private persisting: Promise<void> = Promise.resolve()

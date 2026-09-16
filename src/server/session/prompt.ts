@@ -39,8 +39,15 @@ export interface PromptContext {
   globalAgentsFile?: string
   /** Whether the conversation works in stages. */
   staged?: boolean
-  /** MiMo's `instructions` setting: more instruction files, by glob, looked for up to the repository's top. */
+  /**
+   * MiMo's `instructions` setting: more instruction files, by glob, looked for
+   * up to the repository's top, and web addresses, which are fetched.
+   */
   instructionFiles?: string[]
+  /** The home folder whose `.claude/CLAUDE.md` is read; a check points it somewhere harmless. */
+  home?: string
+  /** How a web address in `instructionFiles` is fetched; a check answers without a network. */
+  fetchInstruction?: (url: string) => Promise<string>
   /** skills: every skill the conversation can reach; the ones kept from the model are left out of the list. */
   skills?: SkillInfo[]
   /** memory: the memory files a top-level conversation keeps; absent for a subagent. */
@@ -139,7 +146,10 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
     )
   }
 
-  const instructions = await projectInstructions(context.directory, context.instructionFiles ?? [])
+  const instructions = await projectInstructions(context.directory, context.instructionFiles ?? [], {
+    home: context.home,
+    fetch: context.fetchInstruction,
+  })
   if (instructions) {
     sections.push(`## Project instructions\n\nThese come from the project itself and take precedence over the general guidance above.\n\n${instructions}`)
   }
@@ -191,18 +201,66 @@ function skillsSection(skills: readonly SkillInfo[]): string {
 }
 
 /**
- * A project's instruction files, as MiMo gathers them.
+ * MiMo's timeout for an instruction file fetched over the web (`Instruction.system`,
+ * `HttpClientRequest.get(url).timeout(5000)`). Anything slower is left out.
+ */
+export const INSTRUCTION_FETCH_MS = 5000
+
+/**
+ * One web address named by the `instructions` setting.
+ *
+ * MiMo fetches these on the way into the system prompt; the user decided on
+ * 2026-09-16 that MCode does too, so a turn may reach the network for them.
+ * As MiMo does, anything that goes wrong - a refusal, a bad status, a timeout -
+ * is the empty string rather than an error: an instruction file that cannot be
+ * had must not stop the conversation.
+ */
+export async function fetchInstruction(url: string): Promise<string> {
+  if (!/^https?:\/\//i.test(url)) return ""
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), INSTRUCTION_FETCH_MS)
+  try {
+    const response = await fetch(url, { signal: controller.signal, redirect: "follow" })
+    if (!response.ok) return ""
+    return (await response.text()).trim()
+  } catch {
+    return ""
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** Where the instruction files that are not a project's own are looked for, in MiMo's order: the first that exists wins. */
+export function globalInstructionFiles(home: string): string[] {
+  return [path.join(home, ".claude", "CLAUDE.md")]
+}
+
+/**
+ * A project's instruction files, as MiMo gathers them (`Instruction.systemPaths`).
  *
  * Every AGENTS.md from the working folder up to the repository's top, nearest
  * first, so a package inside a monorepo reads its own and the root's. While
  * those say less than 500 characters, CLAUDE.md files on the same path join
  * them; with no AGENTS.md at all, the CLAUDE.md files stand in, and failing
- * those the CONTEXT.md files. Then the files the `instructions` setting names,
- * each pattern looked for in the same folders - a web address is left out,
- * since reading it would reach the network. MCode's own `.mcode/rules.md` in
- * the working folder is read last. Each file once, labelled with its path.
+ * those the CONTEXT.md files.
+ *
+ * Then the global instruction file - `~/.claude/CLAUDE.md`, the first of the
+ * global candidates that exists - as MiMo adds its own after the project's and
+ * before the configured ones (the user's 2026-09-16 decision; MCode's own
+ * global AGENTS.md is a separate section of the prompt).
+ *
+ * Then the files the `instructions` setting names: each pattern looked for in
+ * the same folders, and each web address fetched, both as MiMo does. MCode's
+ * own `.mcode/rules.md` in the working folder is read last. Each file once,
+ * labelled with where it came from.
  */
-async function projectInstructions(directory: string, patterns: readonly string[]): Promise<string> {
+async function projectInstructions(
+  directory: string,
+  patterns: readonly string[],
+  options: { home?: string; fetch?: (url: string) => Promise<string> } = {},
+): Promise<string> {
+  const home = options.home ?? os.homedir()
+  const get = options.fetch ?? fetchInstruction
   const folders = await foldersUp(directory)
   const read = async (file: string) => ((await fs.readFile(file, "utf8").catch(() => "")) as string).trim()
   const named = async (name: string) => {
@@ -223,9 +281,17 @@ async function projectInstructions(directory: string, patterns: readonly string[
     chosen = claude.length ? claude : await named("CONTEXT.md")
   }
 
+  for (const file of globalInstructionFiles(home)) {
+    const content = await read(file)
+    if (content) {
+      chosen.push({ file, content })
+      break
+    }
+  }
+
   for (const pattern of patterns) {
     if (/^https?:\/\//i.test(pattern)) continue
-    const expanded = pattern.startsWith("~/") ? path.join(os.homedir(), pattern.slice(2)) : pattern
+    const expanded = pattern.startsWith("~/") ? path.join(home, pattern.slice(2)) : pattern
     const places = path.isAbsolute(expanded) ? [path.dirname(expanded)] : folders.map((folder) => path.join(folder, path.dirname(expanded)))
     const matcher = globToRegExp(path.basename(expanded))
     for (const place of places) {
@@ -243,7 +309,7 @@ async function projectInstructions(directory: string, patterns: readonly string[
   if (ruleText) chosen.push({ file: rules, content: ruleText })
 
   const seen = new Set<string>()
-  return chosen
+  const local = chosen
     .filter((entry) => {
       const key = path.resolve(entry.file).toLowerCase()
       if (seen.has(key)) return false
@@ -251,7 +317,13 @@ async function projectInstructions(directory: string, patterns: readonly string[
       return true
     })
     .map((entry) => `<instructions source="${entry.file}">\n${entry.content}\n</instructions>`)
-    .join("\n\n")
+
+  /* The web addresses last, each once, in the order they were configured. */
+  const urls = [...new Set(patterns.filter((pattern) => /^https?:\/\//i.test(pattern)))]
+  const fetched = await Promise.all(urls.map((url) => get(url).catch(() => "")))
+  const remote = urls.flatMap((url, at) => (fetched[at] ? [`<instructions source="${url}">\n${fetched[at]}\n</instructions>`] : []))
+
+  return [...local, ...remote].join("\n\n")
 }
 
 async function environment(directory: string): Promise<string> {

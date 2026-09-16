@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { AGENT_NAMES, DEFAULT_PERMISSIONS, PERMISSION_KINDS } from "@shared/protocol"
+import { AGENT_NAMES, DEFAULT_PERMISSIONS, IMPORT_SOURCES, PERMISSION_KINDS } from "@shared/protocol"
 import type { Worktree } from "@shared/protocol"
 import { useApp } from "./stores/app"
 import Sidebar from "./components/Sidebar.vue"
@@ -41,7 +41,7 @@ import type { MenuItem } from "./lib/menu"
 import ConnectDialog from "./components/ConnectDialog.vue"
 import SearchOverlay from "./components/SearchOverlay.vue"
 import ErrorBoundary from "./components/ErrorBoundary.vue"
-import Onboarding from "./components/Onboarding.vue"
+import ImportDialog from "./components/ImportDialog.vue"
 import {
   LANGUAGES,
   RTL_LANGUAGES,
@@ -59,15 +59,16 @@ import { draftFromMessage, provideRestoreDraft } from "./lib/draft"
 import { cycleVariant, findModel } from "./lib/model"
 import { PANEL_MIN_WIDTH, useRightPanel } from "./stores/right-panel"
 import { arbitratePanel, boundChord, clampSideWidth, sideFits, toolHints } from "./lib/right-tools"
-import { exportConversationById, exportConversationMarkdown, saveExport, transcriptOf } from "./lib/convo-export"
+import { exportConversationById, exportConversationMarkdown, transcriptOf } from "./lib/convo-export"
 import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/toast"
+import { openDocument } from "./lib/office-open"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
-import { hush, speak } from "./lib/voice"
 import { folderName, projectName } from "./lib/project"
 import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
+import { sessionGroup } from "@shared/session-group"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
@@ -1126,12 +1127,6 @@ watch(
   },
   { immediate: true },
 )
-/**
- * First run takes over the whole workspace until a provider is connected or
- * the step is skipped - an empty launcher would give no hint that the app
- * needs a key before it can do anything.
- */
-const onboarding = computed(() => app.connected && app.config !== undefined && !app.config.onboarded)
 const isArtifacts = computed(() => view.value === "artifacts")
 const isPlugins = computed(() => view.value === "plugins")
 const isHome = computed(
@@ -1141,15 +1136,13 @@ const isHome = computed(
 const empty = computed(() => app.messages.length === 0 && app.loadingID !== app.currentID)
 
 /*
- * The terminal docks along the foot of the main column. Not during onboarding
- * or on the artifacts and plugins pages; on the home screen, as MiMo allows,
- * once there is a project folder for it to open in, since no conversation has
- * one yet.
+ * The terminal docks along the foot of the main column. Not on the artifacts
+ * and plugins pages; on the home screen, as MiMo allows, once there is a
+ * project folder for it to open in, since no conversation has one yet.
  */
 const terminalUp = computed(
   () =>
     terminalOpen.value &&
-    !onboarding.value &&
     !isArtifacts.value &&
     !isPlugins.value &&
     (!isHome.value || Boolean(homeShellDirectory.value)),
@@ -1163,7 +1156,7 @@ const terminalUp = computed(
  */
 const rp = useRightPanel()
 watch(
-  () => (isHome.value || onboarding.value ? undefined : app.currentID),
+  () => (isHome.value ? undefined : app.currentID),
   (scope) => rp.setScope(scope),
   { immediate: true },
 )
@@ -1184,18 +1177,18 @@ watch(
 )
 
 /* The panel on screen beside the main column, whose title row then ends at the column. */
-const panelBeside = computed(() => rp.open && !onboarding.value)
+const panelBeside = computed(() => rp.open)
 
 /* What the panel's tools work in: the conversation's project, or the one picked on the home screen. */
 const panelDirectory = computed(() => (isHome.value ? homeShellDirectory.value : app.current?.directory))
 
 /* The title bar's button and Ctrl+Alt+B: the panel, with its launcher while it holds no tabs. */
 function toggleSidePanel() {
-  if (!onboarding.value) rp.toggleOpen()
+  rp.toggleOpen()
 }
 
 /* MiMo's tool shortcuts ask for a conversation: on the home screen they do nothing. */
-const inConversation = computed(() => !isHome.value && !onboarding.value && Boolean(app.currentID))
+const inConversation = computed(() => !isHome.value && Boolean(app.currentID))
 
 /*
  * The box goes into MiMo's floating chat while the panel is expanded over the
@@ -1253,7 +1246,6 @@ let sideAutoFolded = false
 watch(
   [windowWidth, leftPanel, () => rp.open, () => rp.width, () => rp.fullscreen],
   ([viewport, sideOpen], [, sideBefore]) => {
-    if (onboarding.value) return
     if (sideOpen) sideAutoFolded = false
     const room = { viewport, sideWidth: sideWidth.value, sideOpen, panelOpen: rp.open, panelWidth: Math.max(PANEL_MIN_WIDTH, rp.width), fullscreen: rp.fullscreen }
     const outcome = arbitratePanel(room, sideOpen && !sideBefore)
@@ -1347,9 +1339,31 @@ watch(reviewRequest, () => {
     rp.setOpen(true)
   } else rp.openTool("review")
 })
-watch(fileRequest, (asked) => {
-  const root = app.current?.directory
-  if (asked && root) void window.mcode.openFile(root, asked.path)
+/**
+ * A file named on the edited-files card, opened the way MiMo opens one.
+ *
+ * The recorded path is resolved first - against the project as well as as it
+ * stands - and a path that is no longer there is said so rather than doing
+ * nothing. What can be previewed opens in the panel (a document in the Office
+ * tab, anything else in the files tab, rooted at its own folder when it lies
+ * outside the project); a folder is shown in the system's file manager. Nothing
+ * is handed to an external editor any more.
+ */
+watch(fileRequest, async (asked) => {
+  if (!asked) return
+  const root = app.current?.directory?.replace(/[\\/]+$/, "")
+  const candidates = [asked.path, ...(root ? [`${root}/${asked.path}`] : [])]
+  const found = await window.mcode.resolveExistingPath(candidates).catch(() => null)
+  if (!found) {
+    notifyFailure(t("harnessRow.pathNotExist"))
+    return
+  }
+  if (found.directory) {
+    const shown = await window.mcode.revealPath(found.path).catch(() => ({ ok: false, error: "" }))
+    if (!shown.ok) notifyFailure(t("harnessRow.revealFailed", { error: shown.error ?? "" }))
+    return
+  }
+  await openDocument({ path: found.path }, root)
 })
 
 function copyWorkingDirectory() {
@@ -1497,6 +1511,23 @@ async function focusComposer() {
 
 /** Reachable from the model menu, so an empty list has somewhere to go. */
 const connectOpen = ref(false)
+
+/**
+ * 导入: the first run's one question about conversations in other AI apps.
+ *
+ * Opened only when a source actually holds something, and the profile is marked
+ * as asked either way - so a machine is asked once, as MiMo asks once.
+ */
+const importOpen = ref(false)
+
+async function askAboutImport() {
+  if (!app.config || app.config.importOnboarded) return
+  const answer = await app.client?.request({ type: "import.scan" }).catch(() => undefined)
+  if (!answer || answer.asked) return
+  await app.patchConfig({ importOnboarded: true }, { quiet: true }).catch(() => undefined)
+  const scan = answer.scan
+  importOpen.value = IMPORT_SOURCES.some((source) => scan[source].available && scan[source].sessions > 0)
+}
 
 /** The session waiting on an answer before it is removed for good. */
 const deletingSession = ref<string>()
@@ -1747,7 +1778,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
  * kept below whatever the search leaves.
  */
 function moveMenu(target?: (typeof app.sessions)[number]): Pick<MenuItem, "children" | "search" | "footer" | "childWidth"> {
-  const current = target && !target.scratch ? target.directory : undefined
+  const current = target ? sessionGroup(target) : undefined
   const rows: MenuItem[] = app.projects.map((directory) => ({
       key: `move:${directory}`,
       label: projectName(directory, app.config?.projectNames),
@@ -1999,7 +2030,8 @@ async function runSessionMenu(key: string) {
   // A project chosen in the move submenu.
   if (key.startsWith("move:")) {
     const directory = key.slice("move:".length)
-    if (app.sessions.find((entry) => entry.id === target)?.directory !== directory) await app.move(target, directory)
+    const moving = app.sessions.find((entry) => entry.id === target)
+    if (moving && sessionGroup(moving) !== directory) await app.move(target, directory)
     return
   }
   const own = ROW_ACTIONS[key]
@@ -2126,16 +2158,6 @@ function transcriptMarkdown(): string {
  * transcript drops them: this is the format meant to be parsed, so leaving
  * parts out would defeat it.
  */
-function exportFilename(): string {
-  const session = app.current
-  const raw = session ? sessionTitle(session.title) || session.id : "session"
-  const clean = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/gi, "-")
-    .replace(/^-+|-+$/g, "")
-  return `${clean || session?.id || "session"}.json`
-}
-
 /**
  * Says that writing a file did not work, and leaves the app alone otherwise.
  *
@@ -2165,12 +2187,6 @@ function reportSaveFailure(what: string, failure: unknown): void {
 function reasonOf(failure: unknown): string {
   const raw = failure instanceof Error ? failure.message : String(failure)
   return raw.replace(/^Error invoking remote method '[^']*':\s*/, "")
-}
-
-/* Round 3 AR17-AR18 (artifacts agent): MiMo's file name and single-line toasts, shared with the row menu's export. */
-async function exportSessionData() {
-  if (!app.current) return
-  await saveExport(exportFilename(), JSON.stringify({ info: app.current, messages: app.messages }, null, 2))
 }
 
 async function exportSession() {
@@ -2653,13 +2669,6 @@ const bindableCommands = computed((): AppCommand[] => {
       title: t("share.session"),
       enabled: hasSession && app.messages.length > 0,
       run: shareSession,
-    },
-    {
-      id: "session.export",
-      group: "key.groupSession",
-      title: t("cmd.export"),
-      enabled: hasSession && app.messages.length > 0,
-      run: exportSessionData,
     },
     {
       id: "session.exportMarkdown",
@@ -3766,7 +3775,7 @@ function noticeAbout(sessionID: string) {
   return {
     sessionID,
     title: session ? sessionTitle(session.title) : undefined,
-    project: session && !session.scratch ? projectName(session.directory, app.config?.projectNames) : undefined,
+    project: session && sessionGroup(session) ? projectName(sessionGroup(session)!, app.config?.projectNames) : undefined,
   }
 }
 
@@ -3784,9 +3793,8 @@ function flushNotices() {
   }
 }
 
-/* Coming back to the window cuts off whatever was being read out; leaving it sends what was held. */
+/* Leaving the window sends what was held. */
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) hush()
   flushNotices()
 })
 watch([() => app.currentID, isHome], flushNotices)
@@ -3806,8 +3814,6 @@ watch(
     if (choice !== "off" && longTask(turn.elapsed)) chime(choice)
     const about = noticeAbout(turn.sessionID)
     recordLog("INFO", about.title ?? turn.sessionID)
-    // A short phrase read aloud is for someone who has looked away.
-    if (app.config?.voiceFeedback && document.hidden) speak(t("voice.said.agent"), language.value)
     if (app.config?.notifyAgent === false) return
     // automation: a scheduled task's run is told about by its own policy, below.
     if (app.automationRuns.has(turn.sessionID)) return
@@ -3868,10 +3874,9 @@ watch(
   },
   (message) => {
     if (!message) return
-    // Logged, with its cue and spoken line if they are on; MiMo sends no notification for a failure.
+    // Logged, with its cue if that is on; MiMo sends no notification for a failure.
     recordLog("ERROR", message)
     if (app.config?.soundError) play("error")
-    if (app.config?.voiceFeedback && document.hidden) speak(t("voice.said.error"), language.value)
   },
 )
 
@@ -3951,6 +3956,8 @@ onMounted(async () => {
   window.addEventListener("keydown", onKeydown)
   window.addEventListener("keyup", endRecentWalk)
   window.addEventListener("blur", forgetRecentWalk)
+  // MiMo re-reads the working tree whenever its window comes back; the review tab reads on this.
+  window.addEventListener("focus", app.bumpFsNonce)
   schemeQuery.addEventListener("change", onSchemeChange)
   window.addEventListener("wheel", onWheel, { passive: false })
   offMenu = window.mcode.onMenu(runMenuCommand)
@@ -3984,12 +3991,8 @@ async function boot() {
     return
   }
 
-  // A key already present in the environment means setup is effectively done;
-  // marking it so keeps the gate a single flag, which is what lets the Settings
-  // reset bring the page back even with a provider still connected.
-  if (app.config && !app.config.onboarded && app.providers.some((entry) => entry.configured)) {
-    await app.patchConfig({ onboarded: true })
-  }
+  // 导入: asked once, on a first run, and only when another AI app has something.
+  void askAboutImport()
   if (app.currentID) view.value = "session"
 
   // MiMo opens again on the conversation whose draft was on screen when the app closed.
@@ -4058,6 +4061,7 @@ onBeforeUnmount(() => {
   window.removeEventListener("keydown", onKeydown)
   window.removeEventListener("keyup", endRecentWalk)
   window.removeEventListener("blur", forgetRecentWalk)
+  window.removeEventListener("focus", app.bumpFsNonce)
   schemeQuery.removeEventListener("change", onSchemeChange)
   window.removeEventListener("wheel", onWheel)
   offMenu?.()
@@ -4070,7 +4074,6 @@ onBeforeUnmount(() => {
   <div class="app" :data-platform="app.platform || undefined">
     <!-- MiMo's one title-bar button on the right, on every screen: the side panel. -->
     <button
-      v-if="!onboarding"
       class="side-panel-toggle"
       :class="{ on: rp.open }"
       :aria-pressed="rp.open"
@@ -4086,7 +4089,6 @@ onBeforeUnmount(() => {
     <div
       class="body"
       :class="{
-        blank: !isHome && !onboarding && empty && !app.error,
         /* The side panel expanded over the main column. */
         'panel-full': rp.open && rp.fullscreen,
       }"
@@ -4094,7 +4096,6 @@ onBeforeUnmount(() => {
       <!-- MiMo's per-region boundaries: a region that fails to render shows its own strip. -->
       <ErrorBoundary :reset-key="view">
       <Sidebar
-        v-if="!onboarding"
         :collapsed="!leftPanel"
         :page="view"
         :priority="priorityFilter"
@@ -4134,7 +4135,7 @@ onBeforeUnmount(() => {
         <ErrorBoundary :reset-key="`${view}:${app.currentID ?? ''}`">
         <!-- A turn can run for minutes; the bar is the only thing that says so
              without the user watching the transcript for movement. -->
-        <div v-if="app.busy && !onboarding" class="progress"><span /></div>
+        <div v-if="app.busy" class="progress"><span /></div>
 
         <!--
           Ahead of everything else: if the backend never opened there is no
@@ -4148,8 +4149,6 @@ onBeforeUnmount(() => {
             {{ t("boot.useLocal") }}
           </button>
         </div>
-
-        <Onboarding v-else-if="onboarding" @done="app.patchConfig({ onboarded: true })" />
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
 
@@ -4165,7 +4164,7 @@ onBeforeUnmount(() => {
           @terminal="terminalOpen = true"
         />
 
-        <template v-else-if="!onboarding">
+        <template v-else>
           <!--
             The header is not part of the empty state.
             
@@ -4269,7 +4268,7 @@ onBeforeUnmount(() => {
           wins over that strip's drag. Unlit when pressed, as MiMo's is.
         -->
         <button
-          v-if="isHome && !onboarding"
+          v-if="isHome"
           class="home-bottom"
           :aria-pressed="terminalUp"
           :disabled="!homeShellDirectory"
@@ -4288,11 +4287,20 @@ onBeforeUnmount(() => {
           has it: the full width of this column, under the composer, with its
           own edge to drag. Not in the right-hand column, which is the review's.
         -->
-        <!-- The drawer styles bp-enter/leave itself; out-in so a new home folder closes one drawer before opening the next. -->
-        <Transition name="bp" mode="out-in">
+        <!--
+          The drawer styles bp-enter/leave itself. Deliberately unkeyed: MiMo
+          keeps one bottom panel whose tabs outlive the view, so stepping from
+          the home screen into a conversation must not remount it. It used to
+          be keyed by view and folder, which threw the tab list away - a dev
+          server started at home vanished from the drawer the moment a
+          conversation opened, still running with nothing attached to it. The
+          drawer already answers a change of folder by itself: an untouched
+          terminal is restarted in the new one and a used one gets MiMo's
+          notice above it.
+        -->
+        <Transition name="bp">
           <TerminalDrawer
             v-if="terminalUp"
-            :key="isHome ? `home:${homeShellDirectory}` : 'session'"
             ref="drawer"
             :sessionID="isHome ? undefined : app.currentID"
             :directory="isHome ? homeShellDirectory : undefined"
@@ -4302,7 +4310,7 @@ onBeforeUnmount(() => {
         </Transition>
 
         <!-- MiMo's drop overlay over the main column; the drop itself is the composer's. -->
-        <div v-if="fileDrag && !onboarding" class="drop-overlay" data-drop-overlay aria-hidden="true">
+        <div v-if="fileDrag" class="drop-overlay" data-drop-overlay aria-hidden="true">
           <div class="drop-card">{{ t("composer.dropOverlay") }}</div>
         </div>
         </ErrorBoundary>
@@ -4313,13 +4321,12 @@ onBeforeUnmount(() => {
 
       <!-- MiMo's annotation box, for a selection in a reply or the files tab's code, or a whole file. -->
       <!-- The video preview is the one modal the box works over: its boxed regions are annotated with it. -->
-      <AnnotationComposer v-if="!onboarding" :scope="annotationScope" :disabled="modalOpen && !videoPreview" />
-      <AnnotationMarkers v-if="!onboarding" :mainScope="annotationScope" :disabled="modalOpen" />
+      <AnnotationComposer :scope="annotationScope" :disabled="modalOpen && !videoPreview" />
+      <AnnotationMarkers :mainScope="annotationScope" :disabled="modalOpen" />
 
       <!-- MiMo's right panel: tabs beside the conversation, or its launcher while it holds none. -->
       <ErrorBoundary :reset-key="app.currentID ?? ''">
       <RightPanel
-        v-if="!onboarding"
         ref="rightPanel"
         :sessionID="isHome ? undefined : app.currentID"
         :directory="panelDirectory"
@@ -4435,6 +4442,7 @@ onBeforeUnmount(() => {
 
   </div>
   <ConnectDialog v-if="connectOpen" @close="connectOpen = false" />
+  <ImportDialog v-if="importOpen" @close="importOpen = false" />
   <ImagePreview />
   <VideoPreview />
 
@@ -4528,7 +4536,7 @@ onBeforeUnmount(() => {
   <Toasts />
 
   <!-- Last in the document on purpose: see .rail-no-drag. -->
-  <div v-if="!leftPanel && !onboarding" class="rail-no-drag" aria-hidden="true" />
+  <div v-if="!leftPanel" class="rail-no-drag" aria-hidden="true" />
   <!-- MiMo's exit-full-screen button: Windows only, where full screen hides the overlay caption buttons. -->
   <button
     v-if="app.platform === 'win32' && fullScreen"
@@ -4543,7 +4551,7 @@ onBeforeUnmount(() => {
       <path d="M8 3v3a2 2 0 0 1-2 2H3M21 8h-3a2 2 0 0 1-2-2V3M3 16h3a2 2 0 0 1 2 2v3M16 21v-3a2 2 0 0 1 2-2h3" />
     </svg>
   </button>
-  <div v-if="!onboarding" class="toggles-no-drag" aria-hidden="true" />
+  <div class="toggles-no-drag" aria-hidden="true" />
 </template>
 
 <style scoped>
@@ -4618,64 +4626,37 @@ onBeforeUnmount(() => {
 }
 
 /*
- * The workspace is a single raised panel, inset from all three free edges and
- * from the title bar above it. Everything the session is made of - the side
- * panels included - lives on this one plane, which is what leaves the window
- * reading as a frame around the work rather than as more of the same colour.
- */
-/*
- * Two cards with a gutter between them, not one card with a divider in it.
+ * One flush plane, not cards floating on a frame.
  *
- * Measured on the reference with its review panel open: its conversation is a
- * card at `8,44 600x861` and its panel another at `616,44 829x861` - both on a
- * 10px radius over rgb(22,22,22), both inset 8 from the window, and 8 apart.
- * This was a single card that the panel divided with a 1px line, so the two
- * regions read as halves of one sheet rather than as two surfaces.
- *
- * The row itself now paints nothing; the fill and the corners belong to the
- * regions inside it, which is what lets the gutter show through.
+ * MiMo's `<main>` is `flex min-w-0 flex-1 flex-col overflow-hidden bg-panel
+ * shadow-[var(--shadow-panel)]` with no margin, no radius and no gutter, and
+ * `--shadow-panel` is `none` in both schemes - so the workspace never lifts off
+ * the window at all. What divides it from the side column is a single hairline:
+ * main carries `border-left: 1px solid var(--color-line-soft)`, and the side
+ * panel beyond it carries its own leading border. The only rounding left
+ * anywhere is the side panel's own full-screen state.
  */
 .body {
   position: relative;
   display: flex;
   flex: 1;
-  gap: 8px;
   min-height: 0;
-  margin: 8px;
-}
-
-/* Each region is its own card. */
-.body > .main,
-.body > .panel-host {
-  overflow: hidden;
-  background: var(--surface-raised);
-  border-radius: 10px;
 }
 
 /*
- * Only the panel is raised, and its shadow is elevation/raised - measured layer
- * for layer on the reference, whose conversation card computes `box-shadow:
- * none` while its review panel carries the full four. The asymmetry is the part
- * that could not have been guessed: the panel sits above the conversation
- * rather than the two lying in the same plane.
+ * The conversation's plane, flush to the column beside it. The hairline is
+ * MiMo's `--color-line-soft` - fainter than the lines inside the panel, because
+ * it separates two surfaces rather than two rows.
  */
-.body > .panel-host {
-  box-shadow: var(--shadow-md);
+.body > .main {
+  overflow: hidden;
+  background: var(--surface-raised);
+  border-inline-start: 1px solid var(--border-muted);
 }
 
 /* The docked terminal keeps the height it was dragged to; the transcript gives way. */
 .main > .drawer {
   flex: none;
-}
-
-/*
- * A session with nothing in it is set down rather than lifted. The plane itself
- * is the same one a transcript sits on - the reference changes only the
- * elevation, and painting the panel the frame's own colour instead left the
- * composer's fill showing as a band across the foot of an empty session.
- */
-.body.blank {
-  box-shadow: none;
 }
 
 .main {
@@ -4886,6 +4867,35 @@ onBeforeUnmount(() => {
 .app[data-platform="win32"] .home-bottom svg {
   width: 12px;
   height: 12px;
+}
+
+/*
+ * MiMo warms its light theme on Windows and Linux, and only there:
+ * `html:not([data-theme=dark]) #app.plat-win32, ... #app.plat-linux` sets a
+ * warm-grey side column (#f8f7f5) against the white main plane, with warm
+ * lines (#f0ebe5) instead of neutral ones. macOS keeps the neutral set, and
+ * dark is untouched in every platform.
+ *
+ * Written as the positive light condition rather than `:not(dark)`, and hung on
+ * `.app` rather than `:root`: the palette is written inline onto <html> at boot,
+ * so only a rule matching a descendant of it can win.
+ */
+:root[data-theme="light"] .app[data-platform="win32"],
+:root[data-theme="light"] .app[data-platform="linux"] {
+  --surface-base: #f8f7f5;
+  --surface-hover: #f1f0ec;
+  --surface-selected: #eeedec;
+  --border-weak: #f0ebe5;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .app[data-platform="win32"],
+  :root:not([data-theme="dark"]) .app[data-platform="linux"] {
+    --surface-base: #f8f7f5;
+    --surface-hover: #f1f0ec;
+    --surface-selected: #eeedec;
+    --border-weak: #f0ebe5;
+  }
 }
 
 .side-panel-toggle:hover,

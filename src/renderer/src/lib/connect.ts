@@ -6,9 +6,9 @@ import { t } from "./i18n"
  *
  * A brand can be several providers underneath - a ChatGPT subscription and the
  * metered OpenAI API are different endpoints with different credentials - but
- * to someone connecting an account they are one vendor offering a choice. This
- * lived inside the onboarding wizard; the settings page and the connect dialog
- * need the same answer, and three copies would drift.
+ * to someone connecting an account they are one vendor offering a choice. The
+ * settings page and the connect dialog need the same answer, and two copies
+ * would drift.
  */
 
 export interface Group {

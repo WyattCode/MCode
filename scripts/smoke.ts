@@ -101,6 +101,7 @@ import {
 } from "../src/server/handlers"
 import { PROJECT_LIST_MIGRATION, customModelOf } from "../src/server/config"
 import { listedProjects, projectsByRecency, reconciledProjects } from "../src/shared/projects"
+import { sessionGroup } from "../src/shared/session-group"
 import { askGithub, githubRepository, hasGithubRemote, pullRequestFrom, pullRequestState, type FetchLike, type GitRunner } from "../src/server/pull-request"
 import type { AppConfig, ResponseMap } from "../src/shared/protocol"
 import { closeHidesToTray } from "../src/shared/protocol"
@@ -145,7 +146,7 @@ import {
   toggleChoice,
 } from "../src/renderer/src/lib/confirm-queue"
 import type { PermissionRequest, QuestionRequest } from "../src/shared/protocol"
-import { parseUnifiedDiff, reverseSection } from "../src/shared/unified-diff"
+import { parseUnifiedDiff, recountedSection, reverseSection, sectionPatch } from "../src/shared/unified-diff"
 import { annotationsBlock } from "../src/shared/annotations"
 import { revertTurnFiles } from "../src/server/session/turn-revert"
 import { branchTitle } from "../src/server/session/store"
@@ -279,6 +280,10 @@ import { chatLinkText, convoCard, sortedChatLinks } from "../src/renderer/src/li
 import type { ChatLink, Message as ChatMessage, UserMessage as ChatUserMessage } from "../src/shared/protocol"
 
 import { roundFiveChecks } from "./smoke-round5"
+// round 6: the eight differences the user decided on 2026-09-16 to close.
+import { roundSixChecks } from "./smoke-round6"
+// The round-six audit of failures and edge cases (F1 onwards).
+import { failureChecks } from "./smoke-failures"
 // skills: discovery, frontmatter and the slash list.
 import { parseFrontmatter } from "../src/server/frontmatter"
 import { builtinSkillsRoot, discoverSkills, isSkillPath, skillReminders, withSkillReminders } from "../src/server/skill"
@@ -470,39 +475,51 @@ async function main() {
   await call({ type: "session.delete", sessionID: unplaced.session.id })
 
   /*
-   * "Move out of project" from a conversation's menu: it leaves for a fresh
-   * folder of its own and is marked as having no project; moving it into a
-   * project again clears that mark, and a session that does not exist is
-   * refused before any folder is made.
+   * 移动至项目 and 移出项目, as MiMo's `moveToProject` does them: the grouping
+   * label moves and nothing else. The folder the conversation works in stays
+   * where it was, so its commands, its relative paths and its per-project
+   * approvals all still point at the same place.
    */
+  const other = path.join(project, "another-project")
+  await fs.mkdir(other, { recursive: true })
   const leaving = await call({ type: "session.create", directory: project })
-  const left = await call({ type: "session.moveOut", sessionID: leaving.session.id })
-  const leftStat = await fs.stat(left.session.directory).catch(() => undefined)
+  const foldersBefore = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
+  const moved = await call({ type: "session.move", sessionID: leaving.session.id, directory: other })
   check(
-    "moving a conversation out of its project gives it a folder of its own",
-    left.session.id === leaving.session.id &&
-      left.session.scratch === true &&
-      path.dirname(left.session.directory) === process.env.MCODE_SCRATCH_ROOT &&
-      leftStat?.isDirectory() === true,
-    left.session,
+    "moving a conversation to another project changes only the grouping label",
+    moved.session.group === other && moved.session.directory === project && moved.session.scratch === undefined,
+    moved.session,
+  )
+  check("the conversation is filed under the project it was moved to", sessionGroup(moved.session) === other, sessionGroup(moved.session))
+  const left = await call({ type: "session.moveOut", sessionID: leaving.session.id })
+  const foldersAfter = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
+  check(
+    "moving out of a project files it under none and still makes no folder",
+    left.session.group === "" && sessionGroup(left.session) === undefined && left.session.directory === project && foldersAfter === foldersBefore,
+    { session: left.session, foldersBefore, foldersAfter },
   )
   const returned = await call({ type: "session.move", sessionID: leaving.session.id, directory: project })
   check(
-    "moving it into a project again drops the no-project mark",
-    returned.session.scratch === undefined && returned.session.directory === project,
+    "moving it back to its own project files it there again",
+    sessionGroup(returned.session) === project && returned.session.directory === project,
     returned.session,
   )
-  const foldersBefore = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
   const moveOutRefused = await call({ type: "session.moveOut", sessionID: "ses_missing" }).then(
     () => false,
     () => true,
   )
-  const foldersAfter = (await fs.readdir(process.env.MCODE_SCRATCH_ROOT!)).length
-  check("moving out a session that does not exist is refused and makes no folder", moveOutRefused && foldersAfter === foldersBefore, {
-    moveOutRefused,
-    foldersBefore,
-    foldersAfter,
-  })
+  check("moving out a session that does not exist is refused", moveOutRefused)
+  /*
+   * Conversations stored before the label existed: one in a project and one
+   * with a folder of its own. Neither carries a label, and both must be filed
+   * exactly where they always were.
+   */
+  const storedInProject = { directory: project, updated: 1, scratch: undefined, group: undefined }
+  const storedWithoutProject = { directory: path.join(project, "made-for-it"), updated: 1, scratch: true, group: undefined }
+  check(
+    "a conversation stored before the label is still filed by the folder it works in",
+    sessionGroup(storedInProject) === project && sessionGroup(storedWithoutProject) === undefined,
+  )
   await call({ type: "session.delete", sessionID: leaving.session.id })
 
   /*
@@ -2128,10 +2145,83 @@ async function main() {
       ],
       time: { created: 0 },
     }
-    const reverted = await revertTurnFiles(root, [turnMessage])
-    check("a turn revert restores, removes and skips outside", reverted.restored === 1 && reverted.removed === 1 && reverted.outside === 1 && reverted.failed === 0, reverted)
-    check("the edited file is back to the turn's start", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\n2\nthree\n")
-    check("the created file is gone", !(await exists(path.join(root, "made.txt"))))
+    /*
+     * Taking a turn back goes through git, as MiMo's does. Outside a
+     * repository it refuses and writes nothing; inside one it reverse-applies
+     * the turn's patches, recomputes a patch whose hunk later edits have
+     * moved, and falls back to `git checkout --` for a tracked file whose
+     * lines are gone altogether.
+     */
+    const refused = await revertTurnFiles(root, [turnMessage])
+    check("outside a repository a revert refuses and touches nothing", refused.noRepo === true && refused.restored === 0 && refused.removed === 0, refused)
+    check("the file the refusal did not touch is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
+    check("the file the refusal did not touch is still there", await exists(path.join(root, "made.txt")))
+
+    const repo = path.join(project, "turn-revert-repo")
+    await fs.mkdir(repo, { recursive: true })
+    const inRepo = async (...args: string[]) => await promisify(execFile)("git", args, { cwd: repo })
+    await inRepo("init", "-q")
+    await inRepo("config", "user.email", "smoke@example.invalid")
+    await inRepo("config", "user.name", "Smoke")
+    await fs.writeFile(path.join(repo, "kept.txt"), "one\ntwo\nthree\n")
+    await fs.writeFile(path.join(repo, "moved.txt"), "alpha\nbeta\ngamma\n")
+    await fs.writeFile(path.join(repo, "gone.txt"), "first\nsecond\n")
+    await inRepo("add", "-A")
+    await inRepo("commit", "-qm", "before the turn")
+    /* What the turn did: an edit in each file, and one file it created. */
+    await fs.writeFile(path.join(repo, "kept.txt"), "one\n2\nthree\n")
+    await fs.writeFile(path.join(repo, "moved.txt"), "alpha\nBETA\ngamma\n")
+    await fs.writeFile(path.join(repo, "gone.txt"), "first\nSECOND\n")
+    await fs.writeFile(path.join(repo, "made.txt"), "brand new\n")
+    const repoTurn = {
+      ...turnMessage,
+      parts: [
+        tool("g1", "edit", { path: "kept.txt", diff: unifiedDiff("kept.txt", "one\ntwo\nthree\n", "one\n2\nthree\n") }),
+        tool("g2", "edit", { path: "moved.txt", diff: unifiedDiff("moved.txt", "alpha\nbeta\ngamma\n", "alpha\nBETA\ngamma\n") }),
+        tool("g3", "edit", { path: "gone.txt", diff: unifiedDiff("gone.txt", "first\nsecond\n", "first\nSECOND\n") }),
+        tool("g4", "write", { path: "made.txt", created: true, diff: unifiedDiff("made.txt", "", "brand new\n") }),
+        tool("g5", "write", { path: "../escape.txt", diff: unifiedDiff("../escape.txt", "", "x\n") }),
+      ],
+    }
+    /* Since the turn: lines added above one file's hunk, and another rewritten past recognising. */
+    await fs.writeFile(path.join(repo, "moved.txt"), "header\nlines\nadded\nalpha\nBETA\ngamma\n")
+    await fs.writeFile(path.join(repo, "gone.txt"), "nothing the turn wrote is here\n")
+    const throughGit = await revertTurnFiles(repo, [repoTurn])
+    check(
+      "inside a repository the turn's edits go back and the file it made is deleted",
+      throughGit.noRepo === undefined && throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
+      throughGit,
+    )
+    const back = async (name: string) => (await fs.readFile(path.join(repo, name), "utf8")).replace(/\r\n/g, "\n")
+    check("a plain edit is reverse-applied", (await back("kept.txt")) === "one\ntwo\nthree\n", await back("kept.txt"))
+    check(
+      "a hunk later edits moved is found and only that hunk is taken back",
+      (await back("moved.txt")) === "header\nlines\nadded\nalpha\nbeta\ngamma\n",
+      await back("moved.txt"),
+    )
+    check("a tracked file whose lines are gone falls back to git checkout", (await back("gone.txt")) === "first\nsecond\n", await back("gone.txt"))
+    check("the created file is gone", !(await exists(path.join(repo, "made.txt"))))
+    check("a path outside the project is never written", !(await exists(path.join(project, "escape.txt"))))
+
+    /* An untracked file the turn edited has no index to fall back on, so a lost hunk fails rather than being invented. */
+    await fs.writeFile(path.join(repo, "loose.txt"), "kept as it is\n")
+    const looseTurn = {
+      ...turnMessage,
+      parts: [tool("g6", "edit", { path: "loose.txt", diff: unifiedDiff("loose.txt", "was\n", "now\n") })],
+    }
+    const loose = await revertTurnFiles(repo, [looseTurn])
+    check("an untracked file whose hunk is gone is counted as failed and left alone", loose.failed === 1 && loose.restored === 0, loose)
+    check("that file still reads exactly as it did", (await fs.readFile(path.join(repo, "loose.txt"), "utf8")) === "kept as it is\n")
+
+    /* The pure halves, so the patch writer and the recount are covered without a repository. */
+    const oneSection = parseUnifiedDiff(unifiedDiff("x.txt", "a\nb\n", "a\nB\n"))[0]!
+    const written = sectionPatch(oneSection)
+    check("a section writes back out as a patch git can read", written.startsWith("--- a/x.txt\n+++ b/x.txt\n@@ ") && written.includes("-b") && written.includes("+B"), written)
+    /* The file's final newline must not become a context line past the end of the file, or git apply refuses the hunk. */
+    check("a patch does not ask git to match a line past the end of the file", written.includes("@@ -1,2 +1,2 @@") && !written.endsWith("\n \n"), written)
+    const shifted = recountedSection("pad\npad\na\nB\n", oneSection)
+    check("a recount moves the hunk to where its lines now stand", shifted?.hunks[0]?.newStart === 3, shifted?.hunks[0])
+    check("a recount of lines that are gone answers nothing", recountedSection("unrelated\n", oneSection) === undefined)
   }
 
   // ------------------------------------------------------------------- units
@@ -6993,12 +7083,135 @@ async function main() {
   await commandTemplateChecks(root)
   await historyMemoryCronChecks(root, project)
   await automationChecks(root, project)
+  await roundSixVisualChecks()
   // round 5: the turn loop, providers, context and prompt, in their own file; its provider answers title requests apart.
   delete process.env.MCODE_GENERATE_TITLES
   await roundFiveChecks(check, section)
+  await roundSixChecks(check, section)
+  await failureChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
+}
+
+/**
+ * round 6 (visual): the drawn workspace against MiMo's own numbers.
+ *
+ * These are read out of the stylesheets rather than measured in a window, which
+ * is what makes them a guard rather than a screenshot: a breakpoint, a blur or a
+ * corner put back by hand fails here, in the same run as everything else. The
+ * window measurements live in the round-6 probe beside them.
+ */
+async function roundSixVisualChecks() {
+  section("Round 6: the drawn workspace (MiMo's measurements)")
+  const read = (relative: string) => fs.readFile(path.join(process.cwd(), relative), "utf8")
+  /*
+   * One top-level CSS rule's body. Every rule read here is written at the start
+   * of a line with indented declarations, so the first `\n}` closes it - no
+   * brace matching, which a comment carrying a brace would defeat.
+   */
+  const rule = (source: string, selector: string) => {
+    const at = source.indexOf(`\n${selector} {\n`)
+    return at === -1 ? "" : source.slice(at, source.indexOf("\n}", at + 1))
+  }
+
+  // V1: one flush plane, not two rounded cards on a darker frame.
+  const app = await read("src/renderer/src/App.vue")
+  const body = rule(app, ".body")
+  check("the workspace row has no inset and no gutter", Boolean(body) && !body.includes("margin:") && !body.includes("gap:"), body)
+  const plane = rule(app, ".body > .main")
+  check(
+    "the conversation plane is flush, divided by a hairline instead of rounded off",
+    plane.includes("border-inline-start: 1px solid") && !plane.includes("border-radius"),
+    plane,
+  )
+  check("nothing still addresses the side panel as a floating card", !app.includes("panel-host"), "")
+
+  // V6: MiMo warms the light theme on Windows and Linux, and only there.
+  const tint = app.slice(app.indexOf('.app[data-platform="win32"] .side-panel-toggle'))
+  check(
+    "Windows and Linux get MiMo's warm light column and warm lines",
+    tint.includes("--surface-base: #f8f7f5") && tint.includes("--border-weak: #f0ebe5") && tint.includes('.app[data-platform="linux"]'),
+    "",
+  )
+  check(
+    "the warm tint is light-only, so dark is untouched",
+    tint.includes(':root[data-theme="light"] .app[data-platform="win32"]') && tint.includes("@media (prefers-color-scheme: light)"),
+    "",
+  )
+
+  // V2 / V9: 2000px is the only breakpoint MiMo has.
+  const stream = await read("src/renderer/src/components/MessageStream.vue")
+  const composer = await read("src/renderer/src/components/Composer.vue")
+  const hero = await read("src/renderer/src/components/HomeHero.vue")
+  for (const [what, source] of [["transcript", stream], ["composer", composer], ["home hero", hero]] as const) {
+    check(`the ${what} widens at 2000px and at no other width`, source.includes("@media (min-width: 2000px)") && !source.includes("1536px"), what)
+  }
+  check(
+    "the reading column is 764 on 28, and 996 past 2000px - MiMo's thread, not its home layout",
+    rule(stream, ".inner").includes("max-width: 764px") &&
+      rule(stream, ".inner").includes("padding: 12px 28px 16px") &&
+      stream.includes("@media (min-width: 2000px) {\n  .inner {\n    max-width: 996px;") &&
+      !stream.includes("max-width: 800px"),
+    rule(stream, ".inner"),
+  )
+  check(
+    "the composer column is 712, and 944 past 2000px - the inside of MiMo's 1000 wrapper",
+    composer.includes("max-width: 712px") && composer.includes("@media (min-width: 2000px) {\n  .shell {\n    max-width: 944px;"),
+    "",
+  )
+
+  // V4: MiMo blurs the search overlay and nothing else.
+  const base = await read("src/renderer/src/styles/base.css")
+  const overlay = rule(base, ".overlay")
+  check("the shared dialog scrim does not blur", Boolean(overlay) && !overlay.includes("backdrop-filter"), overlay)
+  const search = await read("src/renderer/src/components/SearchOverlay.vue")
+  check("the search overlay still blurs at 8px, as MiMo's does", search.includes("backdrop-filter: blur(8px)"), "")
+
+  // V3: MiMo's menu panel and its pill rows.
+  const menu = await read("src/renderer/src/components/ContextMenu.vue")
+  const panel = rule(menu, ".menu")
+  check(
+    "the menu panel is a 12px corner on a 1px line, 200 at its narrowest, 5 of padding",
+    panel.includes("border-radius: 12px") && panel.includes("border: 1px solid var(--border-weak)") && panel.includes("min-width: 200px") && panel.includes("--pad: 5px"),
+    panel,
+  )
+  check(
+    "the menu pops open over .18s",
+    panel.includes("animation: menu-pop 0.18s cubic-bezier(0.16, 1, 0.3, 1)") && menu.includes("@keyframes menu-pop"),
+    "",
+  )
+  const row = rule(menu, ".item")
+  check(
+    "a menu row is a 14px pill, 6 by 10 on an 8px corner with 9 to its glyph",
+    row.includes("border-radius: 8px") && row.includes("padding: 6px 10px") && row.includes("font-size: calc(14px") && row.includes("gap: 9px"),
+    row,
+  )
+  check("a menu divider is inset rather than full-bleed", rule(menu, ".rule").includes("margin: 4px 6px"), rule(menu, ".rule"))
+
+  // V7: one focus-ring blue, MiMo's --color-blue, not its link blue.
+  const ringFiles = [
+    "PermissionDialog.vue",
+    "QuestionDock.vue",
+    "parts/DiagramBlock.vue",
+    "parts/LocalMedia.vue",
+    "parts/MediaCoverflow.vue",
+    "parts/MediaStrip.vue",
+    "parts/QuestionForm.vue",
+    "parts/SubagentActivity.vue",
+    "parts/SvgFileCard.vue",
+    "parts/TextPart.vue",
+    "right/RpSubagents.vue",
+  ]
+  const rings = await Promise.all(ringFiles.map((name) => read(`src/renderer/src/components/${name}`)))
+  const stray = ringFiles.filter((_, index) =>
+    /outline: 2px solid (?:#3295fb|var\(--text-interactive\)|var\(--border-selected\)|var\(--border-focus)/.test(rings[index]),
+  )
+  check("every focus ring is the one interactive blue", stray.length === 0, stray)
+
+  // V12: a token nothing read.
+  const tokens = await read("src/renderer/src/styles/tokens.css")
+  check("the dead --sidebar-width token is gone", !tokens.includes("--sidebar-width"), "")
 }
 
 /** commands: MiMo's template rules - shell placeholders, `@file`, folders and model tiers. */
@@ -7272,8 +7485,8 @@ async function skillChecks(root: string) {
     "skill and skill_search are offered, appended, and change nothing",
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
-      // Only tools added since (history, memory, cron, scheduled tasks and plan_exit) come after them.
-      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit"].includes(tool.name)) &&
+      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name)) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
     TOOLS.map((tool) => tool.name),
@@ -8435,8 +8648,8 @@ async function sessionChatChecks(root: string, project: string) {
         // notebook_edit sits between the window tools and them.
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks and plan_exit) come after them.
-        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit"].includes(tool.name))
+        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name))
       )
     })(),
     TOOLS.map((tool) => tool.name),
@@ -9148,6 +9361,8 @@ async function historyMemoryCronChecks(root: string, project: string) {
     },
     busy: (sessionID: string) => busy.has(sessionID),
     session: (sessionID: string) => store.get(sessionID),
+    // cron: a durable task whose conversation is gone is adopted by a new one in the project.
+    create: (directory: string) => store.create({ directory, model, title: "Scheduled tasks" }),
     directories: async () => [schedDir],
   }
   const scheduler = new CronScheduler(host)

@@ -21,7 +21,12 @@ export interface CronTask {
   /** A recurring task that never ages out. */
   permanent?: boolean
   kind?: "loop"
-  /** The conversation it was made from, which is where it runs. */
+  /**
+   * The conversation it runs in: the one that made it, and after that one is
+   * gone whichever conversation adopted it - the scheduler rewrites this rather
+   * than adding a field, so a file written before durable tasks outlived their
+   * conversation still reads exactly as it did.
+   */
   createdBySessionId?: string
   /** Kept in the project file, so it lasts past a restart. */
   durable?: boolean

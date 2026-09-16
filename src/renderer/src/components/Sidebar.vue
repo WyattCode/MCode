@@ -4,8 +4,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
+import { sessionGroup } from "@shared/session-group"
 import { useApp } from "../stores/app"
-import { language, t } from "../lib/i18n"
+import { language, sessionTitle, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
 import type { MenuItem } from "../lib/menu"
@@ -86,7 +87,18 @@ const recentShown = ref(RECENT_PAGE)
 const name = (directory: string) =>
   app.config?.projectNames?.[directory] || directory.split(/[\\/]/).filter(Boolean).pop() || directory
 
-const title = (text?: string) => (text && text.trim() ? text : t("side.newTask"))
+/* Which project a row outside the tree says it belongs to; a conversation filed under none says nothing. */
+const groupNote = (session: SessionInfo) => {
+  const group = sessionGroup(session)
+  return group ? name(group) : ""
+}
+
+/*
+ * A row's name: the conversation's own, with the engine's placeholder worded as
+ * MiMo words it (未命名对话) rather than shown raw, and 新建任务 for a title that
+ * is empty altogether.
+ */
+const title = (text?: string) => (text && text.trim() ? sessionTitle(text) : t("side.newTask"))
 
 /* What a task row's pin and menu lie over at its end, as MiMo allows for them. */
 const TITLE_COVER = 55
@@ -148,9 +160,13 @@ const pinnedProject = (directory: string) => (app.config?.pinnedProjects ?? []).
 const projects = computed(() => {
   const byDirectory = new Map(app.projects.map((directory) => [directory, [] as typeof app.sessions]))
   for (const session of app.sessions) {
-    // A folder made for a task with no project is not a project; Recent has it.
-    if (session.archived || session.scratch) continue
-    byDirectory.get(session.directory)?.push(session)
+    if (session.archived) continue
+    /*
+     * Filed by its grouping label where 移动至项目 gave it one, else by the
+     * folder it works in. A task with no project has neither; Recent has it.
+     */
+    const group = sessionGroup(session)
+    if (group) byDirectory.get(group)?.push(session)
   }
   return app.projects.map((directory) => {
     const sessions = [...(byDirectory.get(directory) ?? [])].sort((a, b) => b.updated - a.updated)
@@ -313,21 +329,24 @@ const normalProjects = computed(() =>
  */
 const PROJECT_DRAG = "application/x-mcode-project"
 const TASK_DRAG = "application/x-mcode-task"
-const carried = ref<{ kind: "project" | "task"; key: string; group?: string }>()
+/* 置顶 rows reorder among themselves, as MiMo's pinned list does. */
+const PINNED_DRAG = "application/x-mcode-pinned"
+type CarryKind = "project" | "task" | "pinned"
+const carried = ref<{ kind: CarryKind; key: string; group?: string }>()
 const dropBefore = ref<string>()
 
-function startCarry(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+function startCarry(event: DragEvent, kind: CarryKind, key: string, group?: string) {
   if (picking.value) {
     event.preventDefault()
     return
   }
   event.stopPropagation()
-  event.dataTransfer?.setData(kind === "project" ? PROJECT_DRAG : TASK_DRAG, key)
+  event.dataTransfer?.setData(kind === "project" ? PROJECT_DRAG : kind === "pinned" ? PINNED_DRAG : TASK_DRAG, key)
   if (event.dataTransfer) event.dataTransfer.effectAllowed = "move"
   carried.value = { kind, key, group }
 }
 
-function carryOver(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+function carryOver(event: DragEvent, kind: CarryKind, key: string, group?: string) {
   const held = carried.value
   if (!held || held.kind !== kind || held.group !== group) return
   event.stopPropagation()
@@ -345,12 +364,27 @@ function endCarry() {
   dropBefore.value = undefined
 }
 
-async function setDown(event: DragEvent, kind: "project" | "task", key: string, group?: string) {
+async function setDown(event: DragEvent, kind: CarryKind, key: string, group?: string) {
   const held = carried.value
   endCarry()
   if (!held || held.kind !== kind || held.group !== group || held.key === key) return
   event.preventDefault()
   event.stopPropagation()
+  /*
+   * 置顶 is kept in the order it is pinned in, and MiMo lets that order be
+   * dragged. Without it a sixth pin can only be reached by unpinning and
+   * pinning again, since the section shows five rows before 展开更多.
+   */
+  if (kind === "pinned") {
+    const list = pinnedConvos.value.map((session) => session.id)
+    const next = movedBefore(list, held.key, key)
+    if (next !== list) {
+      // Anything pinned that this list does not name - a pinned project - keeps its place at the end.
+      const rest = (app.config?.pinnedTabs ?? []).filter((id) => !next.includes(id))
+      await app.patchConfig({ pinnedTabs: [...next, ...rest] })
+    }
+    return
+  }
   if (kind === "project") {
     const list = normalProjects.value.map((project) => project.directory)
     const next = movedBefore(list, held.key, key)
@@ -364,8 +398,8 @@ async function setDown(event: DragEvent, kind: "project" | "task", key: string, 
   if (next !== list) await app.patchConfig({ taskOrder: { ...(app.config?.taskOrder ?? {}), [group]: next } })
 }
 
-const carrying = (kind: "project" | "task", key: string) => carried.value?.kind === kind && carried.value.key === key
-const landing = (kind: "project" | "task", key: string) => carried.value?.kind === kind && dropBefore.value === key
+const carrying = (kind: CarryKind, key: string) => carried.value?.kind === kind && carried.value.key === key
+const landing = (kind: CarryKind, key: string) => carried.value?.kind === kind && dropBefore.value === key
 
 /*
  * Folders dropped onto the project list become projects, as MiMo takes them:
@@ -527,7 +561,9 @@ function setRecentSort(mode: "recent" | "name") {
 
 const recentAll = computed(() => {
   const listed = new Set(projects.value.map((project) => project.directory))
-  const rows = app.sessions.filter((session) => !session.archived && !listed.has(session.directory) && !app.isPinned(session.id))
+  const rows = app.sessions.filter(
+    (session) => !session.archived && !listed.has(sessionGroup(session) ?? "") && !app.isPinned(session.id),
+  )
   return recentSort.value === "name"
     ? rows.sort((a, b) => title(a.title).localeCompare(title(b.title), language.value))
     : rows.sort((a, b) => b.updated - a.updated)
@@ -709,7 +745,7 @@ const byDay = computed<TimelineEntry[]>(() => {
       heading = label
       rows.push({ head: label })
     }
-    rows.push({ session, note: name(session.directory) })
+    rows.push({ session, note: groupNote(session) })
   }
   return rows
 })
@@ -717,11 +753,11 @@ const byDay = computed<TimelineEntry[]>(() => {
 /* The priority view, top to bottom: attention, pinned when asked for, the week. */
 const priorityList = computed<TimelineEntry[]>(() => [
   entry({ section: "priority", group: "priority" }),
-  ...attention.value.map((session) => entry({ session, note: name(session.directory), group: "priority" })),
+  ...attention.value.map((session) => entry({ session, note: groupNote(session), group: "priority" })),
   ...(showPinned.value
     ? [
         entry({ section: "pinned", group: "pinned" }),
-        ...pinnedSessions.value.map((session) => entry({ session, note: name(session.directory), group: "pinned" })),
+        ...pinnedSessions.value.map((session) => entry({ session, note: groupNote(session), group: "pinned" })),
       ]
     : []),
   ...byDay.value.map((row) => ({ ...row, group: "day" })),
@@ -1154,7 +1190,17 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         <div
           v-else-if="block.session"
           class="row task recent pinned-convo"
-          :class="{ on: app.currentID === block.session.id }"
+          :class="{
+            on: app.currentID === block.session.id,
+            carried: carrying('pinned', block.session.id),
+            'lands-before': landing('pinned', block.session.id),
+          }"
+          :data-pinned-drag="block.session.id"
+          :draggable="!anyPicking"
+          @dragstart="startCarry($event, 'pinned', block.session.id)"
+          @dragover="carryOver($event, 'pinned', block.session.id)"
+          @drop="setDown($event, 'pinned', block.session.id)"
+          @dragend="endCarry"
           @contextmenu.prevent="openMenu(block.session.id, $event)"
         >
           <button class="row-open" @click="press(block.session.id)">

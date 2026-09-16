@@ -70,6 +70,26 @@ export interface SessionInfo {
    */
   scratch?: boolean
   /**
+   * Which project the side column files this conversation under, when that is
+   * not the folder it works in - MiMo's `groupProject`.
+   *
+   * 移动至项目 only changes where a conversation is listed. Its working
+   * directory, and with it the commands, the relative paths and the
+   * per-project approvals, stay exactly where they were. An empty string is
+   * MiMo's "moved out": listed under no project at all. Absent - every
+   * conversation stored before this field - is filed by `directory`, which is
+   * what those conversations have always done.
+   */
+  group?: string
+  /**
+   * 导入: taken from another AI app, and what it is called there.
+   *
+   * Only the importer reads it: it is how a conversation already taken is
+   * recognised when the same source is scanned again, so re-running an import
+   * writes the same conversation rather than a second copy of it.
+   */
+  imported?: { source: ImportSource; key: string }
+  /**
    * A side chat, and the conversation it was opened beside.
    *
    * A side chat is a conversation of its own, in the same project, that no
@@ -589,6 +609,13 @@ export interface TurnRevertResult {
   failed: number
   /** Paths outside the project, skipped. */
   outside: number
+  /**
+   * The project is not in a repository, so nothing was touched.
+   *
+   * Taking a turn back goes through git, as MiMo's does, and MiMo refuses
+   * outright rather than writing to files it cannot put back.
+   */
+  noRepo?: boolean
 }
 
 export type Message = UserMessage | AssistantMessage
@@ -1176,6 +1203,37 @@ export interface McpImportItem {
   exists: boolean
 }
 
+/**
+ * 导入: the AI apps whose conversations this one can take in, as MiMo names
+ * them - Claude Code, Codex and OpenCode.
+ */
+export const IMPORT_SOURCES = ["cc", "codex", "opencode"] as const
+
+export type ImportSource = (typeof IMPORT_SOURCES)[number]
+
+/** What one source holds, and how much of it this app has taken before. */
+export interface ImportSourceScan {
+  /** The app keeps its data where this one looks; it may still hold nothing. */
+  available: boolean
+  sessions: number
+  /** Conversations taken from it to date, which may outnumber what it still has. */
+  imported: number
+}
+
+export type ImportScan = Record<ImportSource, ImportSourceScan>
+
+/** What one source's import did. `errors` names files, never a line of what was in them. */
+export interface ImportSourceResult {
+  scanned: number
+  imported: number
+  /** Changed since it was taken, so its copy here was written again rather than doubled. */
+  resynced: number
+  skipped: number
+  errors: string[]
+}
+
+export type ImportRun = Record<ImportSource, ImportSourceResult>
+
 /** One tool a server offers, as the MCP settings page lists it. */
 export interface McpToolInfo {
   name: string
@@ -1355,8 +1413,18 @@ export interface AppConfig {
    * reopening it leaves the same set of conversations to hand.
    */
   openTabs: string[]
-  /** Set once the first-run setup has been completed or skipped. */
-  onboarded: boolean
+  /**
+   * 导入: set once the first run has asked about conversations in other AI
+   * apps, whether or not anything was taken. MiMo asks a machine once; so does
+   * this, and a profile that predates the question is marked as already asked.
+   */
+  importOnboarded: boolean
+  /**
+   * MiMo's 标题生成模型: which model names a conversation after its first
+   * message. Absent - and MiMo's 跟随当前模型 - is the conversation's own model,
+   * which is also where an unusable choice falls back to.
+   */
+  titleModel?: ModelRef
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**
@@ -1428,8 +1496,9 @@ export interface AppConfig {
   /**
    * MiMo's `instructions` setting: more instruction files to read into every
    * conversation, as paths or globs (`docs/*.md`, `~/notes/rules.md`), each
-   * looked for from the working folder up to the repository's top. Web
-   * addresses are not fetched. Set in the config file; the settings have no row for it.
+   * looked for from the working folder up to the repository's top, or as web
+   * addresses, which are fetched as MiMo fetches them - five seconds each, and
+   * left out when that fails. Set in the config file; the settings have no row for it.
    */
   instructionFiles?: string[]
   /** How spoken input is written down. */
@@ -1731,9 +1800,9 @@ export type Request =
   | { type: "session.staged"; sessionID: string; staged: boolean }
   | { type: "session.archive"; sessionID: string; archived: boolean }
   | { type: "session.rename"; sessionID: string; title: string }
-  /* Which project a conversation belongs to, which is the directory it works in. */
+  /* Which project the side column files a conversation under; the folder it works in is untouched. */
   | { type: "session.move"; sessionID: string; directory: string }
-  /* Out of its project, into a fresh folder of its own, as a task with no project works. */
+  /* Out of every project's group and into Recent; again, nothing on disk moves. */
   | { type: "session.moveOut"; sessionID: string }
   /* `titleSuffix` names the branch MiMo's way, 「{title} (分支)」, instead of copying the title. */
   | { type: "session.fork"; sessionID: string; messageID: string; titleSuffix?: boolean }
@@ -1809,6 +1878,13 @@ export type Request =
    * and the files it names with `@` returned for the window to attach.
    */
   | { type: "command.expand"; directory: string; name: string; arguments: string }
+  /*
+   * A template the window filled in itself - an MCP server's prompt, or the
+   * line typed after a skill - with its ``!`cmd` `` placeholders run in
+   * `directory`, as MiMo runs a template's commands whatever its source (the
+   * user's 2026-09-16 decision).
+   */
+  | { type: "command.shell"; directory: string; text: string }
   | { type: "config.get" }
   | { type: "config.set"; patch: Partial<AppConfig> }
   | { type: "provider.list" }
@@ -1945,6 +2021,9 @@ export type Request =
   | { type: "mcp.authenticate"; name: string }
   | { type: "mcp.importScan" }
   | { type: "mcp.importApply"; items: { source: McpImportSource; name: string }[] }
+  /* 导入: what other AI apps on this machine hold, and taking the chosen ones in. Read-only towards them. */
+  | { type: "import.scan" }
+  | { type: "import.run"; sources: ImportSource[] }
   /**
    * Saves one MCP server from the settings form. Environment and header rows
    * named in `keep` that come back blank keep the values already stored.
@@ -2052,6 +2131,7 @@ export interface ResponseMap {
   "command.list": { commands: CommandInfo[] }
   /* `files` are the existing files the prompt names with `@`: `name` as written, `path` absolute. */
   "command.expand": { prompt: string; files: { name: string; path: string }[] }
+  "command.shell": { text: string }
   "config.get": { config: AppConfig }
   "config.set": { config: AppConfig }
   "provider.list": { providers: ProviderStatus[] }
@@ -2142,6 +2222,9 @@ export interface ResponseMap {
   "mcp.importScan": { items: McpImportItem[] }
   /** The names actually added. */
   "mcp.importApply": { imported: string[] }
+  /** 导入: counts only - no title, no path, nothing that was written in another app. */
+  "import.scan": { scan: ImportScan; asked: boolean }
+  "import.run": { result: ImportRun }
   "mcp.save": { config: AppConfig }
   "agents.state": { path: string; state: AgentsFileState }
   /** Writes a starting file when there is none. */
