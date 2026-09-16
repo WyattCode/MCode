@@ -126,6 +126,8 @@ onMounted(async () => {
     return
   }
 
+  // The input's spoken name, xterm's one localisable string that is read without screen reader mode.
+  Terminal.strings.promptLabel = t("term.inputLabel")
   terminal = new Terminal({
     // Its own variable, so a terminal face can differ from the code face.
     fontFamily:

@@ -154,6 +154,13 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
     const toasts = read("components/Toasts.vue")
     check("each notice is an alert and a Tab stop, as MiMo's are (A14)", /class="notice"[^>]*role="alert"\s+tabindex="0"\s+@mousedown="keepFocus"/.test(toasts))
     check("the column of notices stays a polite status region (A14)", /class="toasts"\s+role="status"\s+aria-live="polite"/.test(toasts))
+    check("high contrast outlines the open conversation and the send button, and rings in Highlight (A12)",
+      /@media \(forced-colors: active\) \{\s+\.row\.on,\s+\.quick-convo\.on \{\s+outline: 2px solid Highlight/.test(read("components/Sidebar.vue")) &&
+        /@media \(forced-colors: active\) \{\s+\.send \{\s+outline: 1px solid ButtonText/.test(read("components/Composer.vue")) &&
+        /@media \(forced-colors: active\) \{\s+:focus-visible \{\s+outline-color: Highlight/.test(read("styles/base.css")))
+    const browser = read("components/right/RpBrowser.vue")
+    check("the browser's zoom controls are named in the interface's language (A15)", !/aria-label="(Zoom|Zoom out|Zoom in|Reset zoom)"/.test(browser) && /:aria-label="t\('key\.zoomReset'\)"/.test(browser))
+    check("the terminal's input is named in the interface's language (A15)", /Terminal\.strings\.promptLabel = t\("term\.inputLabel"\)\s+terminal = new Terminal\(/.test(read("components/TerminalPane.vue")))
     check("the file viewer's picture opens its preview from the keyboard", operable(tagWith(read("components/right/RpFiles.vue"), 'class="fv-img"'), /@keydown\.enter\.space\.prevent="openImagePreview/))
   }
 }
