@@ -167,7 +167,7 @@ export function bracketPlurals(tables: Tables): string[] {
  * which are no longer what any screen draws.
  */
 // The fork shortcut row is MiMo's own 分叉聊天 / "Fork chat" again, since W5 was reverted to MiMo's wording.
-const MIMO_CHAT_KEYS = new Set(["toast.noConvosToArchive", "set.codeFontSizeSub", "key.label.conv-archive", "key.desc.conv-archive", "key.label.fork-chat", "key.desc.fork-chat"])
+const MIMO_CHAT_KEYS = new Set(["toast.noConvosToArchive", "toast.archivedNConvos", "set.codeFontSizeSub", "key.label.conv-archive", "key.desc.conv-archive", "key.label.fork-chat", "key.desc.fork-chat"])
 const ENGINE_SESSION_KEYS = new Set([
   "stream.chatSourceGone",
   "share.session",

