@@ -15,7 +15,7 @@ import ContextMenu from "../ContextMenu.vue"
 import AbcBlock from "./AbcBlock.vue"
 import DiagramBlock from "./DiagramBlock.vue"
 import LocalMedia from "./LocalMedia.vue"
-import { projectPath } from "../../lib/delivered"
+import { mediaPath } from "../../lib/delivered"
 
 const props = defineProps<{ part: TextPart }>()
 const app = useApp()
@@ -196,12 +196,12 @@ function mountMedia() {
     const kind = holder.dataset.media
     const path = holder.dataset.mediaPath
     if ((kind !== "image" && kind !== "video" && kind !== "audio") || !path) continue
-    // Only a file in the project is read to show it; any other path stays its chip.
-    const inside = projectPath(path, app.current?.directory)
-    if (!inside) continue
+    // A picture, video or sound is shown wherever it lives, as MiMo shows it (the user's 2026-09-16 decision).
+    const target = mediaPath(path, app.current?.directory)
+    if (!target) continue
     holder.dataset.mounted = "true"
     holder.textContent = ""
-    const vnode = h(LocalMedia, { kind, path: inside, directory: app.current?.directory })
+    const vnode = h(LocalMedia, { kind, path: target, directory: app.current?.directory })
     vnode.appContext = instance?.appContext ?? null
     render(vnode, holder)
     mounted.add(holder)

@@ -74,6 +74,26 @@ export function projectPath(file: string, directory: string | undefined): string
   return relativeInside(directory, full) ? full : undefined
 }
 
+/**
+ * The file a path in a reply names, for previewing it wherever it lives.
+ *
+ * MiMo reads any path the model writes to show it; the user decided on
+ * 2026-09-16 that MCode does the same, so this does not keep to the project.
+ * A relative path is still taken from the conversation's folder, because that
+ * is what a relative path in a reply means, and a web address or any other
+ * scheme is not a file to read at all. The window never reads the disk itself:
+ * the card resolves this through the main process and shows it from the local
+ * preview server, which hands out only the file's own folder.
+ */
+export function mediaPath(file: string, directory: string | undefined): string | undefined {
+  const norm = file.trim().replace(/\\/g, "/")
+  if (!norm || norm.startsWith("~") || /^[a-z][a-z0-9+.-]*:/i.test(norm.replace(/^[A-Za-z]:\//, ""))) return undefined
+  if (/^[A-Za-z]:\//.test(norm) || norm.startsWith("/")) return norm
+  if (!directory) return undefined
+  const base = directory.replace(/\\/g, "/").replace(/\/+$/, "")
+  return `${base}/${norm.replace(/^\.\//, "")}`
+}
+
 /** A path under a folder, as the folder-relative path the main process opens; empty when it is not under it. */
 export function relativeInside(directory: string, file: string): string {
   const norm = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "")
