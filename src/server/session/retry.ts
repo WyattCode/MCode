@@ -12,7 +12,7 @@
  * again in 20s" in its words) is honoured, held under the kind's longest wait.
  */
 import Anthropic from "@anthropic-ai/sdk"
-import { isContextOverflow } from "./overflow"
+import { isOverflowError } from "./overflow"
 import { ProviderError, ProviderHttpError } from "../provider/types"
 
 export type RetryKind = "stream" | "network" | "rate_limit" | "server"
@@ -42,7 +42,6 @@ const FLOOR = 100
 const HINT_CAP = 5 * 60_000
 
 /** GPT's overload answer: tried at once the first time, and three times at most. */
-const GPT_OVERLOAD = /service_unavailable_error|server_is_overloaded/
 const GPT_OVERLOAD_RETRIES = 3
 
 const RATE_LIMITED = /too many requests|too_many_requests|rate[ _]limit(?:ed)?|rate increased too quickly/i
@@ -110,7 +109,7 @@ function aborted(err: unknown): boolean {
 export function retryKind(err: unknown): RetryKind | undefined {
   if (!err || typeof err !== "object") return undefined
   const text = textOf(err)
-  if (aborted(err) || isContextOverflow(text)) return undefined
+  if (aborted(err) || isOverflowError(err, text)) return undefined
   const status = statusOf(err)
   const wire = wireOf(err)
   if (status === 401 || status === 403 || status === 402 || status === 404 || status === 501 || status === 505) return undefined
@@ -171,7 +170,15 @@ export function retryDecision(err: unknown, attempt: number, elapsed: number, ra
   const kind = retryKind(err)
   if (!kind) return undefined
   const budget = RETRY_BUDGETS[kind]
-  const overload = GPT_OVERLOAD.test(`${textOf(err)} ${wireOf(err).code ?? ""} ${wireOf(err).type ?? ""}`)
+  /*
+   * MiMo's `isGptServerOverloadedError` reads the parsed body rather than the
+   * words: type "service_unavailable_error" together with code
+   * "server_is_overloaded". Matching the whole sentence meant an unrelated
+   * failure that merely mentioned one of those strings got the immediate first
+   * retry and a ceiling of three, in place of the full server budget of eight.
+   */
+  const wire = wireOf(err)
+  const overload = wire.type === "service_unavailable_error" && wire.code === "server_is_overloaded"
   const retries = overload ? Math.min(budget.retries, GPT_OVERLOAD_RETRIES) : budget.retries
   if (attempt > retries) return undefined
 

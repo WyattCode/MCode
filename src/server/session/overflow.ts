@@ -1,5 +1,7 @@
+import Anthropic from "@anthropic-ai/sdk"
 import type { ModelRef } from "@shared/protocol"
 import type { ModelEntry } from "../config"
+import { ProviderError, ProviderHttpError } from "../provider/types"
 
 /**
  * When a conversation has outgrown its model, and by how much a request may
@@ -111,4 +113,26 @@ const EXCLUSIONS = [/^(throttling error|service unavailable):/i, /rate limit/i, 
 export function isContextOverflow(message: string): boolean {
   if (EXCLUSIONS.some((pattern) => pattern.test(message))) return false
   return PATTERNS.some((pattern) => pattern.test(message)) || /^4(00|13)\s*(status code)?\s*\(no body\)/i.test(message)
+}
+
+/**
+ * The same question asked of the failure itself, not only of its sentence.
+ *
+ * MiMo checks the status and the body's own code independently of the wording:
+ * `isOverflow(message) || statusCode === 413 || body.error.code ===
+ * "context_length_exceeded"`. Reading the sentence alone caught a bare "413 (no
+ * body)" and nothing else, so a 413 that carried a JSON body - which is the
+ * ordinary shape - matched none of the phrasings and the turn ended red instead
+ * of being compacted and replayed. That is the exact failure the note at the top
+ * of this file says this code exists to prevent.
+ *
+ * @param message what the failure says, which the callers have already gathered
+ *   from its causes.
+ */
+export function isOverflowError(err: unknown, message: string): boolean {
+  const status = err instanceof ProviderHttpError ? err.status : err instanceof Anthropic.APIError ? err.status : undefined
+  if (status === 413) return true
+  const wire = err instanceof ProviderError || err instanceof ProviderHttpError ? err.wire : undefined
+  if (wire?.code === "context_length_exceeded" || wire?.type === "context_length_exceeded") return true
+  return isContextOverflow(message)
 }

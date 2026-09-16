@@ -249,7 +249,8 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("a rate limit gives up after five attempts", retryDecision(limited, 5, 0) !== undefined && retryDecision(limited, 6, 0) === undefined)
     check("a refused key, a missing model and a 400 are never retried", [401, 404, 400, 422, 402, 501].every((status) => retryDecision(new ProviderHttpError("no", status, {}), 1, 0) === undefined))
     check("an upstream stream failure is a stream kind", retryKind(new ProviderError("boom", undefined, undefined, { type: "upstream_error" })) === "stream")
-    const overloaded = new ProviderHttpError("overloaded", 503, {}, { code: "server_is_overloaded" })
+    // MiMo reads both fields of the parsed body, not the wording: a service_unavailable_error that is server_is_overloaded.
+    const overloaded = new ProviderHttpError("overloaded", 503, {}, { type: "service_unavailable_error", code: "server_is_overloaded" })
     check("GPT's overload answer is tried at once, three times at most", retryDecision(overloaded, 1, 0)?.wait === 0 && retryDecision(overloaded, 4, 0) === undefined, retryDecision(overloaded, 1, 0))
 
     // On the wire: a 429 with retry-after-ms, then an answer.
@@ -273,7 +274,12 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       )
       check("the turn went on after the named wait", e.bodies.length === 2 && last?.finish === "end_turn", { requests: e.bodies.length, finish: last?.finish })
 
-      // A failure after a tool call has started to stream is not replayed.
+      /*
+       * A failure while a tool call's arguments were still streaming IS
+       * replayed. MiMo's retrySafe turns false on the assembled tool-call
+       * event, not on the input-start or the deltas before it, and nothing has
+       * run yet - tools execute after the stream returns.
+       */
       e.replies.push((response) => {
         response.writeHead(200, { "content-type": "text/event-stream" })
         response.write(frame({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_half", function: { name: "read", arguments: "" } }] } }] }))
@@ -283,7 +289,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       await e.runner.prompt({ sessionID: session.id, text: "read it" })
       await e.idle(session.id)
       const broken = (await e.assistants(session.id)).at(-1)
-      check("a step whose tool call had begun is not retried", e.bodies.length === sent + 1 && broken?.finish === "error", { requests: e.bodies.length - sent, finish: broken?.finish })
+      check("a step cut off while a tool call was still streaming is sent again", e.bodies.length === sent + 2 && broken?.finish === "end_turn", { requests: e.bodies.length - sent, finish: broken?.finish })
     } finally {
       await e.close()
     }

@@ -43,7 +43,7 @@ import type { SessionStore, Snapshot, SnapshotFile } from "./store"
 import { emptyUsage } from "./store"
 import type { Recording } from "./snapshot"
 import { Snapshots, decode, readSnapshotFile } from "./snapshot"
-import { isContextOverflow, isOverflowByCount, maxOutputTokens } from "./overflow"
+import { isOverflowByCount, isOverflowError, maxOutputTokens } from "./overflow"
 import { SUMMARY_INSTRUCTION, compactedText, continueNote, extractSummary, isSummary, touchedFiles, type CompactionTrigger } from "./summary"
 import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
@@ -1209,7 +1209,7 @@ export class SessionRunner {
       )
       if (outcome.toolCalls.length) called = true
     } catch (failure) {
-      if (isContextOverflow(describe(failure))) throw new Error("This conversation is too large to compact")
+      if (isOverflowError(failure, describe(failure))) throw new Error("This conversation is too large to compact")
       throw failure
     } finally {
       this.summarising.delete(session.id)
@@ -2056,7 +2056,7 @@ export class SessionRunner {
          * original refusal is left to stand.
          */
         const reason = failure instanceof Shown ? failure.reason : failure
-        if (rescued !== step && !controller.signal.aborted && isContextOverflow(describe(reason))) {
+        if (rescued !== step && !controller.signal.aborted && isOverflowError(reason, describe(reason))) {
           rescued = step
           const compacted = await this.compactForOverflow(session, controller.signal)
           if (!compacted) throw failure
@@ -2243,10 +2243,19 @@ export class SessionRunner {
         } catch (err) {
           if (request.signal.aborted || (err instanceof Error && err.name === "AbortError")) throw err
           /*
-           * MiMo retries a step only while replaying it is safe: once a tool
-           * call has started to stream, the attempt is not repeated.
+           * MiMo retries a step while replaying it is safe, and a tool call
+           * that has only begun to stream is still safe: its `retrySafe` turns
+           * false on the assembled `tool-call` event, not on the input-start or
+           * the argument deltas before it.
+           *
+           * This used to give up the moment a tool part had been announced -
+           * which is as soon as the name is known, with the arguments still
+           * streaming - so a socket dropped mid-arguments, the very case
+           * retrying exists for, ended the turn in red instead of being sent
+           * again. Nothing has run at this point either: tools execute after
+           * `stream` returns, and whatever streamed so far is dropped just
+           * below, so replaying the step repeats no side effect.
            */
-          if (assistant.parts.some((part) => part.type === "tool")) throw err
           firstFailure ??= Date.now()
           const decision = retryDecision(err, attempt, Date.now() - firstFailure)
           if (!decision) throw err

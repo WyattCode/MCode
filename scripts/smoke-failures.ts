@@ -16,6 +16,9 @@ import { SessionStore } from "../src/server/session/store"
 import { Storage } from "../src/server/storage"
 import { Config } from "../src/server/config"
 import { Bus } from "../src/server/bus"
+import { isContextOverflow, isOverflowError } from "../src/server/session/overflow"
+import { retryDecision } from "../src/server/session/retry"
+import { ProviderError, ProviderHttpError } from "../src/server/provider/types"
 import type { Check } from "./smoke-round5"
 
 const exists = (target: string) =>
@@ -227,6 +230,37 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     let asked = false
     await store.require("ses_b").catch(() => (asked = true))
     check("asking for the damaged conversation by id still says so", asked)
+  }
+
+  // ------------------------------------------------------------------ F11
+  section("Round 6 (F11): a 413 that carries a body is still an overflow")
+  {
+    /* The ordinary shape: a status and a JSON body whose wording matches no phrasing here. */
+    const withBody = new ProviderHttpError('Request failed (413). {"error":{"message":"too large"}}', 413, {}, undefined)
+    check("the sentence alone does not read as an overflow", !isContextOverflow(withBody.message))
+    check("but the status does", isOverflowError(withBody, withBody.message))
+    const coded = new ProviderError("the provider refused", undefined, undefined, { code: "context_length_exceeded" })
+    check("so does the body's own code", isOverflowError(coded, coded.message))
+    const bare = new ProviderHttpError("413 (no body)", 413, {}, undefined)
+    check("a bare 413 still reads as one", isOverflowError(bare, bare.message))
+    const other = new ProviderHttpError("Request failed (500). upstream died", 500, {}, undefined)
+    check("an ordinary server failure is not an overflow", !isOverflowError(other, other.message))
+    /* An overflow is never retried - it is compacted and replayed instead. */
+    check("an overflow with a body is not sent again", retryDecision(withBody, 1, 0) === undefined)
+  }
+
+  // ------------------------------------------------------------------ F41
+  section("Round 6 (F41): GPT overload is read off the body, not the wording")
+  {
+    const overloaded = new ProviderHttpError("service unavailable", 503, {}, { type: "service_unavailable_error", code: "server_is_overloaded" })
+    const first = retryDecision(overloaded, 1, 0)
+    check("a real overload is tried again at once", first?.wait === 0 && first?.kind === "server", first)
+    check("and three times at most", first?.max === 3, first)
+    /* A failure that merely mentions the words is an ordinary server error. */
+    const lookalike = new ProviderHttpError("upstream log said server_is_overloaded earlier", 503, {}, undefined)
+    const plain = retryDecision(lookalike, 1, 0)
+    check("a failure that only mentions the words keeps the full server budget", plain?.max === 8, plain)
+    check("and waits rather than retrying at once", (plain?.wait ?? 0) > 0, plain)
   }
 
   await fs.rm(root, { recursive: true, force: true }).catch(() => undefined)
