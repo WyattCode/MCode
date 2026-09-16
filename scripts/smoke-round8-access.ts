@@ -97,6 +97,7 @@ export async function roundEightAccessChecks(check: Check, section: (name: strin
   {
     const diff = read("components/parts/DiffBody.vue")
     check("a file in the review's list is a Tab stop that Enter and Space open", /class="db-list-line"\s+role="button"\s+tabindex="0"[\s\S]{0,80}@keydown\.enter\.space\.self\.prevent="reveal\(index, true\)"/.test(diff))
+    check("Enter on a diff row inside a permission card does not also answer the card", /function onDockKey\(event: KeyboardEvent\) \{\s+\/\/[^\n]*\n\s+if \(event\.defaultPrevented\) return/.test(read("components/QuestionDock.vue")))
     check("a file header is a Tab stop that folds, and says whether it is open", /class="db-head"\s+role="button"\s+tabindex="0"\s+:aria-expanded="!collapsed\.has\(file\.name\)"[\s\S]{0,80}@keydown\.enter\.space\.self\.prevent="toggle/.test(diff))
     const panel = read("components/RightPanel.vue")
     check("the shown right-panel tab is the strip's Tab stop", /:tabindex="tab\.id === rp\.active \? 0 : -1"/.test(panel))

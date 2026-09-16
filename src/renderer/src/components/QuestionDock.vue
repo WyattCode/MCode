@@ -58,6 +58,8 @@ function engage() {
 }
 
 function onDockKey(event: KeyboardEvent) {
+  // A control inside the card that answered the key itself - a diff's file row or header - keeps it.
+  if (event.defaultPrevented) return
   const target = event.target as HTMLElement
   if (target.tagName === "TEXTAREA" || target.tagName === "INPUT") return
   const el = root.value
