@@ -116,7 +116,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
    * one of its ten by model id. It is the first section, so the whole of the
    * cached prefix below it stays in one order for every family.
    */
-  const sections = [basePrompt(context.model ? { provider: context.model.provider, id: context.model.id } : undefined)]
+  const sections = [basePrompt(context.model ? { id: context.model.id } : undefined)]
   if (context.agent === "plan") sections.push(PLAN)
   else if (context.staged) sections.push(STAGED)
 

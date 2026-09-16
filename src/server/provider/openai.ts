@@ -1,4 +1,5 @@
-import type { Message, ModelModalities, Usage } from "@shared/protocol"
+import type { Message, ModelModalities, ModelRef, Usage } from "@shared/protocol"
+import { schemaFor } from "./tool-schema"
 import { TOOL_MEDIA_NOTE, attachmentParts, type WirePart } from "./attachment-parts"
 import { userText } from "@shared/annotations"
 import type { ToolDefinition } from "../tool/types"
@@ -59,10 +60,10 @@ interface Chunk {
   error?: { message?: string; code?: unknown; type?: unknown } | string
 }
 
-function toolSchemas(tools: ToolDefinition[]) {
+function toolSchemas(tools: ToolDefinition[], model: ModelRef) {
   return tools.map((tool) => ({
     type: "function" as const,
-    function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+    function: { name: tool.name, description: tool.description, parameters: schemaFor(model, tool.parameters) },
   }))
 }
 
@@ -199,7 +200,7 @@ export const OpenAICompatible: ProviderAdapter = {
     if (!root) throw new Error("This provider has no base URL configured")
 
     const messages = toMessages(systemText(request), request.history, request.inputs, request.interleaved)
-    const tools: Record<string, unknown>[] = toolSchemas(request.tools)
+    const tools: Record<string, unknown>[] = toolSchemas(request.tools, request.model)
     if (cacheMarked(request.model.provider, request.model.model)) withCacheMarks(messages, tools)
 
     // MiMo's stall timeout: a stream that goes quiet for 480s is cut off and retried.

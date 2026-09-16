@@ -134,7 +134,7 @@ export interface ToolResult {
 export interface ToolDefinition {
   name: string
   description: string
-  /** JSON Schema for the tool input, passed to the provider verbatim. */
+  /** JSON Schema for the tool input, passed to the provider in the shape the model's family takes (provider/tool-schema.ts). */
   parameters: Record<string, unknown>
   /** Permission bucket; approvals are remembered per bucket. */
   permission?: string
