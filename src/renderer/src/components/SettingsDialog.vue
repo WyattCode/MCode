@@ -1980,6 +1980,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                 :class="{ on: app.config?.browserEnabled !== false }"
                 role="switch"
                 :aria-checked="app.config?.browserEnabled !== false"
+                :aria-label="t('set.browserPlugin')"
                 @click="app.patchConfig({ browserEnabled: app.config?.browserEnabled === false })"
               >
                 <span class="knob" />
@@ -2129,6 +2130,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <button
                 class="switch"
                 :class="{ on: app.config?.spineSound !== false }"
+                role="switch"
+                :aria-checked="app.config?.spineSound !== false"
+                :aria-label="t('set.spineSound')"
                 @click="app.patchConfig({ spineSound: app.config?.spineSound === false })"
               >
                 <span class="knob" />
@@ -2148,7 +2152,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               <button
                 class="switch"
                 :class="{ on: hardwareAcceleration }"
-                :aria-pressed="hardwareAcceleration"
+                role="switch"
+                :aria-checked="hardwareAcceleration"
+                :aria-label="t('set.hwAccel')"
                 data-hw-accel-switch
                 @click="toggleHardwareAcceleration"
               >
@@ -3164,7 +3170,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
                     :class="{ picking: selecting }"
                     :role="selecting ? 'checkbox' : undefined"
                     :aria-checked="selecting ? pickedLive.includes(session.id) : undefined"
+                    :tabindex="selecting ? 0 : undefined"
                     @click="selecting && togglePick(session.id)"
+                    @keydown.space.prevent="selecting && togglePick(session.id)"
                   >
                     <span v-if="selecting" class="check" :class="{ on: pickedLive.includes(session.id) }" aria-hidden="true">
                       <svg v-if="pickedLive.includes(session.id)" width="12" height="12" viewBox="0 0 12 12" fill="none">

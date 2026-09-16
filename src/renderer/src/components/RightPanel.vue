@@ -254,6 +254,40 @@ function pickTabMenu(key: string) {
   }
 }
 
+/*
+ * The tabs from the keyboard, beyond MiMo, whose tabs cannot take focus: the
+ * shown tab is the strip's one Tab stop, arrows, Home and End walk the strip,
+ * Enter or Space shows the tab, and the Menu key or Shift+F10 opens its menu.
+ */
+const tabEls = new Map<string, HTMLElement>()
+
+function onTabKey(event: KeyboardEvent, id: string) {
+  if (event.target !== event.currentTarget) return
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault()
+    rp.activate(id)
+    return
+  }
+  if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) {
+    event.preventDefault()
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+    rp.activate(id)
+    tabMenu.value = { x: rect.left + rect.width / 2, y: rect.bottom, id }
+    return
+  }
+  const ids = rp.tabs.map((tab) => tab.id)
+  const at = ids.indexOf(id)
+  const rtl = strip.value ? getComputedStyle(strip.value).direction === "rtl" : false
+  const step = { ArrowRight: rtl ? -1 : 1, ArrowLeft: rtl ? 1 : -1 }[event.key]
+  let next: number | undefined
+  if (step !== undefined) next = (at + step + ids.length) % ids.length
+  else if (event.key === "Home") next = 0
+  else if (event.key === "End") next = ids.length - 1
+  if (next === undefined) return
+  event.preventDefault()
+  tabEls.get(ids[next]!)?.focus()
+}
+
 function onTabMouseDown(event: MouseEvent, id: string) {
   if (event.button !== 1) return
   event.preventDefault()
@@ -334,8 +368,11 @@ defineExpose({
           :class="{ active: tab.id === rp.active, 'tool-name': isToolName(tab) }"
           role="tab"
           :aria-selected="tab.id === rp.active"
+          :tabindex="tab.id === rp.active ? 0 : -1"
           :data-rp-tab="tab.type"
+          :ref="(el) => (el ? tabEls.set(tab.id, el as HTMLElement) : tabEls.delete(tab.id))"
           @click="rp.activate(tab.id)"
+          @keydown="onTabKey($event, tab.id)"
           @mousedown="onTabMouseDown($event, tab.id)"
           @contextmenu.prevent="openTabMenu($event, tab.id)"
         >

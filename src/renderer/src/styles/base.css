@@ -48,6 +48,51 @@ body {
   outline: none;
 }
 
+/*
+ * The keyboard's ring, beyond MiMo, which draws almost none: a control reached
+ * from the keyboard shows the accent outline the menus and cards already use.
+ * A pointer never matches :focus-visible on these, so nothing changes under
+ * the mouse. `:where` keeps the weight of a single pseudo-class, so a control
+ * that draws its own keyboard state still wins; the inset keeps the ring
+ * inside scrollers that clip.
+ */
+:where(
+    button,
+    a[href],
+    summary,
+    select,
+    input:is([type="checkbox"], [type="radio"], [type="range"]),
+    [role="button"],
+    [role="tab"],
+    [role="switch"],
+    [role="checkbox"],
+    [role="radio"],
+    [role="option"],
+    [role="menuitem"],
+    [role="link"],
+    [tabindex]:not([tabindex="-1"])
+  ):focus-visible {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
+}
+
+/*
+ * A text field matches :focus-visible however it was focused, so its ring
+ * waits for `data-focus-key` (lib/focus-ring.ts), which a Tab press sets and
+ * any pointer press clears. Clicking into a field draws what it always did.
+ */
+:root[data-focus-key] :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), textarea, [contenteditable="true"]):focus {
+  outline: 2px solid var(--interactive);
+  outline-offset: -2px;
+}
+
+/* In Windows high contrast the ring takes the system highlight. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
+
 /* MiMo's text selection colour, light and dark. */
 ::selection {
   background: #b3d7ff;

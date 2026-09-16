@@ -389,10 +389,24 @@ function completedAt(turn: Turn): string | undefined {
   return turn.completed === undefined ? undefined : stamp(turn.completed)
 }
 
+/*
+ * The clipboard refuses a document that is not focused - an assistive tool
+ * pressing the button on a window behind others - and an uncaught refusal
+ * would take the whole window to the error page. MiMo answers it with its
+ * "copy failed" notice.
+ */
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    notify(t("stream.replyCopied"))
+  } catch {
+    notifyFailure(t("code.copyFailed"))
+  }
+}
+
 async function copyAsked(turn: Turn) {
   if (!turn.text) return
-  await navigator.clipboard.writeText(turn.text)
-  notify(t("stream.replyCopied"))
+  await copyToClipboard(turn.text)
 }
 
 /** The reply itself, without the tool traffic that produced it. */
@@ -407,8 +421,7 @@ function replyText(turn: Turn): string {
 async function copyReply(turn: Turn) {
   const text = replyText(turn)
   if (!text) return
-  await navigator.clipboard.writeText(text)
-  notify(t("stream.replyCopied"))
+  await copyToClipboard(text)
 }
 
 /*
@@ -970,6 +983,8 @@ defineExpose({ stepMessage, scroller })
       <template v-for="(turn, at) in turns" :key="turn.id">
       <!-- round3-panel: the floating card draws the latest turn only, without its question. -->
       <div v-if="!latest || at === turns.length - 1" class="turn" :data-turn="turn.id">
+        <!-- Beyond MiMo: a heading per turn that is never drawn, for a screen reader's heading keys; find and selection pass it by. -->
+        <h2 v-if="!latest" class="a11y-only" data-turn-heading data-find-skip data-selectable="none">{{ t("a11y.turnHeading", { n: at + 1 }) }}</h2>
         <!-- subagents: what a subagent was handed, labelled as MiMo labels it. -->
         <div v-if="subagent && at === 0 && turn.text !== undefined && !turn.inbox" class="subagent-initial" data-subagent-initial>{{ t("subagentDetail.initialTask") }}</div>
         <!-- session chat: the same row names another conversation, over the question it sent. -->
@@ -1010,8 +1025,11 @@ defineExpose({ stepMessage, scroller })
                 class="sent-tile file"
                 :class="{ openable: Boolean(item.path) }"
                 v-tip="item.path ? t('stream.previewTip') : ''"
+                :role="item.path ? 'button' : undefined"
+                :tabindex="item.path ? 0 : undefined"
                 data-sent-file
                 @click="item.path && openSentFile(item.path)"
+                @keydown.enter.space.prevent="item.path && openSentFile(item.path)"
               >
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <path

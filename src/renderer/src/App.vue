@@ -76,6 +76,7 @@ import { HOME_SCOPE, useAnnotations } from "./stores/annotations"
 import { mainAnnotationScope } from "./lib/annotate"
 import { createFind, openFind } from "./lib/find"
 import { chime, play } from "./lib/sound"
+import { announce } from "./lib/announce"
 import { chimeOf, longTask } from "@shared/chime"
 import { themeTokens } from "./lib/theme-engine"
 import { DEFAULT_THEME, THEMES, themeByID } from "./lib/theme-palettes"
@@ -3842,6 +3843,14 @@ watch(
     if (choice !== "off" && longTask(turn.elapsed)) chime(choice)
     const about = noticeAbout(turn.sessionID)
     recordLog("INFO", about.title ?? turn.sessionID)
+    /*
+     * Beyond MiMo, whose thread says nothing as a turn ends: a screen reader
+     * hears it, with the conversation's name when it is not the one on screen.
+     * A subagent's own turns are left to the notice below.
+     */
+    const done = t("notify.done")
+    if (app.currentID === turn.sessionID) announce(done)
+    else if (about.title !== undefined) announce(`${about.title} · ${done}`)
     if (app.config?.notifyAgent === false) return
     // automation: a scheduled task's run is told about by its own policy, below.
     if (app.automationRuns.has(turn.sessionID)) return
@@ -3850,6 +3859,27 @@ watch(
       return
     }
     window.mcode.taskNotice({ kind: "done", ...about, silent: chiming })
+  },
+)
+
+/*
+ * A background subagent of the conversation on screen finishing, said to a
+ * screen reader: the 子智能体 tab changes without a word otherwise.
+ */
+const SUBAGENT_OUTCOME = { success: "subagents.status.completed", failure: "subagents.status.error", cancelled: "subagents.status.rejected" } as const
+const subagentRunning = new Map<string, boolean>()
+
+watch(
+  () => app.subagentSessions.map((session) => ({ session, running: session.subagent?.status === "running" })),
+  (entries) => {
+    for (const { session, running } of entries) {
+      const was = subagentRunning.get(session.id)
+      subagentRunning.set(session.id, running)
+      const outcome = session.subagent?.outcome
+      if (!was || running || !session.subagent?.background || !outcome) continue
+      if (app.rootOf(session.id) !== app.currentID) continue
+      announce(`${session.title || t("subagentActivity.fallbackName")} · ${t(SUBAGENT_OUTCOME[outcome])}`)
+    }
   },
 )
 

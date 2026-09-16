@@ -102,8 +102,8 @@ function onReasonKey(event: KeyboardEvent) {
           <path d="M8 5.6v2.8M8 10.4h.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
         </svg>
       </span>
-      <span data-perm-title>{{ t("perm.request", { verb }) }}</span>
-      <span v-if="chip" class="chip" data-perm-chip>{{ chip }}</span>
+      <span id="confirm-dock-title" data-perm-title>{{ t("perm.request", { verb }) }}</span>
+      <span v-if="chip" id="confirm-dock-chip" class="chip" data-perm-chip>{{ chip }}</span>
       <span class="queue-slot">
         <span v-if="queueTotal > 1" class="queue" data-confirm-queue :title="t('perm.queueTitle', { total: queueTotal })">
           1/{{ queueTotal }}
@@ -112,7 +112,7 @@ function onReasonKey(event: KeyboardEvent) {
     </div>
 
     <div class="cmd-wrap">
-      <pre class="cmd" :class="{ lossy: folded.lossy }" data-perm-cmd>{{ folded.lossy && !showFull ? folded.text : full }}</pre>
+      <pre id="confirm-dock-desc" class="cmd" :class="{ lossy: folded.lossy }" data-perm-cmd>{{ folded.lossy && !showFull ? folded.text : full }}</pre>
       <button
         v-if="folded.lossy"
         type="button"

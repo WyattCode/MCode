@@ -283,6 +283,8 @@ import { roundFiveChecks } from "./smoke-round5"
 import { roundSixChecks } from "./smoke-round6"
 // Round 7: what the model actually receives - the local estimate, pruning, the environment block, provider fields.
 import { roundSevenChecks } from "./smoke-round7"
+// Round 8: the keyboard and assistive-technology barriers (A1-A15).
+import { roundEightAccessChecks } from "./smoke-round8-access"
 // Round 8: the wording rules the eighteen language tables keep.
 import { wordingChecks } from "./smoke-wording"
 import { roundEightChecks } from "./smoke-round8"
@@ -7087,6 +7089,7 @@ async function main() {
   await roundFiveChecks(check, section)
   await roundSixChecks(check, section)
   await roundSevenChecks(check, section)
+  await roundEightAccessChecks(check, section)
   wordingChecks(check, section)
   await roundEightChecks(check, section)
   await failureChecks(check, section)

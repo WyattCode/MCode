@@ -48,6 +48,11 @@ function onListKey(event: KeyboardEvent) {
   giveBack()
 }
 
+/* A press on a capsule's text leaves focus where it was: capsules take focus for the keyboard only. */
+function keepFocus(event: MouseEvent) {
+  if (!(event.target instanceof Element && event.target.closest("button"))) event.preventDefault()
+}
+
 /* The last notice leaving with focus inside hands focus back as well. */
 watch(
   () => toasts.value.length,
@@ -64,7 +69,8 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
   <!--
     MiMo's notices: one capsule per line, centred 8px under the top edge of the
     window, the newest last. The column lets clicks through; only a capsule
-    takes the pointer.
+    takes the pointer. As in MiMo, each capsule is an alert and a Tab stop of
+    its own inside the polite column.
   -->
   <div
     ref="list"
@@ -84,6 +90,9 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onHotkey))
         class="notice"
         :class="toast.level"
         :data-level="toast.level"
+        role="alert"
+        tabindex="0"
+        @mousedown="keepFocus"
         @mouseenter="hold(toast.id)"
         @mouseleave="release(toast.id)"
       >
