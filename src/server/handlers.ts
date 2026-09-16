@@ -206,42 +206,6 @@ async function shellGroup(runtime: Runtime, request: { sessionID?: string; direc
  * without handling it is a type error.
  */
 
-/**
- * Keeps newly discovered models selectable.
- *
- * `enabledModels` is a curation list - empty means everything, and once it has
- * entries anything missing is hidden. It cannot tell a model that was switched
- * off from one that has never been seen, so the previous discovery is used as
- * the record of what has been seen: an id that was not in it is new, and new
- * models are offered rather than silently hidden.
- *
- * @param fresh true when the provider was just connected, which is an explicit
- *   request to use it and so enables everything it serves.
- */
-async function keepModelsSelectable(
-  runtime: Runtime,
-  provider: string,
-  before: string[],
-  fresh: boolean,
-): Promise<void> {
-  const chosen = runtime.config.get().enabledModels ?? []
-  // Nothing is curated yet, so everything already shows.
-  if (!chosen.length) return
-
-  const keys = runtime.config.models(provider).map((model) => `${provider}/${model.id}`)
-  const seen = new Set(before.map((id) => `${provider}/${id}`))
-  /*
-   * A connected provider with nothing enabled is not a state anyone chose - it
-   * is what happens when a provider is added after the list was curated - so
-   * that is repaired rather than preserved.
-   */
-  const none = !keys.some((key) => chosen.includes(key))
-
-  const added = keys.filter((key) => !chosen.includes(key) && (fresh || none || !seen.has(key)))
-  if (!added.length) return
-  await runtime.config.set({ enabledModels: [...chosen, ...added] })
-}
-
 export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
   switch (request.type) {
     case "session.list":
@@ -947,16 +911,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         const models = await discoverModels(definition, "local").catch((cause: Error) => {
           throw new Error(`${definition.name} did not answer. Start it and try again - ${cause.message}`)
         })
-        const wasConfigured = Boolean(runtime.config.apiKey(request.provider))
-        const before = runtime.config.models(request.provider).map((model) => model.id)
         await runtime.config.setApiKey(request.provider, "local")
         await runtime.config.setDiscovered(request.provider, models)
-        await keepModelsSelectable(runtime, request.provider, before, !wasConfigured)
         return { providers: runtime.config.providers(), models: models.length } satisfies Handled<"provider.auth">
       }
 
-      const wasConfigured = Boolean(runtime.config.apiKey(request.provider))
-      const seenBefore = runtime.config.models(request.provider).map((model) => model.id)
       await runtime.config.setApiKey(request.provider, request.apiKey)
       // A key is only useful once we know what it can drive, so discover the
       // model list straight away for providers that expose one.
@@ -969,9 +928,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         found = models.length
       }
       if (!found) found = runtime.config.models(request.provider).length
-      if (request.apiKey) {
-        await keepModelsSelectable(runtime, request.provider, seenBefore, !wasConfigured)
-      }
       return { providers: runtime.config.providers(), models: found } satisfies Handled<"provider.auth">
     }
 
@@ -986,21 +942,17 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       }
       const apiKey = runtime.config.apiKey(request.provider)
       if (!apiKey) throw new Error(`${definition.name} has no API key configured`)
-      const before = runtime.config.models(request.provider).map((model) => model.id)
       const models = await discoverModels(definition, apiKey)
       await runtime.config.setDiscovered(request.provider, models)
-      // Refreshing is how a model that appeared after connecting gets found;
-      // discovering it and then hiding it would make the button pointless.
-      await keepModelsSelectable(runtime, request.provider, before, false)
       return { providers: runtime.config.providers(), count: models.length }
     }
 
     case "provider.addCustom": {
       /*
        * The id is the user's, not a slug of the display name. It is what
-       * `provider/model` refs, the enabled-model list and the stored credential
-       * are all keyed by, so deriving it from a name meant renaming the
-       * provider silently orphaned all three.
+       * `provider/model` refs and the stored credential are both keyed by, so
+       * deriving it from a name meant renaming the provider silently orphaned
+       * both.
        */
       const id = request.id.trim()
       if (!/^[a-z0-9][a-z0-9-_]*$/.test(id)) {
@@ -1044,19 +996,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       })
       // A literal key is stored; an {env:...} indirection stores nothing.
       await runtime.config.setApiKey(id, environment ? "" : request.apiKey.trim())
-      /*
-       * Adding a provider is an explicit request to use it, so its models are
-       * enabled the way a freshly connected provider's are. Without this a
-       * reader who has ever curated the picker adds a provider, types in its
-       * models, and finds none of them offered.
-       */
-      await keepModelsSelectable(runtime, id, [], true)
       return { providers: runtime.config.providers() }
     }
 
     /*
-     * MiMo's 编辑 on a saved custom model. The id stays - refs, the enabled
-     * list and the credential are keyed by it - and a blank key field keeps
+     * MiMo's 编辑 on a saved custom model. The id stays - refs and the
+     * credential are keyed by it - and a blank key field keeps
      * whatever the key came from before, because the window is never sent it.
      */
     case "provider.updateCustom": {
@@ -1075,7 +1020,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       )
       // A credential header was shown masked; left as shown, it keeps what is stored.
       const keptHeaders = restoreHeaders(headers, existing.headers) ?? {}
-      const before = runtime.config.models(request.id).map((model) => model.id)
       const keptEnvironment = environment ?? (!typed ? existing.environment : undefined)
       await runtime.config.set({
         customProviders: config.customProviders.map((entry) =>
@@ -1095,7 +1039,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       })
       if (environment) await runtime.config.setApiKey(request.id, "")
       else if (typed) await runtime.config.setApiKey(request.id, typed)
-      await keepModelsSelectable(runtime, request.id, before, false)
       return { providers: runtime.config.providers() } satisfies Handled<"provider.updateCustom">
     }
 
@@ -1118,7 +1061,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         const stored = runtime.config.apiKey(source.id)
         if (stored) await runtime.config.setApiKey(id, stored)
       }
-      await keepModelsSelectable(runtime, id, [], true)
       return { providers: runtime.config.providers(), id } satisfies Handled<"provider.copyCustom">
     }
 

@@ -59,11 +59,6 @@ export const CONFIG_SCHEMA_VERSION = 1
 
 export type { ModelEntry }
 
-/** "provider/model" - the key models are enabled and looked up by. */
-export function modelKey(ref: ModelRef): string {
-  return `${ref.provider}/${ref.model}`
-}
-
 /**
  * One catalog entry as the window sees it.
  *
@@ -173,12 +168,6 @@ function defaults(): AppConfig {
      */
     commands: {},
     providerEndpoints: {},
-    /**
-     * Which models appear in the composer picker. Empty means "not chosen yet",
-     * and the picker falls back to showing everything a connected provider
-     * offers - otherwise connecting a provider would appear to do nothing.
-     */
-    enabledModels: [],
   }
 }
 
@@ -200,6 +189,8 @@ export const RETIRED_FIELDS: readonly string[] = [
   "pinchZoom",
   "expandShell",
   "expandEdits",
+  // S9-2: the picker's curation list, whose switches round three removed; every model shows.
+  "enabledModels",
 ]
 
 /** Takes the retired fields out of a document; answers whether any was there. */
@@ -659,6 +650,7 @@ export class Config {
     const providersBefore = this.current.customProviders
     const projectsBefore = { projects: this.current.projects, closedProjects: this.current.closedProjects }
     this.current = { ...this.current, ...patch }
+    dropRetired(this.current)
     if (patch.customProviders) {
       this.current = { ...this.current, ...customProviderWrite(providersBefore, this.current) }
     }
@@ -971,16 +963,12 @@ export class Config {
     }))
   }
 
-  /** Models offered in the composer picker, honouring the enabled list. */
+  /** Models offered in the composer picker: every model of every usable provider, as MiMo lists them. */
   enabled(): { provider: string; model: ModelEntry }[] {
-    const chosen = new Set(this.current.enabledModels)
     const out: { provider: string; model: ModelEntry }[] = []
     for (const provider of this.definitions()) {
       if (!this.usable(provider.id)) continue
-      for (const model of this.models(provider.id)) {
-        const key = modelKey({ provider: provider.id, model: model.id })
-        if (chosen.size === 0 || chosen.has(key)) out.push({ provider: provider.id, model })
-      }
+      for (const model of this.models(provider.id)) out.push({ provider: provider.id, model })
     }
     return out
   }

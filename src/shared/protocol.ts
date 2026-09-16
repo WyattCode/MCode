@@ -1497,11 +1497,6 @@ export interface AppConfig {
    * instead of in the document.
    */
   commands: Record<string, CommandDefinition>
-  /**
-   * "provider/model" keys shown in the composer picker. Empty means the user
-   * has not curated the list yet, and every connected model is offered.
-   */
-  enabledModels: string[]
 
   /*
    * Type. Empty means the built-in stack, which is what almost everyone wants;
@@ -1652,9 +1647,9 @@ export interface CustomProvider {
    * Chosen by the user, not derived from the name.
    *
    * The reference asks for this outright and validates it against
-   * /^[a-z0-9][a-z0-9-_]*$/. It matters because `provider/model` refs, the
-   * enabled-model list and the stored credential are all keyed by it, so an id
-   * that moves when the display name is edited takes all three with it.
+   * /^[a-z0-9][a-z0-9-_]*$/. It matters because `provider/model` refs and the
+   * stored credential are both keyed by it, so an id that moves when the
+   * display name is edited takes both with it.
    */
   id: string
   name: string

@@ -96,4 +96,14 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     const protocol = read("src/shared/protocol.ts")
     check("and the protocol no longer declares the fields", retired.every((field) => !new RegExp(`^\\s*${field}\\??:`, "m").test(protocol)))
   }
+
+  section("Round 9 (S9-2): no model stays hidden by a curation list")
+  {
+    const old = await loaded({ enabledModels: ["anthropic/claude-opus-5"] })
+    check("a stored curation list is dropped on load", !("enabledModels" in (old.config.get() as object)) && !("enabledModels" in (await old.disk())))
+    const readers = ["src/renderer/src/App.vue", "src/renderer/src/components/Composer.vue", "src/server/handlers.ts", "src/server/config.ts", "src/shared/protocol.ts"]
+    const still = readers.filter((file) => read(file).replace(/"enabledModels",/, "").includes("enabledModels"))
+    check("the picker, the tray list and the provider handlers no longer read or write it", still.length === 0, still)
+    check("and nothing keeps a list of selectable models up to date", !read("src/server/handlers.ts").includes("keepModelsSelectable"))
+  }
 }

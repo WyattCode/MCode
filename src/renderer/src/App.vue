@@ -1027,13 +1027,11 @@ watch(
  */
 watch(
   () => {
-    const chosen = app.config?.enabledModels ?? []
     const current = app.config?.model
     return app.providers
       .filter((provider) => provider.configured)
       .flatMap((provider) =>
         provider.models
-          .filter((model) => !chosen.length || chosen.includes(`${provider.id}/${model.id}`))
           .map((model) => ({
             key: `${provider.id}/${model.id}`,
             label: `${provider.name} · ${model.name || model.id}`,
