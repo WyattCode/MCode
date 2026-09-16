@@ -223,4 +223,26 @@ async function settingsChecks(check: Check, section: (name: string) => void): Pr
     check("and the backend offers no way to list or withdraw them", !/"permission\.rules"|"permission\.forget"|interface SavedRule/.test(protocol) && !/savedRules\(\)/.test(read("src/server/permission.ts")))
     check("while a deleted conversation still takes its own with it", /permissions\.forgetSession\(request\.sessionID\)/.test(read("src/server/handlers.ts")))
   }
+
+  section("Round 9 (S9-14): no server page and no remote-backend connection")
+  {
+    const dialog = read("src/renderer/src/components/SettingsDialog.vue")
+    check("the settings have no server page or nav entry", !/section === 'server'|navShows\('server'\)|\| "server"|server: "set\./.test(dialog))
+    const gone = ["src/renderer/src/components/ServersDialog.vue", "src/renderer/src/components/ServerPopover.vue"]
+    check("the saved-servers dialog and the server popover are deleted", gone.every((file) => !fs.existsSync(path.join(ROOT, file))))
+    const app = read("src/renderer/src/App.vue")
+    check("the window has no switch-server command, panel or use-local button", !/app\.server"|view\.server"|applyServer|chooseServer|serverPanel|managingServers|ServersDialog|ServerPopover/.test(app))
+    const client = read("src/renderer/src/lib/client.ts")
+    const store = read("src/renderer/src/stores/app.ts")
+    check("the client connects only to the backend this app started", !/useServer/.test(client) && /readonly server: string/.test(client))
+    check("and nothing reads a stored address at launch, which is cleared instead", !/getItem\("mcode\.(default)?[sS]erverURL"\)/.test(store) && /removeItem\("mcode\.serverURL"\)/.test(store) && !/setDefaultServer/.test(store))
+    const fields = ["serverURL", "servers", "defaultServer"]
+    check("the protocol has no server fields", fields.every((field) => !new RegExp(`^\\s*${field}\\??:`, "m").test(read("src/shared/protocol.ts"))) && !/interface ServerEntry/.test(read("src/shared/protocol.ts")))
+    const old = await loaded({ serverURL: "ws://10.0.0.2:4096", servers: [{ id: "a", name: "box", url: "ws://10.0.0.2:4096" }], defaultServer: "a" })
+    const disk = await old.disk()
+    check("stored server fields are dropped", fields.every((field) => !(field in (old.config.get() as object)) && !(field in disk)))
+    const policy = /content="(default-src[^"]*)"/.exec(read("src/renderer/index.html"))?.[1] ?? ""
+    const sockets = (/connect-src ([^;]*)/.exec(policy)?.[1] ?? "").trim().split(/\s+/).filter((source) => /^wss?:/.test(source))
+    check("the window's content policy lets sockets reach this machine alone", sockets.join(" ") === "ws://127.0.0.1:* ws://localhost:*", sockets)
+  }
 }

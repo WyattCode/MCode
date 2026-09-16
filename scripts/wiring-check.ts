@@ -79,10 +79,10 @@ for (const table of ["MENU_COMMAND_IDS", "KEY_COMMAND_IDS"]) {
 /*
  * The content policy and the code have to agree about what the window can talk
  * to, and neither one reports a disagreement: a request the policy forbids does
- * not raise an error the caller can catch, it just never happens. Two features
- * were dead this way at once - the update check, whose fetch could not leave the
- * process, and every remote server, because the policy named the literal
- * 127.0.0.1 and so refused even ws://localhost.
+ * not raise an error the caller can catch, it just never happens. The update
+ * check was dead this way, its fetch unable to leave the process. Round nine
+ * removed the remote-server connection MiMo does not have, so the socket
+ * sources go back to naming this machine alone.
  */
 const html = read("src/renderer/index.html")
 const policy = /content="(default-src[^"]*)"/.exec(html)?.[1] ?? ""
@@ -92,16 +92,19 @@ if (!connect) {
   problems.push("index.html declares no connect-src, so what the window may reach is unstated")
 } else {
   /*
-   * MCode offers to connect to a server on another machine, so the policy has to
-   * allow a socket to one. Compared token by token rather than by searching the
-   * whole line: "ws:" is a substring of "ws://127.0.0.1:*", so a search finds
-   * the scheme in exactly the host-limited source this is meant to reject.
+   * The window talks to its own backend and nothing else, so a socket source
+   * must name this machine: the backend's 127.0.0.1, or localhost for the
+   * development server. A bare scheme (`ws:`, `wss:`) would let page code open a
+   * socket to any host. Compared token by token rather than by searching the
+   * whole line: "ws:" is a substring of "ws://127.0.0.1:*".
    */
   const sources = connect.trim().split(/\s+/)
-  if (!sources.includes("ws:") && !sources.includes("wss:")) {
-    problems.push(
-      `connect-src allows no socket scheme, only ${sources.join(" ")} - so no server but the one on that exact address can be reached`,
-    )
+  const sockets = sources.filter((source) => /^wss?:/.test(source))
+  if (!sockets.includes("ws://127.0.0.1:*")) {
+    problems.push(`connect-src does not allow ws://127.0.0.1:*, so the window cannot reach its own backend`)
+  }
+  for (const source of sockets.filter((source) => source !== "ws://127.0.0.1:*" && source !== "ws://localhost:*")) {
+    problems.push(`connect-src allows the socket source ${source}, which reaches beyond this machine`)
   }
   /*
    * The other direction. http and https are deliberately not reachable from the

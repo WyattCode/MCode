@@ -781,17 +781,14 @@ export const useApp = defineStore("app", () => {
       }
     })
     /*
-     * A chosen server is read from the browser's own storage rather than from
-     * config: config lives on the server, and asking it where to connect would
-     * require being connected already.
+     * The window only ever talks to the backend this app started, as MiMo's
+     * does. The addresses an earlier build kept for other servers are taken
+     * away so they cannot linger.
      */
-    /*
-     * A default outranks the address last connected to: it is the answer to
-     * "where should this app start", where the other is only a record of where
-     * it happened to finish.
-     */
-    const stored = localStorage.getItem("mcode.defaultServerURL") ?? localStorage.getItem("mcode.serverURL")
-    if (stored) instance.useServer(stored)
+    try {
+      localStorage.removeItem("mcode.defaultServerURL")
+      localStorage.removeItem("mcode.serverURL")
+    } catch {}
     instance.connect()
 
     // Poll briefly for the first open rather than racing the socket.
@@ -1645,22 +1642,6 @@ export const useApp = defineStore("app", () => {
   }
 
   /**
-   * Remembers which saved server to connect to at launch.
-   *
-   * Mirrored into the browser own storage for the same reason the current
-   * address is: the next launch has to know where to connect before it has a
-   * connection to ask. An id with no server behind it clears the choice rather
-   * than being written, so a deleted row cannot send the next launch at an
-   * address that is gone.
-   */
-  async function setDefaultServer(id: string) {
-    const entry = config.value?.servers?.find((row) => row.id === id)
-    if (entry) localStorage.setItem("mcode.defaultServerURL", entry.url)
-    else localStorage.removeItem("mcode.defaultServerURL")
-    await patchConfig({ defaultServer: entry ? id : "" })
-  }
-
-  /**
    * Points the default - and the open session - at a model that can actually
    * run. Connecting a provider otherwise changes nothing visible: the composer
    * shows the session's model, and that session was created against whatever
@@ -2058,7 +2039,6 @@ export const useApp = defineStore("app", () => {
     projects,
     addProject,
     removeProjects,
-    setDefaultServer,
     setProviderEndpoint,
     setApiKey,
     authState,

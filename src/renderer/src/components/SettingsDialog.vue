@@ -47,7 +47,6 @@ type Section =
   | "environment"
   | "usage"
   | "updates"
-  | "server"
   | "models"
   | "mcp"
 
@@ -803,7 +802,6 @@ const NAV_LABELS: Record<Section, string> = {
   appearance: "set.appearance",
   files: "set.nav.files",
   models: "set.models",
-  server: "set.server",
   personal: "set.personal",
   keys: "set.shortcuts",
   mcp: "set.nav.mcp",
@@ -819,7 +817,6 @@ const NAV_KEYWORDS: Record<Section, string> = {
   appearance: "set.keywords.appearance",
   files: "set.keywords.files",
   models: "set.keywords.models",
-  server: "set.keywords.server",
   personal: "set.keywords.personal",
   keys: "set.keywords.keys",
   mcp: "set.keywords.mcp",
@@ -1620,10 +1617,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
           @keydown.enter="openFirstMatch"
         />
         <!--
-          MiMo's four groups, in its order. MCode's own server and provider pages
-          sit beside Models, which they feed.
+          MiMo's four groups, in its order.
         -->
-        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('server') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
+        <div v-show="navShows('general') || navShows('usage') || navShows('appearance') || navShows('files') || navShows('models') || navShows('personal') || navShows('keys')" class="nav-group">{{ t("set.group.personal") }}</div>
 
         <button v-show="navShows('general')" class="nav-item" :class="{ on: section === 'general' }" @click="section = 'general'">
           <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -1669,16 +1665,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
             />
           </svg>
           {{ t("set.models") }}
-        </button>
-
-        <button v-show="navShows('server')" class="nav-item" :class="{ on: section === 'server' }" @click="section = 'server'">
-          <svg class="nav-ico" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <rect x="3.35547" y="1.92969" width="13.2857" height="16.1429" stroke="currentColor" />
-            <rect x="3.35547" y="11.9297" width="13.2857" height="6.14286" stroke="currentColor" />
-            <rect x="12.8555" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
-            <rect x="10" y="14.2852" width="1.42857" height="1.42857" fill="currentColor" />
-          </svg>
-          {{ t("set.server") }}
         </button>
 
         <button v-show="navShows('personal')" class="nav-item" :class="{ on: section === 'personal' }" @click="section = 'personal'">
@@ -3071,31 +3057,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown))
               @close="confirmingDelete = undefined"
             />
           </Teleport>
-        </template>
-
-        <!-- Server -->
-        <template v-else-if="section === 'server'">
-          <h2>{{ t("set.server") }}</h2>
-          <!--
-            opencode's server row, measured: one 20px line inside a list
-            padded 20, a 6px dot and then the name 10 after it, and a 20px
-            action at the end. No description under the name and no
-            "connected" label - the dot is the whole status.
-          -->
-          <div class="card server-card">
-            <div class="line">
-              <span
-                class="status"
-                role="status"
-                :class="{ ok: app.connected }"
-                :aria-label="app.connected ? t('set.connected') : t('set.disconnected')"
-                v-tip="{ label: app.connected ? t('set.connected') : t('set.disconnected'), placement: 'top' }"
-              >
-                <span class="led" />
-              </span>
-              <div class="line-title">{{ t("set.localServer") }}</div>
-            </div>
-          </div>
         </template>
 
         <!-- Providers -->
@@ -4608,55 +4569,6 @@ h3 {
   :root:not([data-theme="light"]) .choice {
     border-color: #3d3d3d;
   }
-}
-
-/*
- * The servers list: padded 20 all round, its single row 20 tall with no
- * padding of its own, the dot 6x6 and 10 ahead of the name. Measured on
- * opencode's 服务器 tab.
- */
-.server-card {
-  padding: 20px;
-}
-
-.server-card .line {
-  gap: 10px;
-  min-height: 20px;
-  padding: 0;
-  border-bottom: 0;
-}
-
-.server-card .line-title {
-  font-weight: 440;
-}
-
-.server-card .status {
-  gap: 0;
-}
-
-.server-card .led {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.status {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-weak);
-  font-size: calc(13px * var(--ui-font-scale, 1));
-}
-
-.led {
-  width: 7px;
-  height: 7px;
-  background: var(--error);
-  border-radius: 50%;
-}
-
-.status.ok .led {
-  background: var(--success);
 }
 
 .actions {

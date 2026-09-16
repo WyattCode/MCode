@@ -127,7 +127,14 @@ async function socketChecks(check: Check, section: Section, root: string): Promi
   // The legitimate client has to hold up its end, or the window never connects.
   const clientSource = await fs.readFile(path.join(process.cwd(), "src/renderer/src/lib/client.ts"), "utf8").catch(() => "")
   const mainSource = await fs.readFile(path.join(process.cwd(), "src/main/index.ts"), "utf8").catch(() => "")
-  check("the window's client offers the secret to its own backend only", /this\.address === this\.own \? new WebSocket\(this\.address, socketProtocols\(this\.secret\)\)/.test(clientSource))
+  // Round nine (S9-14): the window connects to its own backend alone, so it always offers the secret, and only there.
+  check(
+    "the window's client offers the secret to its own backend only",
+    /this\.server = `ws:\/\/127\.0\.0\.1:\$\{port\}`/.test(clientSource) &&
+      /new WebSocket\(this\.server, socketProtocols\(this\.secret\)\)/.test(clientSource) &&
+      (clientSource.match(/new WebSocket\(/g) ?? []).length === 1 &&
+      !/useServer|this\.server = (?!`ws:\/\/127)/.test(clientSource),
+  )
   check("the main process hands the secret over the bootstrap channel and names the page's origin", /secret: started\.secret/.test(mainSource) && /origins: rendererOrigins\(/.test(mainSource))
 
   // The same attacks against a running backend.

@@ -1248,21 +1248,6 @@ export interface McpToolInfo {
   description?: string
 }
 
-/**
- * A server the user has saved, so it can be returned to by name.
- *
- * The address is the identity as far as connecting goes, but the id is what the
- * list is keyed by: an address can be edited, and a row that changed identity
- * when its address changed would lose its place and its default flag.
- */
-export interface ServerEntry {
-  id: string
-  /** What to call it in the list. Empty means show the address instead. */
-  name: string
-  /** A ws:// or wss:// address. */
-  url: string
-}
-
 export interface AppConfig {
   /**
    * Which build's idea of this document it is.
@@ -1310,28 +1295,6 @@ export interface AppConfig {
    * reason its setting is described as "before forcing text-only response".
    */
   maxSteps?: number
-  /**
-   * A server to talk to instead of the one this app started.
-   *
-   * Empty means the local backend. The protocol is identical, so a remote
-   * server is simply a different address for the same conversation.
-   */
-  serverURL: string
-  /**
-   * Saved servers, in the order they were added.
-   *
-   * Separate from serverURL, which is whichever one is connected now: a server
-   * can be saved without being in use, and the one in use can be an address
-   * typed once and never kept.
-   */
-  servers: ServerEntry[]
-  /**
-   * The saved server to connect to at launch, by id.
-   *
-   * Empty means start the local backend, which is what an app with no servers
-   * saved has always done.
-   */
-  defaultServer: string
   /** Where to look for a newer release, if anywhere. */
   updateFeed: string
   /** The chime a task that ran past a minute makes when it ends. */

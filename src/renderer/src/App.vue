@@ -22,14 +22,12 @@ import QuestionDock from "./components/QuestionDock.vue"
 import { useQuestions } from "./stores/questions"
 import SettingsDialog from "./components/SettingsDialog.vue"
 import ProjectDialog from "./components/ProjectDialog.vue"
-import ServerPopover from "./components/ServerPopover.vue"
 import ImagePreview from "./components/ImagePreview.vue"
 import LiveEditPill from "./components/LiveEditPill.vue"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
 import { imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
-import ServersDialog from "./components/ServersDialog.vue"
 import RenameDialog from "./components/RenameDialog.vue"
 import { markUpdateReady, updateState } from "./components/UpdatePill.vue"
 import type TerminalDrawerComponent from "./components/TerminalDrawer.vue"
@@ -332,10 +330,7 @@ function toggleSearch() {
 }
 const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
-const settingsSection = ref<"general" | "keys" | "server" | "models" | "mcp" | "archive">()
-
-/** The server control opens its own panel rather than general settings. */
-const serverPanel = ref(false)
+const settingsSection = ref<"general" | "keys" | "models" | "mcp" | "archive">()
 /*
  * Three things need a line of text from the user, and Electron has no
  * window.prompt to fall back on - it throws outright. Each is a flag rather
@@ -347,9 +342,6 @@ const serverPanel = ref(false)
  */
 /** The project a new workspace is being branched from, while it is being named. */
 const namingWorkspace = ref<string>()
-const choosingServer = ref(false)
-/** Whether the saved-servers dialog is up. */
-const managingServers = ref(false)
 
 /*
  * The model menu's "configure custom models" lands on the models page, as MiMo's
@@ -360,15 +352,6 @@ function openSettings(section?: unknown) {
   settingsOpen.value = true
 }
 
-/**
- * The title bar's server control carries a server icon and a status light, so
- * it has to land on the server page - sending it to general settings made the
- * icon a lie.
- */
-function openServerInfo() {
-  settingsSection.value = "server"
-  settingsOpen.value = true
-}
 /** Directory whose presentation is being edited, if any. */
 const editingProject = ref<string>()
 
@@ -597,36 +580,6 @@ async function exportLog() {
   const body = logLines.length ? logLines : [t("log.empty")]
   const saved = await window.mcode.saveText("mcode-log.txt", [...header, ...body].join("\n"))
   if (saved) notify(t("log.saved"), { action: revealAction(saved) })
-}
-
-/**
- * Points the window at another server, or back at the local one.
- *
- * The address is remembered, so the choice survives a restart - a server the
- * user has to re-enter every morning is not a server they will use.
- */
-function chooseServer() {
-  choosingServer.value = true
-}
-
-async function applyServer(answer: string) {
-  choosingServer.value = false
-  const url = answer.trim()
-  if (url && !/^wss?:\/\//.test(url)) {
-    notifyFailure(t("server.badURL"))
-    return
-  }
-  /*
-   * The socket moves first. Writing the config is a request over it, so doing
-   * that first meant a server that had stopped answering could not be left -
-   * the write to change the address had to reach the address being changed.
-   * Local storage is what the next boot reads, and is written here too.
-   */
-  if (url) localStorage.setItem("mcode.serverURL", url)
-  else localStorage.removeItem("mcode.serverURL")
-  app.client?.useServer(url)
-  void app.patchConfig({ serverURL: url })
-  notify(url ? t("server.switched", { url }) : t("server.local"))
 }
 
 /**
@@ -2568,12 +2521,6 @@ const bindableCommands = computed((): AppCommand[] => {
       run: () => void importConversationFile((sessionID) => void app.open(sessionID)),
     },
     {
-      id: "app.server",
-      group: "key.groupGeneral",
-      title: t("server.switch"),
-      run: () => void chooseServer(),
-    },
-    {
       id: "app.update",
       group: "key.groupGeneral",
       title: t("update.check"),
@@ -2691,13 +2638,6 @@ const bindableCommands = computed((): AppCommand[] => {
       hint: "Ctrl+Shift+C",
       enabled: hasSession,
       run: copyWorkingDirectory,
-    },
-    {
-      id: "view.server",
-      group: "key.groupGeneral",
-      title: t("cmd.server"),
-      enabled: inWorkspace,
-      run: () => (serverPanel.value = !serverPanel.value),
     },
     {
       id: "view.right",
@@ -3139,8 +3079,6 @@ const modalOpen = computed(
     Boolean(imagePreview.value) ||
     Boolean(videoPreview.value) ||
     settingsOpen.value ||
-    choosingServer.value ||
-    managingServers.value ||
     Boolean(namingWorkspace.value) ||
     Boolean(editingProject.value) ||
     Boolean(renamingSession.value) ||
@@ -3937,9 +3875,6 @@ onBeforeUnmount(() => {
         <div v-if="!app.connected && (app.error || app.offline)" class="boot">
           <p class="boot-msg">{{ app.error || t("boot.unreachable", { url: app.client?.server ?? "" }) }}</p>
           <button class="boot-retry" @click="retry">{{ t("common.retry") }}</button>
-          <button v-if="app.config?.serverURL" class="boot-retry" @click="applyServer('')">
-            {{ t("boot.useLocal") }}
-          </button>
         </div>
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
@@ -4155,17 +4090,6 @@ onBeforeUnmount(() => {
       @project="startIn"
     />
 
-    <ServerPopover
-      v-if="serverPanel"
-      @close="serverPanel = false"
-      @manage="
-        () => {
-          serverPanel = false
-          managingServers = true
-        }
-      "
-    />
-
     <RenameDialog
       v-if="namingWorkspace"
       :value="''"
@@ -4173,21 +4097,6 @@ onBeforeUnmount(() => {
       :confirm="t('workspace.new')"
       @close="namingWorkspace = undefined"
       @submit="(name) => createWorkspace(namingWorkspace!, name)"
-    />
-
-    <ServersDialog
-      v-if="managingServers"
-      @close="managingServers = false"
-      @connect="applyServer"
-    />
-
-    <RenameDialog
-      v-if="choosingServer"
-      :value="app.config?.serverURL ?? ''"
-      :heading="t('server.prompt')"
-      placeholder="ws://host:port"
-      @close="choosingServer = false"
-      @submit="applyServer"
     />
 
     <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->

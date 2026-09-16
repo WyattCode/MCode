@@ -102,9 +102,6 @@ function defaults(): AppConfig {
     projectOrder: [],
     taskOrder: {},
     keybinds: {},
-    serverURL: "",
-    servers: [],
-    defaultServer: "",
     updateFeed: "",
     taskDoneSound: "bloom",
     spineSound: true,
@@ -196,6 +193,10 @@ export const RETIRED_FIELDS: readonly string[] = [
   "releaseNotes",
   // S9-9: the bar's terminal toggle switch, which nothing ever read.
   "showTerminal",
+  // S9-14: the remote-backend connection MiMo does not have; the window only ever talks to its own backend.
+  "serverURL",
+  "servers",
+  "defaultServer",
 ]
 
 /** Takes the retired fields out of a document; answers whether any was there. */
