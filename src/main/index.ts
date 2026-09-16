@@ -404,8 +404,9 @@ function createWindow(show = true): BrowserWindow {
     // bundle (.icns) or the executable resource (.ico). macOS ignores this.
     icon: windowIcon(),
     webPreferences: {
-      preload: path.join(here, "../preload/index.mjs"),
-      sandbox: false,
+      preload: path.join(here, "../preload/index.cjs"),
+      // Sandboxed, as MiMo's windows are: a compromised page is further from the main process.
+      sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
     },
