@@ -77,6 +77,16 @@ function title(tab: RightTab): string {
 }
 
 /*
+ * Whether the tab shows one of the app's own tool names. MCode localizes those
+ * (MiMo keeps a short fixed set), so a compact pill may widen to fit one; a
+ * page title or a name the reader chose is cut at the compact width as MiMo cuts it.
+ */
+function isToolName(tab: RightTab): boolean {
+  if (tab.type === "browser" && tab.pageTitle) return false
+  return !tab.name && title(tab) !== ""
+}
+
+/*
  * A favicon that will not load gives the tab its globe back until the page
  * names another - or names the same one again after a navigation cleared it.
  */
@@ -320,7 +330,7 @@ defineExpose({
           v-for="tab in rp.tabs"
           :key="tab.id"
           class="rp-tab"
-          :class="{ active: tab.id === rp.active }"
+          :class="{ active: tab.id === rp.active, 'tool-name': isToolName(tab) }"
           role="tab"
           :aria-selected="tab.id === rp.active"
           :data-rp-tab="tab.type"
@@ -586,6 +596,21 @@ body.resizing .right-panel {
   width: 120px;
   min-width: min(120px, 100%);
   max-width: min(120px, 100%);
+}
+
+/*
+ * A localized tool name keeps its whole word when the pills turn compact: the
+ * pill grows from 120 toward the full 160 instead of cutting Überprüfung or
+ * الوكلاء الفرعيون mid-word. A short name still sits in exactly 120.
+ */
+.rp-tabs.compact .rp-tab.tool-name {
+  flex-basis: auto;
+  width: auto;
+  max-width: min(160px, 100%);
+}
+
+.rp-tabs.compact .rp-tab.tool-name .rpt-name {
+  flex: 1 1 auto;
 }
 
 .rp-tab.active {
