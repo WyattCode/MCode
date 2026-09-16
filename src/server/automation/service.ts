@@ -45,6 +45,32 @@ export interface Automation {
   /** Where the schedule is counted from: when it was made or last rescheduled. */
   anchorAt: number
   lastFiredAt?: number
+  /** The last few runs, so one the app died in the middle of is not simply forgotten. */
+  runHistory?: RunRecord[]
+}
+
+/**
+ * One run of a task, as MiMo records one.
+ *
+ * MiMo keeps a runHistory entry per run and replays a journal of finished runs
+ * at start-up, so an entry still "running" with no finishedAt is settled from
+ * the journal rather than left hanging. Here the entry is the journal: it is
+ * written when the run starts and settled when the turn ends, when the app
+ * stops, or - if the app was killed outright - at the next start.
+ */
+export interface RunRecord {
+  runId: string
+  /** The moment the schedule asked for it. */
+  scheduledFor: number
+  startedAt: number
+  status: "running" | "succeeded" | "failed" | "skipped"
+  finishedAt?: number
+  /** The conversation it ran in. */
+  resultThreadId?: string
+  hasNonEmptyReply?: boolean
+  error?: string
+  /** Set once the user has been told about a run that did not finish. */
+  reported?: boolean
 }
 
 interface Receipt {
@@ -61,6 +87,10 @@ interface Saved {
 
 /** MiMo keeps the last 256 operation receipts, so a retried call is answered as it was the first time. */
 const RECEIPTS_KEPT = 256
+/** How many runs a task remembers. */
+const RUNS_KEPT = 20
+/** What a run that the app ended is recorded as. */
+const CLOSED_MID_RUN = "The app closed before the run finished."
 const TICK_MS = 1000
 
 export interface AutomationDeps {
@@ -98,6 +128,8 @@ export class AutomationService {
   /** Runs whose turn has not ended yet, by the conversation they run in. */
   private readonly runs = new Map<string, Automation>()
   private readonly starting = new Set<string>()
+  /** Runs that ended with the app and have not been reported yet; sent on the first check. */
+  private readonly pendingReports: { sessionID: string; notify: boolean }[] = []
   private interval: ReturnType<typeof setInterval> | undefined
   private writing: Promise<void> = Promise.resolve()
   /** Set when the saved tasks could not be read and nothing may be written over them. */
@@ -143,6 +175,34 @@ export class AutomationService {
           : this.blocked
       }
     }
+    /*
+     * Runs that were in flight when the app went away.
+     *
+     * A run used to exist only in memory, so killing the app while a scheduled
+     * task was answering made it vanish: no failed entry, no notification,
+     * nothing in the task to say it ever ran, and - because lastFiredAt was
+     * advanced when the prompt started - no retry either. The user was told
+     * about every other run and silently not that one. A record left "running"
+     * is settled here, and one that nobody has been told about is queued.
+     */
+    let settled = false
+    for (const automation of this.saved.automations) {
+      for (const record of automation.runHistory ?? []) {
+        if (record.status === "running") {
+          record.status = "skipped"
+          record.finishedAt = this.deps.now()
+          record.error = CLOSED_MID_RUN
+          settled = true
+        }
+        if (record.status !== "skipped" || record.reported) continue
+        record.reported = true
+        settled = true
+        if (record.resultThreadId) {
+          this.pendingReports.push({ sessionID: record.resultThreadId, notify: notifies(automation.notification, automation.runMode, "skipped", false) })
+        }
+      }
+    }
+    if (settled) void this.save()
     for (const automation of this.saved.automations) this.plan(automation, true)
     if (options.interval === false) return
     this.interval = setInterval(() => void this.tick(), TICK_MS)
@@ -152,7 +212,39 @@ export class AutomationService {
   stop(): Promise<void> {
     if (this.interval) clearInterval(this.interval)
     this.interval = undefined
+    /*
+     * A run still going when the app quits is recorded as skipped, which is
+     * what MiMo's dispose() resolves a pending run to - and its notification
+     * rule treats skipped as failed, so the user hears about it. The telling
+     * happens at the next start, since the window is on its way out by now.
+     */
+    let ended = false
+    for (const automation of this.saved.automations) {
+      for (const record of automation.runHistory ?? []) {
+        if (record.status !== "running") continue
+        record.status = "skipped"
+        record.finishedAt = this.deps.now()
+        record.error = CLOSED_MID_RUN
+        ended = true
+      }
+    }
+    this.runs.clear()
+    if (ended) void this.save()
     return this.writing
+  }
+
+  /** Opens a record for a run that is starting, keeping only the last few. */
+  private openRun(automation: Automation, sessionID: string): void {
+    const at = this.deps.now()
+    const record: RunRecord = {
+      runId: `run-${at.toString(36)}-${sessionID.slice(-8)}`,
+      scheduledFor: this.next.get(automation.id) ?? at,
+      startedAt: at,
+      status: "running",
+      resultThreadId: sessionID,
+    }
+    automation.runHistory = [...(automation.runHistory ?? []), record].slice(-RUNS_KEPT)
+    void this.save()
   }
 
   list(): Automation[] {
@@ -352,6 +444,14 @@ export class AutomationService {
 
   /** One check: every task that is due and can start, starts. */
   async tick(): Promise<void> {
+    /*
+     * Runs that ended with the app are told of on the first check rather than
+     * at start-up: nothing is listening while the backend is still opening its
+     * socket, and an event published then would be published to nobody.
+     */
+    for (const report of this.pendingReports.splice(0)) {
+      this.deps.publish({ type: "automation.run", sessionID: report.sessionID, phase: "finished", notify: report.notify })
+    }
     const now = this.deps.now()
     const due = [...this.next.entries()].filter(([id, at]) => at <= now && !this.starting.has(id)).sort((a, b) => a[1] - b[1])
     for (const [id] of due) {
@@ -381,6 +481,7 @@ export class AutomationService {
       if (!target) return "skipped"
       if (this.deps.busy(target.id)) return "waiting"
       this.runs.set(target.id, structuredClone(automation))
+      this.openRun(automation, target.id)
       this.deps.publish({ type: "automation.run", sessionID: target.id, phase: "started" })
       await this.deps.prompt({ sessionID: target.id, text: automation.prompt, inbox }).catch(() => this.runs.delete(target.id))
       return "started"
@@ -396,6 +497,7 @@ export class AutomationService {
       ...(automation.project ? {} : { scratch: true }),
     })
     this.runs.set(session.id, structuredClone(automation))
+    this.openRun(automation, session.id)
     this.deps.publish({ type: "automation.run", sessionID: session.id, phase: "started" })
     await this.deps.prompt({ sessionID: session.id, text: automation.prompt, inbox }).catch(() => this.runs.delete(session.id))
     return "started"
@@ -411,6 +513,16 @@ export class AutomationService {
     const failed = !last || Boolean(last.role === "assistant" && (last.error || last.finish === "error"))
     const reply = last?.role === "assistant" ? last.parts.some((part) => part.type === "text" && part.text.trim()) : false
     const notify = notifies(automation.notification, automation.runMode, failed ? "failed" : "succeeded", reply)
+    // The record this run opened is settled here, so only a run the app outlived stays open.
+    const saved = this.saved.automations.find((entry) => entry.id === automation.id)
+    const record = [...(saved?.runHistory ?? [])].reverse().find((entry) => entry.resultThreadId === sessionID && entry.status === "running")
+    if (record) {
+      record.status = failed ? "failed" : "succeeded"
+      record.finishedAt = this.deps.now()
+      record.hasNonEmptyReply = reply
+      record.reported = true
+      void this.save()
+    }
     this.deps.publish({ type: "automation.run", sessionID, phase: "finished", notify })
   }
 

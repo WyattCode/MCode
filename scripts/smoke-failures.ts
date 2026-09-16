@@ -369,6 +369,75 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     check("its wording exists in all eighteen tables", definedIn("stream.interrupted") === 18, definedIn("stream.interrupted"))
   }
 
+  // ------------------------------------------------------------------- F5
+  section("Round 6 (F5): a run the app died in the middle of is not forgotten")
+  {
+    const directory = path.join(root, "automation-runs")
+    await fs.mkdir(directory, { recursive: true })
+    const file = path.join(directory, "automations.json")
+    const caller = { id: "ses_run", directory, model: { provider: "p", model: "m" } } as unknown as SessionInfo
+    /* The rule's hour is the machine's, so the clock is moved by whole days rather than to an hour. */
+    const day = 24 * 60 * 60 * 1000
+    const opened = Date.UTC(2026, 0, 1, 8, 0)
+    let clock = opened
+    const published: { type: string; sessionID: string; phase?: string; notify?: boolean }[] = []
+    const deps = () => ({
+      file,
+      now: () => clock,
+      sessions: { get: async () => caller, create: async () => caller, messages: async () => [] },
+      prompt: async () => undefined,
+      busy: () => false,
+      models: () => [],
+      agent: () => "build" as const,
+      effort: () => undefined,
+      scratch: async () => directory,
+      publish: (event: { type: string; sessionID?: string }) => published.push(event as { type: string; sessionID: string }),
+    })
+    const settled = () => new Promise((resolve) => setTimeout(resolve, 60))
+    const historyOf = async () => {
+      const saved = await parsedOrNothing<{ automations: { runHistory?: { status: string; error?: string; hasNonEmptyReply?: boolean }[] }[] }>(file)
+      return saved?.automations[0]?.runHistory ?? []
+    }
+
+    const first = new AutomationService(deps() as unknown as ConstructorParameters<typeof AutomationService>[0])
+    await first.start({ interval: false })
+    await first.handle({ mode: "create", title: "Daily digest", prompt: "Summarise", rrule: "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0" }, { sessionID: caller.id })
+    clock = opened + 2 * day
+    await first.tick()
+    await settled()
+    check("a run is written down as it starts", (await historyOf())[0]?.status === "running", await historyOf())
+
+    /* The app is killed here: stop() never runs, so the record is left open. */
+    const second = new AutomationService(deps() as unknown as ConstructorParameters<typeof AutomationService>[0])
+    published.length = 0
+    await second.start({ interval: false })
+    await settled()
+    const replayed = await historyOf()
+    check("the next start settles it rather than leaving it hanging", replayed[0]?.status === "skipped", replayed)
+    check("and says why", (replayed[0]?.error ?? "").includes("closed before the run finished"), replayed[0])
+    await second.tick()
+    check("the user is told about the run that did not finish", published.some((event) => event.type === "automation.run" && event.phase === "finished" && event.notify === true), published)
+    await second.tick()
+    check("and told once, not on every check", published.filter((event) => event.phase === "finished").length === 1, published.length)
+
+    /* A run that ends properly settles itself, and is not reported twice. */
+    clock = opened + 3 * day
+    published.length = 0
+    await second.tick()
+    await settled()
+    check("a later run opens a record of its own", (await historyOf()).length === 2, await historyOf())
+    await second.turnEnded(caller.id)
+    await settled()
+    const ended = await historyOf()
+    check("a turn that ended settles its own record", ended[1]?.status === "failed" || ended[1]?.status === "succeeded", ended[1])
+    const third = new AutomationService(deps() as unknown as ConstructorParameters<typeof AutomationService>[0])
+    published.length = 0
+    await third.start({ interval: false })
+    await third.tick()
+    check("a run that finished is not reported again at the next start", published.filter((event) => event.phase === "finished").length === 0, published)
+    await third.stop()
+  }
+
   // ------------------------------------------------------------------- F6
   section("Round 6 (F6): a recurring task whose time passed while the app was closed")
   {
