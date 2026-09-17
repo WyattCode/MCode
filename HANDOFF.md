@@ -301,6 +301,14 @@
   - 验证：六项检查、smoke 3258、build 全过；round9-mcp 15、round9-settings 13、round8-narrow 8、round8-a11y 20、round7-storage 7、round5-plan 8、round5-main 31、round6-journeys 18、round9-windows 8 全过、0 报错。改过的探针都有 `.pre-r9triage` 备份，改动行标 `// Triage:`。
 - **第九轮收尾**：核对那一路合并后（终端面板 dispose 竞态修复 4069262），八个失败探针连同 round6-journeys（18 项）全部通过；除终端面板外都是探针问题（计划模式卡在权限卡上是因为临时配置缺 `orphans-r9` 迁移记录；「始终允许」改用真实回合验证；更新检查改由 `mcode-round5-main-update.cjs` 在独立进程里跑真实 electron-updater）。
 - **本机显示器问题已确认是锁屏造成的**：工作站锁屏期间（LogonUI 运行，04:19 起）Electron 41.7.2 / 41.10.7 的 `screen.getAllDisplays()` 返回空、窗口按 100% 渲染；同一时刻 38 / 43 / 44 正常。解锁后 41.7.2 立即读到 175% 的显示器（`scratchpad/r9t-displays.cjs`）。锁屏时跑的像素探针会得到 1 倍读数，round8-narrow / round8-a11y 已按 devicePixelRatio 各存基准。
+- 排查结果：工具行为 57 项（高 1：中文 Windows 上 bash 输出切到半个汉字时整段按 GBK 乱码）、git 21 项（高 2：非 ASCII 文件名被滤掉致删除工作树前误判干净；「提交并推送」会把从 origin/main 建的分支推到远端 main）、步骤绘制 16 项（高 1：已完成回合的折叠规则）。对以往报告的更正：MiMo 桌面端不给模型 multiedit、标题工具与 `mcp_tool_search`。
+- **用户 2026-09-17 第十轮决定**：
+  - 工具安全照 MiMo 放宽：去掉 bash 正则硬拒绝表（删除类命令改走单独询问）、grep include 可命中被忽略文件、整个 git 仓库根算项目内、present_files 可交出项目外文件。
+  - 工具行为照 MiMo：删掉 multiedit 与 MCode 独有的 list；批准计划后同一运行直接开工；子智能体不能提问；history get 不自动交附件；read 读到的媒体当场存下；Windows 默认 shell 优先 pwsh；webfetch 用 turndown（新依赖，已装 7.2.4）；交付的网址自动用系统浏览器打开；定时规则周期从纪元起算；返回给模型的文案照 MiMo 用中文的那些改中文。
+  - git 照 MiMo：推送固定到 origin 同名分支；工作树 / 子目录对话归入主仓库项目；删掉新建 / 切换 / 删除工作区三条命令；补合并冲突提醒与内置 worktree / merge 技能（文字自写）；提交也设 15 秒超时；撤销按文件所在仓库，含项目外文件。
+  - 步骤：插话照 26.914 切成「上一回合 + 普通提问 + 新回合」；步骤脱敏直播和重载都做（超出对标）；加「i」提示行；长串折行照 MiMo（先截图实测）；阿拉伯语补双数复数。
+  - 按 MiMo 就近定的：定时任务目标限当前对话或侧栏里未归档、非子智能体的对话（MCode 没有置顶对话），找不到时记 skipped；发起方停止时撤回排队的跨对话消息、pdf_locate 接受相对路径照 MiMo；同步跨对话等满时转异步保持现状（有意差异）。
+- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建。
 
 用户决定不做（不要再主动提）：
 
