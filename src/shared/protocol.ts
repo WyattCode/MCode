@@ -1182,6 +1182,24 @@ export type VoiceEdit = VoiceDraft
  * window is hidden instead of closed on macOS, or wherever the tray switch is on,
  * so the app keeps running behind its tray or menu bar icon; otherwise it closes.
  */
+/**
+ * The conversation an event is only of use to, or nothing when every window
+ * should have it (N11-4).
+ *
+ * A text delta is dropped on arrival by a window that is not showing the
+ * conversation, and a running tool's changing output is drawn nowhere else
+ * either - those two are the whole of the high-frequency traffic. Everything
+ * structural - a new message, a part being announced, a tool that has finished
+ * or failed - goes to every window, because a window acts on those wherever
+ * they happened: the automatic opens and the file notices both read a completed
+ * call in any conversation.
+ */
+export function narrowcastSession(event: ServerEvent): string | undefined {
+  if (event.type === "message.delta") return event.sessionID
+  if (event.type === "message.part.updated" && event.part.type === "tool" && (event.part.status === "running" || event.part.status === "pending")) return event.sessionID
+  return undefined
+}
+
 export function closeHidesToTray(state: {
   quitting: boolean
   otherWindows: number
@@ -1817,6 +1835,15 @@ export type Request =
   | { type: "session.redo"; sessionID: string }
   /* One turn's file changes taken back out of the project; `messageIDs` are the turn's assistant messages. */
   | { type: "session.revertTurn"; sessionID: string; messageIDs: string[] }
+  /**
+   * Which conversations this window is drawing (N11-4).
+   *
+   * The high-frequency events - a text delta, a running tool's output -
+   * are only sent to the windows that named the conversation they belong
+   * to. Everything structural is still sent to every window, because a
+   * window acts on a finished tool call wherever it happened.
+   */
+  | { type: "session.watch"; sessionIDs: string[] }
   | { type: "session.history"; sessionID: string }
   | { type: "session.agent"; sessionID: string; agent: AgentName }
   | { type: "session.access"; sessionID: string; access: "ask" | "auto" | "full" }
@@ -2129,6 +2156,7 @@ export interface ResponseMap {
   "session.undo": { files: number; history: HistoryDepth }
   "session.redo": { files: number; history: HistoryDepth }
   "session.revertTurn": TurnRevertResult
+  "session.watch": Record<string, never>
   "session.history": { history: HistoryDepth }
   "session.archive": { session: SessionInfo }
   "session.rename": { session: SessionInfo }
@@ -2297,6 +2325,19 @@ export type ServerEvent =
   | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
   /** Incremental append to a part already announced via message.updated. */
   | { type: "message.delta"; sessionID: string; messageID: string; partID: string; text: string }
+  /**
+   * One part of a reply, new or changed (N11-4).
+   *
+   * A tool call changes six or seven times between being announced and
+   * finishing, and a talkative bash command reports ten times a second.
+   * Each of those used to clone and broadcast the whole assistant message,
+   * so a turn with K tool calls cost O(K) broadcasts of O(K) bytes. The
+   * part alone is what changed, and it is what is sent.
+   *
+   * A window that does not have the message yet ignores this; the message
+   * itself is always announced with `message.updated` first.
+   */
+  | { type: "message.part.updated"; sessionID: string; messageID: string; part: AssistantPart }
   | { type: "permission.requested"; request: PermissionRequest }
   | { type: "permission.resolved"; requestID: string; decided?: PermissionDecision; reason?: string }
   /**

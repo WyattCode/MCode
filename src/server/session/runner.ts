@@ -2604,7 +2604,8 @@ export class SessionRunner {
 
     const announce = (part: AssistantPart) => {
       assistant.parts.push(part)
-      this.bus.publish({ type: "message.updated", message: structuredClone(assistant) })
+      // N11-4: the part, not the whole message. The message itself was announced before the stream opened.
+      this.bus.publish({ type: "message.part.updated", sessionID: assistant.sessionID, messageID: assistant.id, part: structuredClone(part) })
     }
 
     const append = (part: TextPart | ReasoningPart, text: string) => {
@@ -2787,7 +2788,14 @@ export class SessionRunner {
     signal: AbortSignal
   }): Promise<void> {
     const { part, assistant } = input
-    const publish = () => this.bus.publish({ type: "message.updated", message: structuredClone(assistant) })
+    /*
+     * N11-4: every one of the six places below changes this one part and
+     * nothing else, so this one part is what goes out. A bash command reporting
+     * its output ten times a second used to clone and serialise the whole
+     * message - the largest one measured on this machine is 244 KB - and send
+     * it to every window.
+     */
+    const publish = () => this.bus.publish({ type: "message.part.updated", sessionID: assistant.sessionID, messageID: assistant.id, part: structuredClone(part) })
 
     /*
      * A name that does not resolve is repaired rather than refused, which is

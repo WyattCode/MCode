@@ -416,6 +416,8 @@ export const useApp = defineStore("app", () => {
       if (oldest === undefined) break
       held.delete(oldest)
     }
+    // held is an ordinary Map, so it says for itself when what this window follows has changed (N11-4).
+    declareWatched()
   }
 
   /** What a transcript looks like, cheaply: enough to tell whether a fresh read changed anything. */
@@ -591,6 +593,40 @@ export const useApp = defineStore("app", () => {
         if (index === -1) messages.value.push(event.message)
         else messages.value[index] = event.message
         reindex(event.message)
+        break
+      }
+      case "message.part.updated": {
+        /*
+         * N11-4: one part of a reply, rather than the whole message again. The
+         * message itself always arrives first as message.updated, so a part for
+         * a message this window does not hold is a conversation it is not
+         * drawing, and there is nothing to put it into.
+         */
+        const changed = event.part
+        // What a finished call means for this window is the same wherever the conversation is; both read the part alone.
+        const alone = { id: event.messageID, sessionID: event.sessionID, role: "assistant", parts: [changed] } as unknown as Message
+        noteDeliveryUpdate(alone)
+        noteToolWrites(alone, (sessions.value.find((session) => session.id === event.sessionID) ?? sideSessions.value.find((session) => session.id === event.sessionID))?.directory)
+        const into = (list: Message[] | undefined) => {
+          const message = list?.find((candidate) => candidate.id === event.messageID)
+          if (!message || message.role !== "assistant") return undefined
+          const at = message.parts.findIndex((part) => part.id === changed.id)
+          if (at === -1) message.parts.push(changed)
+          else message.parts[at] = changed
+          return message
+        }
+        {
+          const list = sideTranscripts.value[event.sessionID]
+          if (list) {
+            const message = into(list)
+            if (message) sideReindex(event.sessionID, message)
+            break
+          }
+        }
+        into(held.get(event.sessionID))
+        if (event.sessionID !== currentID.value) break
+        const message = into(messages.value)
+        if (message) reindex(message)
         break
       }
       case "message.delta": {
@@ -923,6 +959,38 @@ export const useApp = defineStore("app", () => {
     return instance
   }
 
+  /*
+   * N11-4: the conversations whose fine-grained events this window wants -
+   * the one on screen, the side chats and subagent transcripts it holds, and
+   * the few it keeps in case the reader comes straight back. Sent whenever the
+   * set changes, and again after a reconnect.
+   */
+  let declared = ""
+
+  function declareWatched(): void {
+    const instance = client.value
+    if (!instance) return
+    const wanted = [
+      ...(currentID.value ? [currentID.value] : []),
+      ...Object.keys(sideTranscripts.value),
+      ...held.keys(),
+    ]
+    const unique = [...new Set(wanted)].sort()
+    const key = unique.join(",")
+    if (key === declared) return
+    declared = key
+    void instance.request({ type: "session.watch", sessionIDs: unique }).catch(() => {
+      // A socket that dropped; the reconnect declares again.
+      declared = ""
+    })
+  }
+
+  watch(
+    [currentID, () => Object.keys(sideTranscripts.value).sort().join(",")],
+    () => declareWatched(),
+    { immediate: true },
+  )
+
   /** Set once the first load is done, so the opening connect is not a return. */
   let booted = false
 
@@ -1023,6 +1091,9 @@ export const useApp = defineStore("app", () => {
       // published while it was down, a permission request included.
       pendingPermissions.value = groupPermissions(listed.permissions)
       chatLinks.value = listed.chatLinks ?? {}
+      // A fresh socket knows nothing about this window; say again what it is drawing.
+      declared = ""
+      declareWatched()
       if (currentID.value) await open(currentID.value)
     } catch {
       // A socket that dropped again; the next open will bring another attempt.

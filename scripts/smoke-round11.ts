@@ -20,7 +20,8 @@ import { SCAN_LIMIT, searchMessages } from "../src/server/search"
 import { SessionStore } from "../src/server/session/store"
 import { Storage } from "../src/server/storage"
 import { Bus } from "../src/server/bus"
-import type { Message, ModelRef, ServerEvent, SessionInfo } from "@shared/protocol"
+import type { Message, ModelRef, ServerEvent, SessionInfo, ToolPart } from "@shared/protocol"
+import { narrowcastSession } from "@shared/protocol"
 
 /** Every text source under a folder, as bytes, so control characters survive. */
 async function sourceBytes(root: string): Promise<Map<string, Buffer>> {
@@ -248,6 +249,37 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     )
     const handlers = await read("src/server/handlers.ts")
     check("and a delete waits for the turn it stopped before collecting its store", /await waitForIdle\(runtime, request\.sessionID\)/.test(handlers))
+  }
+
+  section("Round 11 (N11-4): a part at a time, to the windows that are drawing it")
+  {
+    const tool = (status: ToolPart["status"]): ToolPart => ({ type: "tool", id: "prt_1", callID: "call_1", name: "bash", status, time: { created: 1 } }) as unknown as ToolPart
+    const part = (kind: "tool" | "text", status: ToolPart["status"]): ServerEvent =>
+      kind === "tool"
+        ? { type: "message.part.updated", sessionID: "ses_a", messageID: "msg_1", part: tool(status) }
+        : { type: "message.part.updated", sessionID: "ses_a", messageID: "msg_1", part: { type: "text", id: "prt_2", text: "hi" } as unknown as ToolPart }
+    check("a text delta only goes to the window drawing that conversation", narrowcastSession({ type: "message.delta", sessionID: "ses_a", messageID: "m", partID: "p", text: "x" }) === "ses_a")
+    check("so does a running tool's output, which is the ten-a-second one", narrowcastSession(part("tool", "running")) === "ses_a" && narrowcastSession(part("tool", "pending")) === "ses_a")
+    check(
+      "a finished or failed call still goes to every window, because they act on it wherever it happened",
+      narrowcastSession(part("tool", "completed")) === undefined && narrowcastSession(part("tool", "error")) === undefined,
+    )
+    check("and so does a part being announced, and the message itself", narrowcastSession(part("text", "running")) === undefined && narrowcastSession({ type: "session.idle", sessionID: "ses_a" }) === undefined)
+
+    const runner = await read("src/server/session/runner.ts")
+    const runTool = runner.slice(runner.indexOf("private async runTool("), runner.indexOf("private async runTool(") + 1200)
+    check(
+      "the runner sends the part that changed rather than cloning the whole message",
+      /type: "message\.part\.updated", sessionID: assistant\.sessionID, messageID: assistant\.id, part: structuredClone\(part\)/.test(runTool) &&
+        !/publish = \(\) => this\.bus\.publish\(\{ type: "message\.updated"/.test(runTool),
+    )
+    const index = await read("src/server/index.ts")
+    check("and the socket only sends those to a window that named the conversation", /const only = narrowcastSession\(event\)/.test(index) && /watching\.get\(client\)/.test(index))
+    const store = await read("src/renderer/src/stores/app.ts")
+    check(
+      "the window puts a part into the message it already holds, and says which conversations it is drawing",
+      /case "message\.part\.updated"/.test(store) && /type: "session\.watch", sessionIDs: unique/.test(store),
+    )
   }
 
   section("Round 11 (N11-5): the overlay's search goes through the index")

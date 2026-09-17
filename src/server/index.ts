@@ -1,6 +1,7 @@
 import path from "node:path"
 import { WebSocketServer, type WebSocket } from "ws"
 import type { ClientFrame, ServerFrame } from "@shared/protocol"
+import { narrowcastSession } from "@shared/protocol"
 import { codeOf, paramsOf } from "@shared/errors"
 import { Storage } from "./storage"
 import { Bus } from "./bus"
@@ -217,19 +218,39 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   })
   const clients = new Set<WebSocket>()
 
+  /**
+   * Which conversations each window is drawing, as it last said (N11-4).
+   *
+   * A window that has said nothing gets everything, which is what the checks
+   * and any other client see.
+   */
+  const watching = new Map<WebSocket, Set<string>>()
+
   bus.subscribe((event) => {
     // Settings leave with their secrets masked (config-view.ts).
     const frame = frameForWindow({ kind: "event", event })
     const payload = JSON.stringify(frame)
+    const only = narrowcastSession(event)
     for (const client of clients) {
-      if (client.readyState === client.OPEN) client.send(payload)
+      if (client.readyState !== client.OPEN) continue
+      if (only !== undefined) {
+        const declared = watching.get(client)
+        if (declared && !declared.has(only)) continue
+      }
+      client.send(payload)
     }
   })
+
+  /** A window saying which conversations it is drawing; see protocol's session.watch. */
+  const watch = (socket: WebSocket, sessionIDs: readonly string[]) => {
+    watching.set(socket, new Set(sessionIDs))
+  }
 
   server.on("connection", (socket) => {
     clients.add(socket)
     socket.on("close", () => {
       clients.delete(socket)
+      watching.delete(socket)
       /*
        * A window that reloads never unmounts its terminal panes, so nothing on
        * that side closes their shells - the socket simply goes away. Sweeping
@@ -253,6 +274,11 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       }
 
       try {
+        if (frame.request.type === "session.watch") {
+          watch(socket, frame.request.sessionIDs)
+          reply({ kind: "response", id: frame.id, ok: true, data: {} })
+          return
+        }
         const data = await handle(runtime, frame.request, socket)
         reply({ kind: "response", id: frame.id, ok: true, data })
       } catch (err) {

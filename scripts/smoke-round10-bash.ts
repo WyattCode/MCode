@@ -401,9 +401,11 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
       await runner.prompt({ sessionID: session.id, text: "STOPME" })
       // What the card shows while the command runs is published, not saved.
       let live = ""
+      // N11-4: a running call's output now goes out as the part alone, not the whole message.
       const unsubscribe = bus.subscribe((event) => {
-        if (event.type !== "message.updated" || event.message.sessionID !== session.id || event.message.role !== "assistant") return
-        for (const part of event.message.parts) if (part.type === "tool" && part.status === "running" && part.output) live = part.output
+        if (event.type !== "message.part.updated" || event.sessionID !== session.id) return
+        const part = event.part
+        if (part.type === "tool" && part.status === "running" && part.output) live = part.output
       })
       const printed = await until(() => live.includes("partial-output-r10"))
       unsubscribe()
