@@ -554,8 +554,8 @@ export async function failureChecks(check: Check, section: (name: string) => voi
     const third = new SessionChat(store, bus, turns as never, 50, storage)
     await third.restore()
     await new Promise((resolve) => setTimeout(resolve, 50))
-    check("a message whose turn the app outlived comes back to its caller", prompted.some((entry) => entry.sessionID === first.id && entry.text.includes("No reply could be fetched")), prompted)
-    check("and says the app closed rather than blaming the other conversation", prompted.some((entry) => entry.text.includes("The app closed while the other session was working")), prompted)
+    check("a message whose turn the app outlived comes back to its caller", prompted.some((entry) => entry.sessionID === first.id && entry.text.includes("没能取到回复")), prompted)
+    check("and says the app closed rather than blaming the other conversation", prompted.some((entry) => entry.text.includes("对方处理这条消息时应用关闭了")), prompted)
 
     /* A message older than a day is not delivered out of the blue. */
     prompted.length = 0

@@ -7,18 +7,23 @@ import { ToolError } from "./types"
  * session chat: the four tools a conversation uses to reach the others, as
  * MiMo's session-chat set offers them. The work is done by the runner's
  * `SessionChat`; these only read arguments and word the results.
+ *
+ * As MiMo's, a message that could not go, a session that could not be made and
+ * the like come back as results the model reads, not as failed calls (T10-49),
+ * and what the model reads is Chinese where MiMo's is (T10-55). The note for a
+ * busy target that turned the call into an async one stays English, as MiMo's does.
  */
 
 function chatOf(context: ToolContext) {
-  if (!context.chat) throw new ToolError("A subagent cannot message other sessions.")
+  if (!context.chat) throw new ToolError("子智能体不能给其他会话发消息。")
   return context.chat
 }
 
 const text = (value: unknown) => (typeof value === "string" ? value : undefined)
-const shown = (value?: string) => value?.trim() || "not set"
+const shown = (value?: string) => value?.trim() || "未填写"
 
 function contactLine(contact: ChatContact): string {
-  return `- "${contact.title}" id=${contact.id} ${contact.busy ? "busy" : "idle"}; purpose=${shown(contact.purpose)}; workspace=${contact.workspace}; task=${shown(contact.task)}; status=${shown(contact.taskStatus)}`
+  return `- 「${contact.title}」 id=${contact.id} ${contact.busy ? "忙碌" : "空闲"}；用途=${shown(contact.purpose)}；工作目录=${contact.workspace}；当前任务=${shown(contact.task)}；任务状态=${shown(contact.taskStatus)}`
 }
 
 export const ContactsTool: ToolDefinition = {
@@ -39,8 +44,8 @@ export const ContactsTool: ToolDefinition = {
   },
   async execute(_input, context) {
     const contacts = await chatOf(context).contacts(context.sessionID)
-    if (!contacts.length) return { output: "There is no other session to message yet; this is the only one." }
-    return { output: `Contacts (${contacts.length}, most recently active first):\n${contacts.map(contactLine).join("\n")}` }
+    if (!contacts.length) return { output: "通讯录里还没有别的会话，目前只有这一个。" }
+    return { output: `通讯录（${contacts.length} 个会话，最近活跃的在前）：\n${contacts.map(contactLine).join("\n")}` }
   },
 }
 
@@ -76,12 +81,12 @@ export const TalkToSessionTool: ToolDefinition = {
       mode: input.mode === "async" ? "async" : "sync",
       signal: context.signal,
     })
-    if (result.status === "replied") return { output: `Reply from "${result.title}":\n${result.reply}` }
+    if (result.status === "replied") return { output: `「${result.title}」的回复：\n${result.reply}` }
     if (result.status === "queued") {
       return {
         output: result.busy
           ? "The session is busy, so the message was queued and this call switched to async. Do not send it again; the reply will arrive in this conversation as a marked message."
-          : "Sent without waiting. The reply will arrive in this conversation later as a marked message; carry on until then.",
+          : "消息已发出，没有等待回复。对方的回复稍后会以标明来源的消息出现在本会话里，在那之前请继续手上的工作。",
       }
     }
     if (result.status === "switched") {
@@ -90,10 +95,11 @@ export const TalkToSessionTool: ToolDefinition = {
           "No reply within 120 seconds, but the session is still working on it, so this call switched to async. Do not send it again; the reply will arrive in this conversation as a marked message.",
       }
     }
-    if (result.status === "stopped") throw new ToolError("Stopped before the reply arrived.")
-    if (result.status === "failed") throw new ToolError(`No reply: ${result.error}`)
-    const candidates = result.candidates?.length ? `\nCandidates:\n${result.candidates.map(contactLine).join("\n")}` : ""
-    throw new ToolError(`Not delivered: ${result.error}${candidates}`)
+    // Stop ends the call the way it ends any other, so the step settles as stopped.
+    if (result.status === "stopped") throw new ToolError("回复到达之前，这次调用已被停止。")
+    if (result.status === "failed") return { output: `没有收到回复：${result.error}`, metadata: { delivered: false } }
+    const candidates = result.candidates?.length ? `\n候选：\n${result.candidates.map(contactLine).join("\n")}` : ""
+    return { output: `未送达：${result.error}${candidates}`, metadata: { delivered: false } }
   },
 }
 
@@ -123,8 +129,8 @@ export const CreateSessionTool: ToolDefinition = {
       workspace: text(input.workspace) ?? "",
       task: text(input.task),
     })
-    if (!made.ok) throw new ToolError(`The session was not created: ${made.error}`)
-    return { output: `Created the session "${made.session.title}" id=${made.session.id}`, metadata: { sessionID: made.session.id } }
+    if (!made.ok) return { output: `会话没有创建：${made.error}`, metadata: { created: false } }
+    return { output: `会话已创建：「${made.session.title}」 id=${made.session.id}`, metadata: { sessionID: made.session.id } }
   },
 }
 
@@ -149,7 +155,7 @@ export const UpdateSessionTool: ToolDefinition = {
   async execute(input, context) {
     const status = text(input.task_status)
     if (status !== undefined && !(CHAT_TASK_STATUSES as readonly string[]).includes(status)) {
-      throw new ToolError(`task_status must be one of ${CHAT_TASK_STATUSES.join(", ")}.`)
+      return { output: `会话资料没有更新：task_status 只能是 ${CHAT_TASK_STATUSES.join("、")} 之一。`, metadata: { updated: false } }
     }
     const changed = await chatOf(context).update({
       contactID: text(input.contact_id) ?? "",
@@ -158,7 +164,7 @@ export const UpdateSessionTool: ToolDefinition = {
       task: text(input.task),
       taskStatus: status as ChatTaskStatus | undefined,
     })
-    if (!changed.ok) throw new ToolError(`The session was not updated: ${changed.error}`)
-    return { output: `Updated the session "${changed.session.title}" id=${changed.session.id}` }
+    if (!changed.ok) return { output: `会话资料没有更新：${changed.error}`, metadata: { updated: false } }
+    return { output: `会话资料已更新：「${changed.session.title}」 id=${changed.session.id}` }
   },
 }
