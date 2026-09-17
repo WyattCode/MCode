@@ -458,6 +458,13 @@ export interface Attachment {
    * mention; the server fills in `mime` when the message is sent.
    */
   byPath?: boolean
+  /**
+   * A copy of the file taken when a tool read it, which requests read instead
+   * of `path`: MiMo puts the bytes into the tool result there and then, so what
+   * the model was shown stays what it was shown, whatever happens to the file
+   * afterwards. `path` still names the file the model asked for.
+   */
+  copy?: string
 }
 
 export interface AssistantMessage {

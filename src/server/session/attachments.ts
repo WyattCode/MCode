@@ -3,6 +3,7 @@ import path from "node:path"
 import type { AssistantPart, Attachment, Message } from "@shared/protocol"
 import { kindFor, mimeFor } from "../media"
 import { fittedImage, type LoadedAttachment } from "../provider/attachment-parts"
+import { READ_MEDIA_BYTES, sniffMime } from "../tool/read-media"
 
 /**
  * Files attached by path, as MiMo attaches them: the message carries the path,
@@ -23,16 +24,23 @@ function resolved(file: Attachment, directory: string): string {
   return path.isAbsolute(file.path) ? file.path : path.resolve(directory, file.path)
 }
 
-/** What an attached file is, read off the disk: a folder, text, media, or some other file. */
+/**
+ * What an attached file is, read off the disk: a folder, text, media, or some
+ * other file. The first bytes decide before the name does, as MiMo's do, so a
+ * JPEG saved as .png is sent as the JPEG it is rather than refused by the
+ * provider for claiming to be something else.
+ */
 async function mimeOf(target: string): Promise<string> {
   const stat = await fs.stat(target)
   if (stat.isDirectory()) return "application/x-directory"
-  const extension = path.extname(target).slice(1).toLowerCase()
-  if (VIDEO[extension]) return VIDEO[extension]!
   const handle = await fs.open(target, "r")
   try {
     const head = Buffer.alloc(4096)
     const { bytesRead } = await handle.read(head, 0, head.length, 0)
+    const sniffed = sniffMime(head.subarray(0, bytesRead))
+    if (sniffed) return sniffed
+    const extension = path.extname(target).slice(1).toLowerCase()
+    if (VIDEO[extension]) return VIDEO[extension]!
     const kind = kindFor(target, head.subarray(0, bytesRead))
     if (kind === "text") return "text/plain"
     if (kind === "binary") return "application/octet-stream"
@@ -58,7 +66,9 @@ export async function settleAttachments(list: Attachment[] | undefined, director
 export type AttachmentCache = Map<string, LoadedAttachment>
 
 async function load(file: Attachment, directory: string): Promise<LoadedAttachment> {
-  const target = resolved(file, directory)
+  // A tool's copy, taken when it read the file, stands for the file; read already held it to its own limit.
+  const target = file.copy ?? resolved(file, directory)
+  const limit = file.copy ? READ_MEDIA_BYTES : MEDIA_BYTES
   try {
     const mime = file.mime || (await mimeOf(target))
     if (mime === "application/x-directory") {
@@ -84,7 +94,7 @@ async function load(file: Attachment, directory: string): Promise<LoadedAttachme
     }
     if (/^(image|audio|video)\/|^application\/pdf$/.test(mime)) {
       const size = (await fs.stat(target)).size
-      if (size > MEDIA_BYTES) {
+      if (size > limit) {
         return { ...file, mime, data: "", note: `[${path.basename(target)} was attached, but at ${size} bytes it is too large to put into a request, so it was not sent. Tell the user.]` }
       }
       const data = (await fs.readFile(target)).toString("base64")
@@ -120,7 +130,7 @@ export async function withAttachmentData(history: Message[], directory: string, 
         out.push(file)
         continue
       }
-      const key = resolved(file, directory)
+      const key = file.copy ?? resolved(file, directory)
       let loaded = cache.get(key)
       if (!loaded) {
         loaded = await load(file, directory)

@@ -10,7 +10,8 @@ import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import type { Check } from "./smoke-round5"
-import type { ToolContext } from "../src/server/tool/types"
+import { calls, engine, say } from "./smoke-round5"
+import type { ToolContext, ToolResult } from "../src/server/tool/types"
 import { findTool } from "../src/server/tool/registry"
 import { ripgrepBinary } from "../src/server/tool/search"
 
@@ -148,6 +149,188 @@ export async function roundTenFileChecks(check: Check, section: (name: string) =
       const loose = toolContext(path.join(base, "elsewhere"), { permissions: permissions as never })
       await runTool("read", { file_path: path.join(base, "repo", "pkg", "a.txt") }, loose)
       check("and a conversation outside any repository keeps to its own folder", asked.length === 2, asked)
+    } finally {
+      await fs.rm(base, { recursive: true, force: true })
+    }
+  }
+
+  // ------------------------------------------------------------ T10-8, T10-28, T10-33
+  section("Round 10 (T10-8, T10-28, T10-33): read's media - by content, told what to do instead, kept as read")
+  {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r10-media-"))
+    try {
+      const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(40, 1)])
+      const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, 2)])
+      await put(base, "photo.png", jpeg)
+      await put(base, "noext", png)
+      await put(base, "old.bmp", Buffer.concat([Buffer.from("BM"), Buffer.alloc(60, 0)]))
+      await put(base, "phone.heic", Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypheic"), Buffer.alloc(20, 0)]))
+      await put(base, "doc.pdf", Buffer.from("%PDF-1.4\n%binary\n"))
+      await put(base, "notes.bmp", "BMW service notes\n")
+      const copies = path.join(base, "copies")
+      const kept: string[] = []
+      const { keepReadCopy } = await import("../src/server/tool/read-media")
+      const seeing = { inputs: { image: true, pdf: true, audio: false, video: false } }
+      const at = (model: { inputs: Record<string, boolean>; vision?: string } = seeing) =>
+        toolContext(base, {
+          model: async () => model,
+          keepCopy: async (source, bytes) => {
+            const copy = await keepReadCopy(copies, source, bytes)
+            kept.push(copy)
+            return copy
+          },
+        })
+      const read = (file: string, context = at()) =>
+        findTool("read")!
+          .execute({ file_path: file }, context)
+          .catch((error: Error): ToolResult => ({ output: `ERROR ${error.message}` }))
+
+      const disguised = await read("photo.png")
+      check("a JPEG named .png is attached as the JPEG it is", disguised.attachments?.[0]?.mime === "image/jpeg", disguised.attachments)
+      const bare = await read("noext")
+      check("a picture with no extension is attached by its first bytes", bare.attachments?.[0]?.mime === "image/png", bare)
+      const bmp = await read("old.bmp")
+      check("a BMP is not attached, and the model is told which formats read takes and to convert", !bmp.attachments?.length && bmp.output.includes("PNG, JPEG, WebP and GIF") && bmp.output.includes("ffmpeg"), bmp.output)
+      const heic = await read("phone.heic")
+      check("so is a HEIC photo", !heic.attachments?.length && heic.output.includes("image/heic"), heic.output)
+      const text = await read("notes.bmp")
+      check("a text file that happens to start with BM is still read as text", text.output.includes("1: BMW service notes"), text.output)
+
+      const blind = await read("photo.png", at({ inputs: { image: false, pdf: true }, vision: "prov/seer" }))
+      check("a model that cannot see gets no picture, and is told to hand it to a subagent with a model that can", !blind.attachments?.length && blind.output.includes('model "prov/seer"') && blind.output.includes("actor"), blind.output)
+      const blindNone = await read("photo.png", at({ inputs: { image: false } }))
+      check("with no such model connected, it is told to ask for one or use OCR", blindNone.output.includes("OCR"), blindNone.output)
+      const noPdf = await read("doc.pdf", at({ inputs: { image: true, pdf: false } }))
+      check("a model without PDF input is pointed at the built-in pdf skill", !noPdf.attachments?.length && noPdf.output.includes("pdf skill"), noPdf.output)
+      await put(base, "clip.mp4", Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypmp42"), Buffer.alloc(20, 0)]))
+      const noVideo = await read("clip.mp4")
+      check("a model without video input is told to switch or use ffprobe", !noVideo.attachments?.length && noVideo.output.includes("ffprobe"), noVideo.output)
+
+      const big = path.join(base, "huge.pdf")
+      await fs.writeFile(big, "%PDF-1.4\n")
+      await fs.truncate(big, 51 * 1024 * 1024)
+      const huge = await read("huge.pdf")
+      check("a PDF over 50 MB is not read, and the result says so", !huge.attachments?.length && huge.output.includes("It was not read"), huge.output)
+      const wide = path.join(base, "wide.png")
+      await fs.writeFile(wide, png)
+      await fs.truncate(wide, 51 * 1024 * 1024)
+      const oversized = await read("wide.png")
+      check("a picture over 50 MB that cannot be made smaller here is not attached", !oversized.attachments?.length && oversized.output.includes("could not be made smaller"), oversized.output)
+      await fs.rm(big)
+      await fs.rm(wide)
+
+      // T10-33: the copy stands for the file from then on.
+      const first = await read("photo.png")
+      const copy = first.attachments?.[0]?.copy
+      check("the attachment carries a copy taken at read time, named as the file", Boolean(copy) && path.basename(copy!) === "photo.png" && (await fs.readFile(copy!)).equals(jpeg), first.attachments)
+      await fs.writeFile(path.join(base, "photo.png"), png)
+      const { withAttachmentData } = await import("../src/server/session/attachments")
+      const history = [
+        {
+          id: "m1",
+          sessionID: "s",
+          role: "assistant",
+          parts: [{ type: "tool", id: "p1", callID: "c1", name: "read", status: "completed", input: {}, output: first.output, attachments: first.attachments, time: { created: 1 } }],
+          time: { created: 1 },
+        },
+      ] as never
+      const sent = (await withAttachmentData(history, base, new Map())) as unknown as { parts: { attachments: { data: string; mime: string }[] }[] }[]
+      const carried = sent[0]!.parts[0]!.attachments[0]!
+      check("a later request sends what was read, not what the file holds now", Buffer.from(carried.data, "base64").equals(jpeg) && carried.mime === "image/jpeg", carried.mime)
+      await fs.rm(path.join(base, "photo.png"))
+      const gone = (await withAttachmentData(history, base, new Map())) as unknown as { parts: { attachments: { data: string; note?: string }[] }[] }[]
+      check("and still does after the file is deleted", Buffer.from(gone[0]!.parts[0]!.attachments[0]!.data, "base64").equals(jpeg), gone[0]!.parts[0]!.attachments[0]!.note)
+      const again = await keepReadCopy(copies, path.join(base, "photo.png"), jpeg)
+      check("the same bytes are kept once", again === copy)
+
+      const { settleAttachments } = await import("../src/server/session/attachments")
+      await put(base, "shot.png", jpeg)
+      const settled = await settleAttachments([{ path: "shot.png", mime: "", data: "", byPath: true }], base)
+      check("a user's attachment is typed by its first bytes too", settled[0]?.mime === "image/jpeg", settled)
+    } finally {
+      await fs.rm(base, { recursive: true, force: true })
+    }
+  }
+
+  section("Round 10 (T10-28, T10-33, T10-11): the runner gives read the model, a place for copies and the history")
+  {
+    const e = await engine({ custom: { models: [{ id: "m", name: "M" }, { id: "seer", name: "Seer", attachment: true }] } })
+    try {
+      const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(40, 3)])
+      await put(e.project, "pic.png", jpeg)
+      await put(e.project, "sub/AGENTS.md", "sub rule\n")
+      await put(e.project, "sub/a.txt", "a\n")
+      const session = await e.store.create({ directory: e.project, model: e.model })
+      e.replies.push(calls([{ name: "read", input: { file_path: "pic.png" } }]))
+      e.replies.push(calls([{ name: "read", input: { file_path: "sub/a.txt" } }]))
+      e.replies.push(calls([{ name: "read", input: { file_path: "sub/a.txt", offset: 1 } }]))
+      e.replies.push(say("done"))
+      await e.runner.prompt({ sessionID: session.id, text: "READS" })
+      await e.idle(session.id)
+      const parts = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool")
+      const [pic, first, second] = parts.map((part) => (part.type === "tool" ? part : undefined))
+      check("a model without image input is told at read time, and pointed at the connected model that sees", Boolean(pic?.output.includes("cannot see pictures") && pic.output.includes('model "fake/seer"') && !pic.attachments?.length), pic?.output)
+      check("the next step's read carries the folder's instructions", Boolean(first?.output.includes("sub rule")), first?.output)
+      check("and a read in a later step does not repeat them, judged from the history", Boolean(second && !second.output.includes("sub rule")), second?.output)
+
+      await e.store.update(session.id, { model: { provider: "fake", model: "seer" } })
+      e.replies.push(calls([{ name: "read", input: { file_path: "pic.png" } }]))
+      e.replies.push(say("done"))
+      await e.runner.prompt({ sessionID: session.id, text: "LOOK" })
+      await e.idle(session.id)
+      const seen = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool").at(-1)
+      const copy = seen?.type === "tool" ? seen.attachments?.[0]?.copy : undefined
+      check(
+        "a model that sees gets the picture, from a copy kept under the app's data folder",
+        Boolean(copy && copy.startsWith(path.join(e.dir, "data", "storage", "read-media")) && (await fs.readFile(copy)).equals(jpeg)),
+        copy ?? seen,
+      )
+    } finally {
+      await e.close()
+    }
+  }
+
+  // ------------------------------------------------------------ T10-11
+  section("Round 10 (T10-11): read's folder instructions are judged from the history the request still sends")
+  {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r10-instr-"))
+    try {
+      await put(base, "proj/AGENTS.md", "root rule\n")
+      await put(base, "proj/sub/AGENTS.md", "sub rule\n")
+      await put(base, "proj/sub/a.txt", "one\ntwo\n")
+      await put(base, "proj/sub/pic.png", Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(10, 1)]))
+      await put(base, "projx/AGENTS.md", "neighbour rule\n")
+      await put(base, "projx/b.txt", "b\n")
+      const project = path.join(base, "proj")
+      const given = new Set<string>()
+      const at = (messageID: string) => toolContext(project, { messageID, instructionsGiven: async () => given })
+      const rule = path.join(project, "sub", "AGENTS.md")
+
+      const failed = await runTool("read", { file_path: "sub/a.txt", offset: 9 }, at("m1"))
+      check("a read that fails on its offset", Boolean(failed.error?.includes("past the end")), failed)
+      const first = await runTool("read", { file_path: "sub/a.txt" }, at("m1"))
+      check("claims nothing, so the next read still carries the folder's instructions", first.output.includes("sub rule") && !first.output.includes("root rule"), first.output)
+      check("and names them as loaded", JSON.stringify(first.metadata?.loaded) === JSON.stringify([rule]), first.metadata)
+      const sameStep = await runTool("read", { file_path: "sub/a.txt", offset: 2 }, at("m1"))
+      check("a second read in the same reply does not repeat them", !sameStep.output.includes("sub rule"), sameStep.output)
+      given.add(rule)
+      const later = await runTool("read", { file_path: "sub/a.txt" }, at("m2"))
+      check("a later reply whose history still carries them does not get them again", !later.output.includes("sub rule"), later.output)
+      given.clear()
+      const cleared = await runTool("read", { file_path: "sub/a.txt" }, at("m3"))
+      check("once the history no longer carries them - cleared, compacted, or a new launch - they are given again", cleared.output.includes("sub rule"), cleared.output)
+      const media = await runTool("read", { file_path: "sub/pic.png" }, at("m4"))
+      check("a read of a picture carries them too", media.output.includes("sub rule") && JSON.stringify(media.metadata?.loaded) === JSON.stringify([rule]), media)
+      const neighbour = await runTool("read", { file_path: path.join(base, "projx", "b.txt") }, at("m5"))
+      check("a folder whose name only starts with the project's is not inside it", !neighbour.output.includes("neighbour rule"), neighbour.output)
+
+      const { instructionsIn } = await import("../src/server/tool/read")
+      const { clearedNote } = await import("../src/server/session/prune")
+      const part = (output: string, status = "completed") => ({ type: "tool", name: "read", status, output, metadata: { loaded: [rule] } })
+      const history = (p: unknown) => [{ role: "assistant", parts: [p] }] as never
+      check("the history counts a completed read's loaded files", instructionsIn(history(part("x"))).has(rule))
+      check("but not a failed read's", !instructionsIn(history(part("x", "error"))).has(rule))
+      check("nor one whose output pruning cleared", !instructionsIn(history(part(clearedNote("read")))).has(rule))
     } finally {
       await fs.rm(base, { recursive: true, force: true })
     }

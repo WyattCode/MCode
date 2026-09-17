@@ -30,7 +30,9 @@ import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } fr
 import { findTool, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
-import type { PlanControl, SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
+import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
+import { instructionsIn } from "../tool/read"
+import { keepReadCopy } from "../tool/read-media"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
@@ -268,6 +270,8 @@ export class SessionRunner {
   private readonly background = new Map<string, Set<AbortController>>()
   /** Which conversations are close enough to their compaction line to halve tool output. */
   private readonly pressured = new Map<string, boolean>()
+  /** read: how much the running turn trims off older output, so read knows which instructions its request still carries. */
+  private readonly turnPrune = new Map<string, PruneLevel>()
   /** Calls whose arguments arrived as text that could not be read, and why. */
   private readonly inputErrors = new WeakMap<ToolPart, string>()
   /**
@@ -2093,6 +2097,7 @@ export class SessionRunner {
      * back and undo the saving. One decision per turn keeps the request stable.
      */
     const pruneLevel = await this.pruneLevelFor(session)
+    this.turnPrune.set(sessionID, pruneLevel)
 
     /*
      * The step that was last rescued by a compaction. A request the provider
@@ -2826,6 +2831,8 @@ export class SessionRunner {
         tasks: tool.name === "task" ? await this.taskControl(input.session.id) : undefined,
         // plan: the write tools read it before they change anything; plan_exit ends planning through it.
         plan: planControl,
+        // read: the model's inputs, a copy of what it attaches, and the instructions already given.
+        ...(tool.name === "read" ? this.readSupport(input.session.id) : {}),
       })
       // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
       const capped =
@@ -3421,6 +3428,33 @@ export class SessionRunner {
     }
     this.work(child, { background: true })
     return queued(child, message.id)
+  }
+
+  /**
+   * read: what a read in this conversation is told and given - the model's
+   * inputs and a connected model that sees pictures, where attached media is
+   * kept, and which instruction files the request it will join still carries
+   * (the history as this turn sends it: after compaction, with what pruning
+   * cleared taken out).
+   */
+  private readSupport(sessionID: string): Pick<ToolContext, "model" | "keepCopy" | "instructionsGiven"> {
+    return {
+      model: async () => {
+        const session = await this.store.require(sessionID)
+        const vision = this.config
+          .providers()
+          .filter((provider) => provider.configured)
+          .flatMap((provider) => provider.models.filter((model) => model.inputs.image).map((model) => `${provider.id}/${model.id}`))
+          .sort()[0]
+        return { inputs: modelInputs(this.config.modelEntry(session.model)), ...(vision ? { vision } : {}) }
+      },
+      keepCopy: (source, bytes) => keepReadCopy(path.join(this.dataRoot, "read-media"), source, bytes),
+      instructionsGiven: async () => {
+        const session = await this.store.require(sessionID)
+        const sent = prunedHistory(this.contextFor(session, await this.store.messages(sessionID)), this.turnPrune.get(sessionID) ?? 0)
+        return instructionsIn(sent)
+      },
+    }
   }
 
   /** subagents: models - what a subagent can be given, from the providers that are connected. */

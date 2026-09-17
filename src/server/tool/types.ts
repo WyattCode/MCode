@@ -3,7 +3,7 @@ import type { Questions } from "./question"
 import type { SessionChat } from "../session/chat"
 import type { ToolOutputs } from "./truncate"
 import type { SkillInfo } from "../skill"
-import type { Attachment, TaskItem } from "@shared/protocol"
+import type { Attachment, ModelModalities, TaskItem } from "@shared/protocol"
 
 export interface ToolContext {
   sessionID: string
@@ -62,6 +62,16 @@ export interface ToolContext {
    * behind the call.
    */
   plan?: PlanControl
+  /**
+   * read: what the conversation's model reads besides text, and a connected
+   * model that reads pictures - asked only when a read meets media, so read
+   * can say at once what to do instead of attaching what cannot be read.
+   */
+  model?: () => Promise<{ inputs: Partial<ModelModalities>; vision?: string }>
+  /** read: keeps a copy of media it attaches and answers where, so the conversation's record stays as the model saw it. */
+  keepCopy?: (source: string, bytes: Buffer) => Promise<string>
+  /** read: the instruction files this conversation has been given in results it still sends, as MiMo reads them off the history. */
+  instructionsGiven?: () => Promise<Set<string>>
 }
 
 /** plan: the conversation's planning state, as the runner knows it. */
