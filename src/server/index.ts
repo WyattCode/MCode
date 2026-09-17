@@ -19,7 +19,9 @@ import { McpServers } from "./mcp"
 import { createSampler } from "./mcp-sampling"
 import { handle } from "./handlers"
 import { bindDesktopSettings } from "./tool/desktop-settings"
-import { startHistory, stopHistory } from "./history/service"
+import { bindMemoryWrites, startHistory, stopHistory } from "./history/service"
+import { migrateMemoryLayout } from "./memory/migrate"
+import { watchSkillProblems } from "./skill"
 import { startScheduler } from "./cron/start"
 import { startAutomations } from "./automation/start"
 import { protectAppData } from "./tool/app-data"
@@ -120,6 +122,11 @@ export async function startBackend(dataDirectory: string, options: BackendOption
        */
       const layout = await readStorageLayout(storage)
       if (layout.fromNewerVersion) return
+      // memory: project memory moves to its repository's folder, once, with the old layout backed up.
+      await config.migrateMemory(
+        (await sessions.list()).map((session) => session.directory),
+        (directories) => migrateMemoryLayout({ dataDirectory, directories }),
+      )
       await migrateCheckpoints(storage, runner.checkpoints, config)
       await runner.checkpoints.sweep((await sessions.list()).map((session) => session.directory))
       // Brings the store up to date with the transcripts and re-checks what is still on disk.
@@ -130,6 +137,10 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   })()
   // history: the search index beside the store, filled in the background.
   const history = startHistory(dataDirectory, sessions, storage, bus)
+  // skills: a SKILL.md that will not parse is said in the window, once per file, as MiMo reports one.
+  watchSkillProblems((problem) => bus.publish({ type: "skill.problem", path: problem.path, message: problem.message }))
+  // memory: config's memory.disableWrite, read at every write so a hand edit takes effect at once.
+  bindMemoryWrites(() => config.get().memory?.disableWrite !== true)
   // cron: scheduled prompts fire into their conversations while the app runs.
   const scheduler = startScheduler(runner, sessions, config, bus)
   // automation: MiMo's scheduled tasks, kept in the data folder and run while the app is open.
@@ -277,6 +288,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
       await scheduler.stop()
       await automations.stop()
       stopHistory(history)
+      watchSkillProblems(undefined)
       unwatchArtifacts()
       artifacts?.close()
       for (const client of clients) client.terminate()

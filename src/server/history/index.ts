@@ -4,7 +4,11 @@ import type { Bus } from "../bus"
 import type { Storage } from "../storage"
 import type { SessionStore, StoreChange } from "../session/store"
 import type { IndexDatabase } from "./database"
-import { projectKey, rowsOf } from "./extract"
+import { rowsOf, summaryRow } from "./extract"
+import { projectMemoryID } from "../memory/project-id"
+
+/** What identifies a session's current compaction summary. */
+const summaryStamp = (session: SessionInfo): string => (session.compacted ? `${session.compacted.messageID}:${session.compacted.at}` : "")
 import { ftsQuery } from "./text"
 
 /**
@@ -27,8 +31,12 @@ const SETTLE_MS = 400
 /** Slack on file times when deciding whether a message changed after it was indexed. */
 const MTIME_SLACK_MS = 1500
 
-/** Bumped when what is indexed changes, so an index from before is filled again. */
-const CONTENT_VERSION = "1"
+/**
+ * Bumped when what is indexed changes, so an index from before is filled again.
+ * 2: projects are named by repository (memory/project-id.ts), and compaction
+ * summaries and tool attachments are indexed.
+ */
+const CONTENT_VERSION = "2"
 
 export interface HistoryHit {
   part_id: string
@@ -43,7 +51,10 @@ export interface HistoryHit {
 
 export interface HistorySearch {
   query: string
-  /** Only this project's conversations (MiMo's scope "project"); absent searches all of them. */
+  /**
+   * Only this project's conversations (MiMo's scope "project"): every folder
+   * of the same repository, or every folder outside one. Absent searches all.
+   */
   directory?: string
   sessionID?: string
   toolName?: string
@@ -57,6 +68,8 @@ export class HistoryIndex {
   private timer: ReturnType<typeof setTimeout> | undefined
   /** Each session's project as last indexed, so a move can be noticed. */
   private readonly projects = new Map<string, string>()
+  /** Which compaction summary each session last had indexed, so an unchanged one is not written again. */
+  private readonly summaries = new Map<string, string>()
   private unwatch: (() => void) | undefined
   private unsubscribe: (() => void) | undefined
   private closed = false
@@ -130,9 +143,12 @@ export class HistoryIndex {
    * indexed at once; one moved to another project takes its rows with it.
    */
   private onSession(session: SessionInfo): void {
+    if (this.closed) return
     const known = this.projects.get(session.id)
-    const project = projectKey(session.directory)
-    if (this.closed || known === project) return
+    const project = projectMemoryID(session.directory)
+    // A new or replaced compaction summary is searchable as soon as it is written.
+    if (this.summaries.get(session.id) !== summaryStamp(session)) this.writeSummary(session, project)
+    if (known === project) return
     if (known === undefined) {
       this.projects.set(session.id, project)
       return
@@ -150,6 +166,25 @@ export class HistoryIndex {
       this.db.prepare("DELETE FROM history_session WHERE session_id = ?").run(sessionID)
     })
     this.projects.delete(sessionID)
+    this.summaries.delete(sessionID)
+  }
+
+  /**
+   * The conversation's compaction summary, as a row of its own under the last
+   * message it covers. The store keeps only the latest one, so any earlier row
+   * is replaced.
+   */
+  private writeSummary(session: SessionInfo, project: string): void {
+    const row = summaryRow(session)
+    this.database.transaction(() => {
+      this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND kind = 'summary'").run(session.id)
+      if (row) {
+        this.db
+          .prepare("INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+          .run(row.part_id, row.session_id, row.message_id, project, row.kind, row.tool_name, row.body, row.time_created)
+      }
+    })
+    this.summaries.set(session.id, summaryStamp(session))
   }
 
   /** Writes every message waiting to be indexed. Search calls this first, so it never reads behind a save. */
@@ -168,8 +203,8 @@ export class HistoryIndex {
         // Not seen before: its project is read first, then it is indexed like any other.
         void this.store.get(sessionID).then((session) => {
           if (!session || this.closed) return
-          this.projects.set(sessionID, projectKey(session.directory))
-          this.write(sessionID, projectKey(session.directory), messages, now)
+          this.projects.set(sessionID, projectMemoryID(session.directory))
+          this.write(sessionID, projectMemoryID(session.directory), messages, now)
         })
         continue
       }
@@ -178,7 +213,8 @@ export class HistoryIndex {
   }
 
   private write(sessionID: string, project: string, messages: Message[], stamp: number, replaceSession = false): void {
-    const remove = this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND message_id = ?")
+    // A message written again keeps the compaction summary filed under it; that row follows the session, not the message.
+    const remove = this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND message_id = ? AND kind != 'summary'")
     const insert = this.db.prepare(
       "INSERT INTO history_part (part_id, session_id, message_id, project, kind, tool_name, body, time_created) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
@@ -214,8 +250,8 @@ export class HistoryIndex {
       if (since === undefined) {
         const messages = await this.store.messages(session.id)
         if (this.closed) return
-        this.projects.set(session.id, projectKey(session.directory))
-        this.write(session.id, projectKey(session.directory), messages, started, true)
+        this.projects.set(session.id, projectMemoryID(session.directory))
+        this.write(session.id, projectMemoryID(session.directory), messages, started, true)
       } else {
         const changed: Message[] = []
         for (const id of ids) {
@@ -233,9 +269,10 @@ export class HistoryIndex {
           const drop = this.db.prepare("DELETE FROM history_part WHERE session_id = ? AND message_id = ?")
           this.database.transaction(() => stale.forEach((id) => drop.run(session.id, id)))
         }
-        this.projects.set(session.id, projectKey(session.directory))
-        this.write(session.id, projectKey(session.directory), changed, started)
+        this.projects.set(session.id, projectMemoryID(session.directory))
+        this.write(session.id, projectMemoryID(session.directory), changed, started)
       }
+      if (this.summaries.get(session.id) !== summaryStamp(session)) this.writeSummary(session, projectMemoryID(session.directory))
       await new Promise((resolve) => setImmediate(resolve))
     }
   }
@@ -249,7 +286,7 @@ export class HistoryIndex {
     const params: (string | number)[] = [expression]
     if (input.directory !== undefined) {
       where.push("p.project = ?")
-      params.push(projectKey(input.directory))
+      params.push(projectMemoryID(input.directory))
     }
     if (input.sessionID) {
       where.push("p.session_id = ?")

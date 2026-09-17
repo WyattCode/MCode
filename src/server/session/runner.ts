@@ -12,6 +12,7 @@ import type {
   SubagentNotice,
   TextPart,
   ToolPart,
+  TurnAgent,
   UserMessage,
 } from "@shared/protocol"
 import { access, mkdir, rm, writeFile } from "node:fs/promises"
@@ -26,8 +27,8 @@ import type { Permissions } from "../permission"
 import { PermissionDenied, REVIEW_TIMEOUT_MS, VERDICT_TOOL_NAME, looksSecret, verdictApproves } from "../permission"
 import type { Storage } from "../storage"
 import { globalAgentsPath } from "../global-agents"
-import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
-import { findTool, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
+import { discoverSkills, enabledSkills, skillReminders, withSkillReminders, type SkillInfo } from "../skill"
+import { findTool, hasOwnToolsOnly, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
 import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
@@ -56,9 +57,9 @@ import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
-import { memoryFilesFor } from "../history/service"
+import { memoryFilesFor, recallNote } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
-import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt } from "./title"
+import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt, withoutSkillPrefix } from "./title"
 import { interfaceLocale } from "./locale"
 import { providerExtras, samplingFor, smallRequest } from "../provider/sampling"
 import { attachmentNote, runtimeContext, sessionNote } from "./context"
@@ -71,7 +72,7 @@ import { costOf } from "./usage"
 import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
+import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withRecall, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
@@ -138,8 +139,19 @@ type PromptInput = {
   /* session chat: sent by another conversation, marked the way a subagent's follow-up is. */
   inbox?: UserMessage["inbox"]
   /* What a slash command named, for this turn only: MiMo runs the turn as the agent and model the command names. */
-  agent?: SessionInfo["agent"]
+  agent?: TurnAgent
   model?: SessionInfo["model"]
+}
+
+/**
+ * A conversation as one turn runs it: its own settings, except that a slash
+ * command may name one of the command agents for this turn alone.
+ */
+type TurnSession = Omit<SessionInfo, "agent"> & { agent: TurnAgent }
+
+/** The conversation as stored after a change mid-turn, still run as the agent and model this turn was started with. */
+function keepTurn(next: SessionInfo, turn: TurnSession): TurnSession {
+  return { ...next, agent: turn.agent, model: turn.model }
 }
 
 /**
@@ -376,7 +388,7 @@ export class SessionRunner {
    * settings alone, so this is taken by the turn that was started for it and
    * never written to the conversation.
    */
-  private readonly turnOverrides = new Map<string, { agent?: SessionInfo["agent"]; model?: SessionInfo["model"] }>()
+  private readonly turnOverrides = new Map<string, { agent?: TurnAgent; model?: SessionInfo["model"] }>()
 
   constructor(
     private readonly store: SessionStore,
@@ -519,12 +531,12 @@ export class SessionRunner {
   private tools(agent: string, directory: string): ToolDefinition[] {
     // speak rides on the voice feedback setting; the rule itself lives with the registry.
     const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
-    if (agent === "explore") return own
+    if (hasOwnToolsOnly(agent)) return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
 
   /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
-  private offeredTools(session: SessionInfo): ToolDefinition[] {
+  private offeredTools(session: TurnSession): ToolDefinition[] {
     return this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter(
       (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
     )
@@ -538,7 +550,7 @@ export class SessionRunner {
    * again - which is what MiMo's command does. A model whose provider is not
    * configured is ignored rather than failing the turn with it.
    */
-  private withCommandTurn(session: SessionInfo, override: { agent?: SessionInfo["agent"]; model?: SessionInfo["model"] } | undefined): SessionInfo {
+  private withCommandTurn(session: SessionInfo, override: { agent?: TurnAgent; model?: SessionInfo["model"] } | undefined): TurnSession {
     if (!override) return session
     const named = override.model
     const model = named && this.config.definition(named.provider) && this.config.usable(named.provider) ? named : undefined
@@ -700,13 +712,13 @@ export class SessionRunner {
    * summarising over them would fold an abandoned branch into the summary that
    * replaces the conversation.
    */
-  private liveMessages(session: SessionInfo, messages: Message[]): Message[] {
+  private liveMessages(session: TurnSession, messages: Message[]): Message[] {
     if (!session.revert) return messages
     const boundary = messages.findIndex((message) => message.id === session.revert?.messageID)
     return boundary < 0 ? messages : messages.slice(0, boundary)
   }
 
-  private contextFor(session: SessionInfo, messages: Message[]): Message[] {
+  private contextFor(session: TurnSession, messages: Message[]): Message[] {
     // subagents: a subagent call saved before the actor rename is sent as the actor call it is now.
     messages = this.liveMessages(session, messages).map(readLegacyMessage)
 
@@ -1221,7 +1233,7 @@ export class SessionRunner {
    * file, so it goes as a tail after the prefix rather than inside it: the
    * prefix stays the same from one conversation to the next.
    */
-  private async systemFor(session: SessionInfo): Promise<{ system: string; systemTail?: string }> {
+  private async systemFor(session: TurnSession): Promise<{ system: string; systemTail?: string }> {
     const config = this.config.get()
     const skills = await this.skillsFor(session.directory)
     const key = JSON.stringify([
@@ -1275,7 +1287,7 @@ export class SessionRunner {
    * they are what made it too large. A reply that is empty, not a summary, a
    * tool call, or itself too large leaves the conversation as it was.
    */
-  private async compactNow(session: SessionInfo, signal: AbortSignal, trigger: CompactionTrigger): Promise<SessionInfo> {
+  private async compactNow(session: TurnSession, signal: AbortSignal, trigger: CompactionTrigger): Promise<SessionInfo> {
     const stored = await this.store.messages(session.id)
     const live = this.liveMessages(session, stored)
     const last = live.at(-1)
@@ -1371,7 +1383,7 @@ export class SessionRunner {
    * before the model is asked again. A failure leaves the turn to go on; if
    * its request is then refused for length, the rescue in `run` takes over.
    */
-  private async compactIfCrossed(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo> {
+  private async compactIfCrossed(session: TurnSession, signal: AbortSignal): Promise<TurnSession> {
     const live = this.liveMessages(session, await this.store.messages(session.id))
     const from = session.compacted ? live.findIndex((message) => message.id === session.compacted?.messageID) + 1 : 0
     const reply = live
@@ -1380,7 +1392,7 @@ export class SessionRunner {
       .find((message): message is AssistantMessage => message.role === "assistant" && message.finish !== undefined && message.usage !== undefined)
     if (!reply?.usage || !isOverflowByCount(reply.usage, this.config.modelEntry(session.model))) return session
     try {
-      return await this.compactNow(session, signal, "automatic")
+      return keepTurn(await this.compactNow(session, signal, "automatic"), session)
     } catch {
       return session
     }
@@ -1393,10 +1405,10 @@ export class SessionRunner {
    * left out, so the turn carries on from what was asked. Undefined when the
    * compaction could not be made.
    */
-  private async compactForOverflow(session: SessionInfo, signal: AbortSignal): Promise<SessionInfo | undefined> {
-    let compacted: SessionInfo
+  private async compactForOverflow(session: TurnSession, signal: AbortSignal): Promise<TurnSession | undefined> {
+    let compacted: TurnSession
     try {
-      compacted = await this.compactNow(session, signal, "provider-overflow")
+      compacted = keepTurn(await this.compactNow(session, signal, "provider-overflow"), session)
     } catch {
       return undefined
     }
@@ -1554,9 +1566,9 @@ export class SessionRunner {
     return written.then(() => user.id)
   }
 
-  /** skills: every skill a conversation in this directory can reach, with the user's global ones from the app's data folder. */
+  /** skills: every switched-on skill a conversation in this directory can reach, with the user's global ones from the app's data folder. */
   private async skillsFor(directory: string): Promise<SkillInfo[]> {
-    return (await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents) })).skills
+    return enabledSkills((await discoverSkills({ directory, storageDirectory: path.dirname(this.globalAgents) })).skills, this.config.get().disabledSkills)
   }
 
   /** skills: what a user message carries for the model beyond its words - skills it names, and the hint its office documents bring. */
@@ -1789,9 +1801,11 @@ export class SessionRunner {
      * Subagents keep the name they were started with.
      */
     if (!session.parentID && session.titleSource === undefined && session.title === UNTITLED) {
-      const fallback = fallbackTitle(input.text, input.attachments ?? [])
+      // The skill chips ahead of the words are not what the task is called.
+      const words = input.text.includes("/") ? withoutSkillPrefix(input.text, new Set((await this.skillsFor(session.directory)).map((skill) => skill.name))) : input.text
+      const fallback = fallbackTitle(words, input.attachments ?? [])
       session = await this.store.update(session.id, { title: fallback, titleSource: "fallback" })
-      if (/\p{L}/u.test(input.text)) void this.generateTitle(session.id, input.text).catch(() => undefined)
+      if (/\p{L}/u.test(words)) void this.generateTitle(session.id, words).catch(() => undefined)
     }
 
     this.launch(session.id, apiKey, controller, false, lead)
@@ -2057,9 +2071,8 @@ export class SessionRunner {
   }
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
-    let session = await this.store.require(sessionID)
     // A slash command's own agent and model hold for this turn; the conversation keeps its own.
-    session = this.withCommandTurn(session, this.turnOverrides.get(sessionID))
+    let session: TurnSession = this.withCommandTurn(await this.store.require(sessionID), this.turnOverrides.get(sessionID))
     this.turnOverrides.delete(sessionID)
     // plan: what this turn is judged by, however the conversation changes while it runs.
     this.turnAgents.set(sessionID, session.agent)
@@ -2169,13 +2182,21 @@ export class SessionRunner {
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
       const chatted = withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel)))
+      // memory: a conversation with notes or tasks of its own is reminded where they are, each request (MiMo's recall note).
+      const recall = session.parentID
+        ? undefined
+        : await recallNote(
+            sessionID,
+            ((await this.store.get(sessionID))?.tasks?.length ?? 0) > 0,
+            this.offeredTools(session).some((entry) => entry.name === "actor"),
+          )
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
       // in a row bring a note to change approach.
       const history = forWire(
         await withAttachmentData(
-          withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)),
+          withRecall(withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)), recall),
           session.directory,
           attachmentData,
         ),
@@ -2465,7 +2486,7 @@ export class SessionRunner {
    * parts; MCode decides here and rewrites only the request (session/prune.ts),
    * so the transcript the user reads keeps every result whole.
    */
-  private async pruneLevelFor(session: SessionInfo): Promise<PruneLevel> {
+  private async pruneLevelFor(session: TurnSession): Promise<PruneLevel> {
     const live = this.liveMessages(session, await this.store.messages(session.id))
     const last = [...live]
       .reverse()

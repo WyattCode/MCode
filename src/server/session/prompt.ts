@@ -49,12 +49,24 @@ export interface PromptModel {
  * memory: what the model is told about memory, in this app's words; MiMo's desktop build describes the same three files.
  * It names this conversation's own notes file, so a request carries it after the cached system prompt (runner systemFor).
  */
-export function memorySection(files: { project: string; global: string; notes: string }): string {
+export function memorySection(files: { project: string; global: string; notes: string; readOnly?: boolean }): string {
+  // memory: config's memory.disableWrite leaves the files to be read and searched, and says so.
+  if (files.readOnly) {
+    return `## Memory
+
+Some notes outlast this conversation, as markdown files. Writing them is switched off in this app's settings, so do not write or edit any memory file; you can still search them with the memory tool and read them:
+
+- Project memory: \`${files.project}\` - shared by every folder and worktree of this repository (outside a repository, by every such folder).
+- Global memory: \`${files.global}\` - the user's preferences that hold in every project.
+- This conversation's notes: \`${files.notes}\`.
+
+Nothing from them is loaded for you: search or read them when you need what they may hold, and use the history tool for exact past wording.`
+  }
   return `## Memory
 
 Some notes outlast this conversation. They are markdown files you read and write with the ordinary tools, without asking:
 
-- Project memory: \`${files.project}\` - what the project is, rules the user set for it, design decisions and facts later conversations in this project will need. Edit it when the user states a lasting rule or decision for the project, or when you learn something durable.
+- Project memory: \`${files.project}\` - what the project is, rules the user set for it, design decisions and facts later conversations in this project will need. Every folder and worktree of this repository shares it (outside a repository, every such folder shares one). Edit it when the user states a lasting rule or decision for the project, or when you learn something durable.
 - Global memory: \`${files.global}\` - the user's preferences that hold in every project.
 - This conversation's notes: \`${files.notes}\` - your one scratchpad. Add entries headed \`## [turn N · YYYY-MM-DDTHH:MM:SSZ]\` for open questions, quotes worth keeping or context that will matter later. Do not create other memory files.
 
@@ -94,7 +106,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
    * prefix opens with the same bytes whatever the model.
    */
   const sections = [agentPrompt(context.agent)]
-  if (context.agent !== "plan" && context.staged) sections.push(STAGED)
+  if (context.agent === "build" && context.staged) sections.push(STAGED)
 
   /*
    * Before the project's own files, and said to be the reader's rather than
@@ -109,21 +121,15 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
     )
   }
 
-  const global = context.globalAgentsFile
-    ? (await fs.readFile(context.globalAgentsFile, "utf8").catch(() => "")).trim()
-    : ""
-  if (global) {
-    sections.push(
-      `## Global instructions\n\nThese come from the user's global AGENTS.md and apply to every project; the project's own instructions below take precedence.\n\n${global}`,
-    )
-  }
-
   const instructions = await projectInstructions(context.directory, context.instructionFiles ?? [], {
     home: context.home,
     fetch: context.fetchInstruction,
+    globalAgentsFile: context.globalAgentsFile,
   })
   if (instructions) {
-    sections.push(`## Project instructions\n\nThese come from the project itself and take precedence over the general guidance above.\n\n${instructions}`)
+    sections.push(
+      `## Instructions\n\nThese come from the project's instruction files, then the user's global one, then any the settings name. They take precedence over the general guidance above, and the project's own win where the global one disagrees.\n\n${instructions}`,
+    )
   }
 
   const commands = await projectCommands(context.directory)
@@ -202,9 +208,15 @@ export async function fetchInstruction(url: string): Promise<string> {
   }
 }
 
-/** Where the instruction files that are not a project's own are looked for, in MiMo's order: the first that exists wins. */
-export function globalInstructionFiles(home: string): string[] {
-  return [path.join(home, ".claude", "CLAUDE.md")]
+/**
+ * Where the instruction file that is not a project's own is looked for, in
+ * MiMo's order: the app's global AGENTS.md (the one the settings open), then
+ * `~/.claude/CLAUDE.md`. The first that exists is read and the search stops,
+ * so a global AGENTS.md keeps CLAUDE.md out; switched off (renamed), it no
+ * longer exists and CLAUDE.md is read in its place.
+ */
+export function globalInstructionFiles(home: string, globalAgentsFile?: string): string[] {
+  return [...(globalAgentsFile ? [globalAgentsFile] : []), path.join(home, ".claude", "CLAUDE.md")]
 }
 
 /**
@@ -216,10 +228,9 @@ export function globalInstructionFiles(home: string): string[] {
  * them; with no AGENTS.md at all, the CLAUDE.md files stand in, and failing
  * those the CONTEXT.md files.
  *
- * Then the global instruction file - `~/.claude/CLAUDE.md`, the first of the
- * global candidates that exists - as MiMo adds its own after the project's and
- * before the configured ones (the user's 2026-09-16 decision; MCode's own
- * global AGENTS.md is a separate section of the prompt).
+ * Then the global instruction file - the first of `globalInstructionFiles`
+ * that exists - as MiMo adds its own after the project's and before the
+ * configured ones.
  *
  * Then the files the `instructions` setting names: each pattern looked for in
  * the same folders, and each web address fetched, both as MiMo does. MCode's
@@ -229,7 +240,7 @@ export function globalInstructionFiles(home: string): string[] {
 async function projectInstructions(
   directory: string,
   patterns: readonly string[],
-  options: { home?: string; fetch?: (url: string) => Promise<string> } = {},
+  options: { home?: string; fetch?: (url: string) => Promise<string>; globalAgentsFile?: string } = {},
 ): Promise<string> {
   const home = options.home ?? os.homedir()
   const get = options.fetch ?? fetchInstruction
@@ -253,12 +264,12 @@ async function projectInstructions(
     chosen = claude.length ? claude : await named("CONTEXT.md")
   }
 
-  for (const file of globalInstructionFiles(home)) {
+  // The first that exists ends the search, even when it says nothing - MiMo's rule.
+  for (const file of globalInstructionFiles(home, options.globalAgentsFile)) {
+    if (!(await exists(file))) continue
     const content = await read(file)
-    if (content) {
-      chosen.push({ file, content })
-      break
-    }
+    if (content) chosen.push({ file, content })
+    break
   }
 
   for (const pattern of patterns) {

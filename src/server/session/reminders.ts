@@ -188,6 +188,17 @@ export function withSameStepsNote(history: Message[]): Message[] {
   )
 }
 
+/**
+ * memory: MiMo's recall note, after the last user message of this request
+ * only - behind the cached prefix, and never in the transcript.
+ */
+export function withRecall(history: Message[], note: string | undefined): Message[] {
+  if (!note) return history
+  const target = history.map((message) => message.role).lastIndexOf("user")
+  if (target < 0) return history
+  return history.map((message, index) => (index === target && message.role === "user" ? { ...message, text: `${message.text}\n\n${note}` } : message))
+}
+
 /** MiMo's continuation limits, per turn. */
 export const CONTINUATION_LIMITS = { length: 3, textTool: 2, empty: 2 } as const
 

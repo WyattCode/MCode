@@ -60,5 +60,6 @@ const TEMPLATE = `# Global instructions
 
 Write here what MCode should keep in mind in every project: how you like answers
 written, tools you prefer, conventions you always follow. A project's own
-AGENTS.md is read after this file and wins where the two disagree.
+AGENTS.md is read before this file and wins where the two disagree. While this
+file exists, ~/.claude/CLAUDE.md is not read.
 `

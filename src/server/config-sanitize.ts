@@ -79,6 +79,19 @@ export function sanitizeConfig(doc: AppConfig, fallback: AppConfig): boolean {
     if (!Array.isArray(value)) put(key, base[key])
     else if (!strings(value)) put(key, value.filter((item) => typeof item === "string"))
   }
+  if (record.disabledSkills !== undefined) {
+    const value = record.disabledSkills
+    if (!Array.isArray(value)) drop("disabledSkills")
+    else if (!strings(value)) put("disabledSkills", value.filter((item) => typeof item === "string"))
+  }
+  if (record.memory !== undefined) {
+    const memory = record.memory as Record<string, unknown> | null
+    if (!memory || typeof memory !== "object" || Array.isArray(memory)) drop("memory")
+    else if (memory.disableWrite !== undefined && typeof memory.disableWrite !== "boolean") {
+      const { disableWrite: _ignored, ...rest } = memory
+      put("memory", rest)
+    }
+  }
   if (record.instructionFiles !== undefined) {
     const value = record.instructionFiles
     if (!Array.isArray(value)) drop("instructionFiles")
