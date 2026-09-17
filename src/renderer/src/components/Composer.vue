@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, micFailure, transcribeFailure, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
-import type { Attachment, CommandInfo, DirEntry, Effort, Message, ModelInfo, SessionInfo } from "@shared/protocol"
+import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { textualName } from "@shared/attachment-kind"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
@@ -1273,13 +1273,25 @@ async function mentionAttachments(value: string, chosen: Set<string>, to?: strin
  * An empty query lists one level - a folder opens, a file goes into the draft;
  * a query searches the files under the current folder after a short pause.
  * With no project there is nothing to list, and one line says so.
+ *
+ * The search is the backend's, and has to be: browsing lists one folder, so
+ * filtering that list finds nothing that is not in it. Typing `@Compo` at the
+ * project root found no `src/renderer/src/components/Composer.vue` at all, and
+ * the header above the list said "搜索文件" over results that were never
+ * searched for.
  */
 const atSub = ref("")
 const atEntries = ref<DirEntry[]>([])
-const atStatus = ref<"idle" | "loading" | "ready" | "dirFailed">("idle")
+const atHits = ref<FileHit[]>([])
+const atTruncated = ref(false)
+const atStatus = ref<"idle" | "loading" | "ready" | "dirFailed" | "searchFailed">("idle")
 const atIndex = ref(0)
 /* Answers are matched to the latest ask, so a slow one cannot overwrite a newer one. */
 let atAsk = 0
+/* MiMo's pause before a keystroke becomes a request. */
+const AT_SEARCH_DEBOUNCE = 150
+const AT_SEARCH_RESULTS = 50
+let atTimer: ReturnType<typeof setTimeout> | undefined
 
 /** The mention the caret is standing in, if it is standing in one. */
 const atSpan = computed(() => (mode.value === "shell" ? undefined : mentionSpan(text.value, caret.value)))
@@ -1293,13 +1305,21 @@ interface AtRow {
 
 const joinRel = (folder: string, name: string) => (folder ? `${folder}/${name}` : name)
 
+/** Whether the menu is searching the project rather than browsing a folder. */
+const atSearching = computed(() => Boolean(atSpan.value?.query.trim()))
+
 const atRows = computed<AtRow[]>(() => {
   const span = atSpan.value
   if (!span || !projectRoot.value) return []
   /*
-   * MiMo narrows what this folder already listed, with the matcher its settings
-   * search uses, rather than asking the backend again for every keystroke.
+   * Searching: the backend's hits, which are files only and carry the folder
+   * each sits in. Browsing: this folder's own entries, narrowed with the
+   * matcher the settings search uses, so the first keystrokes cost nothing
+   * while the request is still out.
    */
+  if (atSearching.value) {
+    return atHits.value.map((hit) => ({ kind: "file" as const, name: hit.name, rel: hit.rel, dir: hit.dir }))
+  }
   return matchingNames(atEntries.value, span.query).map((entry) => ({
     kind: entry.type,
     name: entry.name,
@@ -1332,20 +1352,73 @@ function loadAt() {
     })
 }
 
-/* The folder is listed once, when the menu opens on it; what is typed after that only filters it. */
+/**
+ * The search itself, after MiMo's pause.
+ *
+ * Only the last ask's answer is taken, and the timer is restarted on every
+ * keystroke, so a long search for two letters cannot land on top of the results
+ * for five.
+ */
+function searchAt(query: string) {
+  const root = projectRoot.value
+  const client = app.client
+  if (!root || !client) return
+  const ask = ++atAsk
+  const sub = atSub.value
+  atStatus.value = "loading"
+  client
+    .request({ type: "file.search", directory: root, query, sub, limit: AT_SEARCH_RESULTS })
+    .then((result) => {
+      if (ask !== atAsk) return
+      atHits.value = result.entries
+      atTruncated.value = result.truncated
+      atStatus.value = "ready"
+    })
+    .catch(() => {
+      if (ask !== atAsk) return
+      atHits.value = []
+      atTruncated.value = false
+      atStatus.value = "searchFailed"
+    })
+}
+
+function stopAtTimer() {
+  if (atTimer === undefined) return
+  clearTimeout(atTimer)
+  atTimer = undefined
+}
+
+/*
+ * The folder is listed once, when the menu opens on it; a query sends a search
+ * instead, restarted 150ms after the last keystroke.
+ */
 watch(
-  () => [atSpan.value !== undefined, atSub.value, projectRoot.value] as const,
-  ([open]) => {
-    if (open) {
+  () => [atSpan.value?.query, atSub.value, projectRoot.value] as const,
+  ([query]) => {
+    stopAtTimer()
+    if (query === undefined) {
+      // Closed: the next @ starts from the project root again.
+      atAsk += 1
+      atSub.value = ""
+      atHits.value = []
+      atTruncated.value = false
+      atStatus.value = "idle"
+      return
+    }
+    if (!query.trim()) {
+      atHits.value = []
+      atTruncated.value = false
       loadAt()
       return
     }
-    // Closed: the next @ starts from the project root again.
-    atAsk += 1
-    atSub.value = ""
-    atStatus.value = "idle"
+    atTimer = setTimeout(() => {
+      atTimer = undefined
+      searchAt(query)
+    }, AT_SEARCH_DEBOUNCE)
   },
 )
+
+onBeforeUnmount(stopAtTimer)
 
 /*
  * Open while it has something to show: rows, a loading or failure line, or
@@ -1355,7 +1428,7 @@ watch(
 const atOpen = computed(() => {
   if (!atSpan.value || dismissed.value) return false
   if (!projectRoot.value) return true
-  return atRows.value.length > 0 || ["loading", "dirFailed"].includes(atStatus.value)
+  return atRows.value.length > 0 || ["loading", "dirFailed", "searchFailed"].includes(atStatus.value)
 })
 
 watch(atRows, (rows) => {
@@ -1403,8 +1476,9 @@ async function insertMention(path: string, file: boolean) {
   caret.value = next.cursor
 }
 
+/* MiMo writes `@rel ` for a folder, with no trailing slash - the same shape a file gets. */
 function referenceFolder(rel: string) {
-  void insertMention(`${rel}/`, false)
+  void insertMention(rel, false)
 }
 
 /**
@@ -2708,7 +2782,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <div v-else-if="atSpan?.query && atSub" class="slash-head">{{ t("composer.at.searchLabel", { path: atCrumbs }) }}</div>
             <div v-else-if="atSpan?.query" class="slash-head">{{ t("composer.at.searchFiles") }}</div>
             <div v-else class="slash-head">{{ t("composer.at.filesGroup") }}</div>
-            <div v-if="atStatus === 'dirFailed'" class="at-note">{{ t("composer.at.cannotReadDir") }}</div>
+            <div v-if="atStatus === 'searchFailed'" class="at-note">{{ t("composer.at.searchFailed") }}</div>
+            <div v-else-if="atStatus === 'dirFailed'" class="at-note">{{ t("composer.at.cannotReadDir") }}</div>
             <div v-else-if="atStatus === 'loading' && !atRows.length" class="at-note">{{ t("composer.at.loading") }}</div>
             <div
               v-for="(row, at) in atRows"
@@ -2735,17 +2810,12 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 <button class="at-ref" type="button" data-at-ref @mousedown.prevent.stop="referenceFolder(row.rel)">
                   {{ t("composer.at.refFolder") }}
                 </button>
-                <button
-                  class="at-enter"
-                  type="button"
-                  :aria-label="t('composer.at.enterFolder')"
-                  v-tip="{ label: t('composer.at.enterFolder'), placement: 'top' }"
-                  @mousedown.prevent.stop="enterFolder(row.rel)"
-                >
-                  ›
-                </button>
+                <!-- Not a button: the whole row already opens the folder, and MiMo draws this as a plain mark. -->
+                <span class="at-enter" aria-hidden="true">›</span>
               </span>
             </div>
+            <!-- MiMo's last line when there was more than the search would show. -->
+            <div v-if="atTruncated && atSearching" class="at-note">{{ t("composer.at.truncated", { count: atRows.length }) }}</div>
           </template>
         </div>
 
@@ -3421,15 +3491,16 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   stroke-linejoin: round;
 }
 
+/* The name is kept whole and the folder behind it gives way, as MiMo cuts a search row. */
 .at-name {
-  min-width: 0;
+  flex: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .at-sub {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   color: var(--text-weaker);
@@ -3446,10 +3517,11 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   margin-inline-start: auto;
 }
 
+/* MiMo's capsule: no fill of its own until the pointer is on it. */
 .at-ref {
   padding: 2px 6px;
-  color: var(--text-base);
-  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
+  color: var(--text-weak);
+  background: none;
   border: 0;
   border-radius: 6px;
   font-size: calc(11px * var(--ui-font-scale, 1));
@@ -3458,25 +3530,17 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 
 .at-ref:hover {
   color: var(--text-strong);
+  background: color-mix(in srgb, var(--text-strong) 8%, transparent);
 }
 
+/* A mark, not a control: the row itself opens the folder. */
 .at-enter {
   display: grid;
   place-items: center;
   width: 20px;
   height: 20px;
-  padding: 0;
   color: var(--text-weak);
-  background: none;
-  border: 0;
-  border-radius: 6px;
   font-size: calc(14px * var(--ui-font-scale, 1));
-  cursor: pointer;
-}
-
-.at-enter:hover {
-  color: var(--text-strong);
-  background: var(--surface-hover);
 }
 
 /* The breadcrumb head: dim, and the text colour under the pointer. */
