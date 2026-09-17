@@ -857,8 +857,14 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     check("an image's size is read from its header", JSON.stringify(imageSize(wide)) === JSON.stringify({ width: 3000, height: 100 }))
     check("over 2000 px an Anthropic route gets a note instead", texts(attachmentParts([file("w.png", "image/png", wide.toString("base64"))], { image: true }, "anthropic"))[0]?.startsWith("[Image omitted") === true)
     check("the same image is sent to a route with no such limit", attachmentParts([file("w.png", "image/png", wide.toString("base64"))], { image: true }, "chat")[0]?.kind === "image")
+    check("a tool's PDF still carries as a file part over chat completions", attachmentParts([file("r.pdf", "application/pdf", "JVBER")], { pdf: true }, "chat", "tool")[0]?.kind === "pdf")
+    // C11-33: of the user's own attachments only a picture travels; the rest is named by path in the turn's blocks.
+    check("a PDF the user attached does not", attachmentParts([file("r.pdf", "application/pdf", "JVBER")], { pdf: true }, "chat", "user").length === 0)
+    check("nor does a text file, audio, video or anything else", attachmentParts([file("a.txt", "text/plain", "hi"), file("v.wav", "audio/wav"), file("m.mp4", "video/mp4"), file("z.zip", "application/zip")], { audio: true, video: true }, "chat", "user").length === 0)
+    check("a picture the user attached does", attachmentParts([file("a.png", "image/png", PNG_1x1)], { image: true }, "chat", "user")[0]?.kind === "image")
+    check("and one the model cannot read is still a note", texts(attachmentParts([file("a.png", "image/png", PNG_1x1)], { image: false }, "chat", "user"))[0]?.includes("cannot read image input") === true)
     const pdfWire = toMessages("s", [{ id: "u", sessionID: "s", role: "user", text: "read", attachments: [file("r.pdf", "application/pdf", "JVBER")], time: { created: 1 } }], { pdf: true }) as Record<string, any>[]
-    check("chat completions carry a PDF as a file part", pdfWire[1]?.content?.some((part: Record<string, any>) => part.type === "file" && String(part.file?.file_data).startsWith("data:application/pdf;base64,")), pdfWire[1]?.content)
+    check("so the chat-completions body carries no file part for it", !JSON.stringify(pdfWire).includes("data:application/pdf;base64,"), pdfWire[1]?.content)
 
     const e = await engine({ custom: { models: [{ id: "m", name: "M", attachment: true }] } })
     try {
@@ -884,7 +890,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       )
       const sent = (e.bodies[0]?.messages as Record<string, any>[]).find((m) => m.role === "user")
       const sentText = JSON.stringify(sent?.content)
-      check("a 320 KB log is read from disk and sent up to 50 KB, with where the rest is", sentText.includes("line of the log") && sentText.includes("read the rest of") && sentText.length < 120_000, sentText.length)
+      check("a 320 KB log is named rather than read into the request", !sentText.includes("line of the log") && sentText.includes("big.log") && sentText.length < 20_000, sentText.length)
       check("the picture is read and sent to a model that reads images", Array.isArray(sent?.content) && sent.content.some((part: Record<string, any>) => part.type === "image_url"))
       check("a file that is gone is named as unreadable", sentText.includes("missing.txt was attached but could not be read"))
       check("and the message says where the files are", sentText.includes("# Attached files") && sentText.includes("big.log"))

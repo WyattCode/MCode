@@ -26,8 +26,14 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
   "image/svg+xml": ".svg",
 }
 
-/** Pictures only, and only as much as a clipboard ever holds. */
-const IMAGE_LIMIT = 25 * 1024 * 1024
+/**
+ * A large paste is written whole.
+ *
+ * A picture off the clipboard has no ceiling of its own: MiMo writes whatever
+ * the clipboard held, and refusing at 25 MB only sent a very large screenshot
+ * back to the window to be carried as base64 instead, which is worse in every
+ * way. Text keeps a ceiling because it is held in memory as a string first.
+ */
 const TEXT_LIMIT = 64 * 1024 * 1024
 
 export type PasteResult = { ok: true; path: string } | { ok: false; error: string }
@@ -39,7 +45,7 @@ function imagesDirectory(userData: string): string {
 async function writeImage(userData: string, mime: string, bytes: Buffer): Promise<PasteResult> {
   const extension = IMAGE_EXTENSIONS[mime]
   if (!extension) return { ok: false, error: "unsupported" }
-  if (!bytes.length || bytes.length > IMAGE_LIMIT) return { ok: false, error: "size" }
+  if (!bytes.length) return { ok: false, error: "size" }
   const directory = imagesDirectory(userData)
   try {
     // Owner-only, as MiMo writes them: a pasted screenshot can hold anything.
@@ -88,7 +94,22 @@ export async function savePastedText(text: unknown): Promise<PasteResult> {
   }
 }
 
+/**
+ * Whether the clipboard holds a picture at all, asked before the page decides
+ * how to read a paste.
+ *
+ * Only ever a yes or a no: the bitmap itself is read by `saveClipboardImage`
+ * and written to disk, so nothing of what the user copied is handed to the
+ * window here.
+ */
+export async function clipboardHasImage(): Promise<boolean> {
+  // Imported here rather than at the top, so the rest of this file can be read by a check with no Electron around it.
+  const { clipboard } = await import("electron")
+  return clipboard.availableFormats().some((format) => format.startsWith("image/"))
+}
+
 export function registerPasteFiles(ipcMain: IpcMain, userData: string) {
+  ipcMain.handle("mcode:clipboard-has-image", () => clipboardHasImage().catch(() => false))
   ipcMain.handle("mcode:save-pasted-image", (_event, dataUrl: unknown) => savePastedImage(userData, dataUrl))
   ipcMain.handle("mcode:save-clipboard-image", () => saveClipboardImage(userData))
   ipcMain.handle("mcode:save-pasted-text", (_event, text: unknown) => savePastedText(text))

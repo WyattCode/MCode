@@ -3,11 +3,16 @@ import type { Attachment, ModelModalities } from "@shared/protocol"
 /**
  * What a user's attachments become on the wire, decided once for every adapter.
  *
- * MiMo checks each attached image, audio, video or PDF against what the model
- * reads and replaces one it cannot read with a short note telling the model to
- * say so, rather than sending it anyway - and never as base64 inside the text.
- * Text files go in as text; any other file is named by its path. The adapters
- * then write the parts in their own shapes.
+ * MiMo sends only pictures. A picture goes natively where the model reads one
+ * and is replaced by a short note where it does not - never as base64 inside
+ * the text. Everything else the user attached stays out of the message
+ * entirely: its absolute path is in the attachment blocks the turn carries
+ * (session/context.ts), and the model reads or opens it from there.
+ *
+ * A file a tool returned is a different matter and keeps its own rules: what
+ * `read` took off the disk is what the model was shown, so a picture, a PDF or
+ * audio in a tool result still travels with the result. `source` says which of
+ * the two a call is for. The adapters then write the parts in their own shapes.
  */
 
 export type Modality = "image" | "audio" | "video" | "pdf"
@@ -153,7 +158,15 @@ export function readFraming(target: string): string {
   return `The read tool was called for you with {"file_path": "${target}"}, and returned:`
 }
 
-export function attachmentParts(attachments: readonly Attachment[], inputs: Partial<ModelModalities> | undefined, wire: Wire): WirePart[] {
+/** Whose files these are: what the user attached, or what a tool's result carried back. */
+export type PartSource = "user" | "tool"
+
+export function attachmentParts(
+  attachments: readonly Attachment[],
+  inputs: Partial<ModelModalities> | undefined,
+  wire: Wire,
+  source: PartSource = "tool",
+): WirePart[] {
   const parts: WirePart[] = []
   for (const file of attachments as readonly LoadedAttachment[]) {
     const name = nameOf(file)
@@ -161,18 +174,25 @@ export function attachmentParts(attachments: readonly Attachment[], inputs: Part
       parts.push({ kind: "text", text: file.note })
       continue
     }
+    const modality = modalityOf(file.mime)
+    /*
+     * What the user attached and the model cannot see natively stays out of the
+     * message: the turn's attachment blocks name it by absolute path and say
+     * what opens it, which is what lets the model read a file at the size it
+     * really is rather than a truncated copy of it.
+     */
+    if (source === "user" && modality !== "image") continue
     if (TEXT_TYPES.test(file.mime)) {
       /*
        * Framed as a read the app already made, as MiMo's engine frames one: it
-       * runs the read tool for an attached text file and injects the call and
-       * its output rather than pasting the text in. The difference is not
+       * runs the read tool for a text file a tool returned and injects the call
+       * and its output rather than pasting the text in. The difference is not
        * cosmetic - a model that reads an inline block does not believe it has
        * read the file, so it reads it again before editing, at full cost.
        */
       parts.push({ kind: "text", text: `${readFraming(file.path)}\n<file path="${file.path}">\n${file.data}\n</file>` })
       continue
     }
-    const modality = modalityOf(file.mime)
     if (!modality) {
       parts.push({ kind: "text", text: `[${name} was attached. It is at ${file.path} and is not a kind of file that can be put in a message; open it with a tool if it is needed.]` })
       continue

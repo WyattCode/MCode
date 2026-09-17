@@ -232,18 +232,20 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
   }
 
   // ------------------------------------------------------------------ M16
-  section("Round 8 (M16): attachments are framed as reads, and Office documents name their tool")
+  section("Round 11 (C11-31, C11-32): every attachment but a picture reaches the model as a path in the turn's blocks")
   {
-    const note = attachmentNote([{ path: "notes.md" }, { path: "books.xlsx" }, { path: "report.docx" }, { path: "deck.pptx" }, { path: "shot.png" }], "/work")
-    check("text files are said to be read already", note?.includes("already read into this message") === true)
+    const note = attachmentNote([{ path: "notes.md" }, { path: "books.xlsx" }, { path: "report.docx" }, { path: "deck.pptx" }, { path: "shot.png" }, { path: "clip.mp4" }], "/work")
+    check("text files are named for the model to read itself", note?.includes("read each one with the read tool") === true && note?.includes("already read into this message") === false)
     check("a spreadsheet names openpyxl or pandas", note?.includes("openpyxl") === true)
     check("a document names python-docx", note?.includes("python-docx") === true)
     check("a deck names python-pptx", note?.includes("python-pptx") === true)
     check("and reading one as text is called out as the wrong move", note?.includes("compressed container") === true)
-    check("pictures are said to travel in the message", note?.includes("travel in this message") === true)
+    check("a video is in the binary block, to be worked on at its path", note?.includes("binary or unknown kind") === true && note?.includes(path.resolve("/work", "clip.mp4")) === true)
+    check("a picture is not named at all - it is in the message", note?.includes("shot.png") === false)
     check("the paths are absolute", note?.includes(path.resolve("/work", "books.xlsx")) === true)
-    check("and the folder-search prohibition is kept", note?.includes("Do not search or list the user's folders") === true)
+    check("and each block forbids searching and globbing for them", (note?.match(/Do not search the user's folders, do not glob/g) ?? []).length === 3)
     check("nothing is said about a kind that was not attached", attachmentNote([{ path: "a.txt" }], "/work")?.includes("Office documents") === false)
+    check("a turn with only pictures gets no block", attachmentNote([{ path: "shot.png" }, { path: "photo.jpeg" }], "/work") === undefined)
 
     const e = await engine()
     try {
@@ -253,9 +255,8 @@ export async function roundEightChecks(check: Check, section: (name: string) => 
       await e.runner.prompt({ sessionID: session.id, text: "what does it say", attachments: [{ path: "notes.md", mime: "", data: "", byPath: true }] })
       await e.idle(session.id)
       const sent = wireText(e.bodies.at(-1))
-      check("the file arrives framed as a read the app already made", sent.includes("The read tool was called for you with"))
-      check("naming the file it was called on", sent.includes('notes.md\\\"}') || sent.includes("notes.md"), sent.slice(0, 200))
-      check("with the contents after it", sent.includes("the answer is 41"))
+      check("the file's contents are not put into the message", !sent.includes("the answer is 41") && !sent.includes("The read tool was called for you with"), sent.slice(0, 400))
+      check("its absolute path is, under the text block", sent.includes("read each one with the read tool") && sent.includes("notes.md"))
     } finally {
       await e.close()
     }

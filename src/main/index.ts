@@ -867,6 +867,29 @@ app.whenReady().then(async () => {
   })
 
   /*
+   * What a dropped path is, for the paths a drag names in its `text/uri-list`
+   * rather than as files.
+   *
+   * MiMo hands every path a drop produced to the main process, keeps the ones
+   * that exist and describes each before deciding between an @mention and an
+   * attachment. The window cannot stat anything itself, so it asks here; a path
+   * that is gone simply does not come back.
+   */
+  ipcMain.handle("mcode:describe-files", async (_event, paths: unknown) => {
+    if (!Array.isArray(paths)) return []
+    const found: { path: string; name: string; size: number; directory: boolean }[] = []
+    for (const entry of paths) {
+      if (typeof entry !== "string" || !path.isAbsolute(entry)) continue
+      const resolved = path.resolve(entry)
+      if (found.some((seen) => seen.path === resolved)) continue
+      const stat = await fs.stat(resolved).catch(() => undefined)
+      if (!stat) continue
+      found.push({ path: resolved, name: path.basename(resolved), size: stat.size, directory: stat.isDirectory() })
+    }
+    return found
+  })
+
+  /*
    * MiMo's default project location, made if need be: the folder chosen in
    * settings, else the one under the home folder; nothing when neither can be made.
    */

@@ -35,6 +35,9 @@ const api = {
   },
   /** Which of these paths are folders, for a drop onto the project list. */
   directoriesOf: (paths: string[]): Promise<string[]> => ipcRenderer.invoke("mcode:directories-of", paths),
+  /** What the paths a drag named in its `text/uri-list` are; the ones that are gone do not come back. */
+  describeFiles: (paths: string[]): Promise<{ path: string; name: string; size: number; directory: boolean }[]> =>
+    ipcRenderer.invoke("mcode:describe-files", paths),
   pickDirectory: (title: string, multiple = false): Promise<string[]> =>
     ipcRenderer.invoke("mcode:pick-directory", title, multiple),
   /** MiMo's 选择或新建项目文件夹: the same dialog, opening at the default project location. */
@@ -46,6 +49,8 @@ const api = {
   openText: (title: string): Promise<{ name: string; text: string } | undefined> =>
     ipcRenderer.invoke("mcode:open-text", title),
 
+  /** Whether the clipboard holds a picture at all - a yes or a no, never its contents. */
+  clipboardHasImage: (): Promise<boolean> => ipcRenderer.invoke("mcode:clipboard-has-image"),
   /** A pasted picture, written under userData so it can be attached by path as MiMo attaches one. */
   savePastedImage: (dataUrl: string): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke("mcode:save-pasted-image", dataUrl),

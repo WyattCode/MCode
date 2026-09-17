@@ -1,16 +1,18 @@
 import path from "node:path"
+import { attachmentKind, extensionOf } from "@shared/attachment-kind"
 import { interfaceLocale, localeName } from "./locale"
 
 /** Office documents a model cannot read as text, and what opens each of them. */
 const OFFICE_TOOLS: Record<string, string> = {
   xlsx: "Python with openpyxl, or pandas when the sheet is a table",
   xlsm: "Python with openpyxl, or pandas when the sheet is a table",
+  xlsb: "Python with pandas (its pyxlsb reader), or LibreOffice to convert it first",
   xls: "Python with pandas (its xlrd reader), or LibreOffice to convert it first",
-  csv: "the read tool, or pandas for anything past a quick look",
   docx: "Python with python-docx",
   doc: "LibreOffice to convert it to .docx first, then python-docx",
   pptx: "Python with python-pptx",
   ppt: "LibreOffice to convert it to .pptx first, then python-pptx",
+  pdf: "Python with pypdf for the text, or a page renderer when the layout matters",
   odt: "LibreOffice to convert it, or a reader for OpenDocument",
   ods: "Python with pandas, or LibreOffice to convert it",
   odp: "LibreOffice to convert it to .pptx first",
@@ -18,66 +20,71 @@ const OFFICE_TOOLS: Record<string, string> = {
   epub: "Python with ebooklib, or Pandoc to convert it",
 }
 
-function extensionOf(file: string): string {
-  const name = file.split(/[\\/]/).pop() ?? ""
-  const dot = name.lastIndexOf(".")
-  return dot <= 0 ? "" : name.slice(dot + 1).toLowerCase()
-}
-
-/** Which of the three attachment blocks a file belongs in, by its name. */
-function group(file: string): "office" | "media" | "other" {
-  const extension = extensionOf(file)
-  if (OFFICE_TOOLS[extension]) return "office"
-  if (/^(png|jpe?g|gif|webp|avif|bmp|ico|svg|pdf|mp3|wav|ogg|oga|m4a|aac|flac|opus|mp4|mov|avi|wmv|webm|mkv)$/.test(extension)) return "media"
-  return "other"
-}
+/** The one line every block ends on: the paths are exact, so nothing is to be searched for. */
+const BY_PATH = "Work on the absolute paths exactly as written. Do not search the user's folders, do not glob, do not list directories to find these files, and do not ask for a path again."
 
 /**
- * MiMo's attachment blocks: the paths of the files attached by path, what to
- * tell the user about them, and what to open each kind with.
+ * MiMo's attachment blocks: what the user attached this turn, sorted into the
+ * three kinds that need different handling, each with the paths to work on.
  *
- * MiMo writes three of these into the message's system text - text and code
- * files, Office documents, everything else binary - because what to do with an
- * attachment depends entirely on which of the three it is: the first has
- * already been read into the message, the second needs a library named per
- * type, and the third is a path to operate on rather than a document to read.
- * A single list said none of that, so a spreadsheet read as text came back as
- * mojibake and the model reported the file as damaged.
+ * Only a picture travels inside the message. A text file, an Office document
+ * and anything else are named here and nowhere else, so the model reads what it
+ * needs, when it needs it, at the size it really is - an attached 300 KB log
+ * used to arrive cut off at 50 KB under a line claiming the read had already
+ * been made for it, and the rest was never fetched.
+ *
+ * Three blocks rather than one list because what to do differs entirely by
+ * kind: the first is read with the read tool, the second needs a library named
+ * per type, and the third is a path to operate on rather than a document to
+ * read. A single list said none of that, so a spreadsheet read as text came
+ * back as mojibake and the model reported the file as damaged.
  */
 export function attachmentNote(files: readonly { path: string }[], directory: string): string | undefined {
   if (!files.length) return undefined
   const absolute = (file: { path: string }) => (path.isAbsolute(file.path) ? file.path : path.resolve(directory, file.path))
+  const text: string[] = []
   const office: string[] = []
-  const media: string[] = []
-  const other: string[] = []
+  const binary: string[] = []
   for (const file of files) {
     const target = absolute(file)
-    const where = group(file.path)
-    if (where === "office") office.push(target)
-    else if (where === "media") media.push(target)
-    else other.push(target)
+    const kind = attachmentKind(file.path)
+    // A picture is in the message already; it needs no instructions.
+    if (kind === "image") continue
+    if (kind === "office") office.push(target)
+    else if (kind === "text") text.push(target)
+    else binary.push(target)
   }
+  if (!text.length && !office.length && !binary.length) return undefined
 
   const lines = ["# Attached files", "The user attached these files to this message. Tell them in one sentence what you received before you do anything else."]
   const listed = (paths: readonly string[]) => paths.map((target) => `- ${target}`)
-  if (other.length) {
+  if (text.length) {
     lines.push(
       "",
-      "Text and code files, already read into this message:",
-      ...listed(other),
-      "What is here is what the read tool returned. Read one again at the path above only when the message does not hold all of it, or when something may have changed it since.",
+      "Text and code files. They are not in this message: read each one with the read tool before working on it.",
+      ...listed(text),
+      BY_PATH,
     )
   }
   if (office.length) {
-    lines.push("", "Office documents. They are not text: reading one with the read tool gives you the compressed container, not the content. Open each with what fits it:", ...office.map((target) => `- ${target} - ${OFFICE_TOOLS[extensionOf(target)]}`))
+    lines.push(
+      "",
+      "Office documents. They are binary: reading one with the read tool gives you the compressed container, not the content. Open each with what fits it:",
+      ...office.map((target) => `- ${target} - ${OFFICE_TOOLS[extensionOf(target)] ?? "a reader that understands this format"}`),
+    )
     // MiMo's bundled runtime: its Python already has these libraries (src/main/runtimes.ts names it).
     if (process.env.MCODE_PYTHON) lines.push("MCode's bundled Python (the MCODE_PYTHON environment variable) has openpyxl, pandas, python-docx, python-pptx and pypdf installed; run these with it.")
     else lines.push("Check that the library is installed before relying on it, and say so plainly if it is not rather than guessing at the contents.")
+    lines.push(BY_PATH)
   }
-  if (media.length) {
-    lines.push("", "Pictures, audio, video and PDFs. They travel in this message where this model reads that kind of file, and a line says so where it does not:", ...listed(media))
+  if (binary.length) {
+    lines.push(
+      "",
+      "Files of a binary or unknown kind - audio, video, archives, images this model cannot read, anything else. Nothing of them is in this message: operate on each one directly, at its path, with whatever tool suits it.",
+      ...listed(binary),
+      BY_PATH,
+    )
   }
-  lines.push("", "Every path above is absolute and exact. Do not search or list the user's folders to find these files, and do not ask them to type a path again.")
   return lines.join("\n")
 }
 

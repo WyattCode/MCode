@@ -7,12 +7,15 @@ import { READ_MEDIA_BYTES, sniffMime } from "../tool/read-media"
 
 /**
  * Files attached by path, as MiMo attaches them: the message carries the path,
- * and the file is read from disk each time a request is built. Nothing about
- * the file's size limits what can be attached; what a request carries of it is
- * limited instead, as MiMo's read of a text file is.
+ * and nothing about the file's size limits what can be attached.
+ *
+ * Of what the user attached, only a picture is ever read into the request - the
+ * rest is named by absolute path in the turn's attachment blocks and read by
+ * the model itself. What a tool's result carried is read here in full, because
+ * what the tool showed the model is what the model must go on seeing.
  */
 
-/** A text file is sent up to this much, with a note saying where the rest is. */
+/** A text file a tool returned is sent up to this much, with a note saying where the rest is. */
 export const INLINE_TEXT_BYTES = 50 * 1024
 
 /** Media larger than this is not put into a request (MiMo's media ceiling). */
@@ -65,12 +68,19 @@ export async function settleAttachments(list: Attachment[] | undefined, director
 
 export type AttachmentCache = Map<string, LoadedAttachment>
 
-async function load(file: Attachment, directory: string): Promise<LoadedAttachment> {
+async function load(file: Attachment, directory: string, forUser: boolean): Promise<LoadedAttachment> {
   // A tool's copy, taken when it read the file, stands for the file; read already held it to its own limit.
   const target = file.copy ?? resolved(file, directory)
   const limit = file.copy ? READ_MEDIA_BYTES : MEDIA_BYTES
   try {
     const mime = file.mime || (await mimeOf(target))
+    /*
+     * Nothing but a picture is read for the user's own attachment. Its path is
+     * in the turn's attachment blocks, and the model reads the file itself -
+     * which is the only way it sees all of a large one. Reading it here would
+     * cost the bytes twice and hand over a truncated copy besides.
+     */
+    if (forUser && !mime.startsWith("image/")) return { ...file, mime, data: "" }
     if (mime === "application/x-directory") {
       const entries = await fs.readdir(target, { withFileTypes: true })
       const names = entries
@@ -123,17 +133,18 @@ export async function withAttachmentData(history: Message[], directory: string, 
     message.role === "user" ? byPath(message.attachments) : message.parts.some((part) => part.type === "tool" && byPath(part.attachments))
   if (!history.some(carries)) return history
 
-  const read = async (list: readonly Attachment[]): Promise<Attachment[]> => {
+  const read = async (list: readonly Attachment[], forUser: boolean): Promise<Attachment[]> => {
     const out: Attachment[] = []
     for (const file of list) {
       if (!file.byPath) {
         out.push(file)
         continue
       }
-      const key = file.copy ?? resolved(file, directory)
+      // The same file can be both a user's attachment and a tool's result, and the two are read differently.
+      const key = `${forUser ? "u" : "t"}:${file.copy ?? resolved(file, directory)}`
       let loaded = cache.get(key)
       if (!loaded) {
-        loaded = await load(file, directory)
+        loaded = await load(file, directory, forUser)
         cache.set(key, loaded)
       }
       out.push({ ...loaded, path: file.path })
@@ -148,12 +159,12 @@ export async function withAttachmentData(history: Message[], directory: string, 
       continue
     }
     if (message.role === "user") {
-      out.push({ ...message, attachments: await read(message.attachments ?? []) })
+      out.push({ ...message, attachments: await read(message.attachments ?? [], true) })
       continue
     }
     const parts: AssistantPart[] = []
     for (const part of message.parts) {
-      parts.push(part.type === "tool" && byPath(part.attachments) ? { ...part, attachments: await read(part.attachments ?? []) } : part)
+      parts.push(part.type === "tool" && byPath(part.attachments) ? { ...part, attachments: await read(part.attachments ?? [], false) } : part)
     }
     out.push({ ...message, parts })
   }

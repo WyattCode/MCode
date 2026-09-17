@@ -4,6 +4,7 @@ import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, micFailure, t
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, DirEntry, Effort, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
+import { textualName } from "@shared/attachment-kind"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { matchingNames, wordMatch } from "../lib/word-match"
@@ -11,7 +12,7 @@ import { draftTouched, drafts, homeFilled, scheduleDraftSave } from "../lib/comp
 import SlashPill from "./SlashPill.vue"
 import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
-import { mentionable, preview, readFiles, videoUrl, MAX_BYTES } from "../lib/attach"
+import { acceptsDrop, mentionable, outsideWindow, preview, readFiles, uriListPaths, videoUrl, MAX_LABEL, MENTION_MAX } from "../lib/attach"
 import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audio-check"
 import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
@@ -399,7 +400,7 @@ async function take(files: readonly File[]) {
   attachments.value = [...attachments.value, ...taken]
   if (taken.length) notify(t("toast.attachmentsAdded", { count: taken.length }))
   for (const item of rejected) {
-    notifyFailure(t(item.reason === "too-large" ? "attach.tooLarge" : "attach.unreadable"), item.name)
+    notifyFailure(item.reason === "too-large" ? t("attach.tooLarge", { size: MAX_LABEL }) : t("attach.unreadable"), item.name)
   }
 }
 
@@ -428,13 +429,26 @@ async function onPaste(event: ClipboardEvent) {
     await take(files)
     return
   }
+  const uris = uriListPaths(event.clipboardData?.getData("text/uri-list") ?? "")
+  if (uris.length) {
+    // Copied from another application, which names the files rather than handing them over.
+    event.preventDefault()
+    await attachPaths(uris)
+    return
+  }
   /*
    * MiMo's fallback: the clipboard says it holds a picture but hands the page
    * no File item (a screenshot from some tools), so the main process reads the
-   * bitmap itself and the picture is attached by path.
+   * bitmap itself and the picture is attached by path. Three ways of telling,
+   * in MiMo's order: the clipboard's own formats, the types on the event, and
+   * a paste that carries no plain text at all.
    */
-  const types = [...(event.clipboardData?.types ?? [])]
-  if (types.some((type) => type.startsWith("image/"))) {
+  const types = [...(event.clipboardData?.types ?? [])].map((type) => type.toLowerCase())
+  const looksLikeImage =
+    (await window.mcode.clipboardHasImage().catch(() => false)) ||
+    types.some((type) => type.startsWith("image/") || type.includes("bitmap")) ||
+    (!types.includes("text/plain") && types.includes("files"))
+  if (looksLikeImage) {
     event.preventDefault()
     const saved = await window.mcode.saveClipboardImage().catch(() => ({ ok: false as const, error: "" }))
     if (!saved.ok) {
@@ -475,13 +489,22 @@ async function onPaste(event: ClipboardEvent) {
     notify(t("composer.pasteAttached"))
     return
   }
-  const name = `mcode-paste-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`
-  if (new Blob([pasted]).size > MAX_BYTES) {
-    notifyFailure(t("attach.tooLarge"), name)
-    return
-  }
-  attachments.value = [...attachments.value, { path: name, mime: "text/plain", data: pasted }]
-  notify(t("composer.pasteAttached"))
+  /*
+   * The write failed, so the paste goes into the box after all - replacing the
+   * selection, as a plain paste would. What the user copied is never turned
+   * away: refusing it left them with an empty box and a notice, and the text
+   * was gone from everywhere but the clipboard.
+   */
+  const box = input.value
+  const start = box?.selectionStart ?? text.value.length
+  const end = box?.selectionEnd ?? start
+  text.value = text.value.slice(0, start) + pasted + text.value.slice(end)
+  const at = start + pasted.length
+  caret.value = at
+  await nextTick()
+  resize()
+  box?.focus({ preventScroll: true })
+  box?.setSelectionRange(at, at)
 }
 
 /**
@@ -518,8 +541,8 @@ function onDragOver(event: DragEvent) {
     dragging.value = false
     return
   }
-  const types = event.dataTransfer?.types
-  if (!types?.includes("Files") && !types?.includes("text/plain")) return
+  // Files and named files only: text dragged into the box is the browser's to insert.
+  if (!acceptsDrop(event.dataTransfer?.types)) return
   // Without this the window navigates to the dropped file instead.
   event.preventDefault()
   dragging.value = true
@@ -527,7 +550,8 @@ function onDragOver(event: DragEvent) {
 
 function onDragLeave(event: DragEvent) {
   if (dialogOpen()) return
-  if (!event.relatedTarget) dragging.value = false
+  // Chromium leaves `relatedTarget` null inside the window too; the pointer being outside it is the real test.
+  if (outsideWindow(event)) dragging.value = false
 }
 
 async function onDrop(event: DragEvent) {
@@ -535,45 +559,25 @@ async function onDrop(event: DragEvent) {
   dragging.value = false
   // Anywhere else the window's own guard stops the browser opening the file, and nothing is added.
   if (!inDropZone(event)) return
+  // Text dragged into the box - a word from a page, or a selection moved within the box - is the browser's to insert.
+  if (!acceptsDrop(event.dataTransfer?.types)) return
   event.preventDefault()
 
-  /*
-   * A path dragged as text becomes a mention rather than a copy of the file:
-   * the reference reads `file:` off the plain text and inserts `@path`, which
-   * keeps a file that is already in the project referred to rather than sent.
-   */
-  const root = projectRoot.value
-  const dropped = event.dataTransfer?.getData("text/plain") ?? ""
-  if (dropped.startsWith("file:")) {
-    const path = decodeURI(dropped.slice("file:".length).replace(/^\/{2,3}/, ""))
-    if (path) {
-      // Inside the project it is named from the project root, as MiMo names it.
-      const rel = root ? projectRelative(root, path) : undefined
-      addDroppedMentions(rel ? [{ rel, file: true }] : [{ rel: path, file: true }])
-      return
-    }
-  }
-
-  /*
-   * MiMo's drop: a file inside the project (not a picture or a video) becomes
-   * an @mention from the project root, appended to the draft; everything else
-   * is attached. A folder is named but not carried, as a folder picked in the
-   * @ menu is.
-   */
   /*
    * MiMo only turns a text file into an @mention: the main process fills in a
    * dropped file's text for text-like names under 256KB, and the drop splits on
    * that - a text file inside the project becomes a mention, and everything
    * else (a PDF, a spreadsheet, an archive, a huge log, a folder) becomes a
-   * real attachment by path. MCode read only "not a picture or a video", so a
-   * PDF in the project reached the model as a bare path.
+   * real attachment by path.
    */
   const files = [...(event.dataTransfer?.files ?? [])]
   const inside: { rel: string; absolute: string }[] = []
   const attach: File[] = []
+  const carried = new Set<string>()
   for (const file of files) {
     const absolute = window.mcode.pathForFile(file)
-    const rel = root && mentionable(file) ? projectRelative(root, absolute) : undefined
+    if (absolute) carried.add(absolute)
+    const rel = projectRoot.value && mentionable(file) ? projectRelative(projectRoot.value, absolute) : undefined
     if (rel) inside.push({ rel, absolute })
     else attach.push(file)
   }
@@ -582,6 +586,43 @@ async function onDrop(event: DragEvent) {
     addDroppedMentions(inside.map((entry) => ({ rel: entry.rel, file: !folders.has(entry.absolute) })))
   }
   if (attach.length) await take(attach)
+
+  /*
+   * A drag from an application that names its files instead of handing them
+   * over. MiMo reads these from `text/uri-list` and puts them through the same
+   * split, after asking the main process which of them exist - so a stale path
+   * from another window never becomes a mention of a file that is not there.
+   */
+  const named = uriListPaths(event.dataTransfer?.getData("text/uri-list") ?? "").filter((target) => !carried.has(target))
+  if (named.length) await attachPaths(named)
+}
+
+/**
+ * Files named by path rather than handed over: the uri-list half of a drop, and
+ * a paste from an application that copies names.
+ *
+ * The same split as a dropped file - a text file inside the project becomes an
+ * @mention, everything else an attachment by path - except that there is no
+ * `File` to read, so a picture arrives without the bytes its thumbnail would be
+ * drawn from and shows as a capsule with its name.
+ */
+async function attachPaths(paths: readonly string[]) {
+  const found = await window.mcode.describeFiles([...paths]).catch(() => [])
+  if (!found.length) return
+  const root = projectRoot.value
+  const mentions: { rel: string; file: boolean }[] = []
+  const attach: Attachment[] = []
+  for (const entry of found) {
+    const textual = !entry.directory && textualName(entry.name) && entry.size < MENTION_MAX
+    const rel = root && textual ? projectRelative(root, entry.path) : undefined
+    if (rel) mentions.push({ rel, file: true })
+    else attach.push({ path: entry.path, mime: "", data: "", byPath: true })
+  }
+  if (mentions.length) addDroppedMentions(mentions)
+  if (attach.length) {
+    attachments.value = [...attachments.value, ...attach]
+    notify(t("toast.attachmentsAdded", { count: attach.length }))
+  }
 }
 
 /* The project a mention is named from: the conversation's folder, or the one the home screen will start in. */
@@ -3649,9 +3690,15 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   display: none;
 }
 
-/* A dropped file has to look like it will land somewhere: MiMo's 2px ring of the accent at 35%. */
+/*
+ * A dropped file has to look like it will land somewhere: MiMo's 2px ring of
+ * the accent at 35%, and the edge in the accent with it. The card's own shadow
+ * is written back into the same declaration, which otherwise replaces it and
+ * flattens the box against the page for as long as the drag lasts.
+ */
 .box.dropping {
-  box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
+  border-color: #ff6a2b;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }
 
 /* Annotations waiting to be sent, under the attachments and skill chips. */
@@ -4835,7 +4882,8 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
 }
 
 .box.dropping {
-  box-shadow: 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
+  border-color: #ff6a2b;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4), 0 0 0 2px color-mix(in srgb, #ff6a2b 35%, transparent);
 }
 
 /*
