@@ -2178,16 +2178,17 @@ async function main() {
       time: { created: 0 },
     }
     /*
-     * Taking a turn back goes through git, as MiMo's does. Outside a
-     * repository it refuses and writes nothing; inside one it reverse-applies
-     * the turn's patches, recomputes a patch whose hunk later edits have
-     * moved, and falls back to `git checkout --` for a tracked file whose
-     * lines are gone altogether.
+     * Taking a turn back goes through git, as MiMo's does. With no repository
+     * an edited file cannot be put back and is left, while a file the turn
+     * created is simply deleted; inside one the turn's patches are
+     * reverse-applied, a patch whose hunk later edits have moved is
+     * recomputed, and a tracked file whose lines are gone altogether falls
+     * back to `git checkout --`.
      */
-    const refused = await revertTurnFiles(root, [turnMessage])
-    check("outside a repository a revert refuses and touches nothing", refused.noRepo === true && refused.restored === 0 && refused.removed === 0, refused)
-    check("the file the refusal did not touch is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
-    check("the file the refusal did not touch is still there", await exists(path.join(root, "made.txt")))
+    const plainRevert = await revertTurnFiles(root, [turnMessage])
+    check("with no repository, edited files are left and counted", plainRevert.restored === 0 && plainRevert.outside === 2 && plainRevert.removed === 1, plainRevert)
+    check("the edited file is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
+    check("the file the turn made is gone", !(await exists(path.join(root, "made.txt"))))
 
     const repo = path.join(project, "turn-revert-repo")
     await fs.mkdir(repo, { recursive: true })
@@ -2221,7 +2222,7 @@ async function main() {
     const throughGit = await revertTurnFiles(repo, [repoTurn])
     check(
       "inside a repository the turn's edits go back and the file it made is deleted",
-      throughGit.noRepo === undefined && throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
+      throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
       throughGit,
     )
     const back = async (name: string) => (await fs.readFile(path.join(repo, name), "utf8")).replace(/\r\n/g, "\n")

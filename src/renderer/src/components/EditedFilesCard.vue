@@ -92,11 +92,7 @@ async function revert() {
   reverting.value = true
   try {
     const result = await app.revertTurn(props.sessionId, props.messageIds)
-    // MiMo's refusal: taking a turn back goes through git, and this project has no repository.
-    if (result.noRepo) {
-      notifyFailure(t("stream.revertNoRepo"))
-      return
-    }
+
     const done = result.restored + result.removed
     if (done === 0) {
       if (result.outside > 0) notifyFailure(t("stream.revertCancelledOutside", { n: result.outside }))

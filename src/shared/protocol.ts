@@ -604,15 +604,12 @@ export interface TurnRevertResult {
   removed: number
   /** Files whose changed lines were no longer there, left alone. */
   failed: number
-  /** Paths outside the project, skipped. */
-  outside: number
   /**
-   * The project is not in a repository, so nothing was touched.
-   *
-   * Taking a turn back goes through git, as MiMo's does, and MiMo refuses
-   * outright rather than writing to files it cannot put back.
+   * Files nothing could take back, left as they are: an edited file in no
+   * repository, or a file created outside the project that git tracks. MiMo
+   * calls these outside, and so does the card.
    */
-  noRepo?: boolean
+  outside: number
 }
 
 export type Message = UserMessage | AssistantMessage
