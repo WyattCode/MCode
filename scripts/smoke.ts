@@ -294,6 +294,8 @@ import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
+// Round 10, part B: bash, webfetch and the shell around a tool call.
+import { roundTenBashChecks } from "./smoke-round10-bash"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -1411,12 +1413,6 @@ async function main() {
   check("the prompt names the directory being reached into", traversalPrompt[0]?.subject.endsWith("*") ?? false, traversalPrompt[0]?.subject)
   permissions.respond(traversalPrompt[0]!.id, "reject")
   check("refusing traversal stops the read", (await traversal) === "denied")
-
-  let refused = false
-  await findTool("bash")!
-    .execute({ command: "rm -rf /", description: "destroy" }, context("c7"))
-    .catch((err: Error) => (refused = err.message.includes("Refused")))
-  check("bash refuses recursive force delete", refused)
 
   // E22: MiMo's bash - workdir, max_output_tokens with the middle left out and the whole saved, a timeout that returns what ran, the exit code kept out of the output.
   {
@@ -6940,6 +6936,7 @@ async function main() {
   await roundNineWindowsChecks(check, section)
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
+  await roundTenBashChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
