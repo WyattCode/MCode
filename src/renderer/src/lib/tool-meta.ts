@@ -1,5 +1,5 @@
 import type { PermissionRecord, ToolPart } from "@shared/protocol"
-import { SUBAGENT_ACTIONS, actorAction, actorTarget } from "@shared/subagent"
+import { SUBAGENT_ACTIONS, actorAction, actorTarget, operationInput } from "@shared/subagent"
 import { t } from "./i18n"
 
 /**
@@ -124,7 +124,7 @@ export function toolVerb(name: string, state: StepState): string {
  * with no action, and one refused for its arguments keep the actor tool's own.
  */
 export function stepVerb(part: ToolPart, state: StepState): string {
-  const action = part.input?.action
+  const action = operationInput(part.input).action
   if (part.name === "actor" && state !== "skipped" && typeof action === "string" && action !== "spawn" && SUBAGENT_ACTIONS.some((known) => known === action)) {
     return t(`toolLabel.subagentAction.${action}.${state}`)
   }
@@ -203,7 +203,7 @@ export function stepTitle(part: ToolPart): string {
     // subagents: a call that starts one is named by its description; one about a subagent by the one it names; models by nothing.
     case "actor": {
       const action = actorAction(input)
-      if (action === "run" || action === "spawn") return text(input.description) || part.title || ""
+      if (action === "run" || action === "spawn") return text(operationInput(input).description) || part.title || ""
       if (action === "models") return ""
       return part.title || actorTarget(input)
     }

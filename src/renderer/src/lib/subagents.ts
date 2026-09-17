@@ -1,5 +1,5 @@
 import type { Message, SessionInfo, SubagentNotice, SubagentNoticeStatus, ToolPart } from "@shared/protocol"
-import { actorAction, actorTarget, answerSummary, launches, subagentAnswer, type SubagentAction } from "@shared/subagent"
+import { actorAction, actorTarget, answerSummary, launches, operationInput, subagentAnswer, type SubagentAction } from "@shared/subagent"
 import { stepState } from "./tool-meta"
 
 /**
@@ -112,7 +112,7 @@ export function subagentItems(messages: readonly Message[], children: readonly S
       const status = subagentStatus(part)
       // Refused for its arguments before anything started: there is nothing to open.
       if (!child && status === "skipped") continue
-      const name = text(part.input?.description) || child?.title || ""
+      const name = text(operationInput(part.input).description) || child?.title || ""
       const summary = status === "completed" ? answerSummary(subagentAnswer(part.output)) : status === "running" ? name : (part.error ?? subagentAnswer(part.output))
       const item: SubagentItem = {
         key: part.callID,

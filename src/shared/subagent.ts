@@ -65,9 +65,23 @@ export const SUBAGENT_ACTIONS = ["run", "spawn", "status", "wait", "cancel", "se
 
 export type SubagentAction = (typeof SUBAGENT_ACTIONS)[number]
 
+/**
+ * A call's arguments as one flat object. The task and actor tools take
+ * MiMo's `{ operation: { action, ... } }`; like MiMo's, they also accept the
+ * fields written flat, and calls saved before the change are flat - so every
+ * reader goes through this.
+ */
+export function operationInput(input: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!input) return {}
+  const operation = input.operation
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) return input
+  const { operation: _wrapped, ...rest } = input
+  return { ...rest, ...(operation as Record<string, unknown>) }
+}
+
 /** A call's action; one that names none is a blocking run, which is all the tool used to do. */
 export function actorAction(input: Record<string, unknown> | undefined): SubagentAction {
-  const raw = input?.action
+  const raw = operationInput(input).action
   return SUBAGENT_ACTIONS.find((action) => action === raw) ?? "run"
 }
 
@@ -78,7 +92,8 @@ export function launches(action: SubagentAction): boolean {
 
 /** The subagent a status, wait, cancel or send call names. */
 export function actorTarget(input: Record<string, unknown> | undefined): string {
-  const raw = input?.actor_id ?? input?.to_actor_id
+  const flat = operationInput(input)
+  const raw = flat.actor_id ?? flat.to_actor_id
   return typeof raw === "string" ? raw.trim() : ""
 }
 
@@ -94,7 +109,7 @@ const REGISTRY_ACTIONS = new Set(["create", "list", "get", "start", "block", "un
  */
 export function isLegacySubagentCall(part: { type: string; name?: string; input?: Record<string, unknown> }): boolean {
   if (part.type !== "tool" || part.name !== "task") return false
-  const input = part.input ?? {}
+  const input = operationInput(part.input)
   const action = input.action
   if (typeof action === "string") return !REGISTRY_ACTIONS.has(action)
   return ["subagent_type", "prompt", "description", "subagent_id"].some((key) => key in input)

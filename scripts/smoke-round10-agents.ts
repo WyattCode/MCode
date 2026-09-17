@@ -20,7 +20,9 @@ import { Bus } from "../src/server/bus"
 import { Permissions } from "../src/server/permission"
 import { SessionStore } from "../src/server/session/store"
 import { SessionRunner } from "../src/server/session/runner"
-import { noticeText, subagentOutput } from "../src/shared/subagent"
+import { actorAction, actorTarget, isLegacySubagentCall, noticeText, subagentOutput } from "../src/shared/subagent"
+import { stepTitle, stepVerb } from "../src/renderer/src/lib/tool-meta"
+import { t } from "../src/renderer/src/lib/i18n"
 import { pillStatus, subagentItems } from "../src/renderer/src/lib/subagents"
 import { AutomationService } from "../src/server/automation/service"
 import { nextOccurrence, parseRRule, scheduleLabel } from "../src/server/automation/rrule"
@@ -334,6 +336,40 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
       const systems = h.parentRequests.map((seen) => seen.system)
       check("the step after approval is asked with build's system prompt", systems.length === 3 && systems[0] !== systems[1] && systems[1] === systems[2], systems.map((text) => text.length))
       check("the plan-mode refusal names the step, not the turn", /Refused for this step only/.test(planApprovedRefusal("a.ts")) && !/next turn/.test(planApprovedRefusal("a.ts")))
+    }
+
+    section("Round 10 (T10-45): task and actor take MiMo's operation object, and actor checks what run and spawn need")
+    {
+      const wrapped = await conversation([
+        { calls: [{ name: "task", input: { operation: { action: "create", summary: "Wrapped work" } } }] },
+        { calls: [{ name: "actor", input: { operation: { action: "run", description: "Wrapped", prompt: "GATEKEEP TASK=T1", subagent_type: "general", task_id: "T1" } } }] },
+      ])
+      const [wrappedRun] = await toolParts(wrapped.id, "actor")
+      check("a wrapped task create and a wrapped actor run work together", (await tasksOf(wrapped))[0]?.status === "done" && wrappedRun?.status === "completed" && (wrappedRun.output ?? "").includes("all of it"), { tasks: await tasksOf(wrapped), run: wrappedRun?.output })
+      const flat = await conversation([{ calls: [{ name: "task", input: { action: "create", summary: "Written flat" } }] }])
+      check("the same fields written flat still work, as MiMo takes them", (await tasksOf(flat))[0]?.summary === "Written flat", await tasksOf(flat))
+      const refusals = await conversation([
+        {
+          calls: [
+            { name: "actor", input: { operation: { action: "spawn", prompt: "PLAIN", subagent_type: "general" } } },
+            { name: "actor", input: { operation: { action: "run", description: "No type", prompt: "PLAIN" } } },
+            { name: "actor", input: { action: "run", description: "Odd type", prompt: "PLAIN", subagent_type: "planner" } },
+          ],
+        },
+      ])
+      const [noDescription, noType, oddType] = await toolParts(refusals.id, "actor")
+      check("spawn without a description is refused", noDescription?.status === "error" && /spawn needs description/.test(noDescription.error ?? ""), noDescription?.error)
+      check("run without a subagent_type is refused rather than taken as general", noType?.status === "error" && /needs subagent_type/.test(noType.error ?? ""), noType?.error)
+      check("an unknown subagent_type is refused", oddType?.status === "error", oddType?.error)
+      check("and none of them started anything", (await childrenOf(refusals.id)).length === 0)
+      const drawn: ToolPart = { type: "tool", id: "p", callID: "c", name: "actor", status: "completed", input: { operation: { action: "wait", actor_id: "general-2" } }, time: { created: 1 } }
+      const started: ToolPart = { ...drawn, input: { operation: { action: "spawn", description: "Drawn by name", prompt: "x", subagent_type: "general" } } }
+      check(
+        "the window reads a wrapped call's action, target and description",
+        actorAction(drawn.input) === "wait" && actorTarget(drawn.input) === "general-2" && stepTitle(started) === "Drawn by name" && stepVerb(drawn, "completed") === t("toolLabel.subagentAction.wait.completed"),
+        [actorAction(drawn.input), actorTarget(drawn.input), stepTitle(started)],
+      )
+      check("a wrapped task call is not mistaken for a saved subagent call", !isLegacySubagentCall({ type: "tool", name: "task", input: { operation: { action: "create", summary: "x" } } }))
     }
 
     section("Round 10 (T10-44): what the actor tool hands back, in MiMo's shapes")

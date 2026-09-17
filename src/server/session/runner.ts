@@ -2087,7 +2087,7 @@ export class SessionRunner {
         callID: `subtask_${Identifier.part()}`,
         name: "actor",
         status: "pending",
-        input: { description: lead.description, prompt: lead.prompt, subagent_type: lead.type },
+        input: { operation: { action: "run", description: lead.description, prompt: lead.prompt, subagent_type: lead.type } },
         time: { created: Date.now() },
       }
       assistant.parts.push(part)
