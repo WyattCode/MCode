@@ -14,6 +14,7 @@ import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentN
 import { buildRows, retryReason, stagesOf, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
 import { cleanReply, saysSomething } from "@shared/reply-clean"
 import { turnOpeners } from "@shared/steer"
+import { redactText } from "@shared/display-redact"
 import { preview, videoUrl } from "../lib/attach"
 import { openImagePreview, openVideoPreview, type ImagePreviewMeta } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
@@ -481,7 +482,7 @@ function foldedMatchCount(needle: string): number {
       }
       if (part.type !== "tool") continue
       if (document.querySelector(`[data-tool-part="${CSS.escape(part.id)}"]`)) continue
-      total += occurrences(part.title ?? "", needle)
+      total += occurrences(redactText(part.title ?? ""), needle)
     }
   }
   return total
@@ -2195,6 +2196,11 @@ defineExpose({ stepMessage, scroller })
 
 .run-chev.open {
   transform: rotate(90deg);
+}
+
+/* Right to left, the closed chevron points the way the line reads. */
+.run-chev:not(.open):dir(rtl) {
+  transform: scaleX(-1);
 }
 /*
  * A failed, stopped or empty turn, as MiMo draws one. The failure is a card on a

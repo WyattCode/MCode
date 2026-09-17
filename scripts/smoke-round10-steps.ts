@@ -10,6 +10,10 @@ import type { AssistantPart, Message, ToolPart, UserMessage } from "../src/share
 import { cleanLiveReply, cleanReply, isDotsOnly, saysSomething } from "../src/shared/reply-clean"
 import { opensTurn, turnOpeners } from "../src/shared/steer"
 import { buildRows, stagesOf } from "../src/renderer/src/lib/step-rows"
+import { noOutput, stepImages, toolIcon } from "../src/renderer/src/lib/tool-meta"
+import { tn } from "../src/renderer/src/lib/plural"
+import { language } from "../src/renderer/src/lib/i18n"
+import { redactText, redactValue, validCardNumber, validChineseID } from "../src/shared/display-redact"
 
 const tool = (id: string, name: string, status: ToolPart["status"] = "completed", extra: Partial<ToolPart> = {}): ToolPart =>
   ({ type: "tool", id, callID: `call_${id}`, name, status, input: {}, time: { created: 1 }, ...extra }) as ToolPart
@@ -81,5 +85,66 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
     const settled = [...turnOpeners(thread, true)].sort().join()
     check("with nothing running the untaken steer is a question of its own", settled === "q1,s1,s2", settled)
     check("an ordinary message always opens one", opensTurn(user("x") as UserMessage, false, false))
+  }
+
+  section("Round 10 (K10-5): what a step shows is masked, beyond MiMo")
+  {
+    const said = redactText("Authorization: Bearer abc.def.ghi and api_key=HUSH12345 with sk-abcdefghijklmnop1234")
+    check("a bearer credential, a named key and a prefixed key are masked", said === "Authorization: Bearer [token] and api_key=[token] with [key]", said)
+    check("a JWT is masked", redactText("t eyJhbGciOi.eyJzdWIiOiIx.c2lnbmF0dXJl") === "t [jwt]")
+    check("GitHub, AWS and Google keys are masked", redactText(`ghp_${"a".repeat(36)} AKIAABCDEFGHIJKLMNOP AIza${"b".repeat(35)}`) === "[key] [key] [key]")
+    check("a long value under a short name is masked", redactText(`token: ${"Z".repeat(20)}`) === "token: [redacted]")
+    check("an ID number with a valid check character is masked", redactText("id 11010519491231002X.") === "id [idcard].")
+    check("one whose check character is wrong is not", redactText("id 110105194912310021") === "id 110105194912310021")
+    check("a card number passing Luhn is masked", redactText("card 4111 1111 1111 1111") === "card [bankcard]")
+    check("a long number failing Luhn is not", redactText("order 4111111111111112") === "order 4111111111111112")
+    const phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident"
+    check("a recovery phrase after its label is masked", redactText(`mnemonic: ${phrase}`) === "mnemonic: [mnemonic]")
+    check("ordinary words are left alone", redactText("the key point is simple") === "the key point is simple")
+    check("an input is masked four levels deep and not changed in place", (() => {
+      const input = { a: { b: { c: "sk-abcdefghijklmnop" } }, list: ["Bearer xyz"] }
+      const shown = redactValue(input)
+      return shown.a.b.c === "[key]" && shown.list[0] === "Bearer [token]" && input.a.b.c === "sk-abcdefghijklmnop"
+    })())
+    check("validChineseID reads the check character", validChineseID("11010519491231002X") && !validChineseID("11010519491231002Y"))
+    check("validCardNumber wants an issuer's length", validCardNumber("4111111111111111") && !validCardNumber("4111111111111"))
+  }
+
+  section("Round 10 (K10-4, K10-8, K10-9, K10-12): one step's pieces")
+  {
+    const images = stepImages([
+      { path: "C:/p/a.png", mime: "", data: "", byPath: true },
+      { path: "C:/p/a.svg", mime: "", data: "", byPath: true },
+      { path: "x", mime: "image/png", data: "AAAA" },
+      { path: "y", mime: "image/svg+xml", data: "AAAA" },
+      { path: "z", mime: "application/pdf", data: "AAAA" },
+    ])
+    check("pictures a call handed back, SVG and other files left out", images.map((item) => item.path).join() === "C:/p/a.png,x", images)
+    check("(no output) in its spellings is no output", noOutput("(no output)") && noOutput("  [No Output] ") && noOutput("no output"))
+    check("anything more is output", !noOutput("no output here") && !noOutput(""))
+    const icons = ["skill", "skill_search", "memory", "pdf_locate", "present_files", "contacts", "actor"].map((name) => toolIcon(name)).join()
+    check("step icons follow MiMo's table", icons === "skill,skill,memory,search,fallback,actor,actor", icons)
+    const rows = buildRows([
+      tool("b1", "bash", "completed", { metadata: { interactive: true } }),
+      tool("b2", "bash", "completed", { metadata: { interactive: true } }),
+    ])
+    const items = rows[0]?.kind === "group" ? rows[0].items.map((item) => item.kind).join() : ""
+    check("a command skipped for wanting input gets MiMo's i row, once per turn", items === "tool,notice,tool", items)
+  }
+
+  section("Round 10 (K10-15): Arabic dual and zero")
+  {
+    const before = language.value
+    language.value = "ar"
+    const two = tn("buildWorkDisplay.read", 2)
+    const zero = tn("buildWorkDisplay.read", 0)
+    const three = tn("buildWorkDisplay.read", 3)
+    language.value = "en"
+    const english = tn("buildWorkDisplay.read", 2)
+    language.value = before
+    check("two files read in Arabic is the dual", two === "تمت قراءة ملفين", two)
+    check("none is its own form", zero === "لم تتم قراءة أي ملف", zero)
+    check("three keeps the plural", three === "تمت قراءة 3 ملفات", three)
+    check("other languages keep their plural", english.includes("2"), english)
   }
 }

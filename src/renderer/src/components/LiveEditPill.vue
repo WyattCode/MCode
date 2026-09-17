@@ -94,7 +94,10 @@ function toggle() {
   text-overflow: ellipsis;
 }
 
+/* Beyond MiMo: kept left-to-right, so an Arabic pill still reads "+N -M". */
 .live-edit-pill-stats {
+  direction: ltr;
+  unicode-bidi: isolate;
   flex: none;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-font-scale, 1));

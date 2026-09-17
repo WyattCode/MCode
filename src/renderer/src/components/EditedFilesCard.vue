@@ -394,7 +394,10 @@ async function pickMenu(key: string) {
   text-overflow: ellipsis;
 }
 
+/* Beyond MiMo: the counts are left-to-right, so an Arabic card keeps "+N -M" in that order. */
 .fc-stat {
+  direction: ltr;
+  unicode-bidi: isolate;
   display: flex;
   flex: none;
   align-items: center;

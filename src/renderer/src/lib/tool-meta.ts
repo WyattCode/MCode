@@ -1,4 +1,4 @@
-import type { PermissionRecord, ToolPart } from "@shared/protocol"
+import type { Attachment, PermissionRecord, ToolPart } from "@shared/protocol"
 import { SUBAGENT_ACTIONS, actorAction, actorTarget } from "@shared/subagent"
 import { t } from "./i18n"
 
@@ -31,6 +31,9 @@ export type StepIconName =
   | "reconnect"
   | "alert"
   | "speaker"
+  | "skill"
+  | "memory"
+  | "actor"
 
 /** How much of a title a row shows; a group of one shows a little more. */
 export const ROW_TITLE_MAX = 90
@@ -149,9 +152,15 @@ const ICONS: Record<string, StepIconName> = {
   todowrite: "todo",
   invalid: "invalid",
   question: "question",
-  // MiMo's desktop tools: a locate reads a document, a present hands files over, the settings tools fall back.
-  pdf_locate: "read",
-  present_files: "list",
+  // MiMo's desktop tools: a locate searches a document; a present and the settings tools fall back.
+  pdf_locate: "search",
+  // skills: a load and a search both wear MiMo's pen; memory has its own mark.
+  skill: "skill",
+  skill_search: "skill",
+  memory: "memory",
+  // subagents: a call no avatar stands for (models), and session chat's contacts, wear the subagent mark.
+  actor: "actor",
+  contacts: "actor",
   // speak: a line read aloud.
   speak: "speaker",
 }
@@ -282,6 +291,26 @@ export function bucketOf(name: string): Bucket {
 
 export function isUnifiedDiff(value: string): boolean {
   return /^@@ /m.test(value) && /^(---|\+\+\+) /m.test(value)
+}
+
+/** The pictures a call handed back that its opened step shows: images, never SVG (MiMo leaves those out). */
+const PICTURE_EXTENSIONS = /\.(png|jpe?g|gif|webp|bmp|avif|ico)$/i
+
+export function stepImages(attachments: readonly Attachment[] | undefined): Attachment[] {
+  return (attachments ?? []).filter((item) => {
+    if (item.byPath) return PICTURE_EXTENSIONS.test(item.path)
+    return Boolean(item.data) && item.mime.startsWith("image/") && !item.mime.includes("svg")
+  })
+}
+
+/*
+ * MiMo's "(no output)": a finished call that printed nothing says so to the
+ * model, and the step treats it as having no output at all - a command opens
+ * to its command alone, and a call with nothing else behind it cannot open.
+ */
+export function noOutput(output: string): boolean {
+  const bare = output.trim().replace(/^[([]/, "").replace(/[)\]]$/, "").trim()
+  return bare.toLowerCase() === "no output"
 }
 
 /*

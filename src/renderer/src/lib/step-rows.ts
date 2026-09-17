@@ -29,6 +29,8 @@ export type StepItem =
   | { kind: "tool"; id: string; part: ToolPart }
   | { kind: "permission"; id: string; part: ToolPart; record: PermissionRecord }
   | { kind: "error"; id: string; error: InlineError }
+  /** MiMo's "i" row: a word from the app about the step before it, under that step's group. */
+  | { kind: "notice"; id: string; key: string }
 
 export type StepRow =
   | { kind: "part"; id: string; part: TextPart | ReasoningPart }
@@ -62,6 +64,8 @@ export function buildRows(parts: AssistantPart[], errors: InlineError[] = []): S
   let group: Extract<StepRow, { kind: "group" }> | undefined
   let actors: Extract<StepRow, { kind: "group" }> | undefined
   const waiting = [...errors].sort((a, b) => a.at - b.at)
+  // MiMo says a command was skipped for wanting input once per turn, the first time.
+  let toldInteractive = false
   const close = () => {
     group = undefined
     actors = undefined
@@ -128,6 +132,10 @@ export function buildRows(parts: AssistantPart[], errors: InlineError[] = []): S
     add({ kind: "tool", id: part.id, part })
     for (const record of permissionsOf(part)) {
       if (permissionShown(record)) add({ kind: "permission", id: `${part.id}:${record.requestID}`, part, record })
+    }
+    if (!toldInteractive && part.metadata?.interactive === true) {
+      toldInteractive = true
+      add({ kind: "notice", id: `${part.id}:interactive`, key: "stepList.interactiveSkipped" })
     }
   })
   placeErrors(Number.POSITIVE_INFINITY)

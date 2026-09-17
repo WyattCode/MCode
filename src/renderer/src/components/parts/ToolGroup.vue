@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue"
 import ToolPart from "./ToolPart.vue"
 import PermissionRow from "./PermissionRow.vue"
 import ErrorStep from "./ErrorStep.vue"
+import NoticeRow from "./NoticeRow.vue"
 import StepIcon from "./StepIcon.vue"
 import StepCollapse from "./StepCollapse.vue"
 import SubagentActivity from "./SubagentActivity.vue"
@@ -85,7 +86,8 @@ function toggle() {
     <template v-for="item in items" :key="item.id">
       <ToolPart v-if="item.kind === 'tool'" :part="item.part" />
       <PermissionRow v-else-if="item.kind === 'permission'" :part="item.part" :record="item.record" />
-      <ErrorStep v-else :error="item.error" />
+      <ErrorStep v-else-if="item.kind === 'error'" :error="item.error" />
+      <NoticeRow v-else :text-key="item.key" />
     </template>
   </div>
   <ToolPart v-else-if="single" :part="single" summary :title-max="SINGLE_TITLE_MAX" />
@@ -114,7 +116,8 @@ function toggle() {
       <template v-for="item in items" :key="item.id">
         <ToolPart v-if="item.kind === 'tool'" :part="item.part" indent />
         <PermissionRow v-else-if="item.kind === 'permission'" :part="item.part" :record="item.record" />
-        <ErrorStep v-else :error="item.error" />
+        <ErrorStep v-else-if="item.kind === 'error'" :error="item.error" />
+        <NoticeRow v-else :text-key="item.key" />
       </template>
     </StepCollapse>
   </div>
