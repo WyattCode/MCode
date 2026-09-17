@@ -312,7 +312,7 @@ onBeforeUnmount(() => {
     >
       <div class="ip-ground" :style="{ opacity: shown ? 0.72 : 0 }" data-image-preview-ground @transitionend="onGroundFaded" />
 
-      <div class="ip-corner" :style="{ opacity: shown ? 1 : 0 }" @click.stop>
+      <div class="ip-corner" :class="{ mac: app.platform === 'darwin' }" :style="{ opacity: shown ? 1 : 0 }" @click.stop>
         <button type="button" class="ip-close" :aria-label="t('imagePreview.close')" data-image-preview-close @click="close">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
             <path d="M6 6l12 12M18 6 6 18" />
@@ -438,13 +438,24 @@ onBeforeUnmount(() => {
   transition: opacity 0.34s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/*
+ * MiMo keeps the tools on the side away from the window buttons: left on
+ * Windows and Linux, whose buttons are at the top right, and right on macOS,
+ * whose traffic lights are at the top left. Those buttons do not move with the
+ * text direction, so neither does this.
+ */
 .ip-corner {
   position: fixed;
   top: 44px;
-  inset-inline-end: 44px;
+  left: 44px;
   z-index: 220;
   display: flex;
   transition: opacity 0.25s ease;
+}
+
+.ip-corner.mac {
+  left: auto;
+  right: 44px;
 }
 
 .ip-close {

@@ -282,4 +282,13 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     check("M10-19: Linux lists nothing, as MiMo does", openApps("linux").length === 0)
     check("M10-19: a plain Windows command is still started by its name", (await launchTarget("code", "win32")) === "code")
   }
+
+  section("Round 10 (platforms): M10-18 the picture preview's tools sit away from the window buttons")
+  {
+    const preview = await fs.readFile(path.join(root, "src/renderer/src/components/ImagePreview.vue"), "utf8")
+    const rule = (selector: string) => new RegExp(`\\n${selector.replace(/\./g, "\\.")} \\{([^}]*)\\}`).exec(preview)?.[1] ?? ""
+    check("M10-18: the corner is 44 from the left on Windows and Linux", /\bleft: 44px;/.test(rule(".ip-corner")) && !/inset-inline-end/.test(rule(".ip-corner")), rule(".ip-corner"))
+    check("M10-18: and 44 from the right on macOS", /\bright: 44px;/.test(rule(".ip-corner.mac")) && /\bleft: auto;/.test(rule(".ip-corner.mac")), rule(".ip-corner.mac"))
+    check("M10-18: only macOS takes the right side", /class="ip-corner" :class="\{ mac: app\.platform === 'darwin' \}"/.test(preview))
+  }
 }
