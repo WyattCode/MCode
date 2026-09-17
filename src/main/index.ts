@@ -71,6 +71,7 @@ import {
   type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
+import { fcitxEnvironment } from "./linux-ime"
 import { restore, saveWindowState, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
@@ -127,7 +128,24 @@ if (process.platform === "linux") {
     if (entry.value === undefined) app.commandLine.appendSwitch(entry.name)
     else app.commandLine.appendSwitch(entry.name, entry.value)
   }
+  /*
+   * MiMo's: shared memory in /tmp rather than /dev/shm, which containers and
+   * some distributions keep too small for Chromium. MiMo also passes
+   * no-zygote; Chromium refuses that while its sandbox is on, so it waits for
+   * a check on real Linux hardware (round10-platforms M10-12).
+   */
+  app.commandLine.appendSwitch("disable-dev-shm-usage")
 }
+
+/* MiMo's fcitx fill-in (see linux-ime.ts), before any window reads the environment. */
+const imeFilled = fcitxEnvironment(process.platform, process.env, () => {
+  try {
+    return readFileSync(path.join(app.getPath("home"), ".xinputrc"), "utf8")
+  } catch {
+    return undefined
+  }
+})
+Object.assign(process.env, imeFilled)
 
 /*
  * MiMo's log files, opened as the module loads so that whatever is said on the
@@ -136,6 +154,7 @@ if (process.platform === "linux") {
  */
 const logs = new DailyLog({ dir: path.join(app.getPath("userData"), LOG_DIR) })
 captureConsole(logs)
+if (Object.keys(imeFilled).length) console.info(`[linux-ime] filled in for fcitx: ${Object.keys(imeFilled).join(", ")}`)
 app.on("will-quit", () => void logs.close())
 process.on("uncaughtException", (error) => recordProcessError("uncaught exception", error))
 process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))

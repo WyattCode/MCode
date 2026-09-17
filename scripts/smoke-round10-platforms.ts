@@ -16,6 +16,7 @@ import { DebugLogger } from "builder-util"
 import { platformShell } from "../src/server/shell-path"
 import { shell as commandShell } from "../src/server/tool/bash"
 import { systemPrompt } from "../src/server/session/prompt"
+import { fcitxEnvironment, fromXinputrc } from "../src/main/linux-ime"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -198,5 +199,46 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const terminal = await fs.readFile(path.join(root, "src/server/shell.ts"), "utf8")
     const preferred = terminal.slice(terminal.indexOf("function preferred()"), terminal.indexOf("function preferred()") + 400)
     check("M10-10: the terminal no longer assumes /bin/bash", !terminal.includes('"/bin/bash"') && /process\.env\.SHELL \|\| platformShell\(\)/.test(preferred), preferred)
+  }
+
+  section("Round 10 (platforms): M10-11 / M10-12 fcitx and Chromium switches on Linux")
+  {
+    const none = () => undefined
+    check("M10-11: nothing is added off Linux", Object.keys(fcitxEnvironment("win32", { GTK_IM_MODULE: "fcitx" }, () => "run_im fcitx5")).length === 0)
+    let read = 0
+    fcitxEnvironment("darwin", {}, () => {
+      read++
+      return "run_im fcitx"
+    })
+    check("M10-11: and ~/.xinputrc is not read there", read === 0)
+    check(
+      "M10-11: GTK's module fills in the other two",
+      JSON.stringify(fcitxEnvironment("linux", { GTK_IM_MODULE: "fcitx5" }, none)) === JSON.stringify({ QT_IM_MODULE: "fcitx5", XMODIFIERS: "@im=fcitx5" }),
+    )
+    check(
+      "M10-11: XMODIFIERS alone is enough",
+      JSON.stringify(fcitxEnvironment("linux", { XMODIFIERS: "@im=fcitx" }, none)) === JSON.stringify({ GTK_IM_MODULE: "fcitx", QT_IM_MODULE: "fcitx" }),
+    )
+    check("M10-11: a value the user set is never replaced", !("GTK_IM_MODULE" in fcitxEnvironment("linux", { GTK_IM_MODULE: "ibus", QT_IM_MODULE: "fcitx" }, none)))
+    check("M10-11: another input method is left alone", Object.keys(fcitxEnvironment("linux", { GTK_IM_MODULE: "ibus", XMODIFIERS: "@im=ibus" }, () => "run_im ibus")).length === 0)
+    check(
+      "M10-11: ~/.xinputrc's last run_im is used when the environment says nothing",
+      JSON.stringify(fcitxEnvironment("linux", {}, () => "# im-config\nrun_im ibus\n  run_im fcitx5\n")) === JSON.stringify({ GTK_IM_MODULE: "fcitx5", QT_IM_MODULE: "fcitx5", XMODIFIERS: "@im=fcitx5" }),
+    )
+    check("M10-11: Sogou Pinyin runs on fcitx", fromXinputrc("run_im sogoupinyin") === "fcitx" && fromXinputrc("run_im Sogou") === "fcitx" && fromXinputrc("run_im ibus") === undefined)
+    check(
+      "M10-11: an unreadable ~/.xinputrc is no method",
+      Object.keys(
+        fcitxEnvironment("linux", {}, () => {
+          throw new Error("EACCES")
+        }),
+      ).length === 0,
+    )
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    const imeAt = main.indexOf("fcitxEnvironment(process.platform")
+    check("M10-11: the main process fills the environment in before the app is ready", imeAt > 0 && imeAt < main.indexOf("app.whenReady") && /Object\.assign\(process\.env, imeFilled\)/.test(main))
+    const linuxBlock = main.slice(main.indexOf('if (process.platform === "linux") {'), imeAt)
+    check("M10-12: Linux asks Chromium to keep shared memory out of /dev/shm", /appendSwitch\("disable-dev-shm-usage"\)/.test(linuxBlock))
+    check("M10-12: no-zygote is not passed while the sandbox is on", !/appendSwitch\("no-zygote"\)/.test(main))
   }
 }
