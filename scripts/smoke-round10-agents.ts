@@ -30,6 +30,8 @@ import { ToolError } from "../src/server/tool/types"
 import { planApprovedRefusal } from "../src/server/session/plan"
 import { recallHint } from "../src/server/session/reminders"
 import { sampleFiles } from "../src/server/tool/skill"
+import { ContactsTool } from "../src/server/tool/session-chat"
+import { withChatHeaders } from "../src/server/session/chat"
 import { QuestionTool } from "../src/server/tool/question"
 import { confirmQueue } from "../src/renderer/src/lib/confirm-queue"
 import type { QuestionRequest } from "../src/shared/protocol"
@@ -456,6 +458,32 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
         await h.config.set({ customProviders: [fake], titleModel: undefined })
         await new Promise<void>((resolve) => broken.close(() => resolve()))
       }
+    }
+
+    section("Round 10 (T10-49, T10-55): cross-chat refusals are results, not failed calls, and the tools answer in Chinese")
+    {
+      const other = await store.create({ directory: h.project, model: h.model, title: "Beta r10" })
+      const asked = await conversation([
+        {
+          calls: [
+            { name: "contacts", input: { explanation: "who is there" } },
+            { name: "talk_to_session", input: { contact: "Nobody here", message: "hi" } },
+            { name: "create_session", input: { name: "G", purpose: "p", workspace: "relative/folder" } },
+            { name: "update_session", input: { contact_id: "ses_missing", name: "x" } },
+          ],
+        },
+      ])
+      const [contacts] = await toolParts(asked.id, "contacts")
+      const [talk] = await toolParts(asked.id, "talk_to_session")
+      const [create] = await toolParts(asked.id, "create_session")
+      const [update] = await toolParts(asked.id, "update_session")
+      check("contacts lists the others in Chinese", contacts?.status === "completed" && (contacts.output ?? "").startsWith("通讯录（") && (contacts.output ?? "").includes(`「Beta r10」 id=${other.id} 空闲`), contacts?.output)
+      check("an unknown contact is a completed call saying it was not delivered, with candidates", talk?.status === "completed" && (talk.output ?? "").startsWith("未送达：没有标题为「Nobody here」的联系人") && (talk.output ?? "").includes("候选："), talk)
+      check("a bad workspace is a completed call saying the session was not created", create?.status === "completed" && (create.output ?? "").startsWith("会话没有创建："), create)
+      check("an unknown session is a completed call saying nothing was updated", update?.status === "completed" && (update.output ?? "").startsWith("会话资料没有更新："), update)
+      const header = withChatHeaders([{ id: "u", sessionID: "s", role: "user", text: "hello", attachments: [], inbox: { from: "Alpha", sessionID: "ses_a", direction: "request" }, time: { created: 1 } }])[0]
+      check("a message from another conversation is introduced in Chinese", header?.role === "user" && header.text.startsWith("【跨会话消息｜来自会话「Alpha」（contact_id ses_a）】"), header)
+      check("a subagent is still refused the tools outright", await ContactsTool.execute({ explanation: "x" }, { sessionID: "s" } as never).then(() => false, (failure: unknown) => failure instanceof ToolError))
     }
 
     section("Round 10 (T10-44): what the actor tool hands back, in MiMo's shapes")

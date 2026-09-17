@@ -8608,10 +8608,10 @@ async function sessionChatChecks(root: string, project: string) {
   const replied = (id: string, extra: Record<string, unknown>): ChatMessage =>
     ({ id, sessionID: "s", role: "assistant", model: { provider: "p", model: "m" }, agent: "build", parts: [], time: { created: 2 }, ...extra }) as ChatMessage
   const headed = withChatHeaders([asked("u1", "hello", { from: "Alpha", sessionID: "ses_a", direction: "request" }), asked("u2", "follow up", { from: "main" })])
-  check("a message from another session reaches the model with its header, and the transcript keeps the words", headed[0]?.role === "user" && headed[0].text.startsWith("[Session chat] A message from the session \"Alpha\"") && headed[0].text.endsWith("hello"))
+  check("a message from another session reaches the model with its header, and the transcript keeps the words", headed[0]?.role === "user" && headed[0].text.startsWith("【跨会话消息｜来自会话「Alpha」") && headed[0].text.endsWith("hello"))
   check("a subagent's follow-up gets no session chat header", headed[1]?.role === "user" && headed[1].text === "follow up")
   const replyHeader = withChatHeaders([asked("u3", "the answer", { from: "Beta", sessionID: "ses_b", direction: "reply" })])[0]
-  check("a reply says it is a reply", replyHeader?.role === "user" && replyHeader.text.startsWith("[Session chat] The reply from the session \"Beta\""))
+  check("a reply says it is a reply", replyHeader?.role === "user" && replyHeader.text.startsWith("【跨会话消息｜会话「Beta」") && replyHeader.text.includes("的回复】"))
   const textPart = (text: string) => ({ type: "text", id: `p${text}`, text })
   check("the reply is the last answer after the message", (() => {
     const outcome = replyIn([asked("u1", "q"), replied("a1", { parts: [textPart("first")] }), replied("a2", { parts: [textPart("final")] })], "u1")
@@ -8708,14 +8708,14 @@ async function sessionChatChecks(root: string, project: string) {
         end("tool_calls")
       }
 
-      if (lastUser.includes("[Session chat] The reply from")) return say("got reply")
+      if (lastUser.includes("对本会话所发消息的回复】")) return say("got reply")
       const chain = /CHAIN:(\d+)/.exec(lastUser)
       if (chain) {
         const at = Number(chain[1])
         if (answered) return say(`chain ${at} done`)
         return call("talk_to_session", { contact: `chain-${at + 1}`, message: `CHAIN:${at + 1}` })
       }
-      if (lastUser.includes("[Session chat] A message from")) {
+      if (lastUser.includes("【跨会话消息｜来自会话")) {
         if (lastUser.includes("SLOW")) return slow("slow pong")
         return say(`pong:${/PING[\w-]*/.exec(lastUser)?.[0] ?? ""}`)
       }
@@ -8788,13 +8788,13 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "CONTACTS" })
   await quiet()
   const [contacts] = await partsOf(alpha.id, "contacts")
-  check("contacts lists the other sessions and leaves the caller out", contacts?.status === "completed" && (contacts.output ?? "").includes(`"Beta" id=${beta.id} idle`) && !(contacts.output ?? "").includes(`id=${alpha.id}`), contacts?.output)
+  check("contacts lists the other sessions and leaves the caller out", contacts?.status === "completed" && (contacts.output ?? "").includes(`「Beta」 id=${beta.id} 空闲`) && !(contacts.output ?? "").includes(`id=${alpha.id}`), contacts?.output)
 
   // A waiting call: a real turn in the target, and its reply as the result.
   await runner.prompt({ sessionID: alpha.id, text: "TALK-SYNC:Beta" })
   await quiet()
   const [talked] = await partsOf(alpha.id, "talk_to_session")
-  check("a waiting call returns the target's reply", talked?.status === "completed" && talked.output === 'Reply from "Beta":\npong:PING', talked?.output)
+  check("a waiting call returns the target's reply", talked?.status === "completed" && talked.output === "「Beta」的回复：\npong:PING", talked?.output)
   const betaAsked = (await store.messages(beta.id)).find((message) => message.role === "user")
   check(
     "the target's transcript has the words, marked as from the caller through the inbox field",
@@ -8827,7 +8827,8 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "SELF:Alpha" })
   await quiet()
   const selfPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
-  check("calling yourself is refused", selfPart?.status === "error" && (selfPart.error ?? "").includes("cannot message itself"), selfPart?.error)
+  // Round 10 (T10-49): a refusal is the call's result, as MiMo returns it, and in Chinese (T10-55).
+  check("calling yourself is refused", selfPart?.status === "completed" && (selfPart.output ?? "").startsWith("未送达：不能给当前会话自己发消息"), selfPart)
 
   // create_session and update_session.
   await runner.prompt({ sessionID: alpha.id, text: "CREATE" })
@@ -8842,7 +8843,7 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "CREATE-BAD" })
   await quiet()
   const badCreate = (await partsOf(alpha.id, "create_session")).at(-1)
-  check("a workspace that is not an absolute folder is refused", badCreate?.status === "error" && (badCreate.error ?? "").includes("absolute"), badCreate?.error)
+  check("a workspace that is not an absolute folder is refused", badCreate?.status === "completed" && (badCreate.output ?? "").includes("绝对路径") && badCreate.metadata?.refused === true, badCreate)
   if (gamma) {
     await runner.prompt({ sessionID: alpha.id, text: `UPDATE:${gamma.id}` })
     await quiet()
@@ -8856,7 +8857,7 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: chain[0]!, text: "CHAIN:1" })
   await quiet()
   const refusedHop = (await partsOf(chain[5]!, "talk_to_session"))[0]
-  check("a chain of calls is refused at the sixth hop", refusedHop?.status === "error" && (refusedHop.error ?? "").includes("limit of 5 hops"), refusedHop?.error)
+  check("a chain of calls is refused at the sixth hop", refusedHop?.status === "completed" && (refusedHop.output ?? "").includes("5 跳上限"), refusedHop)
   check("the session past the limit was never messaged", (await store.messages(chain[6]!)).length === 0)
   check("the replies unwind back to the start", (await texts(chain[0]!)).includes("chain 1 done"))
 
@@ -8868,7 +8869,7 @@ async function sessionChatChecks(root: string, project: string) {
   runner.abort(alpha.id)
   await quiet()
   const stoppedPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
-  check("Stop settles a waiting call cleanly", stoppedPart?.status === "error" && stoppedPart.error === "Stopped before the reply arrived." && stoppedPart.metadata?.aborted === true, stoppedPart)
+  check("Stop settles a waiting call cleanly", stoppedPart?.status === "error" && stoppedPart.error === "在收到回复之前已停止。" && stoppedPart.metadata?.aborted === true, stoppedPart)
   check("the target still finishes its turn", (await texts(delta.id)).includes("slow pong"))
   check("no reply is delivered to a call that was stopped", !(await store.messages(alpha.id)).some((message) => message.role === "user" && message.inbox?.from === "Delta"))
 
@@ -8881,7 +8882,7 @@ async function sessionChatChecks(root: string, project: string) {
   await store.delete(epsilon.id)
   await quiet()
   const gone = (await store.messages(alpha.id)).find((message) => message.role === "user" && message.inbox?.from === "Epsilon")
-  check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("no longer exists"), gone)
+  check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("目标会话已不存在"), gone)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }

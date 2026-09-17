@@ -65,16 +65,20 @@ export type TalkResult =
 
 export type ChatChange = { ok: true; session: SessionInfo } | { ok: false; error: string }
 
-const SELF = "A session cannot message itself."
-const HOPS = `This chain of calls between sessions has reached its limit of ${CHAT_HOPS} hops, so it was refused to prevent a loop. Answer with what you already have instead of calling another session.`
-const GONE = "The target session no longer exists; it may have been deleted."
+/*
+ * What the model reads from these tools is in Chinese, as MiMo's session chat
+ * speaks to its model (the user's 2026-09-17 decision), in this app's own words.
+ */
+const SELF = "不能给当前会话自己发消息。"
+const HOPS = `会话之间的连续调用已达到 ${CHAT_HOPS} 跳上限，为避免循环已拒绝。请根据已有结果直接作答，不要再调用其他会话。`
+const GONE = "目标会话已不存在，可能已被删除。"
 /** What the caller is told about a message whose turn the app outlived. */
-const INTERRUPTED = "The app closed while the other session was working on this message, so no reply came back. Send it again if it still matters."
+const INTERRUPTED = "对方会话处理这条消息时应用被关闭了，所以没有收到回复。如果仍然需要，请重新发送。"
 /** Where the queue is kept between runs. */
 const QUEUE_KEY = "chat-queue"
 /** Older than this and a message is not delivered on a later start: it is no longer what anyone asked for. */
 const RESTORE_MAX_AGE_MS = 24 * 60 * 60 * 1000
-const TIMEOUT = `The target could not start on the message within ${CHAT_WAIT_MS / 1000}s. Try again later, or send it with mode "async".`
+const TIMEOUT = `对方在 ${CHAT_WAIT_MS / 1000} 秒内没能开始处理这条消息。请稍后再试，或改用 mode "async" 发送。`
 
 interface Entry {
   target: string
@@ -123,8 +127,8 @@ function listed(session: SessionInfo): boolean {
  */
 export function chatHeader(source: MessageSource): string {
   return source.direction === "reply"
-    ? `[Session chat] The reply from the session "${source.from}" (contact_id ${source.sessionID}) to a message this session sent it.`
-    : `[Session chat] A message from the session "${source.from}" (contact_id ${source.sessionID}). Your final message in this turn is sent back to it as the reply.`
+    ? `【跨会话消息｜会话「${source.from}」（contact_id ${source.sessionID}）对本会话所发消息的回复】`
+    : `【跨会话消息｜来自会话「${source.from}」（contact_id ${source.sessionID}）】本回合的最终回复会作为答复发回给它。`
 }
 
 /** The history a model is sent, with each chat message carrying its header; a subagent's follow-up is left alone. */
@@ -148,9 +152,9 @@ export function replyIn(messages: Message[], messageID?: string): ChatOutcome {
     .join("\n")
     .trim()
   if (text) return { ok: true, reply: text }
-  if (last?.error) return { ok: false, error: `The other session's turn failed: ${last.error}` }
-  if (last?.finish === "aborted") return { ok: false, error: "The other session's turn was stopped before it replied." }
-  return { ok: false, error: "The other session's turn ended without a text reply." }
+  if (last?.error) return { ok: false, error: `对方回合出错：${last.error}` }
+  if (last?.finish === "aborted") return { ok: false, error: "对方回合在回复之前被停止了。" }
+  return { ok: false, error: "对方回合已结束，但没有可以带回的文字回复。" }
 }
 
 function describe(failure: unknown): string {
@@ -208,9 +212,9 @@ export class SessionChat {
     signal?: AbortSignal
   }): Promise<TalkResult> {
     const message = input.message.trim()
-    if (!message) return { status: "refused", error: "The message is empty." }
+    if (!message) return { status: "refused", error: "消息不能为空。" }
     const caller = await this.store.get(input.from)
-    if (!caller || !listed(caller)) return { status: "refused", error: "Only a conversation in the side column can message other sessions." }
+    if (!caller || !listed(caller)) return { status: "refused", error: "只有侧栏里的会话才能给其他会话发消息。" }
 
     const everyone = (await this.store.list()).filter(listed)
     const others = everyone.filter((session) => session.id !== caller.id)
@@ -220,18 +224,18 @@ export class SessionChat {
     if (id) {
       if (id === caller.id) return { status: "refused", error: SELF }
       target = others.find((session) => session.id === id)
-      if (!target) return { status: "refused", error: `No contact has the id ${id}. Open contacts to see who is there.`, candidates: offered() }
+      if (!target) return { status: "refused", error: `没有 contact_id 为 ${id} 的联系人。可以先用 contacts 查看通讯录。`, candidates: offered() }
     } else {
       const name = input.contact?.trim() ?? ""
-      if (!name) return { status: "refused", error: "Name the contact by its exact title, or give its contact_id." }
+      if (!name) return { status: "refused", error: "请用联系人的完整标题或 contact_id 指明对方。" }
       const named = everyone.filter((session) => session.title.trim() === name)
       const matches = named.filter((session) => session.id !== caller.id)
-      if (!named.length) return { status: "refused", error: `No contact is titled "${name}". Open contacts to see who is there.`, candidates: offered() }
+      if (!named.length) return { status: "refused", error: `没有标题为「${name}」的联系人。可以先用 contacts 查看通讯录。`, candidates: offered() }
       if (!matches.length) return { status: "refused", error: SELF }
       if (matches.length > 1) {
         return {
           status: "refused",
-          error: `Several sessions are titled "${name}". Retry with the contact_id of the one you mean.`,
+          error: `有多个会话的标题都是「${name}」。请从候选中选出要找的那个，用它的 contact_id 重试。`,
           candidates: matches.map((session) => this.contactOf(session)),
         }
       }
@@ -298,10 +302,10 @@ export class SessionChat {
     const name = input.name.trim()
     const purpose = input.purpose.trim()
     const workspace = input.workspace.trim()
-    if (!name || !purpose || !workspace) return { ok: false, error: "name, purpose and workspace are all required." }
-    if (!isAbsolute(workspace)) return { ok: false, error: "workspace must be the absolute path of an existing folder." }
+    if (!name || !purpose || !workspace) return { ok: false, error: "name、purpose 和 workspace 都必须填写。" }
+    if (!isAbsolute(workspace)) return { ok: false, error: "workspace 必须是一个已存在文件夹的绝对路径。" }
     const found = await stat(workspace).catch(() => undefined)
-    if (!found?.isDirectory()) return { ok: false, error: `workspace does not exist or is not a folder: ${workspace}` }
+    if (!found?.isDirectory()) return { ok: false, error: `workspace 不存在或不是文件夹：${workspace}` }
     const task = input.task?.trim()
     const made = await this.turns.create({ directory: workspace, title: name })
     const session = await this.store.update(made.id, {
@@ -313,8 +317,8 @@ export class SessionChat {
   async update(input: { contactID: string; name?: string; purpose?: string; task?: string; taskStatus?: ChatTaskStatus }): Promise<ChatChange> {
     const id = input.contactID.trim()
     const session = id ? await this.store.get(id) : undefined
-    if (!session || !listed(session)) return { ok: false, error: `No session has the id ${id}.` }
-    if (input.name !== undefined && !input.name.trim()) return { ok: false, error: "name cannot be empty." }
+    if (!session || !listed(session)) return { ok: false, error: `没有 id 为 ${id} 的会话。` }
+    if (input.name !== undefined && !input.name.trim()) return { ok: false, error: "name 不能为空。" }
     const chat = { ...(session.chat ?? {}) }
     // An empty purpose or task clears it.
     if (input.purpose !== undefined) chat.purpose = input.purpose.trim() || undefined
@@ -489,7 +493,7 @@ export class SessionChat {
         if (this.queues.get(target)?.[0] !== head) return
         this.hops.delete(target)
         this.remove(head)
-        this.finish(head, { ok: false, error: exists ? `The message could not be delivered: ${describe(failure)}` : GONE })
+        this.finish(head, { ok: false, error: exists ? `消息没能送到对方会话：${describe(failure)}` : GONE })
         this.pump(target)
       })
   }
@@ -519,7 +523,7 @@ export class SessionChat {
       targetTitle: caller.title,
       from: peer.id,
       fromTitle: peer.title,
-      text: outcome.ok ? outcome.reply : `(No reply could be fetched) ${outcome.error}`,
+      text: outcome.ok ? outcome.reply : `（没能取回回复）${outcome.error}`,
       hop: next,
       kind: "reply",
       state: "waiting",
