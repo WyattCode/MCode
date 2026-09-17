@@ -1965,8 +1965,6 @@ export type Request =
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
-  | { type: "workspace.create"; directory: string; name: string }
-  | { type: "workspace.remove"; directory: string; target: string }
   | { type: "mcp.list" }
   | { type: "mcp.toggle"; name: string }
   | { type: "mcp.tools"; name: string }
@@ -2167,8 +2165,6 @@ export interface ResponseMap {
   /* `edit` is 智能编辑's validated answer when a draft was sent; without it the window types `text` in. */
   "voice.transcribe": { text: string; heard: string; edit?: VoiceEdit }
   "workspace.list": { worktrees: Worktree[] }
-  "workspace.create": { directory: string; branch: string }
-  "workspace.remove": Record<string, never>
   "mcp.list": { servers: McpServerState[] }
   "mcp.toggle": { servers: McpServerState[] }
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */

@@ -1357,13 +1357,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "workspace.list":
       return { worktrees: await git.worktrees(request.directory) } satisfies Handled<"workspace.list">
 
-    case "workspace.create":
-      return (await git.addWorktree(request.directory, request.name)) satisfies Handled<"workspace.create">
-
-    case "workspace.remove":
-      await git.removeWorktree(request.directory, request.target)
-      return {} satisfies Handled<"workspace.remove">
-
     case "mcp.list":
       return { servers: runtime.mcp.list() } satisfies Handled<"mcp.list">
 
