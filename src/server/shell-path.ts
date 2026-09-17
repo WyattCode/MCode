@@ -47,6 +47,18 @@ export function gitBash(): string | undefined {
 }
 
 /**
+ * The shell used when nothing names one, as MiMo's engine picks it: the newer
+ * PowerShell first on Windows, then Windows PowerShell, git's bash and
+ * COMSPEC; zsh on macOS, which every Mac has; on Linux bash from PATH, since
+ * some systems have no /bin/bash, and /bin/sh when there is none.
+ */
+export function platformShell(platform: NodeJS.Platform = process.platform): string {
+  if (platform === "win32") return which("pwsh.exe") ?? which("powershell.exe") ?? gitBash() ?? process.env.COMSPEC ?? "cmd.exe"
+  if (platform === "darwin") return "/bin/zsh"
+  return which("bash") ?? "/bin/sh"
+}
+
+/**
  * A POSIX-style path as Windows spells it: `/c/…`, `/c:/…`, `/cygdrive/c/…`
  * and `/mnt/c/…` all name drive C. Anything else, and any path off Windows, is
  * returned as it was.

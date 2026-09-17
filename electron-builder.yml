@@ -75,6 +75,14 @@ nsis:
 # from the settings row (or MCODE_UPDATE_URL), and this one is a reserved name
 # that can never resolve. Nothing is ever uploaded (package.mjs passes
 # --publish never).
+# The mcode: conversation links. macOS registers only a scheme its Info.plist
+# declares (CFBundleURLTypes), and the Linux .desktop file gets the matching
+# MimeType. Windows registers it in build/installer.nsh.
+protocols:
+  - name: MCode
+    schemes:
+      - mcode
+
 publish:
   provider: generic
   url: https://updates.invalid/mcode/
@@ -86,6 +94,17 @@ mac:
     - zip
   icon: build/icon.icns
   category: public.app-category.developer-tools
+  # The Dock's cut of each colourway (scripts/icons.mjs), on Apple's icon grid.
+  extraResources:
+    - from: resources/app-icons-mac
+      to: app-icons-mac
+  # Voice input under the hardened runtime: the default entitlements plus the
+  # microphone, for the app and the helpers it starts.
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # macOS ends a process that asks for the microphone without saying why.
+  extendInfo:
+    NSMicrophoneUsageDescription: MCode uses the microphone only while you dictate a message.
 
 dmg:
   icon: build/icon.icns
@@ -96,3 +115,6 @@ linux:
   # electron-builder picks the size set out of this directory.
   icon: build/icons
   category: Development
+  # The .desktop file is named after package.json's desktopName, which Electron
+  # also uses as the window's app_id / WM_CLASS, so the two are matched.
+  syncDesktopName: true

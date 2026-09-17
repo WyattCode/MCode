@@ -303,6 +303,8 @@ import { roundTenDesktopChecks } from "./smoke-round10-desktop"
 // Round 10: git end to end - paths, push target, time limits, grouping, undo.
 import { roundTenGitChecks } from "./smoke-round10-git"
 import { roundTenStepsChecks } from "./smoke-round10-steps"
+// Round 10: the macOS and Linux branches (M10-1 onwards).
+import { roundTenPlatformChecks } from "./smoke-round10-platforms"
 // round 10: the agent-type tools (subagents, tasks, questions, plans, automations, cross-chat, history, skills).
 import { roundTenAgentChecks } from "./smoke-round10-agents"
 // The round-six audit of failures and edge cases (F1 onwards).
@@ -4462,7 +4464,7 @@ async function main() {
     const keysIn = (text: string) => [...text.matchAll(/^\s+(?:"([^"]+)"|([a-z0-9]))\s*:/gm)].map((match) => (match[1] ?? match[2]).toUpperCase())
     const plainKeys = keysIn(block("const handlers: Record<string, () => void> = {"))
     const shiftedKeys = keysIn(block("const shifted: Record<string, () => void> = {"))
-    const altKeys = [...appSource.matchAll(/mod && event\.altKey && event\.key\.toLowerCase\(\) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
+    const altKeys = [...appSource.matchAll(/mod && event\.altKey && (?:event\.key\.toLowerCase\(\)|letter) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
     check("App.vue's handler tables were found", plainKeys.length > 12 && shiftedKeys.length > 6 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
     const wanted = [
       ...plainKeys.filter((key) => key !== "F" && key !== "R").map((key) => `Ctrl+${key}`),
@@ -6923,6 +6925,7 @@ async function main() {
   await roundTenDesktopChecks(check, section)
   await roundTenGitChecks(check, section)
   await roundTenStepsChecks(check, section)
+  await roundTenPlatformChecks(check, section)
   await roundTenAgentChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()

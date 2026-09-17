@@ -5,7 +5,7 @@
 - 分支：`v2.0`（只在本地，从未推送）
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-15
+- 最近更新：2026-09-17
 
 ## 现在到哪了
 
@@ -352,6 +352,22 @@
   - K10-14 阿拉伯语：步骤、分组、提问卡与回合头的收起箭头镜像；标题 `dir="auto"`，`+N -M`（步骤、改动文件卡、实时胶囊）固定 LTR 隔离，命令 / 输出框按段落自判方向。K10-15 `buildWorkDisplay.*_two/_zero` 进 18 张表（ar 用双数 / 零的说法，其余照抄 `_other`），`tn()` 认 zero / two，缺形式时回落 `_other`。K10-16 实测：MiMo 的 `tc-out` 只有 pre-wrap、祖先也无 overflow-wrap，长串横向滚动；MCode 改为 `overflow-wrap: normal`（改前 / 改后截图 `scratchpad/mcode-round10-steps-long-before.png` / `-after.png`）。
   - 顺带修正：改动文件卡此前对没有改文件的回合也画「已编辑 0 个文件」，现在照 MiMo 只在有文件时画。因此 round8-a11y 的 M 项（基准录的是带空卡的回合高度 260.9 → 169.8）会报差异；另有 5 项宽度差 1.7px 和 `dbListLine` textAlign left→start 在去掉本改动时同样出现，不是本路引起。
   - 验证（合并 v2.0 897ee3c 后）：十三项检查全过，build 通过，smoke **3308 全过**（新 `scripts/smoke-round10-steps.ts` 48 条；`session-check` 插话回滚改为新边界；smoke 里 locate 图标与直播文本两条旧预期随之更新）。探针 `mcode-round10-steps.cjs` 中文 30 项、阿拉伯语 35 项全过、0 报错；一次性改坏全部修复后分别 25 / 30 项失败，smoke 新增 23 条失败，sessioncheck 插话 3 条失败。回归：round3-stream 34、round3-reply 29（copyFeedback 一次偶发，重跑通过）、round6-visual 24 全过；round8-a11y 19/20（见上）。
+- **第十轮 macOS / Linux 一路已完成**（`round10-platforms.md` M10-1 … M10-29，按 2026-09-17 用户决定：M10-7 签名公证架构、M10-8 mac 自动更新、M10-21 mac/Linux 内置运行时、M10-22 deb、M10-27 Linux 托盘兜底**不做**；M10-13、M10-20 做）。没有 Mac / Linux 设备，下面标「未实机」的只按代码实现、用单元检查和假平台探针验证过：
+  - M10-1（安全）`server/open-url.ts`：登录地址只放行 http/https，用参数数组启动 `open` / `xdg-open` / `rundll32 url.dll,FileProtocolHandler`，不经 shell；MCP 登录（`mcp-oauth.ts`）与订阅登录（`auth/manager.ts`）都走它，MCP 登录在等回调之前先拒绝非网页地址。smoke 扫描 main / server 不得再有字符串 `exec`。Windows 已验证；mac/Linux 未实机。
+  - M10-2 / M10-3：`lib/keys.ts` 按平台记和弦——存储里的 `Ctrl` = MiMo 的 `mod`（mac 上是 Command），`Meta` = 另一个键（mac 上是 Control，Windows 是 Win），旧存储原意不变，无需迁移；`modHeld` / `controlHeld` / `controlChord`。`App.vue` 的 mod 在 mac 上只认 Command，终端（Control+\`）和最近对话（Control+Tab）照 MiMo 用 Control，Alt 组合按键位读（Option 会改字符）；浏览器标签页里的转发（`shared/browser-page.ts`）同样区分。快捷键显示统一经 `shownChord`（提示框、右键菜单、应用菜单、启动器、侧栏提示），平台由 store 启动时设。假 darwin 探针验证（见下），未实机。
+  - M10-4 / M10-5 / M10-6：`electron-builder.yml` 顶层 `protocols`（mac 的 CFBundleURLTypes、Linux .desktop 的 MimeType）、`package.json` `desktopName: mcode.desktop` + `linux.syncDesktopName`、`build/entitlements.mac.plist`（默认三项 + audio-input）与 `NSMicrophoneUsageDescription`。smoke 用 app-builder-lib 自己的校验和 .desktop 生成核对；未在 Mac/Linux 上打包。
+  - M10-9 / M10-10：兜底 shell 合到 `server/shell-path.ts` 的 `platformShell`（mac zsh，Linux PATH 上的 bash 否则 /bin/sh），终端也用它（`$SHELL` 照 MiMo 原样取，含 fish）；系统提示词的 `Shell:` 报 bash 工具实际选中的 shell（含设置里的）。
+  - M10-11 `main/linux-ime.ts`：Linux 上照 MiMo 从 GTK/QT/XMODIFIERS 或 `~/.xinputrc` 的 run_im 识别 fcitx，只补缺的三个变量。M10-12 只加了 `disable-dev-shm-usage`；`no-zygote` 在沙箱开启时 Chromium 会拒绝启动，**等 Linux 实机确认**再定。M10-28 Linux 加 `enable-speech-dispatcher`（未实机）。
+  - M10-13：`node scripts/icons.mjs --mac`（完整运行也会做）从 MCode 自己的圆角图生成 macOS 版——824/1024 居中、带柔和阴影（量得 MiMo 的 mac 图可见区域 91–932 × 99–940，约留 9%；MCode 版 87–936 × 97–946），写入 `build/icon.icns` 和 `resources/app-icons-mac/`（只进 mac 包，Dock 用它）。Windows/Linux 的图标不变。未实机看 Dock。
+  - M10-14 / M10-15：mac 的窗口菜单用 minimize / zoom 角色（Cmd+M）；应用菜单的设置 / 新任务 / 打开文件夹 / 关闭按当前改绑取快捷键（`main/menu-keys.ts`），快捷键页录制期间不带快捷键（渲染层 `mcode:menu-keys`）。Windows 上仍只显示不注册。菜单与网页谁先收到按键**未实机**。
+  - M10-16 / M10-17 / M10-19：mac 打开目标照 MiMo（终端 + 19 个，五个应用目录、多包名候选，TextMate / Antigravity 删除），Linux 列表照 MiMo 为空，Windows 的 Sublime Text 按 `subl` / `sublime_text` 查找；文件卡「打开方式」改为按文档类型列文档应用（`mcode:doc-apps`，仅 mac），**Windows 上现在只剩「文件资源管理器」「下载副本」**（与 MiMo 一致，已在本机验证）。新增 10 个应用名文案键（18 张表），删除 textmate / antigravity 两个键。
+  - M10-18：图片预览右上角工具组照 MiMo 放在窗口按钮对侧：Windows/Linux 距左 44，mac 距右 44（本机与假 darwin 都验证）。
+  - M10-20 `main/linux-icon-sync.ts`：Linux 换应用图标时照 MiMo 同步——AppImage 只在本应用自己的桌面入口存在且指向那个文件时改 `~/.local/share/icons/<id>.png` 并 touch 入口（MCode 目前不写入口，所以通常跳过）；系统安装的入口按其 Icon 名在用户 hicolor 主题里写同名各尺寸。未实机。
+  - M10-23 `server/protected-paths.ts`：项目就是主目录时，文件标签搜索、@ 搜索、文件列表不进 MiMo 的受保护目录（mac 的 Pictures / Library 等，Windows 的 AppData / OneDrive 等）。
+  - M10-24 / M10-25 / M10-26（`main/native-dialogs.ts`）：Windows 也读麦克风系统设置，拒绝 / 受限时走引导（本机验证）；原生对话框同一时间只开一个（选目录、打开 / 保存文本共用），mac 上不附着窗口、第二次请求时让窗口失焦（附着规则 Windows 已验证，mac 未实机）；mac 全屏关窗等待隐藏期间重新激活会取消隐藏（未实机）。
+  - M10-29：`npm run package:linux`；`scripts/package-target.mjs` 让跨平台打包在改版本号之前就报错并说明去对应系统打。
+  - 验证：十三项检查、build、smoke **3829 全过**（新 `scripts/smoke-round10-platforms.ts` 188 条；sandbox-check 的应用表数量、smoke 里 App.vue 快捷键表的正则、round9 打包脚本的正则随之更新）；每组新检查都改坏自己的代码确认会失败。探针：`mcode-round10-platforms-keys.cjs`（`FAKE_PLATFORM=darwin` 9 项：Control+\` / Control+Tab 生效而 Command 不生效、输入框里 Control+K/N 不被抢、Option+字母按键位、提示框 ⌘B、快捷键页 ⌃\` ⌃⇥ ⌃⇧⇥ ⌘K ⌥⌘P、录制 ⌃J / ⌘J；`win32` 9 项行为不变）、`mcode-round10-platforms.cjs`（win32 7 项：文件卡无编辑器、预览角落在左、麦克风设置、菜单跟随改绑与录制、同时只一个对话框；darwin 3 项：预览角落在右）全过，改坏的构建上对应项全部失败；回归 `mcode-round5-keys.cjs` 16 项全过。假 darwin 只改了渲染层读到的平台，主进程仍是 Windows。
+  - 未做 / 留意：L24（Linux 自绘窗口按钮）、L25（mac 自绘红绿灯，含 `Sidebar.vue` `.top.mac` 全屏仍留 65px）、L26（AppImage 桌面入口）、L27 仍待实机与决定；`prompts.ts` 里「Windows 上 shell 是 PowerShell」的说明在默认 shell 退到 git bash 时不准确，未改。
 - **第十轮第一批已合并四路**（bash 与网页、文件工具与桌面工具包、git、步骤绘制；合并冲突只在 smoke.ts / HANDOFF / bash.ts 的 import，两边都保留，typecheck 与 i18ncheck 通过）。智能体类工具那一路与文件工具那一路都做了定时任务（T10-20/21/22/51/52/53）和跨对话中文文案（T10-49/55），合并冲突落在 automation 与 session-chat 代码里，已交回该路在自己分支上合并最新 v2.0、每项只留一套实现。T10-50：审计称 MiMo 发起方停止时**不**撤回排队消息，MCode 目前撤回，待问用户。
 - **用户 2026-09-17 第十轮第二批决定**：斜杠菜单照 MiMo 列出并实现 `/init`、`/review`、`/dream`、`/distill`、`/rebuild`（文字自写）；记忆完全照 MiMo 按仓库分份、非 git 文件夹共用一份（迁移时合并、不删、留备份）；技能详情弹窗与「卸载」照 MiMo；macOS 留边距图标与 Linux 图标同步照做。**暂不做**：M10-7 Mac 签名 / 公证 / 架构、M10-8 Mac 自动更新、M10-21 Mac / Linux 随包运行时、M10-22 deb、M10-27（Linux 无托盘时保持 MiMo 行为）。
 - 进行中：记忆 / 技能 / 斜杠命令一路；macOS / Linux 一路（M10-1 登录网址经 shell 打开的注入问题优先）。

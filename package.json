@@ -1,6 +1,7 @@
 {
   "name": "mcode",
   "productName": "MCode",
+  "desktopName": "mcode.desktop",
   "version": "0.2.7",
   "description": "A keyboard-first, command-palette-driven AI coding agent.",
   "author": "MCode",
@@ -18,6 +19,7 @@
     "package": "node scripts/package.mjs",
     "package:win": "node scripts/package.mjs --win",
     "package:mac": "node scripts/package.mjs --mac",
+    "package:linux": "node scripts/package.mjs --linux",
     "smoke": "esbuild scripts/smoke.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/smoke.mjs --alias:@shared=./src/shared --packages=external && node out/smoke.mjs",
     "icons": "esbuild scripts/gen-provider-icons.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/gen-icons.mjs --packages=external && node out/gen-icons.mjs",
     "themecheck": "esbuild scripts/theme-check.ts --bundle --platform=node --format=esm --target=node22 --outfile=out/theme-check.mjs --packages=external && node out/theme-check.mjs",

@@ -136,7 +136,8 @@ export interface PageKeyInput {
 
 /**
  * The app's own chords, in the spelling `chordOf` in the renderer's keys.ts
- * writes: Ctrl, Alt, Shift, then the key upper-cased.
+ * writes: Ctrl (MiMo's `mod`), Alt, Shift, Meta (the other key), then the key
+ * upper-cased.
  *
  * These are the chords App.vue's keydown handler answers. A page that has
  * focus swallows every key, so without this list none of them would work while
@@ -144,12 +145,25 @@ export interface PageKeyInput {
  * fails when a chord there is missing here.
  */
 export const APP_CHORDS: readonly string[] = [
-  "Ctrl+Tab", "Ctrl+Shift+Tab",
   ...["B", "P", "R", "A", "S", "U", "C", "L"].map((key) => `Ctrl+Alt+${key}`),
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => `Ctrl+${digit}`),
-  ...["K", "P", "B", "`", ",", "N", "T", "J", "O", "W", "L", ".", "[", "]"].map((key) => `Ctrl+${key}`),
+  ...["K", "P", "B", ",", "N", "T", "J", "O", "W", "L", ".", "[", "]"].map((key) => `Ctrl+${key}`),
   ...["[", "]", "M", "C", "G", "L", "B", "?", "/"].map((key) => `Ctrl+Shift+${key}`),
 ]
+
+/**
+ * MiMo's `ctrl` chords - the terminal and the recent conversations - which are
+ * the Control key on every system: stored as Meta on macOS, where Ctrl is the
+ * command key, and as Ctrl elsewhere.
+ */
+export function controlChords(platform: string): string[] {
+  return platform === "darwin" ? ["Meta+`", "Meta+Tab", "Shift+Meta+Tab"] : ["Ctrl+`", "Ctrl+Tab", "Ctrl+Shift+Tab"]
+}
+
+/** Every chord the window answers on a platform. */
+export function appChords(platform: string): string[] {
+  return [...APP_CHORDS, ...controlChords(platform)]
+}
 
 /**
  * Chords the page keeps even when the app has them: find, copy, select all and
@@ -178,12 +192,18 @@ function codeKey(code: string): string | undefined {
   return CODE_CHAR[code]
 }
 
-/** The chord a key press spells, by what it typed and by where the key sits. */
-export function chordsOfInput(input: PageKeyInput): string[] {
+/**
+ * The chord a key press spells, by what it typed and by where the key sits.
+ * As in the window, the command key is Ctrl on macOS and the Control key is
+ * Meta there; elsewhere Ctrl is Ctrl and the Windows or Super key is Meta.
+ */
+export function chordsOfInput(input: PageKeyInput, platform = ""): string[] {
+  const mac = platform === "darwin"
   const parts: string[] = []
-  if (input.control || input.meta) parts.push("Ctrl")
+  if (mac ? input.meta : input.control) parts.push("Ctrl")
   if (input.alt) parts.push("Alt")
   if (input.shift) parts.push("Shift")
+  if (mac ? input.control : input.meta) parts.push("Meta")
   if (["Control", "Alt", "Shift", "Meta"].includes(input.key)) return []
   const prefix = parts.length ? `${parts.join("+")}+` : ""
   const out = [`${prefix}${mainKey(input.key)}`]
@@ -202,14 +222,15 @@ export type PageKeyAction = { kind: "none" } | { kind: "reload"; force: boolean 
  * Any other chord the app answers - built in, or one the reader has bound - is
  * taken from the page and handed to the window.
  */
-export function pageKeyAction(input: PageKeyInput, bound: ReadonlySet<string> = new Set()): PageKeyAction {
+export function pageKeyAction(input: PageKeyInput, bound: ReadonlySet<string> = new Set(), platform = ""): PageKeyAction {
   if (input.type !== "keyDown") return { kind: "none" }
   if (!input.control && !input.meta && !input.alt) return { kind: "none" }
-  const chords = chordsOfInput(input)
+  const chords = chordsOfInput(input, platform)
   if (!chords.length || chords.some((chord) => PAGE_KEEPS.includes(chord))) return { kind: "none" }
   if (chords.includes("Ctrl+R")) return { kind: "reload", force: false }
   if (chords.includes("Ctrl+Shift+R")) return { kind: "reload", force: true }
-  if (chords.some((chord) => APP_CHORDS.includes(chord) || bound.has(chord))) return { kind: "forward" }
+  const answered = appChords(platform)
+  if (chords.some((chord) => answered.includes(chord) || bound.has(chord))) return { kind: "forward" }
   return { kind: "none" }
 }
 

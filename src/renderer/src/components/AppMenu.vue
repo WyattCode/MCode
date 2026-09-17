@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, onMounted, nextTick, ref } from "vue"
 import { t } from "../lib/i18n"
 import { isRovingKey } from "../lib/composer-menu"
 import { focusRow } from "../lib/menu-keys"
+import { controlChord, shownChord } from "../lib/keys"
+import { useApp } from "../stores/app"
 
 /**
  * The application menu, drawn in the window.
@@ -20,6 +22,7 @@ const emit = defineEmits<{ close: []; run: [command: string] }>()
  * as the menu being broken rather than the item being unavailable.
  */
 const props = defineProps<{ x: number; y: number; disabled?: Set<string> }>()
+const app = useApp()
 
 interface Item {
   key: string
@@ -64,7 +67,7 @@ const groups = computed<Group[]>(() => [
     label: t("menu.view"),
     items: [
       { key: "sidebar", label: t("menu.sidebar"), hint: "Ctrl+B", divided: true },
-      { key: "terminal", label: t("menu.terminal"), hint: "Ctrl+`" },
+      { key: "terminal", label: t("menu.terminal"), hint: controlChord("`", app.platform) },
       { key: "reload", label: t("menu.reload"), divided: true },
       { key: "devtools", label: t("menu.devTools") },
       { key: "zoom-reset", label: t("menu.resetZoom"), hint: "Ctrl+0", divided: true },
@@ -216,7 +219,7 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey))
         <div v-if="item.divided" class="rule" />
         <button class="item" :disabled="props.disabled?.has(item.key)" @click="pick(item)">
           <span class="item-label">{{ item.label }}</span>
-          <span v-if="item.hint" class="keys">{{ item.hint }}</span>
+          <span v-if="item.hint" class="keys">{{ shownChord(item.hint) }}</span>
         </button>
       </template>
     </div>

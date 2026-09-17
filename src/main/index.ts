@@ -21,6 +21,8 @@ import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
+import { readMenuKeys } from "./menu-keys"
+import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
 import { SHOW_FALLBACK_MS } from "./renderer-health"
 import {
   activate,
@@ -35,7 +37,7 @@ import {
   wireRecovery,
 } from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
-import { installedOpenAppIcons, installedOpenApps } from "./installed-apps"
+import { installedDocApps, installedOpenAppIcons, installedOpenApps, launchTarget } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
 import { readSoundfont } from "./soundfont"
@@ -71,6 +73,8 @@ import {
   type BrowserBounds,
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
+import { fcitxEnvironment } from "./linux-ime"
+import { linuxIconSync } from "./linux-icon-sync"
 import { restore, saveWindowState, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
@@ -127,7 +131,31 @@ if (process.platform === "linux") {
     if (entry.value === undefined) app.commandLine.appendSwitch(entry.name)
     else app.commandLine.appendSwitch(entry.name, entry.value)
   }
+  /*
+   * MiMo's: shared memory in /tmp rather than /dev/shm, which containers and
+   * some distributions keep too small for Chromium. MiMo also passes
+   * no-zygote; Chromium refuses that while its sandbox is on, so it waits for
+   * a check on real Linux hardware (round10-platforms M10-12).
+   */
+  app.commandLine.appendSwitch("disable-dev-shm-usage")
+  /*
+   * The speak tool reads with the system's voices (lib/voice.ts). Chromium on
+   * Linux reaches them only through speech-dispatcher, and only when asked to;
+   * without it there are no voices and nothing is heard. Unverified on a
+   * Linux machine (round10-platforms M10-28).
+   */
+  app.commandLine.appendSwitch("enable-speech-dispatcher")
 }
+
+/* MiMo's fcitx fill-in (see linux-ime.ts), before any window reads the environment. */
+const imeFilled = fcitxEnvironment(process.platform, process.env, () => {
+  try {
+    return readFileSync(path.join(app.getPath("home"), ".xinputrc"), "utf8")
+  } catch {
+    return undefined
+  }
+})
+Object.assign(process.env, imeFilled)
 
 /*
  * MiMo's log files, opened as the module loads so that whatever is said on the
@@ -136,6 +164,7 @@ if (process.platform === "linux") {
  */
 const logs = new DailyLog({ dir: path.join(app.getPath("userData"), LOG_DIR) })
 captureConsole(logs)
+if (Object.keys(imeFilled).length) console.info(`[linux-ime] filled in for fcitx: ${Object.keys(imeFilled).join(", ")}`)
 app.on("will-quit", () => void logs.close())
 process.on("uncaughtException", (error) => recordProcessError("uncaught exception", error))
 process.on("unhandledRejection", (reason) => recordProcessError("unhandled rejection", reason))
@@ -361,14 +390,46 @@ function trayTemplateFile(): string {
     : path.join(here, "../../resources/tray/trayTemplate.png")
 }
 
-/** The file an id names, or nothing if it names none. */
-function appIconFile(id: string): string | undefined {
+/**
+ * The file an id names, or nothing if it names none. The Dock takes the macOS
+ * cut (`app-icons-mac`, on Apple's icon grid, drawn by scripts/icons.mjs), as
+ * MiMo picks its macOS artwork there; everything else takes the full tile.
+ */
+function appIconFile(id: string, dock = false): string | undefined {
   if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
-  const file = app.isPackaged
-    ? path.join(process.resourcesPath, "app-icons", id + ".png")
-    : path.join(here, "../../resources/app-icons", id + ".png")
+  const folder = dock ? "app-icons-mac" : "app-icons"
+  const file = app.isPackaged ? path.join(process.resourcesPath, folder, id + ".png") : path.join(here, "../../resources", folder, id + ".png")
   return existsSync(file) ? file : undefined
 }
+
+/* MiMo's launcher icon sync on Linux (see linux-icon-sync.ts); a no-op elsewhere. */
+const syncLinuxIcon = linuxIconSync({
+  platform: process.platform,
+  appImage: process.env.APPIMAGE,
+  home: app.getPath("home"),
+  xdgDataHome: process.env.XDG_DATA_HOME,
+  xdgDataDirs: process.env.XDG_DATA_DIRS,
+  chromeDesktop: process.env.CHROME_DESKTOP,
+  appName: app.getName(),
+  readBinary: (file) => fs.readFile(file).catch(() => undefined),
+  writeBinary: (file, bytes) => fs.writeFile(file, bytes),
+  readText: (file) => fs.readFile(file, "utf8").catch(() => undefined),
+  listDir: (folder) => fs.readdir(folder).catch(() => []),
+  exists: (file) =>
+    fs.access(file).then(
+      () => true,
+      () => false,
+    ),
+  mkdirp: async (folder) => {
+    await fs.mkdir(folder, { recursive: true })
+  },
+  touch: (file) => fs.utimes(file, new Date(), new Date()),
+  resizePng: (bytes, size) => {
+    const image = nativeImage.createFromBuffer(bytes)
+    if (image.isEmpty()) throw new Error("the icon is not an image")
+    return image.resize({ width: size, height: size, quality: "best" }).toPNG()
+  },
+})
 
 /*
  * What the tray's 配置切换 offers: the models the window's picker offers, with
@@ -670,10 +731,7 @@ function createWindow(show = true): BrowserWindow {
     }
     event.preventDefault()
     hiddenBounds = window.isFullScreen() ? undefined : window.getBounds()
-    if (process.platform === "darwin" && window.isFullScreen()) {
-      window.once("leave-full-screen", () => window.hide())
-      window.setFullScreen(false)
-    } else window.hide()
+    hideWindow(window, process.platform)
   })
 
   // Anything the page tries to open externally goes to the real browser, never
@@ -825,15 +883,14 @@ app.whenReady().then(async () => {
     return undefined
   }
 
-  /* MiMo lets one folder dialog up at a time: a second ask while one is open gets nothing. */
-  let folderDialogOpen = false
-
   /* `project` is MiMo's 选择或新建项目文件夹: it opens at the default project location. */
   ipcMain.handle("mcode:pick-directory", async (event, title: string, multiple?: boolean, project?: boolean) => {
-    if (folderDialogOpen) return []
-    folderDialogOpen = true
+    // MiMo lets one native dialog up at a time: a second ask while one is open gets nothing.
+    const asking = BrowserWindow.fromWebContents(event.sender)
+    const claim = claimDialog(process.platform, asking)
+    if (!claim) return []
     try {
-      const owner = BrowserWindow.fromWebContents(event.sender)
+      const owner = dialogParent(process.platform, asking)
       const options: Electron.OpenDialogOptions = {
         properties: multiple
           ? ["openDirectory", "createDirectory", "multiSelections"]
@@ -845,7 +902,7 @@ app.whenReady().then(async () => {
       const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
       return result.canceled ? [] : result.filePaths
     } finally {
-      folderDialogOpen = false
+      releaseDialog(claim)
     }
   })
 
@@ -965,13 +1022,22 @@ app.whenReady().then(async () => {
     if (page) void shell.openExternal(page).catch(() => {})
   })
 
-  /* MiMo's micAccess before capture: macOS asks for the microphone; other systems answer in getUserMedia. */
+  /*
+   * MiMo's micAccess before capture: macOS asks for the microphone; Windows
+   * refuses when its privacy setting is off, so the guide to that setting
+   * shows; other systems answer in getUserMedia.
+   */
   ipcMain.handle("mcode:mic-access", async () => {
-    if (process.platform !== "darwin") return true
-    const status = systemPreferences.getMediaAccessStatus("microphone")
-    if (status === "granted") return true
-    if (status === "not-determined") return systemPreferences.askForMediaAccess("microphone")
-    return false
+    if (process.platform !== "darwin" && process.platform !== "win32") return true
+    let status = "unknown"
+    try {
+      status = systemPreferences.getMediaAccessStatus("microphone")
+    } catch {
+      // Unknown: macOS guides, Windows lets getUserMedia answer.
+    }
+    const decision = micDecision(process.platform, status)
+    if (decision === "ask") return systemPreferences.askForMediaAccess("microphone").catch(() => false)
+    return decision === "allow"
   })
 
   ipcMain.on(
@@ -1192,6 +1258,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:installed-app-icons", () =>
     installedOpenAppIcons(async (file) => (await app.getFileIcon(file, { size: "small" })).toDataURL(), process.platform),
   )
+  // MiMo's 打开方式 on a delivered document: that kind's installed apps (macOS only), with their icons.
+  ipcMain.handle("mcode:doc-apps", (_event, kind: unknown) =>
+    typeof kind === "string"
+      ? installedDocApps(kind, async (file) => (await app.getFileIcon(file, { size: "small" })).toDataURL(), process.platform)
+      : [],
+  )
 
   // MiMo's 下载副本 on a delivered file: a copy in Downloads, no dialog.
   ipcMain.handle("mcode:save-copy", (_event, file: unknown) => saveCopy(file, app.getPath("downloads")))
@@ -1216,8 +1288,10 @@ app.whenReady().then(async () => {
      * channel checks the scheme instead of believing the caller checked it.
      */
     if (!isKnownOpenWith(openWith, process.platform)) return "unknown application"
+    // The bundle or program that was found for that name (MiMo opens the bundle it found).
+    const launched = await launchTarget(openWith, process.platform)
     const [command, args] =
-      process.platform === "darwin" ? ["open", ["-a", openWith, target]] : [openWith, [target]]
+      process.platform === "darwin" ? ["open", ["-a", launched, target]] : [launched, [target]]
     return await new Promise<string>((resolve) => {
       execFile(command, args, { windowsHide: true }, (error) => resolve(error ? error.message : ""))
     })
@@ -1231,13 +1305,16 @@ app.whenReady().then(async () => {
    */
   /* The import half of the conversation-file pair: one file, read as text. */
   ipcMain.handle("mcode:open-text", async (event, title: string) => {
-    const owner = BrowserWindow.fromWebContents(event.sender)
+    const asking = BrowserWindow.fromWebContents(event.sender)
+    const claim = claimDialog(process.platform, asking)
+    if (!claim) return undefined
+    const owner = dialogParent(process.platform, asking)
     const options: Electron.OpenDialogOptions = {
       title,
       properties: ["openFile"],
       filters: [{ name: "JSON", extensions: ["json"] }],
     }
-    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    const result = await (owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options)).finally(() => releaseDialog(claim))
     const target = result.canceled ? undefined : result.filePaths[0]
     if (!target) return undefined
     /*
@@ -1251,7 +1328,10 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle("mcode:save-text", async (event, suggested: string, text: string) => {
-    const owner = BrowserWindow.fromWebContents(event.sender)
+    const asking = BrowserWindow.fromWebContents(event.sender)
+    const claim = claimDialog(process.platform, asking)
+    if (!claim) return undefined
+    const owner = dialogParent(process.platform, asking)
     const options = {
       defaultPath: suggested,
       // Taken from the name the caller suggested. A fixed Markdown filter used
@@ -1259,10 +1339,8 @@ app.whenReady().then(async () => {
       // onto the shared HTML page - a file the browser would no longer open.
       filters: [saveFilter(suggested)],
     }
-    // Sheeted to the window when there is one, so it cannot be lost behind it.
-    const result = owner
-      ? await dialog.showSaveDialog(owner, options)
-      : await dialog.showSaveDialog(options)
+    // Attached to the window where there is one (not on macOS, as MiMo), so it cannot be lost behind it.
+    const result = await (owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options)).finally(() => releaseDialog(claim))
     if (result.canceled || !result.filePath) return undefined
     await fs.writeFile(result.filePath, text, "utf8")
     savedFiles.add(result.filePath)
@@ -1392,11 +1470,9 @@ app.whenReady().then(async () => {
   /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */
   ipcMain.handle("mcode:app-icon", (event, id: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window || typeof id !== "string" || !/^[a-z][a-z0-9-]{0,30}$/.test(id)) return { ok: false }
-    const file = app.isPackaged
-      ? path.join(process.resourcesPath, "app-icons", id + ".png")
-      : path.join(here, "../../resources/app-icons", id + ".png")
-    if (!existsSync(file)) return { ok: false }
+    if (!window || typeof id !== "string") return { ok: false }
+    const file = appIconFile(id, process.platform === "darwin")
+    if (!file) return { ok: false }
     const image = nativeImage.createFromPath(file)
     if (image.isEmpty()) return { ok: false }
     /*
@@ -1409,6 +1485,9 @@ app.whenReady().then(async () => {
       return { ok: true }
     }
     window.setIcon(image)
+    void syncLinuxIcon(file).then((result) => {
+      if (result.changed || !result.ok) console.info(`[linux-app-icon-sync] ${result.reason}`)
+    })
     /* The corner and the taskbar are the same app; they wear the same icon. */
     trayIcon = id
     if (tray) refreshTray(true)
@@ -1480,6 +1559,12 @@ app.whenReady().then(async () => {
     for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("mcode:screen-reader", enabled)
   })
 
+  /* MiMo's menu follows the shortcuts as bound, and drops them while one is being recorded. */
+  ipcMain.on("mcode:menu-keys", (_event, raw: unknown) => {
+    const keys = readMenuKeys(raw)
+    if (keys) buildMenu(keys)
+  })
+
   ipcMain.on("mcode:window", (event, action: "minimize" | "maximize" | "close") => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window) return
@@ -1495,6 +1580,8 @@ app.whenReady().then(async () => {
   repaintAfterWake(() => quitting)
 
   app.on("activate", () => {
+    // Asked for again while leaving full screen to hide: it stays (MiMo's).
+    for (const window of BrowserWindow.getAllWindows()) cancelPendingHide(window)
     // A window hidden to the tray or menu bar comes back; one whose renderer is gone is replaced.
     activate(raise)
   })

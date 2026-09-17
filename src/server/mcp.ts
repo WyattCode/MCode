@@ -21,6 +21,7 @@ import type { Attachment, McpServerConfig, McpServerState, McpStatus } from "@sh
 import { redactCommand, redactString } from "@shared/mcp-redact"
 import { ToolError, type ToolDefinition } from "./tool/types"
 import { resolveServers, type ResolvedServer } from "./mcp-sources"
+import { browserTarget } from "./open-url"
 import { terminate, windowsLaunch } from "./mcp-launch"
 import { probeTools, type ProbeResult } from "./mcp-probe"
 import { wildcardMatch } from "./permission"
@@ -1260,8 +1261,10 @@ export class McpServers {
       if (attempt.status !== "needs_auth" || !address) {
         throw new Error(attempt.error ?? "the server did not ask for a sign-in")
       }
+      // Only a web page is opened; the address comes from the server's own metadata.
+      if (!browserTarget(address.href)) throw new Error("the server's sign-in address is not an http or https URL")
       const callback = waitForCallback(state, name)
-      openInBrowser(address.toString())
+      openInBrowser(address.href)
       const code = await callback
       const kept = (await store.get(name))?.oauthState
       await store.clear(name, "oauthState")

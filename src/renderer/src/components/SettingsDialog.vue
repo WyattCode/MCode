@@ -25,7 +25,7 @@ import type { McpImportItem, McpImportSource, McpServerConfig, McpStatus, McpToo
 import { MCP_STATUS_TONE, isMcpStatus, mcpNeedsSignIn, mcpStatusLabel } from "../lib/mcp-status"
 import { homePath } from "../lib/home-path"
 import classicIcon from "@resources/app-icons/classic.png"
-import { chordOf, formatChord, isBindable } from "../lib/keys"
+import { chordOf, formatChord, isBindable, recordingChord } from "../lib/keys"
 import { pageRows } from "../lib/shortcut-page"
 import { fullAccessOff } from "../lib/confirm-queue"
 import { notifyFailure, notify } from "../lib/toast"
@@ -1048,7 +1048,7 @@ function onRecordKey(event: KeyboardEvent) {
     return
   }
   // Read by physical key, skipping composition; MiMo needs a modifier plus a key.
-  const chord = chordOf(event)
+  const chord = chordOf(event, app.platform)
   if (isBindable(chord)) recordChord.value = chord
 }
 
@@ -1069,6 +1069,7 @@ function startRecord(command: string) {
   cancelRecord()
   recording.value = command
   recordChord.value = undefined
+  recordingChord.value = true
   window.addEventListener("keydown", onRecordKey, true)
   document.addEventListener("mousedown", onRecordPress)
 }
@@ -1078,6 +1079,7 @@ function cancelRecord() {
   document.removeEventListener("mousedown", onRecordPress)
   recording.value = undefined
   recordChord.value = undefined
+  recordingChord.value = false
 }
 
 /* As MiMo does, a failed save keeps the recording open so the chord can be tried again. */
@@ -1125,7 +1127,7 @@ function onKeySearchKey(event: KeyboardEvent) {
     keySearchChord.value = undefined
     return
   }
-  const chord = chordOf(event)
+  const chord = chordOf(event, app.platform)
   if (chord) keySearchChord.value = chord
 }
 

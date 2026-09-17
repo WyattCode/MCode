@@ -1,7 +1,7 @@
-import { exec } from "node:child_process"
 import type { AuthMethodKind } from "@shared/protocol"
 import type { Bus } from "../bus"
 import type { Config } from "../config"
+import { openUrl } from "../open-url"
 import { discoverSubscriptionModels } from "../provider/discover"
 import {
   CallbackServer,
@@ -15,14 +15,6 @@ import {
   type OAuthTokens,
   type Pending,
 } from "./oauth"
-
-/** Opens the system browser without pulling Electron into the server layer. */
-function openExternal(url: string): void {
-  const quoted = url.replace(/"/g, '%22')
-  if (process.platform === "win32") exec(`start "" "${quoted}"`)
-  else if (process.platform === "darwin") exec(`open "${quoted}"`)
-  else exec(`xdg-open "${quoted}"`)
-}
 
 /**
  * Drives subscription logins.
@@ -90,7 +82,7 @@ export class AuthManager {
       .then((tokens) => this.store(id, provider, tokens))
       .catch((cause: Error) => this.fail(id, provider, cause))
 
-    openExternal(pending.url)
+    openUrl(pending.url)
     return { url: pending.url }
   }
 

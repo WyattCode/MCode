@@ -7,10 +7,9 @@
  * launched, so the two lists have to be the same list rather than two lists
  * that agree today.
  *
- * The entries are the reference's own, verbatim from its `WINDOWS_APPS`,
- * `MAC_APPS` and `LINUX_APPS`: the id it stores the remembered choice under,
- * the i18n key it labels the row with, and the `openWith` name it hands the
- * platform.
+ * Each entry is the id the remembered choice is stored under, the i18n key
+ * the row is labelled with, and the `openWith` name handed to the platform.
+ * Windows keeps the reference's five; macOS and Linux follow MiMo (round ten).
  */
 export interface OpenApp {
   /** Stored as the remembered choice, and the value the menu radio carries. */
@@ -25,6 +24,13 @@ export interface OpenApp {
    * distinction with the same values.
    */
   openWith: string
+  /**
+   * Where to look before offering it. On macOS the bundle names tried in
+   * MiMo's five application folders (`<openWith>.app` when absent); elsewhere
+   * the command names tried on PATH (`openWith` when absent), and the one
+   * found is what is started.
+   */
+  find?: string[]
 }
 
 /**
@@ -42,43 +48,99 @@ export const WINDOWS_APPS: OpenApp[] = [
   { id: "cursor", label: "session.header.open.app.cursor", openWith: "cursor" },
   { id: "zed", label: "session.header.open.app.zed", openWith: "zed" },
   { id: "powershell", label: "session.header.open.app.powershell", openWith: "powershell" },
-  { id: "sublime-text", label: "session.header.open.app.sublimeText", openWith: "Sublime Text" },
+  // Its command is subl, and the editor itself is sublime_text; "Sublime Text" is on no PATH.
+  { id: "sublime-text", label: "session.header.open.app.sublimeText", openWith: "subl", find: ["subl", "sublime_text"] },
 ]
 
 /**
- * macOS, exactly as the reference lists it.
+ * macOS, as MiMo lists its open targets: Terminal (always at
+ * /System/Applications/Utilities), then its nineteen editors and terminals in
+ * its order, each with the bundle names it tries. `openWith` is the name for
+ * `open -a`; the bundle found is what is actually opened with.
  *
- * Twelve, and the longest of the three because a Mac is where the editors and
- * the terminals both live. `openWith` here is a bundle name for `open -a`, not
- * a command on PATH - "Visual Studio Code", not "code" - which is the same
- * split the reference draws.
- *
- * Unlike the other two this list is filtered before it is drawn: the
- * reference's `checkAppExists` does real work only on macOS, where it looks
- * for the bundle under /Applications, and shows a row only for what is there.
+ * Filtered before it is drawn: only what is installed is shown.
  */
 export const MAC_APPS: OpenApp[] = [
+  { id: "terminal", label: "session.header.open.app.terminal", openWith: "Terminal" },
   { id: "vscode", label: "session.header.open.app.vscode", openWith: "Visual Studio Code" },
   { id: "cursor", label: "session.header.open.app.cursor", openWith: "Cursor" },
+  { id: "sublime-text", label: "session.header.open.app.sublimeText", openWith: "Sublime Text" },
   { id: "zed", label: "session.header.open.app.zed", openWith: "Zed" },
-  { id: "textmate", label: "session.header.open.app.textmate", openWith: "TextMate" },
-  { id: "antigravity", label: "session.header.open.app.antigravity", openWith: "Antigravity" },
-  { id: "terminal", label: "session.header.open.app.terminal", openWith: "Terminal" },
+  { id: "xcode", label: "session.header.open.app.xcode", openWith: "Xcode" },
+  { id: "android-studio", label: "session.header.open.app.androidStudio", openWith: "Android Studio" },
+  { id: "pycharm", label: "session.header.open.app.pycharm", openWith: "PyCharm", find: ["PyCharm.app", "PyCharm CE.app", "PyCharm Community Edition.app"] },
+  {
+    id: "intellij-idea",
+    label: "session.header.open.app.intellijIdea",
+    openWith: "IntelliJ IDEA",
+    find: ["IntelliJ IDEA.app", "IntelliJ IDEA CE.app", "IntelliJ IDEA Community Edition.app"],
+  },
+  { id: "webstorm", label: "session.header.open.app.webstorm", openWith: "WebStorm" },
+  { id: "goland", label: "session.header.open.app.goland", openWith: "GoLand" },
+  { id: "clion", label: "session.header.open.app.clion", openWith: "CLion" },
+  { id: "rustrover", label: "session.header.open.app.rustrover", openWith: "RustRover" },
+  { id: "fleet", label: "session.header.open.app.fleet", openWith: "Fleet" },
+  { id: "nova", label: "session.header.open.app.nova", openWith: "Nova" },
   { id: "iterm2", label: "session.header.open.app.iterm2", openWith: "iTerm" },
   { id: "ghostty", label: "session.header.open.app.ghostty", openWith: "Ghostty" },
   { id: "warp", label: "session.header.open.app.warp", openWith: "Warp" },
-  { id: "xcode", label: "session.header.open.app.xcode", openWith: "Xcode" },
-  { id: "android-studio", label: "session.header.open.app.androidStudio", openWith: "Android Studio" },
-  { id: "sublime-text", label: "session.header.open.app.sublimeText", openWith: "Sublime Text" },
+  { id: "kitty", label: "session.header.open.app.kitty", openWith: "kitty" },
+  { id: "alacritty", label: "session.header.open.app.alacritty", openWith: "Alacritty" },
 ]
 
-/** Linux, exactly as the reference lists it: the four that ship a CLI. */
-export const LINUX_APPS: OpenApp[] = [
-  { id: "vscode", label: "session.header.open.app.vscode", openWith: "code" },
-  { id: "cursor", label: "session.header.open.app.cursor", openWith: "cursor" },
-  { id: "zed", label: "session.header.open.app.zed", openWith: "zed" },
-  { id: "sublime-text", label: "session.header.open.app.sublimeText", openWith: "Sublime Text" },
-]
+/**
+ * Linux: none. MiMo looks only for macOS application bundles, so away from a
+ * Mac its list holds the file manager alone.
+ */
+export const LINUX_APPS: OpenApp[] = []
+
+/** The kinds of document a delivered-file card offers document apps for. */
+export type DocKind = "pptx" | "docx" | "xlsx" | "pdf"
+
+/**
+ * MiMo's 打开方式 on a delivered document: the apps for its kind, macOS only
+ * (MiMo looks for bundles, so the group is empty on Windows and Linux). The
+ * names are the apps' own and are shown as they are.
+ */
+const WPS: OpenApp = { id: "wps", label: "WPS Office", openWith: "WPS Office", find: ["wpsoffice.app", "WPS Office.app"] }
+const LIBREOFFICE: OpenApp = { id: "libreoffice", label: "LibreOffice", openWith: "LibreOffice" }
+export const MAC_DOC_APPS: Record<DocKind, OpenApp[]> = {
+  pptx: [
+    { id: "keynote", label: "Keynote", openWith: "Keynote" },
+    { id: "powerpoint", label: "Microsoft PowerPoint", openWith: "Microsoft PowerPoint" },
+    WPS,
+    LIBREOFFICE,
+  ],
+  docx: [{ id: "pages", label: "Pages", openWith: "Pages" }, { id: "word", label: "Microsoft Word", openWith: "Microsoft Word" }, WPS, LIBREOFFICE],
+  xlsx: [
+    { id: "numbers", label: "Numbers", openWith: "Numbers" },
+    { id: "excel", label: "Microsoft Excel", openWith: "Microsoft Excel" },
+    WPS,
+    LIBREOFFICE,
+  ],
+  pdf: [
+    { id: "preview", label: "Preview", openWith: "Preview" },
+    {
+      id: "acrobat",
+      label: "Adobe Acrobat",
+      openWith: "Adobe Acrobat",
+      find: ["Adobe Acrobat.app", "Adobe Acrobat DC.app", "Adobe Acrobat Reader.app", "Adobe Acrobat Reader DC.app"],
+    },
+    WPS,
+  ],
+}
+
+/** The document apps a platform offers for a kind; empty away from macOS. */
+export function docApps(kind: string, platform: string): OpenApp[] {
+  if (platform !== "darwin" || !Object.hasOwn(MAC_DOC_APPS, kind)) return []
+  return MAC_DOC_APPS[kind as DocKind]
+}
+
+/** Every app a platform may open something with: the open targets and, on macOS, the document apps. */
+export function launchableApps(platform: string): OpenApp[] {
+  if (platform !== "darwin") return openApps(platform)
+  return [...openApps(platform), ...Object.values(MAC_DOC_APPS).flat()]
+}
 
 /**
  * The file manager, which is the default choice and has no `openWith`.
@@ -124,5 +186,5 @@ export function openApps(platform: string): OpenApp[] {
  */
 export function isKnownOpenWith(value: unknown, platform: string): value is string {
   if (typeof value !== "string") return false
-  return openApps(platform).some((app) => app.openWith === value)
+  return launchableApps(platform).some((app) => app.openWith === value)
 }

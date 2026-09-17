@@ -25,6 +25,7 @@ import type { VoiceDraft, VoiceEdit } from "@shared/protocol"
 import type { Runtime } from "./index"
 import { customModelOf } from "./config"
 import { IGNORED, insideReal, resolveInsideReal } from "./tool/fs-util"
+import { protectedFilter } from "./protected-paths"
 import { readableFile, workingRoots, writableFile } from "./file-access"
 import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./config-view"
 import { discoverModels } from "./provider/discover"
@@ -1540,6 +1541,8 @@ export async function searchTree(directory: string, query: string): Promise<Hand
   const needle = query.toLowerCase()
   const entries: Handled<"file.search">["entries"] = []
   if (!needle) return { entries, truncated: false }
+  // MiMo's protected folders, when the project is the home folder.
+  const shielded = protectedFilter(target)
   const queue = [{ absolute: target, rel: "", depth: 0 }]
   let seen = 0
   while (queue.length) {
@@ -1548,6 +1551,7 @@ export async function searchTree(directory: string, query: string): Promise<Hand
     listed.sort((a, b) => (a.isDirectory() === b.isDirectory() ? a.name.localeCompare(b.name) : a.isDirectory() ? -1 : 1))
     for (const entry of listed) {
       if (TREE_IGNORED.has(entry.name)) continue
+      if (entry.isDirectory() && shielded(path.join(folder.absolute, entry.name))) continue
       if (++seen > TREE_SEARCH_NODES) return { entries, truncated: true }
       const rel = folder.rel ? `${folder.rel}/${entry.name}` : entry.name
       const isDirectory = entry.isDirectory()
@@ -1587,6 +1591,7 @@ export async function searchFolder(directory: string, query: string, sub?: strin
   const cap = Math.max(1, Math.min(200, limit ?? SEARCH_LIMIT))
   const hits: Handled<"file.search">["entries"] = []
   if (!needle) return { entries: hits, truncated: false }
+  const shielded = protectedFilter(root)
   const queue = [{ dir: target, depth: 0 }]
   let visits = 0
   let overflow = false
@@ -1598,7 +1603,7 @@ export async function searchFolder(directory: string, query: string, sub?: strin
       if (entry.name.startsWith(".") || IGNORED.has(entry.name)) continue
       const absolute = path.join(folder.dir, entry.name)
       if (entry.isDirectory()) {
-        if (folder.depth < SEARCH_DEPTH) queue.push({ dir: absolute, depth: folder.depth + 1 })
+        if (folder.depth < SEARCH_DEPTH && !shielded(absolute)) queue.push({ dir: absolute, depth: folder.depth + 1 })
         continue
       }
       const within = path.relative(target, absolute).split(path.sep).join("/")
@@ -1625,6 +1630,7 @@ async function listFiles(directory: string, query?: string): Promise<FileEntry[]
   const root = path.resolve(directory)
   const needle = query?.toLowerCase()
   const results: FileEntry[] = []
+  const shielded = protectedFilter(root)
   const queue = [root]
 
   while (queue.length && results.length < MAX_FILES) {
@@ -1635,7 +1641,7 @@ async function listFiles(directory: string, query?: string): Promise<FileEntry[]
       const absolute = path.join(dir, entry.name)
       const rel = path.relative(root, absolute).split(path.sep).join("/")
       if (entry.isDirectory()) {
-        queue.push(absolute)
+        if (!shielded(absolute)) queue.push(absolute)
         continue
       }
       if (needle && !rel.toLowerCase().includes(needle)) continue

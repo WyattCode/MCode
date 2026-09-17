@@ -11,7 +11,14 @@
  * asset Icon Composer takes for a layered icon, and it cannot be recovered
  * from a masked one.
  *
- * Run with: node scripts/icons.mjs
+ * macOS gets its own cut (build/icon.icns and resources/app-icons-mac): the
+ * rounded tile on Apple's icon grid, 824 of 1024 with a soft shadow below it,
+ * so the Dock and Finder show it at the size of every other app. MiMo ships
+ * such a cut too (its macOS artwork leaves about 9% on each side, measured);
+ * this one is drawn from MCode's own icon.
+ *
+ * Run with: node scripts/icons.mjs            (everything)
+ *           node scripts/icons.mjs --mac      (only the macOS cut)
  */
 import fs from "node:fs/promises"
 import path from "node:path"
@@ -24,6 +31,8 @@ const root = path.join(here, "..")
 const SOURCE = path.join(root, "resources", "icon-source.png")
 const OUT = path.join(root, "build")
 const ICONSET = path.join(OUT, "icons")
+const APP_ICONS = path.join(root, "resources", "app-icons")
+const APP_ICONS_MAC = path.join(root, "resources", "app-icons-mac")
 
 const MASTER = 1024
 
@@ -161,8 +170,68 @@ async function buildIcns(base) {
   return Buffer.concat([header, body])
 }
 
+/* Apple's icon grid: the tile is 824 of 1024, centred, with a shadow falling below it. */
+const MAC_TILE = 824 / 1024
+const MAC_SHADOW = { blur: 12 / 1024, drop: 10 / 1024, alpha: 0.3 }
+
+/** An image as RGBA pixels of the given side. */
+async function rgba(input, side) {
+  return sharp(input).resize(side, side, { kernel: "lanczos3" }).ensureAlpha().raw().toBuffer()
+}
+
+/**
+ * The macOS cut of a rounded tile at `size`: the tile shrunk onto the grid
+ * and laid over its own shadow, on a transparent square.
+ */
+async function macCut(tile, size) {
+  const side = Math.round(size * MAC_TILE)
+  const inset = Math.round((size - side) / 2)
+  const pixels = await rgba(tile, side)
+  const shadow = Buffer.alloc(side * side * 4)
+  for (let i = 3; i < pixels.length; i += 4) shadow[i] = Math.round(pixels[i] * MAC_SHADOW.alpha)
+  const pad = Math.ceil(size * MAC_SHADOW.blur * 3)
+  const blurred = await sharp(shadow, { raw: { width: side, height: side, channels: 4 } })
+    .extend({ top: pad, bottom: pad, left: pad, right: pad, background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .blur(Math.max(0.3, size * MAC_SHADOW.blur))
+    .png()
+    .toBuffer()
+  const drop = Math.round(size * MAC_SHADOW.drop)
+  const tileImage = await sharp(pixels, { raw: { width: side, height: side, channels: 4 } }).png().toBuffer()
+  // The shadow may reach past the square's edge; it is cut there, as Apple's own template is.
+  // Two steps: sharp crops before it composites, whatever order the calls are written in.
+  const padded = await sharp({ create: { width: size + 2 * pad, height: size + 2 * pad, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: blurred, left: inset, top: inset + drop }])
+    .png()
+    .toBuffer()
+  const shadowLayer = await sharp(padded).extract({ left: pad, top: pad, width: size, height: size }).png().toBuffer()
+  return sharp({ create: { width: size, height: size, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    .composite([{ input: shadowLayer }, { input: tileImage, left: inset, top: inset }])
+    .png({ compressionLevel: 9 })
+    .toBuffer()
+}
+
+/** The macOS cut: the master, the .icns, and each colourway the Settings gallery offers. */
+async function writeMac(rounded) {
+  console.log("writing icon.icns (macOS cut)")
+  await fs.writeFile(path.join(OUT, "icon.icns"), await buildIcns(await macCut(rounded, MASTER)))
+  await fs.mkdir(APP_ICONS_MAC, { recursive: true })
+  const colourways = (await fs.readdir(APP_ICONS)).filter((name) => name.endsWith(".png")).sort()
+  for (const name of colourways) {
+    const source = path.join(APP_ICONS, name)
+    const { width } = await sharp(source).metadata()
+    await fs.writeFile(path.join(APP_ICONS_MAC, name), await macCut(source, width))
+  }
+  console.log(`  app-icons-mac/    ${colourways.length} colourways`)
+}
+
 async function main() {
   await fs.mkdir(ICONSET, { recursive: true })
+
+  if (process.argv.includes("--mac")) {
+    // Only the macOS cut, from the rounded icon already in build/.
+    await writeMac(await fs.readFile(path.join(OUT, "icon.png")))
+    return
+  }
 
   const meta = await sharp(SOURCE).metadata()
   console.log(`source ${meta.width}x${meta.height}`)
@@ -185,8 +254,7 @@ async function main() {
   const ico = await pngToIco(await Promise.all(icoSizes.map((size) => png(rounded, size))))
   await fs.writeFile(path.join(OUT, "icon.ico"), ico)
 
-  console.log("writing icon.icns")
-  await fs.writeFile(path.join(OUT, "icon.icns"), await buildIcns(rounded))
+  await writeMac(rounded)
 
   const report = await Promise.all(
     ["icon.png", "icon-square.png", "icon.ico", "icon.icns"].map(async (name) => {

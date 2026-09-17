@@ -19,6 +19,7 @@ import { PANEL_MIN_WIDTH, useRightPanel, type RightTab, type RightTool } from ".
 import { ADD_MENU_ORDER, LAUNCH_HINTED, LAUNCH_ORDER, MAIN_MIN_WIDTH, RAIL_WIDTH, TOOL_INFO, iconOf, panelWidthShown } from "../lib/right-tools"
 import { useApp } from "../stores/app"
 import { language, t } from "../lib/i18n"
+import { shownChord } from "../lib/keys"
 
 /**
  * MiMo's right panel.
@@ -428,7 +429,7 @@ defineExpose({
           <path v-for="d in TOOL_INFO[tool].icon" :key="d" :d="d" />
         </svg>
         <span class="lc-name">{{ t(TOOL_INFO[tool].label) }}</span>
-        <kbd v-if="LAUNCH_HINTED.includes(tool) && hints[tool]" class="lc-kbd">{{ hints[tool] }}</kbd>
+        <kbd v-if="LAUNCH_HINTED.includes(tool) && hints[tool]" class="lc-kbd">{{ shownChord(hints[tool]!) }}</kbd>
       </button>
     </div>
 

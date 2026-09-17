@@ -17,6 +17,7 @@ import type { Attachment, AgentName,
   SessionInfo,
 } from "@shared/protocol"
 import { Client } from "../lib/client"
+import { setChordPlatform } from "../lib/keys"
 import { language, sessionTitle, t } from "../lib/i18n"
 import { mcpNeedsSignIn } from "../lib/mcp-status"
 import { visibleChatOrder } from "../lib/visible-chats"
@@ -757,6 +758,7 @@ export const useApp = defineStore("app", () => {
   async function start() {
     const bootstrap = await window.mcode.bootstrap()
     platform.value = bootstrap.platform
+    setChordPlatform(bootstrap.platform)
     version.value = bootstrap.version
     port.value = bootstrap.port
 
