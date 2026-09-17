@@ -1,4 +1,5 @@
 import { TASK_STATUSES, type TaskItem, type TaskStatus } from "@shared/protocol"
+import { operationInput } from "@shared/subagent"
 import type { ToolDefinition, ToolResult } from "./types"
 import { ToolError } from "./types"
 
@@ -120,6 +121,7 @@ export const TaskTool: ToolDefinition = {
   name: "task",
   description: [
     "Keep track of the work: tasks with ids (T1, T2, and T1.1, T1.2 under a task) that stay with this conversation and are shown to the user in its task list.",
+    "Pass the action and its fields inside an operation object.",
     "",
     "- create: add a task. Needs summary; parent_id puts it under another task.",
     "- list: the open, in-progress and blocked tasks. status filters by one status; include_terminal adds done and abandoned ones; include_archived adds those finished over a week ago.",
@@ -134,27 +136,35 @@ export const TaskTool: ToolDefinition = {
     "Use it for work of three or more steps, work that spans turns, or work a subagent does (pass the task's id to the actor tool as task_id). Skip it for a single quick action.",
     "Start a task before working on it and mark it done straight after. Only mark it done when it is wholly done: if tests fail or something is left, keep it in progress or block it. Keep one task in progress at a time when working alone.",
     "The user sees the list already, so do not repeat it in your reply; say what you are working on or what changed.",
+    'Examples: {"operation":{"action":"create","summary":"Fix the login redirect"}} {"operation":{"action":"done","id":"T1","event_summary":"redirect fixed"}}',
   ].join("\n"),
   parameters: {
     type: "object",
     properties: {
-      action: { type: "string", enum: [...TASK_ACTIONS], description: "What to do" },
-      summary: { type: "string", description: "create, rename: what the task is, in a short line" },
-      parent_id: { type: "string", description: "create: the task this one goes under, such as T1" },
-      id: { type: "string", description: "get, start, block, unblock, done, abandon, rename: the task's id, such as T1 or T1.1" },
-      event_summary: { type: "string", description: "start, block, unblock, done, abandon: a short note on why or what" },
-      status: { type: "string", enum: [...TASK_STATUSES], description: "list: only tasks with this status" },
-      include_terminal: { type: "boolean", description: "list: also done and abandoned tasks" },
-      include_archived: { type: "boolean", description: "list: also tasks finished over a week ago" },
+      operation: {
+        type: "object",
+        description: "What to do, and its fields",
+        properties: {
+          action: { type: "string", enum: [...TASK_ACTIONS], description: "What to do" },
+          summary: { type: "string", description: "create, rename: what the task is, in a short line" },
+          parent_id: { type: "string", description: "create: the task this one goes under, such as T1" },
+          id: { type: "string", description: "get, start, block, unblock, done, abandon, rename: the task's id, such as T1 or T1.1" },
+          event_summary: { type: "string", description: "start, block, unblock, done, abandon: a short note on why or what" },
+          status: { type: "string", enum: [...TASK_STATUSES], description: "list: only tasks with this status" },
+          include_terminal: { type: "boolean", description: "list: also done and abandoned tasks" },
+          include_archived: { type: "boolean", description: "list: also tasks finished over a week ago" },
+        },
+        required: ["action"],
+      },
     },
-    required: ["action"],
-    additionalProperties: false,
   },
   async execute(input, context) {
     const tasks = context.tasks
     if (!tasks) throw new ToolError("Tasks are not available here.")
+    // MiMo's shape, or the same fields written flat, as MiMo also takes them.
+    const flat = operationInput(input)
     return tasks.update((list, who) => {
-      const applied = applyTask(list, input, { ...who, now: Date.now() })
+      const applied = applyTask(list, flat, { ...who, now: Date.now() })
       return { list: applied.tasks, result: applied.result }
     })
   },

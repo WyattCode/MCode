@@ -21,7 +21,7 @@ export const PlanExitTool: ToolDefinition = {
     "Ask the user to approve the plan you have written and switch this conversation from plan mode to build mode.",
     "Call it once the plan file holds the whole plan and nothing is left for you to ask.",
     "Do not call it before the plan is written, while a question of yours is unanswered, or when the user has said they want to keep planning.",
-    "It raises a Yes/No card: Yes switches to build mode and you carry the plan out, No or typed feedback leaves you planning, and the feedback says what to change.",
+    "It raises a Yes/No card: Yes switches to build mode and you carry the plan out straight away, No or typed feedback leaves you planning, and the feedback says what to change.",
     "In build mode it does nothing.",
   ].join(" "),
   parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -36,16 +36,16 @@ export const PlanExitTool: ToolDefinition = {
     }
 
     /*
-     * Already approved, in this very turn: asking again would put a second
-     * card in front of the user for a question they have answered. The model
-     * asks because its writes are still refused until the turn ends, so this
-     * says so rather than raising anything.
+     * Already approved, by another call of this same step: asking again would
+     * put a second card in front of the user for a question they have
+     * answered. Build mode starts with the next step, so this says so rather
+     * than raising anything.
      */
     if (plan.switched) {
       return {
         title: "Already approved",
         output:
-          "The user has already approved the plan and this conversation is in build mode. The switch takes effect from the next turn, so do not ask again and do not retry any write: end your turn now, and carry the plan out when the user speaks next.",
+          "The user has already approved the plan and this conversation is in build mode. Build mode starts with your next step, so do not ask again: once this step's other calls have returned, carry the plan out.",
         metadata: { switched: true, alreadyApproved: true },
       }
     }
@@ -81,7 +81,7 @@ export const PlanExitTool: ToolDefinition = {
       await plan.approve()
       return {
         title: "Switching to build mode",
-        output: "The user approved the plan. This conversation is in build mode now; wait for what they say next.",
+        output: "The user approved the plan. This conversation is in build mode now: carry the plan out, starting with its first step.",
         metadata: metadata({ switched: true }),
       }
     }

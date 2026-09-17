@@ -26,9 +26,14 @@ export function subagentTone(seed: string | undefined): number {
   return (hash >>> 0) % SUBAGENT_TONES
 }
 
-/** The actor call's output: a line naming the subagent, then its final message inside these tags. */
-export function subagentOutput(actorID: string, answer: string, status?: string): string {
-  const open = status ? `<actor_result status="${status}">` : "<actor_result>"
+/**
+ * The actor call's output: a line naming the subagent, then its final message
+ * inside these tags. As MiMo's, the tag always carries a status - `unknown`
+ * when the answer reported none - and the reported summary when there is one.
+ */
+export function subagentOutput(actorID: string, answer: string, status?: string, summary?: string): string {
+  const said = summary?.replace(/\s+/g, " ").replace(/"/g, "'").trim()
+  const open = `<actor_result status="${status ?? "unknown"}"${said ? ` summary="${said}"` : ""}>`
   return `actor_id: ${actorID}\n\n${open}\n${answer}\n</actor_result>`
 }
 
@@ -60,9 +65,23 @@ export const SUBAGENT_ACTIONS = ["run", "spawn", "status", "wait", "cancel", "se
 
 export type SubagentAction = (typeof SUBAGENT_ACTIONS)[number]
 
+/**
+ * A call's arguments as one flat object. The task and actor tools take
+ * MiMo's `{ operation: { action, ... } }`; like MiMo's, they also accept the
+ * fields written flat, and calls saved before the change are flat - so every
+ * reader goes through this.
+ */
+export function operationInput(input: Record<string, unknown> | undefined): Record<string, unknown> {
+  if (!input) return {}
+  const operation = input.operation
+  if (!operation || typeof operation !== "object" || Array.isArray(operation)) return input
+  const { operation: _wrapped, ...rest } = input
+  return { ...rest, ...(operation as Record<string, unknown>) }
+}
+
 /** A call's action; one that names none is a blocking run, which is all the tool used to do. */
 export function actorAction(input: Record<string, unknown> | undefined): SubagentAction {
-  const raw = input?.action
+  const raw = operationInput(input).action
   return SUBAGENT_ACTIONS.find((action) => action === raw) ?? "run"
 }
 
@@ -73,7 +92,8 @@ export function launches(action: SubagentAction): boolean {
 
 /** The subagent a status, wait, cancel or send call names. */
 export function actorTarget(input: Record<string, unknown> | undefined): string {
-  const raw = input?.actor_id ?? input?.to_actor_id
+  const flat = operationInput(input)
+  const raw = flat.actor_id ?? flat.to_actor_id
   return typeof raw === "string" ? raw.trim() : ""
 }
 
@@ -89,7 +109,7 @@ const REGISTRY_ACTIONS = new Set(["create", "list", "get", "start", "block", "un
  */
 export function isLegacySubagentCall(part: { type: string; name?: string; input?: Record<string, unknown> }): boolean {
   if (part.type !== "tool" || part.name !== "task") return false
-  const input = part.input ?? {}
+  const input = operationInput(part.input)
   const action = input.action
   if (typeof action === "string") return !REGISTRY_ACTIONS.has(action)
   return ["subagent_type", "prompt", "description", "subagent_id"].some((key) => key in input)
@@ -161,13 +181,22 @@ const SAID: Record<SubagentNoticeStatus, string> = {
 /**
  * What the parent's model reads about its background subagents, in MCode's own
  * words. `result` is the whole answer, which the notice itself carries only the
- * first line of.
+ * first line of; for a failure it is the error, and `partial` whatever answer
+ * the subagent had given by then. An answer that reported failed or blocked is
+ * said to have finished with that status, as MiMo's notice says it.
  */
-export function noticeText(entries: { notice: SubagentNotice; result?: string }[]): string {
-  const blocks = entries.map(({ notice, result }) => {
-    const head = `Background subagent "${notice.description}" (actor_id: ${notice.subagentID}) ${SAID[notice.status]}.`
+export function noticeText(entries: { notice: SubagentNotice; result?: string; partial?: string }[]): string {
+  const blocks = entries.map(({ notice, result, partial }) => {
+    const who = `Background subagent "${notice.description}" (actor_id: ${notice.subagentID})`
+    const head = `${who} ${SAID[notice.status]}.`
+    const reported = notice.reported
+    if (reported) {
+      const settled = reported === "failed" || reported === "blocked" ? `${who} finished and reported ${reported}.` : `${who} completed.\nStatus: ${reported}`
+      const summary = notice.summary ? `\nSummary: ${notice.summary}` : ""
+      return `${settled}${summary}\nResult:\n${result ?? ""}`
+    }
     if (notice.status === "completed") return `${head}\nResult:\n${result ?? notice.summary ?? ""}`
-    if (notice.status === "failed") return `${head}\nError: ${result ?? notice.summary ?? "unknown"}`
+    if (notice.status === "failed") return `${head}\nError: ${result ?? notice.summary ?? "unknown"}${partial ? `\nPartial result:\n${partial}` : ""}`
     if (notice.status === "stalled") {
       const quiet = notice.quietSeconds === undefined ? "" : ` Nothing has happened in it for ${notice.quietSeconds}s.`
       return `${head}${quiet} It is still running: check on it with status, send it a message, or cancel it.`
