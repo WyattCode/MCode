@@ -38,6 +38,23 @@ export function clampTitle(title: string): string {
   return `${points.slice(0, TITLE_MAX - 1).join("").trimEnd()}…`
 }
 
+/**
+ * A message without the skill chips it starts with.
+ *
+ * The composer sends each chosen skill as `/name` ahead of the words, and MiMo
+ * names the conversation from the words the user typed, not from the chips.
+ * Only names of skills this conversation has count, so a message that starts
+ * with a path or an unknown command keeps it.
+ */
+export function withoutSkillPrefix(text: string, skills: ReadonlySet<string>): string {
+  let rest = text.replace(/^\s+/, "")
+  for (;;) {
+    const match = /^\/([A-Za-z][A-Za-z0-9_:-]*)(?=\s|$)/.exec(rest)
+    if (!match || !skills.has(match[1]!)) return rest
+    rest = rest.slice(match[0].length).replace(/^[ \t]+/, "").replace(/^\r?\n/, "")
+  }
+}
+
 /** The fallback: the first non-empty line, else the attachments' names, else untitled. */
 export function fallbackTitle(text: string, attachments: readonly { path: string }[] = []): string {
   const line = text

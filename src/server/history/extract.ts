@@ -1,5 +1,5 @@
 import path from "node:path"
-import type { Message, ToolPart } from "@shared/protocol"
+import type { Message, SessionInfo, ToolPart } from "@shared/protocol"
 import { withoutInlineMedia } from "./text"
 
 /**
@@ -7,14 +7,22 @@ import { withoutInlineMedia } from "./text"
  *
  * MiMo indexes what was said (user and assistant text, reasoning), attached
  * file names and types, and each finished tool call as its name, input and
- * output or error. A call still running is left out until it settles.
+ * output or error with the files it handed over. A call still running is left
+ * out until it settles. Beside those: the conversation's compaction summary
+ * with the files it names, and a failed reply's error - MCode's record of
+ * what MiMo keeps as retry errors.
  *
  * A part is named `<session>/<message>/<part>` so that `get` can find it in the
  * JSON store without the index - which is what keeps `get` working while the
  * index is still being built.
  */
 
-export type RowKind = "text" | "reasoning" | "file" | "tool"
+export type RowKind = "text" | "reasoning" | "file" | "tool" | "summary" | "error"
+
+/** The key a compaction summary is filed under, beside the parts of the message it ends at. */
+export const SUMMARY_KEY = "summary"
+/** The key a failed reply's error is filed under. */
+export const ERROR_KEY = "error"
 
 export interface IndexRow {
   part_id: string
@@ -44,10 +52,40 @@ export function projectKey(directory: string): string {
   return process.platform === "win32" || process.platform === "darwin" ? resolved.toLowerCase() : resolved
 }
 
+/** What a tool handed the model besides text, as MiMo lists it: each file's name, type and where it is. */
+function attachmentLines(part: ToolPart): string {
+  return (part.attachments ?? []).map((file) => `${path.basename(file.path)} ${file.mime} ${file.path}`).join(" ")
+}
+
 function toolBody(part: ToolPart): string | undefined {
-  if (part.status === "completed") return `${part.name} ${JSON.stringify(part.input ?? {})} ${JSON.stringify(part.output ?? "")}`
-  if (part.status === "error") return `${part.name} ${JSON.stringify(part.input ?? {})} ${part.error ?? ""}`
+  const files = attachmentLines(part)
+  if (part.status === "completed") return `${part.name} ${JSON.stringify(part.input ?? {})} ${JSON.stringify(part.output ?? "")}${files ? ` ${files}` : ""}`
+  if (part.status === "error") return `${part.name} ${JSON.stringify(part.input ?? {})} ${part.error ?? ""}${files ? ` ${files}` : ""}`
   return undefined
+}
+
+/** A compaction's summary as the index and `get` read it: the summary, then the files it names. */
+export function summaryText(compacted: NonNullable<SessionInfo["compacted"]>): string {
+  return [compacted.summary, ...(compacted.files?.length ? ["", "Files:", ...compacted.files] : [])].join("\n")
+}
+
+/**
+ * The row for a conversation's compaction summary, filed under the last
+ * message it covers. The store keeps only the latest summary, so there is at
+ * most one per conversation.
+ */
+export function summaryRow(session: Pick<SessionInfo, "id" | "compacted">): IndexRow | undefined {
+  const compacted = session.compacted
+  if (!compacted?.summary.trim()) return undefined
+  return {
+    part_id: partID(session.id, compacted.messageID, SUMMARY_KEY),
+    session_id: session.id,
+    message_id: compacted.messageID,
+    kind: "summary",
+    tool_name: null,
+    body: withoutInlineMedia(summaryText(compacted)).trim(),
+    time_created: compacted.at,
+  }
 }
 
 /** Every indexable part of one message. */
@@ -68,6 +106,8 @@ export function rowsOf(message: Message): IndexRow[] {
     else if (part.type === "reasoning") add(part.id, "reasoning", part.text, part.time.created)
     else if (part.type === "tool") add(part.id, "tool", toolBody(part), part.time.created, part.name)
   }
+  // A reply that failed keeps what the provider said, as MiMo keeps its retry errors.
+  if (message.error) add(ERROR_KEY, "error", message.error, message.time.completed ?? message.time.created)
   return rows
 }
 
@@ -95,9 +135,18 @@ export function partTexts(message: Message): PartText[] {
     if (part.type === "text" && part.text) out.push({ part_id: id(part.id), type: "text", role: "assistant", tool_name: null, text: part.text })
     else if (part.type === "reasoning" && part.text) out.push({ part_id: id(part.id), type: "reasoning", role: "assistant", tool_name: null, text: part.text })
     else if (part.type === "tool") {
-      const text = [`tool: ${part.name}`, `status: ${part.status}`, `input: ${JSON.stringify(part.input ?? {})}`, `output: ${part.output ?? ""}`, `error: ${part.error ?? ""}`].join("\n")
+      const files = (part.attachments ?? []).map((file) => `attachment: ${file.path} (${file.mime})`)
+      const text = [`tool: ${part.name}`, `status: ${part.status}`, `input: ${JSON.stringify(part.input ?? {})}`, `output: ${part.output ?? ""}`, `error: ${part.error ?? ""}`, ...files].join("\n")
       out.push({ part_id: id(part.id), type: "tool", role: "assistant", tool_name: part.name, text })
     }
   }
+  if (message.error) out.push({ part_id: id(ERROR_KEY), type: "error", role: "assistant", tool_name: null, text: message.error })
   return out
+}
+
+/** The compaction summary as a part of the message it ends at, when this message is that one. */
+export function summaryPart(session: Pick<SessionInfo, "id" | "compacted">, messageID: string): PartText | undefined {
+  const compacted = session.compacted
+  if (!compacted?.summary.trim() || compacted.messageID !== messageID) return undefined
+  return { part_id: partID(session.id, messageID, SUMMARY_KEY), type: "summary", role: "assistant", tool_name: null, text: summaryText(compacted) }
 }

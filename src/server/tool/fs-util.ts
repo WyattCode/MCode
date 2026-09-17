@@ -1,7 +1,8 @@
 import path from "node:path"
 import fs from "node:fs/promises"
 import { ToolError, type ToolContext } from "./types"
-import { isMemoryPath } from "../history/service"
+import { historyService, isMemoryPath, memoryWritable } from "../history/service"
+import { MEMORY_SANDBOXED_AGENTS, memoryWriteRefusal, sandboxRefusal } from "../memory/guard"
 import { guardAppData } from "./app-data"
 import { worktreeTop } from "../session/worktree"
 
@@ -123,6 +124,38 @@ export async function repositoryRoot(directory: string): Promise<string | undefi
   return path.parse(top.root).root === top.root ? undefined : top.root
 }
 
+/**
+ * memory: MiMo's checks on a write, made before any other: `/dream` and
+ * `/distill` write only memory and the project's config folder, and a write
+ * into the memory folder has to fit its layout (memory/guard.ts).
+ */
+async function guardMemoryWrite(context: ToolContext, resolved: string): Promise<void> {
+  const service = historyService()
+  if (!service) return
+  const agent = context.plan?.agent
+  if (agent && MEMORY_SANDBOXED_AGENTS.has(agent)) {
+    const refused = sandboxRefusal({
+      agent,
+      target: resolved,
+      memoryRoot: service.memoryRoot,
+      projectRoot: (await repositoryRoot(context.directory)) ?? context.directory,
+    })
+    if (refused) throw new ToolError(refused)
+  }
+  if (!isMemoryPath(resolved)) return
+  const session = await service.store.get(context.sessionID)
+  const refused = memoryWriteRefusal({
+    target: resolved,
+    memoryRoot: service.memoryRoot,
+    directory: context.directory,
+    sessionID: context.sessionID,
+    writeEnabled: memoryWritable(),
+    taskID: session?.subagent?.taskID,
+    parentID: session?.parentID,
+  })
+  if (refused) throw new ToolError(refused)
+}
+
 export async function resolvePath(context: ToolContext, target: string, access: "read" | "write" = "read"): Promise<string> {
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
@@ -136,6 +169,7 @@ export async function resolvePath(context: ToolContext, target: string, access: 
     throw new ToolError(`Refused: ${target} names an alternate data stream (a colon after the drive), which tools do not read or write.`)
   }
   await guardAppData(resolved, access, target)
+  if (access === "write") await guardMemoryWrite(context, resolved)
   // A cut output's saved file is the model's to read, as MiMo allows its truncation folder outright.
   if (context.toolOutputs?.holds(resolved)) return resolved
   /*

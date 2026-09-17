@@ -53,6 +53,8 @@ export const DEFAULT_MODEL: ModelRef = { provider: "", model: "" }
 export const PROJECT_LIST_MIGRATION = "projects-list"
 /** Round 10: linked worktrees that had become projects of their own are filed under their repository's. */
 export const REPOSITORY_PROJECTS_MIGRATION = "projects-by-repository"
+/** Round 10: project memory is filed per repository, and outside a repository in one shared folder. */
+export const MEMORY_LAYOUT_MIGRATION = "memory-by-repository"
 
 /**
  * Which build's idea of the stored config this one is.
@@ -895,6 +897,19 @@ export class Config {
       ...(leaving.size ? { pinnedProjects: kept(this.current.pinnedProjects), projectOrder: kept(this.current.projectOrder) } : {}),
       migrations: [...done, REPOSITORY_PROJECTS_MIGRATION],
     })
+  }
+
+  /**
+   * Round ten (R10-6): project memory moves from one folder per conversation
+   * folder to one per repository, once. `move` does the moving and is handed
+   * every folder this profile knows of; the migration is recorded only when it
+   * finished, so a failure is tried again at the next launch.
+   */
+  async migrateMemory(directories: readonly string[], move: (directories: string[]) => Promise<unknown>): Promise<void> {
+    const done = this.current.migrations ?? []
+    if (done.includes(MEMORY_LAYOUT_MIGRATION)) return
+    await move([...directories, ...listedProjects(this.current), ...(this.current.closedProjects ?? [])])
+    await this.set({ migrations: [...(this.current.migrations ?? []), MEMORY_LAYOUT_MIGRATION] })
   }
 
   /**

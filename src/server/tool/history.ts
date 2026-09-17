@@ -1,6 +1,6 @@
 import type { Attachment, Message } from "@shared/protocol"
 import { historyService, type HistoryService } from "../history/service"
-import { parsePartID, partTexts } from "../history/extract"
+import { SUMMARY_KEY, parsePartID, partTexts, summaryPart } from "../history/extract"
 import { SEARCH_HARD_CAP } from "../history/index"
 import { PAGE_DEFAULT, PAGE_MAX, pageOf, summaryOf, withinBudget, withoutInlineMedia } from "../history/text"
 import type { ToolDefinition, ToolResult } from "./types"
@@ -76,6 +76,7 @@ async function around(input: Record<string, unknown>): Promise<ToolResult> {
   const sessionID = await sessionHolding(service, messageID, text(input.session_id))
   if (!sessionID) return reply("around", "No message with that id.")
   const messages = await service.store.messages(sessionID)
+  const session = await service.store.get(sessionID)
   const at = messages.findIndex((message) => message.id === messageID)
   if (at < 0) return reply("around", "No message with that id.")
   const before = Math.max(0, Math.min(AROUND_MAX, whole(input.before) ?? AROUND_DEFAULT))
@@ -85,7 +86,9 @@ async function around(input: Record<string, unknown>): Promise<ToolResult> {
     anchor: message.id === messageID,
     lines: [
       `${message.id === messageID ? ">>>" : "---"} message_id=${message.id} time=${message.time.created}`,
-      ...partTexts(message).map((part) => `part_id=${part.part_id} ${part.role} ${part.type}\n${summaryOf(part.text)}`),
+      ...[...partTexts(message), ...(session ? [summaryPart(session, message.id)] : [])]
+        .filter((part) => part !== undefined)
+        .map((part) => `part_id=${part.part_id} ${part.role} ${part.type}\n${summaryOf(part.text)}`),
     ],
   }))
   const header = `Session ${sessionID}. Summaries only: get a part_id to read the whole part.`
@@ -167,9 +170,11 @@ async function get(input: Record<string, unknown>): Promise<ToolResult> {
   const located = parsePartID(id)
   const service = serviceOf()
   const message = located ? await service.storage.read<Message>(`session/${located.sessionID}/message/${located.messageID}`).catch(() => undefined) : undefined
-  const part = message ? partTexts(message).find((entry) => entry.part_id === id) : undefined
+  // A compaction summary is kept on the conversation, filed under the message it ends at.
+  const summary = located?.key === SUMMARY_KEY ? await service.store.get(located.sessionID).then((session) => (session ? summaryPart(session, located.messageID) : undefined)) : undefined
+  const part = summary ?? (message ? partTexts(message).find((entry) => entry.part_id === id) : undefined)
   if (!message || !located || !part) return reply("get", "No part with that id.")
-  const held = heldMedia(message, located.key, part.text)
+  const held = summary ? [] : heldMedia(message, located.key, part.text)
 
   const wanted = text(input.attachment)
   if (wanted) {
@@ -210,9 +215,9 @@ async function get(input: Record<string, unknown>): Promise<ToolResult> {
 export const HistoryTool: ToolDefinition = {
   name: "history",
   description: [
-    "Search the raw record of past conversations: what the user and assistant wrote, reasoning, attached file names, and each finished tool call's name, input and output or error.",
+    "Search the raw record of past conversations: what the user and assistant wrote, reasoning, attached file names, each finished tool call's name, input and output or error with the files it handed over, the summaries left by compaction, and the error a failed reply ended with.",
     "Reach for memory first when a curated note would do; use history for exact wording, exact tool arguments or output, or to check whether something was already tried.",
-    "operation search: full-text search (every word must appear) ranked best first, with short snippets and ids. scope defaults to this project; \"global\" searches every project. Narrow with session_id, tool_name, time_after and time_before (milliseconds since 1970); limit is 1-50, default 10.",
+    "operation search: full-text search (every word must appear) ranked best first, with short snippets and ids. scope defaults to this project - the whole repository, or every folder outside one; \"global\" searches every project. Narrow with session_id, tool_name, time_after and time_before (milliseconds since 1970); limit is 1-50, default 10.",
     "operation around: the messages either side of message_id (before and after, 0-50 each, default 5), as summaries.",
     `operation get: one part_id's whole text, a page at a time. offset counts UTF-16 characters from 0; length is 1-${PAGE_MAX}, default ${PAGE_DEFAULT}. Continue from next_offset while has_more is true.`,
     "Media is never sent on its own: get lists the part's media by locator (inline:N, tool:N, file:N, counted from 0); get the same part_id again with attachment set to exactly one locator to receive it. Files the user attached stay on disk and are not handed over here: read them by their path with the read tool.",

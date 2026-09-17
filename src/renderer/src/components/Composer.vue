@@ -6,8 +6,8 @@ import type { Attachment, CommandInfo, DirEntry, Effort, Message, ModelInfo, Ses
 import { interruptedTurn } from "@shared/resume"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
-import { matchingNames } from "../lib/word-match"
-import { drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
+import { matchingNames, wordMatch } from "../lib/word-match"
+import { draftTouched, drafts, homeFilled, scheduleDraftSave } from "../lib/composer-drafts"
 import SlashPill from "./SlashPill.vue"
 import { accessPatch } from "../lib/confirm-queue"
 import { expandTemplate, splitCommandLine } from "@shared/command"
@@ -964,6 +964,11 @@ async function submit() {
     await compactFromBox(value)
     return
   }
+  // MiMo's /rebuild: with checkpoints off, as its desktop runs, it compacts; whatever follows the name is not used.
+  if (/^\/rebuild(\s|$)/.test(value) && serverCommand("rebuild")?.own) {
+    await compactFromBox(value, true)
+    return
+  }
   /*
    * An attachment on its own is a message; the model can be asked to look at
    * it. There is deliberately no test for a turn being in flight: one that is
@@ -1079,8 +1084,8 @@ async function submit() {
  * otherwise the draft is cleared and the compaction is reported as it starts
  * and as it ends.
  */
-async function compactFromBox(line: string) {
-  if (line.replace(/^\/compact/, "").trim()) {
+async function compactFromBox(line: string, rebuild = false) {
+  if (!rebuild && line.replace(/^\/compact/, "").trim()) {
     notifyFailure(t("composer.compact.args"))
     return
   }
@@ -1458,6 +1463,20 @@ watch(
 
 onBeforeUnmount(() => saveDraft(draftKey.value))
 
+/* A chip or words put into this box's draft from elsewhere - the skill card's buttons - show at once. */
+watch(draftTouched, (touched) => {
+  if (touched.key !== draftKey.value) return
+  const kept = drafts.get(touched.key)
+  if (!kept) return
+  skills.value = [...kept.skills]
+  if (kept.text !== text.value) {
+    text.value = kept.text
+    caret.value = text.value.length
+    void nextTick(resize)
+  }
+  focus()
+})
+
 /* ------------------------------------------------------------ commands -- */
 
 /**
@@ -1521,19 +1540,15 @@ const sessionEntries = computed<SlashEntry[]>(() => {
 const slashSpan = computed(() => (mode.value === "shell" ? undefined : slashAt(text.value, caret.value)))
 const slashQuery = computed(() => slashSpan.value?.query)
 
+/*
+ * MiMo's slash filter reads the name alone, word by word: every word typed has
+ * to begin a word of the name (a camelCase name counts its parts), and a query
+ * in Chinese or Japanese matches anywhere in it. The description is not read.
+ */
 const slashMatches = computed(() => {
   const query = slashQuery.value
   if (query === undefined) return []
-  const needle = query.trim().toLowerCase()
-  const all = [...sessionEntries.value, ...serverEntries.value]
-  const found = needle
-    ? all.filter(
-        (entry) =>
-          entry.trigger.toLowerCase().includes(needle) ||
-          (entry.description?.toLowerCase().includes(needle) ?? false),
-      )
-    : all
-  return found
+  return [...sessionEntries.value, ...serverEntries.value].filter((entry) => wordMatch(entry.trigger, query))
 })
 
 /*

@@ -95,7 +95,17 @@ const EXPLORE = new Set(["read", "glob", "grep", "bash", "webfetch"])
  */
 export function toolsFor(agent: string): ToolDefinition[] {
   if (agent === "explore") return TOOLS.filter((tool) => EXPLORE.has(tool.name))
+  if (CONSOLIDATING.has(agent)) return TOOLS.filter((tool) => CONSOLIDATION_TOOLS.has(tool.name))
   return TOOLS
+}
+
+/** MiMo's `/dream` and `/distill` agents: everything is denied but these. */
+const CONSOLIDATING = new Set(["dream", "distill"])
+const CONSOLIDATION_TOOLS = new Set(["read", "write", "edit", "glob", "grep", "memory", "bash"])
+
+/** Whether an agent is offered only its own few tools, and none of the MCP servers'. */
+export function hasOwnToolsOnly(agent: string): boolean {
+  return agent === "explore" || CONSOLIDATING.has(agent)
 }
 
 /**

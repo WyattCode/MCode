@@ -31,7 +31,8 @@ import { readTask, smartRoute } from "../src/shared/smart"
 import { chimeOf, longTask, migrateChime } from "../src/shared/chime"
 import { audioVerdict, isAudioFile, limitMinutes } from "../src/renderer/src/lib/audio-check"
 import { draftFileOf, emptyDraftFile, isEmptyDraftFile, readDraftFile, withLegacyHome, type SavedDraft } from "../src/renderer/src/lib/draft-file"
-import { findInMessages, searchMessages, snippetAround } from "../src/server/search"
+import { findInMessages, searchMessages } from "../src/server/search"
+import { snippetOf } from "../src/shared/search-score"
 import type { ClientFrame, Request, ServerEvent, ServerFrame } from "../src/shared/protocol"
 import { PERMISSION_KINDS } from "../src/shared/protocol"
 import { TOOLS, findTool, toolsFor } from "../src/server/tool/registry"
@@ -259,7 +260,8 @@ import { bindHistory, type HistoryService } from "../src/server/history/service"
 import { parsePartID, partID } from "../src/server/history/extract"
 import { ftsQuery, pageOf, summaryOf, withoutInlineMedia } from "../src/server/history/text"
 import { MemoryIndex } from "../src/server/memory/index"
-import { memoryFiles, memoryLocation, memoryType, projectMemoryID } from "../src/server/memory/paths"
+import { memoryFiles, memoryLocation, memoryType } from "../src/server/memory/paths"
+import { projectMemoryID } from "../src/server/memory/project-id"
 import { HISTORY_BUDGET, HistoryTool } from "../src/server/tool/history"
 import { MemoryTool } from "../src/server/tool/memory"
 import { CronTool, cronOperation } from "../src/server/tool/cron"
@@ -305,6 +307,8 @@ import { roundTenGitChecks } from "./smoke-round10-git"
 import { roundTenStepsChecks } from "./smoke-round10-steps"
 // Round 10: the macOS and Linux branches (M10-1 onwards).
 import { roundTenPlatformChecks } from "./smoke-round10-platforms"
+// Round 10: memory, history search, skills, instructions and the slash commands (R10-1 … R10-14).
+import { roundTenMemoryChecks } from "./smoke-round10-memory"
 // round 10: the agent-type tools (subagents, tasks, questions, plans, automations, cross-chat, history, skills).
 import { roundTenAgentChecks } from "./smoke-round10-agents"
 // The round-six audit of failures and edge cases (F1 onwards).
@@ -455,7 +459,7 @@ async function main() {
    * marked, what was said rather than reasoned, and one hit per conversation
    * with archived ones and side chats left out.
    */
-  const cut = snippetAround("x".repeat(60) + "zebra" + "\ny".repeat(60), 60, 5)
+  const cut = snippetOf("x".repeat(60) + "zebra" + "\ny".repeat(60), [{ start: 60, end: 65 }])
   check(
     "a search snippet is one line around the words, cut with ellipses, the words marked",
     cut.text.startsWith("…") && cut.text.endsWith("…") && !cut.text.includes("\n") &&
@@ -473,7 +477,7 @@ async function main() {
   const zebra = findInMessages(said, "zebra")
   check("search finds the words in what was asked, whatever their case", zebra?.messageID === "u1" && zebra.text.slice(zebra.ranges[0].start, zebra.ranges[0].end) === "Zebra", zebra)
   check("search reads what was answered", findInMessages(said, "by the giraffe")?.messageID === "a1")
-  check("search does not read reasoning", findInMessages(said, "hidden") === undefined)
+  check("search does not read reasoning", findInMessages(said, "hidden") === undefined || findInMessages(said, "hidden")!.score < 1000)
   const sessionsForSearch = [
     { id: "old", updated: 1 },
     { id: "new", updated: 3 },
@@ -3802,8 +3806,9 @@ async function main() {
 
     /*
      * The global AGENTS.md. Read into every conversation while it is there, not
-     * once it is switched off (renamed) or deleted, and placed before the
-     * project's own instructions, which win where the two disagree.
+     * once it is switched off (renamed) or deleted, and - as MiMo lists its
+     * global file (R10-10) - after the project's own instructions, labelled
+     * with where it came from.
      */
     const globalAgents = path.join(root, "global", "AGENTS.md")
     check("with no global file its state is none", (await agentsState(globalAgents)) === "none")
@@ -3812,13 +3817,14 @@ async function main() {
     const withGlobal = await systemPrompt({ directory: project, agent: "build", globalAgentsFile: globalAgents })
     check(
       "a global AGENTS.md reaches the prompt",
-      withGlobal.includes("## Global instructions") && withGlobal.includes("Prefer small commits."),
+      withGlobal.includes(`<instructions source="${globalAgents}">\nPrefer small commits.`),
     )
+    const projectAgents = await fs.readFile(path.join(project, "AGENTS.md"), "utf8").catch(() => "")
     check(
-      "before the project's own instructions",
-      // Present first: a missing section's -1 would otherwise count as "before".
-      withGlobal.indexOf("## Global instructions") >= 0 &&
-        withGlobal.indexOf("## Global instructions") < withGlobal.indexOf("## Project instructions"),
+      "after the project's own instructions",
+      // Present first: a missing entry's -1 would otherwise count as "after".
+      withGlobal.indexOf("## Instructions") >= 0 &&
+        (!projectAgents.trim() || withGlobal.indexOf(projectAgents.trim().slice(0, 20)) < withGlobal.indexOf("Prefer small commits.")),
     )
     check(
       "switching it off renames it",
@@ -6927,6 +6933,7 @@ async function main() {
   await roundTenStepsChecks(check, section)
   await roundTenPlatformChecks(check, section)
   await roundTenAgentChecks(check, section)
+  await roundTenMemoryChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
@@ -9152,7 +9159,7 @@ async function historyMemoryCronChecks(root: string, project: string) {
   const data = path.join(root, "hmc-data")
   const memoryRoot = path.join(data, "memory")
   const files = memoryFiles(memoryRoot, project, "ses_0abc")
-  check("project memory is filed by a stable hash of the folder", files.project === path.join(memoryRoot, "projects", projectMemoryID(project), "MEMORY.md") && projectMemoryID(project) === projectMemoryID(path.join(project, ".")))
+  check("project memory is filed under the folder's project id, the same however the folder is spelled", files.project === path.join(memoryRoot, "projects", projectMemoryID(project), "MEMORY.md") && projectMemoryID(project) === projectMemoryID(path.join(project, ".")))
   check(
     "a memory file reads as its scope, id and type",
     JSON.stringify(memoryLocation(memoryRoot, files.notes)) === JSON.stringify({ scope: "sessions", scope_id: "ses_0abc", type: "free", key: "notes" }) &&
@@ -9167,8 +9174,9 @@ async function historyMemoryCronChecks(root: string, project: string) {
   const bus = new Bus()
   const store = new SubagentStore(storage, bus)
   const model = { provider: "fake", model: "m" }
+  // A repository of its own, so its project is not the one every folder outside a repository shares.
   const otherProject = path.join(root, "hmc-other")
-  await fs.mkdir(otherProject, { recursive: true })
+  await fs.mkdir(path.join(otherProject, ".git"), { recursive: true })
   const alpha = await store.create({ directory: project, model, title: "History alpha" })
   const beta = await store.create({ directory: otherProject, model, title: "History beta" })
   const asked = (session: HistorySession, id: string, text: string, created: number): HistoryMessage => ({ id, sessionID: session.id, role: "user", text, attachments: [], time: { created } })

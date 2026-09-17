@@ -31,13 +31,24 @@ export function bindHistory(service: HistoryService | undefined): void {
   bound = service
 }
 
+/** memory: whether memory may be written - config's `memory.disableWrite` turned round, read at each write. */
+let writable: () => boolean = () => true
+
+export function bindMemoryWrites(read: () => boolean): void {
+  writable = read
+}
+
+export function memoryWritable(): boolean {
+  return writable()
+}
+
 export function historyService(): HistoryService | undefined {
   return bound
 }
 
 /** memory: the files a top-level conversation is told about, when the backend keeps memory at all. */
-export function memoryFilesFor(directory: string, sessionID: string): ReturnType<typeof memoryFiles> | undefined {
-  return bound ? memoryFiles(bound.memoryRoot, directory, sessionID) : undefined
+export function memoryFilesFor(directory: string, sessionID: string): (ReturnType<typeof memoryFiles> & { root: string; readOnly: boolean }) | undefined {
+  return bound ? { ...memoryFiles(bound.memoryRoot, directory, sessionID), root: bound.memoryRoot, readOnly: !writable() } : undefined
 }
 
 /** memory: whether a path is a memory file, which MiMo reads and writes without asking. */

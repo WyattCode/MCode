@@ -249,6 +249,22 @@ export interface MessageHit {
   text: string
   /** Where the words sit inside `text`. */
   ranges: { start: number; end: number }[]
+  /** How well the message matched, on the overlay's scale (shared/search-score.ts). */
+  score: number
+}
+
+/** skills: one skill as the plugins page and its detail card show it. */
+export interface SkillSummary {
+  name: string
+  description: string
+  builtin: boolean
+  /** False when `disabledSkills` names it. */
+  enabled: boolean
+  /** Lives in the user's global skills folder, so the card offers to uninstall it. */
+  removable: boolean
+  location: string
+  icon?: string
+  localizations?: Record<string, { displayName?: string; brief?: string }>
 }
 
 /** What one stored session produced, newest file first. */
@@ -483,7 +499,7 @@ export interface AssistantMessage {
   sessionID: string
   role: "assistant"
   model: ModelRef
-  agent: AgentName
+  agent: TurnAgent
   /**
    * What this turn ran at, recorded because the session's setting can change
    * between turns. Always set on turns run since this field existed; absent on
@@ -870,12 +886,14 @@ export interface CommandInfo {
   name: string
   description?: string
   /** Which agent to run it as, when it names one. */
-  agent?: AgentName
+  agent?: TurnAgent
   /** Which model to run it on, when it names one. */
   model?: ModelRef
   source: CommandSource
   /** A skill shipped with the app (MiMo's `bundled`). */
   builtin?: boolean
+  /** One of the app's own commands (/init, /review, /dream, /distill, /rebuild) that nothing has replaced. */
+  own?: boolean
   /**
    * The prompt text, with its placeholders still in it.
    *
@@ -907,7 +925,7 @@ export interface CommandInfo {
 export interface CommandDefinition {
   template: string
   description?: string
-  agent?: AgentName
+  agent?: TurnAgent
   model?: ModelRef
   variant?: Effort
   subtask?: boolean
@@ -925,6 +943,16 @@ export interface CommandDefinition {
 export const AGENT_NAMES = ["build", "plan"] as const
 
 export type AgentName = (typeof AGENT_NAMES)[number]
+
+/**
+ * The agents a slash command can run one turn as: the two presets, and MiMo's
+ * two consolidation agents - `dream` (tidies project memory) and `distill`
+ * (packages repeated work as skills and commands) - which only a command
+ * starts, and which never become a conversation's own setting.
+ */
+export const COMMAND_AGENTS = [...AGENT_NAMES, "dream", "distill"] as const
+
+export type TurnAgent = (typeof COMMAND_AGENTS)[number]
 
 /**
  * subagents: the kinds of subagent the task tool starts. A general one works
@@ -1439,6 +1467,18 @@ export interface AppConfig {
    * where an unusable choice falls back to.
    */
   titleModel?: ModelRef
+  /**
+   * memory: MiMo's `memory.disable_write`, set only in the config file as
+   * MiMo's is. `disableWrite` refuses every write under the memory folder and
+   * tells the model its memory is read-only; searching and reading go on.
+   */
+  memory?: { disableWrite?: boolean }
+  /**
+   * skills: the skills switched off by name - kept out of the prompt, the skill
+   * tools, the slash menu and `/name` loading, as MiMo's `permission.skill`
+   * denies them.
+   */
+  disabledSkills?: string[]
   /** OpenAI-compatible providers the user added by base URL. */
   customProviders: CustomProvider[]
   /**
@@ -1804,7 +1844,7 @@ export type Request =
       attachments?: Attachment[]
       annotations?: Annotation[]
       fileNotices?: FileNotice[]
-      agent?: AgentName
+      agent?: TurnAgent
       model?: ModelRef
     }
   | { type: "session.abort"; sessionID: string }
@@ -1868,6 +1908,12 @@ export type Request =
    * user's 2026-09-16 decision).
    */
   | { type: "command.shell"; directory: string; text: string }
+  /** skills: every skill a folder can reach, switched off ones too, for the plugins page. */
+  | { type: "skill.list"; directory: string }
+  /** skills: a SKILL.md as the detail card shows it, whole, up to the body limit. */
+  | { type: "skill.content"; directory: string; name: string }
+  /** skills: MiMo's uninstall - the skill's folder moves to the app's skill trash. */
+  | { type: "skill.uninstall"; directory: string; name: string }
   | { type: "config.get" }
   | { type: "config.set"; patch: Partial<AppConfig> }
   | { type: "provider.list" }
@@ -2101,6 +2147,9 @@ export interface ResponseMap {
   /* `files` are the existing files the prompt names with `@`: `name` as written, `path` absolute. */
   "command.expand": { prompt: string; files: { name: string; path: string }[] }
   "command.shell": { text: string }
+  "skill.list": { skills: SkillSummary[] }
+  "skill.content": { path: string; content: string; truncated: boolean }
+  "skill.uninstall": { ok: true }
   /**
    * `unreadable` when the stored config would not parse and the app opened on
    * the defaults, with where the damaged file was kept; `fromNewerVersion`
@@ -2262,6 +2311,8 @@ export type ServerEvent =
   | { type: "shell.exit"; shellID: string; code: number | null }
   | { type: "config.updated"; config: AppConfig }
   | { type: "mcp.status"; servers: McpServerState[] }
+  /** skills: a SKILL.md whose frontmatter could not be read, reported once per file. */
+  | { type: "skill.problem"; path: string; message: string }
   /** A subscription login finished in the browser, minutes after it began. */
   | { type: "auth.completed"; provider: string; providers: ProviderStatus[] }
   /** What the providers offer changed without anyone asking - a newer models.dev catalog arrived. */

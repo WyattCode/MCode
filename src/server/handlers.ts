@@ -40,7 +40,7 @@ import { OpenAICompatible } from "./provider/openai"
 import { ChatGPTSubscription } from "./provider/chatgpt"
 import type { ProviderAdapter } from "./provider/types"
 import { expandCommand, listCommands, runShellPlaceholders } from "./command"
-import { discoverSkills } from "./skill"
+import { discoverSkills, enabledSkills, readSkillFile, removableSkill, uninstallSkill } from "./skill"
 import { applyMcpImports, importItem, scanMcpImports } from "./mcp-import"
 import { runImport, scanImports } from "./import"
 import { mergeMcpSecrets } from "./mcp-save"
@@ -420,7 +420,10 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
           directory: session.directory,
           agent: session.agent,
           globalAgentsFile: globalAgentsPath(runtime.storage.directory),
-          skills: (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory })).skills,
+          skills: enabledSkills(
+            (await discoverSkills({ directory: session.directory, storageDirectory: runtime.storage.directory })).skills,
+            runtime.config.get().disabledSkills,
+          ),
         }),
       } satisfies Handled<"session.systemPrompt">
     }
@@ -611,6 +614,46 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
       return {
         text: await runShellPlaceholders(runtime, { directory: request.directory, text: request.text }),
       } satisfies Handled<"command.shell">
+
+    /*
+     * skills: the plugins page lists every skill, switched off or not, and its
+     * detail card reads the file and can uninstall one of the user's own.
+     */
+    case "skill.list": {
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const off = new Set(runtime.config.get().disabledSkills ?? [])
+      return {
+        skills: skills.map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+          builtin: skill.builtin,
+          enabled: !off.has(skill.name),
+          removable: removableSkill(skill, runtime.storage.directory),
+          location: skill.location,
+          ...(skill.icon ? { icon: skill.icon } : {}),
+          ...(skill.localizations ? { localizations: skill.localizations } : {}),
+        })),
+      } satisfies Handled<"skill.list">
+    }
+
+    case "skill.content": {
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const skill = skills.find((entry) => entry.name === request.name)
+      const read = skill ? await readSkillFile(skill.location) : undefined
+      if (!read) throw new Error(`There is no skill ${request.name} to read`)
+      return read satisfies Handled<"skill.content">
+    }
+
+    case "skill.uninstall": {
+      const { skills } = await discoverSkills({ directory: request.directory, storageDirectory: runtime.storage.directory })
+      const skill = skills.find((entry) => entry.name === request.name)
+      if (!skill) throw new Error(`There is no skill ${request.name}`)
+      await uninstallSkill(skill, runtime.storage.directory)
+      // A name that is gone has nothing left to switch off.
+      const disabled = runtime.config.get().disabledSkills ?? []
+      if (disabled.includes(skill.name)) await runtime.config.set({ disabledSkills: disabled.filter((name) => name !== skill.name) })
+      return { ok: true } satisfies Handled<"skill.uninstall">
+    }
 
     /*
      * Replayed for exactly the reason `session.list` replays permissions:

@@ -1,21 +1,27 @@
 import { createHash } from "node:crypto"
 import path from "node:path"
 import { projectKey } from "../history/extract"
+import { projectMemoryID } from "./project-id"
 
 /**
  * memory: where memory markdown lives, as MiMo lays it out -
  * `<data>/memory/<scope>/<scope id>/<key>.md`, with scope `global` (no id),
  * `projects` (one folder per project) or `sessions` (one per conversation).
  *
- * MiMo names a project by its own project id; this app names it by a short
- * hash of the project folder, so the same folder always finds the same file.
+ * A project is named as MiMo names it: one id per repository, shared by its
+ * subdirectories and worktrees, and `global` for every folder outside one
+ * (memory/project-id.ts).
  */
 
 export const MEMORY_SCOPES = ["global", "projects", "sessions"] as const
 export type MemoryScope = (typeof MEMORY_SCOPES)[number]
 
-/** A project's folder name under `projects/`. */
-export function projectMemoryID(directory: string): string {
+/**
+ * The folder name the layout before round ten gave a project: a short hash of
+ * the conversation's folder, one per folder. Read only to move that memory
+ * under its repository's id (memory/migrate.ts).
+ */
+export function folderMemoryID(directory: string): string {
   return createHash("sha1").update(projectKey(directory)).digest("hex").slice(0, 16)
 }
 
