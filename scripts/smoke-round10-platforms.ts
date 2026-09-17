@@ -25,6 +25,8 @@ import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, 
 import { protectedFilter, protectedPaths } from "../src/server/protected-paths"
 import { searchFolder, searchTree } from "../src/server/handlers"
 import { packageTarget } from "./package-target.mjs"
+import { dataDirs, desktopId, entryIcon, linuxIconSync, type IconSyncHost } from "../src/main/linux-icon-sync"
+import sharp from "sharp"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -457,5 +459,121 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const script = await fs.readFile(path.join(root, "scripts", "package.mjs"), "utf8")
     const refusedAt = script.indexOf("process.exit(1)")
     check("M10-29: the refusal comes before the version is touched", refusedAt > 0 && refusedAt < script.indexOf('run("node", ["scripts/bump-version.mjs"])') && refusedAt < script.indexOf("const before"), refusedAt)
+  }
+
+  section("Round 10 (platforms): M10-13 the macOS icon sits on Apple's grid")
+  {
+    /** The opaque tile and the visible extent of a PNG, as boxes. */
+    const measure = async (input: Buffer | string) => {
+      const { data, info } = await sharp(input).ensureAlpha().raw().toBuffer({ resolveWithObject: true })
+      const visible = [info.width, info.height, -1, -1]
+      const tile = [info.width, info.height, -1, -1]
+      for (let y = 0; y < info.height; y++) {
+        for (let x = 0; x < info.width; x++) {
+          const alpha = data[(y * info.width + x) * 4 + 3]
+          for (const [box, floor] of [[visible, 8], [tile, 250]] as const) {
+            if (alpha <= floor) continue
+            box[0] = Math.min(box[0], x)
+            box[1] = Math.min(box[1], y)
+            box[2] = Math.max(box[2], x)
+            box[3] = Math.max(box[3], y)
+          }
+        }
+      }
+      return { size: info.width, visible, tile }
+    }
+    // The icns's 1024 entry (ic10), read out of the container.
+    const icns = await fs.readFile(path.join(root, "build", "icon.icns"))
+    let largest: Buffer | undefined
+    for (let at = 8; at + 8 <= icns.length; ) {
+      const length = icns.readUInt32BE(at + 4)
+      if (icns.toString("ascii", at, at + 4) === "ic10") largest = icns.subarray(at + 8, at + length)
+      at += Math.max(8, length)
+    }
+    check("M10-13: the .icns carries a 1024 image", Boolean(largest))
+    if (largest) {
+      const cut = await measure(largest)
+      const margin = cut.tile[0] / cut.size
+      check("M10-13: its tile is 824 of 1024, centred, as Apple's grid has it", cut.size === 1024 && cut.tile.join(",") === "100,100,923,923", cut)
+      check("M10-13: about 9% is left clear on each side, as MiMo's macOS icon leaves", margin > 0.08 && margin < 0.11 && cut.visible[0] > 64 && cut.visible[2] < 960, cut)
+      check("M10-13: the shadow falls below the tile", cut.visible[3] - cut.tile[3] > cut.tile[1] - cut.visible[1], cut)
+    }
+    const full = await measure(path.join(root, "build", "icon.png"))
+    check("M10-13: Windows and Linux keep the full tile", full.visible.join(",") === "0,0,1023,1023", full)
+    const colourways = (await fs.readdir(path.join(root, "resources", "app-icons"))).filter((name) => name.endsWith(".png")).sort()
+    const macCuts = (await fs.readdir(path.join(root, "resources", "app-icons-mac"))).filter((name) => name.endsWith(".png")).sort()
+    check("M10-13: every colourway has its macOS cut", colourways.length === 7 && colourways.join(",") === macCuts.join(","), macCuts)
+    for (const name of macCuts) {
+      const cut = await measure(path.join(root, "resources", "app-icons-mac", name))
+      check(`M10-13: ${name} for the Dock sits on the grid`, cut.tile[0] === Math.round((cut.size - Math.round(cut.size * 824 / 1024)) / 2) && cut.tile[0] / cut.size > 0.09, cut)
+    }
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    const handler = main.slice(main.indexOf('ipcMain.handle("mcode:app-icon"'), main.indexOf('ipcMain.handle("mcode:app-icon"') + 1200)
+    check("M10-13: the Dock is given the macOS cut", /appIconFile\(id, process\.platform === "darwin"\)/.test(handler) && /const folder = dock \? "app-icons-mac" : "app-icons"/.test(main))
+    const builder = await fs.readFile(path.join(root, "electron-builder.yml"), "utf8")
+    check("M10-13: only the macOS package carries the cuts", /\nmac:\n[\s\S]*?extraResources:\s*\n\s*- from: resources\/app-icons-mac\s*\n\s*to: app-icons-mac/.test(builder) && builder.indexOf("resources/app-icons-mac") > builder.indexOf("\nmac:"))
+    const script = await fs.readFile(path.join(root, "scripts", "icons.mjs"), "utf8")
+    check("M10-13: the icon script draws the cut from MCode's own icon", /writeMac\(await fs\.readFile\(path\.join\(OUT, "icon\.png"\)\)\)/.test(script) && /buildIcns\(await macCut\(rounded, MASTER\)\)/.test(script))
+  }
+
+  section("Round 10 (platforms): M10-20 the Linux launcher follows the chosen icon")
+  {
+    check("M10-20: the desktop id is CHROME_DESKTOP's, else the app name's", desktopId("mcode.desktop", "MCode") === "mcode" && desktopId(undefined, "MCode") === "mcode" && desktopId("../x", "Mé Code") === "me-code")
+    check("M10-20: XDG_DATA_DIRS falls back to the standard pair", dataDirs("").join(",") === "/usr/local/share,/usr/share" && dataDirs("/a/:/b:/a").join(",") === "/a,/b")
+    check("M10-20: Icon= is read from the main group only", entryIcon("[Desktop Entry]\nName=MCode\nIcon=mcode\n[Desktop Action x]\nIcon=other\n") === "mcode" && entryIcon("[Other]\nIcon=x\n") === "")
+
+    const makeHost = (files: Map<string, Buffer>, extra: Partial<IconSyncHost>) => {
+      const touched: string[] = []
+      const host: IconSyncHost = {
+        platform: "linux",
+        home: "/home/me",
+        appName: "MCode",
+        chromeDesktop: "mcode.desktop",
+        readBinary: async (file) => files.get(file),
+        writeBinary: async (file, bytes) => void files.set(file, bytes),
+        readText: async (file) => files.get(file)?.toString("utf8"),
+        listDir: async (folder) => [...new Set([...files.keys()].filter((file) => file.startsWith(folder + "/")).map((file) => file.slice(folder.length + 1).split("/")[0]))],
+        exists: async (file) => files.has(file),
+        mkdirp: async () => {},
+        touch: async (file) => void touched.push(file),
+        resizePng: (bytes, size) => Buffer.concat([Buffer.from(`${size}:`), bytes]),
+        ...extra,
+      }
+      return { host, touched }
+    }
+    const icon = Buffer.from("new-icon")
+
+    // Installed from a package: a theme icon in two sizes.
+    const system = new Map<string, Buffer>([
+      ["/icons/brass.png", icon],
+      ["/usr/share/applications/mcode.desktop", Buffer.from("[Desktop Entry]\nName=MCode\nIcon=mcode\n")],
+      ["/usr/share/icons/hicolor/48x48/apps/mcode.png", Buffer.from("old")],
+      ["/usr/share/icons/hicolor/256x256/apps/mcode.png", Buffer.from("old")],
+      ["/usr/share/icons/hicolor/scalable/apps/mcode.svg", Buffer.from("old")],
+    ])
+    const installed = makeHost(system, {})
+    const sync = linuxIconSync(installed.host)
+    const first = await sync("/icons/brass.png")
+    check("M10-20: an installed app gets a same-named icon in each size in the user's theme", first.changed && system.get("/home/me/.local/share/icons/hicolor/48x48/apps/mcode.png")?.toString() === "48:new-icon" && system.get("/home/me/.local/share/icons/hicolor/256x256/apps/mcode.png")?.toString() === "256:new-icon", first)
+    check("M10-20: the system's own files are left alone", system.get("/usr/share/icons/hicolor/48x48/apps/mcode.png")?.toString() === "old")
+    const second = await sync("/icons/brass.png")
+    check("M10-20: the same icon again writes nothing", !second.changed && second.ok, second)
+    const offLinux = await linuxIconSync({ ...installed.host, platform: "win32" })("/icons/brass.png")
+    check("M10-20: nothing happens off Linux", !offLinux.changed && /not linux/.test(offLinux.reason))
+
+    // An AppImage: only an entry of this app that names the icon file is followed.
+    const bare = new Map<string, Buffer>([["/icons/brass.png", icon]])
+    const lone = makeHost(bare, { appImage: "/opt/MCode.AppImage" })
+    const skipped = await linuxIconSync(lone.host)("/icons/brass.png")
+    check("M10-20: an AppImage without its own entry writes nothing", !skipped.changed && bare.size === 1, skipped)
+    const withEntry = new Map<string, Buffer>([
+      ["/icons/brass.png", icon],
+      ["/data/applications/mcode.desktop", Buffer.from("[Desktop Entry]\nName=MCode\nIcon=/data/icons/mcode.png\n")],
+    ])
+    const image = makeHost(withEntry, { appImage: "/opt/MCode.AppImage", xdgDataHome: "/data/" })
+    const written = await linuxIconSync(image.host)("/icons/brass.png")
+    check("M10-20: an AppImage's entry icon is replaced and the entry touched", written.changed && withEntry.get("/data/icons/mcode.png")?.toString() === "new-icon" && image.touched.join() === "/data/applications/mcode.desktop", written)
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    check("M10-20: choosing an icon on Linux syncs the launcher", /window\.setIcon\(image\)\s*\n\s*void syncLinuxIcon\(file\)/.test(main))
   }
 }

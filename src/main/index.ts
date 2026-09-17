@@ -74,6 +74,7 @@ import {
 } from "./browser"
 import { captionOverlay, refreshTitlebar, setTitlebarMode } from "./titlebar"
 import { fcitxEnvironment } from "./linux-ime"
+import { linuxIconSync } from "./linux-icon-sync"
 import { restore, saveWindowState, track } from "./window-state"
 import { keepWindowsOnScreen, repaintAfterWake } from "./displays"
 import { boundsOnShow, closeBounds } from "./work-area"
@@ -389,14 +390,46 @@ function trayTemplateFile(): string {
     : path.join(here, "../../resources/tray/trayTemplate.png")
 }
 
-/** The file an id names, or nothing if it names none. */
-function appIconFile(id: string): string | undefined {
+/**
+ * The file an id names, or nothing if it names none. The Dock takes the macOS
+ * cut (`app-icons-mac`, on Apple's icon grid, drawn by scripts/icons.mjs), as
+ * MiMo picks its macOS artwork there; everything else takes the full tile.
+ */
+function appIconFile(id: string, dock = false): string | undefined {
   if (!/^[a-z][a-z0-9-]{0,30}$/.test(id)) return undefined
-  const file = app.isPackaged
-    ? path.join(process.resourcesPath, "app-icons", id + ".png")
-    : path.join(here, "../../resources/app-icons", id + ".png")
+  const folder = dock ? "app-icons-mac" : "app-icons"
+  const file = app.isPackaged ? path.join(process.resourcesPath, folder, id + ".png") : path.join(here, "../../resources", folder, id + ".png")
   return existsSync(file) ? file : undefined
 }
+
+/* MiMo's launcher icon sync on Linux (see linux-icon-sync.ts); a no-op elsewhere. */
+const syncLinuxIcon = linuxIconSync({
+  platform: process.platform,
+  appImage: process.env.APPIMAGE,
+  home: app.getPath("home"),
+  xdgDataHome: process.env.XDG_DATA_HOME,
+  xdgDataDirs: process.env.XDG_DATA_DIRS,
+  chromeDesktop: process.env.CHROME_DESKTOP,
+  appName: app.getName(),
+  readBinary: (file) => fs.readFile(file).catch(() => undefined),
+  writeBinary: (file, bytes) => fs.writeFile(file, bytes),
+  readText: (file) => fs.readFile(file, "utf8").catch(() => undefined),
+  listDir: (folder) => fs.readdir(folder).catch(() => []),
+  exists: (file) =>
+    fs.access(file).then(
+      () => true,
+      () => false,
+    ),
+  mkdirp: async (folder) => {
+    await fs.mkdir(folder, { recursive: true })
+  },
+  touch: (file) => fs.utimes(file, new Date(), new Date()),
+  resizePng: (bytes, size) => {
+    const image = nativeImage.createFromBuffer(bytes)
+    if (image.isEmpty()) throw new Error("the icon is not an image")
+    return image.resize({ width: size, height: size, quality: "best" }).toPNG()
+  },
+})
 
 /*
  * What the tray's 配置切换 offers: the models the window's picker offers, with
@@ -1437,11 +1470,9 @@ app.whenReady().then(async () => {
   /* Answers whether the icon took, so Settings can say so or keep the old one (MiMo's setAppIcon). */
   ipcMain.handle("mcode:app-icon", (event, id: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window || typeof id !== "string" || !/^[a-z][a-z0-9-]{0,30}$/.test(id)) return { ok: false }
-    const file = app.isPackaged
-      ? path.join(process.resourcesPath, "app-icons", id + ".png")
-      : path.join(here, "../../resources/app-icons", id + ".png")
-    if (!existsSync(file)) return { ok: false }
+    if (!window || typeof id !== "string") return { ok: false }
+    const file = appIconFile(id, process.platform === "darwin")
+    if (!file) return { ok: false }
     const image = nativeImage.createFromPath(file)
     if (image.isEmpty()) return { ok: false }
     /*
@@ -1454,6 +1485,9 @@ app.whenReady().then(async () => {
       return { ok: true }
     }
     window.setIcon(image)
+    void syncLinuxIcon(file).then((result) => {
+      if (result.changed || !result.ok) console.info(`[linux-app-icon-sync] ${result.reason}`)
+    })
     /* The corner and the taskbar are the same app; they wear the same icon. */
     trayIcon = id
     if (tray) refreshTray(true)

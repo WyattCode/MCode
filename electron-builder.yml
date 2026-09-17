@@ -94,6 +94,10 @@ mac:
     - zip
   icon: build/icon.icns
   category: public.app-category.developer-tools
+  # The Dock's cut of each colourway (scripts/icons.mjs), on Apple's icon grid.
+  extraResources:
+    - from: resources/app-icons-mac
+      to: app-icons-mac
   # Voice input under the hardened runtime: the default entitlements plus the
   # microphone, for the app and the helpers it starts.
   entitlements: build/entitlements.mac.plist
