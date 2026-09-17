@@ -2786,6 +2786,8 @@ function onPointerDown(event: MouseEvent) {
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
   window.addEventListener("dragend", endDrag)
+  // A drag the system took over never sends `dragend`; the next press is when the app knows it is over.
+  window.addEventListener("pointerdown", endDrag, true)
   document.addEventListener("dragover", onDragOver)
   document.addEventListener("dragleave", onDragLeave)
   document.addEventListener("drop", onDrop)
@@ -2793,6 +2795,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener("mousedown", onPointerDown, true)
   window.removeEventListener("dragend", endDrag)
+  window.removeEventListener("pointerdown", endDrag, true)
   document.removeEventListener("dragover", onDragOver)
   document.removeEventListener("dragleave", onDragLeave)
   document.removeEventListener("drop", onDrop)
