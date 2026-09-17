@@ -86,8 +86,9 @@ const canCommit = computed(() => {
 const canPush = computed(() => {
   const current = state.value
   if (!current?.ok || busy.value || !current.branch || current.isDetached || !current.hasHead) return false
-  if (current.hasUpstream) return current.ahead > 0
-  return current.hasOrigin && (current.hasOriginBranch ? current.ahead > 0 : true)
+  // A push only ever goes to origin's branch of the same name, so that branch alone decides.
+  if (!current.hasOrigin) return false
+  return current.hasOriginBranch ? current.ahead > 0 : true
 })
 
 const stats = computed(() =>

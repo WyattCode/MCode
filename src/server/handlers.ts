@@ -1112,10 +1112,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "git.status":
-      return (await git.status(request.directory, request.scope)) satisfies Handled<"git.status">
-
-    case "git.init":
-      return (await git.init(request.directory)) satisfies Handled<"git.init">
+      return (await git.status(request.directory)) satisfies Handled<"git.status">
 
     case "git.branches":
       return (await git.branchState(request.directory)) satisfies Handled<"git.branches">
@@ -1215,16 +1212,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "git.diff":
       return {
-        patch: await git.diff(request.directory, request.file, request.context, request.scope),
+        patch: await git.diff(request.directory, request.file),
       } satisfies Handled<"git.diff">
 
     case "git.diffFiles":
       return (await turnFileDiffs(request.directory, request.files)) satisfies Handled<"git.diffFiles">
 
-    case "git.revert": {
-      await git.revert(request.directory, request.file)
-      return (await git.status(request.directory)) satisfies Handled<"git.revert">
-    }
 
     case "workspace.info":
       return (await workspaceInfo(request.directory)) satisfies Handled<"workspace.info">

@@ -5131,8 +5131,9 @@ async function main() {
   const before = await gitOps.status(repoRoot)
   check("a plain folder is not reported as a repository", before.installed && !before.repo, before)
 
-  const after = await gitOps.init(repoRoot)
-  check("creating a repository takes effect", after.repo, after)
+  await promisify(execFile)("git", ["init", "-q"], { cwd: repoRoot, windowsHide: true })
+  const after = await gitOps.status(repoRoot)
+  check("a new repository is reported as one", after.repo, after)
 
   await fs.writeFile(path.join(repoRoot, "note.txt"), "hello world")
   const dirty = await gitOps.status(repoRoot)
@@ -5174,10 +5175,13 @@ async function main() {
   await inRepo(["reset", "-q", "--", "note.txt"])
   check(
     "git's rename and copy letters read as renamed",
-    gitOps.classify("R ") === "renamed" && gitOps.classify("C ") === "renamed" && gitOps.classify("??") === "added" && gitOps.classify(" M") === "modified",
+    gitOps.classify({ staged: "R", work: " ", untracked: false }) === "renamed" &&
+      gitOps.classify({ staged: "C", work: " ", untracked: false }) === "renamed" &&
+      gitOps.classify({ staged: "?", work: "?", untracked: true }) === "added" &&
+      gitOps.classify({ staged: " ", work: "M", untracked: false }) === "modified",
   )
   const freshRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-fresh-"))
-  await gitOps.init(freshRepo)
+  await runGit("git", ["init", "-q"], { cwd: freshRepo, windowsHide: true })
   await fs.writeFile(path.join(freshRepo, "first.txt"), "first line\n")
   await runGit("git", ["add", "first.txt"], { cwd: freshRepo, windowsHide: true })
   check("a file staged before any commit diffs as new", (await gitOps.diff(freshRepo, "first.txt")).includes("+first line"))
@@ -5242,42 +5246,11 @@ async function main() {
   check("and no build section it cannot support", !bare.includes("## Building and testing"), bare.slice(-200))
   await fs.rm(noRepo, { recursive: true, force: true })
 
-  const branchScope = await gitOps.status(repoRoot, "branch")
-  check("branch scope sees it", branchScope.changed.includes("feature.txt"), branchScope.changed)
   check(
-    "and calls it an addition",
-    branchScope.entries.find((entry) => entry.path === "feature.txt")?.kind === "added",
-    branchScope.entries,
-  )
-  check(
-    "a committed file still diffs against the branch point",
-    (await gitOps.diff(repoRoot, "feature.txt", 3, "branch")).includes("+on the branch"),
-  )
-  check(
-    "and shows nothing against the working tree",
+    "a committed file shows nothing against the working tree",
     (await gitOps.diff(repoRoot, "feature.txt")).trim() === "",
   )
-
-  // Context is what "show all lines" asks for, and it reaches a command line.
-  await fs.writeFile(path.join(repoRoot, "wide.txt"), Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"))
-  await inRepo(["add", "-A"])
-  await inRepo(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "three"])
-  await fs.writeFile(
-    path.join(repoRoot, "wide.txt"),
-    Array.from({ length: 40 }, (_, i) => (i === 20 ? "changed" : `line ${i}`)).join("\n"),
-  )
-  const tight = await gitOps.diff(repoRoot, "wide.txt")
-  const whole = await gitOps.diff(repoRoot, "wide.txt", 100_000)
-  check(
-    "a wider context really shows more of the file",
-    whole.split("\n").length > tight.split("\n").length,
-    { tight: tight.split("\n").length, whole: whole.split("\n").length },
-  )
-  await inRepo(["checkout", "--", "."])
   await inRepo(["checkout", "master"]).catch(() => inRepo(["checkout", "main"]))
-
-  await gitOps.revert(repoRoot, "note.txt")
-  check("reverting removes the change", !(await gitOps.status(repoRoot)).changed.includes("note.txt"))
 
   // Opening a subdirectory of a repository is ordinary, and git answers in
   // paths relative to the root - so the review listed files it could not diff,
@@ -5291,16 +5264,6 @@ async function main() {
     "a file in a subdirectory still diffs",
     (await gitOps.diff(subProject, "main.ts")).includes("+export const a = 1"),
   )
-  await gitOps.revert(subProject, "main.ts")
-  check("reverting from a subdirectory really removes it", !(await exists(path.join(subProject, "main.ts"))))
-
-  await fs.writeFile(path.join(repoRoot, "sibling.txt"), "untouched")
-  const escaped = await gitOps
-    .revert(subProject, "../sibling.txt")
-    .then(() => "allowed", (error: Error) => error.message)
-  check("reverting outside the project is refused", escaped.startsWith("Refusing"), escaped)
-  check("and the file outside is left alone", await exists(path.join(repoRoot, "sibling.txt")))
-
   await fs.rm(repoRoot, { recursive: true, force: true })
 
   // ------------------------------------------------ info card: git ------
@@ -5364,6 +5327,7 @@ async function main() {
   await gitIn(cardRepo, ["remote", "add", "origin", cardOrigin])
   const unpublished = await gitOps.commitState(cardRepo)
   check("a new remote has no branch yet", unpublished.hasOrigin && !unpublished.hasOriginBranch && !unpublished.hasUpstream, unpublished)
+  check("with no branch on origin the card counts nothing ahead", unpublished.ahead === 0 && unpublished.behind === 0, unpublished)
   const published = await gitOps.push(cardRepo)
   check("the first push publishes the branch", published.ok, published)
   const tracking = await gitOps.commitState(cardRepo)

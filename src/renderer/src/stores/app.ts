@@ -1705,25 +1705,12 @@ export const useApp = defineStore("app", () => {
     message?: string
   }>()
 
-  async function gitStatus(directory: string, scope?: "worktree" | "branch") {
-    return api().request({ type: "git.status", directory, scope })
+  async function gitStatus(directory: string) {
+    return api().request({ type: "git.status", directory })
   }
 
-  async function gitInit(directory: string) {
-    return api().request({ type: "git.init", directory })
-  }
-
-  async function gitDiff(
-    directory: string,
-    file: string,
-    context?: number,
-    scope?: "worktree" | "branch",
-  ) {
-    return (await api().request({ type: "git.diff", directory, file, context, scope })).patch
-  }
-
-  async function gitRevert(directory: string, file: string) {
-    return api().request({ type: "git.revert", directory, file })
+  async function gitDiff(directory: string, file: string) {
+    return (await api().request({ type: "git.diff", directory, file })).patch
   }
 
   /** Facts about a directory, straight from disk. */
@@ -2077,9 +2064,9 @@ export const useApp = defineStore("app", () => {
     authState,
     workspaceInfo,
     gitStatus,
-    gitInit,
+
     gitDiff,
-    gitRevert,
+
     beginAuth,
     cancelAuth,
     signOut,
