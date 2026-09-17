@@ -501,7 +501,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const gate = new Promise<void>((resolve) => (release = resolve))
       e.replies.push(async (response, body) => {
         await gate
-        calls([{ name: "list", input: { path: "." } }])(response, body)
+        calls([{ name: "glob", input: { pattern: "*" } }])(response, body)
       })
       const session = await e.store.create({ directory: e.project, model: e.model })
       await e.runner.prompt({ sessionID: session.id, text: "look around" })
@@ -526,7 +526,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
   section("Round 5: loop detection asks the user (E13)")
   {
     const tool = (callID: string, status: "pending" | "running", input: Record<string, unknown>) =>
-      ({ type: "tool", id: callID, callID, name: "list", status, input, time: { created: 1 } }) as AssistantMessage["parts"][number] & { type: "tool" }
+      ({ type: "tool", id: callID, callID, name: "glob", status, input, time: { created: 1 } }) as AssistantMessage["parts"][number] & { type: "tool" }
     const same = [tool("a", "running", { path: ".", depth: 1 }), tool("b", "running", { path: ".", depth: 1 }), tool("c", "running", { path: ".", depth: 1 })]
     check("the third identical call in a row is a repeat", repeatsCall(same, same[2]!))
     check("two are not", !repeatsCall(same.slice(0, 2), same[1]!))
@@ -538,14 +538,14 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
     const e = await engine()
     try {
       const asked = () => e.events.flatMap((event) => (event.type === "question.asked" && event.request.loop ? [event.request] : []))
-      const listThrice = calls([0, 1, 2].map(() => ({ name: "list", input: { path: "." } })))
+      const listThrice = calls([0, 1, 2].map(() => ({ name: "glob", input: { pattern: "*" } })))
       const session = await e.store.create({ directory: e.project, model: e.model })
 
       e.replies.push(listThrice)
       await e.runner.prompt({ sessionID: session.id, text: "LOOP once" })
       check("the third identical call puts a question to the user", await e.until(() => asked().length === 1), asked())
       const first = asked()[0]
-      check("naming the tool, with the once / always / reject answers", first?.loop?.tool === "list" && first.questions[0]?.options.map((option) => option.label).join() === "once,always,reject", first)
+      check("naming the tool, with the once / always / reject answers", first?.loop?.tool === "glob" && first.questions[0]?.options.map((option) => option.label).join() === "once,always,reject", first)
       if (first) e.runner.questions.reply(first.id, [["once"]])
       await e.idle(session.id)
       let parts = (await e.assistants(session.id)).flatMap((message) => message.parts).filter((part) => part.type === "tool")
@@ -573,7 +573,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("always lets that tool repeat for the rest of the conversation", asked().length === 3, asked().length)
 
       // Three steps making the very same call bring a note, in the request only.
-      const one = calls([{ name: "list", input: { path: "src-none" } }])
+      const one = calls([{ name: "glob", input: { pattern: "src-none/*" } }])
       e.replies.push(one, one, one)
       const sent = e.bodies.length
       const steps = await e.store.create({ directory: e.project, model: e.model })
@@ -972,7 +972,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       const before = (await e.store.get(manual.id))?.compacted?.at
       const refused = await e.runner.compact(manual.id).then(() => "", (error: Error) => error.message)
       check("a sentence is refused as a summary", refused.includes("did not return a summary") && (await e.store.get(manual.id))?.compacted?.at === before, refused)
-      e.summaries.push(calls([{ name: "list", input: { path: "." } }]))
+      e.summaries.push(calls([{ name: "glob", input: { pattern: "*" } }]))
       const called = await e.runner.compact(manual.id).then(() => "", (error: Error) => error.message)
       check("so is a tool call while summarising", called.includes("called a tool"), called)
 
@@ -1153,7 +1153,7 @@ export async function roundFiveChecks(check: Check, section: (name: string) => v
       check("with linked worktrees already there, it says to work in a new one", wireText(e.bodies.at(-1)).includes("create a new worktree for the task"))
 
       const reads = await e.store.create({ directory: e.project, model: e.model })
-      e.replies.push(calls([{ name: "list", input: { path: "." } }]))
+      e.replies.push(calls([{ name: "glob", input: { pattern: "*" } }]))
       await e.runner.prompt({ sessionID: reads.id, text: "WORKTREE only reads" })
       await e.idle(reads.id)
       check("reading alone brings no note", !wireText(e.bodies.at(-1)).includes("main worktree") && !(await e.store.get(reads.id))?.worktreeNotice)

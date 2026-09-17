@@ -251,7 +251,7 @@ const MAX_STEPS_PROMPT = [
 const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
-const PLAN_AWARE = new Set(["write", "edit", "multiedit", "notebook_edit", "plan_exit"])
+const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -2909,7 +2909,7 @@ export class SessionRunner {
    * that failed changed nothing worth a notice.
    */
   private async changedMainWorktree(part: ToolPart, directory: string): Promise<string | undefined> {
-    if (["write", "edit", "multiedit", "notebook_edit"].includes(part.name)) {
+    if (["write", "edit", "notebook_edit"].includes(part.name)) {
       const named = part.input?.file_path ?? part.input?.notebook_path
       if (typeof named !== "string") return undefined
       const top = await worktreeTop(path.dirname(path.resolve(directory, named)))

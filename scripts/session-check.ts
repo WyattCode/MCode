@@ -1763,9 +1763,9 @@ async function main(): Promise<void> {
     await asking
     check("and answering it lets the call through", settled)
 
-    await say({ list: "allow" })
+    await say({ glob: "allow" })
     let quiet = false
-    await call("list", "list", { path: "src" }).then(() => (quiet = true))
+    await call("glob", "glob", { pattern: "src/*" }).then(() => (quiet = true))
     check("an allowed one asks nothing", quiet && watch.seen.length === 1, `${watch.seen.length} raised`)
 
     /*

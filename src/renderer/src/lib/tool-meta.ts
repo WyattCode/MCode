@@ -44,13 +44,12 @@ export const OUTPUT_CAP = 3000
 // memory: named in MiMo's tables; history, cron and automation_update are not, and read through the fallbacks.
 // speak: MCode's own tool for the voice feedback MiMo does in the cloud, so its words are this app's.
 const LABELLED = new Set(["read", "edit", "write", "bash", "grep", "glob", "list", "webfetch", "todowrite", "invalid", "actor", "pdf_locate", "present_files", "contacts", "skill", "skill_search", "memory", "speak"])
-const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit", multiedit: "edit" }
+const SPEAKS_AS: Record<string, string> = { apply_patch: "edit", patch: "edit" }
 
 /** The tools this app ships, whose titles are their own rather than their input. */
 const BUILT_IN = new Set([
   "read",
   "edit",
-  "multiedit",
   "write",
   "apply_patch",
   "patch",
@@ -134,7 +133,6 @@ export function stepVerb(part: ToolPart, state: StepState): string {
 const ICONS: Record<string, StepIconName> = {
   read: "read",
   edit: "edit",
-  multiedit: "edit",
   apply_patch: "edit",
   patch: "edit",
   write: "write",
@@ -186,7 +184,6 @@ export function stepTitle(part: ToolPart): string {
   switch (part.name) {
     case "read":
     case "edit":
-    case "multiedit":
     case "write":
       return part.title || text(input.path) || text(input.filePath) || text(input.file_path)
     case "bash":

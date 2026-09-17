@@ -24,7 +24,7 @@ export interface EditedFiles {
   del: number
 }
 
-const EDITING = new Set(["edit", "multiedit", "write", "patch"])
+const EDITING = new Set(["edit", "write", "patch"])
 
 function isAbsolute(file: string) {
   return file.startsWith("/") || file.startsWith("\\\\") || /^[a-zA-Z]:[\\/]/.test(file)

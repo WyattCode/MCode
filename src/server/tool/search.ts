@@ -2,13 +2,11 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import type { ToolDefinition } from "./types"
 import { ToolError } from "./types"
-import { IGNORED, relative, resolvePath } from "./fs-util"
+import { relative, resolvePath } from "./fs-util"
 import { globMatcher, walkFiles } from "./ignore"
 
 /** MiMo lists at most 100 files for a glob and 100 matches for a grep. */
 const LIMIT = 100
-/** The list tool's own ceiling, which MiMo has no counterpart for. */
-const MAX_LIST_ENTRIES = 200
 const MAX_LINE_LENGTH = 2000
 
 async function mtimeOf(file: string): Promise<number | undefined> {
@@ -23,7 +21,7 @@ export const GlobTool: ToolDefinition = {
     "A pattern with no slash in it matches file names at any depth, so `*.ts` finds every TypeScript file under the folder searched; one with a slash is matched against the path from that folder down.",
     "path narrows the search to one folder, the project root when left out. Hidden files are included; what .gitignore excludes is not searched.",
     "Results are absolute paths, most recently changed first, at most 100 - the newest first ordering is what makes it useful for finding what a build or another tool just wrote.",
-    "Use it when you know something about the name. When you know something about the contents instead, use grep; to see how a folder is laid out, use list.",
+    "Use it when you know something about the name. When you know something about the contents instead, use grep; to see what one folder holds, read the folder.",
   ].join("\n"),
   permission: "glob",
   parameters: {
@@ -150,54 +148,5 @@ export const GrepTool: ToolDefinition = {
     }
     if (truncated) lines.push("", `(${LIMIT} of ${total} matches shown. Narrow the path or the pattern to see the rest.)`)
     return { output: lines.join("\n"), title: pattern, metadata: { matches: total, truncated } }
-  },
-}
-
-export const ListTool: ToolDefinition = {
-  name: "list",
-  description: [
-    "List a folder as an indented tree, depth levels deep (two when left out).",
-    "Use it to orient yourself in a part of the project you have not seen: what the top level holds, how a package is laid out, whether the file you expect is where you expect it.",
-    "When you already know what you are looking for, glob and grep answer faster and in fewer lines. A deep listing of a large tree is a lot of text for very little; raise depth only where you need it.",
-  ].join("\n"),
-  permission: "list",
-  parameters: {
-    type: "object",
-    properties: {
-      path: { type: "string", description: "Directory to list, defaults to the project root" },
-      depth: { type: "number", description: "How many levels to descend, default 2" },
-    },
-    additionalProperties: false,
-  },
-  async execute(input, context) {
-    const root = input.path ? await resolvePath(context, String(input.path)) : path.resolve(context.directory)
-    const maxDepth = Math.max(1, Math.min(5, Number(input.depth ?? 2)))
-    const lines: string[] = []
-    let count = 0
-
-    async function descend(dir: string, depth: number, indent: string) {
-      if (depth > maxDepth || count >= MAX_LIST_ENTRIES) return
-      const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
-      const sorted = entries
-        .filter((entry) => !entry.name.startsWith(".") && !IGNORED.has(entry.name))
-        .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
-      for (const entry of sorted) {
-        if (count >= MAX_LIST_ENTRIES) return
-        count++
-        lines.push(`${indent}${entry.name}${entry.isDirectory() ? "/" : ""}`)
-        if (entry.isDirectory()) await descend(path.join(dir, entry.name), depth + 1, indent + "  ")
-      }
-    }
-
-    const stat = await fs.stat(root).catch(() => undefined)
-    if (!stat?.isDirectory()) throw new ToolError(`Not a directory: ${relative(context.directory, root)}`)
-    await descend(root, 1, "")
-
-    const display = relative(context.directory, root) || "."
-    return {
-      output: `${display}/\n${lines.join("\n")}` + (count >= MAX_LIST_ENTRIES ? "\n\n(truncated)" : ""),
-      title: display,
-      metadata: { path: display, entries: count },
-    }
   },
 }
