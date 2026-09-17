@@ -107,9 +107,14 @@ const SERVER_CODE = /exhausted|unavailable/i
 const SERVER_WIRE_CODES = new Set(["overloaded_error", "server_is_overloaded", "server_error"])
 
 /**
- * The codes MiMo marks explicitly not retryable, so a later branch cannot pick
- * them up: a spent quota, a plan that does not include this model, and a prompt
- * the provider refuses to take. Each fails the same way every time.
+ * The codes MiMo marks explicitly not retryable: a spent quota, a plan that
+ * does not include this model, and a prompt the provider refuses to take. Each
+ * fails the same way every time, so waiting only delays saying so.
+ *
+ * A guard rather than the only thing making them terminal - none of them
+ * matches a branch below either, as removing this line and watching the checks
+ * still pass shows. It is here so that widening the branches below cannot
+ * quietly start retrying a failure MiMo names as final.
  */
 const TERMINAL_WIRE_CODES = new Set(["insufficient_quota", "usage_not_included", "invalid_prompt"])
 
