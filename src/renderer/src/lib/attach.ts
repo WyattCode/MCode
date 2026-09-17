@@ -24,10 +24,10 @@ export const MAX_BYTES = 50 * 1024 * 1024
 /**
  * The most a file on disk may weigh and still have its bytes carried too.
  *
- * MiMo's desktop picker inlines a picture under 8 MB as a data URL and passes
- * anything larger by path alone. Here the bytes are only ever for the
- * thumbnail beside the box - the model is served from the path either way - so
- * a large picture keeps its path and loses nothing but the preview.
+ * MiMo's desktop picker reads a picture under 8 MB into a data URL beside the
+ * path and passes anything larger by path alone. Here the bytes are only ever
+ * for the thumbnail beside the box - the model is served from the path either
+ * way - so a large picture keeps its path and loses nothing but the preview.
  */
 export const THUMBNAIL_MAX = 8 * 1024 * 1024
 
@@ -100,10 +100,23 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
 
   for (const file of files) {
     const absolute = diskPath(file)
-    const thumbnailed = (file.type.startsWith("image/") || file.type.startsWith("video/")) && file.size <= THUMBNAIL_MAX
-    if (absolute && !thumbnailed) {
-      // MiMo's attachment by path: no copy in the message, no size cap.
-      attachments.push({ path: absolute, mime: file.type, data: "", byPath: true })
+    if (absolute) {
+      /*
+       * MiMo's attachment by path: no copy in the message, no size cap. A
+       * picture or a video small enough to preview also carries its bytes, but
+       * only so the box can draw a thumbnail - `byPath` keeps the model served
+       * from the path, and the draft on disk drops the bytes again.
+       */
+      const thumbnailed = (file.type.startsWith("image/") || file.type.startsWith("video/")) && file.size <= THUMBNAIL_MAX
+      let data = ""
+      if (thumbnailed) {
+        try {
+          data = await base64(file)
+        } catch {
+          // A thumbnail is worth nothing next to the path; attach it without one.
+        }
+      }
+      attachments.push({ path: absolute, mime: file.type, data, byPath: true })
       continue
     }
     /*
@@ -113,7 +126,7 @@ export async function readFiles(files: readonly File[]): Promise<Taken> {
      * rather than a made-up one, and no cap applies to it. Its bytes are kept
      * beside the path for the thumbnail.
      */
-    if (!absolute && file.type.startsWith("image/")) {
+    if (file.type.startsWith("image/")) {
       try {
         const data = await base64(file)
         const saved = await window.mcode.savePastedImage(`data:${file.type};base64,${data}`)
