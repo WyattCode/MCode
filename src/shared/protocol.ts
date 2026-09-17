@@ -211,8 +211,18 @@ export interface ReasoningPart {
   id: string
   text: string
   time: { created: number; completed?: number }
-  /** Anthropic's signature over the thinking, kept so the block can be sent back to the same model, as MiMo keeps it. */
+  /**
+   * The provider's own token for handing this thinking back to it: Anthropic's
+   * signature over the block, or the Responses API's `encrypted_content`. MiMo
+   * keeps both for the same reason and only ever returns them to the model that
+   * wrote them.
+   */
   signature?: string
+  /**
+   * The Responses API's id for the reasoning item this belongs to, sent back
+   * beside the encrypted content so the item is recognised as the same one.
+   */
+  itemID?: string
 }
 
 export type AssistantPart = TextPart | ReasoningPart | ToolPart
