@@ -27,6 +27,7 @@ import { searchFolder, searchTree } from "../src/server/handlers"
 import { packageTarget } from "./package-target.mjs"
 import { dataDirs, desktopId, entryIcon, linuxIconSync, type IconSyncHost } from "../src/main/linux-icon-sync"
 import sharp from "sharp"
+import { appChords, pageKeyAction, type PageKeyInput } from "../src/shared/browser-page"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -115,6 +116,16 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     check("M10-2: Ctrl+Shift+Tab on Windows keeps its stored chord", chordOf(back, "win32") === controlChord("Shift+Tab", "win32") && controlChord("Shift+Tab", "win32") === "Ctrl+Shift+Tab")
     check("M10-3: a Mac draws the recent-chat chord with the Control glyph", formatChord(controlChord("Shift+Tab", "darwin"), "darwin") === "⌃⇧⇥", formatChord(controlChord("Shift+Tab", "darwin"), "darwin"))
     check("M10-3: a Mac draws mod as the command glyph", formatChord("Ctrl+Alt+P", "darwin") === "⌥⌘P")
+
+    // Inside a browser tab the page is asked first; the same split decides what reaches the window.
+    const press = (key: string, code: string, mods: Partial<PageKeyInput>): PageKeyInput => ({ type: "keyDown", key, code, control: false, shift: false, alt: false, meta: false, ...mods })
+    check("M10-2: in a page on a Mac, Control+K stays with the page", pageKeyAction(press("k", "KeyK", { control: true }), new Set(), "darwin").kind === "none")
+    check("M10-2: and Command+K reaches the window", pageKeyAction(press("k", "KeyK", { meta: true }), new Set(), "darwin").kind === "forward")
+    check("M10-2: Control+` and Control+Tab reach it, Command+` does not", pageKeyAction(press("`", "Backquote", { control: true }), new Set(), "darwin").kind === "forward" && pageKeyAction(press("Tab", "Tab", { control: true, shift: true }), new Set(), "darwin").kind === "forward" && pageKeyAction(press("`", "Backquote", { meta: true }), new Set(), "darwin").kind === "none")
+    check("M10-2: on Windows Ctrl+` and Ctrl+Tab still reach it, the Windows key does not", pageKeyAction(press("`", "Backquote", { control: true }), new Set(), "win32").kind === "forward" && pageKeyAction(press("Tab", "Tab", { control: true }), new Set(), "win32").kind === "forward" && pageKeyAction(press("k", "KeyK", { meta: true }), new Set(), "win32").kind === "none")
+    check("M10-2: the page's list names the terminal chord as the window stores it", appChords("darwin").includes(controlChord("`", "darwin")) && appChords("win32").includes(controlChord("`", "win32")) && appChords("darwin").includes(controlChord("Shift+Tab", "darwin")))
+    const pageModule = await fs.readFile(path.join(root, "src/main/browser-page.ts"), "utf8")
+    check("M10-2: the page asks with this system's platform", /pageKeyAction\(input, boundChords, process\.platform\)/.test(pageModule))
 
     const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
     const handler = appVue.slice(appVue.indexOf("function onKeydown("), appVue.indexOf("const menuCommands"))

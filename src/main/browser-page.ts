@@ -112,7 +112,7 @@ export function wirePage(contents: WebContents, hooks: PageHooks): void {
    * handler as if it had been pressed there.
    */
   contents.on("before-input-event", (event, input) => {
-    const action = pageKeyAction(input, boundChords)
+    const action = pageKeyAction(input, boundChords, process.platform)
     if (action.kind === "none") return
     event.preventDefault()
     if (action.kind === "reload") {

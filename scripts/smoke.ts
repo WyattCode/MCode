@@ -4464,7 +4464,7 @@ async function main() {
     const keysIn = (text: string) => [...text.matchAll(/^\s+(?:"([^"]+)"|([a-z0-9]))\s*:/gm)].map((match) => (match[1] ?? match[2]).toUpperCase())
     const plainKeys = keysIn(block("const handlers: Record<string, () => void> = {"))
     const shiftedKeys = keysIn(block("const shifted: Record<string, () => void> = {"))
-    const altKeys = [...appSource.matchAll(/mod && event\.altKey && event\.key\.toLowerCase\(\) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
+    const altKeys = [...appSource.matchAll(/mod && event\.altKey && (?:event\.key\.toLowerCase\(\)|letter) === "([a-z])"/g)].map((match) => match[1].toUpperCase())
     check("App.vue's handler tables were found", plainKeys.length > 12 && shiftedKeys.length > 6 && altKeys.length > 6, { plainKeys, shiftedKeys, altKeys })
     const wanted = [
       ...plainKeys.filter((key) => key !== "F" && key !== "R").map((key) => `Ctrl+${key}`),
