@@ -19,6 +19,7 @@ import { systemPrompt } from "../src/server/session/prompt"
 import { fcitxEnvironment, fromXinputrc } from "../src/main/linux-ime"
 import { WINDOWS_APPS, docApps, isKnownOpenWith, openApps } from "../src/shared/open-app"
 import { findBundle, installedDocApps, launchTarget, macApplicationFolders } from "../src/main/installed-apps"
+import { MENU_COMMANDS, acceleratorOf, menuAccelerator, readMenuKeys } from "../src/main/menu-keys"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -290,5 +291,39 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     check("M10-18: the corner is 44 from the left on Windows and Linux", /\bleft: 44px;/.test(rule(".ip-corner")) && !/inset-inline-end/.test(rule(".ip-corner")), rule(".ip-corner"))
     check("M10-18: and 44 from the right on macOS", /\bright: 44px;/.test(rule(".ip-corner.mac")) && /\bleft: auto;/.test(rule(".ip-corner.mac")), rule(".ip-corner.mac"))
     check("M10-18: only macOS takes the right side", /class="ip-corner" :class="\{ mac: app\.platform === 'darwin' \}"/.test(preview))
+  }
+
+  section("Round 10 (platforms): M10-14 / M10-15 the macOS menu bar")
+  {
+    const menu = await fs.readFile(path.join(root, "src/main/menu.ts"), "utf8")
+    const windowMenu = menu.slice(menu.indexOf('L("menu.window"'), menu.indexOf("Menu.setApplicationMenu"))
+    check("M10-14: macOS minimizes with the role, which brings Cmd+M", /isMac\s*\?\s*\[\s*\{ role: "minimize"/.test(windowMenu) && /\{ role: "zoom"/.test(windowMenu), windowMenu.slice(0, 300))
+    check("M10-14: Windows and Linux keep the written-out rows", /: \[\s*\{ label: L\("menu\.minimize", "Minimize"\), click:/.test(windowMenu))
+
+    const none = { binds: {}, recording: false }
+    check("M10-15: the built-in chords when nothing is rebound", menuAccelerator("newTask", none, "darwin") === "CmdOrCtrl+N" && menuAccelerator("settings", none, "darwin") === "CmdOrCtrl+,")
+    const moved = { binds: { [MENU_COMMANDS.newTask.id]: "Ctrl+Shift+J", [MENU_COMMANDS.close.id]: "" }, recording: false }
+    check("M10-15: a rebound command shows its new chord", menuAccelerator("newTask", moved, "darwin") === "CmdOrCtrl+Shift+J")
+    check("M10-15: a deleted chord shows none", menuAccelerator("close", moved, "darwin") === undefined)
+    check("M10-15: while recording, no item has a chord", (["settings", "newTask", "openFolder", "close"] as const).every((item) => menuAccelerator(item, { binds: {}, recording: true }, "darwin") === undefined))
+    check("M10-15: the Control key is Control on a Mac and Super elsewhere", acceleratorOf("Alt+Shift+Meta+↑", "darwin") === "Alt+Shift+Control+Up" && acceleratorOf("Meta+K", "linux") === "Super+K")
+    check("M10-15: the plus key is spelled for Electron", acceleratorOf("Ctrl++", "darwin") === "CmdOrCtrl+Plus" && acceleratorOf("Ctrl+Enter", "win32") === "CmdOrCtrl+Return")
+    check("M10-15: an unknown modifier is no accelerator", acceleratorOf("Hyper+K", "darwin") === undefined && acceleratorOf("", "darwin") === undefined)
+    check("M10-15: the menu's command ids are the renderer's", ["app.settings", "session.new", "project.open", "window.close"].every((id) => Object.values(MENU_COMMANDS).some((entry) => entry.id === id)))
+    const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    for (const entry of Object.values(MENU_COMMANDS)) {
+      // The command's own entry, from its id to its run.
+      const at = appVue.indexOf(`id: "${entry.id}"`)
+      const body = at < 0 ? "" : appVue.slice(at, appVue.indexOf("run:", at))
+      const hint = /hint: "([^"]+)"/.exec(body)?.[1]
+      check(`M10-15: ${entry.id} has the same built-in chord in the window and the menu`, hint === entry.chord, hint)
+    }
+    check("M10-15: the IPC takes only strings and a boolean", readMenuKeys({ binds: { a: "Ctrl+A", b: 3 }, recording: true })?.binds.b === undefined && readMenuKeys({ binds: {}, recording: "yes" }) === undefined && readMenuKeys(null) === undefined)
+    for (const item of ["settings", "newTask", "openFolder", "close"]) {
+      check(`M10-15: the ${item} item takes its chord from the bindings`, new RegExp(`\\.\\.\\.command\\("${item}"\\)`).test(menu))
+    }
+    const settings = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    check("M10-15: recording tells the menu, and so does stopping", /recordingChord\.value = true/.test(settings) && /recordingChord\.value = false/.test(settings))
+    check("M10-15: the window sends the bindings to the menu", /window\.mcode\.menuKeys\?\.\(\{ binds: \{ \.\.\.\(binds \?\? \{\}\) \}, recording \}\)/.test(appVue))
   }
 }

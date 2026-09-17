@@ -3,6 +3,7 @@ import { label } from "./labels"
 import { applyZoom } from "./zoom"
 import { APP_NAME, quitPress } from "./desktop-rules"
 import pkg from "../../package.json"
+import { menuAccelerator, type MenuCommand, type MenuKeys } from "./menu-keys"
 
 /* When the first Cmd+Q was pressed, while it is still waiting for a second. */
 let quitArmedAt: number | undefined
@@ -61,6 +62,21 @@ function shown(accelerator: string): MenuItemConstructorOptions {
   return { accelerator, registerAccelerator: false }
 }
 
+/* The bindings the menu was last built with; a relabel rebuilds with the same ones. */
+let keys: MenuKeys = { binds: {}, recording: false }
+
+/**
+ * A command item's chord, as MiMo's menu takes it: the one the command answers
+ * to now, and none while a chord is being recorded. Claimed only on macOS,
+ * where the menu is the menu bar and registers its chords anyway; elsewhere it
+ * is shown, for the reason `shown` gives.
+ */
+function command(item: MenuCommand): MenuItemConstructorOptions {
+  const accelerator = menuAccelerator(item, keys, process.platform)
+  if (!accelerator) return {}
+  return process.platform === "darwin" ? { accelerator } : shown(accelerator)
+}
+
 /**
  * Grows the window to fill the screen, or puts it back.
  *
@@ -74,7 +90,9 @@ function toggleMaximize(): void {
   else window.maximize()
 }
 
-export function buildMenu(): void {
+/** Rebuilds the menu; new bindings (and whether one is being recorded) replace the last ones. */
+export function buildMenu(next?: MenuKeys): void {
+  if (next) keys = next
   /** The translated label, or the English written here as the fallback. */
   const L = label
 
@@ -93,7 +111,7 @@ export function buildMenu(): void {
       submenu: [
         /* Not Electron's stock about panel: MiMo's version box, on every platform. */
         { label: L("menu.about", "About MCode"), click: () => void showAbout() },
-        { label: L("menu.settings", "Settings"), accelerator: "CmdOrCtrl+,", click: send("menu:settings") },
+        { label: L("menu.settings", "Settings"), ...command("settings"), click: send("menu:settings") },
         /* Hiding is a macOS idea; elsewhere these roles would be rows that do nothing. */
         ...(isMac
           ? ([
@@ -126,16 +144,16 @@ export function buildMenu(): void {
     {
       label: L("menu.file", "File"),
       submenu: [
-        { label: L("menu.newTask", "New Task"), ...shown("CmdOrCtrl+N"), click: send("menu:new-session") },
+        { label: L("menu.newTask", "New Task"), ...command("newTask"), click: send("menu:new-session") },
         separator,
-        { label: L("menu.openFolder", "Open Folder"), ...shown("CmdOrCtrl+O"), click: send("menu:open-project") },
+        { label: L("menu.openFolder", "Open Folder"), ...command("openFolder"), click: send("menu:open-project") },
         separator,
         /*
          * MiMo's Ctrl+W / Cmd+W closes the window, which hides to the tray when
          * that is on. Shown rather than claimed: the window answers the key itself,
          * after its check for an open dialog.
          */
-        { label: L("menu.fileClose", "Close"), ...shown("CmdOrCtrl+W"), click: () => BrowserWindow.getFocusedWindow()?.close() },
+        { label: L("menu.fileClose", "Close"), ...command("close"), click: () => BrowserWindow.getFocusedWindow()?.close() },
       ],
     },
     {
@@ -192,14 +210,20 @@ export function buildMenu(): void {
     {
       label: L("menu.window", "Window"),
       /*
-       * Written out rather than taken from the minimize and zoom roles. A role
-       * brings the platform's own chord with it - Ctrl+M on Windows, Cmd+M on
-       * macOS - and the app has already spent that key on the model picker.
+       * On macOS MiMo's roles, which bring Cmd+M (the model picker is
+       * Cmd+Shift+M, so the chord is free) and the system's own zoom. Written
+       * out elsewhere, where the menu is never drawn and a role would register
+       * Ctrl+M behind the window's back.
        */
-      submenu: [
-        { label: L("menu.minimize", "Minimize"), click: () => BrowserWindow.getFocusedWindow()?.minimize() },
-        { label: L("menu.zoomWindow", "Zoom"), click: toggleMaximize },
-      ],
+      submenu: isMac
+        ? [
+            { role: "minimize", label: L("menu.minimize", "Minimize") },
+            { role: "zoom", label: L("menu.zoomWindow", "Zoom") },
+          ]
+        : [
+            { label: L("menu.minimize", "Minimize"), click: () => BrowserWindow.getFocusedWindow()?.minimize() },
+            { label: L("menu.zoomWindow", "Zoom"), click: toggleMaximize },
+          ],
     },
   ]
 

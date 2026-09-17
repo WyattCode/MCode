@@ -62,7 +62,7 @@ import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
 import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
-import { chordOf, controlChord, controlHeld, keyOfCode, modHeld } from "./lib/keys"
+import { chordOf, controlChord, controlHeld, keyOfCode, modHeld, recordingChord } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
 import { projectOf } from "./lib/session-project"
 import FindBar from "./components/FindBar.vue"
@@ -490,6 +490,13 @@ const rebound = computed(() => {
   }
   return out
 })
+/* The application menu names the chords as bound (MiMo's menu does), and none while one is being recorded. */
+watch(
+  [() => app.config?.keybinds, recordingChord],
+  ([binds, recording]) => window.mcode.menuKeys?.({ binds: { ...(binds ?? {}) }, recording }),
+  { immediate: true, deep: true },
+)
+
 /**
  * Built-in chords whose command has been moved somewhere else.
  *

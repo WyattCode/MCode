@@ -161,6 +161,9 @@ export function formatChord(chord: string, platform: string): string {
   return mods.sort((a, b) => order.indexOf(a) - order.indexOf(b)).map((part) => name[part]).join("") + shown
 }
 
+/** Whether the shortcuts page is recording a chord; the application menu drops its own chords meanwhile. */
+export const recordingChord = ref(false)
+
 /* The system chords are drawn for, set once the main process has said which it is. */
 const shownOn = ref("")
 

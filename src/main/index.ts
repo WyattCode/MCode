@@ -21,6 +21,7 @@ import { LINK_SCHEME, linkInArgs, parseSessionLink } from "@shared/session-link"
 import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
+import { readMenuKeys } from "./menu-keys"
 import { SHOW_FALLBACK_MS } from "./renderer-health"
 import {
   activate,
@@ -1505,6 +1506,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:screen-reader", () => app.accessibilitySupportEnabled)
   app.on("accessibility-support-changed", (_event, enabled) => {
     for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send("mcode:screen-reader", enabled)
+  })
+
+  /* MiMo's menu follows the shortcuts as bound, and drops them while one is being recorded. */
+  ipcMain.on("mcode:menu-keys", (_event, raw: unknown) => {
+    const keys = readMenuKeys(raw)
+    if (keys) buildMenu(keys)
   })
 
   ipcMain.on("mcode:window", (event, action: "minimize" | "maximize" | "close") => {
