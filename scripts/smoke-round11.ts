@@ -7,6 +7,7 @@
  * guard - a quit path, a lock, a fan-out rule - only show up when two things
  * happen at once, which a probe can stage but a smoke run cannot.
  */
+import { execFileSync } from "node:child_process"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -14,6 +15,7 @@ import type { Check } from "./smoke-round5"
 import { RunQueue, LEASE_MS, MAX_ATTEMPTS } from "../src/server/automation/run-queue"
 import { AutomationService, type AutomationDeps } from "../src/server/automation/service"
 import { readTaskNotice } from "../src/main/desktop-rules"
+import { SNAPSHOT_GIT_TIMEOUT_MS, SNAPSHOT_QUEUE_TIMEOUT_MS, Snapshots } from "../src/server/session/snapshot"
 import type { Message, ModelRef, ServerEvent, SessionInfo } from "@shared/protocol"
 
 /** Every text source under a folder, as bytes, so control characters survive. */
@@ -186,6 +188,62 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     const saved = JSON.parse(await fs.readFile(deps.file, "utf8")) as { runQueue?: { entries: unknown[] } }
     check("the queue is kept beside the tasks, so a quit does not lose a due run", Array.isArray(saved.runQueue?.entries), saved.runQueue)
     await fs.rm(temp, { recursive: true, force: true })
+  }
+
+  section("Round 11 (N11-6/N11-7): the shadow repository's lock and its timeout")
+  {
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-snap-"))
+    const store = path.join(temp, "snapshot")
+    const project = path.join(temp, "project")
+    await fs.mkdir(project, { recursive: true })
+    await fs.writeFile(path.join(project, "a.txt"), "one", "utf8")
+    // The shadow repository only scans a project that is itself under version control.
+    execFileSync("git", ["init", "-q"], { cwd: project, windowsHide: true })
+    const snapshots = new Snapshots(store)
+
+    // A turn is recording here, so the store may not be pulled out from under it.
+    const recording = snapshots.begin(project)
+    await recording.ready()
+    check("a project being recorded refuses to have its store collected", (await snapshots.collect(project)) === false)
+    check("and the store is still there", (await fs.readdir(store)).length > 0, await fs.readdir(store))
+
+    await fs.writeFile(path.join(project, "a.txt"), "two", "utf8")
+    const recorded = await recording.finish()
+    check("the turn that held it is recorded as usual", recorded.unavailable === undefined && recorded.files.some((file) => file.path.endsWith("a.txt")), recorded)
+    check("once nothing is recording, the store is collected", (await snapshots.collect(project)) === true && (await fs.readdir(store)).length === 0)
+
+    /*
+     * info/attributes is the sentinel: its presence is what says the store is
+     * finished rather than half built. A store missing it is rebuilt from
+     * scratch, which is exactly what a half-removed one needs.
+     */
+    const rebuilt = new Snapshots(store)
+    const second = rebuilt.begin(project)
+    await second.ready()
+    await second.finish()
+    const gitDir = (await fs.readdir(store)).find((entry) => !entry.endsWith(".json")) ?? ""
+    await fs.rm(path.join(store, gitDir, "info", "attributes"), { force: true })
+    await fs.rm(path.join(store, gitDir, "objects"), { recursive: true, force: true })
+    const third = new Snapshots(store)
+    const after = third.begin(project)
+    await after.ready()
+    await fs.writeFile(path.join(project, "a.txt"), "three", "utf8")
+    const remade = await after.finish()
+    check("a store whose sentinel is gone is built again rather than handed back broken", remade.unavailable === undefined, remade)
+
+    const source = await read("src/server/session/snapshot.ts")
+    const collectBody = source.slice(source.indexOf("async collect(directory: string)"))
+    const sentinelAt = collectBody.indexOf('fs.rm(path.join(gitDir, "info", "attributes")')
+    const wholeAt = collectBody.indexOf("fs.rm(gitDir, { recursive: true")
+    check("and a collection removes that sentinel before anything else, so an interrupted one is recoverable", sentinelAt > 0 && wholeAt > sentinelAt, { sentinelAt, wholeAt })
+    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
+
+    check(
+      "every call the shadow repository makes is bounded, and the queue can be given up on",
+      SNAPSHOT_GIT_TIMEOUT_MS > 0 && SNAPSHOT_QUEUE_TIMEOUT_MS > SNAPSHOT_GIT_TIMEOUT_MS && /child\.kill\(\)/.test(source) && /raceLock\(SNAPSHOT_QUEUE_TIMEOUT_MS/.test(source),
+    )
+    const handlers = await read("src/server/handlers.ts")
+    check("and a delete waits for the turn it stopped before collecting its store", /await waitForIdle\(runtime, request\.sessionID\)/.test(handlers))
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

@@ -221,6 +221,27 @@ async function shellGroup(runtime: Runtime, request: { sessionID?: string; direc
  * without handling it is a type error.
  */
 
+/** How long a delete waits for the turn it just stopped to actually be over (N11-6). */
+export const IDLE_WAIT_MS = 5000
+
+/**
+ * Waits for a conversation's turn to really finish after it has been stopped.
+ *
+ * `abort` only signals: the turn's own ending - the shadow repository's leave,
+ * the last `add -A` - runs afterwards, and deleting the project's store under it
+ * is what N11-6 is about. Bounded, and the collection refuses on its own if a
+ * recording is still open, so a turn that will not stop costs a leftover store
+ * rather than a delete that never returns.
+ */
+async function waitForIdle(runtime: Runtime, sessionID: string, within = IDLE_WAIT_MS): Promise<boolean> {
+  const until = Date.now() + within
+  while (runtime.runner.isRunning(sessionID)) {
+    if (Date.now() >= until) return false
+    await new Promise((resolve) => setTimeout(resolve, 25))
+  }
+  return true
+}
+
 export async function handle(runtime: Runtime, request: Request, owner?: ShellOwner): Promise<unknown> {
   switch (request.type) {
     case "session.list":
@@ -448,6 +469,15 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "session.delete": {
       runtime.runner.abort(request.sessionID)
+      /*
+       * abort only signals; the turn's own finish - Recording.finish, leave,
+       * add -A - carries on afterwards. Collecting the project's store under it
+       * is what N11-6 is about, so the delete waits for the turn to really be
+       * over. Bounded, because a turn that will not stop must not hold the
+       * delete open: the collection below refuses on its own if one is still
+       * recording.
+       */
+      await waitForIdle(runtime, request.sessionID)
       // The project it worked in, read before the record goes, so its store can be collected after.
       const worked = (await runtime.sessions.get(request.sessionID).catch(() => undefined))?.directory
       // subagents: a conversation's subagents go with it, background ones stopped first; nothing else could reach them.
@@ -478,7 +508,8 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
         }
         const remaining = await runtime.sessions.list()
         if (!remaining.some((session) => place(session.directory) === place(worked))) {
-          await runtime.runner.checkpoints.collect(worked)
+          const collected = await runtime.runner.checkpoints.collect(worked)
+          if (!collected) console.warn(`[snapshot] ${worked} is still being recorded; its store was left in place`)
         }
       }
       return {} satisfies Handled<"session.delete">
