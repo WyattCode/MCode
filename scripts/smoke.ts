@@ -8623,7 +8623,8 @@ async function sessionChatChecks(root: string, project: string) {
   })())
   check("a stopped turn with nothing written says it was stopped", (() => {
     const outcome = replyIn([asked("u1", "q"), replied("a1", { finish: "aborted" })], "u1")
-    return !outcome.ok && outcome.error.includes("stopped")
+    // Round 10 (T10-55): said in Chinese.
+    return !outcome.ok && outcome.error.includes("被停止")
   })())
   check("chains stop at MiMo's five hops", CHAT_HOPS === 5)
 
