@@ -2284,7 +2284,15 @@ export type ServerEvent =
    */
   | { type: "session.reverted"; sessionID: string }
   /** automation: a scheduled task's run started in a conversation, or its turn ended and whether the user is told. */
-  | { type: "automation.run"; sessionID: string; phase: "started" | "finished"; notify?: boolean }
+  | {
+      type: "automation.run"
+      sessionID: string
+      /** `queued` says the run is due but its conversation is busy, so it is waiting rather than lost (N11-22). */
+      phase: "started" | "queued" | "finished"
+      notify?: boolean
+      /** What became of the run, so the notification can say a failure is a failure (N11-3). */
+      outcome?: "succeeded" | "failed" | "skipped"
+    }
   /** session chat: every conversation's messages in flight, whole, whenever one changes. */
   | { type: "session.chatLinks"; links: Record<string, ChatLink[]> }
   /** Incremental append to a part already announced via message.updated. */

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "
 import { execFile, execFileSync, spawnSync } from "node:child_process"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { app, BrowserWindow, clipboard, crashReporter, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
+import { app, BrowserWindow, clipboard, crashReporter, ipcMain, dialog, shell, nativeImage, nativeTheme, Notification, powerMonitor, powerSaveBlocker, screen, Tray, Menu, session, systemPreferences, type Rectangle } from "electron"
 import { PowerHold } from "./power"
 import { PRUNE_DELAY_MS, pruneCrashDumps, startLocalCrashDumps } from "./crash-dumps"
 import { refreshEnvironment } from "./shell-env"
@@ -30,6 +30,7 @@ import {
   captureConsole,
   currentWindow,
   markClosing,
+  onRecoveryGaveUp,
   recordProcessError,
   relaunch,
   setRecoveryHost,
@@ -243,6 +244,13 @@ function saveBootPrefs(patch: Partial<BootPrefs>): Promise<void> {
 }
 
 let backend: Backend | undefined
+/*
+ * The same backend before it has finished starting. `backend` is only assigned
+ * once startBackend resolves, and MCP's stdio children are already being
+ * spawned well before that - so a quit inside the start window used to skip the
+ * whole teardown and orphan them (N11-30).
+ */
+let startingBackend: Promise<Backend> | undefined
 
 const windows = new Set<BrowserWindow>()
 
@@ -682,8 +690,7 @@ function createWindow(show = true): BrowserWindow {
    */
   window.on("session-end", () => {
     console.info("[quit] session-end (OS shutdown or logoff)")
-    quitting = true
-    beginIntentionalQuit()
+    noteOsQuit()
   })
 
   /*
@@ -719,7 +726,7 @@ function createWindow(show = true): BrowserWindow {
   window.on("close", (event) => {
     const others = [...windows].filter((entry) => entry !== window && !entry.isDestroyed()).length
     const hide = closeHidesToTray({
-      quitting,
+      quitting: leaving(),
       otherWindows: others,
       platform: process.platform,
       trayEnabled: Boolean(tray),
@@ -815,6 +822,7 @@ app.whenReady().then(async () => {
     runtime.bus.subscribe(() => powerHold.sync(runtime.runner.busySessions()))
     return started
   })
+  startingBackend = starting
   // Handled here so a backend that will not start is the page's error screen rather than an unhandled rejection.
   starting.catch((error: unknown) => console.error("[boot] the backend did not start", error))
 
@@ -958,7 +966,11 @@ app.whenReady().then(async () => {
     const body =
       notice.kind === "confirm"
         ? label("notify.confirm", "Your confirmation is needed before the task can continue")
-        : label("notify.done", "Task completed")
+        : notice.kind === "failed"
+          ? label("notify.failed", "A scheduled task failed to run")
+          : notice.kind === "chat"
+            ? label("notify.chat", "A reply is ready")
+            : label("notify.done", "Task completed")
     try {
       const note = new Notification({ title: noticeTitle(notice), body, silent: notice.silent })
       note.on("click", () => {
@@ -1577,7 +1589,22 @@ app.whenReady().then(async () => {
   buildMenu()
   createWindow()
   keepWindowsOnScreen()
-  repaintAfterWake(() => quitting)
+  repaintAfterWake(leaving)
+
+  /*
+   * session-end is a window event, so it is registered per window (see
+   * createWindow). Two cases have no window to register it on: macOS and Linux,
+   * which have no session-end at all, and a renderer recovery that has given
+   * up. powerMonitor covers the first; onRecoveryGaveUp covers the second.
+   */
+  powerMonitor.on("shutdown", () => {
+    console.info("[quit] powerMonitor shutdown")
+    noteOsQuit()
+  })
+  onRecoveryGaveUp(() => {
+    console.info("[quit] renderer recovery gave up; no window is left to notice an OS shutdown")
+    noteOsQuit()
+  })
 
   app.on("activate", () => {
     // Asked for again while leaving full screen to hide: it stays (MiMo's).
@@ -1591,7 +1618,35 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit()
 })
 
-let quitting = false
+/*
+ * Two different questions, which used to share one flag and so answered each
+ * other wrongly (N11-1).
+ *
+ * `osQuitting`: the OS is taking the app away - Windows session-end, or
+ * powerMonitor's shutdown elsewhere. It only tells the close rule below to let
+ * the last window go instead of hiding it to the tray, and tells the wake
+ * repaint to stay out of the way.
+ *
+ * `closing`: before-quit has already run once. It is nothing but a reentry
+ * guard, so that the second app.quit() at the end of the teardown does not
+ * start the teardown again.
+ *
+ * Sharing one flag meant an OS shutdown set it through session-end and then
+ * before-quit's first line returned, skipping backend.close() entirely: the
+ * shells, the MCP children, the scheduler and a pending install were all left
+ * where they were.
+ */
+let osQuitting = false
+let closing = false
+
+/** Either kind of going away, for the close rule and the wake repaint. */
+const leaving = () => osQuitting || closing
+
+/** The OS is taking the app away; the last window must not hide to the tray. */
+function noteOsQuit(): void {
+  osQuitting = true
+  beginIntentionalQuit()
+}
 
 /**
  * Electron does not await an async `before-quit` listener, so the previous
@@ -1603,11 +1658,11 @@ let quitting = false
  * added to close(). Hold the quit, close, then quit for real.
  */
 app.on("before-quit", (event) => {
-  if (quitting) return
-  // No backend to wait for: an install asked for goes ahead at once.
-  if (!backend) return runPendingInstall()
+  if (closing) return
+  // Nothing has been started at all: an install asked for goes ahead at once.
+  if (!startingBackend) return runPendingInstall()
   event.preventDefault()
-  quitting = true
+  closing = true
   // MiMo saves every window's state as the app quits, while they are still where the person left them.
   for (const window of windows) saveWindowState(window)
   /*
@@ -1618,7 +1673,12 @@ app.on("before-quit", (event) => {
   for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.hide()
   // Bounded, so a backend that will not close cannot trap the app open; above
   // the terminals' own four-second bound so that bound is the one that applies.
-  const closed = Promise.race([backend.close(), new Promise((resolve) => setTimeout(resolve, 5000))])
+  const teardown = startingBackend.then(
+    (started) => started.close(),
+    // A backend that never started has nothing to close, and the error is already reported.
+    () => undefined,
+  )
+  const closed = Promise.race([teardown, new Promise((resolve) => setTimeout(resolve, 5000))])
   // Then the installer, if the person asked for one (MiMo quits into it; see mcode:install-update).
   void closed.finally(() => {
     runPendingInstall()

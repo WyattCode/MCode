@@ -71,7 +71,7 @@ const api = {
    * MiMo's task notification: the main process titles and words it, and shows
    * it only while the window is in the background.
    */
-  taskNotice: (notice: { kind: "done" | "confirm"; sessionID?: string; title?: string; project?: string; silent: boolean }): void =>
+  taskNotice: (notice: { kind: "done" | "confirm" | "failed" | "chat"; sessionID?: string; title?: string; project?: string; silent: boolean }): void =>
     ipcRenderer.send("mcode:task-notice", notice),
 
   /** The launcher badge: conversations with an unseen finish or awaiting a confirmation. */

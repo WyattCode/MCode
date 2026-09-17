@@ -3435,7 +3435,7 @@ watch(
       heldNotices.add(turn.sessionID)
       return
     }
-    window.mcode.taskNotice({ kind: "done", ...about, silent: chiming })
+    window.mcode.taskNotice({ kind: app.answeredAnother.has(turn.sessionID) ? "chat" : "done", ...about, silent: chiming })
   },
 )
 
@@ -3465,7 +3465,7 @@ watch(
   () => app.automationNotice,
   (notice) => {
     if (!notice) return
-    window.mcode.taskNotice({ kind: "done", ...noticeAbout(notice.sessionID), silent: false })
+    window.mcode.taskNotice({ kind: notice.failed ? "failed" : "done", ...noticeAbout(notice.sessionID), silent: false })
   },
 )
 

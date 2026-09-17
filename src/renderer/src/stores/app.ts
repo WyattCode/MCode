@@ -76,7 +76,13 @@ export const useApp = defineStore("app", () => {
   const finished = ref<{ sessionID: string; elapsed: number }>()
   /* automation: conversations whose running turn is a scheduled task's run, and the last run the user should be told about. */
   const automationRuns = ref(new Set<string>())
-  const automationNotice = ref<{ sessionID: string; at: number }>()
+  const automationNotice = ref<{ sessionID: string; at: number; failed: boolean }>()
+  /*
+   * session chat: conversations whose current turn is answering a message
+   * another conversation sent. Their end is a reply rather than a task
+   * finishing, and MiMo says so in its own words (N11-3).
+   */
+  const answeredAnother = new Set<string>()
   /**
    * Bumped whenever the window comes back into focus, as MiMo's shell bumps its
    * `fsNonce`.
@@ -552,6 +558,10 @@ export const useApp = defineStore("app", () => {
         }
         // MiMo's present_files and pdf_locate opens, for every conversation, on show or not.
         noteDeliveryUpdate(event.message)
+        if (event.message.role === "user") {
+          if (event.message.inbox?.direction === "request") answeredAnother.add(event.message.sessionID)
+          else if (!event.message.steered) answeredAnother.delete(event.message.sessionID)
+        }
         noteToolWrites(
           event.message,
           (sessions.value.find((session) => session.id === event.message.sessionID) ?? sideSessions.value.find((session) => session.id === event.message.sessionID))?.directory,
@@ -603,11 +613,14 @@ export const useApp = defineStore("app", () => {
         break
       }
       case "automation.run": {
+        // A run that is only waiting for a busy conversation has not started and has not ended.
+        if (event.phase === "queued") break
         const runs = new Set(automationRuns.value)
         if (event.phase === "started") runs.add(event.sessionID)
         else {
           runs.delete(event.sessionID)
-          if (event.notify) automationNotice.value = { sessionID: event.sessionID, at: Date.now() }
+          // The server has already judged the run; a failure must not be announced as a completion (N11-3).
+          if (event.notify) automationNotice.value = { sessionID: event.sessionID, at: Date.now(), failed: event.outcome === "failed" || event.outcome === "skipped" }
         }
         automationRuns.value = runs
         break
@@ -2049,6 +2062,7 @@ export const useApp = defineStore("app", () => {
     finished,
     automationRuns,
     automationNotice,
+    answeredAnother,
     clearPermission,
     recent,
     forkFrom,

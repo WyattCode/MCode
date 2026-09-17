@@ -5,6 +5,7 @@ import type { AgentName, Effort, Message, ModelRef, ServerEvent, SessionInfo, Us
 import { quarantine, writeAtomic } from "../storage"
 import { ToolError } from "../tool/types"
 import { nextOccurrence, parseRRule, scheduleLabel } from "./rrule"
+import { RunQueue, type QueueState, type QueuedRun } from "./run-queue"
 
 /**
  * automation: MiMo desktop's scheduled tasks, as its release build offers them
@@ -71,6 +72,8 @@ export interface RunRecord {
   error?: string
   /** Set once the user has been told about a run that did not finish. */
   reported?: boolean
+  /** Set on a record opened while the run was still waiting for a busy conversation (N11-22). */
+  queuedAt?: number
 }
 
 interface Receipt {
@@ -107,6 +110,8 @@ interface Saved {
   automations: Automation[]
   seq: number
   receipts: Receipt[]
+  /** Runs that are due and have not started yet, so a quit does not lose them (N11-2). */
+  runQueue?: QueueState
 }
 
 /** Raise this only when a change would be misread by a build that predates it. */
@@ -118,7 +123,20 @@ const RECEIPTS_KEPT = 256
 const RUNS_KEPT = 20
 /** What a run that the app ended is recorded as. */
 const CLOSED_MID_RUN = "The app closed before the run finished."
+/** What a run waiting on a busy conversation is recorded as once a newer run of the same task comes due. */
+const TARGET_STAYED_BUSY = "The conversation this task runs in stayed busy until the next run came due."
+/** What a run that could never be started is recorded as, once its attempts are used up. */
+const COULD_NOT_START = "The run could not be started."
 const TICK_MS = 1000
+/**
+ * How many runs one check may start.
+ *
+ * cron already fires at most one due task per check; this side used to start
+ * every due task in the same tick, so ten tasks sharing a time hit the provider
+ * together (N11-28). A small fan-out keeps the two schedulers in the same
+ * shape, and the queue holds whatever does not fit until the next second.
+ */
+const STARTS_PER_TICK = 4
 
 export interface AutomationDeps {
   file: string
@@ -196,8 +214,12 @@ export class AutomationService {
   /** Runs whose turn has not ended yet, by the conversation they run in. */
   private readonly runs = new Map<string, Automation>()
   private readonly starting = new Set<string>()
+  /** Due runs waiting to start, under leases, so none is lost to a failure or a kill (N11-2). */
+  private readonly queue = new RunQueue()
+  /** Runs already announced as waiting, so a busy conversation is said once rather than every second. */
+  private readonly announcedQueued = new Set<string>()
   /** Runs that ended with the app and have not been reported yet; sent on the first check. */
-  private readonly pendingReports: { sessionID: string; notify: boolean }[] = []
+  private readonly pendingReports: { sessionID: string; notify: boolean; outcome?: "succeeded" | "failed" | "skipped" }[] = []
   private interval: ReturnType<typeof setInterval> | undefined
   private writing: Promise<void> = Promise.resolve()
   /** Set when the saved tasks could not be read and nothing may be written over them. */
@@ -252,7 +274,7 @@ export class AutomationService {
         record.reported = true
         settled = true
       }
-      this.pendingReports.push({ sessionID: report.sessionID, notify: report.notify })
+      this.pendingReports.push({ sessionID: report.sessionID, notify: report.notify, outcome: report.status })
     }
     this.replayed = reports.length
     this.reports = []
@@ -270,6 +292,7 @@ export class AutomationService {
           seq: typeof parsed.seq === "number" ? parsed.seq : 0,
           receipts: Array.isArray(parsed.receipts) ? parsed.receipts.slice(-RECEIPTS_KEPT) : [],
         }
+        this.queue.restore(parsed.runQueue)
         /*
          * A document from a later build is read - the tasks in it still run -
          * but nothing is written back over it, or the fields that build added
@@ -324,7 +347,11 @@ export class AutomationService {
         record.reported = true
         settled = true
         if (record.resultThreadId) {
-          this.pendingReports.push({ sessionID: record.resultThreadId, notify: notifies(automation.notification, automation.runMode, "skipped", false) })
+          this.pendingReports.push({
+            sessionID: record.resultThreadId,
+            notify: notifies(automation.notification, automation.runMode, "skipped", false),
+            outcome: "skipped",
+          })
         }
       }
     }
@@ -364,11 +391,11 @@ export class AutomationService {
    * shows in the task's history, and is not reported again at the next start,
    * since there is no conversation to point the user at.
    */
-  private skipRun(automation: Automation, error: string): void {
+  private skipRun(automation: Automation, error: string, run?: QueuedRun): void {
     const at = this.deps.now()
     const record: RunRecord = {
-      runId: `run-${at.toString(36)}-skipped`,
-      scheduledFor: this.next.get(automation.id) ?? at,
+      runId: run ? `${run.runId}-skipped` : `run-${at.toString(36)}-skipped`,
+      scheduledFor: run?.scheduledFor ?? this.next.get(automation.id) ?? at,
       startedAt: at,
       status: "skipped",
       finishedAt: at,
@@ -379,11 +406,11 @@ export class AutomationService {
   }
 
   /** Opens a record for a run that is starting, keeping only the last few. */
-  private openRun(automation: Automation, sessionID: string): void {
+  private openRun(automation: Automation, sessionID: string, run?: QueuedRun): void {
     const at = this.deps.now()
     const record: RunRecord = {
-      runId: `run-${at.toString(36)}-${sessionID.slice(-8)}`,
-      scheduledFor: this.next.get(automation.id) ?? at,
+      runId: run ? run.runId : `run-${at.toString(36)}-${sessionID.slice(-8)}`,
+      scheduledFor: run?.scheduledFor ?? this.next.get(automation.id) ?? at,
       startedAt: at,
       status: "running",
       resultThreadId: sessionID,
@@ -406,7 +433,7 @@ export class AutomationService {
     if (this.blocked) return this.writing
     // Nor over one a newer build wrote, for the same reason in a different key.
     if (this.fromNewerVersion) return this.writing
-    const snapshot = JSON.stringify({ schemaVersion: AUTOMATION_SCHEMA_VERSION, ...this.saved }, null, 2)
+    const snapshot = JSON.stringify({ schemaVersion: AUTOMATION_SCHEMA_VERSION, ...this.saved, runQueue: this.queue.state }, null, 2)
     this.writing = this.writing.then(() => writeAtomic(this.deps.file, snapshot)).catch(() => undefined)
     return this.writing
   }
@@ -655,62 +682,182 @@ export class AutomationService {
      * socket, and an event published then would be published to nobody.
      */
     for (const report of this.pendingReports.splice(0)) {
-      this.deps.publish({ type: "automation.run", sessionID: report.sessionID, phase: "finished", notify: report.notify })
+      this.deps.publish({ type: "automation.run", sessionID: report.sessionID, phase: "finished", notify: report.notify, outcome: report.outcome ?? "skipped" })
     }
     const now = this.deps.now()
-    const due = [...this.next.entries()].filter(([id, at]) => at <= now && !this.starting.has(id)).sort((a, b) => a[1] - b[1])
-    for (const [id] of due) {
+    let dirty = false
+
+    /*
+     * Every due moment becomes a queue entry, and the schedule moves on at
+     * once. Before this the schedule waited on the run: a busy conversation
+     * held lastFiredAt back, so a day's worth of 09:00 runs collapsed into
+     * whichever single one happened to find the conversation idle (N11-22).
+     */
+    const due = [...this.next.entries()].filter(([id, at]) => at <= now).sort((a, b) => a[1] - b[1])
+    for (const [id, at] of due) {
       const automation = this.saved.automations.find((entry) => entry.id === id)
       if (!automation) {
         this.next.delete(id)
         continue
       }
-      this.starting.add(id)
-      try {
-        const started = await this.run(automation)
-        // A conversation that is busy is tried again on the next check; anything else moves the schedule on.
-        if (started === "waiting") continue
-        automation.lastFiredAt = now
-        this.plan(automation)
-        await this.save()
-      } finally {
-        this.starting.delete(id)
+      const fingerprint = scheduleKey(automation.rrule, automation.label)
+      // A run still waiting when the next one comes due has waited long enough; it is given up on and said so.
+      for (const waiting of this.queue.forAutomation(id)) {
+        this.queue.drop(waiting.runId)
+        this.announcedQueued.delete(waiting.runId)
+        this.settleQueuedRecord(automation, waiting, TARGET_STAYED_BUSY)
+        dirty = true
       }
+      this.queue.enqueue({ runId: RunQueue.runIdFor(id, at), automationID: id, scheduledFor: at, scheduleFingerprint: fingerprint, source: "schedule" })
+      automation.lastFiredAt = now
+      this.plan(automation)
+      dirty = true
+    }
+
+    // A holder that never reported - the app was killed between taking a run and starting it - lets its lease go.
+    for (const freed of this.queue.releaseExpired(now)) {
+      console.warn(`[automation] run ${freed.runId} was taken but never reported; it is deliverable again`)
+    }
+    // And one that has been handed out as often as it may be is given up on rather than tried for ever.
+    for (const gone of this.queue.exhausted()) {
+      const automation = this.saved.automations.find((entry) => entry.id === gone.automationID)
+      if (automation) {
+        this.skipRun(automation, COULD_NOT_START, gone)
+        this.tellAbout(automation, undefined, "skipped")
+      }
+      this.announcedQueued.delete(gone.runId)
+      dirty = true
+    }
+
+    for (const entry of this.queue.drain(now, STARTS_PER_TICK)) {
+      const automation = this.saved.automations.find((candidate) => candidate.id === entry.automationID)
+      if (!automation) {
+        this.queue.drop(entry.runId)
+        dirty = true
+        continue
+      }
+      // Rescheduled while this run waited: running it now would run it at a time nobody asked for.
+      if (entry.scheduleFingerprint && entry.scheduleFingerprint !== scheduleKey(automation.rrule, automation.label)) {
+        this.queue.drop(entry.runId)
+        this.skipRun(automation, "The task was rescheduled before this run could start.", entry)
+        dirty = true
+        continue
+      }
+      if (this.starting.has(entry.automationID)) {
+        this.queue.report(entry.runId, entry.deliveryGeneration, "later")
+        continue
+      }
+      this.starting.add(entry.automationID)
+      let outcome: "started" | "skipped" | "waiting" | "failed" = "failed"
+      try {
+        outcome = await this.run(automation, entry)
+      } finally {
+        this.starting.delete(entry.automationID)
+      }
+      if (outcome === "waiting") {
+        this.queue.report(entry.runId, entry.deliveryGeneration, "later")
+        if (!this.announcedQueued.has(entry.runId)) {
+          this.announcedQueued.add(entry.runId)
+          this.deps.publish({ type: "automation.run", sessionID: automation.targetThreadId ?? "", phase: "queued" })
+        }
+        continue
+      }
+      this.announcedQueued.delete(entry.runId)
+      // Started, skipped or failed: either way this entry is finished with, and the failure has been recorded.
+      this.queue.report(entry.runId, entry.deliveryGeneration, "settled")
+      dirty = true
+    }
+    if (dirty) await this.save()
+  }
+
+  /** Records a run that waited for a busy conversation until it was too late, and tells the user by the task's policy. */
+  private settleQueuedRecord(automation: Automation, run: QueuedRun, why: string): void {
+    this.skipRun(automation, why, run)
+    this.tellAbout(automation, automation.targetThreadId, "skipped")
+  }
+
+  /** Tells the window about a run that ended without a turn, when the task's policy says to. */
+  private tellAbout(automation: Automation, sessionID: string | undefined, status: "failed" | "skipped"): void {
+    if (!notifies(automation.notification, automation.runMode, status, false)) return
+    this.deps.publish({ type: "automation.run", sessionID: sessionID ?? "", phase: "finished", notify: true, outcome: status })
+  }
+
+  /**
+   * A run whose turn would not even begin.
+   *
+   * `prompt()` can throw for real reasons - a full disk on the first save, a
+   * routing call that failed - and its rejection used to be swallowed, leaving
+   * the record "running" for ever and the user told nothing (N11-2).
+   */
+  private failRun(automation: Automation, sessionID: string, cause: unknown): void {
+    this.runs.delete(sessionID)
+    const saved = this.saved.automations.find((entry) => entry.id === automation.id)
+    const record = [...(saved?.runHistory ?? [])].reverse().find((entry) => entry.resultThreadId === sessionID && entry.status === "running")
+    if (record) {
+      record.status = "failed"
+      record.finishedAt = this.deps.now()
+      record.error = cause instanceof Error ? cause.message : String(cause)
+      record.reported = true
+    }
+    console.warn(`[automation] the run of "${automation.title}" could not start`, cause)
+    if (notifies(automation.notification, automation.runMode, "failed", false)) {
+      this.deps.publish({ type: "automation.run", sessionID, phase: "finished", notify: true, outcome: "failed" })
+    } else {
+      this.deps.publish({ type: "automation.run", sessionID, phase: "finished", notify: false, outcome: "failed" })
     }
   }
 
-  private async run(automation: Automation): Promise<"started" | "skipped" | "waiting"> {
+  private async run(automation: Automation, entry: QueuedRun): Promise<"started" | "skipped" | "waiting" | "failed"> {
     const inbox = { from: automation.title, automationID: automation.id }
     if (automation.runMode === "existing-task") {
       const target = automation.targetThreadId ? await this.deps.sessions.get(automation.targetThreadId) : undefined
       if (!target) {
-        this.skipRun(automation, "The conversation this task runs in no longer exists.")
+        this.skipRun(automation, "The conversation this task runs in no longer exists.", entry)
+        this.tellAbout(automation, automation.targetThreadId, "skipped")
         return "skipped"
       }
       if (this.deps.busy(target.id)) return "waiting"
       this.runs.set(target.id, structuredClone(automation))
-      this.openRun(automation, target.id)
+      this.openRun(automation, target.id, entry)
       this.deps.publish({ type: "automation.run", sessionID: target.id, phase: "started" })
-      await this.deps.prompt({ sessionID: target.id, text: automation.prompt, inbox }).catch(() => this.runs.delete(target.id))
+      try {
+        await this.deps.prompt({ sessionID: target.id, text: automation.prompt, inbox })
+      } catch (cause) {
+        this.failRun(automation, target.id, cause)
+        return "failed"
+      }
       return "started"
     }
     let directory = automation.project?.path
     if (directory && !(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) {
-      this.skipRun(automation, "The project folder this task runs in no longer exists.")
+      this.skipRun(automation, "The project folder this task runs in no longer exists.", entry)
+      this.tellAbout(automation, undefined, "skipped")
       return "skipped"
     }
     directory ??= await this.deps.scratch()
-    const session = await this.deps.sessions.create({
-      directory,
-      model: { provider: automation.model.provider, model: automation.model.model },
-      agent: this.deps.agent(),
-      title: automation.title,
-      ...(automation.project ? {} : { scratch: true }),
-    })
+    let session
+    try {
+      session = await this.deps.sessions.create({
+        directory,
+        model: { provider: automation.model.provider, model: automation.model.model },
+        agent: this.deps.agent(),
+        title: automation.title,
+        ...(automation.project ? {} : { scratch: true }),
+      })
+    } catch (cause) {
+      this.skipRun(automation, cause instanceof Error ? cause.message : String(cause), entry)
+      this.tellAbout(automation, undefined, "skipped")
+      return "skipped"
+    }
     this.runs.set(session.id, structuredClone(automation))
-    this.openRun(automation, session.id)
+    this.openRun(automation, session.id, entry)
     this.deps.publish({ type: "automation.run", sessionID: session.id, phase: "started" })
-    await this.deps.prompt({ sessionID: session.id, text: automation.prompt, inbox }).catch(() => this.runs.delete(session.id))
+    try {
+      await this.deps.prompt({ sessionID: session.id, text: automation.prompt, inbox })
+    } catch (cause) {
+      this.failRun(automation, session.id, cause)
+      return "failed"
+    }
     return "started"
   }
 
@@ -746,7 +893,7 @@ export class AutomationService {
       record.reported = true
       await this.save()
     }
-    this.deps.publish({ type: "automation.run", sessionID, phase: "finished", notify })
+    this.deps.publish({ type: "automation.run", sessionID, phase: "finished", notify, outcome: report.status })
     this.reports = this.reports.filter((entry) => entry !== report)
     await this.writeJournal()
   }

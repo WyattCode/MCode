@@ -9758,7 +9758,12 @@ async function automationChecks(root: string, project: string) {
   clock = new Date(2026, 0, 3, 9, 0, 1).getTime()
   busy.add(home.id)
   await service.tick()
-  check("a run waits while its conversation is busy", prompts.length === 0 && (service.dueAt("auto-1") ?? Infinity) <= clock)
+  // N11-2/N11-22: the run waits in the queue and says so, while the schedule itself moves on to the next occurrence.
+  check(
+    "a run waits while its conversation is busy",
+    prompts.length === 0 && service.dueAt("auto-1") === new Date(2026, 0, 4, 9, 0).getTime() && events.some((event) => event.type === "automation.run" && event.phase === "queued"),
+    { due: service.dueAt("auto-1"), events: events.filter((event) => event.type === "automation.run") },
+  )
   busy.delete(home.id)
   await service.tick()
   check(

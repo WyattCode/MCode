@@ -700,7 +700,8 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
     )
     check(
       "and the quit path runs it only after the backend has closed (or at once when there is none)",
-      /void closed\.finally\(\(\) => \{\s*runPendingInstall\(\)\s*app\.quit\(\)/.test(main) && /if \(!backend\) return runPendingInstall\(\)/.test(main),
+      // N11-30: the quit path waits on the backend even while it is still starting, so the guard is the start promise.
+      /void closed\.finally\(\(\) => \{\s*runPendingInstall\(\)\s*app\.quit\(\)/.test(main) && /if \(!startingBackend\) return runPendingInstall\(\)/.test(main),
     )
     check(
       "electron-updater is loaded the way MiMo loads it, the feed comes from the setting or MCODE_UPDATE_URL, and the interruption reaches the window",
