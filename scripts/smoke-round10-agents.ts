@@ -29,6 +29,7 @@ import { nextOccurrence, parseRRule, scheduleLabel } from "../src/server/automat
 import { ToolError } from "../src/server/tool/types"
 import { planApprovedRefusal } from "../src/server/session/plan"
 import { recallHint } from "../src/server/session/reminders"
+import { sampleFiles } from "../src/server/tool/skill"
 import { QuestionTool } from "../src/server/tool/question"
 import { confirmQueue } from "../src/renderer/src/lib/confirm-queue"
 import type { QuestionRequest } from "../src/shared/protocol"
@@ -519,6 +520,26 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
   }
   await automationChecks(check, section, root)
   await historyChecks(check, section, root)
+  await skillChecks(check, section, root)
+}
+
+async function skillChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 10 (T10-46): a skill's file list respects ignore files, as MiMo's ripgrep listing does")
+  const repo = path.join(root, "skill-repo")
+  const skill = path.join(repo, "skills", "tidy")
+  await fs.mkdir(path.join(repo, ".git"), { recursive: true })
+  await fs.mkdir(path.join(skill, "scripts"), { recursive: true })
+  await fs.mkdir(path.join(skill, "build"), { recursive: true })
+  await fs.writeFile(path.join(repo, ".gitignore"), "build/\n*.log\n")
+  await fs.writeFile(path.join(skill, "SKILL.md"), "---\nname: tidy\ndescription: x\n---\n")
+  await fs.writeFile(path.join(skill, "scripts", "run.py"), "print(1)\n")
+  await fs.writeFile(path.join(skill, "debug.log"), "noise\n")
+  await fs.writeFile(path.join(skill, "build", "out.bin"), "x")
+  await fs.writeFile(path.join(skill, ".env.example"), "A=1\n")
+  const listed = (await sampleFiles(skill)).map((file) => path.relative(skill, file).split(path.sep).join("/")).sort()
+  check("ignored files and folders are left out, hidden ones and scripts are listed, SKILL.md is not", listed.join() === ".env.example,scripts/run.py", listed)
+  for (let at = 0; at < 14; at++) await fs.writeFile(path.join(skill, "scripts", `extra-${at}.py`), "")
+  check("at most ten are listed", (await sampleFiles(skill)).length === 10)
 }
 
 async function historyChecks(check: Check, section: Section, root: string): Promise<void> {
