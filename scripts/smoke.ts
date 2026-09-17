@@ -294,6 +294,8 @@ import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
+// Round 10: git end to end - paths, push target, time limits, grouping, undo.
+import { roundTenGitChecks } from "./smoke-round10-git"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -6908,6 +6910,7 @@ async function main() {
   await roundNineWindowsChecks(check, section)
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
+  await roundTenGitChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
