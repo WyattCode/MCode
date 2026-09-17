@@ -10,6 +10,9 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { browserCommand, browserTarget, openUrl, type Launch } from "../src/server/open-url"
 import { openInBrowser } from "../src/server/mcp-oauth"
+import { getConfig, validateConfiguration } from "app-builder-lib/out/util/config/config.js"
+import { LinuxTargetHelper } from "app-builder-lib/out/targets/LinuxTargetHelper.js"
+import { DebugLogger } from "builder-util"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -117,5 +120,49 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     for (const [file, pattern] of shown) {
       check(`M10-3: ${path.basename(file)} draws its shortcuts for the platform`, pattern.test(await fs.readFile(path.join(root, file), "utf8")))
     }
+  }
+
+  section("Round 10 (platforms): M10-4 / M10-5 / M10-6 what the macOS and Linux packages declare")
+  {
+    const config = (await getConfig(root, null, null)) as any
+    let valid = true
+    try {
+      await validateConfiguration(config, new DebugLogger(false))
+    } catch (error) {
+      valid = false
+      check("M10-4: electron-builder accepts the configuration", false, String(error).slice(0, 300))
+    }
+    if (valid) check("M10-4: electron-builder accepts the configuration", true)
+    const schemes = (config.protocols ?? []).flatMap((protocol: { schemes: string[] }) => protocol.schemes)
+    check("M10-4: the mcode scheme is declared for the Info.plist", schemes.length === 1 && schemes[0] === "mcode", config.protocols)
+    const linkModule = await fs.readFile(path.join(root, "src/shared/session-link.ts"), "utf8")
+    check("M10-4: it is the scheme the app registers", /LINK_SCHEME\s*=\s*"mcode"/.test(linkModule))
+
+    const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"))
+    check("M10-5: package.json names the desktop entry", pkg.desktopName === "mcode.desktop", pkg.desktopName)
+    check("M10-5: the Linux package names its .desktop file after it", config.linux?.syncDesktopName === true)
+    const fakePackager = {
+      appInfo: { productName: pkg.productName, description: pkg.description, sanitizedProductName: pkg.productName },
+      executableName: "mcode",
+      fileAssociations: [],
+      config,
+      platformSpecificBuildOptions: config.linux,
+      info: { metadata: pkg },
+    }
+    const helper = new LinuxTargetHelper(fakePackager as any)
+    const entry = await helper.computeDesktopEntry(config.linux, "/opt/MCode/mcode %U")
+    check("M10-4: the Linux desktop entry handles mcode: links", /^MimeType=x-scheme-handler\/mcode;$/m.test(entry), entry)
+    check("M10-5: the window class matches the desktop entry", /^StartupWMClass=mcode$/m.test(entry) && helper.getDesktopFileName() === "mcode", entry)
+
+    const entitlements = await fs.readFile(path.join(root, config.mac?.entitlements ?? "missing"), "utf8").catch(() => "")
+    const granted = [...entitlements.matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g)].map((match) => match[1])
+    check("M10-6: the app and its helpers use the same entitlements", config.mac?.entitlements === "build/entitlements.mac.plist" && config.mac?.entitlementsInherit === config.mac?.entitlements)
+    check(
+      "M10-6: the microphone is granted beside electron-builder's defaults",
+      ["com.apple.security.cs.allow-jit", "com.apple.security.cs.allow-unsigned-executable-memory", "com.apple.security.cs.disable-library-validation", "com.apple.security.device.audio-input"].every((name) => granted.includes(name)) && granted.length === 4,
+      granted,
+    )
+    const why = config.mac?.extendInfo?.NSMicrophoneUsageDescription
+    check("M10-6: the Info.plist says why the microphone is used", typeof why === "string" && why.startsWith("MCode ") && why.length > 20, why)
   }
 }
