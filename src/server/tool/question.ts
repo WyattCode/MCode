@@ -282,6 +282,8 @@ export const QuestionTool: ToolDefinition = {
     additionalProperties: false,
   },
   async execute(input, context) {
+    // A subagent cannot put questions to the user, as MiMo's cannot; it is not offered the tool, and a call that reaches here anyway is refused.
+    if (context.subagent) throw new ToolError("A subagent cannot ask the user questions. Decide for yourself, or say in your final message what needs the user's decision.")
     const questions = readQuestions(input.questions)
     const answers = await context.questions.ask({
       sessionID: context.sessionID,
