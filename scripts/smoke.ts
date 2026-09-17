@@ -5691,6 +5691,9 @@ async function main() {
 
   const repoInfo = await workspaceInfo(repo)
   check("a repository reports its actual branch", repoInfo.branch === "feature/x", repoInfo.branch)
+  await fs.mkdir(path.join(repo, "packages", "web"), { recursive: true })
+  const subInfo = await workspaceInfo(path.join(repo, "packages", "web"))
+  check("a project opened on a subdirectory reports the repository's branch (G10-14)", subInfo.branch === "feature/x", subInfo)
 
   const plainInfo = await workspaceInfo(plain)
   check("a plain directory claims no branch", plainInfo.exists && plainInfo.branch === undefined, plainInfo)
@@ -5700,7 +5703,7 @@ async function main() {
 
   await fs.writeFile(path.join(repo, ".git", "HEAD"), "9f1c2ab3d4e5f60718293a4b5c6d7e8f90123456\n")
   const detached = await workspaceInfo(repo)
-  check("a detached HEAD shows a short sha", detached.branch === "9f1c2ab", detached.branch)
+  check("a detached HEAD shows HEAD, as MiMo's side column does (G10-14)", detached.branch === "HEAD", detached.branch)
 
   await fs.rm(wsRoot, { recursive: true, force: true })
 

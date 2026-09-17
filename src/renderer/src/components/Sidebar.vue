@@ -211,6 +211,11 @@ watch(
     if (now < before) void readBranches(true)
   },
 )
+/* A switch or a new branch made in this window is shown straight away, as MiMo re-detects it. */
+watch(
+  () => app.branchNonce,
+  () => void readBranches(true),
+)
 const branchesOnFocus = () => void readBranches()
 onMounted(() => window.addEventListener("focus", branchesOnFocus))
 onBeforeUnmount(() => window.removeEventListener("focus", branchesOnFocus))

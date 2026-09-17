@@ -36,7 +36,10 @@ export async function switchBranch(
     return { kind: "failed", branch, error: err instanceof Error ? err.message : String(err) }
   }
   if (!result) return { kind: "unchanged" }
-  if (result.ok) return { kind: "switched", branch: result.branch ?? branch, conflicts: Boolean(result.conflicts) }
+  if (result.ok) {
+    useApp().branchesChanged()
+    return { kind: "switched", branch: result.branch ?? branch, conflicts: Boolean(result.conflicts) }
+  }
   if (result.worktree) return { kind: "worktree", branch, ...result.worktree }
   if (result.dirty) return { kind: "dirty", branch }
   return { kind: "failed", branch, result, error: result.error ?? "" }

@@ -1,5 +1,6 @@
 import fs from "node:fs/promises"
 import path from "node:path"
+import { worktreeTop } from "./session/worktree"
 
 /**
  * What is actually true about a session's directory.
@@ -11,7 +12,7 @@ import path from "node:path"
  */
 export interface WorkspaceInfo {
   exists: boolean
-  /** Branch name, or a short SHA when HEAD is detached. Absent if not a repo. */
+  /** Branch name, or "HEAD" when HEAD is detached, as MiMo shows it. Absent if not a repo. */
   branch?: string
   /** Epoch ms of the newest change git knows about, or the directory itself. */
   modified?: number
@@ -43,7 +44,12 @@ export async function workspaceInfo(directory: string): Promise<WorkspaceInfo> {
 
   const info: WorkspaceInfo = { exists: true, modified: stats.mtimeMs }
 
-  const git = await gitDirectory(directory)
+  /*
+   * The checkout's top may be above the folder: a project opened on a
+   * subdirectory of a repository is still on that repository's branch.
+   */
+  const top = await worktreeTop(directory)
+  const git = top ? await gitDirectory(top.root) : undefined
   if (!git) return info
 
   // Reading HEAD beats shelling out to git: no process, and it works the same
@@ -51,7 +57,7 @@ export async function workspaceInfo(directory: string): Promise<WorkspaceInfo> {
   const head = await fs.readFile(path.join(git, "HEAD"), "utf8").catch(() => "")
   const ref = /^ref:\s*refs\/heads\/(.+)$/m.exec(head)
   if (ref) info.branch = ref[1].trim()
-  else if (/^[0-9a-f]{40}/.test(head.trim())) info.branch = head.trim().slice(0, 7)
+  else if (/^[0-9a-f]{40}/.test(head.trim())) info.branch = "HEAD"
 
   const headStats = await fs.stat(path.join(git, "HEAD")).catch(() => undefined)
   if (headStats) info.modified = Math.max(info.modified ?? 0, headStats.mtimeMs)

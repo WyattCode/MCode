@@ -85,6 +85,13 @@ export const useApp = defineStore("app", () => {
   const fsNonce = ref(0)
   const bumpFsNonce = () => (fsNonce.value += 1)
   /**
+   * Bumped when this window switched or created a branch, as MiMo re-detects
+   * the side column's branch names straight after the home chip or the info
+   * card changes one, rather than at the next focus.
+   */
+  const branchNonce = ref(0)
+  const branchesChanged = () => (branchNonce.value += 1)
+  /**
    * What the home screen's next task works in, when the reader has said.
    *
    * MiMo's 不使用项目 and its project pick are navigation state, so they outlive
@@ -2049,6 +2056,8 @@ export const useApp = defineStore("app", () => {
     setStaged,
     patchConfig,
     fsNonce,
+    branchNonce,
+    branchesChanged,
     bumpFsNonce,
     homeProject,
     modelPick,
@@ -2064,9 +2073,7 @@ export const useApp = defineStore("app", () => {
     authState,
     workspaceInfo,
     gitStatus,
-
     gitDiff,
-
     beginAuth,
     cancelAuth,
     signOut,
