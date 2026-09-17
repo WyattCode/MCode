@@ -247,6 +247,7 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const linuxBlock = main.slice(main.indexOf('if (process.platform === "linux") {'), imeAt)
     check("M10-12: Linux asks Chromium to keep shared memory out of /dev/shm", /appendSwitch\("disable-dev-shm-usage"\)/.test(linuxBlock))
     check("M10-12: no-zygote is not passed while the sandbox is on", !/appendSwitch\("no-zygote"\)/.test(main))
+    check("M10-28: Linux asks Chromium for the system voices", /appendSwitch\("enable-speech-dispatcher"\)/.test(linuxBlock))
   }
 
   section("Round 10 (platforms): M10-16 / M10-17 / M10-19 what a folder and a document open with")

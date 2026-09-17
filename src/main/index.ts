@@ -137,6 +137,13 @@ if (process.platform === "linux") {
    * a check on real Linux hardware (round10-platforms M10-12).
    */
   app.commandLine.appendSwitch("disable-dev-shm-usage")
+  /*
+   * The speak tool reads with the system's voices (lib/voice.ts). Chromium on
+   * Linux reaches them only through speech-dispatcher, and only when asked to;
+   * without it there are no voices and nothing is heard. Unverified on a
+   * Linux machine (round10-platforms M10-28).
+   */
+  app.commandLine.appendSwitch("enable-speech-dispatcher")
 }
 
 /* MiMo's fcitx fill-in (see linux-ime.ts), before any window reads the environment. */
