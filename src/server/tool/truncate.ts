@@ -93,7 +93,7 @@ function tail(lines: readonly string[], maxLines: number, maxBytes: number): str
 /** What the model is told after a cut: where the rest is, and how to get at it without reading it all back in. */
 function note(file: string, delegate: boolean, outcome?: CapOutcome): string {
   const how = delegate
-    ? "To look through it, start an explore subagent with the task tool and have it grep and read the file in parts, rather than reading the whole file here."
+    ? 'To look through it, start an explore subagent with the actor tool (action "run", subagent_type "explore") and have it grep and read the file in parts, rather than reading the whole file here.'
     : "Search it with grep, or read the parts you need with read and an offset and limit."
   /*
    * MiMo says which it was. A model reading "this output was too long" cannot
