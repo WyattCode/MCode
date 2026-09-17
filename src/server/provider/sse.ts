@@ -19,8 +19,6 @@
  *   - `field:value` and `field: value` are the same field; only one leading
  *     space belongs to the separator.
  *   - lines end with LF, CR or CRLF, not LF alone.
- *   - a byte-order mark at the very start of the stream belongs to the encoding
- *     and not to the first field name.
  *   - the decoder needs a final flush, and whatever is left in the buffer when
  *     the connection closes is still an event. A provider whose last line has
  *     no trailing newline used to lose it entirely - and that last frame is
@@ -78,9 +76,14 @@ function splitLines(chunk: string): { lines: string[]; rest: string } {
  */
 export async function* readEvents(body: ReadableStream<Uint8Array>, options: SseOptions = {}): AsyncGenerator<SseEvent> {
   const reader = body.getReader()
+  /*
+   * `ignoreBOM` is false by default, so this already takes a byte-order mark
+   * off the front of the stream - MiMo's parser strips one itself because it is
+   * handed strings rather than bytes. Doing it again here was checked and found
+   * to be dead code.
+   */
   const decoder = new TextDecoder()
   let rest = ""
-  let first = true
   let name = ""
   let data = ""
   let done = false
@@ -118,10 +121,8 @@ export async function* readEvents(body: ReadableStream<Uint8Array>, options: Sse
       // Before anything is parsed: the provider is alive whatever these bytes say.
       options.onRead?.()
       done = read.done
-      const text = done ? decoder.decode() : decoder.decode(read.value, { stream: true })
-      // MiMo's parser strips a byte-order mark from the first chunk and only the first.
-      const chunk = first ? text.replace(/^\uFEFF/, "") : text
-      first = false
+      // The final `decode()` with no argument flushes whatever the last chunk left half-decoded.
+      const chunk = done ? decoder.decode() : decoder.decode(read.value, { stream: true })
       const split = splitLines(rest + chunk)
       rest = split.rest
       for (const line of split.lines) {

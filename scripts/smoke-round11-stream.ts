@@ -136,6 +136,7 @@ export async function roundElevenStreamChecks(check: Check, section: (name: stri
     check("several data lines make one event, joined with newlines", two.length === 1 && two[0]!.data === "{\"a\":1,\n\"b\":2}", two)
     check("and that event parses", two.length === 1 && JSON.parse(two[0]!.data).b === 2)
 
+    // A byte-order mark belongs to the encoding; TextDecoder takes it off the stream for us.
     const bom = await eventsOf(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from("data: first\n\ndata: second\n\n")]))
     check("a byte-order mark does not eat the first event", bom.length === 2 && bom[0]!.data === "first", bom)
 
@@ -177,7 +178,7 @@ export async function roundElevenStreamChecks(check: Check, section: (name: stri
       seen.push(data)
     }
     check("every read refreshes the timer, before anything is parsed", reads >= 1, reads)
-    check("a ping is an event like any other and the words still arrive", seen.includes("real"), seen)
+    check("a named event is read like any other, and the words still arrive", seen.includes("{}") && seen.includes("real"), seen)
 
     /*
      * The whole point, end to end: a provider that says nothing but comments
