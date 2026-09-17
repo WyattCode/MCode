@@ -191,4 +191,99 @@ export async function roundTenDesktopChecks(check: Check, section: (name: string
       else delete globals.window
     }
   }
+
+  // ------------------------------------------------------------ T10-20, T10-21, T10-22, T10-52, T10-53
+  section("Round 10 (T10-20/21/22/52/53): automation_update checks what MiMo checks, and compares tasks as MiMo does")
+  {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r10-auto-"))
+    try {
+      const { Storage } = await import("../src/server/storage")
+      const { SessionStore } = await import("../src/server/session/store")
+      const { Bus } = await import("../src/server/bus")
+      const { AutomationService, scheduleKey } = await import("../src/server/automation/service")
+      const { scheduleLabel } = await import("../src/server/automation/rrule")
+      const { ToolError } = await import("../src/server/tool/types")
+      const store = new SessionStore(new Storage(path.join(root, "storage")), new Bus())
+      const model = { provider: "fake", model: "m" }
+      const home = await store.create({ directory: root, model, title: "Home" })
+      const other = await store.create({ directory: root, model, title: "Other" })
+      const archived = await store.create({ directory: root, model, title: "Old" })
+      await store.update(archived.id, { archived: true })
+      const side = await store.create({ directory: root, model, title: "Side", sideOf: home.id } as never)
+      const child = await store.create({ directory: root, model, title: "general-1", parentID: home.id, subagent: { type: "general", id: "general-1" } } as never)
+      let clock = new Date(2026, 0, 2, 10, 0).getTime()
+      let locale = "zh-CN"
+      const service = new AutomationService({
+        file: path.join(root, "automations.json"),
+        now: () => clock,
+        sessions: store,
+        prompt: async () => undefined,
+        busy: () => false,
+        models: () => [
+          { provider: "fake", id: "m", name: "M", efforts: ["low", "high"] },
+          { provider: "fake", id: "plain", name: "Plain", efforts: [] },
+        ],
+        agent: () => "build",
+        effort: () => "high",
+        locale: () => locale,
+        scratch: async () => root,
+        publish: () => undefined,
+      })
+      await service.start({ interval: false })
+      const call = async (input: Record<string, unknown>) => JSON.parse(await service.handle(input, { sessionID: home.id })) as Record<string, any>
+      const refusal = (input: Record<string, unknown>) =>
+        service.handle(input, { sessionID: home.id }).then(
+          () => "",
+          (failure: unknown) => (failure instanceof ToolError ? failure.message : `crash: ${String(failure)}`),
+        )
+      const daily = "RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0"
+
+      check("new-task with important-updates is refused (T10-20)", (await refusal({ mode: "create", title: "a", prompt: "p", rrule: daily, notification: "important-updates" })).includes("does not fit"))
+      check("so is existing-task with all-runs", (await refusal({ mode: "create", title: "a", prompt: "p", rrule: daily, runMode: "existing-task", notification: "all-runs" })).includes("does not fit"))
+      const task = await call({ mode: "create", title: "Digest", prompt: "Sum up", rrule: daily })
+      const id = task.automation.id as string
+      const merged = await refusal({ mode: "update", id, notification: "important-updates" })
+      check("an update is checked on the task as it would become, and a refused one changes nothing", merged.includes("does not fit") && service.list()[0]?.notification === "all-runs", { merged, kept: service.list()[0]?.notification })
+
+      // T10-21
+      clock = new Date(2026, 0, 3, 9, 0, 1).getTime()
+      await service.tick()
+      check("the task has run once, so it has a run history", (service.list()[0]?.runHistory?.length ?? 0) === 1, service.list()[0]?.runHistory)
+      const reordered = await call({ mode: "create", title: "Digest", prompt: "Sum up", rrule: "RRULE:FREQ=DAILY;BYMINUTE=0;BYHOUR=9", scheduleLabel: "Every morning" })
+      check("the same task with its rule's parts in another order, or a label on a simple rule, is the same task", reordered.deduplicated === true, reordered)
+      check("schedules compare by meaning", scheduleKey("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0") === scheduleKey("RRULE:FREQ=DAILY;BYMINUTE=0;BYHOUR=9", "x") && scheduleKey("RRULE:FREQ=DAILY;INTERVAL=2", "a") !== scheduleKey("RRULE:FREQ=DAILY;INTERVAL=2", "b"))
+
+      // T10-22
+      check("an existing-task task may run in another listed conversation", (await call({ mode: "create", title: "In other", prompt: "p", rrule: daily, runMode: "existing-task", targetThreadId: other.id })).automation.targetThreadId === other.id)
+      for (const [label, target] of [["an archived", archived.id], ["a side chat's", side.id], ["a subagent's", child.id], ["a made-up", "ses_nope"]] as const) {
+        check(`but not in ${label} conversation`, (await refusal({ mode: "create", title: `t-${label}`, prompt: "p", rrule: daily, runMode: "existing-task", targetThreadId: target })).includes("targetThreadId"))
+      }
+      check("nor may an update move it there", (await refusal({ mode: "update", id, runMode: "existing-task", targetThreadId: archived.id })).includes("targetThreadId"))
+
+      // T10-53
+      check("a reasoning level the model does not take is refused, naming the ones it does", (await refusal({ mode: "create", title: "r", prompt: "p", rrule: daily, reasoning: "max" })).includes("it takes: low, high"))
+      check("a model that takes none says so", (await refusal({ mode: "create", title: "r2", prompt: "p", rrule: daily, model: "plain", reasoning: "low" })).includes("none"))
+      const plain = await call({ mode: "create", title: "r3", prompt: "p", rrule: daily, model: "plain" })
+      check("the app's own level is not given to a model that does not take it", plain.automation.reasoning === undefined, plain.automation)
+      check("an empty title in an update is refused rather than ignored", (await refusal({ mode: "update", id, title: "  " })).includes("title cannot be empty"))
+      check("so is an empty prompt", (await refusal({ mode: "update", id, prompt: "" })).includes("prompt cannot be empty"))
+
+      // T10-52
+      check("the schedule reads in Chinese for a Chinese interface", task.automation.schedule === "每天 9:00", task.automation.schedule)
+      locale = "en"
+      check("and in English otherwise", (await call({ mode: "view", id })).automation.schedule === "Every day 9:00")
+      check(
+        "MiMo's Chinese names and its rule for labels",
+        scheduleLabel("RRULE:FREQ=HOURLY;BYMINUTE=0", undefined, "zh-CN") === "每小时" &&
+          scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=18;BYMINUTE=30", undefined, "zh-TW") === "工作日 18:30" &&
+          scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=SU;BYHOUR=8;BYMINUTE=0", undefined, "zh-CN") === "星期日（时间：8:00）" &&
+          scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2", "隔天提醒", "zh-CN") === "隔天提醒" &&
+          scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2", "Every other day", "zh-CN") === "每隔 2 天" &&
+          scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2", "自定义", "en") === "Every 2 days" &&
+          scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2", "隔天提醒", "en") === "Every 2 days",
+      )
+    } finally {
+      await fs.rm(root, { recursive: true, force: true })
+    }
+  }
 }

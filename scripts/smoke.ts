@@ -9626,6 +9626,7 @@ async function automationChecks(root: string, project: string) {
     "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29",
     "RRULE:FREQ=HOURLY;BYMINUTE=30",
     "DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2",
+    "DTSTART:20260101T080000\nRRULE:FREQ=DAILY;UNTIL=20260301T0900Z",
   ]
   check("MiMo's subset of rules is accepted", valid.every((rule) => parseRRule(rule) !== undefined), valid.filter((rule) => !parseRRule(rule)))
   const refused = [
@@ -9640,21 +9641,31 @@ async function automationChecks(root: string, project: string) {
     "RRULE:FREQ=DAILY;FREQ=DAILY",
     "RRULE:FREQ=WEEKLY;BYDAY=XX",
     "RRULE:FREQ=DAILY\nRRULE:FREQ=HOURLY",
+    // T10-51: MiMo's DTSTART takes no Z and no seconds but 00; its UNTIL needs a time.
+    "DTSTART:20260101T0800Z\nRRULE:FREQ=DAILY",
+    "DTSTART:20260101T080030\nRRULE:FREQ=DAILY",
+    "RRULE:FREQ=DAILY;UNTIL=20260301",
   ]
   check("and everything outside it is refused", refused.every((rule) => parseRRule(rule) === undefined), refused.filter((rule) => parseRRule(rule)))
   const friday = new Date(2026, 0, 2, 10, 0).getTime()
-  const next = (rule: string, after = friday, anchor = friday) => nextOccurrence(parseRRule(rule)!, after, anchor)
+  const next = (rule: string, after = friday) => nextOccurrence(parseRRule(rule)!, after)
   check("every day at 09:00, after 10:00, is tomorrow at 09:00", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 3, 9, 0).getTime())
   check("weekdays after a Friday morning is Monday", next("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
-  check("an interval counts from the anchor", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
+  // T10-51: with no DTSTART an interval counts from the start of 1970, as MiMo's does, whenever the task was made.
+  const everyThird = (() => {
+    for (let day = 3; ; day++) if (Math.floor(Date.UTC(2026, 0, day) / 86_400_000) % 3 === 0) return new Date(2026, 0, day, 9, 0).getTime()
+  })()
+  check("an interval counts from 1970, whenever the task was made", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === everyThird && next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0", friday + 86_400_000) === everyThird)
+  check("a rule that runs once a decade is still found", next("RRULE:FREQ=YEARLY;INTERVAL=10;BYMONTH=3;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0") === new Date(2030, 2, 1, 9, 0).getTime())
+  check("and one that can never land (every fourth year from 1970 is never a leap year) ends the search with none", next("RRULE:FREQ=YEARLY;INTERVAL=4;BYMONTH=2;BYMONTHDAY=29;BYHOUR=9;BYMINUTE=0") === undefined)
   check("hourly at half past is the next half hour", next("RRULE:FREQ=HOURLY;BYMINUTE=30") === new Date(2026, 0, 2, 10, 30).getTime())
   check("COUNT stops after that many runs", next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2") === undefined && next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=3") === new Date(2026, 0, 3, 8, 0).getTime())
-  check("UNTIL stops at its date", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102") === undefined)
+  check("UNTIL stops at its time", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102T2359") === undefined && next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260103T0900") === new Date(2026, 0, 3, 9, 0).getTime())
   check(
     "schedules read the way MiMo names them",
-    scheduleLabel("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=5") === "Every day 09:05" &&
-      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === "Weekdays 09:00" &&
-      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0") === "Monday (time: 09:00)" &&
+    scheduleLabel("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=5") === "Every day 9:05" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === "Weekdays 9:00" &&
+      scheduleLabel("RRULE:FREQ=WEEKLY;BYDAY=MO;BYHOUR=9;BYMINUTE=0") === "Monday (time: 9:00)" &&
       scheduleLabel("RRULE:FREQ=HOURLY;BYMINUTE=0") === "Hourly" &&
       scheduleLabel("RRULE:FREQ=DAILY;INTERVAL=2") === "Every 2 days" &&
       scheduleLabel("RRULE:FREQ=MONTHLY;BYMONTHDAY=1", "First of the month") === "First of the month",
@@ -9696,8 +9707,8 @@ async function automationChecks(root: string, project: string) {
     },
     busy: (sessionID: string) => busy.has(sessionID),
     models: () => [
-      { provider: "fake", id: "m", name: "Fake M" },
-      { provider: "fake", id: "big", name: "Fake Big" },
+      { provider: "fake", id: "m", name: "Fake M", efforts: ["low", "medium", "high"] },
+      { provider: "fake", id: "big", name: "Fake Big", efforts: ["low", "high", "max"] },
     ],
     agent: () => "build" as const,
     effort: () => "high" as const,
@@ -9729,7 +9740,7 @@ async function automationChecks(root: string, project: string) {
       created.automation.model.name === "Fake M" &&
       created.automation.reasoning === "high" &&
       created.automation.project === path.basename(project) &&
-      created.automation.schedule === "Every day 09:00",
+      created.automation.schedule === "Every day 9:00",
     created,
   )
   check("its first run is the next 09:00", service.dueAt("auto-1") === new Date(2026, 0, 3, 9, 0).getTime())
@@ -9775,11 +9786,14 @@ async function automationChecks(root: string, project: string) {
     Boolean(opened) && opened?.model.model === "big" && opened?.scratch === true && opened?.directory === path.join(root, "automation-scratch") && prompts.at(-1)?.sessionID === opened?.id,
     opened,
   )
-  await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: "ses_gone" })
+  const doomed = await store.create({ directory: project, model, title: "Soon gone" })
+  await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: doomed.id })
+  await store.delete(doomed.id)
   const before = prompts.length
   clock = new Date(2026, 0, 5, 9, 0, 1).getTime()
   await service.tick()
   check("a run whose conversation is gone is skipped and the schedule moves on", prompts.length === before && service.dueAt("auto-1") === new Date(2026, 0, 6, 9, 0).getTime())
+  check("and the skip is on the task's record (T10-22)", service.list()[0]?.runHistory?.at(-1)?.status === "skipped" && Boolean(service.list()[0]?.runHistory?.at(-1)?.error), service.list()[0]?.runHistory?.at(-1))
 
   // Kept in the data folder; a run missed while closed happens once at start.
   await service.stop()
@@ -9788,7 +9802,7 @@ async function automationChecks(root: string, project: string) {
   clock = new Date(2026, 0, 9, 12, 0).getTime()
   const reopened = new AutomationService(deps)
   await reopened.start({ interval: false })
-  check("after a restart the next run is counted from the last one, so a missed run is due at once", (reopened.dueAt("auto-1") ?? Infinity) <= clock && reopened.list()[0]?.targetThreadId === "ses_gone")
+  check("after a restart the next run is counted from the last one, so a missed run is due at once", (reopened.dueAt("auto-1") ?? Infinity) <= clock && reopened.list()[0]?.targetThreadId === doomed.id)
   check("delete removes the task", (await JSON.parse(await reopened.handle({ mode: "delete", id: "auto-1" }, { sessionID: home.id }))).ok === true && reopened.list().length === 0)
   await reopened.stop()
 }

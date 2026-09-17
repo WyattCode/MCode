@@ -130,11 +130,13 @@ export interface AutomationDeps {
   }
   prompt(input: { sessionID: string; text: string; inbox: UserMessage["inbox"] }): Promise<unknown>
   busy(sessionID: string): boolean
-  /** The models of connected providers, as `provider/model` with a display name. */
-  models(): { provider: string; id: string; name: string }[]
+  /** The models of connected providers, as `provider/model` with a display name and the reasoning levels each takes. */
+  models(): { provider: string; id: string; name: string; efforts?: readonly string[] }[]
   agent(): AgentName
   /** The app-wide reasoning level. */
   effort(): Effort | undefined
+  /** The interface language, which the schedule's words follow (T10-52). */
+  locale?(): string
   /** A fresh folder for a task with no project. */
   scratch(): Promise<string>
   publish(event: ServerEvent): void
@@ -148,6 +150,45 @@ export function notifies(policy: NotificationPolicy, runMode: RunMode, status: "
 }
 
 const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
+
+/**
+ * A schedule as MiMo compares two: hourly, daily, weekdays and weekly rules by
+ * what they mean, so the order of their parts does not matter, and any other
+ * rule by its lines together with its label.
+ */
+export function scheduleKey(rrule: string, label?: string): string {
+  const rule = parseRRule(rrule)
+  const lines = rrule.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).join("\n")
+  if (!rule) return `invalid:${lines}`
+  const simple = !rule.hasStart && !rule.extraLines
+  const only = (allowed: string[]) => simple && rule.keys.every((key) => allowed.includes(key))
+  const time = `${rule.byHours[0] ?? 9}:${rule.byMinutes[0] ?? 0}`
+  if (rule.interval === 1 && rule.frequency === "HOURLY" && rule.byMinutes.join() === "0" && only(["FREQ", "BYMINUTE"])) return "hourly:0"
+  if (rule.interval === 1 && rule.frequency === "DAILY" && rule.byHours.length === 1 && rule.byMinutes.length === 1 && !rule.byWeekdays.length && only(["FREQ", "BYHOUR", "BYMINUTE"])) return `daily:${time}`
+  if (rule.interval === 1 && rule.frequency === "WEEKLY" && rule.byHours.length === 1 && rule.byMinutes.length === 1 && only(["FREQ", "BYHOUR", "BYMINUTE", "BYDAY"])) {
+    if (rule.byWeekdays.join() === "1,2,3,4,5") return `weekdays:${time}`
+    if (rule.byWeekdays.length === 1) return `weekly:${rule.byWeekdays[0]}:${time}`
+  }
+  return `custom:${lines}\u0000${label?.trim() ?? ""}`
+}
+
+/** Whether two tasks are the same task, on MiMo's ten fields: run history, labels on simple rules and key order do not count. */
+export function sameTask(a: Automation, b: Automation): boolean {
+  const fields = (task: Automation) =>
+    JSON.stringify([
+      task.title,
+      task.prompt,
+      task.enabled,
+      task.runMode,
+      task.targetThreadId ?? null,
+      task.project ? [task.project.name, task.project.path] : null,
+      [task.model.provider, task.model.model],
+      task.reasoning ?? null,
+      scheduleKey(task.rrule, task.label),
+      task.notification,
+    ])
+  return fields(a) === fields(b)
+}
 
 export class AutomationService {
   private saved: Saved = { automations: [], seq: 0, receipts: [] }
@@ -225,7 +266,7 @@ export class AutomationService {
       try {
         const parsed = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw) as Partial<Saved>
         this.saved = {
-          automations: Array.isArray(parsed.automations) ? parsed.automations.filter((entry) => entry && typeof entry.id === "string" && parseRRule(entry.rrule ?? "")) : [],
+          automations: Array.isArray(parsed.automations) ? parsed.automations.filter((entry) => entry && typeof entry.id === "string" && typeof entry.rrule === "string") : [],
           seq: typeof parsed.seq === "number" ? parsed.seq : 0,
           receipts: Array.isArray(parsed.receipts) ? parsed.receipts.slice(-RECEIPTS_KEPT) : [],
         }
@@ -318,6 +359,25 @@ export class AutomationService {
     return this.writing
   }
 
+  /**
+   * A run that could not start, recorded as MiMo records one (T10-22): it
+   * shows in the task's history, and is not reported again at the next start,
+   * since there is no conversation to point the user at.
+   */
+  private skipRun(automation: Automation, error: string): void {
+    const at = this.deps.now()
+    const record: RunRecord = {
+      runId: `run-${at.toString(36)}-skipped`,
+      scheduledFor: this.next.get(automation.id) ?? at,
+      startedAt: at,
+      status: "skipped",
+      finishedAt: at,
+      error,
+      reported: true,
+    }
+    automation.runHistory = [...(automation.runHistory ?? []), record].slice(-RUNS_KEPT)
+  }
+
   /** Opens a record for a run that is starting, keeping only the last few. */
   private openRun(automation: Automation, sessionID: string): void {
     const at = this.deps.now()
@@ -359,7 +419,7 @@ export class AutomationService {
       return
     }
     const from = initial ? Math.max(automation.lastFiredAt ?? 0, automation.anchorAt) || this.deps.now() : this.deps.now()
-    const at = nextOccurrence(rule, from, automation.anchorAt)
+    const at = nextOccurrence(rule, from)
     if (at === undefined) this.next.delete(automation.id)
     else this.next.set(automation.id, at)
   }
@@ -375,15 +435,54 @@ export class AutomationService {
       project: automation.project?.name ?? null,
       model: { id: `${automation.model.provider}/${automation.model.model}`, name: automation.model.name },
       ...(automation.reasoning ? { reasoning: automation.reasoning } : {}),
-      schedule: scheduleLabel(automation.rrule, automation.label),
+      schedule: scheduleLabel(automation.rrule, automation.label, this.deps.locale?.() ?? "en"),
       notification: automation.notification,
     }
   }
 
-  /** The app's reasoning level as a task's default; effort is one app-wide value here, not a conversation's own. */
-  private appEffort(): { reasoning?: Effort } {
+  /** The app's reasoning level as a task's default, when the task's model takes it; effort is one app-wide value here. */
+  private appEffort(model: ModelRef): { reasoning?: Effort } {
     const effort = this.deps.effort()
-    return effort && (REASONING as readonly string[]).includes(effort) ? { reasoning: effort } : {}
+    if (!effort || !(REASONING as readonly string[]).includes(effort)) return {}
+    const efforts = this.effortsOf(model)
+    return !efforts || efforts.includes(effort) ? { reasoning: effort } : {}
+  }
+
+  /** The reasoning levels a connected model takes; nothing when the model is not one this app lists. */
+  private effortsOf(model: ModelRef): readonly string[] | undefined {
+    return this.deps.models().find((entry) => entry.provider === model.provider && entry.id === model.model)?.efforts
+  }
+
+  /** MiMo's check that a task's reasoning is one its model takes (T10-53). */
+  private checkReasoning(reasoning: string | undefined, model: ModelRef): void {
+    if (!reasoning) return
+    const efforts = this.effortsOf(model)
+    if (!efforts || efforts.includes(reasoning)) return
+    throw new ToolError(
+      `reasoning "${reasoning}" is not a level model "${model.provider}/${model.model}" takes; it takes: ${efforts.length ? efforts.join(", ") : "none (leave reasoning out)"}.`,
+    )
+  }
+
+  /** MiMo refuses a notification that cannot mean anything for where the task runs (T10-20). */
+  private checkNotification(runMode: RunMode, notification: NotificationPolicy): void {
+    if (runMode === "new-task" && notification === "important-updates") {
+      throw new ToolError('notification "important-updates" does not fit runMode "new-task": it only reports replies in an existing conversation. Use all-runs or failed-runs.')
+    }
+    if (runMode === "existing-task" && notification === "all-runs") {
+      throw new ToolError('notification "all-runs" does not fit runMode "existing-task". Use important-updates or failed-runs.')
+    }
+  }
+
+  /**
+   * Where an existing-task task may run: this conversation, or a conversation
+   * the side column lists - not a subagent's, a side chat or an archived one
+   * (the user's T10-22 decision; MiMo takes this or a pinned conversation).
+   */
+  private async checkTarget(id: string, caller: SessionInfo): Promise<void> {
+    if (id === caller.id) return
+    const target = await this.deps.sessions.get(id)
+    if (target && !target.parentID && !target.sideOf && !target.archived) return
+    throw new ToolError(`targetThreadId "${id}" is not a conversation a task can run in: give this conversation's id, or one listed in the side column that is not archived.`)
   }
 
   private model(ref: string | undefined, fallback: ModelRef): ModelRef & { name: string } {
@@ -460,30 +559,32 @@ export class AutomationService {
       const missing = [!title && "title", !prompt && "prompt", !rrule && "rrule"].filter(Boolean)
       if (missing.length) throw new ToolError(`create needs: ${missing.join(", ")}`)
       const chosenMode = (runMode as RunMode | undefined) ?? "new-task"
+      const chosenModel = this.model(text(input.model), caller.model)
+      this.checkReasoning(reasoning, chosenModel)
+      const chosenNotification = (notification as NotificationPolicy | undefined) ?? (chosenMode === "existing-task" ? "important-updates" : "all-runs")
+      this.checkNotification(chosenMode, chosenNotification)
+      const target = chosenMode === "existing-task" ? (text(input.targetThreadId) ?? caller.id) : undefined
+      if (target) await this.checkTarget(target, caller)
       const draft: Automation = {
         id: "",
         title: title!,
         prompt: prompt!,
         enabled: status !== "paused",
         runMode: chosenMode,
-        ...(chosenMode === "existing-task" ? { targetThreadId: text(input.targetThreadId) ?? caller.id } : {}),
+        ...(target ? { targetThreadId: target } : {}),
         project,
-        model: this.model(text(input.model), caller.model),
-        ...(reasoning ? { reasoning: reasoning as Effort } : this.appEffort()),
+        model: chosenModel,
+        ...(reasoning ? { reasoning: reasoning as Effort } : this.appEffort(chosenModel)),
         rrule: rrule!,
         ...(text(input.scheduleLabel) ? { label: text(input.scheduleLabel) } : {}),
-        notification: (notification as NotificationPolicy | undefined) ?? (chosenMode === "existing-task" ? "important-updates" : "all-runs"),
+        notification: chosenNotification,
         revision: 1,
         createdAt: now,
         updatedAt: now,
         anchorAt: now,
       }
-      // The same task asked for twice is kept once, as MiMo does.
-      const same = (automation: Automation) => {
-        const { id: _a, revision: _b, createdAt: _c, updatedAt: _d, anchorAt: _e, lastFiredAt: _f, ...rest } = automation
-        return JSON.stringify(rest)
-      }
-      const duplicate = this.saved.automations.find((automation) => same(automation) === same(draft))
+      // The same task asked for twice is kept once, as MiMo does, judged on its ten fields (T10-21).
+      const duplicate = this.saved.automations.find((automation) => sameTask(automation, draft))
       if (duplicate) return answer({ ok: true, created: false, deduplicated: true, automation: this.view(duplicate) })
       draft.id = `auto-${++this.saved.seq}`
       this.saved.automations.push(draft)
@@ -491,21 +592,33 @@ export class AutomationService {
       return answer({ ok: true, automation: this.view(draft) })
     }
 
-    const automation = find(idOf())
+    const found = find(idOf())
     if (mode === "delete") {
+      const automation = found
       this.saved.automations = this.saved.automations.filter((entry) => entry.id !== automation.id)
       this.next.delete(automation.id)
       return answer({ ok: true, id: automation.id })
     }
+    // Changed on a copy, which replaces the task only once every check has passed.
+    const automation = structuredClone(found)
     if (mode === "pause" || mode === "resume") {
       automation.enabled = mode === "resume"
     } else {
+      // An empty title or prompt is refused, as MiMo's check refuses it, rather than quietly ignored (T10-53).
+      for (const field of ["title", "prompt"] as const) {
+        if (typeof input[field] === "string" && !text(input[field])) throw new ToolError(`${field} cannot be empty; leave it out to keep the task's ${field}.`)
+      }
       const title = text(input.title)
       const prompt = text(input.prompt)
       if (title) automation.title = title
       if (prompt) automation.prompt = prompt
       if (input.model !== undefined || reasoning) automation.model = this.model(text(input.model), automation.model)
       if (reasoning) automation.reasoning = reasoning as Effort
+      if (input.model !== undefined && !reasoning && automation.reasoning) {
+        const efforts = this.effortsOf(automation.model)
+        if (efforts && !efforts.includes(automation.reasoning)) delete automation.reasoning
+      }
+      this.checkReasoning(reasoning, automation.model)
       if (rrule !== undefined) {
         automation.rrule = rrule
         automation.anchorAt = now
@@ -519,12 +632,17 @@ export class AutomationService {
       if (notification) automation.notification = notification as NotificationPolicy
       else if (automation.runMode === "existing-task" && before !== "existing-task" && automation.notification === "all-runs") automation.notification = "important-updates"
       else if (automation.runMode === "new-task" && before !== "new-task" && automation.notification === "important-updates") automation.notification = "all-runs"
-      if (text(input.targetThreadId)) automation.targetThreadId = text(input.targetThreadId)
-      else if (automation.runMode === "existing-task" && !automation.targetThreadId) automation.targetThreadId = caller.id
+      const named = text(input.targetThreadId)
+      if (named) {
+        await this.checkTarget(named, caller)
+        automation.targetThreadId = named
+      } else if (automation.runMode === "existing-task" && !automation.targetThreadId) automation.targetThreadId = caller.id
       if (automation.runMode === "new-task") delete automation.targetThreadId
+      this.checkNotification(automation.runMode, automation.notification)
     }
     automation.revision++
     automation.updatedAt = now
+    this.saved.automations = this.saved.automations.map((entry) => (entry.id === found.id ? automation : entry))
     this.plan(automation, mode === "resume")
     return answer({ ok: true, automation: this.view(automation) })
   }
@@ -565,7 +683,10 @@ export class AutomationService {
     const inbox = { from: automation.title, automationID: automation.id }
     if (automation.runMode === "existing-task") {
       const target = automation.targetThreadId ? await this.deps.sessions.get(automation.targetThreadId) : undefined
-      if (!target) return "skipped"
+      if (!target) {
+        this.skipRun(automation, "The conversation this task runs in no longer exists.")
+        return "skipped"
+      }
       if (this.deps.busy(target.id)) return "waiting"
       this.runs.set(target.id, structuredClone(automation))
       this.openRun(automation, target.id)
@@ -574,7 +695,10 @@ export class AutomationService {
       return "started"
     }
     let directory = automation.project?.path
-    if (directory && !(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) return "skipped"
+    if (directory && !(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) {
+      this.skipRun(automation, "The project folder this task runs in no longer exists.")
+      return "skipped"
+    }
     directory ??= await this.deps.scratch()
     const session = await this.deps.sessions.create({
       directory,
