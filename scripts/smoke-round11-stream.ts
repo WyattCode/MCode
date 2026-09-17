@@ -240,32 +240,52 @@ export async function roundElevenStreamChecks(check: Check, section: (name: stri
 
   section("Round 11 (S11-11): a stream cut between reads is not a reply")
   {
-    const stop = new AbortController()
-    const server = createServer((request, response) => {
-      request.on("data", () => {})
-      request.on("end", () => {
-        response.writeHead(200, { "content-type": "text/event-stream" })
-        // A call is announced, its arguments start, and then the user presses Stop.
-        response.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_cut", function: { name: "bash", arguments: "{\"command\":\"rm " } }] } }] })}\n\n`)
-        setTimeout(() => stop.abort(), 60)
-        // Nothing more arrives for a while, so the reader is sitting in a read when the signal falls.
-        setTimeout(() => response.end(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`), 160)
-      })
-    })
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()))
-    const port = (server.address() as { port: number }).port
-    const result = await OpenAICompatible.stream(
-      { ...baseRequest, model: { provider: "x", model: "m" }, signal: stop.signal, baseURL: `http://127.0.0.1:${port}/v1` },
-      () => {},
+    /*
+     * The whole answer arrives in one chunk and Stop is pressed while it is
+     * being handed out, so the reader never sits in a read that could reject:
+     * it simply runs out of lines and ends. That is the case the adapter used
+     * to answer with a perfectly ordinary outcome, half-assembled call and all.
+     */
+    const cut = new AbortController()
+    const chat = await rawProvider(
+      `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: "call_cut", function: { name: "bash", arguments: "{\"command\":\"rm -rf x\"}" } }] } }] })}\n\n` +
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] })}\n\ndata: [DONE]\n\n`,
+    )
+    const chatResult = await OpenAICompatible.stream(
+      { ...baseRequest, model: { provider: "x", model: "m" }, signal: cut.signal, baseURL: `http://127.0.0.1:${chat.port}/v1` },
+      (event: TurnEvent) => {
+        if (event.type === "tool") cut.abort()
+      },
     ).then(
       (value) => value,
       (err: unknown) => err as Error,
     )
-    await new Promise<void>((resolve) => server.close(() => resolve()))
+    await chat.close()
     check(
-      "a half-assembled call is never handed back as a finished turn",
-      result instanceof Error && result.name === "AbortError",
-      result instanceof Error ? result.name : result,
+      "chat completions: a half-assembled call is never handed back as a finished turn",
+      chatResult instanceof Error && chatResult.name === "AbortError",
+      chatResult instanceof Error ? chatResult.name : chatResult,
+    )
+
+    const stopCodex = new AbortController()
+    const codex = await codexProvider(
+      `data: ${JSON.stringify({ type: "response.output_item.done", item: { type: "function_call", call_id: "call_cut", name: "bash", arguments: "{}" } })}\n\n` +
+        `data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", usage: { input_tokens: 1, output_tokens: 1 } } })}\n\n`,
+    )
+    const codexResult = await ChatGPTSubscription.stream(
+      { ...baseRequest, model: { provider: "codex", model: "gpt-5.5" }, signal: stopCodex.signal, baseURL: `http://127.0.0.1:${codex.port}` },
+      (event: TurnEvent) => {
+        if (event.type === "tool") stopCodex.abort()
+      },
+    ).then(
+      (value) => value,
+      (err: unknown) => err as Error,
+    )
+    await codex.close()
+    check(
+      "and neither does the Responses path, which had no signal check at all",
+      codexResult instanceof Error && codexResult.name === "AbortError",
+      codexResult instanceof Error ? codexResult.name : codexResult,
     )
   }
 
