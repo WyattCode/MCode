@@ -2122,10 +2122,11 @@ export class SessionRunner {
   }
 
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
-    // A slash command's own agent and model hold for this turn; the conversation keeps its own.
-    let session: TurnSession = this.withCommandTurn(await this.store.require(sessionID), this.turnOverrides.get(sessionID))
+    const own = await this.store.require(sessionID)
     // plan: the conversation's own mode as the turn begins; approving a plan changes it mid-turn.
-    const planning = session.agent === "plan"
+    const planning = own.agent === "plan"
+    // A slash command's own agent and model hold for this turn; the conversation keeps its own.
+    let session: TurnSession = this.withCommandTurn(own, this.turnOverrides.get(sessionID))
     this.turnOverrides.delete(sessionID)
     // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
