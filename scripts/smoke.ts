@@ -304,6 +304,7 @@ import { roundTenFileChecks } from "./smoke-round10-files"
 import { roundTenDesktopChecks } from "./smoke-round10-desktop"
 // Round 10: git end to end - paths, push target, time limits, grouping, undo.
 import { roundTenGitChecks } from "./smoke-round10-git"
+import { roundElevenChecks } from "./smoke-round11"
 import { roundTenStepsChecks } from "./smoke-round10-steps"
 // Round 10: the macOS and Linux branches (M10-1 onwards).
 import { roundTenPlatformChecks } from "./smoke-round10-platforms"
@@ -6937,6 +6938,7 @@ async function main() {
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
+  await roundElevenChecks(check, section)
 
   console.log(`\n${passed} passed, ${failed} failed`)
   process.exit(failed === 0 ? 0 : 1)
