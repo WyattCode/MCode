@@ -1231,6 +1231,7 @@ export class SessionRunner {
       config.instructionFiles ?? [],
       session.model.provider,
       session.model.model,
+      config.shell ?? "",
       this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).map((tool) => tool.name),
       // skills: a skill added or removed changes the list the prompt carries.
       skills.map((skill) => skill.name),
@@ -1253,6 +1254,7 @@ export class SessionRunner {
               provider: session.model.provider,
               id: session.model.model,
             },
+            shell: config.shell,
           })
     this.prefixes.set(session.id, { key, system: base })
     // subagents: a subagent is told what it is, after what its agent would be told anyway.

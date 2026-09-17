@@ -10,7 +10,7 @@ import { collectMutationTargets, scanCommand } from "./bash-scan"
 import { mainWorktreeRoots } from "../session/worktree"
 import { ABORTED_TOOL } from "../provider/history"
 import { repositoryRoot, tryGit } from "../git"
-import { gitBash, which, windowsPath } from "../shell-path"
+import { gitBash, platformShell, which, windowsPath } from "../shell-path"
 import { mergeConflictNotice } from "./merge-conflict"
 
 const DEFAULT_TIMEOUT = 120_000
@@ -225,13 +225,6 @@ function located(file: string): string {
     return shell
   }
   return which(shell) ?? shell
-}
-
-/** The shell used when nothing names one: MiMo's order, the newer PowerShell first on Windows. */
-function platformShell(): string {
-  if (process.platform === "win32") return which("pwsh.exe") ?? which("powershell.exe") ?? gitBash() ?? process.env.COMSPEC ?? "cmd.exe"
-  if (process.platform === "darwin") return "/bin/zsh"
-  return which("bash") ?? "/bin/sh"
 }
 
 let defaultShell: { key: string; file: string } | undefined

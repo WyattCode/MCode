@@ -4,7 +4,7 @@ import { Identifier } from "@shared/id"
 import { typedInput } from "@shared/terminal-input"
 import type { Bus } from "./bus"
 import type { ShellSummary } from "@shared/protocol"
-import { gitBash, which } from "./shell-path"
+import { platformShell } from "./shell-path"
 
 /** How wide and how tall the drawer's grid is, in character cells. */
 export interface ShellSize {
@@ -431,6 +431,7 @@ function shellCommand(chosen?: string): { command: string; args: string[] } {
  * that a reader is likely to have configured a prompt in.
  */
 function preferred(): string {
-  if (process.platform !== "win32") return process.env.SHELL || "/bin/bash"
-  return which("pwsh") ?? which("powershell") ?? gitBash() ?? process.env.COMSPEC ?? "cmd.exe"
+  // MiMo's terminal takes SHELL as it is (fish included); without it, the same fallback as the tool's.
+  if (process.platform !== "win32") return process.env.SHELL || platformShell()
+  return platformShell()
 }

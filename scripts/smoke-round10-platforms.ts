@@ -13,6 +13,9 @@ import { openInBrowser } from "../src/server/mcp-oauth"
 import { getConfig, validateConfiguration } from "app-builder-lib/out/util/config/config.js"
 import { LinuxTargetHelper } from "app-builder-lib/out/targets/LinuxTargetHelper.js"
 import { DebugLogger } from "builder-util"
+import { platformShell } from "../src/server/shell-path"
+import { shell as commandShell } from "../src/server/tool/bash"
+import { systemPrompt } from "../src/server/session/prompt"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -164,5 +167,36 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     )
     const why = config.mac?.extendInfo?.NSMicrophoneUsageDescription
     check("M10-6: the Info.plist says why the microphone is used", typeof why === "string" && why.startsWith("MCode ") && why.length > 20, why)
+  }
+
+  section("Round 10 (platforms): M10-9 / M10-10 which shell runs a command and opens a terminal")
+  {
+    check("M10-10: macOS falls back to zsh", platformShell("darwin") === "/bin/zsh")
+    const savedPath = process.env.PATH
+    const savedShell = process.env.SHELL
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r10-shell-"))
+    try {
+      process.env.PATH = scratch
+      check("M10-10: Linux without bash on PATH falls back to /bin/sh, not /bin/bash", platformShell("linux") === "/bin/sh", platformShell("linux"))
+      process.env.PATH = savedPath
+      process.env.SHELL = "/usr/bin/fish"
+      const picked = commandShell().command
+      check("M10-9: a login shell of fish does not run commands", !/fish/i.test(picked), picked)
+      const prompt = await systemPrompt({ directory: scratch, agent: "build" })
+      const line = /^Shell: (.*)$/m.exec(prompt)?.[1]
+      check("M10-9: the prompt names the shell commands really run in", line === picked, line)
+      const chosen = await systemPrompt({ directory: scratch, agent: "build", shell: "cmd.exe" })
+      check("M10-9: a configured shell is the one the prompt names", /^Shell: .*cmd(\.exe)?$/im.test(chosen), /^Shell: (.*)$/m.exec(chosen)?.[1])
+      process.env.SHELL = "/usr/bin/nu"
+      check("M10-9: nor does nu", !/\bnu\b/i.test(commandShell().command), commandShell().command)
+    } finally {
+      process.env.PATH = savedPath
+      if (savedShell === undefined) delete process.env.SHELL
+      else process.env.SHELL = savedShell
+      await fs.rm(scratch, { recursive: true, force: true })
+    }
+    const terminal = await fs.readFile(path.join(root, "src/server/shell.ts"), "utf8")
+    const preferred = terminal.slice(terminal.indexOf("function preferred()"), terminal.indexOf("function preferred()") + 400)
+    check("M10-10: the terminal no longer assumes /bin/bash", !terminal.includes('"/bin/bash"') && /process\.env\.SHELL \|\| platformShell\(\)/.test(preferred), preferred)
   }
 }

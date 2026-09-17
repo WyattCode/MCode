@@ -4,6 +4,7 @@ import os from "node:os"
 import { pathToFileURL } from "node:url"
 import { defaultBranch, gitUser, recentCommits, status } from "../git"
 import { globToRegExp } from "../tool/ignore"
+import { shell } from "../tool/bash"
 import { foldersUp } from "./worktree"
 import { modelInvocable, type SkillInfo } from "../skill"
 import { agentPrompt } from "./prompts"
@@ -35,6 +36,8 @@ export interface PromptContext {
   memory?: { project: string; global: string; notes: string }
   /** Which model this is, so the environment block can say so (MiMo names it there). */
   model?: PromptModel
+  /** The shell setting, so the environment block names the shell commands really run in. */
+  shell?: string
 }
 
 /** The model as the environment block names it. */
@@ -138,7 +141,7 @@ export async function systemPrompt(context: PromptContext): Promise<string> {
    * (session/context.ts) and this prompt stays the same for the conversation,
    * as MiMo freezes its own.
    */
-  sections.push(await environment(context.directory, context.model))
+  sections.push(await environment(context.directory, context.model, context.shell))
 
   // memory: names this conversation's own notes file, so last - where a request carries it, outside the cached prefix.
   if (context.memory) sections.push(memorySection(context.memory))
@@ -317,8 +320,10 @@ async function projectInstructions(
  */
 const environments = new Map<string, string>()
 
-async function environment(directory: string, model?: PromptModel, today = new Date().toISOString().slice(0, 10)): Promise<string> {
-  const key = [path.resolve(directory), today, model?.provider ?? "", model?.id ?? ""].join("|")
+async function environment(directory: string, model?: PromptModel, configured?: string, today = new Date().toISOString().slice(0, 10)): Promise<string> {
+  // The shell the bash tool will pick: a login shell of fish or nu is not it.
+  const commandShell = shell(configured).command
+  const key = [path.resolve(directory), today, model?.provider ?? "", model?.id ?? "", commandShell].join("|")
   const cached = environments.get(key)
   if (cached !== undefined) return cached
 
@@ -344,7 +349,7 @@ async function environment(directory: string, model?: PromptModel, today = new D
     `Project directory: ${directory}`,
     `Is a git repository: ${repo}`,
     `Platform: ${process.platform} (${os.release()})`,
-    `Shell: ${process.platform === "win32" ? "PowerShell" : process.env.SHELL || "/bin/bash"}`,
+    `Shell: ${commandShell}`,
   ]
   // Which model this is: without it a model cannot answer "which model am I".
   if (model) lines.push(`Model: ${model.name ? `${model.name}, ` : ""}${model.provider}/${model.id}`)
