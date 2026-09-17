@@ -120,7 +120,7 @@ export async function* readEvents(body: ReadableStream<Uint8Array>, options: Sse
       done = read.done
       const text = done ? decoder.decode() : decoder.decode(read.value, { stream: true })
       // MiMo's parser strips a byte-order mark from the first chunk and only the first.
-      const chunk = first ? text.replace(/^﻿/, "") : text
+      const chunk = first ? text.replace(/^\uFEFF/, "") : text
       first = false
       const split = splitLines(rest + chunk)
       rest = split.rest
