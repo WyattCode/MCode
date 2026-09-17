@@ -22,6 +22,8 @@ import { WINDOWS_APPS, docApps, isKnownOpenWith, openApps } from "../src/shared/
 import { findBundle, installedDocApps, launchTarget, macApplicationFolders } from "../src/main/installed-apps"
 import { MENU_COMMANDS, acceleratorOf, menuAccelerator, readMenuKeys } from "../src/main/menu-keys"
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "../src/main/native-dialogs"
+import { protectedFilter, protectedPaths } from "../src/server/protected-paths"
+import { searchFolder, searchTree } from "../src/server/handlers"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -398,5 +400,45 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     hideWindow(onWindows, "win32")
     check("M10-26: Windows hides at once, full screen or not", onWindows.hidden === 1)
     check("M10-26: the activate handler cancels a waiting hide", /app\.on\("activate", \(\) => \{[\s\S]{0,200}cancelPendingHide\(window\)/.test(main))
+  }
+
+  section("Round 10 (platforms): M10-23 a search from the home folder stays out of its private folders")
+  {
+    const mac = protectedPaths("darwin", "/Users/me")
+    check("M10-23: macOS keeps out of Pictures, Library and the rest", ["/Users/me/Pictures", "/Users/me/Library", "/Users/me/Desktop", "/Users/me/Library/Application Support/AddressBook"].every((file) => mac.includes(file)), mac)
+    check("M10-23: Windows keeps out of AppData and OneDrive", protectedPaths("win32", "C:\\Users\\me").includes("C:\\Users\\me\\AppData") && protectedPaths("win32", "C:\\Users\\me").includes("C:\\Users\\me\\OneDrive"))
+    check("M10-23: Linux has none", protectedPaths("linux", "/home/me").length === 0)
+    check("M10-23: only a walk rooted at home skips them", protectedFilter("/Users/me", "darwin", "/Users/me")("/Users/me/Pictures") && !protectedFilter("/Users/me/code", "darwin", "/Users/me")("/Users/me/Pictures"))
+    check("M10-23: Windows compares without case", protectedFilter("c:\\users\\ME", "win32", "C:\\Users\\me")("C:\\USERS\\me\\appdata"))
+
+    const home = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r10-home-"))
+    const savedProfile = process.env.USERPROFILE
+    const savedHome = process.env.HOME
+    try {
+      for (const folder of ["Pictures", "Documents", "AppData/Roaming", "code/Pictures"]) await fs.mkdir(path.join(home, folder), { recursive: true })
+      for (const file of ["Pictures/note-a.txt", "Documents/note-b.txt", "AppData/Roaming/note-c.txt", "code/note-d.txt", "code/Pictures/note-e.txt"]) {
+        await fs.writeFile(path.join(home, file), "x")
+      }
+      process.env.USERPROFILE = home
+      process.env.HOME = home
+      check("M10-23: the test home is the home folder", path.resolve(os.homedir()) === path.resolve(home), os.homedir())
+      const names = (found: { entries: { name: string }[] }) => found.entries.map((entry) => entry.name).sort().join(",")
+      if (process.platform === "win32" || process.platform === "darwin") {
+        const tree = await searchTree(home, "note")
+        check("M10-23: the files tab's search from home skips the private folders", names(tree) === "note-d.txt,note-e.txt", names(tree))
+        const picker = await searchFolder(home, "note")
+        check("M10-23: so does the @ search", names(picker) === "note-d.txt,note-e.txt", names(picker))
+        const project = await searchFolder(path.join(home, "code"), "note")
+        check("M10-23: a project below home searches all of itself", names(project) === "note-d.txt,note-e.txt", names(project))
+        const documents = await searchTree(path.join(home, "Documents"), "note")
+        check("M10-23: a private folder opened as its own project is searched", names(documents) === "note-b.txt", names(documents))
+      }
+    } finally {
+      if (savedProfile === undefined) delete process.env.USERPROFILE
+      else process.env.USERPROFILE = savedProfile
+      if (savedHome === undefined) delete process.env.HOME
+      else process.env.HOME = savedHome
+      await fs.rm(home, { recursive: true, force: true })
+    }
   }
 }
