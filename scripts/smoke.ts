@@ -7060,7 +7060,8 @@ async function roundSevenTimingChecks() {
   )
   check(
     "a live answer is drawn from the text the store holds, as the reference appends each delta as it lands",
-    /renderReply\(props\.part\.text,/.test(textPart),
+    // Round 10 (K10-6): the text is cleaned of leaked markup on the way, nothing more.
+    /cleanLiveReply\(props\.part\.text\) : cleanReply\(props\.part\.text\)\s+const list = renderReply\(text,/.test(textPart),
   )
   check("a turn's end no longer waits for a reveal to drain", !/playingOut|revealing/.test(stream))
   check(
@@ -7910,7 +7911,8 @@ async function deliveredToolChecks(root: string) {
       deliveredStepTitle({ name: "present_files", input: { files: ["C:\\p\\a.pdf", "b/c.html"] } } as never) === "a.pdf, c.html" &&
       deliveredStepTitle({ name: "set_desktop_setting", input: { key: "theme", value: "dark" } } as never) === "theme → dark",
   )
-  check("a locate step wears the read icon", deliveredToolIcon("pdf_locate") === "read")
+  // Round 10 (K10-9): MiMo gives a locate the search mark.
+  check("a locate step wears the search icon", deliveredToolIcon("pdf_locate") === "search")
   const artifacts = sessionArtifacts(
     [{ id: "m1", role: "assistant", sessionID: "s", parts: [part("completed", [{ path: path.join(project, "notes.txt"), name: "notes.txt", size: 1 }])], time: { created: 1 } }] as never,
     project,
