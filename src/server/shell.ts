@@ -1,10 +1,10 @@
-import path from "node:path"
 import { statSync } from "node:fs"
 import { spawn as ptySpawn, type IPty } from "@lydell/node-pty"
 import { Identifier } from "@shared/id"
 import { typedInput } from "@shared/terminal-input"
 import type { Bus } from "./bus"
 import type { ShellSummary } from "@shared/protocol"
+import { gitBash, which } from "./shell-path"
 
 /** How wide and how tall the drawer's grid is, in character cells. */
 export interface ShellSize {
@@ -433,43 +433,4 @@ function shellCommand(chosen?: string): { command: string; args: string[] } {
 function preferred(): string {
   if (process.platform !== "win32") return process.env.SHELL || "/bin/bash"
   return which("pwsh") ?? which("powershell") ?? gitBash() ?? process.env.COMSPEC ?? "cmd.exe"
-}
-
-/**
- * git's bundled bash, found by walking up from git itself.
- *
- * The reference goes exactly two directories up and looks in bin/, which holds
- * for the usual install because PATH gets `<root>/cmd/git.exe`. It does not
- * hold when git is found somewhere else in the same install: on this machine
- * PATH carries `<root>/mingw64/bin/git.exe` too, and two up from there is
- * `<root>/mingw64/bin/bash.exe`, which does not exist - so the shell silently
- * became cmd. Walking up until a bin/bash.exe turns up finds the same file
- * from either entry point and stops at the drive root.
- */
-function gitBash(): string | undefined {
-  const git = which("git")
-  if (!git) return undefined
-  let dir = path.dirname(git)
-  for (let up = 0; up < 4; up += 1) {
-    const parent = path.dirname(dir)
-    if (parent === dir) break
-    dir = parent
-    const bash = path.join(dir, "bin", "bash.exe")
-    if (statSync(bash, { throwIfNoEntry: false })?.size) return bash
-  }
-  return undefined
-}
-
-/** The first match for a bare command name on PATH, or undefined. */
-function which(command: string): string | undefined {
-  const dirs = (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)
-  const suffixes =
-    process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").filter(Boolean) : [""]
-  for (const dir of dirs) {
-    for (const suffix of suffixes) {
-      const candidate = path.join(dir, command + suffix)
-      if (statSync(candidate, { throwIfNoEntry: false })?.isFile()) return candidate
-    }
-  }
-  return undefined
 }

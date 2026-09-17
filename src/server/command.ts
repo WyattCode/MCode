@@ -142,12 +142,18 @@ export async function expandCommand(
 
 /** One placeholder's stdout; anything that goes wrong is the empty string. */
 function runPlaceholder(script: string, cwd: string, chosen?: string): Promise<string> {
-  const { command, args } = shell(chosen)
+  const { command, args, verbatim } = shell(chosen)
   return new Promise((resolve) => {
     const chunks: Buffer[] = []
     try {
       // Stderr is not piped at all: it is never read, and an unread pipe that fills would stall the command.
-      const child = spawn(command, args(script), { cwd, env: process.env, stdio: ["ignore", "pipe", "ignore"], windowsHide: true })
+      const child = spawn(command, args(script), {
+        cwd,
+        env: process.env,
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        windowsVerbatimArguments: verbatim,
+      })
       child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk))
       child.once("error", () => resolve(""))
       child.once("close", () => resolve(Buffer.concat(chunks).toString("utf8")))

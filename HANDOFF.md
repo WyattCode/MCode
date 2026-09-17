@@ -308,6 +308,16 @@
   - git 照 MiMo：推送固定到 origin 同名分支；工作树 / 子目录对话归入主仓库项目；删掉新建 / 切换 / 删除工作区三条命令；补合并冲突提醒与内置 worktree / merge 技能（文字自写）；提交也设 15 秒超时；撤销按文件所在仓库，含项目外文件。
   - 步骤：插话照 26.914 切成「上一回合 + 普通提问 + 新回合」；步骤脱敏直播和重载都做（超出对标）；加「i」提示行；长串折行照 MiMo（先截图实测）；阿拉伯语补双数复数。
   - 按 MiMo 就近定的：定时任务目标限当前对话或侧栏里未归档、非子智能体的对话（MCode 没有置顶对话），找不到时记 skipped；发起方停止时撤回排队的跨对话消息、pdf_locate 接受相对路径照 MiMo；同步跨对话等满时转异步保持现状（有意差异）。
+- **第十轮 B 部分（bash / 网页 / 执行外壳）已完成**（T10-1～7、T10-34～41，T10-55 按决定保持英文）：
+  - bash 输出按流解码，编码每条命令只在第一个非 ASCII 字符处判定一次（UTF-8 或控制台代码页），两个管道共用；头部、尾部、保存文件、实时预览都用解码后的文本，切在字符中间不再整段变 GBK。预览只留最新 30000 字，至多每 100 ms 刷新一次（T10-41）。
+  - 超时 / 停止：先结束进程树并等管道关闭（最多 3 秒），之后不再收任何输出；runner 的 progress 只在调用 running 时写。停止时调用记为 `interrupted`，错误为 `Tool execution aborted`，已打印的输出下一次请求按结果交给模型（T10-5）。
+  - PowerShell 前缀同时设 `$OutputEncoding`（管道给原生程序的中文不再变 `?`）；cmd 用逐字参数并加 `chcp 65001`；POSIX shell 用 `-c`。默认 shell 照 MiMo：`SHELL`（fish、nu 除外）→ pwsh → powershell → git bash → COMSPEC；设置里的 shell 仍优先。`which` / `gitBash` / `windowsPath` 移到 `server/shell-path.ts`，终端抽屉共用。
+  - 删掉正则硬拒绝表（用户决定）；删除类命令仍走原有的单独删除询问（每次询问、不记住、临时目录除外，判定同 MiMo 的 DELETE_COMMANDS 与 GIT_DESTRUCTIVE）。
+  - `workdir` 的 `/c/…`、`/mnt/c/…`、`/cygdrive/c/…` 转盘符（POSIX shell 下 `/tmp` 之类问 cygpath），目录不存在时报 `workdir does not exist…`；bash-scan 的参数路径也对所有 shell 做同样转换。
+  - git 作者 / 提交者按项目仓库 `git config` 设置（环境里已有则不设，按项目目录缓存）；`description` 改为必填（T10-40，照 MiMo）。
+  - 截断提示改为用 actor 工具开 explore 子智能体，且只在本轮确实提供 actor 时这样说；调用不存在的工具时列出本次请求提供的工具名。
+  - webfetch：turndown（MiMo 的选项，移到 devDependencies，由主进程构建打包，不再随 node_modules 重复打包）；图片（SVG 与 fastbidsheet 除外）作为附件交给模型；发生跳转时输出第一行写明最终地址；描述去掉「不抓本机」。
+  - 验证：`scripts/smoke-round10-bash.ts`（44 条，接在 smoke.ts 里）；草稿区 `r10b-mutate.cjs` 逐项改坏确认会失败；探针 `mcode-round10-bash.cjs`（B1～B6：实时中文、刷新频率、删除卡片、停止后交出输出、图片附件、无报错）。
 - 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
 
 用户决定不做（不要再主动提）：

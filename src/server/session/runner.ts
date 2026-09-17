@@ -519,6 +519,13 @@ export class SessionRunner {
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
   }
 
+  /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
+  private offeredTools(session: SessionInfo): ToolDefinition[] {
+    return this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter(
+      (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
+    )
+  }
+
   /**
    * This turn's copy of the conversation, run as the agent and model a slash
    * command named.
@@ -1316,7 +1323,7 @@ export class SessionRunner {
           model: session.model,
           ...(await this.systemFor(session)),
           history: [...replay, instruction],
-          tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+          tools: this.offeredTools(session),
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
@@ -2232,7 +2239,7 @@ export class SessionRunner {
         tools: lastStep
           ? []
           : [
-              ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+              ...this.offeredTools(session),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort: effort ?? "",
@@ -2692,9 +2699,12 @@ export class SessionRunner {
         tool = repaired
       } else {
         tool = findTool("invalid")
+        // As MiMo's model library words it: the names this request did offer, so the model can pick one.
+        const info = await this.store.get(input.session.id)
+        const available = info ? [...this.offeredTools(info).map((entry) => entry.name), ...(info.subagent?.outputSchema ? [STRUCTURED_OUTPUT] : [])] : []
         part.input = {
           tool: part.name,
-          error: `Model tried to call unavailable tool '${part.name}'.`,
+          error: `Model tried to call unavailable tool '${part.name}'. ${available.length ? `Available tools: ${available.join(", ")}.` : "No tools are available."}`,
         }
         part.name = "invalid"
       }
@@ -2819,6 +2829,8 @@ export class SessionRunner {
           ? undefined
           : this.subagentControl({ parentID: input.session.id, messageID: assistant.id, callID: part.callID, signal: input.signal }),
         progress: (text) => {
+          // As MiMo's metadata updates: only while the call runs, so a late write never replaces a finished result.
+          if (part.status !== "running") return
           part.output = text
           publish()
         },
@@ -2827,12 +2839,17 @@ export class SessionRunner {
         // plan: the write tools read it before they change anything; plan_exit ends planning through it.
         plan: planControl,
       })
-      // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
+      /*
+       * MiMo's shared cap, for every tool that did not cap its own output. The
+       * note suggests handing the file to an explore subagent only where this
+       * conversation is offered the actor tool; a subagent is told to grep.
+       */
+      const offered = result.metadata?.truncated === undefined ? await this.store.get(input.session.id) : undefined
       const capped =
         result.metadata?.truncated === undefined
           ? await this.toolOutputs
               .cap(result.output, {
-                delegate: !this.workers.has(input.session.id),
+                delegate: offered ? this.offeredTools(offered).some((entry) => entry.name === "actor") : false,
                 pressure: this.pressured.get(owner) ?? false,
                 // The call reached here, so it did not throw: MiMo's "succeeded but was cut".
                 outcome: "success",
@@ -2858,10 +2875,14 @@ export class SessionRunner {
         part.errorParams = err.params
       }
       /*
-       * Cut off by Stop rather than failing on its own. The model still reads
-       * the error; the transcript settles the step quietly, as MiMo does.
+       * Cut off by Stop rather than failing on its own; the transcript settles
+       * the step quietly, as MiMo does. Marked interrupted too, as MiMo marks
+       * it: a call that had already printed something (a command's output on
+       * its card) is then handed to the model as that output, so it knows how
+       * far the command got; one that had printed nothing keeps its own
+       * account of the stop.
        */
-      if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true }
+      if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true, interrupted: true }
       if (err instanceof PermissionDenied && err.byUser) refusedByUser = true
     } finally {
       stopListening()
