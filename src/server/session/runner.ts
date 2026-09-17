@@ -508,7 +508,6 @@ export class SessionRunner {
           // Out of band; the empty variants list already withholds the level, so this is for the body fields.
           ...smallRequest(session.model.provider, session.model.model),
           variants: [],
-          showReasoning: false,
           signal: controller.signal,
           baseURL: definition.baseURL,
           headers: definition.headers,
@@ -1371,7 +1370,7 @@ export class SessionRunner {
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
-          showReasoning: false,
+
           signal,
           baseURL: definition.baseURL,
           headers: definition.headers,
@@ -1708,7 +1707,6 @@ export class SessionRunner {
             tools: [],
             // Out of band: routing one message is not work a reasoning budget should be spent on.
             ...smallRequest(main.provider, main.model),
-            showReasoning: false,
             signal: controller.signal,
             baseURL: definition.baseURL,
             headers: definition.headers,
@@ -1963,7 +1961,6 @@ export class SessionRunner {
             // Out of band: MiMo's cheap profile, so naming a conversation does not think for as long as answering it.
             ...smallRequest(model.provider, model.model),
             variants: this.config.variants(model),
-            showReasoning: false,
             signal: controller.signal,
             baseURL: definition.baseURL,
             headers: definition.headers,
@@ -2358,8 +2355,7 @@ export class SessionRunner {
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort: effort ?? "",
-        // MiMo draws no reasoning, so none is asked for.
-        showReasoning: false,
+
         signal: controller.signal,
         baseURL: definition.baseURL,
         /*
@@ -2515,6 +2511,25 @@ export class SessionRunner {
         continue
       }
 
+      /*
+       * Stopped between the reply and its tools.
+       *
+       * `stream` already returns undefined for an abort it saw, but an adapter
+       * can only notice a signal where it looks at one, and the last place it
+       * looks is before its final read. A Stop that lands after that returns a
+       * perfectly ordinary outcome, and running its calls is the one thing this
+       * turn must not do - the tools write to disk, and whether each of them
+       * re-checks the signal before it does is not something this loop should
+       * depend on. MiMo cannot reach this case at all: its tools execute inside
+       * the stream, so cutting the stream is what stops them.
+       */
+      if (controller.signal.aborted) {
+        assistant.finish = "aborted"
+        assistant.time.completed = Date.now()
+        await this.store.saveMessage(assistant)
+        return
+      }
+
       // Tools in one assistant turn are independent, so run them together and
       // let each report its own transitions.
       await Promise.all(
@@ -2591,6 +2606,14 @@ export class SessionRunner {
     if (request.signal.aborted) inner.abort()
     else request.signal.addEventListener("abort", follow, { once: true })
     let cut = false
+    /**
+     * Whether this attempt has had anything at all out of the provider.
+     *
+     * MiMo splits its retries by exactly this (`hasProviderOutput`): a failure
+     * before the first event is the request phase, and one after it is the
+     * stream phase. The two wait on different curves - see `retryDecision`.
+     */
+    let streamed = false
     // Text and reasoning blocks are keyed by the index the adapter reports;
     // tools are keyed by call id, since only the provider knows how those
     // interleave with the rest of the turn.
@@ -2620,6 +2643,7 @@ export class SessionRunner {
     }
 
     const emit = (event: TurnEvent) => {
+      streamed = true
       if (event.type === "text.start") {
         const part: TextPart = { type: "text", id: Identifier.part(), text: "" }
         blocks.set(event.index, part)
@@ -2636,8 +2660,14 @@ export class SessionRunner {
       } else if (event.type === "text.delta" || event.type === "reasoning.delta") {
         const part = blocks.get(event.index)
         if (part) append(part, event.text)
-        // The reply itself is watched, never the reasoning: a model may think in circles and still answer.
-        if (event.type === "text.delta" && !cut && monitor?.append(event.text)) {
+        /*
+         * Both the words and the thinking, as MiMo watches them: its n-gram
+         * check runs on its `text-delta` and its `reasoning-delta` alike, so a
+         * model stuck repeating one passage inside its own thinking has the
+         * stream cut too. Nothing here could reach the reasoning arm until the
+         * thinking was asked for at all.
+         */
+        if (!cut && monitor?.append(event.text)) {
           cut = true
           inner.abort()
         }
@@ -2652,6 +2682,7 @@ export class SessionRunner {
         const part = blocks.get(event.index)
         if (part?.type === "reasoning") {
           part.signature = event.signature
+          if (event.itemID) part.itemID = event.itemID
           dirty = true
         }
       } else if (event.type === "tool") {
@@ -2702,8 +2733,14 @@ export class SessionRunner {
            * below, so replaying the step repeats no side effect.
            */
           firstFailure ??= Date.now()
-          const decision = retryDecision(err, attempt, Date.now() - firstFailure)
+          /*
+           * MiMo's two phases: a request that failed before the provider had
+           * said a single word is tried again on its quick request curve, and
+           * one that failed part-way through a reply waits out its kind.
+           */
+          const decision = retryDecision(err, attempt, Date.now() - firstFailure, Math.random(), streamed ? "stream" : "request")
           if (!decision) throw err
+          streamed = false
           /*
            * Tried again from the start, as MiMo's engine does: what the failed
            * attempt managed to stream is dropped, because the next one streams
