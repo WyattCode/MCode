@@ -19,11 +19,10 @@ import { GLOBAL_PROJECT_ID, PROJECT_ID_FILE, forgetProjectIDs, mainGitDir, proje
 import { folderMemoryID, memoryFiles } from "../src/server/memory/paths"
 import { migrateMemoryLayout } from "../src/server/memory/migrate"
 import { memoryWriteRefusal, sandboxRefusal } from "../src/server/memory/guard"
-import { bindHistory, bindMemoryWrites, recallNote, type HistoryService } from "../src/server/history/service"
+import { bindHistory, bindMemoryWrites, type HistoryService } from "../src/server/history/service"
 import { rowsOf, summaryPart, summaryRow } from "../src/server/history/extract"
 import { IndexDatabase } from "../src/server/history/database"
 import { HistoryIndex } from "../src/server/history/index"
-import { withRecall } from "../src/server/session/reminders"
 import { memorySection, systemPrompt } from "../src/server/session/prompt"
 import { agentPrompt } from "../src/server/session/prompts"
 import { withoutSkillPrefix, fallbackTitle } from "../src/server/session/title"
@@ -192,31 +191,7 @@ export async function roundTenMemoryChecks(check: Check, section: (name: string)
     }
   }
 
-  // ------------------------------------------------------------------ R10-7
-  section("Round 10 (R10-7): the recall note")
-  {
-    const memoryRoot = path.join(root, "recall", "memory")
-    bindHistory({ memoryRoot } as unknown as HistoryService)
-    try {
-      check("nothing kept, no tasks: no note", (await recallNote("ses_quiet", false, true)) === undefined)
-      const withTasks = await recallNote("ses_quiet", true, false)
-      check("tasks alone bring it, without the actor line when there is no actor tool", Boolean(withTasks?.includes(path.join(memoryRoot, "sessions", "ses_quiet"))) && !withTasks!.includes("actor"), withTasks)
-      await put(path.join(memoryRoot, "sessions", "ses_notes", "notes.md"), "a note")
-      const kept = await recallNote("ses_notes", false, true)
-      check("notes in the conversation's folder bring it, with the actor line when offered", Boolean(kept?.startsWith("<system-reminder>") && kept.includes("actor tool")), kept)
-      const history = [
-        { id: "u1", sessionID: "s", role: "user", text: "first", attachments: [], time: { created: 1 } },
-        { id: "a1", sessionID: "s", role: "assistant", parts: [], time: { created: 2 } },
-        { id: "u2", sessionID: "s", role: "user", text: "second", attachments: [], time: { created: 3 } },
-        { id: "a2", sessionID: "s", role: "assistant", parts: [], time: { created: 4 } },
-      ] as unknown as Message[]
-      const noted = withRecall(history, "NOTE")
-      check("it follows the last user message only", (noted[2] as { text: string }).text === "second\n\nNOTE" && (noted[0] as { text: string }).text === "first")
-      check("and changes nothing it was handed", (history[2] as { text: string }).text === "second")
-    } finally {
-      bindHistory(undefined)
-    }
-  }
+  // R10-7: the recall note itself is the agent-tools lane's (reminders recallHint, checked in smoke-round10-agents); a real /dream turn below checks it reaches a request.
 
   // ------------------------------------------------------------------ R10-8
   section("Round 10 (R10-8): compaction summaries, tool attachments and failed replies are searchable")

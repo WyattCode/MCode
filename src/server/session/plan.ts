@@ -109,19 +109,19 @@ export function planRefusal(display: string, plan: string): string {
 }
 
 /**
- * The same refusal, for the turn in which the plan was approved.
+ * The same refusal, for a write made in the step in which the plan was
+ * approved - a call beside plan_exit in the same reply.
  *
  * It says what the plain one cannot: nothing is wrong, the switch has
- * happened, and this turn - the one that was promised read-only - is simply
- * the wrong side of it. Without this a real model reads "plan mode is on"
- * moments after being told the plan was approved, decides the switch failed,
- * and spends the rest of the turn retrying the same write.
+ * happened, and this step is simply the wrong side of it. Without this a real
+ * model reads "plan mode is on" moments after being told the plan was
+ * approved, and decides the switch failed.
  */
 export function planApprovedRefusal(display: string): string {
   return (
-    `Refused for this turn only: ${display} was not written and nothing changed. ` +
-    `The plan is approved and this conversation is in build mode, but the switch takes effect from the next turn - this turn began in plan mode and stays read-only to the end. ` +
-    `Do not retry the write and do not call plan_exit again. End your turn now, saying the plan is approved and that you will carry it out; you can change files when the user speaks next.`
+    `Refused for this step only: ${display} was not written and nothing changed. ` +
+    `The plan is approved and this conversation is in build mode, which starts with your next step. ` +
+    `Do not call plan_exit again. Make this change again in your next step, and carry on with the plan.`
   )
 }
 

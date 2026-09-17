@@ -1,7 +1,7 @@
-import fs from "node:fs/promises"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
 import { modelInvocable, type SkillInfo } from "../skill"
+import { walkFiles } from "./ignore"
 import type { ToolContext, ToolDefinition, ToolResult } from "./types"
 import { ToolError } from "./types"
 
@@ -33,20 +33,22 @@ async function available(context: ToolContext): Promise<SkillInfo[]> {
   return modelInvocable(context.skills ? await context.skills() : [])
 }
 
-/** A few of the files beside SKILL.md, so the model knows what it can open or run. */
-async function sampleFiles(directory: string, limit = SKILL_FILE_SAMPLE): Promise<string[]> {
+/**
+ * A few of the files beside SKILL.md, so the model knows what it can open or
+ * run - found as MiMo lists them with ripgrep: ignore files respected, hidden
+ * files included, links not followed, and anything whose path names SKILL.md
+ * left out.
+ */
+export async function sampleFiles(directory: string, limit = SKILL_FILE_SAMPLE): Promise<string[]> {
   const out: string[] = []
-  const walk = async (folder: string, depth: number) => {
-    if (out.length >= limit || depth > 6) return
-    const entries = await fs.readdir(folder, { withFileTypes: true }).catch(() => [])
-    for (const entry of [...entries].sort((a, b) => a.name.localeCompare(b.name))) {
-      if (out.length >= limit) return
-      const full = path.join(folder, entry.name)
-      if (entry.isDirectory()) await walk(full, depth + 1)
-      else if (entry.isFile() && entry.name !== "SKILL.md") out.push(full)
-    }
-  }
-  await walk(directory, 0)
+  await walkFiles(
+    directory,
+    (file) => {
+      if (!path.relative(directory, file).includes("SKILL.md")) out.push(file)
+      return out.length >= limit
+    },
+    new AbortController().signal,
+  )
   return out
 }
 

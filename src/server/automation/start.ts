@@ -4,8 +4,8 @@ import type { Config } from "../config"
 import { scratchDirectory } from "../scratch"
 import type { SessionRunner } from "../session/runner"
 import type { SessionStore } from "../session/store"
-import { AutomationService, bindAutomations } from "./service"
 import { interfaceLocale } from "../session/locale"
+import { AutomationService, bindAutomations } from "./service"
 
 /** automation: the scheduled tasks bound to this backend's runner and store. */
 export function startAutomations(dataDirectory: string, runner: SessionRunner, sessions: SessionStore, config: Config, bus: Bus): AutomationService {

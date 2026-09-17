@@ -49,7 +49,7 @@ export const useQuestions = defineStore("questions", () => {
   const queue = computed(() => {
     const sessionID = app.currentID
     const permissions = sessionID ? (app.pendingPermissions.get(sessionID) ?? []) : []
-    // subagents: a subagent's questions wait in the dock of the conversation it works for.
+    // subagents: a subagent asks no questions; its repeated-call checks wait in the dock of the conversation it works for.
     return confirmQueue(sessionID, permissions, pending.value.values(), (id) => app.rootOf(id) === sessionID)
   })
 

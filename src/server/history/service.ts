@@ -1,4 +1,3 @@
-import fs from "node:fs/promises"
 import path from "node:path"
 import type { Bus } from "../bus"
 import type { Storage } from "../storage"
@@ -50,33 +49,6 @@ export function historyService(): HistoryService | undefined {
 /** memory: the files a top-level conversation is told about, when the backend keeps memory at all. */
 export function memoryFilesFor(directory: string, sessionID: string): (ReturnType<typeof memoryFiles> & { root: string; readOnly: boolean }) | undefined {
   return bound ? { ...memoryFiles(bound.memoryRoot, directory, sessionID), root: bound.memoryRoot, readOnly: !writable() } : undefined
-}
-
-/**
- * memory: the note MiMo adds to a turn whose conversation already has memory
- * of its own - notes in its folder, or tasks in its registry - naming where it
- * is and how to find what is not in view. Undefined when there is nothing to
- * recall. Request only.
- */
-export async function recallNote(sessionID: string, hasTasks: boolean, hasActor: boolean): Promise<string | undefined> {
-  if (!bound) return undefined
-  const folder = path.join(bound.memoryRoot, "sessions", sessionID)
-  const kept = await fs.readdir(folder).then(
-    (entries) => entries.length > 0,
-    () => false,
-  )
-  if (!kept && !hasTasks) return undefined
-  return [
-    "<system-reminder>",
-    `This conversation keeps memory in ${folder}${path.sep}. What has dropped out of view can be found again:`,
-    "- the memory tool searches it (with the project's and the global memory);",
-    `- read opens a file there directly;`,
-    "- the task tool's list shows the task registry;",
-    ...(hasActor ? ["- the actor tool's status shows what subagents are doing;"] : []),
-    "",
-    "Look there before asking the user something the memory may already hold.",
-    "</system-reminder>",
-  ].join("\n")
 }
 
 /** memory: whether a path is a memory file, which MiMo reads and writes without asking. */

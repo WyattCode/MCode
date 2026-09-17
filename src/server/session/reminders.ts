@@ -188,17 +188,6 @@ export function withSameStepsNote(history: Message[]): Message[] {
   )
 }
 
-/**
- * memory: MiMo's recall note, after the last user message of this request
- * only - behind the cached prefix, and never in the transcript.
- */
-export function withRecall(history: Message[], note: string | undefined): Message[] {
-  if (!note) return history
-  const target = history.map((message) => message.role).lastIndexOf("user")
-  if (target < 0) return history
-  return history.map((message, index) => (index === target && message.role === "user" ? { ...message, text: `${message.text}\n\n${note}` } : message))
-}
-
 /** MiMo's continuation limits, per turn. */
 export const CONTINUATION_LIMITS = { length: 3, textTool: 2, empty: 2 } as const
 
@@ -274,6 +263,33 @@ export function withNotes(history: Message[], notes: ReadonlyMap<string, readonl
 
 export function reminder(body: string): string {
   return `<system-reminder>\n${body.trim()}\n</system-reminder>`
+}
+
+/**
+ * MiMo's recall hint, in this app's own words: where a conversation that has
+ * memory or tasks can look for what has dropped out of view, and a word not
+ * to ask the user for what is written down already.
+ */
+export function recallHint(memoryFolder: string, actor: boolean): string {
+  return reminder(
+    [
+      `This conversation keeps memory in ${memoryFolder}. To bring back something that is no longer in view:`,
+      '- memory({ operation: "search", query: "<words>" })',
+      `- read the files under ${memoryFolder}`,
+      '- task({ operation: "list" })',
+      ...(actor ? ['- actor({ operation: "status", actor_id: "<id>" })'] : []),
+      "",
+      "Look there before asking the user about something it may already record.",
+    ].join("\n"),
+  )
+}
+
+/** The hint, carried after the latest user message's own text for this request only, as MiMo carries it. */
+export function withRecallHint<T extends { role: string; reminders?: string[] }>(history: T[], hint: string | undefined): T[] {
+  if (!hint) return history
+  const at = history.map((message) => message.role).lastIndexOf("user")
+  if (at < 0) return history
+  return history.map((message, index) => (index === at ? { ...message, reminders: [...(message.reminders ?? []), hint] } : message))
 }
 
 /**

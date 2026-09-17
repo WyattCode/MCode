@@ -4,7 +4,7 @@ import type { SubagentNotice, ToolPart } from "@shared/protocol"
 import SubagentAvatar from "./SubagentAvatar.vue"
 import { t } from "../../lib/i18n"
 import { actionOf, childFor, noticeStatus, pillStatus } from "../../lib/subagents"
-import { answerSummary, subagentAnswer } from "@shared/subagent"
+import { answerSummary, operationInput, subagentAnswer } from "@shared/subagent"
 import { useApp } from "../../stores/app"
 import { useRightPanel } from "../../stores/right-panel"
 
@@ -40,7 +40,8 @@ const pills = computed(() => {
   }
   return (props.parts ?? []).map((part) => {
     const child = childFor(part.callID, app.subagentSessions)
-    const described = typeof part.input?.description === "string" ? part.input.description.trim() : ""
+    const given = operationInput(part.input).description
+    const described = typeof given === "string" ? given.trim() : ""
     return {
       key: part.callID as string | undefined,
       id: part.callID,

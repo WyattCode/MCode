@@ -127,9 +127,10 @@ function listed(session: SessionInfo): boolean {
  * request only: the transcript keeps the words as they were sent.
  */
 export function chatHeader(source: MessageSource): string {
+  // In Chinese, as MiMo introduces a message from another conversation (T10-55), in this app's own words.
   return source.direction === "reply"
-    ? `[Session chat] The reply from the session "${source.from}" (contact_id ${source.sessionID}) to a message this session sent it.`
-    : `[Session chat] A message from the session "${source.from}" (contact_id ${source.sessionID}). Your final message in this turn is sent back to it as the reply.`
+    ? `【跨会话消息｜会话「${source.from}」（contact_id ${source.sessionID}）对本会话所发消息的回复】`
+    : `【跨会话消息｜来自会话「${source.from}」（contact_id ${source.sessionID}）】本回合的最终回复会作为答复发回给它。`
 }
 
 /** The history a model is sent, with each chat message carrying its header; a subagent's follow-up is left alone. */
@@ -282,15 +283,13 @@ export class SessionChat {
         this.settle(entry, { status: "switched" })
       }, this.waitMs)
       /*
-       * The caller was stopped. A message not yet started is taken back; one
-       * already running finishes there, with nobody waiting on its reply.
+       * The caller was stopped. As MiMo's does (the user's 2026-09-17 decision,
+       * T10-50), the message is not taken back: one still queued is delivered
+       * and runs in its turn, and one already running finishes there - either
+       * way with nobody waiting on its reply, which is dropped.
        */
       const stop = () => {
         if (entry.settled) return
-        if (entry.state === "waiting") {
-          this.remove(entry)
-          this.pump(entry.target)
-        }
         this.settle(entry, { status: "stopped" })
       }
       input.signal?.addEventListener("abort", stop, { once: true })

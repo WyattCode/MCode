@@ -307,6 +307,8 @@ import { roundTenGitChecks } from "./smoke-round10-git"
 import { roundTenStepsChecks } from "./smoke-round10-steps"
 // Round 10: memory, history search, skills, instructions and the slash commands (R10-1 … R10-14).
 import { roundTenMemoryChecks } from "./smoke-round10-memory"
+// round 10: the agent-type tools (subagents, tasks, questions, plans, automations, cross-chat, history, skills).
+import { roundTenAgentChecks } from "./smoke-round10-agents"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -6927,6 +6929,7 @@ async function main() {
   await roundTenDesktopChecks(check, section)
   await roundTenGitChecks(check, section)
   await roundTenStepsChecks(check, section)
+  await roundTenAgentChecks(check, section)
   await roundTenMemoryChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
@@ -8318,7 +8321,7 @@ async function subagentChecks(root: string) {
     { spawn: sixSpawn?.output, record: sixChild?.subagent },
   )
   check("status sees it still at work, by its description", reportOf(sixStatus).status === "running" && reportOf(sixStatus).description === "Look in the background", sixStatus?.output)
-  check("wait holds until it is idle and hands back its result", reportOf(sixWait).status === "idle" && reportOf(sixWait).outcome === "success" && reportOf(sixWait).result === "background", sixWait?.output)
+  check("wait holds until it is idle and hands back its result", reportOf(sixWait).status === "idle" && reportOf(sixWait).lastOutcome === "success" && reportOf(sixWait).result === "background", sixWait?.output)
   check("its record says it ran in the background and succeeded", sixChild?.subagent?.background === true && sixChild.subagent.status === "idle" && sixChild.subagent.outcome === "success", sixChild?.subagent)
   const sixNotices = await noticesIn(six.id)
   check("the conversation is told it completed, its answer as the summary", sixNotices.some((entry) => entry.status === "completed" && entry.subagentID === "explore-1" && entry.summary === "background"), sixNotices)
@@ -8511,7 +8514,7 @@ async function subagentChecks(root: string) {
   await settled(sixteen.id)
   const headerPart = (await taskParts(sixteen.id)).find((part) => part.input?.prompt === "HEADER")
   check("a general subagent is asked to open with the status header; an explore one is not", childSystems.some((text) => text.includes("**Status**: success, partial, failed or blocked")) && childSystems.some((text) => !text.includes("**Status**:")), childSystems.length)
-  check("the header's status reaches the actor result", Boolean(headerPart?.output?.includes('<actor_result status="partial">')), headerPart?.output)
+  check("the header's status reaches the actor result", Boolean(headerPart?.output?.includes('<actor_result status="partial" summary="half done">')), headerPart?.output)
 
   parentSteps = [[{ action: "spawn", description: "Header failed", prompt: "HEADERFAIL", subagent_type: "general" }]]
   const seventeen = await store.create({ directory: project, model })
@@ -8534,7 +8537,8 @@ async function subagentChecks(root: string) {
   await runner.prompt({ sessionID: eighteen.id, text: "tasks" })
   await settled(eighteen.id)
   const registered = (await store.get(eighteen.id))?.tasks ?? []
-  check("a task created in a conversation is kept on its record", registered.some((task) => task.id === "T1" && task.summary === "Parent work" && task.owner === "main"), registered)
+  // Round 10 (T10-16): the subagent started for T1 takes it and starts it, as MiMo's actor does.
+  check("a task created in a conversation is kept on its record, taken by the subagent started for it", registered.some((task) => task.id === "T1" && task.summary === "Parent work" && task.owner === "general-1" && task.status === "in_progress"), registered)
   check("a subagent's task goes into its parent's registry, under the parent's task, held by the subagent", registered.some((task) => task.id === "T1.1" && task.parentID === "T1" && task.owner === "general-1"), registered)
   const children = await childrenOf(eighteen.id)
   check("task_id naming a task binds the subagent to it", children.find((session) => session.title === "Bound")?.subagent?.taskID === "T1", children.map((session) => session.subagent))
@@ -8586,10 +8590,10 @@ async function sessionChatChecks(root: string, project: string) {
   const replied = (id: string, extra: Record<string, unknown>): ChatMessage =>
     ({ id, sessionID: "s", role: "assistant", model: { provider: "p", model: "m" }, agent: "build", parts: [], time: { created: 2 }, ...extra }) as ChatMessage
   const headed = withChatHeaders([asked("u1", "hello", { from: "Alpha", sessionID: "ses_a", direction: "request" }), asked("u2", "follow up", { from: "main" })])
-  check("a message from another session reaches the model with its header, and the transcript keeps the words", headed[0]?.role === "user" && headed[0].text.startsWith("[Session chat] A message from the session \"Alpha\"") && headed[0].text.endsWith("hello"))
+  check("a message from another session reaches the model with its header, and the transcript keeps the words", headed[0]?.role === "user" && headed[0].text.startsWith("【跨会话消息｜来自会话「Alpha」") && headed[0].text.endsWith("hello"))
   check("a subagent's follow-up gets no session chat header", headed[1]?.role === "user" && headed[1].text === "follow up")
   const replyHeader = withChatHeaders([asked("u3", "the answer", { from: "Beta", sessionID: "ses_b", direction: "reply" })])[0]
-  check("a reply says it is a reply", replyHeader?.role === "user" && replyHeader.text.startsWith("[Session chat] The reply from the session \"Beta\""))
+  check("a reply says it is a reply", replyHeader?.role === "user" && replyHeader.text.startsWith("【跨会话消息｜会话「Beta」") && replyHeader.text.includes("的回复】"))
   const textPart = (text: string) => ({ type: "text", id: `p${text}`, text })
   check("the reply is the last answer after the message", (() => {
     const outcome = replyIn([asked("u1", "q"), replied("a1", { parts: [textPart("first")] }), replied("a2", { parts: [textPart("final")] })], "u1")
@@ -8686,14 +8690,14 @@ async function sessionChatChecks(root: string, project: string) {
         end("tool_calls")
       }
 
-      if (lastUser.includes("[Session chat] The reply from")) return say("got reply")
+      if (lastUser.includes("对本会话所发消息的回复】")) return say("got reply")
       const chain = /CHAIN:(\d+)/.exec(lastUser)
       if (chain) {
         const at = Number(chain[1])
         if (answered) return say(`chain ${at} done`)
         return call("talk_to_session", { contact: `chain-${at + 1}`, message: `CHAIN:${at + 1}` })
       }
-      if (lastUser.includes("[Session chat] A message from")) {
+      if (lastUser.includes("【跨会话消息｜来自会话")) {
         if (lastUser.includes("SLOW")) return slow("slow pong")
         return say(`pong:${/PING[\w-]*/.exec(lastUser)?.[0] ?? ""}`)
       }

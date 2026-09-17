@@ -10,12 +10,13 @@ import type {
   ReasoningPart,
   SessionInfo,
   SubagentNotice,
+  TaskItem,
   TextPart,
   ToolPart,
   TurnAgent,
   UserMessage,
 } from "@shared/protocol"
-import { access, mkdir, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
 import { effortToSend, menuEfforts } from "@shared/effort-menu"
@@ -57,7 +58,7 @@ import { memorySection, repositoryState, systemPrompt } from "./prompt"
 // plan: the plan file, what planning may write, and what each planning turn is told.
 import { approvedNote, buildSwitchNote, carryOutNote, firstPlanNote, laterPlanNote, planDisplay, planFile, planFolders, planWritable, slugOf, subagentAgent } from "./plan"
 import { status as gitStatus } from "../git"
-import { memoryFilesFor, recallNote } from "../history/service"
+import { memoryFilesFor } from "../history/service"
 import { withAutomationNotes } from "../automation/framing"
 import { TITLE_SYSTEM, UNTITLED, cleanTitle, fallbackTitle, titleModelRef, titlePrompt, withoutSkillPrefix } from "./title"
 import { interfaceLocale } from "./locale"
@@ -72,13 +73,13 @@ import { costOf } from "./usage"
 import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withRecall, withSameStepsNote } from "./reminders"
+import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
-import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, statusHeader, subagentOutput, type SubagentTimers } from "@shared/subagent"
+import { SUBAGENT_TIMERS, firstLine, isStalled, noticeText, readLegacyMessage, statusHeader, subagentOutput, type ResultStatus, type SubagentTimers } from "@shared/subagent"
 import { STRUCTURED_OUTPUT, STRUCTURED_REMINDER, STRUCTURED_RETRIES, structuredOutputTool, structuredResult } from "../tool/subagent"
-import { TASK_ID } from "../tool/task"
+import { TASK_ID, applyTask, listedTasks } from "../tool/task"
 import type { TaskControl } from "../tool/types"
 import type { McpServers } from "../mcp"
 
@@ -113,6 +114,21 @@ const RETURN_NOTE = [
   "**Summary**: one sentence saying what happened",
   "Then give what the task asked for. Where it applies, end with **Files changed**: the paths you changed, or (none).",
 ].join("\n")
+
+/* tasks: MiMo's completion gate sends a general subagent back this many times at most. */
+const TASK_GATE_TURNS = 2
+
+/* tasks: what a general subagent that is ending with tasks still in its hands is told, in MCode's own words. */
+function taskGateReminder(held: readonly TaskItem[]): string {
+  return [
+    "<system-reminder>",
+    "You are ending your work, but these tasks are assigned to you and are not finished:",
+    ...held.map((task) => `- ${task.id} (${task.status}): ${task.summary}`),
+    "Finish each one and mark it done with the task tool, or abandon it with a reason if it turned out not to be needed.",
+    "Then write your final message again, opening with the **Status** and **Summary** lines.",
+    "</system-reminder>",
+  ].join("\n")
+}
 
 /* subagents: a subagent asked for structured output returns it through its tool rather than in prose. */
 const STRUCTURED_NOTE = [
@@ -262,7 +278,7 @@ const MAX_STEPS_PROMPT = [
  * subagent has no plan to put to anyone - MiMo denies it to every agent but
  * its two primary ones for the same reason.
  */
-const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit"])
+const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit", "question"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
 const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
@@ -581,9 +597,9 @@ export class SessionRunner {
     const { file, folders } = await this.planFor(session)
     const began = this.turnAgents.get(session.id) ?? session.agent
     return {
-      // The turn's own mode, not the conversation's: approval mid-turn does not lift that turn's promise.
+      // The step's own mode, not the conversation's: approval lifts planning from the next step, not within the step that asked.
       agent: began,
-      // Approved while this turn was running: what it refuses, it refuses only until the turn ends.
+      // Approved during this step: what it refuses, it refuses only until the step ends.
       switched: began === "plan" && session.agent !== "plan",
       file,
       writable: (target) => planWritable(target, folders),
@@ -641,6 +657,21 @@ export class SessionRunner {
     // The folder is made now, so the model's first write lands rather than failing on a missing parent.
     await mkdir(dirname(file), { recursive: true }).catch(() => undefined)
     return firstPlanNote(display, exists)
+  }
+
+  /**
+   * The recall hint for a step, when the conversation has any: its memory
+   * folder holds something, or its task list has ever had a task. A
+   * subagent's are its parent's, as its tasks are.
+   */
+  private async recallFor(session: TurnSession): Promise<string | undefined> {
+    const rootID = session.parentID ?? session.id
+    const notes = memoryFilesFor(session.directory, rootID)?.notes
+    if (!notes) return undefined
+    const folder = dirname(notes)
+    const remembered = (await readdir(folder).catch((): string[] => [])).length > 0
+    const tasked = remembered || ((await this.store.get(rootID))?.tasks ?? []).length > 0
+    return tasked ? recallHint(folder, !session.parentID) : undefined
   }
 
   isRunning(sessionID: string): boolean {
@@ -1863,12 +1894,6 @@ export class SessionRunner {
       session.model,
       (ref) => Boolean(this.config.definition(ref.provider)) && this.config.usable(ref.provider) && Boolean(this.config.modelEntry(ref)),
     )
-    const definition = this.config.definition(model.provider)
-    if (!definition || !this.config.usable(model.provider)) return
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
-    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
-    const entry = this.config.modelEntry(model)
     const controller = new AbortController()
     /*
      * Held where Stop can reach it. This request is launched and forgotten and
@@ -1877,7 +1902,38 @@ export class SessionRunner {
      * seconds after it had been cancelled, and billing for the request.
      */
     const release = this.hold(sessionID, controller)
-    const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
+    let title: string | undefined
+    try {
+      title = await this.titleFrom(session, model, text, controller.signal)
+      // MiMo's fallback: a title model that failed, or answered with nothing usable, is followed by one try on the conversation's own.
+      const own = session.model
+      if (!title && !controller.signal.aborted && (model.provider !== own.provider || model.model !== own.model)) {
+        title = await this.titleFrom(session, own, text, controller.signal)
+      }
+    } finally {
+      release()
+    }
+    // Stopped while it was writing: the conversation keeps the fallback it already has.
+    if (controller.signal.aborted || !title) return
+    const current = await this.store.get(sessionID)
+    if (current?.titleSource !== "fallback") return
+    await this.store.update(sessionID, { title, titleSource: "generated" })
+  }
+
+  /** One title request on one model: the cleaned title, or nothing when it failed, timed out or said nothing usable. */
+  private async titleFrom(session: SessionInfo, model: ModelRef, text: string, stopped: AbortSignal): Promise<string | undefined> {
+    const definition = this.config.definition(model.provider)
+    if (!definition || !this.config.usable(model.provider) || stopped.aborted) return undefined
+    const adapter: ProviderAdapter =
+      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const entry = this.config.modelEntry(model)
+    // Each try has its own time limit, and Stop ends either.
+    const controller = new AbortController()
+    const stop = () => controller.abort()
+    stopped.addEventListener("abort", stop, { once: true })
+    const timer = setTimeout(stop, TITLE_TIMEOUT_MS)
+    const sessionID = session.id
     let answer = ""
     try {
       // MiMo's request budget for a call that is not a turn: four quick tries, then the fallback stands.
@@ -1920,18 +1976,13 @@ export class SessionRunner {
       }, controller.signal)
       this.noteBackground(sessionID, model, outcome.usage, "title")
     } catch {
-      return
+      return undefined
     } finally {
       clearTimeout(timer)
-      release()
+      stopped.removeEventListener("abort", stop)
     }
-    // Stopped while it was writing: the conversation keeps the fallback it already has.
-    if (controller.signal.aborted) return
-    const title = cleanTitle(answer)
-    if (!title) return
-    const current = await this.store.get(sessionID)
-    if (current?.titleSource !== "fallback") return
-    await this.store.update(sessionID, { title, titleSource: "generated" })
+    if (controller.signal.aborted) return undefined
+    return cleanTitle(answer) || undefined
   }
 
   /**
@@ -2073,8 +2124,10 @@ export class SessionRunner {
   private async run(sessionID: string, apiKey: string, controller: AbortController, resumed = false, lead?: Lead): Promise<void> {
     // A slash command's own agent and model hold for this turn; the conversation keeps its own.
     let session: TurnSession = this.withCommandTurn(await this.store.require(sessionID), this.turnOverrides.get(sessionID))
+    // plan: the conversation's own mode as the turn begins; approving a plan changes it mid-turn.
+    const planning = session.agent === "plan"
     this.turnOverrides.delete(sessionID)
-    // plan: what this turn is judged by, however the conversation changes while it runs.
+    // plan: what this step is judged by; a plan approved during the turn moves it to build from the next step.
     this.turnAgents.set(sessionID, session.agent)
     // The project's servers are connected (or have failed) before the turn is offered their tools, as MiMo's instance waits for them.
     await this.mcp?.ready(session.directory)
@@ -2091,7 +2144,7 @@ export class SessionRunner {
     if (definition.kind === "chatgpt" && !tokens) throw new CodedError(`The ${definition.name} sign-in has expired`, "auth.expired", { name: definition.name })
     const config = this.config.get()
     // MiMo's prefix snapshot, with the skills and a subagent's notes; memory rides after it (see systemFor).
-    const { system, systemTail } = await this.systemFor(session)
+    let { system, systemTail } = await this.systemFor(session)
     // subagents: a subagent asked for structured output returns it through its tool.
     const outputSchema = session.subagent?.outputSchema
 
@@ -2116,7 +2169,7 @@ export class SessionRunner {
         callID: `subtask_${Identifier.part()}`,
         name: "actor",
         status: "pending",
-        input: { description: lead.description, prompt: lead.prompt, subagent_type: lead.type },
+        input: { operation: { action: "run", description: lead.description, prompt: lead.prompt, subagent_type: lead.type } },
         time: { created: Date.now() },
       }
       assistant.parts.push(part)
@@ -2176,27 +2229,34 @@ export class SessionRunner {
        */
       await this.steering.get(sessionID)?.written
       await this.deliverWorktreeNotice(sessionID)
+      /*
+       * plan: MiMo picks each step's agent from the latest user message, so a
+       * plan approved in the last step - which wrote the approval as a message
+       * from the build agent - is carried out from this step on, in the same
+       * run: build's prompt, build's tools, and writes no longer refused.
+       */
+      if (planning && session.agent === "plan") {
+        const now = await this.store.get(sessionID)
+        if (now && now.agent !== "plan") {
+          session = { ...session, agent: now.agent }
+          ;({ system, systemTail } = await this.systemFor(session))
+          this.turnAgents.set(sessionID, session.agent)
+        }
+      }
       const stored = await this.store.messages(sessionID)
       const delivered = this.markDelivered(sessionID, stored)
       if (delivered.length) await this.openSteeredTurn(sessionID, session.directory, delivered, stored)
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
-      const chatted = withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel)))
-      // memory: a conversation with notes or tasks of its own is reminded where they are, each request (MiMo's recall note).
-      const recall = session.parentID
-        ? undefined
-        : await recallNote(
-            sessionID,
-            ((await this.store.get(sessionID))?.tasks?.length ?? 0) > 0,
-            this.offeredTools(session).some((entry) => entry.name === "actor"),
-          )
+      // MiMo's recall hint: a conversation with memory or tasks is told, each step, where to look before asking.
+      const chatted = withRecallHint(withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel))), await this.recallFor(session))
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
       // in a row bring a note to change approach.
       const history = forWire(
         await withAttachmentData(
-          withRecall(withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)), recall),
+          withSameStepsNote(withNotes(withSkillReminders(step > 0 ? frameSteered(chatted) : chatted), notes)),
           session.directory,
           attachmentData,
         ),
@@ -2872,6 +2932,7 @@ export class SessionRunner {
         snapshot: (target) => this.record(owner, target),
         shell: this.config.get().shell,
         toolOutputs: this.toolOutputs,
+        subagent: this.workers.has(input.session.id),
         // session chat: a conversation's own calls only; a subagent has no contacts.
         chat: this.workers.has(input.session.id) ? undefined : this.chat,
         // subagents: offered to a conversation's own calls; a subagent's calls get none, so there is no nesting.
@@ -3068,18 +3129,27 @@ export class SessionRunner {
     const session = await this.store.get(sessionID)
     const root = session?.parentID ?? sessionID
     const who = { owner: session?.subagent?.id ?? "main", subagent: Boolean(session?.parentID) }
-    return {
-      update: (change) => {
-        const next = (this.taskQueues.get(root) ?? Promise.resolve()).then(async () => {
-          const current = (await this.store.get(root))?.tasks ?? []
-          const { list, result } = change(current, who)
-          if (JSON.stringify(list) !== JSON.stringify(current)) await this.store.update(root, { tasks: list })
-          return result
-        })
-        this.taskQueues.set(root, next.catch(() => undefined))
-        return next
-      },
-    }
+    return { update: (change) => this.changeTasks(root, who, change) }
+  }
+
+  /** tasks: one change to a conversation's registry, queued behind the others. */
+  private changeTasks<T>(root: string, who: { owner: string; subagent: boolean }, change: (list: TaskItem[], who: { owner: string; subagent: boolean }) => { list: TaskItem[]; result: T }): Promise<T> {
+    const next = (this.taskQueues.get(root) ?? Promise.resolve()).then(async () => {
+      const current = (await this.store.get(root))?.tasks ?? []
+      const { list, result } = change(current, who)
+      if (JSON.stringify(list) !== JSON.stringify(current)) await this.store.update(root, { tasks: list })
+      return result
+    })
+    this.taskQueues.set(root, next.catch(() => undefined))
+    return next
+  }
+
+  /** tasks: the tasks a subagent holds that are not finished (open, in progress or blocked), as MiMo's completion gate reads them. */
+  private async heldTasks(child: SessionInfo): Promise<TaskItem[]> {
+    const owner = child.subagent?.id
+    if (!owner || !child.parentID) return []
+    const tasks = (await this.store.get(child.parentID))?.tasks ?? []
+    return listedTasks(tasks, {}, Date.now()).filter((task) => task.owner === owner)
   }
 
   /** subagents: the actor tool's actions, bound to the conversation and call they were asked from. */
@@ -3155,6 +3225,14 @@ export class SessionRunner {
       attachments: [],
       time: { created: Date.now() },
     })
+    // tasks: the task it was started for becomes its own and under way, as MiMo's actor starts it.
+    const started = taskID
+    if (started) {
+      await this.changeTasks(parent.id, { owner: name, subagent: false }, (list, who) => ({
+        list: applyTask(list, { action: "start", id: started }, { ...who, now: Date.now() }).tasks,
+        result: undefined,
+      })).catch(() => undefined)
+    }
     const worker = this.work(child, { background, owner: background ? undefined : (this.owners.get(parent.id) ?? parent.id) })
     return { child, worker, taskNote }
   }
@@ -3188,25 +3266,47 @@ export class SessionRunner {
   /** subagents: one turn of a subagent, then its record, then word to its parent if it is owed any. */
   private async childTurn(child: SessionInfo, worker: Worker, controller: AbortController): Promise<ChildOutcome> {
     let failure: unknown
+    // tasks: how often the completion gate sent it back, and the last words it had said by then.
+    const gate: TaskGate = { turns: 0 }
     try {
       let reminded = 0
       for (;;) {
         await this.run(child.id, this.config.apiKey(child.model.provider) ?? "", controller)
         await this.steering.get(child.id)?.written
         if (controller.signal.aborted) break
+        // A turn that ended in an error ends the work; what it had said before stays as its partial result.
+        const ended = await this.lastReply(child.id)
+        if (ended?.finish === "error" || ended?.finish === "refusal") break
+        gate.said = answerIn(ended) || gate.said
         // A follow-up that landed as the last step ended is answered in this turn too.
         if (this.steered(child.id)) continue
         // Asked for structured output and ended without it: reminded, at most twice, as MiMo retries.
         const schema = (await this.store.get(child.id))?.subagent?.outputSchema
-        if (!schema || reminded >= STRUCTURED_RETRIES || structuredResult(await this.store.messages(child.id)) !== undefined) break
-        reminded++
+        if (schema && reminded < STRUCTURED_RETRIES && structuredResult(await this.store.messages(child.id)) === undefined) {
+          reminded++
+          await this.store.saveMessage({
+            id: Identifier.message(),
+            sessionID: child.id,
+            role: "user",
+            text: STRUCTURED_REMINDER,
+            attachments: [],
+            inbox: { from: "main" },
+            time: { created: Date.now() },
+          })
+          continue
+        }
+        // tasks: MiMo's completion gate - a general subagent ending with open or started tasks in its hands is sent back, at most twice.
+        if (child.subagent?.type !== "general" || gate.turns >= TASK_GATE_TURNS) break
+        const held = (await this.heldTasks(child)).filter((task) => task.status === "open" || task.status === "in_progress")
+        if (!held.length) break
+        gate.turns++
         await this.store.saveMessage({
           id: Identifier.message(),
           sessionID: child.id,
           role: "user",
-          text: STRUCTURED_REMINDER,
+          text: taskGateReminder(held),
           attachments: [],
-          inbox: { from: "main" },
+          synthetic: true,
           time: { created: Date.now() },
         })
       }
@@ -3219,12 +3319,10 @@ export class SessionRunner {
       if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
       this.running.delete(child.id)
       this.owners.delete(child.id)
-      if (this.workers.get(child.id) === worker) this.workers.delete(child.id)
-      this.unwatch()
       this.bus.publish({ type: "session.idle", sessionID: child.id })
     }
 
-    const outcome = await this.outcomeOf(child.id, controller.signal.aborted, failure)
+    const outcome = await this.outcomeOf(child, controller.signal.aborted, failure, gate)
     const current = await this.store.get(child.id)
     if (current?.subagent) {
       await this.store
@@ -3234,48 +3332,100 @@ export class SessionRunner {
             status: "idle",
             outcome: outcome.kind,
             error: outcome.kind === "failure" ? outcome.error : undefined,
+            reported: outcome.kind === "success" && (outcome.status || outcome.unfinished) ? { status: outcome.status, unfinished: outcome.unfinished } : undefined,
             ended: Date.now(),
           },
         })
         .catch(() => undefined)
     }
+    // Let go only once its outcome is on record, so a wait that finds no worker reads how it ended.
+    if (this.workers.get(child.id) === worker) this.workers.delete(child.id)
+    this.unwatch()
     if (worker.notify && current) await this.notifyParent(worker.parentID, this.noticeOf(current, outcome)).catch(() => undefined)
     return outcome
   }
 
-  /** subagents: how a subagent's turn ended, read from its transcript. */
-  private async outcomeOf(sessionID: string, aborted: boolean, failure: unknown): Promise<ChildOutcome> {
+  /**
+   * subagents: how a subagent's turn ended, read from its transcript. A turn
+   * the completion gate sent it back for that failed leaves the answer given
+   * before it, with the status lowered to partial, as MiMo's gate does.
+   */
+  private async outcomeOf(child: SessionInfo, aborted: boolean, failure: unknown, gate: TaskGate = { turns: 0 }): Promise<ChildOutcome> {
     if (aborted) return { kind: "cancelled" }
-    const messages = await this.store.messages(sessionID).catch((): Message[] => [])
+    const messages = await this.store.messages(child.id).catch((): Message[] => [])
     const last = [...messages].reverse().find((message): message is AssistantMessage => message.role === "assistant")
-    if (failure !== undefined || last?.finish === "error" || last?.finish === "refusal") {
-      return { kind: "failure", error: last?.error ?? describe(failure instanceof Shown ? failure.reason : failure) }
+    const failed = failure !== undefined || last?.finish === "error" || last?.finish === "refusal"
+    if (failed && !gate.turns) {
+      return {
+        kind: "failure",
+        error: last?.error ?? describe(failure instanceof Shown ? failure.reason : failure),
+        ...(gate.said ? { partial: gate.said } : {}),
+      }
     }
     // subagents: asked for structured output, the object it returned is its answer, and none is a failure.
-    if ((await this.store.get(sessionID))?.subagent?.outputSchema) {
+    if ((await this.store.get(child.id))?.subagent?.outputSchema) {
       const value = structuredResult(messages)
       if (value === undefined) return { kind: "failure", error: `The subagent ended without returning its result through ${STRUCTURED_OUTPUT}.` }
-      return { kind: "success", answer: JSON.stringify(value, null, 2) }
+      return this.reconciled(child, JSON.stringify(value, null, 2), failed, false)
     }
-    return { kind: "success", answer: answerIn(last) }
+    // After the gate sent it back, a turn that said nothing leaves the answer it gave before, as MiMo keeps it.
+    return this.reconciled(child, (!failed && answerIn(last)) || (gate.turns ? gate.said : "") || "", failed, true)
   }
 
-  /** subagents: a subagent's last answer, for wait. */
-  private async answerOf(sessionID: string): Promise<string> {
+  /**
+   * tasks: a subagent's answer as its parent reads it, reconciled as MiMo's
+   * actor does: tasks a general subagent still holds lower the status it
+   * reported - to partial while any is open or under way, to blocked when only
+   * blocked ones are left - and are named after a prose answer.
+   */
+  private async reconciled(child: SessionInfo, answer: string, gateFailed: boolean, prose: boolean): Promise<ChildOutcome> {
+    const header = prose ? statusHeader(answer) : undefined
+    const held = child.subagent?.type === "general" ? await this.heldTasks(child) : []
+    const lowered = held.some((task) => task.status !== "blocked") ? "partial" : held.length ? "blocked" : undefined
+    const status = lowered ?? (gateFailed && (!header || header.status === "success") ? "partial" : header?.status)
+    const unfinished = held.length ? held.map((task) => task.id) : undefined
+    return {
+      kind: "success",
+      answer: prose && unfinished ? unfinishedNamed(answer, unfinished) : answer,
+      ...(status ? { status } : {}),
+      ...(header ? { summary: header.summary } : {}),
+      ...(unfinished ? { unfinished } : {}),
+    }
+  }
+
+  /** subagents: a subagent's latest reply. */
+  private async lastReply(sessionID: string): Promise<AssistantMessage | undefined> {
     const messages = await this.store.messages(sessionID).catch((): Message[] => [])
-    return answerIn([...messages].reverse().find((message): message is AssistantMessage => message.role === "assistant"))
+    return [...messages].reverse().find((message): message is AssistantMessage => message.role === "assistant")
+  }
+
+  /**
+   * subagents: a subagent's last answer, for wait, as its parent was given it:
+   * with the tasks it left unfinished named after it.
+   */
+  private async answerOf(child: SessionInfo): Promise<string> {
+    const answer = child.subagent?.outputSchema ? JSON.stringify(structuredResult(await this.store.messages(child.id)) ?? null, null, 2) : answerIn(await this.lastReply(child.id))
+    const unfinished = child.subagent?.reported?.unfinished
+    return unfinished?.length && !child.subagent?.outputSchema ? unfinishedNamed(answer, unfinished) : answer
   }
 
   /** subagents: MiMo's five outcomes, as the parent is told them. */
   private noticeOf(child: SessionInfo, outcome: ChildOutcome): NoticeEntry {
     const base = { subagentID: child.subagent?.id ?? child.id, sessionID: child.id, description: child.title }
     if (outcome.kind === "cancelled") return { notice: { ...base, status: "cancelled" } }
-    if (outcome.kind === "failure") return { notice: { ...base, status: "failed", summary: firstLine(outcome.error) }, result: outcome.error }
+    if (outcome.kind === "failure") {
+      return { notice: { ...base, status: "failed", summary: firstLine(outcome.error) }, result: outcome.error, ...(outcome.partial ? { partial: outcome.partial } : {}) }
+    }
     if (!outcome.answer) return { notice: { ...base, status: "ended" } }
-    // A final message that opens with MiMo's status header says how it went in its own words.
-    const header = statusHeader(outcome.answer)
+    // The status its answer reported, as reconciled with its tasks, says how it went.
+    const reported = outcome.status
     return {
-      notice: { ...base, status: header?.status === "failed" ? "failed" : "completed", summary: header?.summary ?? firstLine(outcome.answer) },
+      notice: {
+        ...base,
+        status: reported === "failed" ? "failed" : "completed",
+        summary: outcome.summary ?? firstLine(outcome.answer),
+        ...(reported ? { reported } : {}),
+      },
       result: outcome.answer,
     }
   }
@@ -3348,10 +3498,14 @@ export class SessionRunner {
       const note = "The subagent did not finish in the time allowed and is still working. Check on it with status or wait, or cancel it."
       return { output: noted(subagentOutput(name, note, "timeout")), title: child.title, metadata }
     }
-    if (outcome.kind === "cancelled") throw new ToolError("The subagent was stopped before it finished.")
-    if (outcome.kind === "failure") throw new ToolError(`The subagent failed: ${outcome.error}`)
+    // Stopped with this turn: the call is cut off with it. Stopped some other way: a result that says so, as MiMo's run returns it.
+    if (outcome.kind === "cancelled" && call.signal.aborted) throw new ToolError("The subagent was stopped before it finished.")
+    if (outcome.kind === "cancelled") {
+      return { output: noted(subagentOutput(name, "The subagent was stopped before it finished.", "cancelled")), title: child.title, metadata: { ...metadata, cancelled: true } }
+    }
+    if (outcome.kind === "failure") throw new ToolError(`The subagent failed: ${outcome.error}${outcome.partial ? `\nPartial result: ${outcome.partial}` : ""}`)
     return {
-      output: noted(subagentOutput(name, outcome.answer || "(The subagent ended without a final message.)", statusHeader(outcome.answer)?.status)),
+      output: noted(subagentOutput(name, outcome.answer || "(The subagent ended without a final message.)", outcome.status, outcome.summary)),
       title: child.title,
       metadata,
     }
@@ -3382,7 +3536,7 @@ export class SessionRunner {
     return { output: JSON.stringify({ status: "unknown", actor_id: id }), title: id, metadata: { status: "unknown" } }
   }
 
-  /** subagents: where a subagent stands, as status, wait and cancel report it. */
+  /** subagents: where a subagent stands, as status and wait report it, under MiMo's field names. */
   private snapshotOf(child: SessionInfo): Record<string, unknown> {
     const state = child.subagent
     const running = this.running.has(child.id)
@@ -3390,13 +3544,13 @@ export class SessionRunner {
       status: running ? "running" : "idle",
       actor_id: state?.id ?? child.id,
       description: child.title,
-      subagent_type: state?.type,
+      agent: state?.type,
       background: state?.background === true,
-      turns: state?.turns ?? 1,
-      ...(!running && state?.outcome ? { outcome: state.outcome } : {}),
+      turnCount: state?.turns ?? 1,
+      lastTurnTime: (!running && state?.ended) || child.updated,
+      ...(!running && state?.outcome ? { lastOutcome: state.outcome } : {}),
       ...(!running && state?.error ? { error: state.error } : {}),
-      started: child.created,
-      ...(!running && state?.ended ? { ended: state.ended } : {}),
+      time: { created: child.created, updated: child.updated, ...(!running && state?.ended ? { completed: state.ended } : {}) },
     }
   }
 
@@ -3429,8 +3583,17 @@ export class SessionRunner {
       child = (await this.store.get(child.id)) ?? child
     }
     const snapshot = this.snapshotOf(child)
-    const answered = snapshot.status === "idle" && (child.subagent?.outcome ?? "success") === "success"
-    return this.reported(child, answered ? { ...snapshot, result: await this.answerOf(child.id) } : snapshot)
+    if (snapshot.status !== "idle") return this.reported(child, snapshot)
+    // An ended subagent's answer comes with it, and so does what a failed one had said by then, as MiMo's wait gives both.
+    const outcome = child.subagent?.outcome ?? "success"
+    const result = outcome === "cancelled" ? "" : await this.answerOf(child)
+    const said = child.subagent?.reported
+    return this.reported(child, {
+      ...snapshot,
+      ...(result && (outcome === "success" || !child.subagent?.outputSchema) ? { result } : {}),
+      ...(outcome === "success" && said?.status ? { reportedStatus: said.status } : {}),
+      ...(outcome === "success" && !child.subagent?.outputSchema && statusHeader(result) ? { reportedSummary: statusHeader(result)!.summary } : {}),
+    })
   }
 
   /** subagents: cancel - stop a running subagent; one that is idle is left as it is. */
@@ -3652,9 +3815,20 @@ interface Worker {
   settled: Promise<ChildOutcome>
 }
 
-type ChildOutcome = { kind: "success"; answer: string } | { kind: "failure"; error: string } | { kind: "cancelled" }
+type ChildOutcome =
+  | { kind: "success"; answer: string; status?: ResultStatus; summary?: string; unfinished?: string[] }
+  | { kind: "failure"; error: string; partial?: string }
+  | { kind: "cancelled" }
 
-type NoticeEntry = { notice: SubagentNotice; result?: string }
+/** tasks: the completion gate's turns so far, and the last answer given before one. */
+type TaskGate = { turns: number; said?: string }
+
+/** tasks: an answer with the tasks its subagent left unfinished named after it. */
+function unfinishedNamed(answer: string, ids: readonly string[]): string {
+  return `${answer}\n\n**Unfinished tasks**: ${ids.join(", ")}`
+}
+
+type NoticeEntry = { notice: SubagentNotice; result?: string; partial?: string }
 
 /** subagents: a reply's final words. */
 function answerIn(message: AssistantMessage | undefined): string {
