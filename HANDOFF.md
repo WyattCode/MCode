@@ -318,7 +318,6 @@
   - 截断提示改为用 actor 工具开 explore 子智能体，且只在本轮确实提供 actor 时这样说；调用不存在的工具时列出本次请求提供的工具名。
   - webfetch：turndown（MiMo 的选项，移到 devDependencies，由主进程构建打包，不再随 node_modules 重复打包）；图片（SVG 与 fastbidsheet 除外）作为附件交给模型；发生跳转时输出第一行写明最终地址；描述去掉「不抓本机」。
   - 验证：`scripts/smoke-round10-bash.ts`（44 条，接在 smoke.ts 里）；草稿区 `r10b-mutate.cjs` 逐项改坏确认会失败；探针 `mcode-round10-bash.cjs`（B1～B6：实时中文、刷新频率、删除卡片、停止后交出输出、图片附件、无报错）。
-- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
 - **第十轮·文件工具与桌面工具包（A、D 两部分）已完成**（smoke 3390 全过，探针 `mcode-round10-files.cjs` 9 项全过，改坏的构建跑出 F1–F8 失败）：
   - 删除：multiedit（工具、描述、权限、`tool.multiedit` 18 张表、界面映射、检查）与 MCode 独有的 list 工具（explore 只剩 read/glob/grep/bash/webfetch）；渲染层保留 MiMo 自己的 list 文案和 list 权限桶。
   - glob / grep 改走随包 ripgrep（`MCODE_RIPGREP_PATH`；没有时退回 `ignore.ts` 的遍历，规则尽量一致）：Rust 正则、UTF-16/二进制处理、`--glob` 压过 .gitignore（grep include 也照 MiMo 放开）；路径不存在报错；停止时报错而不是返回半截；读不了的路径注明；匹配行去掉换行、非 UTF-8 行解码显示；任何层级都排除 `.git`。
@@ -342,7 +341,6 @@
   - **归组规则改了（G10-8）**：新请求 `git.repoRoots`（`server/repo-roots.ts`，5 分钟缓存，存 `storage/repo-roots-cache.json`，过期先用旧值后台刷新，报告已不存在的目录）；渲染层 `lib/session-project.ts` 的 `projectOf` 按「标签 → 目录本身是已列出项目 → 主仓库 → 目录已不存在则无项目」归组，已不存在的项目不显示；新会话收养主仓库为项目（「移动至项目」仍按所选目录）。一次性迁移 `projects-by-repository`：已列出的链接工作树项目移出列表（连同置顶与排序），改列其主仓库；子目录项目保留。
   - 验证：13 项检查、build、smoke **3327 全过**（新 `scripts/smoke-round10-git.ts` 75 条，全部在一次性仓库和本地裸仓库上跑；snapshotcheck 加三条）；每条新检查都改坏对应代码确认会失败。探针 `mcode-round10-git.cjs` 12 项全过、0 报错，在 v2.0 基线（897ee3c）构建上 10 项核心检查全部失败（基线的「推送」确实把 fix 写进了 origin/main）；回归探针 round3-files 37、round4-projects 10、round2-info 23、branch-picker 8（`mcode-branch-picker-r10.cjs` 只是把 ROOT 改成读 `MCODE_ROOT`）全过。
   - 未改：`git diff` 本身会顺手刷新 index（与设置无关，MiMo 的差异请求同样如此），只保证 status 不写 index；撤销时 MCode 仍保留「补丁回不去就 `git checkout --`」的兜底（MiMo 26.914 只靠补丁）。
-- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
 - **步骤绘制这一路已完成**（`round10-steps.md` K10-1 … K10-16，K10-10 按用户决定跳过——multiedit 由工具一路删除；worktree 分支 9f5ab4d、9e6b033、03a8b6e、8f44b60）：
   - K10-1 已完成回合照 MiMo 分「段」（`lib/step-rows.ts` `stagesOf`）：只有正常结束、且最后一段以文字 / 提问收尾的回合，回合头才是折叠按钮，收起范围是最后一段文字之前的全部（中间说明、较早的提问也收）；停止 / 失败 / 以工具或子智能体收尾的回合头部是纯文字、全部摊开，最后一段没说话时它的工具组默认展开。查找的「未展开 N」也数被收起的文字。
   - K10-2 插话照 26.914（`shared/steer.ts`）：模型接收后插话成为下一回合的普通提问（时间、复制、编辑），上一回合按完成结算（有操作行、不显示「中断」），新回合计时重开；未接收的插话放在回合最底部、工作指示之后，带「已插话 · 会尽快处理」；没有回合在跑时，未接收的插话按普通提问显示。子智能体通知仍留在回合内。runner 在接收插话的那一步把撤销记录一分为二（`openSteeredTurn`），回滚到插话只撤它之后的改动；实时改动胶囊、信息卡任务计数用同一边界；旧记录照常读取（旧快照的多消息记录仍由 revert 的 restoredTo 逻辑处理）。
