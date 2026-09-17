@@ -1,9 +1,6 @@
-import { execFile } from "node:child_process"
 import path from "node:path"
-import { promisify } from "node:util"
 import * as git from "../git"
-
-const run = promisify(execFile)
+import { runGit } from "../git-process"
 
 /** The most files one card asks about; rows past it keep the counts the turn's tools recorded. */
 const MAX_FILES = 200
@@ -22,8 +19,8 @@ export async function turnFileDiffs(
   directory: string,
   files: string[],
 ): Promise<{ repo: boolean; files: { path: string; patch: string }[] }> {
-  const repo = await run("git", ["rev-parse", "--is-inside-work-tree"], { cwd: directory, windowsHide: true })
-    .then(({ stdout }) => stdout.trim() === "true")
+  const repo = await runGit(directory, ["rev-parse", "--is-inside-work-tree"])
+    .then((stdout) => stdout.trim() === "true")
     .catch(() => false)
   if (!repo) return { repo: false, files: [] }
 

@@ -11,6 +11,7 @@ import { mainWorktreeRoots } from "../session/worktree"
 import { ABORTED_TOOL } from "../provider/history"
 import { repositoryRoot, tryGit } from "../git"
 import { gitBash, which, windowsPath } from "../shell-path"
+import { mergeConflictNotice } from "./merge-conflict"
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -656,6 +657,8 @@ export const BashTool: ToolDefinition = {
         if (expired) {
           output += `\n\n(The command was stopped when it ran past its ${timeout} ms timeout. If it needs longer and is not waiting for input, run it again with a larger timeout.)`
         }
+        // A merge or rebase this left stopped on conflicts: the note says to back out and hand the conflict over.
+        output += await mergeConflictNotice(cwd, command, output)
         if (cut && file) output += `\n\nThe whole output is saved at ${file}`
         resolve({
           output,

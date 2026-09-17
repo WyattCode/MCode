@@ -49,6 +49,42 @@ const recorded = repo.done.files[0]?.path ?? ""
 if (path.basename(recorded) !== "a.txt" || !path.isAbsolute(recorded))
   problems.push(`a git project recorded ${recorded || "nothing"}, expected an absolute path to a.txt`)
 
+/*
+ * Round 10 (G10-18), as MiMo's snapshot does: the project's own info/exclude
+ * is honoured, untracked files over 2MB are left out, and a file the store
+ * already held stops being photographed once the project ignores it.
+ */
+{
+  const tuned = path.join(root, "tuned")
+  await fs.mkdir(path.join(tuned, "localbuild"), { recursive: true })
+  execFileSync("git", ["init", "-q"], { cwd: tuned })
+  await fs.writeFile(path.join(tuned, ".git", "info", "exclude"), "localbuild/\n", "utf8")
+  await fs.writeFile(path.join(tuned, "a.txt"), "before", "utf8")
+  await fs.writeFile(path.join(tuned, "notes.txt"), "one", "utf8")
+  await fs.writeFile(path.join(tuned, "localbuild", "out.txt"), "x", "utf8")
+  await fs.writeFile(path.join(tuned, "big.bin"), Buffer.alloc(3 * 1024 * 1024, 1))
+  const snapshots = new Snapshots(store)
+  const first = snapshots.begin(tuned)
+  await first.ready()
+  await fs.writeFile(path.join(tuned, "a.txt"), "after", "utf8")
+  await fs.writeFile(path.join(tuned, "notes.txt"), "two", "utf8")
+  await fs.writeFile(path.join(tuned, "localbuild", "out.txt"), "y", "utf8")
+  await fs.writeFile(path.join(tuned, "big.bin"), Buffer.alloc(3 * 1024 * 1024, 2))
+  const firstDone = await first.finish()
+  const names = firstDone.files.map((file) => path.basename(file.path)).sort().join(",")
+  if (firstDone.unavailable || firstDone.refused) problems.push(`the tuned project failed to record: ${firstDone.unavailable ?? firstDone.refused}`)
+  if (names !== "a.txt,notes.txt") problems.push(`info/exclude and the 2MB limit: recorded ${names || "nothing"}, expected a.txt,notes.txt`)
+
+  await fs.appendFile(path.join(tuned, ".git", "info", "exclude"), "notes.txt\n", "utf8")
+  const second = snapshots.begin(tuned)
+  await second.ready()
+  await fs.writeFile(path.join(tuned, "notes.txt"), "three", "utf8")
+  await fs.writeFile(path.join(tuned, "a.txt"), "again", "utf8")
+  const secondDone = await second.finish()
+  const again = secondDone.files.map((file) => path.basename(file.path)).sort().join(",")
+  if (again !== "a.txt") problems.push(`a file ignored after it was stored: recorded ${again || "nothing"}, expected a.txt`)
+}
+
 await fs.rm(root, { recursive: true, force: true })
 
 if (problems.length) {

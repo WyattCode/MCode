@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
-import { sessionGroup } from "@shared/session-group"
+import { projectOf } from "../lib/session-project"
 import { useApp } from "../stores/app"
 import { language, sessionTitle, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
@@ -89,7 +89,7 @@ const name = (directory: string) =>
 
 /* Which project a row outside the tree says it belongs to; a conversation filed under none says nothing. */
 const groupNote = (session: SessionInfo) => {
-  const group = sessionGroup(session)
+  const group = projectOf(session)
   return group ? name(group) : ""
 }
 
@@ -165,7 +165,7 @@ const projects = computed(() => {
      * Filed by its grouping label where 移动至项目 gave it one, else by the
      * folder it works in. A task with no project has neither; Recent has it.
      */
-    const group = sessionGroup(session)
+    const group = projectOf(session)
     if (group) byDirectory.get(group)?.push(session)
   }
   return app.projects.map((directory) => {
@@ -210,6 +210,11 @@ watch(
   (now, before) => {
     if (now < before) void readBranches(true)
   },
+)
+/* A switch or a new branch made in this window is shown straight away, as MiMo re-detects it. */
+watch(
+  () => app.branchNonce,
+  () => void readBranches(true),
 )
 const branchesOnFocus = () => void readBranches()
 onMounted(() => window.addEventListener("focus", branchesOnFocus))
@@ -563,7 +568,7 @@ function setRecentSort(mode: "recent" | "name") {
 const recentAll = computed(() => {
   const listed = new Set(projects.value.map((project) => project.directory))
   const rows = app.sessions.filter(
-    (session) => !session.archived && !listed.has(sessionGroup(session) ?? "") && !app.isPinned(session.id),
+    (session) => !session.archived && !listed.has(projectOf(session) ?? "") && !app.isPinned(session.id),
   )
   return recentSort.value === "name"
     ? rows.sort((a, b) => title(a.title).localeCompare(title(b.title), language.value))
@@ -1220,7 +1225,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
             <ChatLinkMark v-if="app.chatLinksOf(block.session.id).length" :links="app.chatLinksOf(block.session.id)" />
             <RowTitle
               class="row-label task-label"
-              v-tip="{ card: convoCard(block.session, app.config?.projectNames, app.chatLinksOf(block.session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === block.session.id }"
+              v-tip="{ card: convoCard(block.session, app.config?.projectNames, app.chatLinksOf(block.session.id), (id: string) => emit('open', id), app.groupContext), placement: 'right', disabled: picking || menuSession === block.session.id }"
               :text="title(block.session.title)"
               :cover="picking ? 0 : TITLE_COVER"
               @rename="!picking && emit('rename', block.session.id)"
@@ -1419,7 +1424,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
                 <ChatLinkMark v-if="app.chatLinksOf(session.id).length" :links="app.chatLinksOf(session.id)" />
                 <RowTitle
                   class="row-label task-label"
-                  v-tip="{ card: convoCard(session, app.config?.projectNames, app.chatLinksOf(session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === session.id }"
+                  v-tip="{ card: convoCard(session, app.config?.projectNames, app.chatLinksOf(session.id), (id: string) => emit('open', id), app.groupContext), placement: 'right', disabled: picking || menuSession === session.id }"
                   :text="title(session.title)"
                   :cover="picking ? 0 : TITLE_COVER"
                   @rename="!picking && emit('rename', session.id)"
@@ -1552,7 +1557,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
             <span class="stack">
               <RowTitle
                 class="row-label task-label"
-                v-tip="{ card: convoCard(entry.session, app.config?.projectNames, app.chatLinksOf(entry.session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === entry.session.id }"
+                v-tip="{ card: convoCard(entry.session, app.config?.projectNames, app.chatLinksOf(entry.session.id), (id: string) => emit('open', id), app.groupContext), placement: 'right', disabled: picking || menuSession === entry.session.id }"
                 :text="title(entry.session.title)"
                 :cover="picking ? 0 : TITLE_COVER"
                 @rename="!picking && emit('rename', entry.session.id)"

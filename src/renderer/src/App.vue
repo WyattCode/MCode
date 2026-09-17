@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { AGENT_NAMES, IMPORT_SOURCES } from "@shared/protocol"
-import type { Worktree } from "@shared/protocol"
 import { useApp } from "./stores/app"
 import Sidebar from "./components/Sidebar.vue"
 import HomeHero from "./components/HomeHero.vue"
@@ -65,7 +64,7 @@ import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, schedule
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
-import { sessionGroup } from "@shared/session-group"
+import { projectOf } from "./lib/session-project"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
@@ -339,16 +338,9 @@ const settingsOpen = ref(false)
 /** Non-default landing page for the settings dialog, when opened from a shortcut. */
 const settingsSection = ref<"general" | "keys" | "models" | "mcp" | "archive">()
 /*
- * Three things need a line of text from the user, and Electron has no
- * window.prompt to fall back on - it throws outright. Each is a flag rather
- * than a promise so the dialog stays declarative like every other overlay.
- */
-/*
  * The header, so the rename command can start the title's own editor. Renaming
  * is inline now - there is no dialog left for a flag to open.
  */
-/** The project a new workspace is being branched from, while it is being named. */
-const namingWorkspace = ref<string>()
 
 /*
  * The model menu's "configure custom models" lands on the models page, as MiMo's
@@ -417,144 +409,6 @@ provideRestoreDraft((message) => {
   composer.value?.set(draftFromMessage(message))
 })
 const paletteMode = ref<PaletteMode>("files")
-
-/**
- * Starts a workspace: a second checkout of the project, on its own branch.
- *
- * A session is opened in it straight away, because a workspace with nothing
- * working in it is just a directory - the point is to take this conversation
- * somewhere it cannot collide with the one next door.
- */
-function newWorkspace() {
-  const directory = app.current?.directory ?? app.config?.directory
-  if (!directory) return
-  namingWorkspace.value = directory
-}
-
-async function createWorkspace(directory: string, name: string) {
-  namingWorkspace.value = undefined
-  if (!name.trim()) return
-  try {
-    const made = await app.client?.request({
-      type: "workspace.create",
-      directory,
-      name: name.trim(),
-    })
-    if (!made) return
-    startIn(made.directory)
-    notify(t("workspace.created", { name: made.branch }))
-  } catch (err) {
-    notifyFailure(t("workspace.failed"), err instanceof Error ? err.message : String(err))
-  }
-}
-
-/**
- * The workspace being deleted, and what deleting it would cost.
- *
- * `workspace.remove` has been on the wire and handled by the server since
- * workspaces were built, and nothing in the interface ever called it - a
- * workspace could be made and switched to but never removed, so the worktrees
- * piled up and the only way out was the command line.
- *
- * The state is the whole confirmation rather than a flag, because the warning
- * depends on what git says: `git worktree remove --force` discards uncommitted
- * work without asking, and the reference tells you before that happens
- * (`workspace.status.dirty`, "unmerged changes detected in this workspace").
- */
-const deletingWorkspace = ref<{ target: string; from: string; dirty: boolean }>()
-
-/** The other checkouts of the repository the open session sits in. */
-async function worktreesHere(): Promise<{ list: Worktree[]; here: string } | undefined> {
-  const here = app.current?.directory ?? app.config?.directory
-  if (!here) return undefined
-  const listed = await app.client?.request({ type: "workspace.list", directory: here })
-  if (!listed?.worktrees.length) return undefined
-  return { list: listed.worktrees, here }
-}
-
-/** Whether the session on screen is in a workspace that could be removed. */
-const inRemovableWorkspace = ref(false)
-
-async function refreshWorkspaceKind() {
-  const found = await worktreesHere().catch(() => undefined)
-  const here = found?.here
-  inRemovableWorkspace.value = Boolean(
-    here && found?.list.some((entry) => entry.directory === here && !entry.main),
-  )
-}
-
-async function askDeleteWorkspace() {
-  // A repository git cannot read is a reason to say so, not to leave a
-  // rejected promise behind the `void` at the call site.
-  const found = await worktreesHere().catch(() => undefined)
-  if (!found) return
-  const { list, here } = found
-  const main = list.find((entry) => entry.main)
-  if (!main || main.directory === here) {
-    // The repository's own checkout is not a workspace and cannot be removed.
-    notify(t("workspace.deleteMain"))
-    return
-  }
-
-  /*
-   * Asked from the main checkout, because a worktree cannot be removed from
-   * inside itself - and asked before the dialog so the dialog can say what is
-   * at stake rather than warning about it afterwards.
-   */
-  let dirty = false
-  try {
-    const status = await app.gitStatus(here)
-    dirty = Boolean(status.changed.length)
-  } catch {
-    // A repository that cannot be read is treated as having something to lose.
-    dirty = true
-  }
-  deletingWorkspace.value = { target: here, from: main.directory, dirty }
-}
-
-async function confirmDeleteWorkspace() {
-  const asked = deletingWorkspace.value
-  deletingWorkspace.value = undefined
-  if (!asked) return
-  try {
-    await app.client?.request({ type: "workspace.remove", directory: asked.from, target: asked.target })
-    // The directory the session was in is gone, so it cannot be left open on it.
-    startIn(asked.from)
-    notify(t("workspace.deleted"))
-  } catch (err) {
-    notifyFailure(t("workspace.deleteFailed"), err instanceof Error ? err.message : String(err))
-  }
-  void refreshWorkspaceKind()
-}
-
-/*
- * Re-asked whenever the session changes, because the answer is a property of
- * the directory that session sits in - and the command's enabled state is read
- * long before anyone opens the palette.
- */
-watch(() => app.current?.directory ?? app.config?.directory, () => void refreshWorkspaceKind(), {
-  immediate: true,
-})
-
-/** Opens a session in another checkout of the same repository. */
-async function switchWorkspace() {
-  const directory = app.current?.directory ?? app.config?.directory
-  if (!directory) return
-  const listed = await app.client?.request({ type: "workspace.list", directory })
-  const others = (listed?.worktrees ?? []).filter((entry) => entry.directory !== directory)
-  if (!others.length) {
-    notify(t("workspace.none"))
-    return
-  }
-  // One other checkout needs no picker; more than one goes through the palette
-  // the same way projects do.
-  if (others.length === 1) {
-    startIn(others[0].directory)
-    return
-  }
-  workspaceChoices.value = others.map((entry) => entry.directory)
-  openPalette("projects")
-}
 
 /**
  * Writes out what the app has been complaining about.
@@ -677,8 +531,6 @@ const TerminalDrawer = defineAsyncComponent(() => import("./components/TerminalD
 
 const drawer = ref<InstanceType<typeof TerminalDrawerComponent>>()
 const rightPanel = ref<InstanceType<typeof RightPanel>>()
-/* Set while the project picker is standing in for a workspace picker. */
-const workspaceChoices = ref<string[]>([])
 
 /**
  * Runs what was typed in the composer's shell mode.
@@ -1655,7 +1507,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
  * kept below whatever the search leaves.
  */
 function moveMenu(target?: (typeof app.sessions)[number]): Pick<MenuItem, "children" | "search" | "footer" | "childWidth"> {
-  const current = target ? sessionGroup(target) : undefined
+  const current = target ? projectOf(target) : undefined
   const rows: MenuItem[] = app.projects.map((directory) => ({
       key: `move:${directory}`,
       label: projectName(directory, app.config?.projectNames),
@@ -1908,7 +1760,7 @@ async function runSessionMenu(key: string) {
   if (key.startsWith("move:")) {
     const directory = key.slice("move:".length)
     const moving = app.sessions.find((entry) => entry.id === target)
-    if (moving && sessionGroup(moving) !== directory) await app.move(target, directory)
+    if (moving && projectOf(moving) !== directory) await app.move(target, directory)
     return
   }
   const own = ROW_ACTIONS[key]
@@ -2689,32 +2541,6 @@ const bindableCommands = computed((): AppCommand[] => {
     },
     // App
     {
-      /*
-       * The reference's "Delete workspace". Only offered from inside one: the
-       * repository's own checkout is not a workspace, and the entry would do
-       * nothing there.
-       */
-      id: "workspace.remove",
-      group: "key.groupGeneral",
-      title: t("workspace.delete"),
-      enabled: inWorkspace && inRemovableWorkspace.value,
-      run: () => void askDeleteWorkspace(),
-    },
-    {
-      id: "workspace.new",
-      group: "key.groupGeneral",
-      title: t("workspace.new"),
-      enabled: hasSession,
-      run: () => void newWorkspace(),
-    },
-    {
-      id: "workspace.switch",
-      group: "key.groupGeneral",
-      title: t("workspace.switch"),
-      enabled: hasSession,
-      run: () => void switchWorkspace(),
-    },
-    {
       id: "composer.promptMode",
       group: "key.groupPrompt",
       title: t("cmd.promptMode"),
@@ -3112,7 +2938,6 @@ const modalOpen = computed(
     Boolean(imagePreview.value) ||
     Boolean(videoPreview.value) ||
     settingsOpen.value ||
-    Boolean(namingWorkspace.value) ||
     Boolean(editingProject.value) ||
     Boolean(renamingSession.value) ||
     Boolean(renamingProject.value),
@@ -3515,7 +3340,7 @@ function noticeAbout(sessionID: string) {
   return {
     sessionID,
     title: session ? sessionTitle(session.title) : undefined,
-    project: session && sessionGroup(session) ? projectName(sessionGroup(session)!, app.config?.projectNames) : undefined,
+    project: session && projectOf(session) ? projectName(projectOf(session)!, app.config?.projectNames) : undefined,
   }
 }
 
@@ -4109,8 +3934,8 @@ onBeforeUnmount(() => {
     <CommandPalette
       v-if="paletteOpen"
       :mode="paletteMode"
-      :projects="workspaceChoices.length ? workspaceChoices : openProjects"
-      @close="paletteOpen = false; workspaceChoices = []"
+      :projects="openProjects"
+      @close="paletteOpen = false"
       @file="composer?.mention($event)"
       @project="pickedProject"
     />
@@ -4121,15 +3946,6 @@ onBeforeUnmount(() => {
       @close="searchOpen = false"
       @open="openFromSearch"
       @project="startIn"
-    />
-
-    <RenameDialog
-      v-if="namingWorkspace"
-      :value="''"
-      :heading="t('workspace.namePrompt')"
-      :confirm="t('workspace.new')"
-      @close="namingWorkspace = undefined"
-      @submit="(name) => createWorkspace(namingWorkspace!, name)"
     />
 
     <!-- MiMo's settings boundary: a page that fails to draw shows its strip, not the fatal page. -->
@@ -4173,15 +3989,6 @@ onBeforeUnmount(() => {
   <ImportDialog v-if="importOpen" @close="importOpen = false" />
   <ImagePreview />
   <VideoPreview />
-
-  <ConfirmDialog
-    v-if="deletingWorkspace"
-    :title="t('workspace.delete')"
-    :body="deletingWorkspace.dirty ? t('workspace.deleteDirty') : t('workspace.deleteBody')"
-    :confirm-label="t('common.delete')"
-    @confirm="confirmDeleteWorkspace"
-    @close="deletingWorkspace = undefined"
-  />
 
   <!-- MiMo's wording for several at once: the count in the title and in the question. -->
   <ConfirmDialog

@@ -300,6 +300,8 @@ import { roundTenBashChecks } from "./smoke-round10-bash"
 import { roundTenFileChecks } from "./smoke-round10-files"
 // round 10: MiMo's desktop toolkit as its engine and window run it.
 import { roundTenDesktopChecks } from "./smoke-round10-desktop"
+// Round 10: git end to end - paths, push target, time limits, grouping, undo.
+import { roundTenGitChecks } from "./smoke-round10-git"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -2180,16 +2182,17 @@ async function main() {
       time: { created: 0 },
     }
     /*
-     * Taking a turn back goes through git, as MiMo's does. Outside a
-     * repository it refuses and writes nothing; inside one it reverse-applies
-     * the turn's patches, recomputes a patch whose hunk later edits have
-     * moved, and falls back to `git checkout --` for a tracked file whose
-     * lines are gone altogether.
+     * Taking a turn back goes through git, as MiMo's does. With no repository
+     * an edited file cannot be put back and is left, while a file the turn
+     * created is simply deleted; inside one the turn's patches are
+     * reverse-applied, a patch whose hunk later edits have moved is
+     * recomputed, and a tracked file whose lines are gone altogether falls
+     * back to `git checkout --`.
      */
-    const refused = await revertTurnFiles(root, [turnMessage])
-    check("outside a repository a revert refuses and touches nothing", refused.noRepo === true && refused.restored === 0 && refused.removed === 0, refused)
-    check("the file the refusal did not touch is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
-    check("the file the refusal did not touch is still there", await exists(path.join(root, "made.txt")))
+    const plainRevert = await revertTurnFiles(root, [turnMessage])
+    check("with no repository, edited files are left and counted", plainRevert.restored === 0 && plainRevert.outside === 2 && plainRevert.removed === 1, plainRevert)
+    check("the edited file is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
+    check("the file the turn made is gone", !(await exists(path.join(root, "made.txt"))))
 
     const repo = path.join(project, "turn-revert-repo")
     await fs.mkdir(repo, { recursive: true })
@@ -2223,7 +2226,7 @@ async function main() {
     const throughGit = await revertTurnFiles(repo, [repoTurn])
     check(
       "inside a repository the turn's edits go back and the file it made is deleted",
-      throughGit.noRepo === undefined && throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
+      throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
       throughGit,
     )
     const back = async (name: string) => (await fs.readFile(path.join(repo, name), "utf8")).replace(/\r\n/g, "\n")
@@ -5133,8 +5136,9 @@ async function main() {
   const before = await gitOps.status(repoRoot)
   check("a plain folder is not reported as a repository", before.installed && !before.repo, before)
 
-  const after = await gitOps.init(repoRoot)
-  check("creating a repository takes effect", after.repo, after)
+  await promisify(execFile)("git", ["init", "-q"], { cwd: repoRoot, windowsHide: true })
+  const after = await gitOps.status(repoRoot)
+  check("a new repository is reported as one", after.repo, after)
 
   await fs.writeFile(path.join(repoRoot, "note.txt"), "hello world")
   const dirty = await gitOps.status(repoRoot)
@@ -5176,10 +5180,13 @@ async function main() {
   await inRepo(["reset", "-q", "--", "note.txt"])
   check(
     "git's rename and copy letters read as renamed",
-    gitOps.classify("R ") === "renamed" && gitOps.classify("C ") === "renamed" && gitOps.classify("??") === "added" && gitOps.classify(" M") === "modified",
+    gitOps.classify({ staged: "R", work: " ", untracked: false }) === "renamed" &&
+      gitOps.classify({ staged: "C", work: " ", untracked: false }) === "renamed" &&
+      gitOps.classify({ staged: "?", work: "?", untracked: true }) === "added" &&
+      gitOps.classify({ staged: " ", work: "M", untracked: false }) === "modified",
   )
   const freshRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-fresh-"))
-  await gitOps.init(freshRepo)
+  await runGit("git", ["init", "-q"], { cwd: freshRepo, windowsHide: true })
   await fs.writeFile(path.join(freshRepo, "first.txt"), "first line\n")
   await runGit("git", ["add", "first.txt"], { cwd: freshRepo, windowsHide: true })
   check("a file staged before any commit diffs as new", (await gitOps.diff(freshRepo, "first.txt")).includes("+first line"))
@@ -5244,42 +5251,11 @@ async function main() {
   check("and no build section it cannot support", !bare.includes("## Building and testing"), bare.slice(-200))
   await fs.rm(noRepo, { recursive: true, force: true })
 
-  const branchScope = await gitOps.status(repoRoot, "branch")
-  check("branch scope sees it", branchScope.changed.includes("feature.txt"), branchScope.changed)
   check(
-    "and calls it an addition",
-    branchScope.entries.find((entry) => entry.path === "feature.txt")?.kind === "added",
-    branchScope.entries,
-  )
-  check(
-    "a committed file still diffs against the branch point",
-    (await gitOps.diff(repoRoot, "feature.txt", 3, "branch")).includes("+on the branch"),
-  )
-  check(
-    "and shows nothing against the working tree",
+    "a committed file shows nothing against the working tree",
     (await gitOps.diff(repoRoot, "feature.txt")).trim() === "",
   )
-
-  // Context is what "show all lines" asks for, and it reaches a command line.
-  await fs.writeFile(path.join(repoRoot, "wide.txt"), Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"))
-  await inRepo(["add", "-A"])
-  await inRepo(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "three"])
-  await fs.writeFile(
-    path.join(repoRoot, "wide.txt"),
-    Array.from({ length: 40 }, (_, i) => (i === 20 ? "changed" : `line ${i}`)).join("\n"),
-  )
-  const tight = await gitOps.diff(repoRoot, "wide.txt")
-  const whole = await gitOps.diff(repoRoot, "wide.txt", 100_000)
-  check(
-    "a wider context really shows more of the file",
-    whole.split("\n").length > tight.split("\n").length,
-    { tight: tight.split("\n").length, whole: whole.split("\n").length },
-  )
-  await inRepo(["checkout", "--", "."])
   await inRepo(["checkout", "master"]).catch(() => inRepo(["checkout", "main"]))
-
-  await gitOps.revert(repoRoot, "note.txt")
-  check("reverting removes the change", !(await gitOps.status(repoRoot)).changed.includes("note.txt"))
 
   // Opening a subdirectory of a repository is ordinary, and git answers in
   // paths relative to the root - so the review listed files it could not diff,
@@ -5293,16 +5269,6 @@ async function main() {
     "a file in a subdirectory still diffs",
     (await gitOps.diff(subProject, "main.ts")).includes("+export const a = 1"),
   )
-  await gitOps.revert(subProject, "main.ts")
-  check("reverting from a subdirectory really removes it", !(await exists(path.join(subProject, "main.ts"))))
-
-  await fs.writeFile(path.join(repoRoot, "sibling.txt"), "untouched")
-  const escaped = await gitOps
-    .revert(subProject, "../sibling.txt")
-    .then(() => "allowed", (error: Error) => error.message)
-  check("reverting outside the project is refused", escaped.startsWith("Refusing"), escaped)
-  check("and the file outside is left alone", await exists(path.join(repoRoot, "sibling.txt")))
-
   await fs.rm(repoRoot, { recursive: true, force: true })
 
   // ------------------------------------------------ info card: git ------
@@ -5366,6 +5332,7 @@ async function main() {
   await gitIn(cardRepo, ["remote", "add", "origin", cardOrigin])
   const unpublished = await gitOps.commitState(cardRepo)
   check("a new remote has no branch yet", unpublished.hasOrigin && !unpublished.hasOriginBranch && !unpublished.hasUpstream, unpublished)
+  check("with no branch on origin the card counts nothing ahead", unpublished.ahead === 0 && unpublished.behind === 0, unpublished)
   const published = await gitOps.push(cardRepo)
   check("the first push publishes the branch", published.ok, published)
   const tracking = await gitOps.commitState(cardRepo)
@@ -5728,6 +5695,9 @@ async function main() {
 
   const repoInfo = await workspaceInfo(repo)
   check("a repository reports its actual branch", repoInfo.branch === "feature/x", repoInfo.branch)
+  await fs.mkdir(path.join(repo, "packages", "web"), { recursive: true })
+  const subInfo = await workspaceInfo(path.join(repo, "packages", "web"))
+  check("a project opened on a subdirectory reports the repository's branch (G10-14)", subInfo.branch === "feature/x", subInfo)
 
   const plainInfo = await workspaceInfo(plain)
   check("a plain directory claims no branch", plainInfo.exists && plainInfo.branch === undefined, plainInfo)
@@ -5737,7 +5707,7 @@ async function main() {
 
   await fs.writeFile(path.join(repo, ".git", "HEAD"), "9f1c2ab3d4e5f60718293a4b5c6d7e8f90123456\n")
   const detached = await workspaceInfo(repo)
-  check("a detached HEAD shows a short sha", detached.branch === "9f1c2ab", detached.branch)
+  check("a detached HEAD shows HEAD, as MiMo's side column does (G10-14)", detached.branch === "HEAD", detached.branch)
 
   await fs.rm(wsRoot, { recursive: true, force: true })
 
@@ -6945,6 +6915,7 @@ async function main() {
   await roundTenBashChecks(check, section)
   await roundTenFileChecks(check, section)
   await roundTenDesktopChecks(check, section)
+  await roundTenGitChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)

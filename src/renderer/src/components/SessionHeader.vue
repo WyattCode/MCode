@@ -33,7 +33,7 @@ const emit = defineEmits<{ rename: []; menu: [x: number, y: number]; info: []; b
 const title = computed(() => (app.current ? sessionTitle(app.current.title) : ""))
 
 /* MiMo's card over the title: the project, the folder and when it last changed. */
-const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames) : undefined))
+const card = computed(() => (app.current ? convoCard(app.current, app.config?.projectNames, [], undefined, app.groupContext) : undefined))
 const pinned = computed(() => Boolean(app.current && app.isPinned(app.current.id)))
 
 /*

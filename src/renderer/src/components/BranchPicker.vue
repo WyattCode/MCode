@@ -53,6 +53,8 @@ async function refresh() {
 }
 
 watch(() => props.directory, refresh, { immediate: true })
+/* A branch changed from the info card, or by this chip, is shown at once. */
+watch(() => app.branchNonce, refresh)
 
 watch(open, async (value) => {
   query.value = ""
@@ -113,6 +115,7 @@ async function create() {
     if (result.ok) {
       open.value = false
       notify(t("home.branchCreated", { branch }))
+      app.branchesChanged()
       await refresh()
     } else if (result.code === "branch-exists") notifyFailure(t("home.branchCreateExists", { branch }))
     else if (result.code === "branch-invalid") notifyFailure(t("home.branchCreateInvalid", { branch }))
@@ -156,13 +159,18 @@ function onKeydown(event: KeyboardEvent) {
   }
 }
 
+/* MiMo re-reads the home branch when the window comes back: a switch made in a terminal shows on return. */
+const onFocus = () => void refresh()
+
 onMounted(() => {
   window.addEventListener("mousedown", onPointerDown, true)
   window.addEventListener("keydown", onKeydown)
+  window.addEventListener("focus", onFocus)
 })
 onBeforeUnmount(() => {
   window.removeEventListener("mousedown", onPointerDown, true)
   window.removeEventListener("keydown", onKeydown)
+  window.removeEventListener("focus", onFocus)
 })
 </script>
 

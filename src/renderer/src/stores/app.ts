@@ -21,7 +21,8 @@ import { language, sessionTitle, t } from "../lib/i18n"
 import { mcpNeedsSignIn } from "../lib/mcp-status"
 import { visibleChatOrder } from "../lib/visible-chats"
 import { projectName } from "../lib/project"
-import { projectsByRecency } from "@shared/projects"
+import { knownFolder, listedProjects, projectsByRecency } from "@shared/projects"
+import type { GroupContext } from "@shared/session-group"
 import { availableModels, fallbackModel, modelAvailable } from "@shared/model-fallback"
 import type { ChatLink } from "@shared/protocol"
 import { notice, notify, notifyFailure } from "../lib/toast"
@@ -85,6 +86,13 @@ export const useApp = defineStore("app", () => {
    */
   const fsNonce = ref(0)
   const bumpFsNonce = () => (fsNonce.value += 1)
+  /**
+   * Bumped when this window switched or created a branch, as MiMo re-detects
+   * the side column's branch names straight after the home chip or the info
+   * card changes one, rather than at the next focus.
+   */
+  const branchNonce = ref(0)
+  const branchesChanged = () => (branchNonce.value += 1)
   /**
    * What the home screen's next task works in, when the reader has said.
    *
@@ -1639,8 +1647,48 @@ export const useApp = defineStore("app", () => {
     throw failure
   }
 
+  /**
+   * Which main repository each conversation folder belongs to, and which
+   * folders are gone, as the backend last answered (MiMo's repoRoots). Asked
+   * again whenever the set of folders changes and when the window comes back.
+   */
+  const repoRoots = ref<Record<string, string>>({})
+  const missingFolders = ref<ReadonlySet<string>>(new Set())
+  const folderKey = computed(() => {
+    const folders = new Set<string>(listedProjects(config.value))
+    for (const session of sessions.value) if (session.directory && !session.scratch) folders.add(session.directory)
+    return [...folders].sort().join("\n")
+  })
+  let rootsAsked = 0
+  async function refreshRepoRoots() {
+    const directories = folderKey.value ? folderKey.value.split("\n") : []
+    if (!client.value || !connected.value) return
+    const asked = ++rootsAsked
+    const answer = await client.value.request({ type: "git.repoRoots", directories }).catch(() => undefined)
+    if (!answer || asked !== rootsAsked) return
+    repoRoots.value = answer.roots
+    missingFolders.value = new Set(answer.missing)
+  }
+  watch([folderKey, connected], () => void refreshRepoRoots())
+  watch(fsNonce, () => void refreshRepoRoots())
+
+  /* What `sessionGroup` needs to file a conversation the way MiMo does. */
+  const groupContext = computed<GroupContext>(() => {
+    const listed = listedProjects(config.value)
+    const roots = repoRoots.value
+    const missing = missingFolders.value
+    return {
+      listed: new Set(listed),
+      root: (directory) => {
+        const root = roots[directory]
+        return root ? (knownFolder(listed, root) ?? root) : undefined
+      },
+      missing: (directory) => missing.has(directory),
+    }
+  })
+
   /* The project list the side column, the home picker and move-to-project read, most recent first. */
-  const projects = computed(() => projectsByRecency(config.value, sessions.value))
+  const projects = computed(() => projectsByRecency(config.value, sessions.value, groupContext.value))
 
   /**
    * MiMo's project add: onto the list with no conversation. `used` makes it the
@@ -1709,25 +1757,12 @@ export const useApp = defineStore("app", () => {
     message?: string
   }>()
 
-  async function gitStatus(directory: string, scope?: "worktree" | "branch") {
-    return api().request({ type: "git.status", directory, scope })
+  async function gitStatus(directory: string) {
+    return api().request({ type: "git.status", directory })
   }
 
-  async function gitInit(directory: string) {
-    return api().request({ type: "git.init", directory })
-  }
-
-  async function gitDiff(
-    directory: string,
-    file: string,
-    context?: number,
-    scope?: "worktree" | "branch",
-  ) {
-    return (await api().request({ type: "git.diff", directory, file, context, scope })).patch
-  }
-
-  async function gitRevert(directory: string, file: string) {
-    return api().request({ type: "git.revert", directory, file })
+  async function gitDiff(directory: string, file: string) {
+    return (await api().request({ type: "git.diff", directory, file })).patch
   }
 
   /** Facts about a directory, straight from disk. */
@@ -2066,6 +2101,9 @@ export const useApp = defineStore("app", () => {
     setStaged,
     patchConfig,
     fsNonce,
+    groupContext,
+    branchNonce,
+    branchesChanged,
     bumpFsNonce,
     homeProject,
     modelPick,
@@ -2081,9 +2119,7 @@ export const useApp = defineStore("app", () => {
     authState,
     workspaceInfo,
     gitStatus,
-    gitInit,
     gitDiff,
-    gitRevert,
     beginAuth,
     cancelAuth,
     signOut,
