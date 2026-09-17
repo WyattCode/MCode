@@ -35,6 +35,8 @@ export async function roundTenStepsChecks(check: Check, section: (name: string) 
     check("words with dots are", !isDotsOnly("ok..."))
     check("a thinking block alone says nothing", !saysSomething("<think>only this</think>"))
     check("a live reply holds back a tag still arriving", cleanLiveReply("Working <tool_ca") === "Working")
+    check("a live reply keeps its line breaks, which the renderer's open last line depends on", cleanLiveReply("a\n**b**\n") === "a\n**b**\n")
+    check("and loses only the markup", cleanLiveReply("<think>x</think>ok\n") === "ok\n")
     check("but not an ordinary less-than", cleanLiveReply("a <b") === "a <b")
     check("nor one inside a code block still being written", cleanLiveReply("```\nx <tool_ca") === "```\nx <tool_ca")
   }

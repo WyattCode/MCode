@@ -181,7 +181,15 @@ function cleanProse(prose: string): { text: string; cut: boolean } {
 
 /** The reply with leaked tool-call and thinking markup removed outside code, blank runs squeezed and the ends trimmed. */
 export function cleanReply(raw: string): string {
-  if (!raw) return ""
+  return stripMarkup(raw)
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
+/** The reply with the leaked spans taken out and nothing else touched. */
+function stripMarkup(raw: string): string {
+  if (!raw || !raw.includes("<")) return raw ?? ""
   let out = ""
   for (const run of runsOf(raw)) {
     if (run.code) {
@@ -193,9 +201,6 @@ export function cleanReply(raw: string): string {
     if (cleaned.cut) break
   }
   return out
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim()
 }
 
 /** A reply that is only an ellipsis or full stops - MiMo does not count it as a step. */
@@ -210,9 +215,11 @@ const PARTIAL_OPENERS = ["<tool_call>", "<function=", "<parameter=", "<thinking>
 /**
  * The live reply: cleaned, and with a tag that is still arriving at its very
  * end held back, so `<tool_ca` never flashes on screen before it is removed.
+ * Its line breaks are left as they came - the reply renderer holds back a
+ * last line until its newline arrives, so the end is never trimmed here.
  */
 export function cleanLiveReply(raw: string): string {
-  const text = cleanReply(raw)
+  const text = stripMarkup(raw)
   const at = text.lastIndexOf("<")
   if (at < 0) return text
   const tail = text.slice(at)
