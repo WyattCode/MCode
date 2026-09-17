@@ -260,9 +260,13 @@ async function appDataChecks(check: Check, section: Section, root: string): Prom
   check("copying config.json out of the folder is still allowed", fromBackup.code !== "tool.err.appData", fromBackup)
   if (process.platform === "win32") {
     process.env.MCODE_R8_DATA = data
+    // The tool honours $SHELL as MiMo does; a run from Git Bash would hand this PowerShell line to bash.
+    const shell = process.env.SHELL
+    delete process.env.SHELL
     const viaEnv = await failure(() =>
       BashTool.execute({ command: 'Set-Content -Path "$env:MCODE_R8_DATA\\storage\\config.json" -Value x', description: "write" }, context),
     )
+    if (shell !== undefined) process.env.SHELL = shell
     check("a PowerShell write naming the folder through an environment variable is refused", viaEnv.code === "tool.err.appData", viaEnv)
     delete process.env.MCODE_R8_DATA
   }
