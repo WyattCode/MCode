@@ -1,14 +1,13 @@
-import { watch } from "vue"
 import type { AssistantPart, Message, ToolPart } from "@shared/protocol"
 import { openDocument, officeTypeOf } from "./office-open"
 import { requestPdfLocate } from "./annotate"
 import { mediaOf } from "./markdown"
+import { addressName, demotedInBatch, normalizedAddress } from "@shared/session-files"
 
 /*
  * MiMo's two window tools, on the renderer's side: what a present_files call
  * handed over (the cards under the reply), and what happens when either tool
- * completes in the conversation on show - the first delivered file opens in
- * the right panel, and a PDF locate opens or focuses the PDF and marks the passage.
+ * completes - see the end of this file.
  */
 
 export type Delivered =
@@ -17,7 +16,11 @@ export type Delivered =
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
-/** The files a turn's completed present_files calls handed over, in order, each once. */
+/**
+ * The files a turn's completed present_files calls handed over, in order, each
+ * once - without the ones MiMo's demotions set aside from each call's batch
+ * (renders and copies made on the way to a document, T10-19).
+ */
 export function deliveredFiles(parts: readonly AssistantPart[]): Delivered[] {
   const out: Delivered[] = []
   const seen = new Set<string>()
@@ -25,18 +28,22 @@ export function deliveredFiles(parts: readonly AssistantPart[]): Delivered[] {
     if (part.type !== "tool" || part.name !== "present_files" || part.status !== "completed") continue
     const files = part.metadata?.files
     if (!Array.isArray(files)) continue
-    for (const entry of files) {
-      if (!isRecord(entry)) continue
+    const entries = files.filter(isRecord)
+    const demoted = demotedInBatch(entries.flatMap((entry) => (typeof entry.path === "string" && entry.path ? [entry.path] : [])))
+    for (const entry of entries) {
       if (typeof entry.path === "string" && entry.path) {
+        if (demoted.has(entry.path)) continue
         const key = entry.path.replace(/\\/g, "/").toLowerCase()
         if (seen.has(key)) continue
         seen.add(key)
         const name = typeof entry.name === "string" && entry.name ? entry.name : entry.path.split(/[\\/]/).pop() || entry.path
         out.push({ kind: "file", path: entry.path, name, size: typeof entry.size === "number" ? entry.size : 0 })
       } else if (typeof entry.url === "string" && /^https?:\/\//i.test(entry.url)) {
-        if (seen.has(entry.url)) continue
-        seen.add(entry.url)
-        out.push({ kind: "url", url: entry.url, name: entry.url })
+        // Calls recorded before addresses were normalised carry them as written.
+        const url = normalizedAddress(entry.url) ?? entry.url
+        if (seen.has(url)) continue
+        seen.add(url)
+        out.push({ kind: "url", url, name: addressName(url) })
       }
     }
   }
@@ -56,22 +63,6 @@ export function deliveredCard(item: Delivered): "office" | "html" | "media" | "f
   if (officeTypeOf(item.name) ?? officeTypeOf(item.path)) return "office"
   if (/\.html?$/i.test(item.name) || /\.html?$/i.test(item.path)) return "html"
   return mediaOf(item.path) ? "media" : "file"
-}
-
-/**
- * The file a path a reply names, when it may be read off disk to preview it:
- * inside the conversation's project, taken from the project when relative.
- * MiMo previews any path; MCode keeps to the project, and anything else stays
- * a path chip or a plain card. Answers the absolute path, so nothing looks for
- * the file in a folder above the project.
- */
-export function projectPath(file: string, directory: string | undefined): string | undefined {
-  const norm = file.trim().replace(/\\/g, "/")
-  if (!directory || !norm || norm.split("/").includes("..") || norm.startsWith("~") || /^[a-z][a-z0-9+.-]*:/i.test(norm.replace(/^[A-Za-z]:\//, ""))) return undefined
-  const base = directory.replace(/\\/g, "/").replace(/\/+$/, "")
-  const absolute = /^[A-Za-z]:\//.test(norm) || norm.startsWith("/")
-  const full = absolute ? norm : `${base}/${norm.replace(/^\.\//, "")}`
-  return relativeInside(directory, full) ? full : undefined
 }
 
 /**
@@ -102,16 +93,80 @@ export function relativeInside(directory: string, file: string): string {
   return full.toLowerCase().startsWith(base.toLowerCase()) ? full.slice(base.length) : ""
 }
 
-/* A completion counts only when it is new: finished after the conversation came on screen, and just now. */
-const RECENT_MS = 15_000
-const FOLLOWED = new Set(["pdf_locate", "present_files"])
+/* ------------------------------------------------------------ opening what a turn handed over */
 
-async function follow(part: ToolPart, directory: string | undefined) {
-  if (part.name === "present_files") {
-    const first = deliveredFiles([part])[0]
-    if (first?.kind === "file") await openDocument({ path: first.path, name: first.name }, directory)
+/*
+ * MiMo's automatic opens, for every conversation rather than only the one on
+ * show (T10-18). A pdf_locate that completes asks the PDF view to mark its
+ * passage at once and opens the PDF - or, when its conversation is not on
+ * show, keeps the open until it is. A present_files call only notes what it
+ * handed over; when the turn ends, the first file the whole turn handed over
+ * (after the demotions, T10-19) is opened the same way. What opens depends on
+ * the file (T10-48): a web address goes to the system browser, a picture or a
+ * sound opens nothing, anything else goes to the right panel.
+ *
+ * Only calls this window saw complete count: a transcript read back, or a
+ * conversation opened later, opens nothing it did not see happen.
+ */
+
+type Pending = { kind: "delivered"; item: Delivered } | { kind: "pdf"; path: string }
+
+/** Opens held for a conversation until it is on show; the latest one wins, as MiMo keeps one. */
+const pending = new Map<string, Pending>()
+/** present_files calls of the turn each conversation is running, in order. */
+const presentedThisTurn = new Map<string, ToolPart[]>()
+/** Calls already acted on, and calls seen before they completed. */
+const handled = new Set<string>()
+const seenRunning = new Set<string>()
+const windowStarted = Date.now()
+
+let shownCheck: (sessionID: string) => boolean = () => false
+let directoryOf: (sessionID: string) => string | undefined = () => undefined
+
+/** How the window says which conversations are on show, and where each works. */
+export function setDeliveryView(view: { shown: (sessionID: string) => boolean; directory: (sessionID: string) => string | undefined }): void {
+  shownCheck = view.shown
+  directoryOf = view.directory
+}
+
+const NOT_OPENED = new Set(["svg", "png", "jpg", "jpeg", "gif", "webp", "bmp", "avif", "ico", "wav", "mp3", "m4a", "ogg", "flac", "aac"])
+
+/** What an automatic open does with a delivered entry: MiMo's `none`, `external`, or the right panel. */
+export function autoOpenKind(item: Delivered): "none" | "external" | "panel" {
+  if (item.kind === "url") return "external"
+  const name = (item.name || item.path).toLowerCase()
+  const dot = name.lastIndexOf(".")
+  return dot > 0 && NOT_OPENED.has(name.slice(dot + 1)) ? "none" : "panel"
+}
+
+async function perform(action: Pending, directory: string | undefined): Promise<void> {
+  if (action.kind === "pdf") {
+    await openDocument({ path: action.path }, directory)
     return
   }
+  const item = action.item
+  if (item.kind === "url") {
+    window.mcode.openExternal(item.url)
+    return
+  }
+  await openDocument({ path: item.path, name: item.name }, directory)
+}
+
+function openOrHold(sessionID: string, action: Pending): void {
+  if (shownCheck(sessionID)) void perform(action, directoryOf(sessionID)).catch(() => undefined)
+  else pending.set(sessionID, action)
+}
+
+/** A conversation came on show: what was held for it opens now. */
+export function deliveryShown(sessionID: string | undefined): void {
+  if (!sessionID) return
+  const action = pending.get(sessionID)
+  if (!action || !shownCheck(sessionID)) return
+  pending.delete(sessionID)
+  void perform(action, directoryOf(sessionID)).catch(() => undefined)
+}
+
+async function locate(sessionID: string, part: ToolPart): Promise<void> {
   const input = part.input ?? {}
   const file = typeof part.metadata?.path === "string" ? part.metadata.path : typeof input.file === "string" ? input.file : ""
   const snippet = typeof input.snippet === "string" ? input.snippet : ""
@@ -120,47 +175,36 @@ async function follow(part: ToolPart, directory: string | undefined) {
   // MiMo ignores a path that is not on disk.
   const found = await window.mcode.resolveExistingPath([file]).catch(() => null)
   if (!found || found.directory) return
-  await openDocument({ path: found.path }, directory)
   requestPdfLocate({ path: found.path, snippet, page })
+  openOrHold(sessionID, { kind: "pdf", path: found.path })
 }
 
-/**
- * Watches the conversation on show for the two tools completing, and acts once
- * per call. A conversation opened later, or a transcript read back, has only old
- * completions and so opens nothing.
- */
-export function followDeliveries(source: {
-  enabled: () => boolean
-  session: () => string | undefined
-  messages: () => readonly Message[]
-  directory: () => string | undefined
-}) {
-  const handled = new Set<string>()
-  let since = Date.now()
-  watch(source.session, () => (since = Date.now()))
-  watch(
-    () => {
-      if (!source.enabled()) return []
-      const list = source.messages()
-      const found: ToolPart[] = []
-      // A completion lands in the turn being written, so only the last few messages are looked at.
-      for (let at = Math.max(0, list.length - 4); at < list.length; at++) {
-        const message = list[at]
-        if (message.role !== "assistant") continue
-        for (const part of message.parts) {
-          if (part.type === "tool" && FOLLOWED.has(part.name) && part.status === "completed" && !handled.has(part.callID)) found.push(part)
-        }
-      }
-      return found
-    },
-    (parts) => {
-      for (const part of parts) {
-        if (handled.has(part.callID)) continue
-        handled.add(part.callID)
-        const done = part.time.completed ?? 0
-        if (done < since || Date.now() - done > RECENT_MS) continue
-        void follow(part, source.directory()).catch(() => undefined)
-      }
-    },
-  )
+/** Every message update the window receives, from any conversation. */
+export function noteDeliveryUpdate(message: Message): void {
+  if (message.role === "user") {
+    // A new turn of its own starts a new list; a message sent into a running turn does not.
+    if (!message.steered) presentedThisTurn.delete(message.sessionID)
+    return
+  }
+  for (const part of message.parts) {
+    if (part.type !== "tool" || (part.name !== "pdf_locate" && part.name !== "present_files") || handled.has(part.callID)) continue
+    if (part.status !== "completed") {
+      if (part.status === "running" || part.status === "pending") seenRunning.add(part.callID)
+      continue
+    }
+    handled.add(part.callID)
+    const live = seenRunning.delete(part.callID) || (part.time.completed ?? 0) >= windowStarted
+    if (!live) continue
+    if (part.name === "pdf_locate") void locate(message.sessionID, part).catch(() => undefined)
+    else presentedThisTurn.set(message.sessionID, [...(presentedThisTurn.get(message.sessionID) ?? []), part])
+  }
+}
+
+/** A conversation's turn ended: the first thing the turn handed over opens, or waits to. */
+export function noteDeliveryTurnEnded(sessionID: string): void {
+  const parts = presentedThisTurn.get(sessionID)
+  presentedThisTurn.delete(sessionID)
+  const first = parts ? deliveredFiles(parts)[0] : undefined
+  if (!first || autoOpenKind(first) === "none") return
+  openOrHold(sessionID, { kind: "delivered", item: first })
 }

@@ -15,7 +15,7 @@ export interface SessionFiles {
 }
 
 /** Tools whose `path` input names a file they changed. */
-const WRITERS = new Set(["write", "edit", "multiedit"])
+const WRITERS = new Set(["write", "edit"])
 
 /**
  * What a conversation has produced and what it has looked at.
@@ -138,7 +138,7 @@ const stemOf = (file: string) => {
   return dot > 0 ? name.slice(0, dot) : name
 }
 
-const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"])
+const IMAGE = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif", "ico"])
 const VIDEO = new Set(["mp4", "webm", "mov", "m4v", "mkv"])
 const AUDIO = new Set(["mp3", "wav", "m4a", "ogg", "flac"])
 const OFFICE = new Set(["docx", "pptx", "xlsx"])
@@ -166,31 +166,53 @@ export function artifactKind(file: string): ArtifactKind {
 }
 
 /** Folders a render or a scratch step lands in, rather than a finished piece. */
-const WORK_FOLDERS = new Set([
-  "preview", "previews", "pages", "slides", "render", "renders", "rendered", "screenshot", "screenshots",
-  "thumbnail", "thumbnails", "tmp", "temp", "cache", ".cache",
-])
+const WORK_FOLDERS = ["preview", "previews", "pages", "slides", "render", "renders", "rendered", "screenshot", "screenshots", "thumbnail", "thumbnails", "tmp", "temp", "cache", ".cache"]
+const IN_WORK_FOLDER = new RegExp(`(^|[\\\\/])(?:${WORK_FOLDERS.map((name) => name.replace(/\./g, "\\.")).join("|")})[\\\\/]`, "i")
+/** A page or frame number at the end of a name: `slide_3`, `page-12`, `7`. */
+const NUMBERED = /(?:^|[_-])\d{1,3}$/
+/** What a document's rendering is demoted beside, and what each kind of source demotes. */
+const DOCUMENTS = new Set(["docx", "pptx", "xlsx", "pdf"])
+const DERIVED_FROM: Record<string, ReadonlySet<string>> = {
+  md: new Set(["html", "htm", "pdf"]),
+  markdown: new Set(["html", "htm", "pdf"]),
+  ipynb: new Set(["html", "htm", "pdf"]),
+  html: new Set(["pdf"]),
+  htm: new Set(["pdf"]),
+}
+
+const normalStem = (file: string) => stemOf(file.replace(/\\/g, "/")).normalize("NFC")
 
 /**
- * MiMo's demotions, applied to one conversation's deliverables as a batch: the
- * pictures and PDFs made on the way to a document are not handed over beside it.
+ * MiMo's demotions for one batch of files handed over together, in its order:
+ * pictures made on the way to a document (in a render or scratch folder, a
+ * numbered run of three or more, or named as an Office file), a PDF named as an
+ * Office file, and an HTML page or PDF named as its Markdown or notebook source
+ * (a PDF also as its HTML page). Answers the files that are intermediate.
  */
-function demoted(file: string, batch: readonly string[]): boolean {
-  const extension = extensionOf(file)
-  const stem = stemOf(file)
-  const delivered = (set: ReadonlySet<string>) =>
-    batch.some((other) => other !== file && set.has(extensionOf(other)) && stemOf(other) === stem)
-  const hasDocument = batch.some((other) => OFFICE.has(extensionOf(other)) || extensionOf(other) === "pdf")
-  if (IMAGE.has(extension)) {
-    const folders = file.toLowerCase().split("/").slice(0, -1)
-    if (hasDocument && folders.some((folder) => WORK_FOLDERS.has(folder))) return true
-    const images = batch.filter((other) => IMAGE.has(extensionOf(other))).length
-    if (hasDocument && images >= 3 && /[_-]\d{1,3}$/.test(stem)) return true
-    if (delivered(OFFICE)) return true
+export function demotedInBatch(batch: readonly string[]): Set<string> {
+  const demoted = new Set<string>()
+  const kept = () => batch.filter((file) => !demoted.has(file))
+  if (batch.some((file) => DOCUMENTS.has(extensionOf(file.replace(/\\/g, "/"))))) {
+    const images = batch.filter((file) => IMAGE.has(extensionOf(file.replace(/\\/g, "/"))))
+    const numberedRun = images.length >= 3 && images.some((file) => NUMBERED.test(normalStem(file)))
+    const officeStems = new Set(batch.filter((file) => OFFICE.has(extensionOf(file.replace(/\\/g, "/")))).map(normalStem))
+    for (const file of images) {
+      if (IN_WORK_FOLDER.test(file) || (numberedRun && NUMBERED.test(normalStem(file))) || officeStems.has(normalStem(file))) demoted.add(file)
+    }
   }
-  if (extension === "pdf" && (delivered(OFFICE) || delivered(new Set(["html", "htm"])))) return true
-  if ((extension === "pdf" || extension === "html" || extension === "htm") && delivered(NOTEBOOK)) return true
-  return false
+  const officeStems = new Set(kept().filter((file) => OFFICE.has(extensionOf(file.replace(/\\/g, "/")))).map(normalStem))
+  for (const file of kept()) if (extensionOf(file.replace(/\\/g, "/")) === "pdf" && officeStems.has(normalStem(file))) demoted.add(file)
+  const derived = new Map<string, Set<string>>()
+  for (const file of kept()) {
+    const kinds = DERIVED_FROM[extensionOf(file.replace(/\\/g, "/"))]
+    if (!kinds) continue
+    const stem = normalStem(file)
+    const into = derived.get(stem) ?? new Set<string>()
+    for (const kind of kinds) into.add(kind)
+    derived.set(stem, into)
+  }
+  for (const file of kept()) if (derived.get(normalStem(file))?.has(extensionOf(file.replace(/\\/g, "/")))) demoted.add(file)
+  return demoted
 }
 
 /**
@@ -198,14 +220,16 @@ function demoted(file: string, batch: readonly string[]): boolean {
  *
  * The rule:
  * - a file a completed `present_files` call handed over is a deliverable,
- *   whatever it is and however it came to be, as MiMo's role "deliverable" is;
+ *   whatever it is and however it came to be, as MiMo's role "deliverable" is -
+ *   unless MiMo's demotions take it out of that call's batch, which makes it
+ *   intermediate (T10-19);
  * - otherwise only a file a completed `write` created counts; editing a file
  *   that was already there is a change, and the review is where changes are shown;
  * - a created document, sheet, deck, PDF, web page, markdown, notebook, table,
  *   picture, video or recording is a deliverable; anything else created
  *   (code, configuration, scripts, data, plain text) is intermediate;
  * - a deliverable is demoted to intermediate by MiMo's rules for renders made
- *   on the way to a document (see `demoted`).
+ *   on the way to a document (see `demotedInBatch`).
  * Newest first, each file once.
  */
 export function sessionArtifacts(messages: readonly Message[], directory: string): SessionArtifact[] {
@@ -213,17 +237,23 @@ export function sessionArtifacts(messages: readonly Message[], directory: string
   const key = (file: string) => file.toLowerCase()
   const shown = new Map<string, string>()
   const presented = new Set<string>()
+  const handedAside = new Set<string>()
   for (const message of messages) {
     if (message.role !== "assistant") continue
     for (const raw of message.parts) {
       const part = raw as Partial<ToolPart>
       if (part.type === "tool" && part.name === "present_files" && part.status === "completed") {
         const handed = Array.isArray(part.metadata?.files) ? part.metadata.files : []
-        for (const entry of handed) {
+        const paths = handed.flatMap((entry) => {
           const target = typeof entry === "object" && entry !== null ? (entry as { path?: unknown }).path : undefined
-          const file = typeof target === "string" ? projectRelative(directory, target) : undefined
+          return typeof target === "string" && target ? [target] : []
+        })
+        const demoted = demotedInBatch(paths)
+        for (const target of paths) {
+          const file = projectRelative(directory, target)
           if (!file) continue
-          presented.add(key(file))
+          if (demoted.has(target)) handedAside.add(key(file))
+          else presented.add(key(file))
           if (!created.has(key(file))) created.set(key(file), part.time?.completed ?? part.time?.created ?? message.time.created)
           shown.set(key(file), file)
         }
@@ -242,16 +272,50 @@ export function sessionArtifacts(messages: readonly Message[], directory: string
   // A later write to the same file moves it up without changing whether it was created here.
   const touched = new Map(sessionFiles(messages, directory).written.map((entry) => [key(entry.path), entry.at]))
   const files = [...created.keys()].map((id) => ({ path: shown.get(id) ?? id, at: Math.max(created.get(id) ?? 0, touched.get(id) ?? 0) }))
-  const candidates = files.filter((file) => DELIVERABLE.has(extensionOf(file.path))).map((file) => file.path)
+  const candidates = files.filter((file) => DELIVERABLE.has(extensionOf(file.path)) && !handedAside.has(key(file.path))).map((file) => file.path)
+  const demotedCandidates = demotedInBatch(candidates)
   return files
     .map((file) => ({
       ...file,
       kind: artifactKind(file.path),
-      role: (presented.has(key(file.path)) || (candidates.includes(file.path) && !demoted(file.path, candidates))
+      role: (presented.has(key(file.path)) || (candidates.includes(file.path) && !demotedCandidates.has(file.path))
         ? "deliverable"
         : "intermediate") as ArtifactRole,
     }))
     .sort((a, b) => b.at - a.at)
+}
+
+/**
+ * A web address as MiMo keeps one: without its #fragment or a default port,
+ * so the same page named two ways is handed over once. Nothing when it is not
+ * an http(s) address that parses.
+ */
+export function normalizedAddress(entry: string): string | undefined {
+  if (!/^https?:\/\//i.test(entry)) return undefined
+  try {
+    const url = new URL(entry)
+    url.hash = ""
+    if ((url.protocol === "http:" && url.port === "80") || (url.protocol === "https:" && url.port === "443")) url.port = ""
+    return url.toString()
+  } catch {
+    return undefined
+  }
+}
+
+/** What a card calls a web address: the last part of its path, decoded, or the host when there is no path. */
+export function addressName(address: string): string {
+  try {
+    const url = new URL(address)
+    const last = url.pathname.split("/").filter(Boolean).pop()
+    if (!last) return url.hostname
+    try {
+      return decodeURIComponent(last)
+    } catch {
+      return last
+    }
+  } catch {
+    return address
+  }
 }
 
 export interface SessionReferences {

@@ -319,6 +319,18 @@
   - webfetch：turndown（MiMo 的选项，移到 devDependencies，由主进程构建打包，不再随 node_modules 重复打包）；图片（SVG 与 fastbidsheet 除外）作为附件交给模型；发生跳转时输出第一行写明最终地址；描述去掉「不抓本机」。
   - 验证：`scripts/smoke-round10-bash.ts`（44 条，接在 smoke.ts 里）；草稿区 `r10b-mutate.cjs` 逐项改坏确认会失败；探针 `mcode-round10-bash.cjs`（B1～B6：实时中文、刷新频率、删除卡片、停止后交出输出、图片附件、无报错）。
 - 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
+- **第十轮·文件工具与桌面工具包（A、D 两部分）已完成**（smoke 3390 全过，探针 `mcode-round10-files.cjs` 9 项全过，改坏的构建跑出 F1–F8 失败）：
+  - 删除：multiedit（工具、描述、权限、`tool.multiedit` 18 张表、界面映射、检查）与 MCode 独有的 list 工具（explore 只剩 read/glob/grep/bash/webfetch）；渲染层保留 MiMo 自己的 list 文案和 list 权限桶。
+  - glob / grep 改走随包 ripgrep（`MCODE_RIPGREP_PATH`；没有时退回 `ignore.ts` 的遍历，规则尽量一致）：Rust 正则、UTF-16/二进制处理、`--glob` 压过 .gitignore（grep include 也照 MiMo 放开）；路径不存在报错；停止时报错而不是返回半截；读不了的路径注明；匹配行去掉换行、非 UTF-8 行解码显示；任何层级都排除 `.git`。
+  - 越界判断：会话所在 git 工作树根以内都算项目内（`repositoryRoot`），应用数据目录的保护仍在前。
+  - read：先按文件头判断类型（七种魔数，`read-media.ts`；用户附件同样）；只附 MiMo 的媒体，其余提示转换；模型读不了时当场给出替代办法（带视觉模型的 actor、内置 pdf 技能、ffprobe）；上限 50 MB，图片 150 MB 内先压缩；附上的媒体在读取时复制到 `<data>/storage/read-media/<sha>/<文件名>`（`Attachment.copy`，请求读副本，历史固定；副本按内容去重，**目前不清理**）。子目录指令改为从本轮要发送的历史判断（已完成、未被裁剪清空的 read），只有成功的 read 才占用，媒体 read 也带，修正了前缀误判。
+  - notebook 带 BOM 可编辑并保留 BOM；write / 空 old_string 的 edit 只把 ENOENT 当新文件；edit 的最接近提示补齐 MiMo 七个匹配器；edit 新建文件在改动卡里算新建。
+  - present_files：相对路径先 cwd 后项目；绝对路径可在项目外（卡片预览、打开方式随之支持）；网址去 #/默认端口去重，卡片名取路径末段。每次调用按 MiMo 三道规则降级（卡片、信息卡、自动打开都用；照 MiMo 按完整路径判断 tmp/temp 等目录）。
+  - 自动打开改在 store 层（`lib/delivered.ts`：`noteDeliveryUpdate` / `noteDeliveryTurnEnded` / `deliveryShown`，`App.vue` 登记「在显示」）：对所有对话生效；pdf_locate 立即标记段落，对话不在显示时挂起到切过去再开；present_files 在回合结束时只开本回合第一个交付物；图片 / 音频不开，网址用系统浏览器，其余进右侧面板；只认本窗口实时看到的完成。
+  - 跨对话四个工具与桌面设置：失败作为结果文本返回（停止仍按停止记）；返回给模型的文案改中文（MCode 自己的措辞），「对方忙、转异步」提示照 MiMo 保留英文；设置快照包成 `{ok, settings}`，接受 浅色/深色/跟随系统、颜色/+/-。
+  - automation_update：拒绝 new-task+important-updates、existing-task+all-runs（修改按合并后的结果检查，失败不改动）；去重按 MiMo 十个字段、日程按含义比较；existing-task 目标限当前对话或侧栏里未归档、非子智能体的对话，运行时找不到目标 / 项目目录记 skipped；reasoning 须是该模型支持的档位（默认档位不支持就不带）；update 传空 title/prompt 报错；无 DTSTART 时周期从 1970 起算，按日历整周期搜索下一次；DTSTART 不接受 Z 和非 00 秒，UNTIL 必须带时间（旧格式的任务保留但不运行）；schedule 文案随界面语言出中文，时间去前导 0，label 规则照 MiMo。
+  - 保持现状（按用户决定）：同步跨对话等满时转异步（有意差异）、发起方停止时撤回排队消息、pdf_locate 接受相对路径；「MCode 更好」清单中的字面 replace_all、保留 BOM、Windows 下记忆索引都未动。
+  - 未做 / 留意：数值参数自动转换（round7 M6，validate.ts）不在这两部分；read-media 副本没有清理机制；探针截图里无改动回合也显示「已编辑 0 个文件」卡，bash 那一路的截图同样如此，不是本路引入，需另查。
 
 用户决定不做（不要再主动提）：
 

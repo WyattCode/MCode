@@ -20,7 +20,7 @@ import { ToolError, type ToolContext } from "../src/server/tool/types"
 // L16: a template's shell placeholders, run whatever source the template came from.
 import { runShellPlaceholders } from "../src/server/command"
 // L18: which local media a reply may preview.
-import { mediaPath, projectPath } from "../src/renderer/src/lib/delivered"
+import { mediaPath } from "../src/renderer/src/lib/delivered"
 // L19: scheduling that belongs to the project rather than to one conversation.
 import { ADOPTED_TITLE, CronScheduler, reaches } from "../src/server/cron/scheduler"
 import { readCronTasks, writeCronTasks, type CronTask } from "../src/server/cron/tasks"
@@ -116,7 +116,6 @@ export async function roundSixChecks(check: Check, section: (name: string) => vo
     const project = process.platform === "win32" ? "C:/proj" : "/proj"
     const outside = process.platform === "win32" ? "C:/elsewhere/shot.png" : "/elsewhere/shot.png"
     check("a picture outside the project is previewed rather than left a chip", mediaPath(outside, project) === outside)
-    check("and the old rule would have refused it", projectPath(outside, project) === undefined)
     check("a relative path is still taken from the conversation's folder", mediaPath("sub/shot.png", project) === `${project}/sub/shot.png`)
     check("a file inside the project still resolves", mediaPath(`${project}/a/b.png`, project) === `${project}/a/b.png`)
     check("a web address is not a file to read", mediaPath("https://example.com/a.png", project) === undefined)

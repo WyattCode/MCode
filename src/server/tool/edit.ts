@@ -50,13 +50,101 @@ function* whitespaceNormalized(content: string, find: string): Generator<string>
   }
 }
 
+const trimmedLines = (text: string) => {
+  const lines = text.split("\n").map((line) => line.trim())
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop()
+  return lines
+}
+
+/**
+ * Blocks that start and end on the quoted first and last lines, whatever came
+ * between: the one whose middle agrees most with the quote, when there are several.
+ */
+function* blockAnchor(content: string, find: string): Generator<string> {
+  const wanted = trimmedLines(find)
+  if (wanted.length < 3) return
+  const lines = content.split("\n")
+  const first = wanted[0]!
+  const last = wanted[wanted.length - 1]!
+  const middle = wanted.slice(1, -1)
+  const candidates: { block: string; score: number }[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.trim() !== first) continue
+    for (let j = i + 2; j < lines.length; j++) {
+      if (lines[j]!.trim() !== last) continue
+      const between = lines.slice(i + 1, j).map((line) => line.trim())
+      const shared = middle.filter((line) => between.includes(line)).length
+      candidates.push({ block: lines.slice(i, j + 1).join("\n"), score: middle.length ? shared / Math.max(middle.length, between.length) : 1 })
+      break
+    }
+  }
+  if (candidates.length === 1) yield candidates[0]!.block
+  else {
+    const best = candidates.sort((a, b) => b.score - a.score)[0]
+    if (best && best.score >= 0.3) yield best.block
+  }
+}
+
+/** Blocks that match once each side's common indentation is taken off. */
+function* indentationFlexible(content: string, find: string): Generator<string> {
+  const outdent = (text: string) => {
+    const lines = text.split("\n")
+    const depth = Math.min(...lines.filter((line) => line.trim()).map((line) => /^[ \t]*/.exec(line)![0].length))
+    return lines.map((line) => (line.trim() ? line.slice(Number.isFinite(depth) ? depth : 0) : "")).join("\n")
+  }
+  const wanted = find.replace(/\n$/, "")
+  const target = outdent(wanted)
+  const lines = content.split("\n")
+  const size = wanted.split("\n").length
+  for (let i = 0; i + size <= lines.length; i++) {
+    const block = lines.slice(i, i + size).join("\n")
+    if (outdent(block) === target) yield block
+  }
+}
+
+/** The quote without the blank space around it. */
+function* trimmedBoundary(content: string, find: string): Generator<string> {
+  const trimmed = find.trim()
+  if (!trimmed || trimmed === find) return
+  if (content.includes(trimmed)) yield trimmed
+  const lines = content.split("\n")
+  const size = find.split("\n").length
+  for (let i = 0; i + size <= lines.length; i++) {
+    const block = lines.slice(i, i + size).join("\n")
+    if (block.trim() === trimmed) yield block
+  }
+}
+
+const UNESCAPED: Record<string, string> = { n: "\n", t: "\t", r: "\r", "\n": "\n" }
+
+/** The quote with the escapes a model writes when it means the characters (`\n`, `\t`, `\"`) read as those characters. */
+function* escapeNormalized(content: string, find: string): Generator<string> {
+  const plain = find.replace(/\\(n|t|r|'|"|`|\\|\n|\$)/g, (_, char: string) => UNESCAPED[char] ?? char)
+  if (plain !== find && content.includes(plain)) yield plain
+}
+
+/** Blocks of the quote's length anchored on its first and last lines, with at least half the lines between agreeing. */
+function* contextAware(content: string, find: string): Generator<string> {
+  const wanted = trimmedLines(find)
+  if (wanted.length < 3) return
+  const lines = content.split("\n")
+  for (let i = 0; i + wanted.length <= lines.length; i++) {
+    const block = lines.slice(i, i + wanted.length)
+    if (block[0]!.trim() !== wanted[0] || block[block.length - 1]!.trim() !== wanted[wanted.length - 1]) continue
+    const middle = wanted.slice(1, -1).map((line, at) => [line, block[at + 1]!.trim()] as const).filter(([line]) => line)
+    const agreeing = middle.filter(([line, found]) => line === found).length
+    if (!middle.length || agreeing / middle.length >= 0.5) yield block.join("\n")
+  }
+}
+
 /**
  * The text in the file an edit most likely meant, for the error that says it
  * was not found - MiMo points the model at it so the retry quotes the file as
- * it is. Only the hint is loose; the replacement itself stays exact.
+ * it is. Only the hint is loose; the replacement itself stays exact. The
+ * matchers are tried in MiMo's order.
  */
 export function closestMatch(content: string, find: string): string | undefined {
-  for (const matcher of [lineTrimmed, whitespaceNormalized]) {
+  for (const matcher of [lineTrimmed, blockAnchor, indentationFlexible, whitespaceNormalized, trimmedBoundary, escapeNormalized, contextAware]) {
     for (const match of matcher(content, find)) {
       if (match && match !== find && content.includes(match)) return match
     }
@@ -76,9 +164,8 @@ interface Change {
 }
 
 /**
- * One exact replacement, on text rather than on the disk, so edit and
- * multiedit refuse the same things in the same words. Throws what the model
- * should read when the quote is missing or is not unique.
+ * One exact replacement, on text rather than on the disk. Throws what the
+ * model should read when the quote is missing or is not unique.
  */
 function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", display: string): { updated: string; occurrences: number } {
   const inFileEndings = (text: string) => {
@@ -105,6 +192,38 @@ function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", disp
   }
   const updated = change.replaceAll ? original.split(find).join(replacement) : original.slice(0, first) + replacement + original.slice(first + find.length)
   return { updated, occurrences }
+}
+
+/**
+ * What a file holds now, or undefined when there is no file there at all.
+ *
+ * Only a path that does not exist is a new file (T10-31). A folder, a file this
+ * app may not read or anything else that fails is said before anyone is asked
+ * to approve a "new" file - approving one used to end in a crash, or in a file
+ * that could be written but not read being overwritten unseen.
+ */
+async function currentText(target: string, display: string): Promise<string | undefined> {
+  try {
+    if ((await fs.stat(target)).isDirectory()) throw new ToolError(`${display} is a folder, not a file`)
+    return await fs.readFile(target, "utf8")
+  } catch (error) {
+    if (error instanceof ToolError) throw error
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT") {
+      // Windows says ENOENT for a path that runs through a file; that is no place for a new one.
+      for (let parent = path.dirname(target); parent !== path.dirname(parent); parent = path.dirname(parent)) {
+        const stat = await fs.stat(parent).catch(() => undefined)
+        if (!stat) continue
+        if (!stat.isDirectory()) throw new ToolError(`${display} could not be read (${path.basename(parent)} is a file, not a folder), so it was not changed.`)
+        break
+      }
+      return undefined
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new ToolError(`Permission denied: ${display} exists but this app is not allowed to read it, so it was not changed.`, "error.readDenied", { path: display })
+    }
+    throw new ToolError(`${display} could not be read (${code ?? (error as Error).message}), so it was not changed.`)
+  }
 }
 
 export const WriteTool: ToolDefinition = {
@@ -142,7 +261,7 @@ export const WriteTool: ToolDefinition = {
     const content = String(input.content)
 
     return locked(target, async () => {
-      const previous = await fs.readFile(target, "utf8").catch(() => undefined)
+      const previous = await currentText(target, display)
       const diff = unifiedDiff(display, previous ?? "", content)
 
       // memory: memory files are written without asking, as MiMo does.
@@ -187,7 +306,7 @@ export const EditTool: ToolDefinition = {
     "What it does",
     "- new_string has to differ from old_string, and is written exactly as given - it is not reindented for you.",
     "- An empty old_string writes new_string as the whole file, creating it when it is not there. Use write for that instead unless you are creating a small file in passing.",
-    "- One call changes one place in one file. For several changes to the same file, use multiedit, which makes them in one call and writes nothing unless every one of them applies.",
+    "- One call changes one place in one file; make one call per change.",
     "- The result is a diff, and the user sees it. Do not paste the changed lines back into your reply.",
   ].join("\n"),
   permission: "edit",
@@ -230,7 +349,7 @@ export const EditTool: ToolDefinition = {
 
       // MiMo's edit with nothing to find writes the whole file.
       if (oldString === "") {
-        const previous = await fs.readFile(target, "utf8").catch(() => undefined)
+        const previous = await currentText(target, display)
         const diff = unifiedDiff(display, previous ?? "", newString)
         await ask(diff)
         await context.snapshot(target)
@@ -258,131 +377,6 @@ export const EditTool: ToolDefinition = {
         output: `Edited ${display}${replaceAll ? ` (${occurrences} occurrences)` : ""}`,
         title: display,
         metadata: { path: display, diff, occurrences: replaceAll ? occurrences : 1 },
-      }
-    })
-  },
-}
-
-/** What multiedit's `edits` holds, checked before anything is read. */
-function readChanges(raw: unknown): Change[] {
-  if (!Array.isArray(raw) || raw.length === 0) throw new ToolError("edits must be a non-empty array")
-  return raw.map((entry, index) => {
-    const item = (entry ?? {}) as Record<string, unknown>
-    if (typeof item.old_string !== "string" || typeof item.new_string !== "string") {
-      throw new ToolError(`edits[${index}] needs old_string and new_string, both strings`)
-    }
-    if (item.old_string === item.new_string) throw new ToolError(`edits[${index}]: old_string and new_string are the same, so there is nothing to change`)
-    if (item.old_string === "" && index > 0) throw new ToolError(`edits[${index}]: only the first edit may have an empty old_string, and only to create the file`)
-    return { oldString: item.old_string, newString: item.new_string, replaceAll: item.replace_all === true }
-  })
-}
-
-/**
- * MiMo's multiedit: several exact replacements in one file, in one call.
- *
- * The changes are applied in order to the text in memory, each to what the
- * ones before it left, and the file is written once at the end - or not at
- * all, when any one of them does not apply. That is the whole point of the
- * tool: an edit that fails half way through a batch leaves no half-changed
- * file for the next call to trip over, and the user is asked once, over the
- * whole diff, rather than once per change.
- */
-export const MultiEditTool: ToolDefinition = {
-  name: "multiedit",
-  description: [
-    "Make several exact replacements in one file, in a single call.",
-    "",
-    "Before using it",
-    "- Read the file first, in this conversation, as you would for edit. Every old_string has to match byte for byte.",
-    "- Use it when one file needs more than one change. For a single change, edit is simpler; for changes to different files, make one call per file.",
-    "",
-    "How the edits are applied",
-    "- In the order given, each to the file as the edits before it left it. Quote what the text will be at that point, not what it was when you read it: if an earlier edit rewrote a line, a later one has to quote the rewritten line.",
-    "- All or nothing. If any one old_string is missing, or appears more than once without replace_all, the call fails, says which edit it was, and the file is not touched. Fix that edit and send the whole batch again.",
-    "- Each edit follows edit's rules: quote without the read tool's `N: ` line-number prefix, keep the indentation exactly, include enough surrounding lines to be unique, and set replace_all on one edit to change every occurrence of its text.",
-    "- new_string has to differ from old_string, and is written exactly as given.",
-    "",
-    "Creating a file",
-    "Give a path that does not exist, an empty old_string and the whole content as new_string in the first edit; later edits in the same call then change that new content. Only the first edit may have an empty old_string.",
-    "",
-    "Watch for",
-    "- Two edits whose quotes overlap. The second will not find its text once the first has changed it; merge them into one edit.",
-    "- An order that breaks the file part way through. That is fine - only the result is written - but the result must be complete and correct.",
-    "The result is one diff for the whole batch, and the user is asked about it once. Do not paste the changes back into your reply.",
-  ].join("\n"),
-  permission: "edit",
-  parameters: {
-    type: "object",
-    properties: {
-      file_path: { type: "string", description: "Path of the file, absolute or relative to the project root" },
-      edits: {
-        type: "array",
-        minItems: 1,
-        description: "The replacements, applied in this order, each to the text the ones before it left",
-        items: {
-          type: "object",
-          properties: {
-            old_string: { type: "string", description: "Exact text to replace, including indentation; empty only in the first edit, to create the file" },
-            new_string: { type: "string", description: "Replacement text, different from old_string" },
-            replace_all: { type: "boolean", description: "Replace every occurrence of this edit's text instead of requiring exactly one" },
-          },
-          required: ["old_string", "new_string"],
-          additionalProperties: false,
-        },
-      },
-    },
-    required: ["file_path", "edits"],
-    additionalProperties: false,
-  },
-  async execute(input, context) {
-    const target = await resolvePath(context, String(input.file_path), "write")
-    const display = relative(context.directory, target)
-    // plan: planning writes its plan file and nothing else.
-    guardPlanWrite(context, target, display)
-    const changes = readChanges(input.edits)
-
-    return locked(target, async () => {
-      const stat = await fs.stat(target).catch(() => undefined)
-      if (stat?.isDirectory()) throw new ToolError(`${display} is a folder, not a file`)
-      const creating = changes[0]!.oldString === ""
-      if (!stat && !creating) throw new ToolError(`File not found: ${display}. To create it, give the first edit an empty old_string and the whole content as new_string.`)
-
-      const original = stat ? await fs.readFile(target, "utf8") : ""
-      // An empty first quote writes the whole file, as it does for edit; the rest apply to that.
-      let text = creating ? changes[0]!.newString : original
-      const ending = endingOf(stat ? original : text)
-      for (const [index, change] of changes.entries()) {
-        if (index === 0 && creating) continue
-        try {
-          text = replaceIn(text, change, ending, display).updated
-        } catch (err) {
-          if (!(err instanceof ToolError)) throw err
-          throw new ToolError(`Edit ${index + 1} of ${changes.length} did not apply, so nothing was written. ${err.message}`)
-        }
-      }
-
-      const diff = unifiedDiff(display, original.replaceAll("\r\n", "\n"), text.replaceAll("\r\n", "\n"))
-      // memory: memory files are edited without asking, as MiMo does.
-      if (!isMemoryPath(target)) {
-        await context.permissions.ask({
-          sessionID: context.sessionID,
-          messageID: context.messageID,
-          callID: context.callID,
-          kind: "edit",
-          directory: context.directory,
-          title: stat ? "Edit file" : "Create file",
-          subject: display,
-          preview: diff,
-        })
-      }
-      await context.snapshot(target)
-      await fs.mkdir(path.dirname(target), { recursive: true })
-      await fs.writeFile(target, text, "utf8")
-
-      return {
-        output: `${stat ? "Edited" : "Created"} ${display} with ${changes.length} edit${changes.length === 1 ? "" : "s"}`,
-        title: display,
-        metadata: { path: display, diff, edits: changes.length, created: !stat },
       }
     })
   },

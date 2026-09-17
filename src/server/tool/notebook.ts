@@ -88,9 +88,11 @@ export const NotebookEditTool: ToolDefinition = {
     guardPlanWrite(context, target, display)
     const before = await fs.readFile(target, "utf8").catch(() => undefined)
     if (before === undefined) throw new ToolError(`Notebook not found: ${display}`)
+    // A byte-order mark is not JSON: it is set aside to parse, and written back as it was (T10-30).
+    const bom = before.startsWith("\uFEFF") ? "\uFEFF" : ""
     let notebook: Notebook
     try {
-      notebook = JSON.parse(before) as Notebook
+      notebook = JSON.parse(before.slice(bom.length)) as Notebook
     } catch (err) {
       throw new ToolError(`The notebook is not valid JSON: ${(err as Error).message}`)
     }
@@ -150,8 +152,8 @@ export const NotebookEditTool: ToolDefinition = {
       }
     }
 
-    const after = JSON.stringify(notebook, null, 1) + (before.endsWith("\n") ? "\n" : "")
-    const diff = unifiedDiff(display, before, after)
+    const after = bom + JSON.stringify(notebook, null, 1) + (before.endsWith("\n") ? "\n" : "")
+    const diff = unifiedDiff(display, before.slice(bom.length), after.slice(bom.length))
     await context.permissions.ask({
       sessionID: context.sessionID,
       messageID: context.messageID,

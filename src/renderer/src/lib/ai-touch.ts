@@ -68,7 +68,7 @@ function contains(directory: string | undefined, file: string) {
 export function noteToolWrites(message: Message, directory: string | undefined) {
   if (message.role !== "assistant") return
   for (const part of message.parts) {
-    if (part.type !== "tool" || part.status !== "completed" || !["edit", "multiedit", "write", "patch"].includes(part.name)) continue
+    if (part.type !== "tool" || part.status !== "completed" || !["edit", "write", "patch"].includes(part.name)) continue
     const key = `${message.id}:${part.id}`
     if (seen.has(key)) continue
     seen.add(key)

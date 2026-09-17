@@ -22,7 +22,6 @@ import { notify, notifyFailure } from "../lib/toast"
 import EditedFilesCard from "./EditedFilesCard.vue"
 import DeliveredFilesCard from "./DeliveredFilesCard.vue"
 import MediaStrip from "./parts/MediaStrip.vue"
-import { followDeliveries } from "../lib/delivered"
 import { followSpoken } from "../lib/speak-part"
 import AnnotationChips from "./AnnotationChips.vue"
 import { openDocument } from "../lib/office-open"
@@ -82,13 +81,6 @@ const shownError = computed(() => (props.side ? app.sideErrorOf(sideKey.value) :
 const bare = computed(() => Boolean(props.side || props.latest))
 /* The open conversation was just switched to and its messages are still on their way. */
 const loadingHere = computed(() => !props.side && !props.latest && !props.subagent && Boolean(app.loadingID) && app.loadingID === app.currentID)
-/* MiMo's present_files and pdf_locate: the main stream opens what a completing call names in the right panel. */
-followDeliveries({
-  enabled: () => !props.side && !props.latest && !props.subagent,
-  session: () => shownID.value,
-  messages: () => shownMessages.value,
-  directory: () => shownDirectory.value,
-})
 /* speak: a completed call of the speak tool is read aloud, with the machine's own voice. */
 followSpoken({
   enabled: () => !props.side && !props.latest && !props.subagent,
