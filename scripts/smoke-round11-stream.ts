@@ -222,7 +222,8 @@ export async function roundElevenStreamChecks(check: Check, section: (name: stri
   section("Round 11 (S11-9): reasoning tokens are split out for every server, not only OpenRouter")
   {
     const local = usageOf(
-      { prompt_tokens: 1000, completion_tokens: 300, prompt_tokens_details: { cached_tokens: 400 }, completion_tokens_details: { reasoning_tokens: 120 } },
+      // A cache_write_tokens no such server sends, to show it is not read here.
+      { prompt_tokens: 1000, completion_tokens: 300, prompt_tokens_details: { cached_tokens: 400, cache_write_tokens: 70 }, completion_tokens_details: { reasoning_tokens: 120 } },
       "deepseek",
     )
     check(
