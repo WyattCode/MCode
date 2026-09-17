@@ -200,13 +200,14 @@ async function pickMenu(key: string) {
 </script>
 
 <template>
-  <div v-if="reverted" class="file-card reverted" data-fc-reverted>
+  <!-- MiMo draws the card only for a turn that changed files. -->
+  <div v-if="files.length && reverted" class="file-card reverted" data-fc-reverted>
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true">
       <path d="M3 7v6h6M3 13a9 9 0 1 0 3-7.7L3 8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
     </svg>
     {{ t("stream.revertedCard", { n: files.length }) }}
   </div>
-  <template v-else>
+  <template v-else-if="files.length">
     <div class="file-card" data-edited-card @contextmenu="single ? openMenu($event, single.path) : undefined">
       <div class="fc-head" data-fc-header>
         <span class="fc-icon" :data-fc-icon="files.length > 1 ? 'multiple' : single?.created ? 'new' : 'edited'">
@@ -389,7 +390,10 @@ async function pickMenu(key: string) {
   text-overflow: ellipsis;
 }
 
+/* Beyond MiMo: the counts are left-to-right, so an Arabic card keeps "+N -M" in that order. */
 .fc-stat {
+  direction: ltr;
+  unicode-bidi: isolate;
   display: flex;
   flex: none;
   align-items: center;

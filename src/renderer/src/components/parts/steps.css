@@ -185,6 +185,32 @@
   transform: rotate(90deg);
 }
 
+/* Right to left, a closed chevron points the way the line reads; opened it still points down. */
+.hs-chev:not(.open):dir(rtl) svg {
+  transform: scaleX(-1);
+}
+
+/*
+ * Beyond MiMo (which has no right-to-left language): commands, paths and the
+ * +N -M counts are left-to-right text, so in an Arabic line they are isolated
+ * and keep their own order - "+12 -3" never reads "3- 12+", and a path's
+ * leading slash stays at its start. A title takes its direction from its own
+ * text (dir="auto" in the markup), and boxes of several lines take each
+ * paragraph's from its own text.
+ */
+.hs-diffstat {
+  direction: ltr;
+  unicode-bidi: isolate;
+}
+
+.hs-cell,
+.hs-full-cmd,
+.hs-perm-cmd,
+.tc-out:not(.md) {
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+
 /* Running: the words are painted by a sweep, the icon is left alone. */
 .running-shimmer {
   color: transparent;
@@ -327,11 +353,59 @@ html[data-motion="on"] .hs-collapse {
   border-radius: 8px;
 }
 
+/*
+ * MiMo's output box keeps its lines: a string with no spaces in it (base64, a
+ * long address, minified JSON) runs on and the box scrolls sideways, rather
+ * than being broken at any character.
+ */
 .tc-out {
   max-height: 480px;
   font-size: calc(12px * var(--code-font-scale, 1));
   word-break: normal;
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+}
+
+/* MiMo's skill output: the output box's frame around Markdown, in the text face and colour rather than monospace. */
+.tc-out.md {
+  color: var(--text-strong);
+  font-family: inherit;
+  font-size: calc(12px * var(--ui-font-scale, 1));
+  line-height: 1.6;
+  white-space: normal;
+}
+
+.tc-out.md > :first-child {
+  margin-top: 0;
+}
+
+.tc-out.md > :last-child {
+  margin-bottom: 0;
+}
+
+/* MiMo's hs-shots: what a call handed back, wrapping 6 apart under the step, each at most 220 tall. */
+.hs-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.hs-shot {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid var(--border-weak);
+  border-radius: 10px;
+  cursor: zoom-in;
+}
+
+.hs-shot img {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  object-fit: contain;
 }
 
 .hs-skip-hint {
@@ -572,7 +646,24 @@ html[data-motion="on"] .hs-collapse {
   user-select: text;
 }
 
-:root[data-theme="dark"] :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label) {
+/* MiMo's "i" row: a monospaced i in the 14px icon column, the words quiet at 14px. */
+.hs-notice {
+  gap: 9px;
+  color: #909091;
+}
+
+.hs-notice-mark {
+  flex: none;
+  width: 14px;
+  font-family: var(--font-mono);
+  text-align: center;
+}
+
+.hs-notice-text {
+  user-select: text;
+}
+
+:root[data-theme="dark"] :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label, .hs-notice) {
   color: #b8b8b8;
 }
 
@@ -605,7 +696,7 @@ html[data-motion="on"] .hs-collapse {
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label) {
+  :root:not([data-theme="light"]) :is(.hs-h, .hs-bash-desc, .hs-bash-desc-line, .hs-skip-hint, .hs-perm-toggle, .hs-perm-reason, .hs-ic.mut, .hs-tag, .hs-q-count, .hs-q-header, .hs-retry-label, .hs-notice) {
     color: #b8b8b8;
   }
 

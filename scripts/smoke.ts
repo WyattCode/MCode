@@ -302,6 +302,7 @@ import { roundTenFileChecks } from "./smoke-round10-files"
 import { roundTenDesktopChecks } from "./smoke-round10-desktop"
 // Round 10: git end to end - paths, push target, time limits, grouping, undo.
 import { roundTenGitChecks } from "./smoke-round10-git"
+import { roundTenStepsChecks } from "./smoke-round10-steps"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -4804,9 +4805,12 @@ async function main() {
     const question = (id: string, steered = false) =>
       ({ id, sessionID: "s", role: "user", text: id, attachments: [], time: { created: 1 }, ...(steered ? { steered: true } : {}) }) as Message
     const thread = [question("q1"), reply("a1", "x"), question("q2"), reply("a2", "y"), question("s1", true), reply("a3", "z")]
-    const latest = latestTurnParts(thread).map((part) => part.id)
-    check("the pill counts the latest turn only, steers included", latest.join() === "y,z", latest)
-    check("and a new question empties it", latestTurnParts([...thread, question("q3")]).length === 0)
+    const latest = latestTurnParts(thread, false).map((part) => part.id)
+    check("a steer the model took opens the turn the pill counts (26.914)", latest.join() === "z", latest)
+    const waiting = latestTurnParts([question("q2"), reply("a2", "y"), question("s2", true)], false).map((part) => part.id)
+    check("a steer still waiting stays inside the running turn", waiting.join() === "y", waiting)
+    check("with nothing running it is a question of its own", latestTurnParts([question("q2"), reply("a2", "y"), question("s2", true)], true).length === 0)
+    check("and a new question empties it", latestTurnParts([...thread, question("q3")], false).length === 0)
   }
 
   section("Steering")
@@ -6916,6 +6920,7 @@ async function main() {
   await roundTenFileChecks(check, section)
   await roundTenDesktopChecks(check, section)
   await roundTenGitChecks(check, section)
+  await roundTenStepsChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
@@ -7031,7 +7036,8 @@ async function roundSevenTimingChecks() {
   )
   check(
     "a live answer is drawn from the text the store holds, as the reference appends each delta as it lands",
-    /renderReply\(props\.part\.text,/.test(textPart),
+    // Round 10 (K10-6): the text is cleaned of leaked markup on the way, nothing more.
+    /cleanLiveReply\(props\.part\.text\) : cleanReply\(props\.part\.text\)\s+const list = renderReply\(text,/.test(textPart),
   )
   check("a turn's end no longer waits for a reveal to drain", !/playingOut|revealing/.test(stream))
   check(
@@ -7864,7 +7870,8 @@ async function deliveredToolChecks(root: string) {
       deliveredStepTitle({ name: "present_files", input: { files: ["C:\\p\\a.pdf", "b/c.html"] } } as never) === "a.pdf, c.html" &&
       deliveredStepTitle({ name: "set_desktop_setting", input: { key: "theme", value: "dark" } } as never) === "theme → dark",
   )
-  check("a locate step wears the read icon", deliveredToolIcon("pdf_locate") === "read")
+  // Round 10 (K10-9): MiMo gives a locate the search mark.
+  check("a locate step wears the search icon", deliveredToolIcon("pdf_locate") === "search")
   const artifacts = sessionArtifacts(
     [{ id: "m1", role: "assistant", sessionID: "s", parts: [part("completed", [{ path: path.join(project, "notes.txt"), name: "notes.txt", size: 1 }])], time: { created: 1 } }] as never,
     project,

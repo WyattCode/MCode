@@ -1,5 +1,6 @@
 import type { Message, TaskItem } from "@shared/protocol"
 import type { SessionArtifact } from "@shared/session-files"
+import { turnOpeners } from "@shared/steer"
 
 /**
  * The plan a conversation is working to, and the info card's own bookkeeping.
@@ -92,10 +93,11 @@ export function infoTasks(registry: readonly TaskItem[] | undefined, messages: r
   if (!entries.length) return []
   let runStarted = Infinity
   if (running) {
+    // A steer the model has taken starts the running turn; one still waiting does not.
+    const openers = turnOpeners(messages, false)
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index]
-      // A message steered into a running turn is part of that turn, not its start.
-      if (message?.role === "user" && !message.steered) {
+      if (message?.role === "user" && openers.has(message.id)) {
         runStarted = message.time.created
         break
       }

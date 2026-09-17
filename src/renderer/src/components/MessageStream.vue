@@ -11,7 +11,10 @@ import MessageSourceRow from "./parts/MessageSource.vue"
 import type { MessageSource } from "@shared/protocol"
 import SubagentActivity from "./parts/SubagentActivity.vue"
 import type { Annotation, Attachment, AssistantMessage, AssistantPart, SubagentNotice } from "@shared/protocol"
-import { buildRows, retryReason, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
+import { buildRows, retryReason, stagesOf, type InlineError, type StepItem, type StepRow } from "../lib/step-rows"
+import { cleanReply, saysSomething } from "@shared/reply-clean"
+import { turnOpeners } from "@shared/steer"
+import { redactText } from "@shared/display-redact"
 import { preview, videoUrl } from "../lib/attach"
 import { openImagePreview, openVideoPreview, type ImagePreviewMeta } from "../lib/image-preview"
 import { language, t } from "../lib/i18n"
@@ -89,7 +92,11 @@ followSpoken({
 })
 const scroller = ref<HTMLElement>()
 
-/** A message sent into a turn while it was running - MiMo's 插话 - and where among the turn's parts it landed. */
+/**
+ * A message sent into a turn while it was running (MiMo's 插话) that the model
+ * has not taken yet, or news of subagents that reached the turn - and where
+ * among the turn's parts it landed.
+ */
 interface Steer {
   id: string
   text?: string
@@ -106,12 +113,12 @@ interface Steer {
 /*
  * A turn as MiMo's step list lays it out (see lib/step-rows): consecutive tool
  * calls under one summary line until the model says something, questions on
- * their own rows, and a steer where it landed. A group carries whether it is
+ * their own rows, and news of subagents where it landed. A group carries whether it is
  * the one the live turn is working in, which is the group that starts open.
  */
 type Row =
   | Exclude<StepRow, { kind: "group" }>
-  | { kind: "group"; id: string; items: StepItem[]; open: boolean }
+  | { kind: "group"; id: string; items: StepItem[]; open: boolean; actor?: boolean }
   | { kind: "steer"; id: string; steer: Steer }
   /** MiMo's 正在重新连接 N, while the provider request is being tried again. */
   | { kind: "retry"; id: string; attempt: number; reason?: string }
@@ -139,7 +146,10 @@ interface Turn {
   /** When the user sent it, for the footer under their own message. */
   asked?: number
   parts: AssistantPart[]
+  /** subagents: news of background subagents that reached the turn while it ran, drawn where it landed. */
   steers: Steer[]
+  /** MiMo's 插话 the model has not taken yet: at the very end of the running turn, after its working marks. */
+  waiting: Steer[]
   /** Errors from steps the turn went on past, drawn as MiMo's 错误：… where they happened. */
   errors: InlineError[]
   /** The assistant messages the turn is made of, which is how the server is told which turn to take back. */
@@ -164,6 +174,8 @@ interface Turn {
 const turns = computed<Turn[]>(() => {
   const out: Turn[] = []
   let current: Turn | undefined
+  // MiMo 26.914: a steer the model has taken is a question of its own, and the turn before it is over.
+  const openers = turnOpeners(shownMessages.value, !shownBusy.value)
 
   /*
    * The conversation as it now stands, which is not always the whole of what
@@ -177,13 +189,14 @@ const turns = computed<Turn[]>(() => {
     if (message.role === "user" && message.synthetic) continue
     if (message.role === "user") {
       /*
-       * A message sent into a running turn stays inside that turn, where the
-       * model took it in, as MiMo shows it. The backend marks such a message
-       * when it joins the turn; guessing from the step before it would also
-       * swallow the next question after a turn the app was closed during.
+       * A message sent into a running turn waits at the end of that turn until
+       * the model takes it, and news of subagents stays where it landed. The
+       * backend marks such a message when it joins the turn; guessing from the
+       * step before it would also swallow the next question after a turn the
+       * app was closed during.
        */
-      if (current && message.steered) {
-        current.steers.push({
+      if (current && !openers.has(message.id)) {
+        const steer: Steer = {
           id: message.id,
           text: message.text,
           attachments: message.attachments,
@@ -191,9 +204,17 @@ const turns = computed<Turn[]>(() => {
           at: current.parts.length,
           notices: message.notices,
           inbox: message.inbox,
-        })
+        }
+        if (message.notices?.length) current.steers.push(steer)
+        else current.waiting.push(steer)
         continue
       }
+      /*
+       * A taken steer settles the turn it was sent into as a whole one, as
+       * MiMo's does: that turn's last step was a call, which carries no finish
+       * of its own, and would otherwise read as broken off.
+       */
+      if (current?.last && message.steered) current.finish ??= "end_turn"
       current = {
         id: message.id,
         // subagents: a notice is the runner's words to the model, not a question to show.
@@ -205,6 +226,7 @@ const turns = computed<Turn[]>(() => {
         asked: message.time.created,
         parts: [],
         steers: [],
+        waiting: [],
         errors: [],
         messageIDs: [],
       }
@@ -212,7 +234,7 @@ const turns = computed<Turn[]>(() => {
       continue
     }
     if (!current) {
-      current = { id: message.id, parts: [], steers: [], errors: [], messageIDs: [] }
+      current = { id: message.id, parts: [], steers: [], waiting: [], errors: [], messageIDs: [] }
       out.push(current)
     }
     /*
@@ -405,7 +427,8 @@ async function copyAsked(turn: Turn) {
 function replyText(turn: Turn): string {
   return turn.parts
     .filter((part) => part.type === "text")
-    .map((part) => (part.type === "text" ? part.text : ""))
+    .map((part) => (part.type === "text" ? cleanReply(part.text) : ""))
+    .filter(Boolean)
     .join("\n\n")
     .trim()
 }
@@ -443,9 +466,15 @@ function foldedMatchCount(needle: string): number {
   let total = 0
   for (const turn of turns.value) {
     for (const part of turn.parts) {
+      // A finished turn folds its earlier words too, as MiMo does, so those count as well.
+      if (part.type === "text") {
+        if (!saysSomething(part.text) || document.querySelector(`[data-text-part="${CSS.escape(part.id)}"]`)) continue
+        total += occurrences(cleanReply(part.text), needle)
+        continue
+      }
       if (part.type !== "tool") continue
       if (document.querySelector(`[data-tool-part="${CSS.escape(part.id)}"]`)) continue
-      total += occurrences(part.title ?? "", needle)
+      total += occurrences(redactText(part.title ?? ""), needle)
     }
   }
   return total
@@ -457,17 +486,29 @@ onMounted(() => {
 })
 onBeforeUnmount(() => releaseFoldedCounter?.())
 
-/** Whether this turn did any work worth folding. A question stays in view, so it is not such work. */
-function hasTools(turn: Turn): boolean {
-  return turn.errors.length > 0 || turn.parts.some((part) => part.type === "tool" && part.name !== "question")
+/** Rows that say something to the reader: MiMo's stages end on these. */
+function speaks(row: Row): boolean {
+  if (row.kind === "part" || row.kind === "question") return true
+  if (row.kind === "group") return Boolean(row.actor)
+  return row.kind === "steer" && Boolean(row.steer.notices?.length)
 }
 
-/*
- * What the answer shows. While the turn runs, everything, with the group it is
- * working in open; once it is done, its own words and questions always, and its
- * steps when the head above them is opened.
+/** MiMo's natural end: not stopped, not failed, not cut short by a quit. */
+function endedNaturally(turn: Turn, at: number): boolean {
+  return turn.finish !== "aborted" && !failed(turn) && !interrupted(turn, at)
+}
+
+/**
+ * A turn's rows, and where its fold ends (0 when the head folds nothing).
+ *
+ * While the turn runs, everything, with the group it is working in open. Once
+ * it is done, MiMo folds everything before the last stage's words - earlier
+ * remarks and questions included - but only for a turn that ended naturally on
+ * words or a question. Any other turn (stopped, failed, ended on a call or on
+ * subagents) is laid out in full under a plain head, and a last stage that
+ * said nothing has its groups open, so the reader sees where it stopped.
  */
-function shown(turn: Turn, at: number): Row[] {
+function layout(turn: Turn, at: number): { rows: Row[]; foldAt: number } {
   const live = liveTurn(at)
   const all: Row[] = []
   let from = 0
@@ -477,35 +518,50 @@ function shown(turn: Turn, at: number): Row[] {
   }
   all.push(...rows(turn, from, turn.parts.length, live))
 
-  if (!live) return opened.value.has(turn.id) ? all : all.filter((row) => row.kind !== "group" && row.kind !== "error")
-
-  const retry = turn.last?.retry
-  if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message) })
-  // The last group with nothing said after it is the one being worked in.
-  for (let index = all.length - 1; index >= 0; index--) {
-    const row = all[index]!
-    if (row.kind === "part") break
-    if (row.kind === "group") {
-      row.open = true
-      break
+  if (live) {
+    const retry = turn.last?.retry
+    if (retry) all.push({ kind: "retry", id: `retry:${turn.last?.id}`, attempt: retry.attempt, reason: retryReason(retry.message) })
+    // The last group with nothing said after it is the one being worked in.
+    for (let index = all.length - 1; index >= 0; index--) {
+      const row = all[index]!
+      if (row.kind === "part") break
+      if (row.kind === "group") {
+        row.open = true
+        break
+      }
     }
+    return { rows: all, foldAt: 0 }
   }
-  return all
+
+  const last = stagesOf(all, speaks).at(-1)
+  if (!last) return { rows: all, foldAt: 0 }
+  const tail = all[last.end - 1]
+  if (endedNaturally(turn, at) && last.progressEnd < last.end && (tail?.kind === "part" || tail?.kind === "question")) {
+    return { rows: all, foldAt: last.progressEnd }
+  }
+  if (last.progressEnd === last.end) {
+    for (const row of all.slice(last.start, last.end)) if (row.kind === "group" && !row.actor) row.open = true
+  }
+  return { rows: all, foldAt: 0 }
+}
+
+const layouts = computed(() => turns.value.map((turn, at) => layout(turn, at)))
+
+/** Whether the finished turn's head is MiMo's fold button. */
+function folds(at: number): boolean {
+  return (layouts.value[at]?.foldAt ?? 0) > 0
+}
+
+/* What the answer shows: the whole layout, or from the fold on while the head is closed. */
+function shown(turn: Turn, at: number): Row[] {
+  const { rows: all, foldAt } = layouts.value[at] ?? { rows: [], foldAt: 0 }
+  return foldAt > 0 && !opened.value.has(turn.id) ? all.slice(foldAt) : all
 }
 
 /** Rows that belong to MiMo's tight step column rather than the reply's paragraphs. */
 function isStep(row: Row): boolean {
   // subagents: notices that reached a running turn are a step row of pills, spaced as steps are.
-  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question" || (row.kind === "steer" && Boolean(row.steer.notices?.length))
-}
-
-/*
- * MiMo's 已插话 · 会尽快处理 under a message sent into the running turn, until
- * the model has taken it in - which is when a step begins after it.
- */
-function steerWaiting(turn: Turn, at: number, steer: Steer): boolean {
-  if (at !== turns.value.length - 1 || !shownBusy.value) return false
-  return !shownMessages.value.some((message) => message.role === "assistant" && message.time.created > steer.created)
+  return row.kind === "group" || row.kind === "error" || row.kind === "retry" || row.kind === "question" || row.kind === "steer"
 }
 
 /** Whether this is the turn still being worked on. */
@@ -792,7 +848,7 @@ function previewSent(item: Attachment, all: Attachment[] | undefined, event: Mou
 
 /** Whether the turn said or did anything a reader would call an answer. */
 function answered(turn: Turn): boolean {
-  return turn.parts.some((part) => (part.type === "text" && part.text.trim()) || part.type === "tool")
+  return turn.parts.some((part) => (part.type === "text" && cleanReply(part.text)) || part.type === "tool")
 }
 
 /*
@@ -1177,7 +1233,7 @@ defineExpose({ stepMessage, scroller })
             its steps away.
           -->
           <button
-            v-if="turn.started && hasTools(turn) && !liveTurn(at)"
+            v-if="turn.started && folds(at)"
             type="button"
             class="run foldable"
             data-turn-head
@@ -1199,48 +1255,8 @@ defineExpose({ stepMessage, scroller })
 
           <div v-for="row in shown(turn, at)" :key="row.id" class="part" :class="{ step: isStep(row) }">
             <!-- subagents: news of background subagents that reached the turn while it ran. -->
-            <SubagentActivity v-if="row.kind === 'steer' && row.steer.notices?.length" :notices="row.steer.notices" />
-            <div
-              v-else-if="row.kind === 'steer'"
-              class="steer"
-              :data-user-steer="row.id"
-              :data-message-id="row.steer.id"
-              :data-steer-state="steerWaiting(turn, at, row.steer) ? 'waiting' : 'landed'"
-            >
-              <div v-if="row.steer.attachments?.length" class="sent">
-                <template v-for="(item, index) in row.steer.attachments" :key="index">
-                  <button
-                    v-if="preview(item)"
-                    type="button"
-                    class="sent-tile picture"
-                    :aria-label="t('stream.previewTip')"
-                    v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
-                    :data-preview-src="preview(item)"
-                    @click="previewSent(item, row.steer.attachments, $event)"
-                  >
-                    <img :src="preview(item)" :alt="item.path" />
-                  </button>
-                  <button
-                    v-else-if="videoUrl(item)"
-                    type="button"
-                    class="sent-tile picture"
-                    :aria-label="t('stream.previewTip')"
-                    v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
-                    data-sent-video
-                    @click="openVideoPreview(videoUrl(item) ?? '', { name: item.path })"
-                  >
-                    <video :src="videoUrl(item)" muted playsinline preload="metadata" />
-                  </button>
-                  <span v-else class="sent-tile file">
-                    <span class="sent-name">{{ fileName(item.path) }}</span>
-                  </span>
-                </template>
-              </div>
-              <MessageSourceRow v-if="row.steer.inbox && (subagent || row.steer.inbox.sessionID || row.steer.inbox.automationID)" :source="row.steer.inbox" />
-              <div v-if="row.steer.text" class="user-bubble steer-bubble">{{ row.steer.text }}</div>
-              <span v-if="steerWaiting(turn, at, row.steer)" class="steer-note">{{ t("stream.steerWaiting") }}</span>
-            </div>
-            <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" />
+            <SubagentActivity v-if="row.kind === 'steer'" :notices="row.steer.notices" />
+            <ToolGroup v-else-if="row.kind === 'group'" :items="row.items" :default-open="row.open" :actor="row.actor" />
             <QuestionCard v-else-if="row.kind === 'question'" :part="row.part" />
             <ErrorStep v-else-if="row.kind === 'error'" :error="row.error" />
             <RetryRow v-else-if="row.kind === 'retry'" :attempt="row.attempt" :reason="row.reason" />
@@ -1368,6 +1384,54 @@ defineExpose({ stepMessage, scroller })
           <svg viewBox="0 0 34 7" width="34" height="7" aria-hidden="true" focusable="false">
             <circle v-for="x in [3.5, 12.5, 21.5, 30.5]" :key="x" :cx="x" cy="3.5" r="3" fill="currentColor" />
           </svg>
+        </div>
+
+        <!--
+          MiMo 26.914's 插话 not yet taken: at the very end of the running turn,
+          after its words and working marks, in the question's own bubble with
+          已插话 · 会尽快处理 under it. Once the model takes it, it is the next
+          turn's question.
+        -->
+        <div
+          v-for="steer in turn.waiting"
+          :key="steer.id"
+          class="steer"
+          :data-user-steer="steer.id"
+          :data-message-id="steer.id"
+          data-steer-state="waiting"
+        >
+          <div v-if="steer.attachments?.length" class="sent">
+            <template v-for="(item, index) in steer.attachments" :key="index">
+              <button
+                v-if="preview(item)"
+                type="button"
+                class="sent-tile picture"
+                :aria-label="t('stream.previewTip')"
+                v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                :data-preview-src="preview(item)"
+                @click="previewSent(item, steer.attachments, $event)"
+              >
+                <img :src="preview(item)" :alt="item.path" />
+              </button>
+              <button
+                v-else-if="videoUrl(item)"
+                type="button"
+                class="sent-tile picture"
+                :aria-label="t('stream.previewTip')"
+                v-tip="{ label: t('stream.previewTip'), placement: 'top' }"
+                data-sent-video
+                @click="openVideoPreview(videoUrl(item) ?? '', { name: item.path })"
+              >
+                <video :src="videoUrl(item)" muted playsinline preload="metadata" />
+              </button>
+              <span v-else class="sent-tile file">
+                <span class="sent-name">{{ fileName(item.path) }}</span>
+              </span>
+            </template>
+          </div>
+          <MessageSourceRow v-if="steer.inbox && (subagent || steer.inbox.sessionID || steer.inbox.automationID)" :source="steer.inbox" />
+          <div v-if="steer.text" class="user-bubble steer-bubble">{{ steer.text }}</div>
+          <span class="steer-note">{{ t("stream.steerWaiting") }}</span>
         </div>
       </div>
       </template>
@@ -2011,9 +2075,9 @@ defineExpose({ stepMessage, scroller })
 }
 
 /*
- * MiMo's 插话: the message sits where it landed among the turn's steps, at the
- * end of the line and at most 78% of it wide, in the question's own bubble,
- * with a 12px quiet note under it until the model has taken it in.
+ * MiMo's 插话 waiting to be taken: under the running turn, at the end of the
+ * line and at most 78% of it wide, in the question's own bubble, with a 12px
+ * quiet note under it.
  */
 .steer {
   display: flex;
@@ -2023,6 +2087,7 @@ defineExpose({ stepMessage, scroller })
   max-width: 78%;
   margin-inline-start: auto;
   padding: 5px 0;
+  margin-block: 4px;
 }
 
 .steer-bubble {
@@ -2123,6 +2188,11 @@ defineExpose({ stepMessage, scroller })
 
 .run-chev.open {
   transform: rotate(90deg);
+}
+
+/* Right to left, the closed chevron points the way the line reads. */
+.run-chev:not(.open):dir(rtl) {
+  transform: scaleX(-1);
 }
 /*
  * A failed, stopped or empty turn, as MiMo draws one. The failure is a card on a

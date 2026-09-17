@@ -6,6 +6,7 @@ import StepIcon from "./StepIcon.vue"
 import "./steps.css"
 import { t } from "../../lib/i18n"
 import { bashOf, isUnifiedDiff } from "../../lib/tool-meta"
+import { redactText } from "@shared/display-redact"
 
 /**
  * A permission question after it was answered, as MiMo leaves it in the steps:
@@ -36,7 +37,8 @@ const decided = computed(() => t(DECIDED[props.record.decided] ?? "perm.decided.
 const bash = computed(() => (props.record.kind === "bash" ? bashOf(props.part) : undefined))
 
 /** The command as `$ command` when the call carries one, otherwise what was asked about. */
-const full = computed(() => (bash.value ? `$ ${bash.value.cmd}` : props.record.subject).slice(0, 3000))
+/* Secrets and personal numbers masked, as the step rows mask them (beyond MiMo). */
+const full = computed(() => redactText(bash.value ? `$ ${bash.value.cmd}` : props.record.subject).slice(0, 3000))
 
 /* One line at most, at most 120 characters of it, with the rest behind a toggle. */
 const folded = computed(() => {
@@ -57,7 +59,7 @@ const showDiff = ref(false)
     <div class="hs-body">
       <div class="hs-perm-head">
         <span data-perm-request>{{ t("perm.request", { verb }) }}</span>
-        <span v-if="bash?.desc" class="hs-bash-desc">{{ bash.desc }}</span>
+        <span v-if="bash?.desc" class="hs-bash-desc" dir="auto">{{ redactText(bash.desc) }}</span>
         <span class="hs-decided" data-decided-label>{{ decided }}</span>
       </div>
       <pre class="hs-perm-cmd" data-perm-row-cmd>{{ folded.lossy && !showCmd ? folded.text : full }}</pre>

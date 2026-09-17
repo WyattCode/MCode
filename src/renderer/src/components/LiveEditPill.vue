@@ -21,7 +21,7 @@ const rp = useRightPanel()
 /* The diff tab's source, which App.vue also reads to say whether the tab is on show. */
 const LIVE_EDIT = "live-edit"
 
-const latest = computed(() => latestTurnParts(app.visible))
+const latest = computed(() => latestTurnParts(app.visible, !app.busy))
 
 const changes = computed(() => editedFiles(latest.value, app.current?.directory))
 
@@ -94,7 +94,10 @@ function toggle() {
   text-overflow: ellipsis;
 }
 
+/* Beyond MiMo: kept left-to-right, so an Arabic pill still reads "+N -M". */
 .live-edit-pill-stats {
+  direction: ltr;
+  unicode-bidi: isolate;
   flex: none;
   font-family: var(--font-mono);
   font-size: calc(12px * var(--ui-font-scale, 1));

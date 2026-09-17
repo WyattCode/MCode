@@ -2,7 +2,9 @@
 import { computed, ref } from "vue"
 import type { ToolPart } from "@shared/protocol"
 import { parseUnifiedDiff } from "@shared/unified-diff"
+import { redactText, redactValue } from "@shared/display-redact"
 import DiffView from "./DiffView.vue"
+import StepShots from "./StepShots.vue"
 import StepIcon from "./StepIcon.vue"
 import StepCollapse from "./StepCollapse.vue"
 import SubagentActivity from "./SubagentActivity.vue"
@@ -12,14 +14,17 @@ import { t } from "../../lib/i18n"
 import { childFor, isPill } from "../../lib/subagents"
 import { useApp } from "../../stores/app"
 import { openStepPath } from "../../lib/open-step-path"
+import { renderMarkdown } from "../../lib/markdown"
 import {
   OUTPUT_CAP,
   ROW_TITLE_MAX,
   bashOf,
   cleanOutput,
   isUnifiedDiff,
+  noOutput,
   opensPath,
   reducedTitle,
+  stepImages,
   stepState,
   stepTitle,
   stepVerb,
@@ -55,11 +60,29 @@ const open = ref(false)
 /** Only a fold the reader asked for animates. */
 const animate = ref(false)
 
+/*
+ * The call as the row shows it: secrets and personal numbers in its title,
+ * input, output, error and diff masked (beyond MiMo, live as well as after a
+ * reload). Only what is drawn - opening a path uses the part as it is.
+ */
+const shown = computed<ToolPart>(() => {
+  const part = props.part
+  const diff = part.metadata?.diff
+  return {
+    ...part,
+    title: part.title === undefined ? undefined : redactText(part.title),
+    input: redactValue(part.input),
+    output: part.output === undefined ? undefined : redactText(part.output),
+    error: part.error === undefined ? undefined : redactText(part.error),
+    ...(typeof diff === "string" ? { metadata: { ...part.metadata, diff: redactText(diff) } } : {}),
+  }
+})
+
 const state = computed(() => stepState(props.part))
 const verb = computed(() => stepVerb(props.part, state.value))
 const icon = computed(() => toolIcon(props.part.name))
-const bash = computed(() => bashOf(props.part))
-const title = computed(() => stepTitle(props.part))
+const bash = computed(() => bashOf(shown.value))
+const title = computed(() => stepTitle(shown.value))
 
 /** A web lookup's row is its verb alone, and it has no output to open. */
 const webLike = computed(() => props.part.name === "webfetch" || props.part.name === "websearch")
@@ -81,23 +104,40 @@ const fullTitle = computed(() => {
 
 /** A tool that named its failure gets it said in the user's language. */
 const errorText = computed(() =>
-  props.part.errorCode ? t(props.part.errorCode, props.part.errorParams) : (props.part.error ?? ""),
+  props.part.errorCode ? redactText(t(props.part.errorCode, props.part.errorParams)) : (shown.value.error ?? ""),
 )
 
 const diff = computed(() => {
-  const value = props.part.metadata?.diff
+  const value = shown.value.metadata?.diff
   return typeof value === "string" && value ? value : undefined
 })
 
-/** MiMo's step output: the error for a call that did not succeed, else the diff, else what the tool printed. */
+/*
+ * MiMo's step output: the error for a call that did not succeed, else the
+ * diff, else what the tool printed - and a finished call's "(no output)" is no
+ * output at all, as MiMo's live steps take it.
+ */
 const output = computed(() => {
   if (state.value === "error" || state.value === "skipped" || state.value === "rejected") return errorText.value
-  return diff.value ?? props.part.output ?? ""
+  const said = diff.value ?? shown.value.output ?? ""
+  return state.value === "completed" && noOutput(said) ? "" : said
 })
 const cleaned = computed(() => cleanOutput(output.value))
 const diffText = computed(() => (isUnifiedDiff(cleaned.value) ? cleaned.value : undefined))
 
-const expandable = computed(() => (Boolean(output.value) && !webLike.value) || Boolean(bash.value) || Boolean(fullTitle.value))
+/* The pictures the call handed back; a step with any can always be opened, a web lookup included. */
+const hasShots = computed(() => stepImages(props.part.attachments).length > 0)
+
+/* MiMo draws a skill's output as Markdown, in the output box's frame, rather than as monospaced text. */
+const skillHtml = computed(() =>
+  props.part.name === "skill" && output.value && state.value === "completed" && !diffText.value
+    ? renderMarkdown(cleaned.value.slice(0, OUTPUT_CAP))
+    : "",
+)
+
+const expandable = computed(
+  () => (Boolean(output.value) && !webLike.value) || Boolean(bash.value) || Boolean(fullTitle.value) || hasShots.value,
+)
 
 /* Lines the step's diff added and removed, counted inside its hunks as MiMo counts them. */
 const diffstat = computed(() => {
@@ -123,7 +163,8 @@ function onTitleClick(event: MouseEvent | KeyboardEvent) {
   if (!openable.value || !(event.metaKey || event.ctrlKey)) return
   event.preventDefault()
   event.stopPropagation()
-  void openStepPath(title.value, app.current?.directory)
+  // The path as the call named it, not as it is drawn.
+  void openStepPath(stepTitle(props.part), app.current?.directory)
 }
 
 function toggle() {
@@ -172,20 +213,21 @@ const avatarSeed = computed(() => {
         </span>
         <span class="hs-text" :class="{ 'running-shimmer': state === 'running' }">
           <span class="hs-verb" :class="{ 'hs-err': state === 'error', 'hs-struck': state === 'skipped' }" data-step-verb>{{ verb }}</span>
-          <span v-if="bash" class="hs-bash-desc" :class="{ 'hs-struck': state === 'skipped' }" data-step-title>{{ bash.desc || bash.cmd }}</span>
+          <span v-if="bash" class="hs-bash-desc" dir="auto" :class="{ 'hs-struck': state === 'skipped' }" data-step-title>{{ bash.desc || bash.cmd }}</span>
           <span
             v-else-if="showTitle"
             class="hs-title"
             :class="{ 'hs-err': state === 'error', 'hs-struck': state === 'skipped' }"
             data-step-title
-          ><code :class="{ openable }" :title="codeTip" @click="onTitleClick">{{ shortTitle }}</code></span>
+          ><code :class="{ openable }" dir="auto" :title="codeTip" @click="onTitleClick">{{ shortTitle }}</code></span>
           <!-- MiMo's hs-diffstat: what the step added and took away, zeroes left out. -->
           <span v-if="diffstat.add || diffstat.del" class="hs-diffstat" data-diffstat>
             <span v-if="diffstat.add" class="add">+{{ diffstat.add }}</span>
             <template v-if="diffstat.add && diffstat.del">{{ " " }}</template>
             <span v-if="diffstat.del" class="del">-{{ diffstat.del }}</span>
           </span>
-          <span v-if="state === 'running'" class="hs-dim" aria-hidden="true">…</span>
+          <!-- MiMo's trailing dots mark a running call inside a group; a row standing alone has none. -->
+          <span v-if="state === 'running' && !summary" class="hs-dim" aria-hidden="true">…</span>
         </span>
         <span v-if="expandable" class="hs-chev" :class="{ open }">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -211,9 +253,12 @@ const avatarSeed = computed(() => {
               <pre class="tc-out" data-step-output>{{ cleaned.slice(0, OUTPUT_CAP) }}</pre>
             </template>
             <div v-else-if="diffText" class="hs-diff"><DiffView :diff="diffText" /></div>
+            <!-- Safe to bind: the Markdown renderer escapes every piece of source it places. -->
+            <div v-else-if="skillHtml" class="tc-out md text" data-step-output data-step-markdown v-html="skillHtml" />
             <pre v-else class="tc-out" data-step-output>{{ cleaned.slice(0, OUTPUT_CAP) }}</pre>
           </template>
         </template>
+        <StepShots v-if="hasShots" :attachments="part.attachments" />
       </StepCollapse>
     </div>
   </div>

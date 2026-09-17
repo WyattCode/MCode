@@ -270,7 +270,11 @@ export interface UserMessage {
   /** Files pinned into the prompt by the user. */
   attachments: Attachment[]
   time: { created: number }
-  /** Sent into a turn that was already running (MiMo's 插话), so the transcript keeps it inside that turn. */
+  /**
+   * Sent into a turn that was already running (MiMo's 插话). Until the model
+   * takes it the transcript shows it waiting at the end of that turn; once
+   * taken it is a question like any other and opens the next turn (26.914).
+   */
   steered?: boolean
   /**
    * plan: written by the app rather than typed - the word that the user
