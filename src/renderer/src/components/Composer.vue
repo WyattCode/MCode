@@ -5,6 +5,9 @@ import type { Ref } from "vue"
 import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
 import { textualName } from "@shared/attachment-kind"
+import { commandTitle } from "../lib/skill-display"
+import { normalizeChord } from "@shared/chord"
+import { chordOf } from "../lib/keys"
 import { detectCodeLanguage, insertFence } from "../lib/paste-code"
 import { appendMentions, mentionBackspace, projectRelative, promptHistory, slashAt } from "../lib/composer-text"
 import { matchingNames, wordMatch } from "../lib/word-match"
@@ -175,6 +178,18 @@ const historyStash = ref("")
 let walkingHistory = false
 
 /**
+ * Set for one write the app made rather than the user, which closes both menus
+ * - MiMo's `wn()` before every programmatic rewrite. Cleared by the watcher
+ * that reads it, so the next keystroke behaves as typing again.
+ */
+let rewriting = false
+
+function rewrite(value: string) {
+  rewriting = true
+  text.value = value
+}
+
+/**
  * The picker lists display names, so the pill has to as well - showing the raw
  * slug there made the same model read two different ways on one screen.
  */
@@ -209,6 +224,10 @@ const RESIZE_MIN = 44
 const RESIZE_MAX = 480
 const RESIZE_SHARE = 0.5
 const RESIZE_SLOP = 6
+/* MiMo's pause after a width change before the box is measured again. */
+const RESIZE_DEBOUNCE = 60
+/* Below this the box is not laid out yet, and measuring it would give a wrong answer. */
+const MEASURE_MIN_WIDTH = 28
 const PINNED_HEIGHT = 200
 const PINNED_CHARS = 3000
 const PINNED_LINES = 30
@@ -262,9 +281,53 @@ function resize() {
     element.style.height = `${PINNED_HEIGHT}px`
     return
   }
+  /*
+   * Too narrow to measure against: the box is hidden, has not been laid out, or
+   * is halfway through being moved between docks. MiMo skips the measurement
+   * below that width and keeps the height it had; measuring anyway collapses a
+   * three-line draft to one line for as long as the move lasts.
+   */
+  if (!Number.isFinite(element.clientWidth) || element.clientWidth <= MEASURE_MIN_WIDTH) return
   element.style.height = "auto"
   element.style.height = `${element.scrollHeight}px`
 }
+
+/**
+ * The box is measured again when it changes width, not only when it changes
+ * text.
+ *
+ * Narrowing the window or opening the right-hand panel rewraps what is written
+ * without touching it, so a draft that already filled three lines stayed two
+ * lines tall with its last line scrolled out of sight. MiMo watches the
+ * textarea and remeasures 60ms after the width settles; a manual height is
+ * clamped again at the same moment, because the ceiling is half the window.
+ */
+let widthSeen = 0
+let widthTimer: ReturnType<typeof setTimeout> | undefined
+let widthWatch: ResizeObserver | undefined
+
+function watchWidth() {
+  const element = input.value
+  if (!element || typeof ResizeObserver === "undefined") return
+  widthSeen = element.clientWidth
+  widthWatch = new ResizeObserver(() => {
+    const now = input.value?.clientWidth ?? 0
+    if (now === widthSeen) return
+    widthSeen = now
+    clearTimeout(widthTimer)
+    widthTimer = setTimeout(() => {
+      if (manualHeight.value !== null) manualHeight.value = clampHeight(manualHeight.value)
+      resize()
+    }, RESIZE_DEBOUNCE)
+  })
+  widthWatch.observe(element)
+}
+
+onBeforeUnmount(() => {
+  widthWatch?.disconnect()
+  widthWatch = undefined
+  clearTimeout(widthTimer)
+})
 
 let drag: { y: number; height: number; before: number | null; moved: boolean } | null = null
 
@@ -313,7 +376,10 @@ function followDockHeight() {
 watch(manualHeight, () => void nextTick(resize))
 /* A18: carried into the floating dock (or back), the box refits there rather than keeping the main dock's height. */
 watch(() => props.resizable, () => void nextTick(resize))
-onMounted(() => window.addEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
+onMounted(() => {
+  window.addEventListener(DOCK_HEIGHT_EVENT, followDockHeight)
+  watchWidth()
+})
 onBeforeUnmount(() => window.removeEventListener(DOCK_HEIGHT_EVENT, followDockHeight))
 
 /**
@@ -359,8 +425,14 @@ watch(text, (value) => {
    * Whatever the box says now is what the menus answer to. A menu closed with
    * Escape comes back as soon as anything is typed, which is the reference's
    * rule and the only one that keeps Escape from being a trapdoor.
+   *
+   * A rewrite the app made is not typing, and closes both menus instead - MiMo
+   * clears their state before every one of them. Walking back to an old `/word`
+   * question used to throw the slash menu open over it, and deleting a whole
+   * mention could open the @ menu on whatever `@` was left in front of it.
    */
-  dismissed.value = false
+  dismissed.value = rewriting
+  rewriting = false
   // A mention edited out of the draft stops being a mention: the file must not
   // travel with the message because its path was once typed here.
   if (!mentioned.value.size) return
@@ -821,8 +893,10 @@ async function toggleVoice() {
       const quick = (app.config?.voiceMode ?? "smart") === "fast"
       /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
       if (quick && isClearCommand(result.text)) {
-        text.value = ""
+        rewrite("")
         await nextTick(resize)
+        // The user pressed a button to start this, so the keyboard is on the button: the box is given it back.
+        input.value?.focus({ preventScroll: true })
         input.value?.setSelectionRange(0, 0)
         showCue("cleared")
         return
@@ -830,9 +904,10 @@ async function toggleVoice() {
       const next = applyVoiceResult(draft, result)
       const edited = editCue(draft.text, next.text, Boolean(result.edit))
       if (next.text !== text.value) {
-        text.value = next.text
+        rewrite(next.text)
         await nextTick(resize)
       }
+      input.value?.focus({ preventScroll: true })
       input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
       /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
       const sendsByVoice = (app.config?.voiceSend ?? false) && !quick
@@ -967,6 +1042,11 @@ const skillRows = computed(() => {
 })
 const hasSkills = computed(() => app.commands.some((command) => command.source === "skill"))
 
+/* A chip is named after the skill it stands for, translated as the plugins page translates it. */
+function skillChipName(trigger: string): string {
+  return commandTitle(serverCommand(trigger), trigger, language.value)
+}
+
 async function openSkillMenu(event: Event) {
   const row = (event.currentTarget as HTMLElement).getBoundingClientRect()
   skillSubOpen.value = true
@@ -1097,6 +1177,14 @@ async function submit() {
 
   const named = await mentionAttachments(value, carried, target)
   const filled = await fillCommand(value, target)
+  /*
+   * Files with nothing written beside them still make a message that reads as
+   * one: MiMo puts a fixed short phrase in the body, so the bubble in the
+   * transcript is not an empty square and the model is told plainly that the
+   * files are the message. A skill chip already stands in the body, so it is
+   * left to speak for itself.
+   */
+  const body = filled && !filled.text.trim() && sent.length && !chips.length ? t("composer.seeAttachments") : (filled?.text ?? "")
   // A file the command names that was also mentioned goes once.
   const commandFiles = filled ? filled.attachments.filter((file) => !named.some((entry) => entry.path === file.path)) : []
 
@@ -1107,7 +1195,7 @@ async function submit() {
     ? false
     : subtask
       ? await app.subtask(value, subtask)
-      : await app.send(withSkills(filled.text, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
+      : await app.send(withSkills(body, chips), [...sent, ...named, ...commandFiles], target, pointed, filled.command)
   if (!accepted) {
     text.value = value
     attachments.value = sent
@@ -1551,7 +1639,16 @@ watch(
     attachments.value = kept?.attachments ?? []
     mentioned.value = new Set(kept?.mentioned ?? [])
     skills.value = kept?.skills ?? []
+    /*
+     * The caret goes to the end of the restored draft, in the box as well as in
+     * this component's own idea of it. Writing only the number left the two
+     * disagreeing until the first keystroke, and the @ and slash menus are both
+     * questions about the characters before it.
+     */
     caret.value = text.value.length
+    void nextTick(() => {
+      if (document.activeElement === input.value) input.value?.setSelectionRange(caret.value, caret.value)
+    })
     // The folder being browsed belonged to the project that conversation was in.
     atSub.value = ""
   },
@@ -1624,13 +1721,19 @@ const SOURCE_BADGE: Record<CommandInfo["source"], string> = {
   skill: "composer.slashSkill",
 }
 
-/** The project's own commands, its MCP prompts and its skills, badged by source; a skill shipped with the app says so. */
+/**
+ * The project's own commands, its MCP prompts and its skills, badged by source.
+ *
+ * Three badges, as MiMo has three: a skill that ships with the app is still a
+ * skill, and calling it out as a fourth kind said something about where it came
+ * from that the user has no use for while picking one.
+ */
 const serverEntries = computed<SlashEntry[]>(() =>
   app.commands.map((entry) => ({
     id: `custom.${entry.name}`,
     trigger: entry.name,
     description: entry.description,
-    badge: entry.source === "skill" && entry.builtin ? t("composer.slashBuiltinSkill") : t(SOURCE_BADGE[entry.source]),
+    badge: t(SOURCE_BADGE[entry.source]),
   })),
 )
 
@@ -1640,7 +1743,7 @@ const serverEntries = computed<SlashEntry[]>(() =>
  */
 const sessionEntries = computed<SlashEntry[]>(() => {
   const id = sessionID.value
-  if (!id || serverCommand("compact")) return []
+  if (!id) return []
   return [
     { id: "session.compact", trigger: "compact", description: t("composer.compactDesc"), run: () => void compactFromBox("/compact") },
   ]
@@ -1663,7 +1766,19 @@ const slashQuery = computed(() => slashSpan.value?.query)
 const slashMatches = computed(() => {
   const query = slashQuery.value
   if (query === undefined) return []
-  return [...sessionEntries.value, ...serverEntries.value].filter((entry) => wordMatch(entry.trigger, query))
+  /*
+   * The session's own command wins a name it shares with the project's, which
+   * is MiMo's order: it walks its session commands first and keeps the first of
+   * each name. It used to be the other way round, and on the home screen - where
+   * there is no conversation to compact - a project command called `compact`
+   * was listed although MiMo hides exactly that one there.
+   */
+  const session = sessionEntries.value
+  const taken = new Set(session.map((entry) => entry.trigger))
+  const server = sessionID.value
+    ? serverEntries.value.filter((entry) => !taken.has(entry.trigger))
+    : serverEntries.value.filter((entry) => entry.trigger !== "compact")
+  return [...session, ...server].filter((entry) => wordMatch(entry.trigger, query))
 })
 
 /*
@@ -1716,7 +1831,8 @@ async function runSlash(at: number) {
    */
   const skill = serverCommand(command.trigger)?.source === "skill"
   if (command.run || skill) {
-    text.value = before + after.replace(/^ /, "")
+    // Only the `/query` goes. MiMo leaves whatever followed it exactly as it was, space included.
+    rewrite(before + after)
     await nextTick(resize)
     if (skill) addSkill(command.trigger)
     else command.run?.()
@@ -1725,7 +1841,7 @@ async function runSlash(at: number) {
     return
   }
   const named = `/${command.trigger} `
-  text.value = before + named + after
+  rewrite(before + named + after)
   await nextTick(resize)
   // After the tick, because the text watcher clears this on every change.
   dismissed.value = true
@@ -1753,10 +1869,59 @@ function moveMenu(event: KeyboardEvent, count: number, index: Ref<number>): bool
   return true
 }
 
-/** Enter and Tab both take the highlighted row, as they do in the reference. */
+/**
+ * Enter and Tab both take the highlighted row, as they do in the reference.
+ *
+ * Modifiers are not looked at for Enter: MiMo's own test is the key and the
+ * absence of Shift, so Ctrl+Enter over an open menu picks the row rather than
+ * slipping past it and typing a newline.
+ */
 function takesRow(event: KeyboardEvent): boolean {
-  if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false
-  return event.key === "Enter" || event.key === "Tab"
+  if (event.key === "Enter") return !event.shiftKey
+  if (event.key !== "Tab") return false
+  return !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+}
+
+/**
+ * The chord the user has bound "send message" to, when it is an Enter of some
+ * kind.
+ *
+ * MiMo reads the binding before deciding between a newline and a send: a
+ * binding on an Enter combination is matched exactly and takes Ctrl+Enter's
+ * newline away with it, and anything else leaves the default alone - Enter
+ * sends, Ctrl+Enter breaks the line, Alt+Enter sends. Nothing read the binding
+ * here at all, so rebinding the send key did nothing in the box and, worse, the
+ * window's own dispatcher then sent the newline the box had just typed.
+ */
+const sendChord = computed(() => {
+  const bound = app.config?.keybinds?.["composer.send"]
+  const chord = typeof bound === "string" && bound ? normalizeChord(bound) : ""
+  return /(^|\+)Enter$/i.test(chord) ? chord : ""
+})
+
+function sendsMessage(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter") return false
+  if (sendChord.value) return chordOf(event, app.platform) === sendChord.value
+  return !event.shiftKey && !event.metaKey && !event.ctrlKey
+}
+
+/** Ctrl+Enter breaks the line only while no Enter combination is bound to sending. */
+function breaksLine(event: KeyboardEvent): boolean {
+  if (event.key !== "Enter" || event.shiftKey || event.altKey || sendChord.value) return false
+  return event.ctrlKey || event.metaKey
+}
+
+/**
+ * A key the box has answered for itself, and which must not travel on.
+ *
+ * The window's shortcut dispatcher listens on `window` in the bubble phase, so
+ * a key left to bubble is acted on twice: with Ctrl+Enter bound to sending,
+ * the box typed a newline and the dispatcher then sent the draft with the
+ * newline in it.
+ */
+function handled(event: KeyboardEvent) {
+  event.preventDefault()
+  event.stopPropagation()
 }
 
 function onKeydown(event: KeyboardEvent) {
@@ -1822,12 +1987,12 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   // MiMo's Ctrl+Enter (Cmd+Enter): a newline at the caret, in place of any selection.
-  if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey) {
+  if (breaksLine(event)) {
     const box = input.value
     if (!box) return
-    event.preventDefault()
+    handled(event)
     const start = box.selectionStart
-    text.value = `${text.value.slice(0, start)}\n${text.value.slice(box.selectionEnd)}`
+    rewrite(`${text.value.slice(0, start)}\n${text.value.slice(box.selectionEnd)}`)
     void nextTick(() => {
       resize()
       box.setSelectionRange(start + 1, start + 1)
@@ -1843,8 +2008,8 @@ function onKeydown(event: KeyboardEvent) {
       const known = [...new Set([...[...recentMentions].reverse(), ...mentioned.value])]
       const next = mentionBackspace(text.value, box.selectionStart, known)
       if (next) {
-        event.preventDefault()
-        text.value = next.text
+        handled(event)
+        rewrite(next.text)
         void nextTick(() => {
           resize()
           box.setSelectionRange(next.caret, next.caret)
@@ -1856,8 +2021,8 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   // Enter sends; Shift+Enter is a newline. This is a chat surface, not an editor.
-  if (event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey) {
-    event.preventDefault()
+  if (sendsMessage(event)) {
+    handled(event)
     // Held down, it sends once. The reference guards the same way, after its
     // preventDefault so the repeats do not fall through and type newlines.
     if (event.repeat) return
@@ -1876,10 +2041,17 @@ function onKeydown(event: KeyboardEvent) {
     const selected = box ? box.selectionStart !== box.selectionEnd : false
     const copy = (event.key === "c" || event.key === "C") && event.ctrlKey && !selected
     if (escape || copy) {
-      event.preventDefault()
+      handled(event)
       void app.abort(sessionID.value)
       return
     }
+  }
+
+  // MiMo's shell mode leaves on Escape - after the input-method guard above, not before it.
+  if (event.key === "Escape" && mode.value === "shell") {
+    handled(event)
+    setMode("normal")
+    return
   }
 
   /*
@@ -1893,13 +2065,13 @@ function onKeydown(event: KeyboardEvent) {
   const walking = historyIndex.value !== null
   if (event.key === "ArrowUp" && history.value.length) {
     if (!walking && !(collapsed && element.selectionStart === 0 && !text.value.includes("\n"))) return
-    event.preventDefault()
+    handled(event)
     if (historyIndex.value === null) {
       historyStash.value = text.value
       showHistory(history.value.length - 1)
     } else showHistory(Math.max(0, historyIndex.value - 1))
   } else if (event.key === "ArrowDown" && walking) {
-    event.preventDefault()
+    handled(event)
     const next = (historyIndex.value ?? 0) + 1
     showHistory(next >= history.value.length ? null : next)
   }
@@ -1910,7 +2082,7 @@ function showHistory(at: number | null) {
   walkingHistory = true
   historyIndex.value = at
   const value = at === null ? historyStash.value : (history.value[at] ?? "")
-  text.value = value
+  rewrite(value)
   void nextTick(() => {
     walkingHistory = false
     resize()
@@ -2576,8 +2748,19 @@ onBeforeUnmount(() => {
   document.removeEventListener("drop", onDrop)
 })
 
+/**
+ * Puts the keyboard in the box, with the caret at the end of whatever is there.
+ *
+ * Chromium leaves the caret at position 0 when a textarea that already holds
+ * text is focused for the first time, so a restored draft was typed into from
+ * the front. MiMo puts it at the end in both places it focuses the box.
+ */
 function focus() {
-  input.value?.focus()
+  const box = input.value
+  if (!box) return
+  box.focus({ preventScroll: true })
+  box.setSelectionRange(text.value.length, text.value.length)
+  caret.value = text.value.length
 }
 
 /**
@@ -2755,7 +2938,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
             <span class="cchip-ic" aria-hidden="true">
               <svg viewBox="0 0 12 12" fill="none"><path d="M6.2 2.5h2.3a1 1 0 0 1 1 1v1.2a1.3 1.3 0 1 1 0 2.6v1.2a1 1 0 0 1-1 1H7.3a1.3 1.3 0 1 0-2.6 0H3.5a1 1 0 0 1-1-1V7.3a1.3 1.3 0 1 0 0-2.6V3.5a1 1 0 0 1 1-1z" /></svg>
             </span>
-            <span class="cchip-name">{{ name }}</span>
+            <span class="cchip-name">{{ skillChipName(name) }}</span>
             <button
               class="cchip-rm"
               type="button"
@@ -2858,7 +3041,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
           :placeholder="placeholder"
           :disabled="compactingHere"
           :aria-busy="compactingHere || undefined"
-          @keydown.escape="mode === 'shell' && setMode('normal')"
           @keydown="onKeydown"
           @blur="onInputBlur"
           @keyup="syncCaret"

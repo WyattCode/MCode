@@ -892,6 +892,14 @@ export interface CommandInfo {
   source: CommandSource
   /** A skill shipped with the app (MiMo's `bundled`). */
   builtin?: boolean
+  /**
+   * A skill's own translated names, from its `locales/<language>.json`.
+   *
+   * Carried so a skill chip in the box can be labelled the way the plugins page
+   * labels the same skill - MiMo names a chip from the skill, and falls back to
+   * the command only when it cannot find it.
+   */
+  localizations?: Record<string, { displayName?: string; brief?: string }>
   /** One of the app's own commands (/init, /review, /dream, /distill, /rebuild) that nothing has replaced. */
   own?: boolean
   /**

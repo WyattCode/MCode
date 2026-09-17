@@ -27,6 +27,19 @@ export function skillTitle(skill: SkillSummary, language: string): string {
   return localized(skill, language)?.displayName?.trim() || skill.name
 }
 
+/**
+ * The name a skill chip in the box carries.
+ *
+ * MiMo names a chip from the skill it stands for and falls back to the command
+ * only when it cannot find one, so the same skill reads the same way in the box
+ * as on its card. The chip used to show the command trigger, which for a skill
+ * with a translated name was a different word entirely.
+ */
+export function commandTitle(command: { name: string; localizations?: SkillSummary["localizations"] } | undefined, fallback: string, language: string): string {
+  if (!command) return fallback
+  return localized({ ...command, description: "", builtin: false, enabled: true, removable: false, location: "" }, language)?.displayName?.trim() || command.name
+}
+
 /** The one-line summary, when it says something the description does not. */
 export function skillBrief(skill: SkillSummary, language: string): string {
   const brief = localized(skill, language)?.brief?.trim() ?? ""
