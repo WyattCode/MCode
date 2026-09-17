@@ -63,7 +63,7 @@ import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, schedule
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
-import { sessionGroup } from "@shared/session-group"
+import { projectOf } from "./lib/session-project"
 import FindBar from "./components/FindBar.vue"
 import AnnotationComposer from "./components/AnnotationComposer.vue"
 import AnnotationMarkers from "./components/AnnotationMarkers.vue"
@@ -1491,7 +1491,7 @@ const ROW_ACTIONS: Record<string, (sessionID: string, header: boolean) => void |
  * kept below whatever the search leaves.
  */
 function moveMenu(target?: (typeof app.sessions)[number]): Pick<MenuItem, "children" | "search" | "footer" | "childWidth"> {
-  const current = target ? sessionGroup(target) : undefined
+  const current = target ? projectOf(target) : undefined
   const rows: MenuItem[] = app.projects.map((directory) => ({
       key: `move:${directory}`,
       label: projectName(directory, app.config?.projectNames),
@@ -1744,7 +1744,7 @@ async function runSessionMenu(key: string) {
   if (key.startsWith("move:")) {
     const directory = key.slice("move:".length)
     const moving = app.sessions.find((entry) => entry.id === target)
-    if (moving && sessionGroup(moving) !== directory) await app.move(target, directory)
+    if (moving && projectOf(moving) !== directory) await app.move(target, directory)
     return
   }
   const own = ROW_ACTIONS[key]
@@ -3324,7 +3324,7 @@ function noticeAbout(sessionID: string) {
   return {
     sessionID,
     title: session ? sessionTitle(session.title) : undefined,
-    project: session && sessionGroup(session) ? projectName(sessionGroup(session)!, app.config?.projectNames) : undefined,
+    project: session && projectOf(session) ? projectName(projectOf(session)!, app.config?.projectNames) : undefined,
   }
 }
 

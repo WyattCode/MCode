@@ -1,5 +1,5 @@
 import type { AppConfig, SessionInfo } from "./protocol"
-import { sessionGroup } from "./session-group"
+import { sessionGroup, type GroupContext } from "./session-group"
 
 /**
  * MiMo's project list, kept as a list rather than read off conversations.
@@ -15,6 +15,20 @@ export type ProjectConfig = Pick<
 >
 
 type ProjectSession = Pick<SessionInfo, "directory" | "updated" | "archived" | "scratch" | "sideOf" | "parentID" | "group">
+
+/**
+ * The spelling a list already uses for this folder, if it holds it.
+ *
+ * git reports a repository's folder in its own letter case, and a Windows path
+ * picked in a dialog may differ from it only in case - the same folder, which
+ * must not become a second project.
+ */
+export function knownFolder(list: readonly string[], directory: string): string | undefined {
+  if (list.includes(directory)) return directory
+  if (!/^[a-z]:[\\/]|\\/i.test(directory)) return undefined
+  const key = directory.replace(/[\\/]+/g, "\\").replace(/\\$/, "").toLowerCase()
+  return list.find((entry) => entry.replace(/[\\/]+/g, "\\").replace(/\\$/, "").toLowerCase() === key)
+}
 
 /**
  * The folders conversations make projects of, newest conversation first.
@@ -127,17 +141,23 @@ export function reconciledProjects(
  * pick; the stored list breaks ties, so a project added without being picked
  * sits where MiMo's would.
  */
-export function projectsByRecency(config: Partial<ProjectConfig> | undefined, sessions: readonly ProjectSession[]): string[] {
+export function projectsByRecency(
+  config: Partial<ProjectConfig> | undefined,
+  sessions: readonly ProjectSession[],
+  context?: GroupContext,
+): string[] {
   const listed = listedProjects(config)
   const at = new Map(listed.map((directory) => [directory, config?.projectUsed?.[directory] ?? 0]))
   for (const session of sessions) {
     if (session.archived) continue
     // A conversation counts towards the project it is filed under, which its label may have moved.
-    const group = sessionGroup(session)
+    const group = sessionGroup(session, context)
     const seen = group ? at.get(group) : undefined
     if (group && seen !== undefined && session.updated > seen) at.set(group, session.updated)
   }
   return listed
+    // MiMo leaves a project whose folder is gone off the list, without forgetting it.
+    .filter((directory) => !context?.missing?.(directory))
     .map((directory, index) => ({ directory, index, at: at.get(directory) ?? 0 }))
     .sort((a, b) => b.at - a.at || a.index - b.index)
     .map((entry) => entry.directory)

@@ -1922,6 +1922,8 @@ export type Request =
   | { type: "git.push"; directory: string }
   /* The current branch's pull request, asked of GitHub's public API; only for GitHub remotes. */
   | { type: "git.pullRequest"; directory: string }
+  /* Which main repository each conversation folder belongs to, and which folders are gone: MiMo's repoRoots. */
+  | { type: "git.repoRoots"; directories: string[] }
   /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
   | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
   | { type: "file.list"; directory: string; query?: string }
@@ -2116,6 +2118,7 @@ export interface ResponseMap {
   "git.commit": CommitResult
   "git.push": PushResult
   "git.pullRequest": PullRequestState
+  "git.repoRoots": { roots: Record<string, string>; missing: string[] }
   "git.commitMessage": { message: string; generated: boolean }
   "file.list": { files: FileEntry[] }
   /* Folders first, then files, each by name; dot entries and the ignored folders left out. */

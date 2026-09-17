@@ -399,7 +399,7 @@ export class SessionRunner {
         prompt: (input) => this.prompt(input),
         create: async ({ directory, title }) => {
           const settings = config.get()
-          await config.adoptProjects([directory])
+          await config.adoptProjects([directory], { byRepository: true })
           return store.create({ directory, title, model: settings.model, agent: settings.agent, staged: settings.staged, ...(settings.smart ? { smart: true } : {}) })
         },
       },

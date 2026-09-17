@@ -21,7 +21,9 @@ import {
   PERMISSION_KINDS,
   type PermissionKind,
 } from "@shared/protocol"
-import { adoptedProjects, reconciledProjects } from "@shared/projects"
+import { adoptedProjects, knownFolder, listedProjects, reconciledProjects } from "@shared/projects"
+import { RepoRoots } from "./repo-roots"
+import { worktreeTop } from "./session/worktree"
 import { sanitizeConfig } from "./config-sanitize"
 import { defaultAccess, type Access } from "@shared/access"
 import type { Storage } from "./storage"
@@ -49,6 +51,8 @@ export const DEFAULT_MODEL: ModelRef = { provider: "", model: "" }
 
 /** Recorded in `migrations` once the project list has been filled from conversations. */
 export const PROJECT_LIST_MIGRATION = "projects-list"
+/** Round 10: linked worktrees that had become projects of their own are filed under their repository's. */
+export const REPOSITORY_PROJECTS_MIGRATION = "projects-by-repository"
 
 /**
  * Which build's idea of the stored config this one is.
@@ -420,11 +424,16 @@ export class Config {
   /** Whether a document was already on disk when this process read it; see the import migration. */
   private existed = false
 
+  /** Which main repository a conversation folder is part of, kept between launches. */
+  readonly repoRoots: RepoRoots
+
   constructor(
     private readonly storage: Storage,
     private readonly bus: Bus,
     private readonly credentialFile: string,
-  ) {}
+  ) {
+    this.repoRoots = new RepoRoots(storage)
+  }
 
   /**
    * Changes to a document that this build makes once and then leaves alone.
@@ -825,10 +834,67 @@ export class Config {
     return this.current
   }
 
-  /** Conversation folders neither listed nor removed join the project list, as MiMo derives them. */
-  async adoptProjects(directories: readonly string[]): Promise<void> {
-    const patch = adoptedProjects(this.current, directories)
+  /**
+   * Folders neither listed nor removed join the project list, as MiMo derives them.
+   *
+   * `byRepository` is for a conversation's own folder: one that is not a known
+   * project is filed under the main repository it belongs to, so a
+   * conversation in a linked worktree or a subdirectory adds the repository's
+   * project rather than one of its own, and a folder that is gone adds nothing.
+   * A folder the reader chose as a project (移动至项目) is taken as it is.
+   */
+  async adoptProjects(directories: readonly string[], options: { byRepository?: boolean } = {}): Promise<void> {
+    const folders = options.byRepository ? await this.projectFolders(directories) : directories
+    const patch = adoptedProjects(this.current, folders)
     if (patch) await this.set(patch)
+  }
+
+  private async projectFolders(directories: readonly string[]): Promise<string[]> {
+    const known = [...(this.current.projects ?? []), ...(this.current.closedProjects ?? [])]
+    const out: string[] = []
+    for (const directory of directories) {
+      const listed = knownFolder(known, directory)
+      if (listed) {
+        out.push(listed)
+        continue
+      }
+      const { roots, missing } = await this.repoRoots.resolve([directory])
+      if (missing.includes(directory)) continue
+      const root = roots[directory]
+      out.push(root ? (knownFolder(known, root) ?? root) : directory)
+    }
+    return out
+  }
+
+  /**
+   * Once: a listed project that is a linked worktree of another repository
+   * leaves the list, and that repository's folder joins it, so the worktree's
+   * conversations are filed under the repository as new ones now are. Only
+   * linked worktrees - a subdirectory may have been added as a project on
+   * purpose - and nothing about the conversations themselves changes.
+   */
+  async migrateRepositoryProjects(): Promise<void> {
+    const done = this.current.migrations ?? []
+    if (done.includes(REPOSITORY_PROJECTS_MIGRATION)) return
+    const leaving = new Set<string>()
+    const joining: string[] = []
+    for (const directory of listedProjects(this.current)) {
+      const top = await worktreeTop(directory).catch(() => undefined)
+      if (!top || top.main) continue
+      const root = await this.repoRoots.rootOf(directory).catch(() => undefined)
+      if (!root) continue
+      leaving.add(directory)
+      joining.push(root)
+    }
+    const kept = (list: string[] | undefined) => (list ?? []).filter((entry) => !leaving.has(entry))
+    const trimmed = { ...this.current, projects: kept(this.current.projects) }
+    const known = [...trimmed.projects, ...(trimmed.closedProjects ?? [])]
+    const adopted = adoptedProjects(trimmed, joining.map((root) => knownFolder(known, root) ?? root))
+    await this.set({
+      projects: adopted?.projects ?? trimmed.projects,
+      ...(leaving.size ? { pinnedProjects: kept(this.current.pinnedProjects), projectOrder: kept(this.current.projectOrder) } : {}),
+      migrations: [...done, REPOSITORY_PROJECTS_MIGRATION],
+    })
   }
 
   /**

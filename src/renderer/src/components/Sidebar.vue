@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import RowTitle from "./RowTitle.vue"
 import ChatLinkMark from "./ChatLinkMark.vue"
 import { convoCard } from "../lib/convo-card"
-import { sessionGroup } from "@shared/session-group"
+import { projectOf } from "../lib/session-project"
 import { useApp } from "../stores/app"
 import { language, sessionTitle, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
@@ -89,7 +89,7 @@ const name = (directory: string) =>
 
 /* Which project a row outside the tree says it belongs to; a conversation filed under none says nothing. */
 const groupNote = (session: SessionInfo) => {
-  const group = sessionGroup(session)
+  const group = projectOf(session)
   return group ? name(group) : ""
 }
 
@@ -165,7 +165,7 @@ const projects = computed(() => {
      * Filed by its grouping label where 移动至项目 gave it one, else by the
      * folder it works in. A task with no project has neither; Recent has it.
      */
-    const group = sessionGroup(session)
+    const group = projectOf(session)
     if (group) byDirectory.get(group)?.push(session)
   }
   return app.projects.map((directory) => {
@@ -568,7 +568,7 @@ function setRecentSort(mode: "recent" | "name") {
 const recentAll = computed(() => {
   const listed = new Set(projects.value.map((project) => project.directory))
   const rows = app.sessions.filter(
-    (session) => !session.archived && !listed.has(sessionGroup(session) ?? "") && !app.isPinned(session.id),
+    (session) => !session.archived && !listed.has(projectOf(session) ?? "") && !app.isPinned(session.id),
   )
   return recentSort.value === "name"
     ? rows.sort((a, b) => title(a.title).localeCompare(title(b.title), language.value))

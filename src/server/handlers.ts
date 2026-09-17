@@ -358,7 +358,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * as MiMo derives one. Listed before the session exists, so the window
        * never sees the conversation without its project.
        */
-      if (!request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory])
+      if (!request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory], { byRepository: true })
       // MiMo's rule for saved MCP changes: a new conversation is when they take effect, for every conversation.
       // Not waited for: the conversation's first turn waits for its project's servers itself.
       void runtime.mcp.commitIfDirty()
@@ -1131,6 +1131,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "git.pullRequest":
       return (await pullRequestState(request.directory)) satisfies Handled<"git.pullRequest">
+
+    case "git.repoRoots":
+      return (await runtime.config.repoRoots.resolve(
+        Array.isArray(request.directories) ? request.directories.filter((entry) => typeof entry === "string").slice(0, 5000) : [],
+      )) satisfies Handled<"git.repoRoots">
 
     case "git.commitMessage": {
       const paths = request.paths.filter((entry) => typeof entry === "string")
