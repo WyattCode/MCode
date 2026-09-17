@@ -29,6 +29,8 @@ import { planApprovedRefusal } from "../src/server/session/plan"
 import { QuestionTool } from "../src/server/tool/question"
 import { confirmQueue } from "../src/renderer/src/lib/confirm-queue"
 import type { QuestionRequest } from "../src/shared/protocol"
+import { HistoryTool } from "../src/server/tool/history"
+import { bindHistory, type HistoryService } from "../src/server/history/service"
 
 type Section = (name: string) => void
 
@@ -395,6 +397,71 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
     await h.close()
   }
   await automationChecks(check, section, root)
+  await historyChecks(check, section, root)
+}
+
+async function historyChecks(check: Check, section: Section, root: string): Promise<void> {
+  section("Round 10 (T10-17): history get lists media by locator and hands over one only when asked, never a file on disk")
+  const storage = new Storage(path.join(root, "history", "storage"))
+  const store = new SessionStore(storage, new Bus())
+  const project = path.join(root, "project")
+  const picture = path.join(project, "shot.png")
+  await fs.writeFile(picture, Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"))
+  const model = { provider: "fake", model: "m" }
+  const session = await store.create({ directory: project, model, title: "Pictures" })
+  const png = Buffer.alloc(64, 7).toString("base64")
+  await store.saveMessage({ id: "msg_0r10a", sessionID: session.id, role: "user", text: `look at this data:image/png;base64,${png} please`, attachments: [{ path: picture, mime: "image/png", data: "", byPath: true }], time: { created: 1 } }, true)
+  await store.saveMessage(
+    {
+      id: "msg_0r10b",
+      sessionID: session.id,
+      role: "assistant",
+      model,
+      agent: "build",
+      parts: [
+        {
+          type: "tool",
+          id: "prt_0r10",
+          callID: "c1",
+          name: "webfetch",
+          status: "completed",
+          input: { url: "https://example.com/a.png" },
+          output: "fetched",
+          attachments: [
+            { path: "a.png", mime: "image/png", data: png },
+            { path: picture, mime: "image/png", data: "", byPath: true },
+          ],
+          time: { created: 2 },
+        },
+      ],
+      time: { created: 2 },
+    },
+    true,
+  )
+  bindHistory({ storage, store } as unknown as HistoryService)
+  try {
+    const context = { sessionID: session.id, messageID: "m", callID: "c", directory: project } as never
+    const get = (input: Record<string, unknown>) => HistoryTool.execute({ operation: "get", ...input }, context)
+    const file = await get({ part_id: `${session.id}/msg_0r10a/file:0` })
+    check("a user's attached picture is listed, not attached", !file.attachments?.length && file.output.includes("attachment=file:0 mime=image/png") && file.output.includes("file: file:0 to file:0"), file)
+    const refusedFile = await get({ part_id: `${session.id}/msg_0r10a/file:0`, attachment: "file:0" })
+    check("asked for, it is refused and read is named instead", !refusedFile.attachments?.length && /read tool/.test(refusedFile.output) && /nothing was read/.test(refusedFile.output), refusedFile)
+    const typed = await get({ part_id: `${session.id}/msg_0r10a/text` })
+    check("inline media in a part's text is replaced in the page and listed as inline:0", !typed.attachments?.length && typed.output.includes("[media image/png]") && typed.output.includes("attachment=inline:0 mime=image/png") && !typed.output.includes(png), typed.output)
+    const inline = await get({ part_id: `${session.id}/msg_0r10a/text`, attachment: "inline:0" })
+    check("asked for by its locator, the inline picture comes with the result", inline.attachments?.length === 1 && inline.attachments[0]?.data === png && inline.attachments[0].mime === "image/png", inline)
+    const tool = await get({ part_id: `${session.id}/msg_0r10b/prt_0r10` })
+    check("a tool call's media is listed as tool:0 and tool:1", !tool.attachments?.length && tool.output.includes("attachment=tool:0") && tool.output.includes("attachment=tool:1") && tool.output.includes("tool: tool:0 to tool:1"), tool.output)
+    const bytes = await get({ part_id: `${session.id}/msg_0r10b/prt_0r10`, attachment: "tool:0" })
+    check("the one it carries the bytes of is handed over", bytes.attachments?.[0]?.data === png, bytes)
+    const byPath = await get({ part_id: `${session.id}/msg_0r10b/prt_0r10`, attachment: "tool:1" })
+    check("the one it names only by path is not", !byPath.attachments?.length && /read tool/.test(byPath.output), byPath)
+    const missing = await get({ part_id: `${session.id}/msg_0r10b/prt_0r10`, attachment: "tool:7" })
+    check("an unknown locator says how to list them", !missing.attachments?.length && /list them/.test(missing.output), missing.output)
+    check("the tool offers the attachment parameter", "attachment" in ((HistoryTool.parameters as { properties: Record<string, unknown> }).properties ?? {}))
+  } finally {
+    bindHistory(undefined)
+  }
 }
 
 async function automationChecks(check: Check, section: Section, root: string): Promise<void> {

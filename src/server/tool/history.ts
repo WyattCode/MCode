@@ -118,6 +118,49 @@ async function around(input: Record<string, unknown>): Promise<ToolResult> {
   return reply("around", [header, ...body, ...(cut ? [MORE] : [])].join("\n"), window.length, cut)
 }
 
+/** How much of an answer the list of attachment locators may take, in bytes. */
+export const LOCATOR_BUDGET = 2_000
+
+/**
+ * One piece of media a part holds, by the locator `get` lists it under:
+ * `inline:N` for data carried in the part's text, `tool:N` for what a tool
+ * call handed the model, `file:N` for a file the user attached.
+ */
+interface Held {
+  id: string
+  mime: string
+  /** The bytes, when the part carries them; a file named by its path has none. */
+  attachment?: Attachment
+}
+
+/** The media a part holds, in MiMo's three kinds of locator. */
+function heldMedia(message: Message, key: string, whole: string): Held[] {
+  const held: Held[] = []
+  const inline = /(?:^|[^A-Za-z0-9._/+%-])data:([a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+)(?:;[^;,\s]+=[^;,\s]+)*;base64,([A-Za-z0-9+/]+={0,2})/gi
+  for (const found of whole.matchAll(inline)) {
+    if (found[2]!.length < 16) continue
+    const mime = found[1]!.toLowerCase()
+    held.push({ id: `inline:${held.length}`, mime, attachment: { path: `inline-${held.length}`, mime, data: found[2]! } })
+  }
+  if (message.role === "user") {
+    const at = /^file:(\d+)$/.exec(key)
+    const file = at ? message.attachments[Number(at[1])] : undefined
+    if (file) held.push({ id: "file:0", mime: file.mime })
+    return held
+  }
+  const part = message.parts.find((entry) => entry.type === "tool" && entry.id === key)
+  if (part?.type === "tool") {
+    ;(part.attachments ?? []).forEach((file, at) => held.push({ id: `tool:${at}`, mime: file.mime, ...(file.data && !file.byPath ? { attachment: { ...file } } : {}) }))
+  }
+  return held
+}
+
+/**
+ * get: a part's text a page at a time and, as MiMo's history gives it, a list
+ * of the media the part holds rather than the media itself. One piece is
+ * handed over only when asked for by its locator, and never a file on disk:
+ * that is read's business, under read's permissions.
+ */
 async function get(input: Record<string, unknown>): Promise<ToolResult> {
   const id = text(input.part_id)
   if (!id) return reply("get", "get needs a part_id.")
@@ -125,7 +168,19 @@ async function get(input: Record<string, unknown>): Promise<ToolResult> {
   const service = serviceOf()
   const message = located ? await service.storage.read<Message>(`session/${located.sessionID}/message/${located.messageID}`).catch(() => undefined) : undefined
   const part = message ? partTexts(message).find((entry) => entry.part_id === id) : undefined
-  if (!part) return reply("get", "No part with that id.")
+  if (!message || !located || !part) return reply("get", "No part with that id.")
+  const held = heldMedia(message, located.key, part.text)
+
+  const wanted = text(input.attachment)
+  if (wanted) {
+    const piece = held.find((entry) => entry.id === wanted)
+    if (!piece) return reply("get", "No attachment with that locator; get the part without attachment to list them.")
+    if (!piece.attachment) {
+      return reply("get", "A file kept on disk is not handed over from history. Read it with the read tool, which asks where it has to; nothing was read.")
+    }
+    return { ...reply("get", "The requested attachment comes with this result.", 1), attachments: [piece.attachment] }
+  }
+
   let page
   try {
     page = pageOf(withoutInlineMedia(part.text), whole(input.offset) ?? 0, whole(input.length) ?? PAGE_DEFAULT)
@@ -133,18 +188,23 @@ async function get(input: Record<string, unknown>): Promise<ToolResult> {
     return reply("get", (failure as Error).message)
   }
   const next = page.has_more ? `More follows: get the same part_id with offset=${page.next_offset}.` : "This is the end of the part."
-  const answer = reply("get", `offset=${page.offset} next_offset=${page.next_offset} total_length=${page.total_length} has_more=${page.has_more}\n${next}\n${page.text}`, 1)
-  // MiMo's history hands media over rather than describing it: the file this part names goes with the answer.
-  const media = mediaOf(message, located?.key)
-  return media ? { ...answer, attachments: [media] } : answer
-}
-
-/** The file a `file:<n>` part names, when it is media a model could be handed. */
-function mediaOf(message: Message | undefined, key: string | undefined): Attachment | undefined {
-  const at = /^file:(\d+)$/.exec(key ?? "")
-  if (!message || message.role !== "user" || !at) return undefined
-  const file = message.attachments[Number(at[1])]
-  return file && /^(image|audio|video)\/|^application\/pdf$/.test(file.mime) ? { ...file } : undefined
+  const counts = (["inline", "tool", "file"] as const)
+    .map((kind) => {
+      const count = held.filter((entry) => entry.id.startsWith(`${kind}:`)).length
+      return `${kind}: ${count ? `${kind}:0 to ${kind}:${count - 1}` : "none"}`
+    })
+    .join("; ")
+  const locators = held.map((entry) => `attachment=${entry.id} mime=${entry.mime.slice(0, 120)}`)
+  const listed = withinBudget(locators, LOCATOR_BUDGET)
+  const media = held.length
+    ? [
+        "",
+        `Media in this part (${held.length}); none is sent unless you get this part again with attachment set to one locator: ${counts}`,
+        ...listed.lines,
+        ...(listed.cut ? ["[More locators than fit here; they follow the same numbering.]"] : []),
+      ]
+    : []
+  return reply("get", [`offset=${page.offset} next_offset=${page.next_offset} total_length=${page.total_length} has_more=${page.has_more}`, next, page.text, ...media].join("\n"), 1)
 }
 
 export const HistoryTool: ToolDefinition = {
@@ -155,7 +215,8 @@ export const HistoryTool: ToolDefinition = {
     "operation search: full-text search (every word must appear) ranked best first, with short snippets and ids. scope defaults to this project; \"global\" searches every project. Narrow with session_id, tool_name, time_after and time_before (milliseconds since 1970); limit is 1-50, default 10.",
     "operation around: the messages either side of message_id (before and after, 0-50 each, default 5), as summaries.",
     `operation get: one part_id's whole text, a page at a time. offset counts UTF-16 characters from 0; length is 1-${PAGE_MAX}, default ${PAGE_DEFAULT}. Continue from next_offset while has_more is true.`,
-    "search and around only summarise: get the part_id you need before relying on the details. Inline images are replaced by a marker; read attached files by their path instead.",
+    "Media is never sent on its own: get lists the part's media by locator (inline:N, tool:N, file:N, counted from 0); get the same part_id again with attachment set to exactly one locator to receive it. Files the user attached stay on disk and are not handed over here: read them by their path with the read tool.",
+    "search and around only summarise: get the part_id you need before relying on the details.",
   ].join("\n"),
   parameters: {
     type: "object",
@@ -174,6 +235,7 @@ export const HistoryTool: ToolDefinition = {
       part_id: { type: "string", description: "get: the part to read" },
       offset: { type: "integer", minimum: 0, description: "get: where the page starts; use next_offset from the previous page" },
       length: { type: "integer", minimum: 1, maximum: PAGE_MAX, description: `get: page length, default ${PAGE_DEFAULT}` },
+      attachment: { type: "string", description: "get: one media locator the previous get listed, such as inline:0 or tool:0" },
     },
     required: ["operation"],
     additionalProperties: false,
