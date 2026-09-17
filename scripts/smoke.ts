@@ -294,6 +294,8 @@ import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
+// round 10: the file tools as MiMo's engine runs them.
+import { roundTenFileChecks } from "./smoke-round10-files"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -969,15 +971,15 @@ async function main() {
   }
 
   let stop = answer("reject")
-  const denied = await findTool("list")!
-    .execute({ path: outsideRoot }, context("c-esc1"))
+  const denied = await findTool("read")!
+    .execute({ file_path: outsideRoot }, context("c-esc1"))
     .then(() => undefined, (error: unknown) => error)
   stop()
   check("an outside path asks, and a refusal is honoured", denied instanceof PermissionDenied, denied)
 
   stop = answer("always")
-  const granted = await findTool("list")!
-    .execute({ path: outsideRoot }, context("c-esc2"))
+  const granted = await findTool("read")!
+    .execute({ file_path: outsideRoot }, context("c-esc2"))
     .then((result) => result, (error: unknown) => error)
   stop()
   check("approving lets the tool through", typeof (granted as { output?: string })?.output === "string", granted)
@@ -1001,8 +1003,8 @@ async function main() {
   // A directory nothing has approved: `outsideRoot` carries the "always" from
   // above, and would answer for itself whatever the setting said.
   const unseen = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-outside1-"))
-  const running = findTool("list")!
-    .execute({ path: unseen }, context("c-esc4"))
+  const running = findTool("read")!
+    .execute({ file_path: unseen }, context("c-esc4"))
     .then((result) => result, (error: unknown) => error)
   /*
    * If a prompt goes up, this answers it so the tool settles and the run moves
@@ -1050,8 +1052,8 @@ async function main() {
   await backend.runtime.config.set({ autoApprove: [] })
   const untouched = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-outside2-"))
   const asksAgain = answer("reject")
-  const blocked = await findTool("list")!
-    .execute({ path: untouched }, context("c-esc5"))
+  const blocked = await findTool("read")!
+    .execute({ file_path: untouched }, context("c-esc5"))
     .then(() => undefined, (error: unknown) => error)
   asksAgain()
   check("turning it off restores the prompt", blocked instanceof PermissionDenied, blocked)
@@ -1069,7 +1071,7 @@ async function main() {
     grep.output,
   )
 
-  // E2: matched as ripgrep matches for MiMo - a name glob at any depth, hidden files searched, .git and ignored files not.
+  // E2: matched as ripgrep matches for MiMo - a name glob at any depth, hidden files searched, .git and ignored folders not.
   {
     const tree = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-glob-"))
     const put = async (rel: string, text: string) => {
@@ -1097,7 +1099,8 @@ async function main() {
     const anchored = posix((await findTool("glob")!.execute({ pattern: "src/*.ts" }, inTree("g-e2-3"))).output)
     check("a glob with a slash is anchored to the folder searched", anchored.includes("src/app.ts") && !anchored.includes("inner.ts"), anchored)
     const logs = posix((await findTool("glob")!.execute({ pattern: "*.log" }, inTree("g-e2-4"))).output)
-    check("an ignore rule can be negated", logs.includes("keep.log") && !logs.includes("debug.log"), logs)
+    // T10-10: ripgrep's --glob outranks .gitignore, so a pattern naming an ignored file finds it.
+    check("a pattern that names ignored files finds them, as ripgrep's --glob does", logs.includes("keep.log") && logs.includes("debug.log"), logs)
     const found = posix((await findTool("grep")!.execute({ pattern: "needle", include: "*.ts" }, inTree("g-e2-5"))).output)
     check(
       "grep's include matches at any depth and skips ignored files",
@@ -1389,8 +1392,8 @@ async function main() {
     await fs.rm(outputsDir, { recursive: true, force: true })
   }
 
-  const list = await findTool("list")!.execute({}, context("c4"))
-  check("list renders a tree", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
+  const list = await findTool("read")!.execute({ file_path: "." }, context("c4"))
+  check("read of the project folder lists what is in it", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
 
   const taskless = await findTool("task")!
     .execute({ action: "create", summary: "Write the thing" }, context("c5"))
@@ -1647,7 +1650,7 @@ async function main() {
     const foreground = command("s-child", "c-bg-5", { subject: "rm y", patterns: ["rm y"], always: [], forced: true })
     check("a subagent running in the foreground asks as a conversation does", (await outcome(bg, foreground, "c-bg-5")) === "asked")
 
-    check("E38: an explore subagent gets read, glob, grep, list, bash and webfetch only", toolsFor("explore").map((tool) => tool.name).sort().join() === "bash,glob,grep,list,read,webfetch", toolsFor("explore").map((tool) => tool.name))
+    check("E38: an explore subagent gets read, glob, grep, bash and webfetch only", toolsFor("explore").map((tool) => tool.name).sort().join() === "bash,glob,grep,read,webfetch", toolsFor("explore").map((tool) => tool.name))
 
     const stallTimes = { ...STALL }
     Object.assign(STALL, { headerMs: 300, chunkMs: 300 })
@@ -6940,6 +6943,7 @@ async function main() {
   await roundNineWindowsChecks(check, section)
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
+  await roundTenFileChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
