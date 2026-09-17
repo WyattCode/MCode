@@ -308,7 +308,7 @@
   - git 照 MiMo：推送固定到 origin 同名分支；工作树 / 子目录对话归入主仓库项目；删掉新建 / 切换 / 删除工作区三条命令；补合并冲突提醒与内置 worktree / merge 技能（文字自写）；提交也设 15 秒超时；撤销按文件所在仓库，含项目外文件。
   - 步骤：插话照 26.914 切成「上一回合 + 普通提问 + 新回合」；步骤脱敏直播和重载都做（超出对标）；加「i」提示行；长串折行照 MiMo（先截图实测）；阿拉伯语补双数复数。
   - 按 MiMo 就近定的：定时任务目标限当前对话或侧栏里未归档、非子智能体的对话（MCode 没有置顶对话），找不到时记 skipped；发起方停止时撤回排队的跨对话消息、pdf_locate 接受相对路径照 MiMo；同步跨对话等满时转异步保持现状（有意差异）。
-- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建。
+- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
 - **第十轮·智能体类工具（`r10-part-C.md` 与对应 T10 项）已完成**，检查在 `scripts/smoke-round10-agents.ts`（118 项，每项都在改坏代码后确认会失败）：
   - T10-16：带有效 `task_id` 启动的子智能体先把该任务开始并归到自己名下；general 子智能体结束时若手里还有未开始 / 进行中的任务，用隐藏提醒（`synthetic`）最多再跑 2 轮；仍持有未完成任务时状态降为 partial（只剩 blocked 时为 blocked），答复末尾列出「**Unfinished tasks**」，闸门那一轮出错时保留之前的答复并降为 partial。子智能体记录新增 `subagent.reported`。
   - T10-44：`<actor_result>` 总带 status（无状态头为 unknown）和 summary 属性；被外部停止的 run 返回 cancelled 结果（随父回合 Stop 的仍是中断）；失败带 Partial result；status / wait 字段改为 `agent / turnCount / lastTurnTime / lastOutcome / time`，wait 带 `reportedStatus / reportedSummary`；failed / blocked 的通知写「finished and reported …」。子智能体的 worker 在结果落盘后才释放（修掉 wait 偶发读不到 lastOutcome）。
