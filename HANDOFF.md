@@ -409,7 +409,23 @@
 **第十一轮对照（2026-09-18 起）：进行中。** 三个没用过的只读角度：**输入到回合之间的全部路径**（输入法、粘贴与超大文本、拖放、附件、提及与芯片、发送时机、语音，`round11-composer.md`）、**并发与长期运行**（多回合同时跑、共享资源与锁、后端重启与断网、内存与句柄增长、超大对话与仓库，`round11-concurrency.md`）、**模型回复的解析**（流式事件、工具参数分片与损坏、推理块、重试与续流、用量与中止，`round11-stream.md`）。
 - 排查结果：输入路径 52 项（高 3）、并发与长期运行 41 项（高 7）、回复解析 17 项（高 2）。更正两条旧结论：MiMo 的引擎同样在主进程里（只隔了一层本机 HTTP），真正搬出主线程的只有 SQLite（每库一个 worker）；MiMo 26.914 与 26.912 的 @ 提及都是**后端项目级搜索**，第五轮 L7 据错误判读改成了本地过滤。另发现 MCode 有 7 个源文件含裸 NUL，约 900 行对 ripgrep 不可见——前十轮所有基于 rg 的检索都有这个盲区。
 - **用户 2026-09-18 第十一轮决定**：附件完全照 MiMo（只内联图片，其余走三段 `[Attachments]` 系统块，不再内联文本、不再直送 PDF / 音视频字节）；回滚 L7、@ 提及改回后端搜索；语音改分段转写；附件胶囊改图标、去掉「内置技能」标签、只有附件时照抄 MiMo 文案；输入框撤销 / 重做保留为「比 MiMo 好」。并发：定时任务做完整队列与租约、消息广播改增量、界面搜索走 FTS、SQLite 进 worker 线程、面板与抽屉终端各用自己的 pty、同仓 git 写操作排队、MCP 当前会话按会话区分、子智能体并发闸门；限流最多等 30 分钟并给倒计时与「不等了」。推理**完全照 MiMo**：请求里要思考（界面仍不画，只用于「只思考没回答」判定），Responses 通道索取并回传加密思考（密文存进对话记录）。
-- 进行中：回复解析、并发与长期运行、输入路径三路构建。
+- 进行中：并发与长期运行、输入路径两路构建。
+- **回复解析（`round11-stream.md` S11-1 … S11-17）已全部完成并验证。** 最终：十三项检查全过，build 通过，smoke **4020 全过**（新增 73 条，`scripts/smoke-round11-stream.ts`，全部服务器都是本地起的假 SSE，没有调用任何真实服务商）；探针 `mcode-round11-stream.cjs` 6 项全过，回归 `mcode-round3-stream` 34 项、`mcode-round8-model` 9 项全过。逐项：
+  - **S11-1 / S11-2**（`provider/anthropic.ts` 新增 `anthropicStop`）：停止原因与工具调用不再互相覆盖。原来顺序是 `refusal → max_tokens → 工具`，于是"边写工具参数边撞输出上限"返回 `max_tokens`，回合走进"没有工具要跑"的分支，`continuationFor` 看见消息里有 tool part 又直接返回 `{}`，那次已经宣告的调用永远停在 `pending`，界面只剩一张"输出超长"卡片。现在照 MiMo `mapAnthropicStopReason`：工具优先，`finishReason` 仍带着服务商自己的词。`model_context_window_exceeded` 并入 `max_tokens`（它是 stop_reason 不是错误正文，`overflow.ts` 的正则够不着，原来落到 `end_turn`）。
+  - **S11-3**（`session/retry.ts`）：200 流里的错误帧按 `code || type` 分档，`overloaded_error` / `server_is_overloaded` / `server_error` → `server`（八次 / 十五分钟）。这类帧没有 HTTP 状态，原来 `retryKind` 全部落空、一次就红。`insufficient_quota` / `usage_not_included` / `invalid_prompt` 显式列为不重试（**注**：实测它们本来也不匹配下面任何分支，这行是守卫，注释里写明了）。
+  - **S11-4 / S11-5**（新文件 `provider/sse.ts`，两条线共用）：按规范——空行派发、多行 data 以换行拼接、`:` 注释不是事件、`field:value` 与 `field: value` 同义（只吃一个空格）、`\r` / `\n` / `\r\n` 都是行尾、结束时冲洗解码器、**尾部没有换行的最后一帧不再丢**（往往正是带 `usage` / `finish_reason` 的那帧）。`onRead` 在**每次 `reader.read()` 返回时、解析之前**调用，静默计时器挂在它上面（MiMo `wrapSSE` 的口径），于是 OpenRouter 的 `: PROCESSING` 注释和 ping 都算"活着"。**实测更正报告一条**：BOM 其实由 `TextDecoder`（`ignoreBOM` 默认 false）吃掉，显式剥离是死代码，已删；相应检查改为守住"BOM 不会吃掉第一个事件"这个行为本身。按模型覆盖超时（MiMo 的 `chunkTimeout` / `headerTimeout`）属于设置，按报告建议不做。
+  - **S11-6 / S11-8**（`provider/chatgpt.ts`）：`response.incomplete` 改读 `incomplete_details.reason`——`content_filter` 是 refusal、`max_output_tokens` 才是输出到顶。原来一律当输出超长，于是被内容过滤拦下的回复顶着"输出超长"卡片，`continuationFor` 还照 `LENGTH_NOTE` 让模型"从中断处接着写"。同时补上 `finishReason`（incomplete 原因 / `tool_calls` / `response.status`），`reminders.ts` 的"把工具调用写成正文"和 runner 的内容过滤文案这才能在这条线上生效。
+  - **S11-7（用户定：照 MiMo）**：请求加 `include: ["reasoning.encrypted_content"]`；`response.output_item.done` 的 reasoning item 把密文与 item id 存进 ReasoningPart（复用 `signature`，新增 `itemID`）；`toInput` 在同一会话同一模型里按原顺序回传，并照 MiMo 在 `store: false` 时**丢掉没有密文的 reasoning item**。没有摘要文字的 item 也会开一个空的 ReasoningPart 只用来放密文——它 `text` 为空，所以不会被 `thinkOnly()` 误判（探针专门验了这条）。
+  - **S11-9**（`provider/openai.ts` `usageOf`）：`completion_tokens_details.reasoning_tokens` 对**所有** OpenAI 兼容服务商都读（DeepSeek / GLM / Qwen / MiniMax 都报）。费用不变（推理与输出同价），但上下文用量卡"不计推理 token"（I20）这才对它们真正生效。`cache_write_tokens` 仍只有 OpenRouter 报，保持只对它读。
+  - **S11-10 / S11-16（用户定：完全照 MiMo）**：`TurnRequest.showReasoning` 整个删掉（五个调用点全传 false，等于死设置）。Anthropic `display` 固定 `summarized`（原来是 `omitted`，服务端根本不发思考块）、Responses `summary` 固定 `auto`、chat-completions 的推理增量无条件保留。**界面照旧一点思考都不画**（`turn-end.ts` 的 `stepPart` 把 reasoning 清空，模板也只画 text 行——探针把两处都改坏才画得出来）。有了思考，C17 的"只思考没回答"卡片和 `reminders.ts` 里"GPT 只输出思考算 final"这两条规则才真正可达。循环监视同时吃正文与思考增量（MiMo 的 `checkTextNgram` 在两个分支里都调）。
+  - **S11-11**（两个适配器 + `session/runner.ts`）：中断落在两次读之间时，读取器是干净结束而不是抛错，于是半截拼出来的工具调用被当成正常结果派发出去。两个适配器在循环后补上 Anthropic 那条一直都有的 `if (signal.aborted) throw AbortError`；回合循环在派发工具前再加一道闸（MiMo 碰不到这个竞态——它的工具在流里执行，流一断就停）。
+  - **S11-12**（`session/reminders.ts`）：`function_call` 与 `tool_calls` / `tool_use` 并列成 `TOOL_FINISH`（自建网关、旧版 vLLM / FastChat 还在用这个收尾词）。
+  - **S11-13**（`tool/repair.ts`）：新增 `repairUnicodeEscapes`（MiMo `parseToolInput` 的等价物，自己写的实现）与共用的 `parseToolArguments`，两个适配器各自那份"只 `JSON.parse` 一次"的解析删掉。带中文 / emoji 的路径最容易把 `\u` 写坏。
+  - **S11-14**（`shared/models-dev.ts` / `provider/catalog.ts` / `config.ts` / `session/usage.ts`）：models.dev 的 `cost.context_over_200k` 原来在 `trimCatalog` 就被裁掉了；现在读进 `ModelEntry.over200K`，`costOf` 在 `input + cacheRead > 200_000` 时整步换用长上下文单价（MiMo `getUsage`）。Claude 这类过线翻倍的模型，长会话费用原来系统性偏低。**注**：仓库里 `resources/models-snapshot.json` 是旧口径生成的、没有这个字段，本轮不联网所以没有重新生成；线上目录一拉下来就会带上。
+  - **S11-15**（`retry.ts` + `runner.ts`）：记一个"这次尝试有没有拿到过事件"的标志（MiMo 的 `hasProviderOutput`），没拿到就用 `RETRY_BUDGETS.request` 的等待曲线（200ms 起、翻倍），档位判定与次数上限仍按失败种类。
+  - **S11-17 记为「与 MiMo 故意不同」**（见下方那张表）：不改。
+  - 约定补充：新探针 `mcode-round11-stream.cjs`（丢弃式配置，不调用模型，把回合直接放进 store）。**一个 verdict 如果只是把探针自己塞进去的数据读回来，就永远不会失败**——这次把 `reasoningKept` / `cipherKept` 两条从 verdict 里拿掉、只留在 `state` 里，"回传"改由 smoke 验。另外"完成的回合会把前面的行折叠到回合头后面"，所以验"没画出来"必须把 `[data-turn-head][aria-expanded]` 全部点开再看一次，否则折叠视图本身就让检查恒过。
+  - 未做：LAN 模型端到端实测（`192.168.10.212:8888` 本轮不可达，连接超时）。
 
 用户决定不做（不要再主动提）：
 
@@ -431,6 +447,7 @@
 - 自定义表单保留「接口协议」（OpenAI / Anthropic）选项（MiMo 新建自定义只能是 OpenAI 兼容，P9-7）。
 - 步骤内容脱敏直播和重载都做（MiMo 只在重载后做，第十轮 K10-5）；阿拉伯语的步骤箭头镜像与方向隔离是 MCode 自有（MiMo 没有 RTL）。
 - 保留 ChatGPT Pro/Plus 订阅登录（MiMo 桌面只有小米账号登录，P9-11）；入口在连接弹窗（模型菜单 / 命令面板打开的那个），设置页快速添加里没有。
+- chat-completions 请求无条件发 `stream_options: {include_usage: true}`（第十一轮 S11-17）。MiMo 只在配置里给了 `includeUsage` 时才发，而它的通用 OpenAI 兼容服务商没有设——也就是说 **MiMo 在自建模型上根本拿不到用量**。MCode 一直发，用量卡对自建模型才有数；代价是个别严格校验未知字段的服务端可能 400。日后真有服务商报错，再做成自定义服务商表单上的开关，不要直接删掉。
 
 ## 本会话完成的轮次（新到旧）
 
