@@ -370,7 +370,6 @@
   - 未做 / 留意：L24（Linux 自绘窗口按钮）、L25（mac 自绘红绿灯，含 `Sidebar.vue` `.top.mac` 全屏仍留 65px）、L26（AppImage 桌面入口）、L27 仍待实机与决定；`prompts.ts` 里「Windows 上 shell 是 PowerShell」的说明在默认 shell 退到 git bash 时不准确，未改。
 - **第十轮第一批已合并四路**（bash 与网页、文件工具与桌面工具包、git、步骤绘制；合并冲突只在 smoke.ts / HANDOFF / bash.ts 的 import，两边都保留，typecheck 与 i18ncheck 通过）。智能体类工具那一路与文件工具那一路都做了定时任务（T10-20/21/22/51/52/53）和跨对话中文文案（T10-49/55），合并冲突落在 automation 与 session-chat 代码里，已交回该路在自己分支上合并最新 v2.0、每项只留一套实现。T10-50：审计称 MiMo 发起方停止时**不**撤回排队消息，MCode 目前撤回，待问用户。
 - **用户 2026-09-17 第十轮第二批决定**：斜杠菜单照 MiMo 列出并实现 `/init`、`/review`、`/dream`、`/distill`、`/rebuild`（文字自写）；记忆完全照 MiMo 按仓库分份、非 git 文件夹共用一份（迁移时合并、不删、留备份）；技能详情弹窗与「卸载」照 MiMo；macOS 留边距图标与 Linux 图标同步照做。**暂不做**：M10-7 Mac 签名 / 公证 / 架构、M10-8 Mac 自动更新、M10-21 Mac / Linux 随包运行时、M10-22 deb、M10-27（Linux 无托盘时保持 MiMo 行为）。
-- 进行中：macOS / Linux 一路（M10-1 登录网址经 shell 打开的注入问题优先）。
 - **第十轮·智能体类工具（`r10-part-C.md` 与对应 T10 项）已完成**，检查在 `scripts/smoke-round10-agents.ts`（每项都在改坏代码后确认会失败）：
   - T10-16：带有效 `task_id` 启动的子智能体先把该任务开始并归到自己名下；general 子智能体结束时若手里还有未开始 / 进行中的任务，用隐藏提醒（`synthetic`）最多再跑 2 轮；仍持有未完成任务时状态降为 partial（只剩 blocked 时为 blocked），答复末尾列出「**Unfinished tasks**」，闸门那一轮出错时保留之前的答复并降为 partial。子智能体记录新增 `subagent.reported`。
   - T10-44：`<actor_result>` 总带 status（无状态头为 unknown）和 summary 属性；被外部停止的 run 返回 cancelled 结果（随父回合 Stop 的仍是中断）；失败带 Partial result；status / wait 字段改为 `agent / turnCount / lastTurnTime / lastOutcome / time`，wait 带 `reportedStatus / reportedSummary`；failed / blocked 的通知写「finished and reported …」。子智能体的 worker 在结果落盘后才释放（修掉 wait 偶发读不到 lastOutcome）。
@@ -401,6 +400,8 @@
   - R10-4 斜杠菜单只按名称、逐词前缀匹配（与设置搜索同一 `wordMatch`）；加号菜单的技能子菜单核实过 MiMo 就是名称 + 说明子串匹配，未改。R10-14 frontmatter 解析失败的 SKILL.md 每个文件报一次错误吐司（修好再坏会再报），缺 name / description 的只写日志。
   - 合并 v2.0 时修的：`run()` 的 planning 要从存储里的会话读（否则命令指定 plan 的回合第一步就被切回 build）。十三项检查、build 全过，smoke 全量 3755 全过（round9-providers 的「Smart 路由记为后台开销」有一次偶发失败，单独跑和整体重跑都通过）。
   - 未做：LAN 模型实测 /dream、/distill（可选，未跑）。
+- **第十轮全部合并**（智能体类工具在自己分支合并 v2.0 后无冲突合回；记忆 / 技能 / 斜杠、macOS / Linux 两路合并只在 smoke.ts 冲突）。T10-50 用户定为照 MiMo **不撤回**（已改）。「插件」页入口：用户先选恢复、随即改为「继续隐藏」——技能开关与详情卡在界面上点不到，停用技能只能手改 `disabledSkills`（有意差异）。合并后 round8 安全的 PowerShell 环境变量检查因 bash 工具改为照 MiMo 优先 `$SHELL`（从 Git Bash 跑 smoke 时交给了 bash）而失败，已让该检查固定用 PowerShell（72f6423）。
+- 全量验证（b8b77d3）：十三项检查全过，build 通过，smoke **3943 全过**。29 个探针里 21 个直接通过；待核对：round10-memory 技能三项（插件页入口隐藏）、round10-platforms 两个（NO JSON，需参数）、round9-windows W4、round8-a11y M（去掉空卡是预期，另有 5 处 1.7px 与 text-align 来源不明）、round8-narrow F、round5-keys R24（Alt+T）、slash-menu 两项、search 两项、round4-subagents（5 次里 1 次整轮失败）。已派一路核对。
 
 用户决定不做（不要再主动提）：
 
