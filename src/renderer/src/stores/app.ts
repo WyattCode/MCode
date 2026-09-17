@@ -28,6 +28,7 @@ import { notice, notify, notifyFailure } from "../lib/toast"
 import { findModel, withoutLatest } from "../lib/model"
 import { noteRunEnded, noteToolWrites } from "../lib/ai-touch"
 import { endOfficeWatches } from "../lib/annotation-fx"
+import { noteDeliveryTurnEnded, noteDeliveryUpdate } from "../lib/delivered"
 import { readLegacyMessage } from "@shared/subagent"
 import { isScheduledPrompt } from "@shared/scheduled"
 import { returnFileNotices, takeFileNotices } from "../lib/file-notices"
@@ -540,6 +541,8 @@ export const useApp = defineStore("app", () => {
             running.value = new Set(running.value).add(message.sessionID)
           }
         }
+        // MiMo's present_files and pdf_locate opens, for every conversation, on show or not.
+        noteDeliveryUpdate(event.message)
         noteToolWrites(
           event.message,
           (sessions.value.find((session) => session.id === event.message.sessionID) ?? sideSessions.value.find((session) => session.id === event.message.sessionID))?.directory,
@@ -615,6 +618,7 @@ export const useApp = defineStore("app", () => {
           break
         }
         noteRunEnded(event.sessionID)
+        noteDeliveryTurnEnded(event.sessionID)
         endOfficeWatches(event.sessionID)
         running.value.delete(event.sessionID)
         const began = turnStarted.get(event.sessionID)

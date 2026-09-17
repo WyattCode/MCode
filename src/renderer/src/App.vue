@@ -26,6 +26,7 @@ import ImagePreview from "./components/ImagePreview.vue"
 import LiveEditPill from "./components/LiveEditPill.vue"
 import { fileRequest, reviewRequest } from "./lib/review-request"
 import { foldedMatches } from "./lib/find-folded"
+import { deliveryShown, setDeliveryView } from "./lib/delivered"
 import { imagePreview, videoPreview } from "./lib/image-preview"
 import VideoPreview from "./components/VideoPreview.vue"
 import RenameDialog from "./components/RenameDialog.vue"
@@ -1036,6 +1037,21 @@ watch(
   (scope) => rp.setScope(scope),
   { immediate: true },
 )
+/*
+ * MiMo's automatic opens (lib/delivered): a conversation is on show when it is
+ * the one in the middle of its conversation view, or the side chat tab open in
+ * the panel. An open held for one runs when it comes on show.
+ */
+setDeliveryView({
+  shown: (sessionID) =>
+    (!isHome.value && !isArtifacts.value && !isPlugins.value && app.currentID === sessionID) ||
+    (rp.open && rp.activeTab?.type === "chat" && rp.activeTab.convoId === sessionID),
+  directory: (sessionID) => (app.sessions.find((session) => session.id === sessionID) ?? app.sideSessionOf(sessionID))?.directory ?? app.current?.directory,
+})
+watch([() => (isHome.value || isArtifacts.value || isPlugins.value ? undefined : app.currentID)], ([shown]) => deliveryShown(shown))
+watch([() => rp.open, () => rp.activeTab], ([open, tab]) => {
+  if (open && tab?.type === "chat") deliveryShown(tab.convoId)
+})
 /* MiMo puts both the panel and the terminal away on its own pages. */
 watch([isArtifacts, isPlugins], ([artifacts, plugins]) => {
   if (artifacts || plugins) {
