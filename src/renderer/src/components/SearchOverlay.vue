@@ -5,6 +5,7 @@ import { useApp } from "../stores/app"
 import { sessionTitle, t } from "../lib/i18n"
 import { projectName } from "../lib/project"
 import { projectOf } from "../lib/session-project"
+import { scoreMatch } from "@shared/search-score"
 
 /**
  * MiMo's search: one field over conversations, projects and what they made.
@@ -59,27 +60,8 @@ interface Item {
 const RECENT = 50
 const plain = (text: string): Span => ({ text, ranges: [] })
 
-/**
- * Where the query occurs: as typed, anywhere in the text; failing that, each of
- * its letters in order. A match as typed always ranks above a scattered one.
- */
-function match(text: string, needle: string): { score: number; ranges: Span["ranges"] } | undefined {
-  const hay = text.toLowerCase()
-  const at = hay.indexOf(needle)
-  if (at >= 0) return { score: 1000 - at, ranges: [{ start: at, end: at + needle.length }] }
-  const ranges: Span["ranges"] = []
-  let from = 0
-  for (const char of needle) {
-    if (char === " ") continue
-    const found = hay.indexOf(char, from)
-    if (found < 0) return undefined
-    const last = ranges[ranges.length - 1]
-    if (last && last.end === found) last.end = found + 1
-    else ranges.push({ start: found, end: found + 1 })
-    from = found + 1
-  }
-  return { score: 100 - ranges.length * 10, ranges }
-}
+/* MiMo's scoring, shared with the backend's message search so both land on one scale. */
+const match = scoreMatch
 
 const visible = computed(() => {
   const closed = new Set(app.config?.closedProjects ?? [])
@@ -127,7 +109,8 @@ const items = computed<Item[]>(() => {
       title: titled ? { text: title, ranges: titled.ranges } : plain(title),
       meta: owner(session),
       snippet,
-      score: (titled ? titled.score + 300 : 600) + bonus,
+      // MiMo: a title match gains 300 over its own score; a conversation found only by what was said scores as that message did.
+      score: (titled ? titled.score + 300 : hit!.score) + bonus,
       time: session.updated,
     })
   }
@@ -143,9 +126,11 @@ const items = computed<Item[]>(() => {
     const named = match(name, needle)
     if (named) {
       found.push({ kind: "project", id: directory, target: directory, title: { text: name, ranges: named.ranges }, meta: directory, score: named.score + 200, time })
-    } else if (directory.toLowerCase().includes(needle)) {
-      found.push({ kind: "project", id: directory, target: directory, title: plain(name), meta: directory, score: 0, time })
+      continue
     }
+    // A project found by its path ranks 100 under what the path match scored, as MiMo ranks it.
+    const pathed = match(directory, needle)
+    if (pathed) found.push({ kind: "project", id: directory, target: directory, title: plain(name), meta: directory, score: pathed.score - 100, time })
   }
 
   const shown = new Set(visible.value.map((session) => session.id))
