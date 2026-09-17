@@ -116,7 +116,9 @@ export async function roundTenBashChecks(check: Check, section: (name: string) =
       "big.cjs",
       `const lines = []; for (let n = 0; n < 3000; n++) lines.push(${JSON.stringify(big)}.replace("{n}", n));
        const all = Buffer.from(lines.join(""), "utf8");
-       let at = 0; const next = () => { if (at >= all.length) return; process.stdout.write(all.subarray(at, at + 1000), () => setTimeout(next, 2)); at += 1000 }; next()`,
+       // The first write ends inside the first character, and the rest waits until the reader has had it.
+       process.stdout.write(all.subarray(0, 1)); let at = 1;
+       const next = () => { if (at >= all.length) return; process.stdout.write(all.subarray(at, at + 1000), () => setTimeout(next, 2)); at += 1000 }; setTimeout(next, 150)`,
     )
     const expected = Array.from({ length: 3000 }, (_, n) => big.replace("{n}", String(n))).join("")
     const previews: string[] = []
