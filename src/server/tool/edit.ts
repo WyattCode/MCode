@@ -50,13 +50,101 @@ function* whitespaceNormalized(content: string, find: string): Generator<string>
   }
 }
 
+const trimmedLines = (text: string) => {
+  const lines = text.split("\n").map((line) => line.trim())
+  if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop()
+  return lines
+}
+
+/**
+ * Blocks that start and end on the quoted first and last lines, whatever came
+ * between: the one whose middle agrees most with the quote, when there are several.
+ */
+function* blockAnchor(content: string, find: string): Generator<string> {
+  const wanted = trimmedLines(find)
+  if (wanted.length < 3) return
+  const lines = content.split("\n")
+  const first = wanted[0]!
+  const last = wanted[wanted.length - 1]!
+  const middle = wanted.slice(1, -1)
+  const candidates: { block: string; score: number }[] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i]!.trim() !== first) continue
+    for (let j = i + 2; j < lines.length; j++) {
+      if (lines[j]!.trim() !== last) continue
+      const between = lines.slice(i + 1, j).map((line) => line.trim())
+      const shared = middle.filter((line) => between.includes(line)).length
+      candidates.push({ block: lines.slice(i, j + 1).join("\n"), score: middle.length ? shared / Math.max(middle.length, between.length) : 1 })
+      break
+    }
+  }
+  if (candidates.length === 1) yield candidates[0]!.block
+  else {
+    const best = candidates.sort((a, b) => b.score - a.score)[0]
+    if (best && best.score >= 0.3) yield best.block
+  }
+}
+
+/** Blocks that match once each side's common indentation is taken off. */
+function* indentationFlexible(content: string, find: string): Generator<string> {
+  const outdent = (text: string) => {
+    const lines = text.split("\n")
+    const depth = Math.min(...lines.filter((line) => line.trim()).map((line) => /^[ \t]*/.exec(line)![0].length))
+    return lines.map((line) => (line.trim() ? line.slice(Number.isFinite(depth) ? depth : 0) : "")).join("\n")
+  }
+  const wanted = find.replace(/\n$/, "")
+  const target = outdent(wanted)
+  const lines = content.split("\n")
+  const size = wanted.split("\n").length
+  for (let i = 0; i + size <= lines.length; i++) {
+    const block = lines.slice(i, i + size).join("\n")
+    if (outdent(block) === target) yield block
+  }
+}
+
+/** The quote without the blank space around it. */
+function* trimmedBoundary(content: string, find: string): Generator<string> {
+  const trimmed = find.trim()
+  if (!trimmed || trimmed === find) return
+  if (content.includes(trimmed)) yield trimmed
+  const lines = content.split("\n")
+  const size = find.split("\n").length
+  for (let i = 0; i + size <= lines.length; i++) {
+    const block = lines.slice(i, i + size).join("\n")
+    if (block.trim() === trimmed) yield block
+  }
+}
+
+const UNESCAPED: Record<string, string> = { n: "\n", t: "\t", r: "\r", "\n": "\n" }
+
+/** The quote with the escapes a model writes when it means the characters (`\n`, `\t`, `\"`) read as those characters. */
+function* escapeNormalized(content: string, find: string): Generator<string> {
+  const plain = find.replace(/\\(n|t|r|'|"|`|\\|\n|\$)/g, (_, char: string) => UNESCAPED[char] ?? char)
+  if (plain !== find && content.includes(plain)) yield plain
+}
+
+/** Blocks of the quote's length anchored on its first and last lines, with at least half the lines between agreeing. */
+function* contextAware(content: string, find: string): Generator<string> {
+  const wanted = trimmedLines(find)
+  if (wanted.length < 3) return
+  const lines = content.split("\n")
+  for (let i = 0; i + wanted.length <= lines.length; i++) {
+    const block = lines.slice(i, i + wanted.length)
+    if (block[0]!.trim() !== wanted[0] || block[block.length - 1]!.trim() !== wanted[wanted.length - 1]) continue
+    const middle = wanted.slice(1, -1).map((line, at) => [line, block[at + 1]!.trim()] as const).filter(([line]) => line)
+    const agreeing = middle.filter(([line, found]) => line === found).length
+    if (!middle.length || agreeing / middle.length >= 0.5) yield block.join("\n")
+  }
+}
+
 /**
  * The text in the file an edit most likely meant, for the error that says it
  * was not found - MiMo points the model at it so the retry quotes the file as
- * it is. Only the hint is loose; the replacement itself stays exact.
+ * it is. Only the hint is loose; the replacement itself stays exact. The
+ * matchers are tried in MiMo's order.
  */
 export function closestMatch(content: string, find: string): string | undefined {
-  for (const matcher of [lineTrimmed, whitespaceNormalized]) {
+  for (const matcher of [lineTrimmed, blockAnchor, indentationFlexible, whitespaceNormalized, trimmedBoundary, escapeNormalized, contextAware]) {
     for (const match of matcher(content, find)) {
       if (match && match !== find && content.includes(match)) return match
     }
@@ -106,6 +194,38 @@ function replaceIn(original: string, change: Change, ending: "\r\n" | "\n", disp
   return { updated, occurrences }
 }
 
+/**
+ * What a file holds now, or undefined when there is no file there at all.
+ *
+ * Only a path that does not exist is a new file (T10-31). A folder, a file this
+ * app may not read or anything else that fails is said before anyone is asked
+ * to approve a "new" file - approving one used to end in a crash, or in a file
+ * that could be written but not read being overwritten unseen.
+ */
+async function currentText(target: string, display: string): Promise<string | undefined> {
+  try {
+    if ((await fs.stat(target)).isDirectory()) throw new ToolError(`${display} is a folder, not a file`)
+    return await fs.readFile(target, "utf8")
+  } catch (error) {
+    if (error instanceof ToolError) throw error
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === "ENOENT") {
+      // Windows says ENOENT for a path that runs through a file; that is no place for a new one.
+      for (let parent = path.dirname(target); parent !== path.dirname(parent); parent = path.dirname(parent)) {
+        const stat = await fs.stat(parent).catch(() => undefined)
+        if (!stat) continue
+        if (!stat.isDirectory()) throw new ToolError(`${display} could not be read (${path.basename(parent)} is a file, not a folder), so it was not changed.`)
+        break
+      }
+      return undefined
+    }
+    if (code === "EACCES" || code === "EPERM") {
+      throw new ToolError(`Permission denied: ${display} exists but this app is not allowed to read it, so it was not changed.`, "error.readDenied", { path: display })
+    }
+    throw new ToolError(`${display} could not be read (${code ?? (error as Error).message}), so it was not changed.`)
+  }
+}
+
 export const WriteTool: ToolDefinition = {
   name: "write",
   description: [
@@ -141,7 +261,7 @@ export const WriteTool: ToolDefinition = {
     const content = String(input.content)
 
     return locked(target, async () => {
-      const previous = await fs.readFile(target, "utf8").catch(() => undefined)
+      const previous = await currentText(target, display)
       const diff = unifiedDiff(display, previous ?? "", content)
 
       // memory: memory files are written without asking, as MiMo does.
@@ -229,7 +349,7 @@ export const EditTool: ToolDefinition = {
 
       // MiMo's edit with nothing to find writes the whole file.
       if (oldString === "") {
-        const previous = await fs.readFile(target, "utf8").catch(() => undefined)
+        const previous = await currentText(target, display)
         const diff = unifiedDiff(display, previous ?? "", newString)
         await ask(diff)
         await context.snapshot(target)

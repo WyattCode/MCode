@@ -290,6 +290,56 @@ export async function roundTenFileChecks(check: Check, section: (name: string) =
     }
   }
 
+  // ------------------------------------------------------------ T10-30, T10-31, T10-32
+  section("Round 10 (T10-30, T10-31, T10-32): notebooks with a BOM, reads that fail before a write, closer hints")
+  {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r10-edit-"))
+    try {
+      const notebook = { cells: [{ id: "abc", cell_type: "code", source: ["x = 1"], metadata: {}, outputs: [], execution_count: null }], metadata: {}, nbformat: 4, nbformat_minor: 5 }
+      await put(base, "nb.ipynb", `\uFEFF${JSON.stringify(notebook, null, 1)}\n`)
+      const asked: string[] = []
+      const at = toolContext(base, { permissions: { allowsOutside: () => true, ask: async (request: { title?: string }) => void asked.push(String(request.title)) } as never })
+      const edited = await runTool("notebook_edit", { notebook_path: "nb.ipynb", cell_id: "abc", new_source: "x = 2" }, at)
+      const written = await fs.readFile(path.join(base, "nb.ipynb"), "utf8")
+      check("a notebook that starts with a byte-order mark is edited, not refused as bad JSON", !edited.error && written.includes('"x = 2"'), edited)
+      check("and keeps its mark", written.startsWith("\uFEFF") && JSON.stringify(JSON.parse(written.slice(1)).cells[0].source).includes("x = 2"), written.slice(0, 20))
+
+      await fs.mkdir(path.join(base, "folder"))
+      asked.length = 0
+      const intoFolder = await runTool("write", { file_path: "folder", content: "x" }, at)
+      check("write to a folder is refused before anything is asked", Boolean(intoFolder.error?.includes("is a folder")) && asked.length === 0, { intoFolder, asked })
+      const editFolder = await runTool("edit", { file_path: "folder", old_string: "", new_string: "x" }, at)
+      check("so is an edit with nothing to find", Boolean(editFolder.error?.includes("is a folder")) && asked.length === 0, { editFolder, asked })
+      await put(base, "file.txt", "x")
+      const underFile = await runTool("write", { file_path: "file.txt/inner.txt", content: "x" }, at)
+      check("a path that runs through a file is an error, not a new file", Boolean(underFile.error?.includes("could not be read")) && asked.length === 0, { underFile, asked })
+      asked.length = 0
+      const fresh = await runTool("write", { file_path: "new/fresh.txt", content: "hello" }, at)
+      check("a path that does not exist is still a new file", !fresh.error && fresh.metadata?.created === true && asked.join() === "Create file", { fresh, asked })
+
+      const { closestMatch } = await import("../src/server/tool/edit")
+      const code = "function run() {\n  const a = 1\n  const b = 2\n  return a + b\n}\n"
+      check("BlockAnchor: first and last lines agree, the middle differs", closestMatch(code, "function run() {\n  const a = 10\n  return a + b\n}") === "function run() {\n  const a = 1\n  const b = 2\n  return a + b\n}")
+      check("IndentationFlexible: the whole quote is indented differently", closestMatch("class A {\n    go() {\n        x()\n    }\n}\n", "go() {\n    x()\n}") === "    go() {\n        x()\n    }")
+      check("TrimmedBoundary: blank space around the quote", closestMatch(code, "\n\n  const b = 2   \n\n") === "const b = 2")
+      check("EscapeNormalized: escapes written for the characters", closestMatch('say("hi")\nnext\n', 'say(\\"hi\\")\\nnext') === 'say("hi")\nnext')
+      check("ContextAware: anchored, most of the middle agreeing", closestMatch("a {\n  one\n  two\n  three\n}\n", "a {\n  one\n  TWO\n  three\n}") === "a {\n  one\n  two\n  three\n}")
+      const miss = await runTool("edit", { file_path: "file.txt", old_string: "nothing like it at all", new_string: "y" }, at)
+      check("and a quote like nothing in the file gets no hint", Boolean(miss.error) && !miss.error!.includes("closest text"), miss)
+    } finally {
+      await fs.rm(base, { recursive: true, force: true })
+    }
+  }
+
+  section("Round 10: an edit that creates a file counts as created in the edited-files card")
+  {
+    const { editedFiles } = await import("../src/renderer/src/lib/edited-files")
+    const diff = "--- /dev/null\n+++ b/new.ts\n@@ -0,0 +1 @@\n+x\n"
+    const part = (name: string, created: boolean) => ({ type: "tool", name, status: "completed", metadata: { diff, created } }) as never
+    check("an edit that created the file", editedFiles([part("edit", true)]).files[0]?.created === true, editedFiles([part("edit", true)]))
+    check("an edit that changed one does not", editedFiles([part("edit", false)]).files[0]?.created === false)
+  }
+
   // ------------------------------------------------------------ T10-11
   section("Round 10 (T10-11): read's folder instructions are judged from the history the request still sends")
   {

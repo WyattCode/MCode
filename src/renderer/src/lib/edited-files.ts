@@ -53,7 +53,8 @@ export function editedFiles(parts: readonly AssistantPart[], directory?: string)
       if (!section.file.trim() || !inProject(section.file, directory)) continue
       let entry = byPath.get(section.file)
       if (!entry) {
-        const created = tool.name === "write" ? tool.metadata?.created === true : tool.name === "patch" && createsFile(section)
+        // An edit with nothing to find creates the file as write does, and says so the same way.
+        const created = tool.name === "write" || tool.name === "edit" ? tool.metadata?.created === true : tool.name === "patch" && createsFile(section)
         entry = { path: section.file, add: 0, del: 0, created }
         byPath.set(section.file, entry)
       }
