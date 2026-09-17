@@ -1225,7 +1225,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
             <ChatLinkMark v-if="app.chatLinksOf(block.session.id).length" :links="app.chatLinksOf(block.session.id)" />
             <RowTitle
               class="row-label task-label"
-              v-tip="{ card: convoCard(block.session, app.config?.projectNames, app.chatLinksOf(block.session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === block.session.id }"
+              v-tip="{ card: convoCard(block.session, app.config?.projectNames, app.chatLinksOf(block.session.id), (id: string) => emit('open', id), app.groupContext), placement: 'right', disabled: picking || menuSession === block.session.id }"
               :text="title(block.session.title)"
               :cover="picking ? 0 : TITLE_COVER"
               @rename="!picking && emit('rename', block.session.id)"
@@ -1424,7 +1424,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
                 <ChatLinkMark v-if="app.chatLinksOf(session.id).length" :links="app.chatLinksOf(session.id)" />
                 <RowTitle
                   class="row-label task-label"
-                  v-tip="{ card: convoCard(session, app.config?.projectNames, app.chatLinksOf(session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === session.id }"
+                  v-tip="{ card: convoCard(session, app.config?.projectNames, app.chatLinksOf(session.id), (id: string) => emit('open', id), app.groupContext), placement: 'right', disabled: picking || menuSession === session.id }"
                   :text="title(session.title)"
                   :cover="picking ? 0 : TITLE_COVER"
                   @rename="!picking && emit('rename', session.id)"
@@ -1557,7 +1557,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
             <span class="stack">
               <RowTitle
                 class="row-label task-label"
-                v-tip="{ card: convoCard(entry.session, app.config?.projectNames, app.chatLinksOf(entry.session.id), (id: string) => emit('open', id)), placement: 'right', disabled: picking || menuSession === entry.session.id }"
+                v-tip="{ card: convoCard(entry.session, app.config?.projectNames, app.chatLinksOf(entry.session.id), (id: string) => emit('open', id), app.groupContext), placement: 'right', disabled: picking || menuSession === entry.session.id }"
                 :text="title(entry.session.title)"
                 :cover="picking ? 0 : TITLE_COVER"
                 @rename="!picking && emit('rename', entry.session.id)"
