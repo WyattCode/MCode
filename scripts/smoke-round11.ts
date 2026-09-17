@@ -16,6 +16,10 @@ import { RunQueue, LEASE_MS, MAX_ATTEMPTS } from "../src/server/automation/run-q
 import { AutomationService, type AutomationDeps } from "../src/server/automation/service"
 import { readTaskNotice } from "../src/main/desktop-rules"
 import { SNAPSHOT_GIT_TIMEOUT_MS, SNAPSHOT_QUEUE_TIMEOUT_MS, Snapshots } from "../src/server/session/snapshot"
+import { SCAN_LIMIT, searchMessages } from "../src/server/search"
+import { SessionStore } from "../src/server/session/store"
+import { Storage } from "../src/server/storage"
+import { Bus } from "../src/server/bus"
 import type { Message, ModelRef, ServerEvent, SessionInfo } from "@shared/protocol"
 
 /** Every text source under a folder, as bytes, so control characters survive. */
@@ -244,6 +248,64 @@ export async function roundElevenChecks(check: Check, section: (name: string) =>
     )
     const handlers = await read("src/server/handlers.ts")
     check("and a delete waits for the turn it stopped before collecting its store", /await waitForIdle\(runtime, request\.sessionID\)/.test(handlers))
+  }
+
+  section("Round 11 (N11-5): the overlay's search goes through the index")
+  {
+    const made = (id: string, updated: number): SessionInfo => ({ id, directory: "/p", model: { provider: "fake", model: "m" }, agent: "build", title: id, created: 1, updated } as unknown as SessionInfo)
+    const sessions = Array.from({ length: 300 }, (_, at) => made(`ses_${at}`, 1000 - at))
+    const readFrom: string[] = []
+    const load = async (sessionID: string): Promise<Message[]> => {
+      readFrom.push(sessionID)
+      const say = sessionID === "ses_7" || sessionID === "ses_250" ? "the needle is here" : "nothing of interest"
+      return [{ id: `msg_${sessionID}`, sessionID, role: "user", text: say, time: { created: 1 } } as unknown as Message]
+    }
+
+    readFrom.length = 0
+    const named = await searchMessages(sessions, load, "needle", 50, () => ["ses_7", "ses_250"])
+    check("only the conversations the index names are read", readFrom.length === 2 && readFrom.includes("ses_250"), readFrom)
+    check("and both of them are hits", named.map((hit) => hit.sessionID).sort().join() === "ses_250,ses_7", named)
+
+    readFrom.length = 0
+    const scanned = await searchMessages(sessions, load, "needle", 50, () => undefined)
+    check("an index that cannot help falls back to a capped scan rather than the whole profile", readFrom.length === SCAN_LIMIT && SCAN_LIMIT < sessions.length, readFrom.length)
+    check("and the fallback still finds what is inside the cap", scanned.some((hit) => hit.sessionID === "ses_7") && !scanned.some((hit) => hit.sessionID === "ses_250"), scanned)
+
+    const handlers = await read("src/server/handlers.ts")
+    check(
+      "the handler hands the index to the search and stands back while it is still being filled",
+      /history\.index\.building/.test(handlers) && /history\.index\.search\(\{ query, limit: SEARCH_HARD_CAP \}\)/.test(handlers),
+    )
+  }
+
+  section("Round 11 (N11-5): the conversation list is read once")
+  {
+    const temp = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-r11-store-"))
+    const storage = new Storage(path.join(temp, "storage"))
+    const store = new SessionStore(storage, new Bus())
+    const model = { provider: "fake", model: "m" }
+    const first = await store.create({ directory: temp, model, title: "one" })
+    await store.create({ directory: temp, model, title: "two" })
+    let reads = 0
+    const realList = storage.listDirectories.bind(storage)
+    storage.listDirectories = async (prefix: string) => {
+      if (prefix === "session") reads++
+      return realList(prefix)
+    }
+    await store.list()
+    await store.list()
+    await store.list()
+    check("three calls read the folder once", reads === 1, reads)
+    const copy = await store.list()
+    copy[0]!.title = "edited in place"
+    check("and what a caller is given is its own copy", (await store.list()).every((session) => session.title !== "edited in place"))
+    await store.update(first.id, { title: "renamed" })
+    await store.list()
+    check("a record changing drops the cache", reads === 2, reads)
+    check("and the new title is what comes back", (await store.list()).some((session) => session.title === "renamed"))
+    await store.delete(first.id)
+    check("a deletion drops it too", (await store.list()).length === 1 && reads === 3, reads)
+    await fs.rm(temp, { recursive: true, force: true }).catch(() => undefined)
   }
 
   section("Round 11 (N11-3): the four kinds of task notification")

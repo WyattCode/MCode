@@ -31,6 +31,8 @@ import { restoreHeaders, restoreMasked, restoreServer, restoreUrl } from "./conf
 import { discoverModels } from "./provider/discover"
 import { blankProjectDirectory, scratchDirectory, scratchRoot } from "./scratch"
 import { searchMessages } from "./search"
+import { historyService } from "./history/service"
+import { SEARCH_HARD_CAP } from "./history/index"
 import { workspaceInfo } from "./workspace"
 import { systemPrompt } from "./session/prompt"
 import * as git from "./git"
@@ -419,7 +421,21 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     case "search.messages": {
       const sessions = await runtime.sessions.list()
       const limit = Math.max(1, Math.min(200, request.limit ?? 50))
-      const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit)
+      /*
+       * The full-text index the backend already keeps names the conversations
+       * worth reading (N11-5). It was serving only the model's `history` tool;
+       * the overlay read every message of every conversation instead, once per
+       * keystroke. While the index is still being filled it says so, and the
+       * search falls back to a capped scan.
+       */
+      const history = historyService()
+      const narrow = (query: string): readonly string[] | undefined => {
+        if (!history || history.index.building) return undefined
+        const found = new Set<string>()
+        for (const hit of history.index.search({ query, limit: SEARCH_HARD_CAP })) found.add(hit.session_id)
+        return [...found]
+      }
+      const hits = await searchMessages(sessions, (id) => runtime.sessions.messages(id), request.query, limit, narrow)
       return { hits } satisfies Handled<"search.messages">
     }
 
