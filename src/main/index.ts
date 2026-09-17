@@ -22,6 +22,7 @@ import { closeHidesToTray } from "@shared/protocol"
 import { label, setLabels } from "./labels"
 import { buildMenu } from "./menu"
 import { readMenuKeys } from "./menu-keys"
+import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "./native-dialogs"
 import { SHOW_FALLBACK_MS } from "./renderer-health"
 import {
   activate,
@@ -690,10 +691,7 @@ function createWindow(show = true): BrowserWindow {
     }
     event.preventDefault()
     hiddenBounds = window.isFullScreen() ? undefined : window.getBounds()
-    if (process.platform === "darwin" && window.isFullScreen()) {
-      window.once("leave-full-screen", () => window.hide())
-      window.setFullScreen(false)
-    } else window.hide()
+    hideWindow(window, process.platform)
   })
 
   // Anything the page tries to open externally goes to the real browser, never
@@ -845,15 +843,14 @@ app.whenReady().then(async () => {
     return undefined
   }
 
-  /* MiMo lets one folder dialog up at a time: a second ask while one is open gets nothing. */
-  let folderDialogOpen = false
-
   /* `project` is MiMo's 选择或新建项目文件夹: it opens at the default project location. */
   ipcMain.handle("mcode:pick-directory", async (event, title: string, multiple?: boolean, project?: boolean) => {
-    if (folderDialogOpen) return []
-    folderDialogOpen = true
+    // MiMo lets one native dialog up at a time: a second ask while one is open gets nothing.
+    const asking = BrowserWindow.fromWebContents(event.sender)
+    const claim = claimDialog(process.platform, asking)
+    if (!claim) return []
     try {
-      const owner = BrowserWindow.fromWebContents(event.sender)
+      const owner = dialogParent(process.platform, asking)
       const options: Electron.OpenDialogOptions = {
         properties: multiple
           ? ["openDirectory", "createDirectory", "multiSelections"]
@@ -865,7 +862,7 @@ app.whenReady().then(async () => {
       const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
       return result.canceled ? [] : result.filePaths
     } finally {
-      folderDialogOpen = false
+      releaseDialog(claim)
     }
   })
 
@@ -985,13 +982,22 @@ app.whenReady().then(async () => {
     if (page) void shell.openExternal(page).catch(() => {})
   })
 
-  /* MiMo's micAccess before capture: macOS asks for the microphone; other systems answer in getUserMedia. */
+  /*
+   * MiMo's micAccess before capture: macOS asks for the microphone; Windows
+   * refuses when its privacy setting is off, so the guide to that setting
+   * shows; other systems answer in getUserMedia.
+   */
   ipcMain.handle("mcode:mic-access", async () => {
-    if (process.platform !== "darwin") return true
-    const status = systemPreferences.getMediaAccessStatus("microphone")
-    if (status === "granted") return true
-    if (status === "not-determined") return systemPreferences.askForMediaAccess("microphone")
-    return false
+    if (process.platform !== "darwin" && process.platform !== "win32") return true
+    let status = "unknown"
+    try {
+      status = systemPreferences.getMediaAccessStatus("microphone")
+    } catch {
+      // Unknown: macOS guides, Windows lets getUserMedia answer.
+    }
+    const decision = micDecision(process.platform, status)
+    if (decision === "ask") return systemPreferences.askForMediaAccess("microphone").catch(() => false)
+    return decision === "allow"
   })
 
   ipcMain.on(
@@ -1259,13 +1265,16 @@ app.whenReady().then(async () => {
    */
   /* The import half of the conversation-file pair: one file, read as text. */
   ipcMain.handle("mcode:open-text", async (event, title: string) => {
-    const owner = BrowserWindow.fromWebContents(event.sender)
+    const asking = BrowserWindow.fromWebContents(event.sender)
+    const claim = claimDialog(process.platform, asking)
+    if (!claim) return undefined
+    const owner = dialogParent(process.platform, asking)
     const options: Electron.OpenDialogOptions = {
       title,
       properties: ["openFile"],
       filters: [{ name: "JSON", extensions: ["json"] }],
     }
-    const result = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    const result = await (owner ? dialog.showOpenDialog(owner, options) : dialog.showOpenDialog(options)).finally(() => releaseDialog(claim))
     const target = result.canceled ? undefined : result.filePaths[0]
     if (!target) return undefined
     /*
@@ -1279,7 +1288,10 @@ app.whenReady().then(async () => {
   })
 
   ipcMain.handle("mcode:save-text", async (event, suggested: string, text: string) => {
-    const owner = BrowserWindow.fromWebContents(event.sender)
+    const asking = BrowserWindow.fromWebContents(event.sender)
+    const claim = claimDialog(process.platform, asking)
+    if (!claim) return undefined
+    const owner = dialogParent(process.platform, asking)
     const options = {
       defaultPath: suggested,
       // Taken from the name the caller suggested. A fixed Markdown filter used
@@ -1287,10 +1299,8 @@ app.whenReady().then(async () => {
       // onto the shared HTML page - a file the browser would no longer open.
       filters: [saveFilter(suggested)],
     }
-    // Sheeted to the window when there is one, so it cannot be lost behind it.
-    const result = owner
-      ? await dialog.showSaveDialog(owner, options)
-      : await dialog.showSaveDialog(options)
+    // Attached to the window where there is one (not on macOS, as MiMo), so it cannot be lost behind it.
+    const result = await (owner ? dialog.showSaveDialog(owner, options) : dialog.showSaveDialog(options)).finally(() => releaseDialog(claim))
     if (result.canceled || !result.filePath) return undefined
     await fs.writeFile(result.filePath, text, "utf8")
     savedFiles.add(result.filePath)
@@ -1529,6 +1539,8 @@ app.whenReady().then(async () => {
   repaintAfterWake(() => quitting)
 
   app.on("activate", () => {
+    // Asked for again while leaving full screen to hide: it stays (MiMo's).
+    for (const window of BrowserWindow.getAllWindows()) cancelPendingHide(window)
     // A window hidden to the tray or menu bar comes back; one whose renderer is gone is replaced.
     activate(raise)
   })

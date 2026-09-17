@@ -4,6 +4,7 @@
  * Linux machine: the modules take the platform as an argument, and the
  * packaging configuration is read as text.
  */
+import { EventEmitter } from "node:events"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -20,6 +21,7 @@ import { fcitxEnvironment, fromXinputrc } from "../src/main/linux-ime"
 import { WINDOWS_APPS, docApps, isKnownOpenWith, openApps } from "../src/shared/open-app"
 import { findBundle, installedDocApps, launchTarget, macApplicationFolders } from "../src/main/installed-apps"
 import { MENU_COMMANDS, acceleratorOf, menuAccelerator, readMenuKeys } from "../src/main/menu-keys"
+import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "../src/main/native-dialogs"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -325,5 +327,76 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const settings = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
     check("M10-15: recording tells the menu, and so does stopping", /recordingChord\.value = true/.test(settings) && /recordingChord\.value = false/.test(settings))
     check("M10-15: the window sends the bindings to the menu", /window\.mcode\.menuKeys\?\.\(\{ binds: \{ \.\.\.\(binds \?\? \{\}\) \}, recording \}\)/.test(appVue))
+  }
+
+  section("Round 10 (platforms): M10-24 / M10-25 / M10-26 microphone, dialogs and full screen")
+  {
+    check("M10-24: Windows refuses when its microphone setting is off", micDecision("win32", "denied") === "deny" && micDecision("win32", "restricted") === "deny")
+    check("M10-24: and lets getUserMedia answer otherwise", micDecision("win32", "granted") === "allow" && micDecision("win32", "unknown") === "allow" && micDecision("win32", "not-determined") === "allow")
+    check("M10-24: macOS asks once, and guides after a refusal", micDecision("darwin", "not-determined") === "ask" && micDecision("darwin", "denied") === "deny" && micDecision("darwin", "unknown") === "deny" && micDecision("darwin", "granted") === "allow")
+    check("M10-24: Linux leaves it to getUserMedia", micDecision("linux", "denied") === "allow")
+    const main = await fs.readFile(path.join(root, "src/main/index.ts"), "utf8")
+    const mic = main.slice(main.indexOf('ipcMain.handle("mcode:mic-access"'), main.indexOf('ipcMain.handle("mcode:mic-access"') + 500)
+    check("M10-24: the IPC reads the status on Windows too", /process\.platform !== "darwin" && process\.platform !== "win32"/.test(mic) && /micDecision\(process\.platform, status\)/.test(mic), mic)
+
+    const win = { name: "window" }
+    check("M10-25: macOS attaches no dialog to the window", dialogParent("darwin", win) === undefined)
+    check("M10-25: Windows and Linux do", dialogParent("win32", win) === win && dialogParent("linux", win) === win && dialogParent("win32", null) === undefined)
+    let blurred = 0
+    const asking = { blur: () => blurred++ }
+    const first = claimDialog("darwin", asking)
+    const second = claimDialog("darwin", asking)
+    check("M10-25: a second dialog while one is up is refused", Boolean(first) && second === undefined)
+    check("M10-25: and on macOS the asking window gives way to the open one", blurred === 1)
+    claimDialog("win32", asking)
+    check("M10-25: Windows does not move focus", blurred === 1)
+    releaseDialog(second)
+    check("M10-25: a refused claim frees nothing", claimDialog("win32") === undefined)
+    releaseDialog(first)
+    const third = claimDialog("win32")
+    check("M10-25: the dialog closing frees the next", Boolean(third))
+    releaseDialog(third)
+    for (const channel of ["mcode:pick-directory", "mcode:open-text", "mcode:save-text"]) {
+      const at = main.indexOf(`ipcMain.handle("${channel}"`)
+      const body = main.slice(at, at + 1400)
+      check(`M10-25: ${channel} takes the one-dialog claim and the platform's parent`, at > 0 && /claimDialog\(process\.platform, asking\)/.test(body) && /dialogParent\(process\.platform, asking\)/.test(body) && /releaseDialog\(claim\)/.test(body))
+    }
+    check("M10-25: no dialog is opened on the raw sender window any more", !/const owner = BrowserWindow\.fromWebContents\(event\.sender\)\s*\n\s*const options(?:: Electron\.OpenDialogOptions)? = \{\s*\n\s*(?:title|defaultPath)/.test(main))
+
+    class FakeWindow extends EventEmitter {
+      full = true
+      hidden = 0
+      destroyed = false
+      isFullScreen() {
+        return this.full
+      }
+      isDestroyed() {
+        return this.destroyed
+      }
+      setFullScreen(flag: boolean) {
+        this.full = flag
+      }
+      hide() {
+        this.hidden++
+      }
+    }
+    const plain = new FakeWindow()
+    plain.full = false
+    hideWindow(plain, "darwin")
+    check("M10-26: a window not in full screen hides at once", plain.hidden === 1)
+    const full = new FakeWindow()
+    hideWindow(full, "darwin")
+    check("M10-26: a full-screen window leaves full screen first", full.hidden === 0 && full.full === false)
+    full.emit("leave-full-screen")
+    check("M10-26: and hides once it has", full.hidden === 1)
+    const again = new FakeWindow()
+    hideWindow(again, "darwin")
+    cancelPendingHide(again)
+    again.emit("leave-full-screen")
+    check("M10-26: activating the app meanwhile keeps it shown", again.hidden === 0 && again.listenerCount("leave-full-screen") === 0)
+    const onWindows = new FakeWindow()
+    hideWindow(onWindows, "win32")
+    check("M10-26: Windows hides at once, full screen or not", onWindows.hidden === 1)
+    check("M10-26: the activate handler cancels a waiting hide", /app\.on\("activate", \(\) => \{[\s\S]{0,200}cancelPendingHide\(window\)/.test(main))
   }
 }
