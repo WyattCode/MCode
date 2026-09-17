@@ -303,6 +303,8 @@ import { roundTenDesktopChecks } from "./smoke-round10-desktop"
 // Round 10: git end to end - paths, push target, time limits, grouping, undo.
 import { roundTenGitChecks } from "./smoke-round10-git"
 import { roundTenStepsChecks } from "./smoke-round10-steps"
+// Round 10: the macOS and Linux branches (M10-1 onwards).
+import { roundTenPlatformChecks } from "./smoke-round10-platforms"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -6921,6 +6923,7 @@ async function main() {
   await roundTenDesktopChecks(check, section)
   await roundTenGitChecks(check, section)
   await roundTenStepsChecks(check, section)
+  await roundTenPlatformChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)

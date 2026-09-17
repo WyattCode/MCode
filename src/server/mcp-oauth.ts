@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs"
-import { exec } from "node:child_process"
+import { browserTarget, openUrl } from "./open-url"
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http"
 import { createConnection } from "node:net"
 import { createHash, randomBytes } from "node:crypto"
@@ -829,13 +829,11 @@ export async function stopCallbackServer(): Promise<void> {
  * file to receive the address instead, so no browser opens during a probe.
  */
 export function openInBrowser(url: string): void {
+  if (!browserTarget(url)) return
   const log = process.env.MCODE_OAUTH_OPEN_FILE
   if (log) {
     appendFileSync(log, `${url}\n`)
     return
   }
-  const quoted = url.replace(/"/g, "%22")
-  if (process.platform === "win32") exec(`start "" "${quoted}"`)
-  else if (process.platform === "darwin") exec(`open "${quoted}"`)
-  else exec(`xdg-open "${quoted}"`)
+  openUrl(url)
 }
