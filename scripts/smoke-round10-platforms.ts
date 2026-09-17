@@ -24,6 +24,7 @@ import { MENU_COMMANDS, acceleratorOf, menuAccelerator, readMenuKeys } from "../
 import { cancelPendingHide, claimDialog, dialogParent, hideWindow, micDecision, releaseDialog } from "../src/main/native-dialogs"
 import { protectedFilter, protectedPaths } from "../src/server/protected-paths"
 import { searchFolder, searchTree } from "../src/server/handlers"
+import { packageTarget } from "./package-target.mjs"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -441,5 +442,20 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
       else process.env.HOME = savedHome
       await fs.rm(home, { recursive: true, force: true })
     }
+  }
+
+  section("Round 10 (platforms): M10-29 a package is built on the system it is for")
+  {
+    const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"))
+    check("M10-29: there is a Linux package command", pkg.scripts["package:linux"] === "node scripts/package.mjs --linux")
+    check("M10-29: each flag names its system", packageTarget(["--linux"], "linux").target === "linux" && packageTarget(["--mac"], "darwin").target === "darwin" && packageTarget(["--win"], "win32").target === "win32")
+    check("M10-29: no flag builds for this machine", packageTarget([], "linux").target === "linux" && packageTarget(["--dir"], "win32").target === "win32")
+    const cross = packageTarget(["--mac"], "win32")
+    check("M10-29: a Mac package on Windows is refused, saying where to build it", !cross.target && /built on macOS/.test(cross.error ?? ""), cross)
+    check("M10-29: so is a Linux package on a Mac", Boolean(packageTarget(["--linux"], "darwin").error))
+    check("M10-29: two systems at once are refused", Boolean(packageTarget(["--win", "--linux"], "win32").error))
+    const script = await fs.readFile(path.join(root, "scripts", "package.mjs"), "utf8")
+    const refusedAt = script.indexOf("process.exit(1)")
+    check("M10-29: the refusal comes before the version is touched", refusedAt > 0 && refusedAt < script.indexOf('run("node", ["scripts/bump-version.mjs"])') && refusedAt < script.indexOf("const before"), refusedAt)
   }
 }

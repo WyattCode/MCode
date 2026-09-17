@@ -451,7 +451,7 @@ export async function roundNineWindowsChecks(check: Check, section: (name: strin
       "a Windows package places and verifies them first and carries them beside the asar; git never holds them",
       /win:[\s\S]*extraResources:\s*\n\s*- from: resources\/runtimes\/win32-x64\s*\n\s*to: runtimes\/win32-x64/.test(builder) &&
         /^resources\/runtimes\/$/m.test(ignore) &&
-        /if \(status === 0 && forWindows\) status = run\("node", \["scripts\/runtimes\.mjs"\]\)/.test(packageScript) &&
+        /if \(status === 0 && target === "win32"\) status = run\("node", \["scripts\/runtimes\.mjs"\]\)/.test(packageScript) &&
         packageScript.indexOf("scripts/runtimes.mjs") < packageScript.indexOf("scripts/bump-version.mjs"),
     )
     const skills = await Promise.all(["docx", "pdf", "pptx", "xlsx", "data-analytics"].map((name) => fs.readFile(path.join(root, "resources", "skills", name, "SKILL.md"), "utf8")))
