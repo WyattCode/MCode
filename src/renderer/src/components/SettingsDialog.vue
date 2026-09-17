@@ -1048,7 +1048,7 @@ function onRecordKey(event: KeyboardEvent) {
     return
   }
   // Read by physical key, skipping composition; MiMo needs a modifier plus a key.
-  const chord = chordOf(event)
+  const chord = chordOf(event, app.platform)
   if (isBindable(chord)) recordChord.value = chord
 }
 
@@ -1125,7 +1125,7 @@ function onKeySearchKey(event: KeyboardEvent) {
     keySearchChord.value = undefined
     return
   }
-  const chord = chordOf(event)
+  const chord = chordOf(event, app.platform)
   if (chord) keySearchChord.value = chord
 }
 

@@ -6,6 +6,7 @@ import { useApp } from "../../stores/app"
 import { installBrowserBridge } from "../../lib/browser-bridge"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
+import { shownChord } from "../../lib/keys"
 
 /**
  * MiMo's browser tab: an address bar - a status dot, back and forward, the
@@ -312,7 +313,7 @@ defineExpose({
           :class="{ active: annotating }"
           data-rb-annotate
           :aria-pressed="annotating"
-          v-tip="t('rp.browser.annotate', { combo: ANNOTATE_COMBO })"
+          v-tip="t('rp.browser.annotate', { combo: shownChord(ANNOTATE_COMBO) })"
           @click="toggleAnnotate"
         >
           <span>{{ t("rp.browser.annotateLabel") }}</span>

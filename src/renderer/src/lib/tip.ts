@@ -1,4 +1,5 @@
 import type { App, DirectiveBinding } from "vue"
+import { shownChord } from "./keys"
 
 /**
  * Tooltips drawn by the app.
@@ -220,7 +221,7 @@ function render(node: HTMLElement, tip: Tip) {
   node.classList.toggle("card", Boolean(tip.card))
   node.classList.toggle("interactive", pressable(tip))
   if (!tip.card) {
-    node.textContent = tipText(tip)
+    node.textContent = tipText({ label: tip.label, hint: tip.hint && shownChord(tip.hint) })
     return
   }
   const title = document.createElement("div")

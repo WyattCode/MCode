@@ -4,6 +4,7 @@ import { filterMenu, type MenuItem } from "../lib/menu"
 import { besideRow } from "../lib/submenu"
 import { isRovingKey } from "../lib/composer-menu"
 import { focusRow } from "../lib/menu-keys"
+import { shownChord } from "../lib/keys"
 
 /**
  * The right-click menu, wherever one is wanted.
@@ -288,7 +289,7 @@ onBeforeUnmount(() => {
           </svg>
         </span>
         <span class="label">{{ item.label }}<span v-if="item.value" class="value">{{ joiner(item.label) }}{{ item.value }}</span></span>
-        <span v-if="item.hint" class="hint">{{ item.hint }}</span>
+        <span v-if="item.hint" class="hint">{{ shownChord(item.hint) }}</span>
         <svg v-if="item.children" class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M6 3.8 10.2 8 6 12.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
@@ -356,7 +357,7 @@ onBeforeUnmount(() => {
           </svg>
         </span>
         <span class="label">{{ child.label }}</span>
-        <span v-if="child.hint" class="hint">{{ child.hint }}</span>
+        <span v-if="child.hint" class="hint">{{ shownChord(child.hint) }}</span>
         <svg v-if="child.checkEnd" class="tick-end" :class="{ on: child.checked }" width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden="true">
           <path d="M4.5 10.5L8 14L15.5 6.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
         </svg>

@@ -10,6 +10,7 @@ import path from "node:path"
 import type { Check } from "./smoke-round5"
 import { browserCommand, browserTarget, openUrl, type Launch } from "../src/server/open-url"
 import { openInBrowser } from "../src/server/mcp-oauth"
+import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
 async function sources(root: string): Promise<Map<string, string>> {
@@ -74,5 +75,47 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     check("M10-1: no shell-string exec is left in the main process or the server", offenders.length === 0, offenders.map(([file]) => path.relative(root, file)))
     const mcp = texts.get(path.join(root, "src/server/mcp.ts")) ?? ""
     check("M10-1: the MCP sign-in checks the address before it waits for the browser", /browserTarget\(address\.href\)[\s\S]{0,200}waitForCallback\(state, name\)/.test(mcp))
+  }
+
+  section("Round 10 (platforms): M10-2 / M10-3 Command and Control are two keys on a Mac")
+  {
+    const key = (init: Partial<KeyboardEvent>) =>
+      ({ ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, isComposing: false, keyCode: 0, key: "", code: "", ...init }) as KeyboardEvent
+    const cmdK = key({ metaKey: true, key: "k", code: "KeyK" })
+    const controlK = key({ ctrlKey: true, key: "k", code: "KeyK" })
+    check("M10-2: Command+K records as the stored Ctrl+K on a Mac", chordOf(cmdK, "darwin") === "Ctrl+K")
+    check("M10-2: Control+K records as Meta+K on a Mac, not as Ctrl+K", chordOf(controlK, "darwin") === "Meta+K", chordOf(controlK, "darwin"))
+    check("M10-2: both held record both", chordOf(key({ metaKey: true, ctrlKey: true, key: "k", code: "KeyK" }), "darwin") === "Ctrl+Meta+K")
+    check("M10-2: Ctrl+K is Ctrl+K on Windows and Linux", chordOf(controlK, "win32") === "Ctrl+K" && chordOf(controlK, "linux") === "Ctrl+K")
+    check("M10-2: the Windows key is its own modifier", chordOf(key({ metaKey: true, key: "k", code: "KeyK" }), "win32") === "Meta+K")
+    check("M10-2: mod is Command alone on a Mac", modHeld(cmdK, "darwin") && !modHeld(controlK, "darwin") && !modHeld({ ctrlKey: true, metaKey: true }, "darwin"))
+    check("M10-2: mod is Ctrl alone elsewhere", modHeld(controlK, "win32") && !modHeld(cmdK, "win32") && modHeld(controlK, "linux"))
+    check("M10-2: MiMo's ctrl is the Control key everywhere", controlHeld(controlK) && !controlHeld(cmdK))
+    check("M10-2: the terminal chord is Control+` on a Mac", controlChord("`", "darwin") === "Meta+`" && formatChord(controlChord("`", "darwin"), "darwin") === "⌃`")
+    check("M10-2: and Ctrl+` elsewhere, as it always was", controlChord("`", "win32") === "Ctrl+`" && controlChord("`", "linux") === "Ctrl+`")
+    const back = key({ ctrlKey: true, shiftKey: true, key: "Tab", code: "Tab" })
+    check("M10-2: Control+Shift+Tab on a Mac matches its stored chord", chordOf(back, "darwin") === controlChord("Shift+Tab", "darwin"), [chordOf(back, "darwin"), controlChord("Shift+Tab", "darwin")])
+    check("M10-2: Ctrl+Shift+Tab on Windows keeps its stored chord", chordOf(back, "win32") === controlChord("Shift+Tab", "win32") && controlChord("Shift+Tab", "win32") === "Ctrl+Shift+Tab")
+    check("M10-3: a Mac draws the recent-chat chord with the Control glyph", formatChord(controlChord("Shift+Tab", "darwin"), "darwin") === "⌃⇧⇥", formatChord(controlChord("Shift+Tab", "darwin"), "darwin"))
+    check("M10-3: a Mac draws mod as the command glyph", formatChord("Ctrl+Alt+P", "darwin") === "⌥⌘P")
+
+    const appVue = await fs.readFile(path.join(root, "src/renderer/src/App.vue"), "utf8")
+    const handler = appVue.slice(appVue.indexOf("function onKeydown("), appVue.indexOf("const menuCommands"))
+    check("M10-2: the key handler never folds Command into Ctrl", handler.length > 1000 && !/ctrlKey\s*\|\|\s*event\.metaKey/.test(handler) && /modHeld\(event, platform\)/.test(handler))
+    check("M10-2: the key handler reads rebindings with the platform", /chordOf\(event, platform\)/.test(handler))
+    check("M10-2: the terminal is not in the Command table", !/"`":/.test(handler) && /controlHeld\(event\)[^\n]*Backquote/.test(handler))
+    check("M10-2: the terminal and recent-chat hints are MiMo's ctrl chords", /hint: controlChord\("`", app\.platform\)/.test(appVue) && /hint: controlChord\("Tab", app\.platform\)/.test(appVue) && /hint: controlChord\("Shift\+Tab", app\.platform\)/.test(appVue))
+    const settings = await fs.readFile(path.join(root, "src/renderer/src/components/SettingsDialog.vue"), "utf8")
+    check("M10-2: recording a chord knows the platform", !/chordOf\(event\)/.test(settings) && /chordOf\(event, app\.platform\)/.test(settings))
+    const shown: Array<[string, RegExp]> = [
+      ["src/renderer/src/lib/tip.ts", /shownChord\(tip\.hint\)/],
+      ["src/renderer/src/components/ContextMenu.vue", /shownChord\(item\.hint\)[\s\S]*shownChord\(child\.hint\)/],
+      ["src/renderer/src/components/AppMenu.vue", /shownChord\(item\.hint\)/],
+      ["src/renderer/src/components/RightPanel.vue", /shownChord\(hints\[tool\]/],
+      ["src/renderer/src/components/Sidebar.vue", /shortcut: shownChord\(/],
+    ]
+    for (const [file, pattern] of shown) {
+      check(`M10-3: ${path.basename(file)} draws its shortcuts for the platform`, pattern.test(await fs.readFile(path.join(root, file), "utf8")))
+    }
   }
 }

@@ -18,6 +18,7 @@ import { crumbsFor, editCounts, fileCategory, rowIndent, saveFailureKey, treeRow
 import { centreRange, clearPaint, paintRanges, textRanges } from "../../lib/dom-find"
 import { notify, notifyFailure } from "../../lib/toast"
 import { t } from "../../lib/i18n"
+import { modHeld } from "../../lib/keys"
 
 /**
  * MiMo's files tab: the project's tree down the start, the chosen file beside
@@ -507,7 +508,7 @@ const findCount = computed(() =>
  * own shortcuts see it.
  */
 function onWindowKey(event: KeyboardEvent) {
-  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return
+  if (!modHeld(event, app.platform) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return
   const element = wrapper.value
   if (!rp.open || !element || !element.offsetParent) return
   if (document.querySelector("[aria-modal='true']")) return

@@ -62,7 +62,7 @@ import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
 import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
-import { chordOf } from "./lib/keys"
+import { chordOf, controlChord, controlHeld, keyOfCode, modHeld } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
 import { projectOf } from "./lib/session-project"
 import FindBar from "./components/FindBar.vue"
@@ -2535,7 +2535,8 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "view.terminal",
       group: "key.groupTerminal",
       title: terminalOpen.value ? t("cmd.hideTerminal") : t("cmd.showTerminal"),
-      hint: "Ctrl+`",
+      // MiMo's `ctrl`: Control on a Mac too, where Command+` cycles windows.
+      hint: controlChord("`", app.platform),
       enabled: inWorkspace,
       run: () => (terminalOpen.value = !terminalOpen.value),
     },
@@ -2814,7 +2815,7 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "session.nextRecent",
       group: "key.groupConversation",
       title: t("key.nextRecent"),
-      hint: "Ctrl+Tab",
+      hint: controlChord("Tab", app.platform),
       run: async () => {
         await stepRecent(1)
         endRecentWalk()
@@ -2824,7 +2825,7 @@ const bindableCommands = computed((): AppCommand[] => {
       id: "session.prevRecent",
       group: "key.groupConversation",
       title: t("key.prevRecent"),
-      hint: "Ctrl+Shift+Tab",
+      hint: controlChord("Shift+Tab", app.platform),
       run: async () => {
         await stepRecent(-1)
         endRecentWalk()
@@ -2953,7 +2954,11 @@ function swallowDrop(event: DragEvent) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  const mod = event.ctrlKey || event.metaKey
+  const platform = app.platform
+  // MiMo's `mod`: Command on a Mac and Ctrl elsewhere, never the two folded together.
+  const mod = modHeld(event, platform)
+  // Read by where the key sits: with Option held a Mac types another character.
+  const letter = (keyOfCode(event.code) ?? event.key).toLowerCase()
   if (event.isComposing || event.keyCode === 229) return
 
   /*
@@ -2962,7 +2967,7 @@ function onKeydown(event: KeyboardEvent) {
    * rebinding move an action onto a combination the table knows nothing about.
    */
   if (!modalOpen.value) {
-    const chord = chordOf(event)
+    const chord = chordOf(event, platform)
     const bound = rebound.value.get(chord)
     if (bound) {
       const command = commands.value.find((entry) => entry.id === bound)
@@ -2982,9 +2987,9 @@ function onKeydown(event: KeyboardEvent) {
 
   /*
    * Ctrl+Tab and Ctrl+Shift+Tab, through the recently viewed conversations.
-   * Ctrl rather than Cmd: on a Mac, Cmd+Tab belongs to the system.
+   * Control rather than Command: on a Mac, Cmd+Tab belongs to the system.
    */
-  if (event.ctrlKey && !event.altKey && event.key === "Tab") {
+  if (controlHeld(event) && !event.altKey && event.key === "Tab") {
     if (modalOpen.value) return
     event.preventDefault()
     void stepRecent(event.shiftKey ? -1 : 1)
@@ -2992,7 +2997,7 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /* The side panel, on MiMo's chord and on every screen, as its title-bar button is; its review tab is Ctrl+Shift+G. */
-  if (mod && event.altKey && event.key.toLowerCase() === "b") {
+  if (mod && event.altKey && letter === "b") {
     if (modalOpen.value) return
     event.preventDefault()
     toggleSidePanel()
@@ -3000,7 +3005,7 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /* Pinning the open conversation, and copying the id of it. */
-  if (mod && event.altKey && event.key.toLowerCase() === "p") {
+  if (mod && event.altKey && letter === "p") {
     if (modalOpen.value || !app.currentID) return
     event.preventDefault()
     app.togglePinned(app.currentID)
@@ -3008,14 +3013,14 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /* Renaming and archiving the open conversation, on MiMo's chords. */
-  if (mod && event.altKey && event.key.toLowerCase() === "r") {
+  if (mod && event.altKey && letter === "r") {
     if (modalOpen.value || !app.currentID || isHome.value) return
     event.preventDefault()
     beginRename()
     return
   }
 
-  if (mod && event.altKey && event.key.toLowerCase() === "a") {
+  if (mod && event.altKey && letter === "a") {
     if (modalOpen.value || !app.currentID) return
     event.preventDefault()
     void archiveSessions([app.currentID])
@@ -3023,7 +3028,7 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /* A side chat tab, on MiMo's chord. */
-  if (mod && event.altKey && event.key.toLowerCase() === "s") {
+  if (mod && event.altKey && letter === "s") {
     if (modalOpen.value) return
     event.preventDefault()
     openSideChatTab()
@@ -3031,14 +3036,14 @@ function onKeydown(event: KeyboardEvent) {
   }
 
   /* The priority filter, on MiMo's own chord. */
-  if (mod && event.altKey && event.key.toLowerCase() === "u") {
+  if (mod && event.altKey && letter === "u") {
     if (modalOpen.value) return
     event.preventDefault()
     priorityFilter.value = !priorityFilter.value
     return
   }
 
-  if (mod && event.altKey && event.key.toLowerCase() === "c") {
+  if (mod && event.altKey && letter === "c") {
     if (modalOpen.value || !app.currentID) return
     event.preventDefault()
     window.mcode.setClipboardText(app.currentID)
@@ -3046,10 +3051,18 @@ function onKeydown(event: KeyboardEvent) {
     return
   }
 
-  if (mod && event.altKey && event.key.toLowerCase() === "l") {
+  if (mod && event.altKey && letter === "l") {
     if (modalOpen.value || !app.current) return
     event.preventDefault()
     copySessionLink()
+    return
+  }
+
+  /* MiMo's terminal toggle is its `ctrl` chord: Control+` on a Mac as well. */
+  if (controlHeld(event) && !event.altKey && !event.shiftKey && event.code === "Backquote") {
+    if (modalOpen.value || paletteOpen.value) return
+    event.preventDefault()
+    if (!commandDisabled("view.terminal")) terminalOpen.value = !terminalOpen.value
     return
   }
 
@@ -3155,7 +3168,6 @@ function onKeydown(event: KeyboardEvent) {
     // MiMo's files tab.
     p: openFilesTab,
     b: () => toggleSide(),
-    "`": () => (terminalOpen.value = !terminalOpen.value),
     ",": openSettings,
     n: () => void newSession(),
     // MiMo's: Ctrl+T is a browser tab, and the bottom panel is Ctrl+J.
@@ -3290,7 +3302,6 @@ const KEY_COMMAND_IDS: Record<string, string> = {
   k: "app.search",
   p: "app.openFile",
   b: "view.left",
-  "`": "view.terminal",
   j: "view.bottom",
   "[": "app.back",
   "]": "app.forward",

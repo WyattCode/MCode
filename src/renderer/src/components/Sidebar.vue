@@ -9,6 +9,7 @@ import { useApp } from "../stores/app"
 import { language, sessionTitle, t } from "../lib/i18n"
 import { notify } from "../lib/toast"
 import { RAIL_WIDTH } from "../lib/right-tools"
+import { shownChord } from "../lib/keys"
 import type { MenuItem } from "../lib/menu"
 import ContextMenu from "./ContextMenu.vue"
 import UpdatePill from "./UpdatePill.vue"
@@ -1086,7 +1087,7 @@ onBeforeUnmount(() => clearTimeout(quickTimer))
         :class="{ on: priority }"
         :aria-pressed="Boolean(priority)"
         :aria-label="t(priority ? 'side.priorityOff' : 'side.priorityOn')"
-        v-tip="t(priority ? 'side.priorityTipOff' : 'side.priorityTipOn', { shortcut: 'Ctrl+Alt+U' })"
+        v-tip="t(priority ? 'side.priorityTipOff' : 'side.priorityTipOn', { shortcut: shownChord('Ctrl+Alt+U') })"
         @click="emit('toggle-priority')"
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
