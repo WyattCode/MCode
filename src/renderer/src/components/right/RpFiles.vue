@@ -818,50 +818,15 @@ function rowMenuTarget(row: TreeRow): MenuTarget {
 
 <style scoped>
 /*
- * MiMo's files colours: a dim grey for chevrons, separators and line numbers,
- * and one hue per kind of file for the tree's icons, lighter under the dark
- * theme.
+ * MiMo's files colours - a dim grey for chevrons, separators and line numbers,
+ * and one hue per kind of file for the tree's icons - are in base.css, because
+ * the box's attachment chips draw the same glyph in the same colours.
  */
 .rp-files {
-  --ft-dim: #151c1366;
-  --ft-dir: #e0a63b;
-  --ft-code: #2f6fed;
-  --ft-web: #ff6a2b;
-  --ft-data: #0d9488;
-  --ft-doc: #16a34a;
-  --ft-media: #ec4899;
-  --ft-shell: #a855f7;
-  --ft-archive: #b45309;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-height: 0;
-}
-
-:root[data-theme="dark"] .rp-files {
-  --ft-dim: #777;
-  --ft-dir: #f0b850;
-  --ft-code: #5a9cff;
-  --ft-web: #ff8a52;
-  --ft-data: #2dd4bf;
-  --ft-doc: #4ade80;
-  --ft-media: #f472b6;
-  --ft-shell: #c084fc;
-  --ft-archive: #d9822b;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .rp-files {
-    --ft-dim: #777;
-    --ft-dir: #f0b850;
-    --ft-code: #5a9cff;
-    --ft-web: #ff8a52;
-    --ft-data: #2dd4bf;
-    --ft-doc: #4ade80;
-    --ft-media: #f472b6;
-    --ft-shell: #c084fc;
-    --ft-archive: #d9822b;
-  }
 }
 
 /* MiMo's head: at least 36 tall, 8 by 12, a rule under it, 12px muted, and a container for the narrow rule. */

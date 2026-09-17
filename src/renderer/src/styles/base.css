@@ -950,3 +950,51 @@ html[data-smoothing="off"] body {
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
 }
+
+/*
+ * The file-kind colours the files tree, its search results and the box's
+ * attachment chips all draw their file-page glyph in - one hue per kind of
+ * file, lighter under the dark theme, as MiMo colours the same nine classes.
+ *
+ * Global rather than inside one component's scoped block: the same file has to
+ * read the same way wherever it is drawn, and the composer and the files tab
+ * are not in the same tree. Not tokens - tokens.css is generated whole from the
+ * palette, and these are a fixed table, not derived from it.
+ */
+:root {
+  --ft-dim: #151c1366;
+  --ft-dir: #e0a63b;
+  --ft-code: #2f6fed;
+  --ft-web: #ff6a2b;
+  --ft-data: #0d9488;
+  --ft-doc: #16a34a;
+  --ft-media: #ec4899;
+  --ft-shell: #a855f7;
+  --ft-archive: #b45309;
+}
+
+:root[data-theme="dark"] {
+  --ft-dim: #777;
+  --ft-dir: #f0b850;
+  --ft-code: #5a9cff;
+  --ft-web: #ff8a52;
+  --ft-data: #2dd4bf;
+  --ft-doc: #4ade80;
+  --ft-media: #f472b6;
+  --ft-shell: #c084fc;
+  --ft-archive: #d9822b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ft-dim: #777;
+    --ft-dir: #f0b850;
+    --ft-code: #5a9cff;
+    --ft-web: #ff8a52;
+    --ft-data: #2dd4bf;
+    --ft-doc: #4ade80;
+    --ft-media: #f472b6;
+    --ft-shell: #c084fc;
+    --ft-archive: #d9822b;
+  }
+}

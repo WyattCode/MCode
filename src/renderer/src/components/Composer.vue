@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
-import { VoiceRecorder, applyVoiceResult, editCue, isClearCommand, micFailure, transcribeFailure, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
+import { applyVoiceResult, dropVoice, editCue, isClearCommand, micFailure, nextVoiceBox, recorder, transcribeFailure, voiceOwner, voiceRun, voiceState, type Recording, type VoiceCue, type VoiceFailure, type VoiceState } from "../lib/voice"
 import type { Ref } from "vue"
 import type { Attachment, CommandInfo, DirEntry, Effort, FileHit, Message, ModelInfo, SessionInfo } from "@shared/protocol"
 import { interruptedTurn } from "@shared/resume"
@@ -20,7 +20,7 @@ import { audioVerdict, isAudioFile, limitMinutes, probeAudio } from "../lib/audi
 import { ACCESS_LEVELS, defaultAccess, sessionAccess, type Access } from "@shared/access"
 import { openImagePreview, openVideoPreview } from "../lib/image-preview"
 import type { Draft } from "../lib/draft"
-import { badgeStyle, fileBadge } from "../lib/filetype"
+import { fileCategory } from "../lib/files-tab"
 import { clampEffort, effortLabelKey, findModel, withoutLatest } from "../lib/model"
 import {
   fileName,
@@ -471,9 +471,26 @@ async function take(files: readonly File[]) {
   const { attachments: taken, rejected } = await readFiles(files)
   attachments.value = [...attachments.value, ...taken]
   if (taken.length) notify(t("toast.attachmentsAdded", { count: taken.length }))
+  sayIfUnreadable(taken)
   for (const item of rejected) {
     notifyFailure(item.reason === "too-large" ? t("attach.tooLarge", { size: MAX_LABEL }) : t("attach.unreadable"), item.name)
   }
+}
+
+/**
+ * Says so when the model cannot look at a picture that was just attached.
+ *
+ * A picture is the only thing that travels inside the message; everything else
+ * goes by path and any model can open it with a tool. MiMo has a line for this
+ * in all nineteen of its tables and never shows it - nothing in the app reads
+ * the key - so a picture attached to a model without vision simply went
+ * nowhere. This is MCode's own notice, in the box where it happened.
+ */
+function sayIfUnreadable(added: readonly Attachment[]) {
+  const model = currentModel.value
+  if (!model || model.inputs.image) return
+  if (!added.some((file) => file.mime.startsWith("image/"))) return
+  notify(t("attach.noImageInput", { model: model.name || model.id }))
 }
 
 function pick() {
@@ -529,8 +546,10 @@ async function onPaste(event: ClipboardEvent) {
       return
     }
     const data = saved.dataUrl?.split(",")[1] ?? ""
-    attachments.value = [...attachments.value, { path: saved.path, mime: "image/png", data, byPath: true }]
+    const pasted: Attachment = { path: saved.path, mime: "image/png", data, byPath: true }
+    attachments.value = [...attachments.value, pasted]
     notify(t("toast.attachmentsAdded", { count: 1 }))
+    sayIfUnreadable([pasted])
     return
   }
   const pasted = event.clipboardData?.getData("text/plain") ?? ""
@@ -808,17 +827,16 @@ function setMode(next: "normal" | "shell") {
 /*
  * Speaking instead of typing.
  *
- * The recorder is held for the life of the box so a second press finds the
- * same one; it opens the microphone on the first press and closes it on the
- * second, and `cancel` on unmount makes sure a window closed mid-recording
- * does not leave the device open.
+ * The recorder is the app's one recorder, not this box's: several boxes are
+ * mounted at once and each holding its own opened two captures of the same
+ * microphone. `voiceOwner` says which box has it, so only that one draws the
+ * capsule, and pressing the button in another stops this one first.
  */
-const recorder = new VoiceRecorder()
-const voice = ref<VoiceState>("idle")
+const boxID = nextVoiceBox()
+const mine = computed(() => voiceOwner.value === boxID)
+const voice = computed<VoiceState>(() => (mine.value ? voiceState.value : "idle"))
 /* The microphone's level for the capsule's waveform, read once a frame while recording. */
 const voiceLevel = ref(0)
-/* Bumped by × so a transcription already on its way lands nowhere. */
-let voiceRun = 0
 
 const voiceConfigured = computed(() => Boolean(app.config?.voiceModel?.model))
 
@@ -827,7 +845,7 @@ let levelFrame = 0
 function followLevel() {
   cancelAnimationFrame(levelFrame)
   const step = () => {
-    if (voice.value !== "recording") {
+    if (!mine.value || voiceState.value !== "recording") {
       voiceLevel.value = 0
       return
     }
@@ -839,7 +857,8 @@ function followLevel() {
 
 onBeforeUnmount(() => {
   cancelAnimationFrame(levelFrame)
-  recorder.cancel()
+  // Only what this box started: another box's recording outlives this one being taken off screen.
+  if (mine.value) dropVoice()
 })
 
 /* MiMo's five bars: 4px at rest and up to 16 at full level, the middle one the tallest. */
@@ -865,64 +884,88 @@ function showCue(cue: VoiceCue) {
 
 onBeforeUnmount(() => clearTimeout(cueTimer))
 
-async function toggleVoice() {
-  if (voice.value === "working" || voice.value === "starting") return
-  if (voice.value === "recording") {
-    voice.value = "working"
-    const run = ++voiceRun
-    try {
-      const recording = await recorder.stop()
-      /* A press and an immediate second press is a slip, not a message. */
-      if (!recording || recording.ms < 350) return
-      /* The box and its caret go along, so 智能编辑 can edit them; lib/voice decides what lands. */
-      const draft = {
-        text: text.value,
-        selectionStart: input.value?.selectionStart ?? text.value.length,
-        selectionEnd: input.value?.selectionEnd ?? text.value.length,
-      }
-      const result = await app.client?.request({
-        type: "voice.transcribe",
-        audio: recording.audio,
-        mime: recording.mime,
-        language: language.value,
-        draft,
-      })
-      // Cancelled while it was being written down.
-      if (run !== voiceRun) return
-      if (!result) return
-      const quick = (app.config?.voiceMode ?? "smart") === "fast"
-      /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
-      if (quick && isClearCommand(result.text)) {
-        rewrite("")
-        await nextTick(resize)
-        // The user pressed a button to start this, so the keyboard is on the button: the box is given it back.
-        input.value?.focus({ preventScroll: true })
-        input.value?.setSelectionRange(0, 0)
-        showCue("cleared")
-        return
-      }
-      const next = applyVoiceResult(draft, result)
-      const edited = editCue(draft.text, next.text, Boolean(result.edit))
-      if (next.text !== text.value) {
-        rewrite(next.text)
-        await nextTick(resize)
-      }
+/**
+ * One stretch of speech, written down while the next is still being spoken.
+ *
+ * The stretches are handled strictly in turn: each reads the box as it stands
+ * when its own answer comes back, so two of them cannot both edit the draft
+ * they each saw at the start and undo one another.
+ */
+let voiceQueue: Promise<void> = Promise.resolve()
+
+function queueSegment(recording: Recording, run: number) {
+  voiceQueue = voiceQueue.then(() => hearSegment(recording, run)).catch(() => undefined)
+}
+
+async function hearSegment(recording: Recording, run: number) {
+  /* A press and an immediate second press is a slip, not a message. */
+  if (recording.ms < 350 || run !== voiceRun.value) return
+  /* The box and its caret go along, so 智能编辑 can edit them; lib/voice decides what lands. */
+  const draft = {
+    text: text.value,
+    selectionStart: input.value?.selectionStart ?? text.value.length,
+    selectionEnd: input.value?.selectionEnd ?? text.value.length,
+  }
+  try {
+    const result = await app.client?.request({
+      type: "voice.transcribe",
+      audio: recording.audio,
+      mime: recording.mime,
+      language: language.value,
+      draft,
+    })
+    // Cancelled while it was being written down.
+    if (run !== voiceRun.value) return
+    if (!result) return
+    const quick = (app.config?.voiceMode ?? "smart") === "fast"
+    /* MiMo's quick input: an utterance that is only a clear word empties the box instead of being typed. */
+    if (quick && isClearCommand(result.text)) {
+      rewrite("")
+      await nextTick(resize)
+      // The user pressed a button to start this, so the keyboard is on the button: the box is given it back.
       input.value?.focus({ preventScroll: true })
-      input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
-      /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
-      const sendsByVoice = (app.config?.voiceSend ?? false) && !quick
-      if (next.send && sendsByVoice && text.value.trim()) {
-        voice.value = "idle"
-        // MiMo sends at once and then says so; a send is named over a rewrite heard in the same breath.
-        await submit()
-        showCue("sent")
-        return
-      }
-      if (edited) showCue(edited)
-    } catch (err) {
-      if (run === voiceRun) showVoiceFailure(transcribeFailure(err))
+      input.value?.setSelectionRange(0, 0)
+      showCue("cleared")
+      return
+    }
+    const next = applyVoiceResult(draft, result)
+    const edited = editCue(draft.text, next.text, Boolean(result.edit))
+    if (next.text !== text.value) {
+      rewrite(next.text)
+      await nextTick(resize)
+    }
+    input.value?.focus({ preventScroll: true })
+    input.value?.setSelectionRange(next.selectionStart, next.selectionEnd)
+    /* As in MiMo, the spoken "send" belongs to the considered mode only; quick input just types. */
+    const sendsByVoice = (app.config?.voiceSend ?? false) && !quick
+    if (next.send && sendsByVoice && text.value.trim()) {
+      dropVoice()
+      // MiMo sends at once and then says so; a send is named over a rewrite heard in the same breath.
+      await submit()
+      showCue("sent")
+      return
+    }
+    if (edited) showCue(edited)
+  } catch (err) {
+    if (run === voiceRun.value) showVoiceFailure(transcribeFailure(err))
+  }
+}
+
+async function toggleVoice() {
+  if (mine.value && (voice.value === "working" || voice.value === "starting")) return
+  if (mine.value && voice.value === "recording") {
+    voiceState.value = "working"
+    const run = voiceRun.value
+    try {
+      // Whatever is left since the last cut is the last stretch; the earlier ones are already in the queue.
+      const last = await recorder.stop()
+      if (last) queueSegment(last, run)
+      await voiceQueue
     } finally {
-      if (run === voiceRun) voice.value = "idle"
+      if (run === voiceRun.value) {
+        voiceState.value = "idle"
+        voiceOwner.value = undefined
+      }
     }
     return
   }
@@ -931,25 +974,32 @@ async function toggleVoice() {
     notifyFailure(t("voice.notConfigured"))
     return
   }
+  /* MiMo's rule when another box has the microphone: that one stops, and this one starts. */
+  if (voiceOwner.value && voiceOwner.value !== boxID) dropVoice()
   // MiMo's starting capsule, between the press and the microphone answering.
-  voice.value = "starting"
+  voiceOwner.value = boxID
+  voiceState.value = "starting"
+  const run = voiceRun.value
   try {
     // MiMo's micAccess before capture: a refusal from the OS is a denial like getUserMedia's.
     if (!(await window.mcode.micAccess())) throw new DOMException("", "NotAllowedError")
+    recorder.onSegment = (recording) => queueSegment(recording, run)
     await recorder.start()
-    voice.value = "recording"
+    if (run !== voiceRun.value) return
+    voiceState.value = "recording"
     followLevel()
   } catch (err) {
-    voice.value = "idle"
+    if (run === voiceRun.value) {
+      voiceState.value = "idle"
+      voiceOwner.value = undefined
+    }
     showVoiceFailure(micFailure(err))
   }
 }
 
 /* MiMo's ×: the recording, or the transcription on its way, is thrown away and nothing is typed. */
 function cancelVoice() {
-  voiceRun += 1
-  recorder.cancel()
-  voice.value = "idle"
+  dropVoice()
   cueOn.value = false
 }
 
@@ -2915,9 +2965,22 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
               @click="onTileClick(item, $event)"
               @keydown.enter.space.self.prevent="onTileClick(item, $event)"
             >
-              <span class="badge att-badge" :style="badgeStyle(fileBadge(fileName(item.path)))">
-                {{ fileBadge(fileName(item.path)).label }}
-              </span>
+              <!-- The tree's file-page glyph in the tree's colours, so one file reads the same way in both places. -->
+              <svg
+                class="att-ic"
+                :class="`cat-${fileCategory(fileName(item.path))}`"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.7"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M13 2v7h7" />
+              </svg>
               <span class="att-name">{{ fileName(item.path) }}</span>
               <button
                 class="att-x inline"
@@ -2926,9 +2989,7 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
                 v-tip="{ label: t('attach.remove'), placement: 'top' }"
                 @click.stop="remove(at)"
               >
-                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                  <path d="M2.5 2.5l5 5M7.5 2.5l-5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-                </svg>
+                ✕
               </button>
             </div>
           </template>
@@ -3748,24 +3809,6 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   font-size: calc(13px * var(--ui-font-scale, 1));
 }
 
-/*
- * The type mark a file row leads with, the same one the palette and the tree
- * use - a file should not read as a different kind of thing depending on which
- * list it is being offered from.
- */
-.badge {
-  display: inline-flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 17px;
-  height: 15px;
-  border-radius: 3px;
-  font-family: var(--font-mono);
-  font-size: calc(8.5px * var(--ui-font-scale, 1));
-  font-weight: 530;
-}
-
 .slash-title {
   /*
    * Takes the middle of the row so the hint stays against the far edge whether
@@ -4024,8 +4067,41 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   cursor: pointer;
 }
 
-.att-badge {
+.att-ic {
   flex: none;
+  color: var(--text-weak);
+}
+
+.att-ic.cat-dir {
+  color: var(--ft-dir);
+}
+
+.att-ic.cat-code {
+  color: var(--ft-code);
+}
+
+.att-ic.cat-web {
+  color: var(--ft-web);
+}
+
+.att-ic.cat-data {
+  color: var(--ft-data);
+}
+
+.att-ic.cat-doc {
+  color: var(--ft-doc);
+}
+
+.att-ic.cat-media {
+  color: var(--ft-media);
+}
+
+.att-ic.cat-shell {
+  color: var(--ft-shell);
+}
+
+.att-ic.cat-archive {
+  color: var(--ft-archive);
 }
 
 .att-name {
@@ -4042,6 +4118,9 @@ defineExpose({ focus, insert, mention, openContext, openModelMenu, pick, reset, 
   color: var(--text-weak);
   background: transparent;
   border-radius: 6px;
+  /* MiMo's mark is the character at 13px, not a drawing. */
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  line-height: 1;
 }
 
 .att-x.inline:hover {
