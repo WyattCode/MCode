@@ -23,9 +23,14 @@ export function isPill(part: ToolPart): boolean {
 /** The words after the pills, MiMo's six: 开始工作 / 已完成 / 失败 / 已取消 / 可能停滞 / 已结束. */
 export type PillStatus = "started" | SubagentNoticeStatus
 
-/** 已完成 once every pill is a run that has answered; a spawn only started its subagent, so it reads 开始工作. */
+/**
+ * 已完成 once every pill is a run that has answered; a spawn only started its
+ * subagent, so it reads 开始工作. Runs whose subagent was stopped read 已取消.
+ */
 export function pillStatus(parts: readonly ToolPart[]): PillStatus {
-  return parts.length > 0 && parts.every((part) => actionOf(part) === "run" && stepState(part) === "completed") ? "completed" : "started"
+  const answered = parts.length > 0 && parts.every((part) => actionOf(part) === "run" && stepState(part) === "completed")
+  if (answered && parts.every((part) => part.metadata?.cancelled === true)) return "cancelled"
+  return answered && !parts.some((part) => part.metadata?.cancelled === true) ? "completed" : "started"
 }
 
 /** Notices drawn together share their word when they agree, and read 已结束 when they do not. */
@@ -55,6 +60,8 @@ export interface SubagentItem {
 export function subagentStatus(part: ToolPart): SubagentStatus {
   const state = stepState(part)
   if (state === "error" && part.metadata?.aborted === true) return "rejected"
+  // A run whose subagent was stopped some other way answers that it was cancelled.
+  if (state === "completed" && part.metadata?.cancelled === true) return "rejected"
   // A spawn that went through only started its subagent: it is at work until something says otherwise.
   if (state === "completed" && actionOf(part) === "spawn") return "running"
   return state
@@ -106,7 +113,7 @@ export function subagentItems(messages: readonly Message[], children: readonly S
       // Refused for its arguments before anything started: there is nothing to open.
       if (!child && status === "skipped") continue
       const name = text(part.input?.description) || child?.title || ""
-      const summary = status === "completed" ? answerSummary(subagentAnswer(part.output)) : status === "running" ? name : (part.error ?? "")
+      const summary = status === "completed" ? answerSummary(subagentAnswer(part.output)) : status === "running" ? name : (part.error ?? subagentAnswer(part.output))
       const item: SubagentItem = {
         key: part.callID,
         sessionID: child?.id,

@@ -26,9 +26,14 @@ export function subagentTone(seed: string | undefined): number {
   return (hash >>> 0) % SUBAGENT_TONES
 }
 
-/** The actor call's output: a line naming the subagent, then its final message inside these tags. */
-export function subagentOutput(actorID: string, answer: string, status?: string): string {
-  const open = status ? `<actor_result status="${status}">` : "<actor_result>"
+/**
+ * The actor call's output: a line naming the subagent, then its final message
+ * inside these tags. As MiMo's, the tag always carries a status - `unknown`
+ * when the answer reported none - and the reported summary when there is one.
+ */
+export function subagentOutput(actorID: string, answer: string, status?: string, summary?: string): string {
+  const said = summary?.replace(/\s+/g, " ").replace(/"/g, "'").trim()
+  const open = `<actor_result status="${status ?? "unknown"}"${said ? ` summary="${said}"` : ""}>`
   return `actor_id: ${actorID}\n\n${open}\n${answer}\n</actor_result>`
 }
 
@@ -161,13 +166,22 @@ const SAID: Record<SubagentNoticeStatus, string> = {
 /**
  * What the parent's model reads about its background subagents, in MCode's own
  * words. `result` is the whole answer, which the notice itself carries only the
- * first line of.
+ * first line of; for a failure it is the error, and `partial` whatever answer
+ * the subagent had given by then. An answer that reported failed or blocked is
+ * said to have finished with that status, as MiMo's notice says it.
  */
-export function noticeText(entries: { notice: SubagentNotice; result?: string }[]): string {
-  const blocks = entries.map(({ notice, result }) => {
-    const head = `Background subagent "${notice.description}" (actor_id: ${notice.subagentID}) ${SAID[notice.status]}.`
+export function noticeText(entries: { notice: SubagentNotice; result?: string; partial?: string }[]): string {
+  const blocks = entries.map(({ notice, result, partial }) => {
+    const who = `Background subagent "${notice.description}" (actor_id: ${notice.subagentID})`
+    const head = `${who} ${SAID[notice.status]}.`
+    const reported = notice.reported
+    if (reported) {
+      const settled = reported === "failed" || reported === "blocked" ? `${who} finished and reported ${reported}.` : `${who} completed.\nStatus: ${reported}`
+      const summary = notice.summary ? `\nSummary: ${notice.summary}` : ""
+      return `${settled}${summary}\nResult:\n${result ?? ""}`
+    }
     if (notice.status === "completed") return `${head}\nResult:\n${result ?? notice.summary ?? ""}`
-    if (notice.status === "failed") return `${head}\nError: ${result ?? notice.summary ?? "unknown"}`
+    if (notice.status === "failed") return `${head}\nError: ${result ?? notice.summary ?? "unknown"}${partial ? `\nPartial result:\n${partial}` : ""}`
     if (notice.status === "stalled") {
       const quiet = notice.quietSeconds === undefined ? "" : ` Nothing has happened in it for ${notice.quietSeconds}s.`
       return `${head}${quiet} It is still running: check on it with status, send it a message, or cancel it.`

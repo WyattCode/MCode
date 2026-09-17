@@ -31,7 +31,8 @@ export function structuredOutputTool(schema: Record<string, unknown>): ToolDefin
 
 /** The structured result a subagent returned since it was last given work, if it did. */
 export function structuredResult(messages: readonly Message[]): unknown {
-  const since = messages.map((message) => message.role === "user" && message.text !== STRUCTURED_REMINDER).lastIndexOf(true)
+  // A reminder - to return the result, or from the completion gate - does not start new work.
+  const since = messages.map((message) => message.role === "user" && !message.synthetic && message.text !== STRUCTURED_REMINDER).lastIndexOf(true)
   for (const message of messages.slice(since + 1).reverse()) {
     if (message.role !== "assistant") continue
     for (const part of [...message.parts].reverse()) {

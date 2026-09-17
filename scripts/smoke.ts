@@ -294,6 +294,8 @@ import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
+// round 10: the agent-type tools (subagents, tasks, questions, plans, automations, cross-chat, history, skills).
+import { roundTenAgentChecks } from "./smoke-round10-agents"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -6940,6 +6942,7 @@ async function main() {
   await roundNineWindowsChecks(check, section)
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
+  await roundTenAgentChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
@@ -8336,7 +8339,7 @@ async function subagentChecks(root: string) {
     { spawn: sixSpawn?.output, record: sixChild?.subagent },
   )
   check("status sees it still at work, by its description", reportOf(sixStatus).status === "running" && reportOf(sixStatus).description === "Look in the background", sixStatus?.output)
-  check("wait holds until it is idle and hands back its result", reportOf(sixWait).status === "idle" && reportOf(sixWait).outcome === "success" && reportOf(sixWait).result === "background", sixWait?.output)
+  check("wait holds until it is idle and hands back its result", reportOf(sixWait).status === "idle" && reportOf(sixWait).lastOutcome === "success" && reportOf(sixWait).result === "background", sixWait?.output)
   check("its record says it ran in the background and succeeded", sixChild?.subagent?.background === true && sixChild.subagent.status === "idle" && sixChild.subagent.outcome === "success", sixChild?.subagent)
   const sixNotices = await noticesIn(six.id)
   check("the conversation is told it completed, its answer as the summary", sixNotices.some((entry) => entry.status === "completed" && entry.subagentID === "explore-1" && entry.summary === "background"), sixNotices)
@@ -8529,7 +8532,7 @@ async function subagentChecks(root: string) {
   await settled(sixteen.id)
   const headerPart = (await taskParts(sixteen.id)).find((part) => part.input?.prompt === "HEADER")
   check("a general subagent is asked to open with the status header; an explore one is not", childSystems.some((text) => text.includes("**Status**: success, partial, failed or blocked")) && childSystems.some((text) => !text.includes("**Status**:")), childSystems.length)
-  check("the header's status reaches the actor result", Boolean(headerPart?.output?.includes('<actor_result status="partial">')), headerPart?.output)
+  check("the header's status reaches the actor result", Boolean(headerPart?.output?.includes('<actor_result status="partial" summary="half done">')), headerPart?.output)
 
   parentSteps = [[{ action: "spawn", description: "Header failed", prompt: "HEADERFAIL", subagent_type: "general" }]]
   const seventeen = await store.create({ directory: project, model })

@@ -355,6 +355,8 @@ export interface SubagentNotice {
   summary?: string
   /** For a stall: how many seconds nothing has happened in it. */
   quietSeconds?: number
+  /** The status its final message reported (MiMo's Status header), as the parent's model is told it. */
+  reported?: "success" | "partial" | "failed" | "blocked"
 }
 
 /**
@@ -376,6 +378,11 @@ export interface SubagentState {
   ended?: number
   /** The task registry's task it was started for, when the id named one. */
   taskID?: string
+  /**
+   * tasks: how its last successful turn was reconciled - the status its parent
+   * was given, and the tasks it still held unfinished (MiMo's completion gate).
+   */
+  reported?: { status?: "success" | "partial" | "failed" | "blocked"; unfinished?: string[] }
   /** The slash command that started it. */
   command?: string
   /** The JSON Schema its result has to match (MiMo's output_schema). */
