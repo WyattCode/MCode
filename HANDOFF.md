@@ -5,7 +5,7 @@
 - 分支：`v2.0`（只在本地，从未推送）
 - 目标：在界面和功能上 1:1 复刻 Xiaomi MiMo 桌面端，MCode 保留自己的名字、图标和字标
 - 对照清单（逐项实测，含百分比）：https://claude.ai/code/artifact/f149a5d1-857e-4bae-80be-ca03265d9f83
-- 最近更新：2026-09-15
+- 最近更新：2026-09-17
 
 ## 现在到哪了
 
@@ -39,7 +39,7 @@
 - I1 [已完成] 录音胶囊：圆形麦克风展开成胶囊，启动中（转圈）/ 录音中（5 条波形 + ×）/ 转写中（转圈 + ×），× 丢弃录音或待转写内容
 - I2 [已完成] 附件：换行排列，图片 / 视频 54px 缩略图点开预览，文件胶囊带 ×；顺序 附件 → 技能芯片 → 批注
 - I3 [已完成] @ 菜单按目录浏览：「文件」头、‹ 工作区 / 面包屑、每个文件夹「引用」和 ›、当前目录内 150ms 搜索、加载中 / 无法读取 / 搜索失败 / 截断提示、无项目「选个项目后可引用文件」；Tab 引用文件夹、空查询 Backspace 返回上级（服务端 file.listDir / file.search）
-- I4 [已完成] 技能芯片：斜杠菜单或加号菜单「技能 ›」（可搜索）选中后成芯片，发送时在渲染端展开技能正文
+- I4 [已完成] 技能芯片：斜杠菜单或加号菜单「技能 ›」（可搜索）选中后成芯片，发送时以 `/name` 前缀发出，由服务端加载技能正文（第十轮更正）
 - I5 [已完成] 加号菜单：更多 / 添加照片和文件、分隔线、终端常驻（首页打开底部终端）、去掉计划模式开关、编排模式文案，靠近窗口底部时向上翻
 - I6 [已完成] 中断回合的「继续」：上一回合被停止、失败、未完成或无回复且输入框为空时显示播放按钮，服务端 session.resume（runner.resumeTurn，不写用户消息），无法继续时提示「当前回合无法继续」
 - I7 [已完成] 压缩上下文中：输入框锁定、占位「正在压缩上下文…」、发送位转圈；输入或菜单 /compact 按 MiMo 的前置检查与提示
@@ -354,7 +354,7 @@
   - 验证（合并 v2.0 897ee3c 后）：十三项检查全过，build 通过，smoke **3308 全过**（新 `scripts/smoke-round10-steps.ts` 48 条；`session-check` 插话回滚改为新边界；smoke 里 locate 图标与直播文本两条旧预期随之更新）。探针 `mcode-round10-steps.cjs` 中文 30 项、阿拉伯语 35 项全过、0 报错；一次性改坏全部修复后分别 25 / 30 项失败，smoke 新增 23 条失败，sessioncheck 插话 3 条失败。回归：round3-stream 34、round3-reply 29（copyFeedback 一次偶发，重跑通过）、round6-visual 24 全过；round8-a11y 19/20（见上）。
 - **第十轮第一批已合并四路**（bash 与网页、文件工具与桌面工具包、git、步骤绘制；合并冲突只在 smoke.ts / HANDOFF / bash.ts 的 import，两边都保留，typecheck 与 i18ncheck 通过）。智能体类工具那一路与文件工具那一路都做了定时任务（T10-20/21/22/51/52/53）和跨对话中文文案（T10-49/55），合并冲突落在 automation 与 session-chat 代码里，已交回该路在自己分支上合并最新 v2.0、每项只留一套实现。T10-50：审计称 MiMo 发起方停止时**不**撤回排队消息，MCode 目前撤回，待问用户。
 - **用户 2026-09-17 第十轮第二批决定**：斜杠菜单照 MiMo 列出并实现 `/init`、`/review`、`/dream`、`/distill`、`/rebuild`（文字自写）；记忆完全照 MiMo 按仓库分份、非 git 文件夹共用一份（迁移时合并、不删、留备份）；技能详情弹窗与「卸载」照 MiMo；macOS 留边距图标与 Linux 图标同步照做。**暂不做**：M10-7 Mac 签名 / 公证 / 架构、M10-8 Mac 自动更新、M10-21 Mac / Linux 随包运行时、M10-22 deb、M10-27（Linux 无托盘时保持 MiMo 行为）。
-- 进行中：记忆 / 技能 / 斜杠命令一路；macOS / Linux 一路（M10-1 登录网址经 shell 打开的注入问题优先）。
+- 进行中：macOS / Linux 一路（M10-1 登录网址经 shell 打开的注入问题优先）。
 - **第十轮·智能体类工具（`r10-part-C.md` 与对应 T10 项）已完成**，检查在 `scripts/smoke-round10-agents.ts`（每项都在改坏代码后确认会失败）：
   - T10-16：带有效 `task_id` 启动的子智能体先把该任务开始并归到自己名下；general 子智能体结束时若手里还有未开始 / 进行中的任务，用隐藏提醒（`synthetic`）最多再跑 2 轮；仍持有未完成任务时状态降为 partial（只剩 blocked 时为 blocked），答复末尾列出「**Unfinished tasks**」，闸门那一轮出错时保留之前的答复并降为 partial。子智能体记录新增 `subagent.reported`。
   - T10-44：`<actor_result>` 总带 status（无状态头为 unknown）和 summary 属性；被外部停止的 run 返回 cancelled 结果（随父回合 Stop 的仍是中断）；失败带 Partial result；status / wait 字段改为 `agent / turnCount / lastTurnTime / lastOutcome / time`，wait 带 `reportedStatus / reportedSummary`；failed / blocked 的通知写「finished and reported …」。子智能体的 worker 在结果落盘后才释放（修掉 wait 偶发读不到 lastOutcome）。
@@ -369,6 +369,22 @@
   - 未改：T10-23 同步等满转异步保持现状（有意差异）；T10-47 history 的「本项目」仍按文件夹；T10-4（截断提示里的 actor）由 bash 一路完成。**T10-50（用户 2026-09-17 改为照 MiMo 不撤回）**：同步跨对话调用的发起方被停止时，还在排队的消息不再撤回，照常送达并运行，回复丢弃（`session/chat.ts`；检查 smoke-round10-agents「T10-50」4 项，恢复撤回写法时会失败）。
   - 探针 `mcode-round4-crosschat.cjs` 的假模型改认中文消息头（备份 `.pre-r10c`，改动处标 `R10c`）。
   - 验证（合并 v2.0 cef790a 后）：十三项检查、smoke 3641、build 全过；定时任务与跨对话两处与文件工具一路重复，保留那一路的实现，本路只补上跨对话消息头的中文（MiMo 的注入头是中文）并删掉重复检查；合并前的验证：十三项检查、smoke 3372、build 全过；新探针 `mcode-round10-agents.cjs` 5 项（批准后同一运行写入、完成闸门、子智能体提问进不了停靠栏、包装后的 spawn / wait 绘制、无报错）全过，改坏代码后 A1–A4 全败；round5-plan 8、round4-crosschat 10 全过；round4-subagents 10 项：R5（取消后台子智能体）断续失败（合并后 4 次中 2 次，表现为取消后子智能体仍在跑、没有通知），加了诊断输出（R10c 标记）后连续 12 次全过，未能复现原因，需留意。
+
+- **第十轮·记忆 / 技能 / 斜杠命令一路已完成**（`round10-memory.md` R10-1 … R10-14；检查 `scripts/smoke-round10-memory.ts` 114 条，合并前两次改坏分别有 50、10 条失败；探针 `mcode-round10-memory.cjs` 21 项全过、0 报错，改坏的构建 8 项失败）：
+  - R10-6 记忆按仓库：项目 id 是主仓库 `.git/mcode-project-id` 里的随机 UUID（子目录、链接工作树共用；另一份克隆不同；`.git` 在家目录或盘根不算）；所有非 git 文件夹共用 `projects/global`；`.git` 不可写时用主仓库路径派生的 `repo-xxxxxxxx`。history 的「本项目」范围随之改为同一 id（更正 T10-47 的「仍按文件夹」）。一次性迁移 `memory-by-repository`：先把整个 `memory/projects` 复制到 `<数据目录>/backup/memory-projects-<时间>/`，再按已知文件夹（会话目录、项目列表、已关闭项目）把旧的按文件夹哈希目录并入新目录——目标不存在就移动、已有同样内容只留一份、不同内容追加在「## Merged from <文件夹> (日期)」下；认不出归属的旧目录原样保留。
+  - R10-5 / R10-13 写入守卫（`memory/guard.ts`，接在 `resolvePath` 的写入分支）：必须是 `<scope>/…/<name>.md`（projects / sessions 须带 id）；`sessions/<id>/tasks/**` 只给绑定该任务的子智能体写自己那份；配置 `memory.disableWrite`（只能手写进 config.json）拒绝一切记忆写入，提示词记忆段改为只读说明。
+  - R10-7 找回提示：与智能体工具一路的 T10-42 重复，合并时保留那一路（`recallHint`），本路只留一条真实回合检查。
+  - R10-8 历史索引收录压缩摘要（`<会话>/<消息>/summary`，含文件清单，get / around 可读）、工具附件（名称 / 类型 / 路径）和失败回复的 error；CONTENT_VERSION 升到 2，启动时重建。
+  - R10-9 搜索浮层按 MiMo 打分（`shared/search-score.ts`，前后端共用）：精确命中 1000 + 近端最多 200 + 词边界 80 / 30；模糊 500 − 段数×40 − 跨度 − 起点，≤0 丢弃，空格不跳过。服务端读正文 + 工具输出（截 20000 字），每个对话取得分最高的一条并按分数排序；只命中消息的对话按该分数，标题命中 +300，项目按路径命中为路径分 −100。仍扫描全部转录。
+  - R10-10 全局 AGENTS.md 并入指令列表、排在项目文件之后；找到第一个存在的全局文件就停（空文件也停），所以有全局 AGENTS.md 时不读 `~/.claude/CLAUDE.md`，停用（改名）后才读。提示词段名改为「## Instructions」，全局 AGENTS.md 模板文案同步。
+  - R10-11 后备标题和标题请求都去掉消息开头的技能芯片 `/name`。R10-12 新内置技能 `memory-search`（表结构、只读 SQLite、查询模板；技能和 dream / distill 提示词里的查询都在 smoke 里对真实索引跑过）。
+  - R10-1 技能开关：配置 `disabledSkills`（MCode 自己的键）；提示词清单、skill / skill_search、斜杠与加号菜单、`/name` 加载统一过滤；插件页技能卡片显示真实状态，已停用的显示 MiMo 的「安装」按钮（点了即启用），否则「…」菜单里是「停用」；切换后吐司「已启用 / 已停用技能」并重取斜杠列表；手改 config.json 同样生效。
+  - R10-2 技能详情卡（`SkillDetailDialog.vue`，520 宽 / 圆角 16 / 内距 22，照 MiMo）：图标（frontmatter `icon`，否则按名字取色的拼图）、`locales/<语言>.json` 的显示名与简介、开关、说明（界面简体中文而说明纯英文、界面英文而说明含中文时照 MiMo 不显示）、「查看 SKILL.md 内容」（整文件，最多 20 万字，超出提示）、底部「卸载」「让智能体来配置」「在对话中试用」。**卸载照 MiMo**：不弹确认，只对用户全局技能目录（`<数据目录>/storage/skills`）里的技能显示，文件夹移到 `<数据目录>/storage/skill-trash/<时间戳>-<名字>`，不删除也不清理；内置技能和项目 `.mcode` 技能没有卸载。「让智能体来配置」开新任务、只挂 `skill-creator` 芯片并预填请求；「在对话中试用」把芯片放进当前对话（没有就放首页）的输入框（`composer-drafts` 的 `addDraftSkill`）。
+  - **注意：插件页入口仍按 2026-09-14 的决定隐藏**（`goPlugins` 没有调用者），所以 R10-1 的「…」菜单和 R10-2 的详情卡目前在界面上进不去；探针是在临时加了 `window.__probePlugins` 钩子的构建上跑的（钩子未提交）。是否恢复侧栏「插件」行需用户决定；在此之前可手改 config.json 的 `disabledSkills`。
+  - R10-3 斜杠命令照 MiMo：列表开头依次 `/init` `/review` `/dream` `/distill` `/rebuild`（对话里 `/compact` 仍在最前），来源标签「命令」，说明是英文（MiMo 也直接显示引擎的英文说明），文字全部自写（`server/command-builtin.ts`）；同名的用户命令会替换它（`CommandInfo.own` 区分）。`/init` 在对话里写仓库根的 AGENTS.md；`/review` 交给子智能体；`/dream` `/distill` 本回合以自己的智能体运行（`COMMAND_AGENTS` / `TurnAgent`，`prompts.ts` 的 DREAM / DISTILL 提示词，只有 read / write / edit / glob / grep / memory / bash，不给 MCP，写入只许记忆目录和项目 `.mcode`；bash 仍按用户的权限级别询问——MiMo 的 dream 规则里 bash 是 allow，这里没有放宽）；`/rebuild` 由输入框接管，照 MiMo 桌面端（关了 checkpoint）改为压缩，后面的参数忽略。回合中途压缩后仍保持命令指定的智能体和模型。
+  - R10-4 斜杠菜单只按名称、逐词前缀匹配（与设置搜索同一 `wordMatch`）；加号菜单的技能子菜单核实过 MiMo 就是名称 + 说明子串匹配，未改。R10-14 frontmatter 解析失败的 SKILL.md 每个文件报一次错误吐司（修好再坏会再报），缺 name / description 的只写日志。
+  - 合并 v2.0 时修的：`run()` 的 planning 要从存储里的会话读（否则命令指定 plan 的回合第一步就被切回 build）。十三项检查、build 全过，smoke 全量 3755 全过（round9-providers 的「Smart 路由记为后台开销」有一次偶发失败，单独跑和整体重跑都通过）。
+  - 未做：LAN 模型实测 /dream、/distill（可选，未跑）。
 
 用户决定不做（不要再主动提）：
 
@@ -458,7 +474,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
 
 用户并排截了 MiMo 和 MCode 的同一界面，要求逐个对照、1:1 复刻。每项动手前先读 MiMo 包核实细节；账号相关（头像 Biscuit、个人资料、计费）不在范围内。
 
-- [x] A1 斜杠菜单（已完成：只列项目命令 / MCP / 技能，`/name` 胶囊 + 说明 + 右侧来源标签；对话中首行是 `/compact`，选中直接压缩；浮层在输入框上方 8px 内缩、6px 间距、12px 圆角；应用命令不再出现在斜杠菜单里，Composer 和 HomeHero 的 `commands` 属性已删除，命令面板保留。注意 `prompt.*` 键是参考实现的译文，i18ncheck 会拦改值，MCode 自己的标签用 `composer.slash*` 键。探针 `mcode-slash-menu.cjs`）原始差异：MiMo 在输入框**上方**独立浮层，标题「命令」，每行 `/name` 胶囊 + 灰色说明 + 右侧「命令 / 技能」标签，内容是项目命令和技能；MCode 在输入框卡片内，列的是应用命令（新建会话、切换模型…），快捷键被截成「Ct…」
+- [x] A1 斜杠菜单（已完成；**第十轮更正**：MiMo 引擎自带的 /init /review /dream /distill /rebuild 也会列出，见第十轮记忆一路；原记录：只列项目命令 / MCP / 技能，`/name` 胶囊 + 说明 + 右侧来源标签；对话中首行是 `/compact`，选中直接压缩；浮层在输入框上方 8px 内缩、6px 间距、12px 圆角；应用命令不再出现在斜杠菜单里，Composer 和 HomeHero 的 `commands` 属性已删除，命令面板保留。注意 `prompt.*` 键是参考实现的译文，i18ncheck 会拦改值，MCode 自己的标签用 `composer.slash*` 键。探针 `mcode-slash-menu.cjs`）原始差异：MiMo 在输入框**上方**独立浮层，标题「命令」，每行 `/name` 胶囊 + 灰色说明 + 右侧「命令 / 技能」标签，内容是项目命令和技能；MCode 在输入框卡片内，列的是应用命令（新建会话、切换模型…），快捷键被截成「Ct…」
 - [x] A2 权限菜单（已完成：芯片和菜单行都是 手 / 笔 / 带警示的盾 图标；行 = 图标 + 名称 + 右侧对勾（只在选中行显示），32px 行高、210 宽、12px 圆角；说明文字移到行右侧的换行提示（`v-tip` 新增 `wrap`，base.css `.app-tip.wrap`）；菜单行叫「完全访问权限」（新键 `composer.access.fullItem`），芯片仍是橙色「完全访问」；首页永远在芯片下方展开，对话里向下展开、离窗口底部不足 60px 时翻到上方，同 MiMo 的 avoidCollisions 只给 dock 变体。探针 `mcode-access-menu.cjs`，12 项）原始差异：MiMo 三项带图标（手 / 笔 / 警示）、对勾在右、无说明、在按钮**下方**展开；选中完全访问时胶囊是橙色「完全访问」；MCode 有说明文字、对勾在左、向上展开
 - [x] A3 首页项目选择（已完成：新组件 `ProjectPicker.vue` 替换 SelectMenu。输入框放进一个 20px 圆角的深色托盘，下面 40px 条里是项目芯片（有项目时带文件夹图标，没有时显示「进入项目工作」）。菜单固定在芯片下方、不翻转，宽 260–440。依次是：搜索框（打开即聚焦）、最近 3 个项目（「显示更多」展开，超过 3 行滚动并在底部渐隐）、同名项目标出能区分它们的最短父目录、选中项右侧对勾、分隔线、「添加新项目 ›」右侧子菜单（创建空白项目 / 使用现有文件夹）、「× 不使用项目」（弹提示「已不使用项目」）。创建空白项目是新功能：用 RenameDialog 输入名称，服务端新请求 `project.createBlank` 在默认项目位置下建空文件夹，重名时加 (2)，Windows 不接受的字符会被清理；冒烟测试新增 3 项，共 337。未做：MiMo 弹窗里可以改位置，MCode 仍在设置里改默认项目位置；git 分支芯片也还没做。探针 `mcode-home-picker.cjs`，12 项）原始差异：MiMo「进入项目工作」挂在输入框下方的附着条里，菜单有「搜索项目」框、文件夹图标、分隔线、「+ 添加新项目 ›」子菜单、「× 不使用项目」；MCode 是文件夹 + 项目名的普通下拉
 - [x] A4 模型菜单（已完成：菜单在芯片下方、与芯片右对齐，对话里离底部不足 60px 时翻到上方（与权限菜单共用 `menuUp`）；去掉搜索框。行依次是：Smart（带说明）、分隔线、第一个已连接提供商的模型（`ModelMenuRow.vue`：20px 厂商标记 + 名称 + 右侧对勾；有推理强度的带 › 并在旁边打开「默认 / 各级别」子菜单，选中即同时设置模型和强度）、「更多模型 ›」（其余提供商按厂商分组，子菜单在旁边，固定定位，空间不够时翻到另一侧，见 `lib/submenu.ts`）、分隔线、「配置自定义模型」（打开设置的模型页，`open-settings` 带 `"models"`）。当前强度显示在模型芯片名称后，单独的强度芯片已删除；首页和侧边聊天不提供强度子菜单。已删除 `ManageModelsDialog.vue` 和只被它与旧菜单使用的 `ModelTooltip.vue`，`manage-models` 事件链也一并删除。未做：MiMo 的价格倍率（0.4x / 1.0x）是它自家模型的计价，MCode 没有对应数据，不编造。探针 `mcode-model-menu.cjs`，12 项）原始差异：MiMo 在按钮下方展开、每行有模型图标、Smart 带说明、模型带倍率（0.4x / 1.0x）、对勾在右、底部「配置自定义模型」（打开设置的模型页）；MCode 向上展开、有搜索框和厂商分组、对勾在左、「管理模型」打开单独弹窗
