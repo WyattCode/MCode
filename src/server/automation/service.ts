@@ -4,7 +4,8 @@ import { createHash } from "node:crypto"
 import type { AgentName, Effort, Message, ModelRef, ServerEvent, SessionInfo, UserMessage } from "@shared/protocol"
 import { quarantine, writeAtomic } from "../storage"
 import { ToolError } from "../tool/types"
-import { nextOccurrence, parseRRule, scheduleLabel } from "./rrule"
+import { menuEfforts } from "@shared/effort-menu"
+import { chineseSchedule, nextOccurrence, parseRRule, scheduleKey, scheduleLabel } from "./rrule"
 
 /**
  * automation: MiMo desktop's scheduled tasks, as its release build offers them
@@ -138,6 +139,8 @@ export interface AutomationDeps {
   /** A fresh folder for a task with no project. */
   scratch(): Promise<string>
   publish(event: ServerEvent): void
+  /** The interface language, which the schedules a task view shows are written in. */
+  locale?(): string | undefined
 }
 
 /** MiMo's rule for telling the user about a finished run. */
@@ -145,6 +148,42 @@ export function notifies(policy: NotificationPolicy, runMode: RunMode, status: "
   if (policy === "all-runs") return true
   if (policy === "failed-runs") return status === "failed" || status === "skipped"
   return runMode === "existing-task" && status === "succeeded" && hasReply
+}
+
+/** MiMo refuses the two pairings where the notification rule could never, or would always, fire. */
+export function clashes(runMode: RunMode, notification: NotificationPolicy): boolean {
+  return (runMode === "new-task" && notification === "important-updates") || (runMode === "existing-task" && notification === "all-runs")
+}
+
+/** A value with its keys in order, so two equal objects write out the same. */
+function ordered(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(ordered)
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, ordered((value as Record<string, unknown>)[key])]),
+    )
+  }
+  return value
+}
+
+/** The ten things MiMo compares to tell whether a task asked for is one already kept. */
+export function taskIdentity(automation: Automation): string {
+  return JSON.stringify(
+    ordered({
+      title: automation.title,
+      prompt: automation.prompt,
+      enabled: automation.enabled,
+      runMode: automation.runMode,
+      targetThreadId: automation.targetThreadId ?? null,
+      project: automation.project,
+      model: { provider: automation.model.provider, model: automation.model.model, name: automation.model.name },
+      reasoning: automation.reasoning ?? null,
+      schedule: scheduleKey(automation.rrule, automation.label),
+      notification: automation.notification,
+    }),
+  )
 }
 
 const text = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : undefined)
@@ -332,6 +371,22 @@ export class AutomationService {
     void this.save()
   }
 
+  /** Records a run that could not start - its conversation or folder is gone - as skipped. */
+  private skipRun(automation: Automation, why: string, sessionID?: string): void {
+    const at = this.deps.now()
+    const record: RunRecord = {
+      runId: `run-${at.toString(36)}-skipped`,
+      scheduledFor: this.next.get(automation.id) ?? at,
+      startedAt: at,
+      finishedAt: at,
+      status: "skipped",
+      error: why,
+      reported: true,
+      ...(sessionID ? { resultThreadId: sessionID } : {}),
+    }
+    automation.runHistory = [...(automation.runHistory ?? []), record].slice(-RUNS_KEPT)
+  }
+
   list(): Automation[] {
     return this.saved.automations.map((automation) => structuredClone(automation))
   }
@@ -359,7 +414,7 @@ export class AutomationService {
       return
     }
     const from = initial ? Math.max(automation.lastFiredAt ?? 0, automation.anchorAt) || this.deps.now() : this.deps.now()
-    const at = nextOccurrence(rule, from, automation.anchorAt)
+    const at = nextOccurrence(rule, from)
     if (at === undefined) this.next.delete(automation.id)
     else this.next.set(automation.id, at)
   }
@@ -375,15 +430,44 @@ export class AutomationService {
       project: automation.project?.name ?? null,
       model: { id: `${automation.model.provider}/${automation.model.model}`, name: automation.model.name },
       ...(automation.reasoning ? { reasoning: automation.reasoning } : {}),
-      schedule: scheduleLabel(automation.rrule, automation.label),
+      schedule: scheduleLabel(automation.rrule, automation.label, chineseSchedule(this.deps.locale?.())),
       notification: automation.notification,
     }
   }
 
-  /** The app's reasoning level as a task's default; effort is one app-wide value here, not a conversation's own. */
-  private appEffort(): { reasoning?: Effort } {
+  /**
+   * A task's reasoning level for its model, as MiMo checks it: one the model
+   * offers, when one is asked for; otherwise the app's level where the model
+   * offers it, or the model's usual one. A model that offers none takes none.
+   */
+  private reasoningFor(model: Automation["model"], asked: string | undefined): { reasoning?: Effort } {
+    const offered = menuEfforts(model.model, model.name)
+    if (asked) {
+      if (!offered.includes(asked as Effort)) {
+        const choices = offered.length ? `supported values: ${offered.join(", ")}` : "this model takes no reasoning level, so leave reasoning out"
+        throw new ToolError(`reasoning "${asked}" is not supported by model "${model.provider}/${model.model}"; ${choices}.`)
+      }
+      return { reasoning: asked as Effort }
+    }
+    if (!offered.length) return {}
     const effort = this.deps.effort()
-    return effort && (REASONING as readonly string[]).includes(effort) ? { reasoning: effort } : {}
+    return { reasoning: effort && offered.includes(effort) ? effort : offered.includes("medium") ? "medium" : offered[0] }
+  }
+
+  /**
+   * Where an existing-task run may go: this conversation, or another the side
+   * column shows - one that is there, not archived and not a subagent's. MCode
+   * has no pinned conversations, which is what MiMo accepts besides the caller.
+   */
+  private async checkTarget(id: string, caller: SessionInfo): Promise<string> {
+    if (id === caller.id) return id
+    const target = await this.deps.sessions.get(id)
+    if (!target || target.archived || target.parentID) {
+      throw new ToolError(
+        `targetThreadId must be this conversation or another conversation in the side column that is not archived and is not a subagent's; "${id}" is not one. Leave it out to run in this conversation.`,
+      )
+    }
+    return id
   }
 
   private model(ref: string | undefined, fallback: ModelRef): ModelRef & { name: string } {
@@ -454,36 +538,43 @@ export class AutomationService {
     const now = this.deps.now()
     const project = input.project === "none" || caller.scratch ? null : { name: path.basename(caller.directory) || caller.directory, path: caller.directory }
 
+    // The two notification pairings MiMo refuses, on create and on the merged result of an update.
+    const clash = (mode: RunMode, policy: NotificationPolicy) => {
+      if (!clashes(mode, policy)) return
+      const allowed = NOTIFICATIONS.filter((entry) => !clashes(mode, entry)).join(" or ")
+      throw new ToolError(`notification "${policy}" does not go with runMode "${mode}"; use ${allowed}.`)
+    }
+
     if (mode === "create") {
       const title = text(input.title)
       const prompt = text(input.prompt)
       const missing = [!title && "title", !prompt && "prompt", !rrule && "rrule"].filter(Boolean)
       if (missing.length) throw new ToolError(`create needs: ${missing.join(", ")}`)
       const chosenMode = (runMode as RunMode | undefined) ?? "new-task"
+      const policy = (notification as NotificationPolicy | undefined) ?? (chosenMode === "existing-task" ? "important-updates" : "all-runs")
+      clash(chosenMode, policy)
+      const model = this.model(text(input.model), caller.model)
       const draft: Automation = {
         id: "",
         title: title!,
         prompt: prompt!,
         enabled: status !== "paused",
         runMode: chosenMode,
-        ...(chosenMode === "existing-task" ? { targetThreadId: text(input.targetThreadId) ?? caller.id } : {}),
+        ...(chosenMode === "existing-task" ? { targetThreadId: await this.checkTarget(text(input.targetThreadId) ?? caller.id, caller) } : {}),
         project,
-        model: this.model(text(input.model), caller.model),
-        ...(reasoning ? { reasoning: reasoning as Effort } : this.appEffort()),
+        model,
+        ...this.reasoningFor(model, reasoning),
         rrule: rrule!,
         ...(text(input.scheduleLabel) ? { label: text(input.scheduleLabel) } : {}),
-        notification: (notification as NotificationPolicy | undefined) ?? (chosenMode === "existing-task" ? "important-updates" : "all-runs"),
+        notification: policy,
         revision: 1,
         createdAt: now,
         updatedAt: now,
         anchorAt: now,
       }
-      // The same task asked for twice is kept once, as MiMo does.
-      const same = (automation: Automation) => {
-        const { id: _a, revision: _b, createdAt: _c, updatedAt: _d, anchorAt: _e, lastFiredAt: _f, ...rest } = automation
-        return JSON.stringify(rest)
-      }
-      const duplicate = this.saved.automations.find((automation) => same(automation) === same(draft))
+      // The same task asked for twice is kept once, compared as MiMo compares them - its runs so far do not count.
+      const identity = taskIdentity(draft)
+      const duplicate = this.saved.automations.find((automation) => taskIdentity(automation) === identity)
       if (duplicate) return answer({ ok: true, created: false, deduplicated: true, automation: this.view(duplicate) })
       draft.id = `auto-${++this.saved.seq}`
       this.saved.automations.push(draft)
@@ -500,28 +591,44 @@ export class AutomationService {
     if (mode === "pause" || mode === "resume") {
       automation.enabled = mode === "resume"
     } else {
+      // A title or prompt passed empty is refused, as MiMo's check refuses it, rather than quietly kept.
+      for (const field of ["title", "prompt"] as const) {
+        if (input[field] !== undefined && !text(input[field])) throw new ToolError(`${field} cannot be empty; leave it out to keep the current one.`)
+      }
+      // Worked out on a copy, so a change refused below leaves the task as it was.
+      const next: Automation = structuredClone(automation)
       const title = text(input.title)
       const prompt = text(input.prompt)
-      if (title) automation.title = title
-      if (prompt) automation.prompt = prompt
-      if (input.model !== undefined || reasoning) automation.model = this.model(text(input.model), automation.model)
-      if (reasoning) automation.reasoning = reasoning as Effort
-      if (rrule !== undefined) {
-        automation.rrule = rrule
-        automation.anchorAt = now
+      if (title) next.title = title
+      if (prompt) next.prompt = prompt
+      if (input.model !== undefined) next.model = this.model(text(input.model), next.model)
+      if (input.model !== undefined || reasoning) {
+        const { reasoning: level } = this.reasoningFor(next.model, reasoning ?? (next.reasoning && menuEfforts(next.model.model, next.model.name).includes(next.reasoning) ? next.reasoning : undefined))
+        if (level) next.reasoning = level
+        else delete next.reasoning
       }
-      if (input.scheduleLabel !== undefined) automation.label = text(input.scheduleLabel)
-      if (input.project !== undefined) automation.project = project
-      if (status) automation.enabled = status === "active"
-      const before = automation.runMode
-      if (runMode) automation.runMode = runMode as RunMode
+      if (rrule !== undefined) {
+        next.rrule = rrule
+        next.anchorAt = now
+      }
+      if (input.scheduleLabel !== undefined) next.label = text(input.scheduleLabel)
+      if (input.project !== undefined) next.project = project
+      if (status) next.enabled = status === "active"
+      const before = next.runMode
+      if (runMode) next.runMode = runMode as RunMode
       // MiMo's defaults when the run target changes and nothing else was said.
-      if (notification) automation.notification = notification as NotificationPolicy
-      else if (automation.runMode === "existing-task" && before !== "existing-task" && automation.notification === "all-runs") automation.notification = "important-updates"
-      else if (automation.runMode === "new-task" && before !== "new-task" && automation.notification === "important-updates") automation.notification = "all-runs"
-      if (text(input.targetThreadId)) automation.targetThreadId = text(input.targetThreadId)
-      else if (automation.runMode === "existing-task" && !automation.targetThreadId) automation.targetThreadId = caller.id
-      if (automation.runMode === "new-task") delete automation.targetThreadId
+      if (notification) next.notification = notification as NotificationPolicy
+      else if (next.runMode === "existing-task" && before !== "existing-task" && next.notification === "all-runs") next.notification = "important-updates"
+      else if (next.runMode === "new-task" && before !== "new-task" && next.notification === "important-updates") next.notification = "all-runs"
+      clash(next.runMode, next.notification)
+      const target = text(input.targetThreadId)
+      if (next.runMode === "new-task") delete next.targetThreadId
+      else if (target) next.targetThreadId = await this.checkTarget(target, caller)
+      else if (!next.targetThreadId) next.targetThreadId = caller.id
+      Object.assign(automation, next)
+      if (!next.reasoning) delete automation.reasoning
+      if (!next.targetThreadId) delete automation.targetThreadId
+      if (next.label === undefined) delete automation.label
     }
     automation.revision++
     automation.updatedAt = now
@@ -565,7 +672,11 @@ export class AutomationService {
     const inbox = { from: automation.title, automationID: automation.id }
     if (automation.runMode === "existing-task") {
       const target = automation.targetThreadId ? await this.deps.sessions.get(automation.targetThreadId) : undefined
-      if (!target) return "skipped"
+      // A conversation that is gone - deleted, or put away - is a run skipped, and recorded as one.
+      if (!target || target.archived) {
+        this.skipRun(automation, "The conversation this task runs in no longer exists.", automation.targetThreadId)
+        return "skipped"
+      }
       if (this.deps.busy(target.id)) return "waiting"
       this.runs.set(target.id, structuredClone(automation))
       this.openRun(automation, target.id)
@@ -574,7 +685,10 @@ export class AutomationService {
       return "started"
     }
     let directory = automation.project?.path
-    if (directory && !(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) return "skipped"
+    if (directory && !(await fs.stat(directory).then((stat) => stat.isDirectory(), () => false))) {
+      this.skipRun(automation, "The project folder this task runs in no longer exists.")
+      return "skipped"
+    }
     directory ??= await this.deps.scratch()
     const session = await this.deps.sessions.create({
       directory,

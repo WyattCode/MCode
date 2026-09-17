@@ -4,6 +4,7 @@ import type { Config } from "../config"
 import { scratchDirectory } from "../scratch"
 import type { SessionRunner } from "../session/runner"
 import type { SessionStore } from "../session/store"
+import { interfaceLocale } from "../session/locale"
 import { AutomationService, bindAutomations } from "./service"
 
 /** automation: the scheduled tasks bound to this backend's runner and store. */
@@ -23,6 +24,7 @@ export function startAutomations(dataDirectory: string, runner: SessionRunner, s
     effort: () => config.get().effort,
     scratch: () => scratchDirectory(new Date(), config.get().projectRoot),
     publish: (event) => bus.publish(event),
+    locale: () => interfaceLocale(config.get().language),
   })
   bus.subscribe((event) => {
     if (event.type === "session.idle") void service.turnEnded(event.sessionID)
