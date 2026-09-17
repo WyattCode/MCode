@@ -308,7 +308,18 @@
   - git 照 MiMo：推送固定到 origin 同名分支；工作树 / 子目录对话归入主仓库项目；删掉新建 / 切换 / 删除工作区三条命令；补合并冲突提醒与内置 worktree / merge 技能（文字自写）；提交也设 15 秒超时；撤销按文件所在仓库，含项目外文件。
   - 步骤：插话照 26.914 切成「上一回合 + 普通提问 + 新回合」；步骤脱敏直播和重载都做（超出对标）；加「i」提示行；长串折行照 MiMo（先截图实测）；阿拉伯语补双数复数。
   - 按 MiMo 就近定的：定时任务目标限当前对话或侧栏里未归档、非子智能体的对话（MCode 没有置顶对话），找不到时记 skipped；发起方停止时撤回排队的跨对话消息、pdf_locate 接受相对路径照 MiMo；同步跨对话等满时转异步保持现状（有意差异）。
-- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、git 一路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
+- **第十轮 git 一路已完成**（`round10-git.md` G10-1 … G10-21 全部）：
+  - 所有对用户仓库的 git 调用改走 `server/git-process.ts` 的 `runGit`：`-c core.quotepath=false`、`GIT_OPTIONAL_LOCKS=0`、`LC_ALL=C`、不弹控制台窗口、默认 15 秒超时（`worktree list` 10 秒、推送 60 秒，提交也是 15 秒，超时的钩子被杀掉，提示「git commit timed out after 15s」）。status / numstat / 提交状态都读 `-z` 输出，中文、带空格的文件名原样进入审查列表、变更行数和提交说明（G10-1、4–7）。
+  - 推送固定为 `origin` 的同名分支（有上游时 `push origin b:b`，没有时 `push -u`），ahead / behind 只和 `origin/<b>` 比，卡片的「推送」可用条件照 MiMo（G10-2）。
+  - status 失败带 `error`，审查标签显示「读取 git 状态失败」和 git 原话（G10-3）；未跟踪文件夹只算一行、0 行（项目本身在未跟踪文件夹里时才展开）；审查字母照 MiMo 取工作区列、否则暂存区列，U / T 等灰色（G10-11、12）；分支芯片在窗口获得焦点、切换或新建分支后立即刷新，侧栏同步（store 的 `branchNonce`）；`workspace.info` 向上找仓库，分离 HEAD 显示「HEAD」（G10-13、14）；设置工作树行识别 detached / bare（G10-15）。
+  - 删除：`git.revert`（含 `git clean -f`）、`git.init`、status / diff 的 branch 范围与 context；新建 / 切换 / 删除工作区三条命令、`workspace.create` / `workspace.remove` 和 12 个 `workspace.*` 文案（G10-9、16）。
+  - 撤销编辑卡按每个文件所在仓库处理，项目外文件在某个仓库里就反向应用补丁、未跟踪的新建文件直接删除；无法撤回的计入「项目外」。原来「项目不是仓库就整体拒绝」随之去掉（MiMo 26.914 没有这条），`stream.revertNoRepo` 删除（G10-17）。
+  - 快照同步项目的 `info/exclude`，未跟踪文件超过 2MB 不入快照，已被忽略的文件移出影子 index（G10-18）；提交失败保留 git 输出前 300 字（G10-19）；默认分支按 MiMo 顺序推断（G10-20）。
+  - bash 执行后若仓库停在合并 / 变基 / cherry-pick / revert 冲突中，结果末尾附内部说明：未合并文件、对应的 `--abort`、用 `talk_to_session` 把冲突交给分支所属对话（`contacts` 查找），不要复述给用户（`tool/merge-conflict.ts`，G10-10）。新增内置技能 `worktree`、`merge`（MCode 自写，结构照 MiMo，G10-21）。
+  - **归组规则改了（G10-8）**：新请求 `git.repoRoots`（`server/repo-roots.ts`，5 分钟缓存，存 `storage/repo-roots-cache.json`，过期先用旧值后台刷新，报告已不存在的目录）；渲染层 `lib/session-project.ts` 的 `projectOf` 按「标签 → 目录本身是已列出项目 → 主仓库 → 目录已不存在则无项目」归组，已不存在的项目不显示；新会话收养主仓库为项目（「移动至项目」仍按所选目录）。一次性迁移 `projects-by-repository`：已列出的链接工作树项目移出列表（连同置顶与排序），改列其主仓库；子目录项目保留。
+  - 验证：13 项检查、build、smoke **3327 全过**（新 `scripts/smoke-round10-git.ts` 75 条，全部在一次性仓库和本地裸仓库上跑；snapshotcheck 加三条）；每条新检查都改坏对应代码确认会失败。探针 `mcode-round10-git.cjs` 12 项全过、0 报错，在 v2.0 基线（897ee3c）构建上 10 项核心检查全部失败（基线的「推送」确实把 fix 写进了 origin/main）；回归探针 round3-files 37、round4-projects 10、round2-info 23、branch-picker 8（`mcode-branch-picker-r10.cjs` 只是把 ROOT 改成读 `MCODE_ROOT`）全过。
+  - 未改：`git diff` 本身会顺手刷新 index（与设置无关，MiMo 的差异请求同样如此），只保证 status 不写 index；撤销时 MCode 仍保留「补丁回不去就 `git checkout --`」的兜底（MiMo 26.914 只靠补丁）。
+- 进行中：工具（文件与桌面 / bash 与网页 / 智能体类）三路、步骤绘制一路构建；另开两个只读角度：**记忆、历史搜索与技能**（`round10-memory.md`）、**macOS / Linux 代码分支静态对照**（`round10-platforms.md`，逐项标明「代码可确定」或「需实机确认」）。
 
 用户决定不做（不要再主动提）：
 
@@ -349,7 +360,7 @@
 ## 本轮：环境页与工作树
 
 - `src/renderer/src/components/SettingsDialog.vue`：`environment` 一节。
-  - 项目 = 会话所在的目录（排除已归档、无项目任务、已关闭的项目），和侧栏同一套规则。
+  - 项目 = 会话所归的项目（排除已归档、无项目任务、已关闭的项目），和侧栏同一套规则。**第十轮（G10-8）起**：会话有「移动至项目」标签就按标签；否则会话目录本身是已列出的项目就归它；否则照 MiMo 归到该目录所属的主仓库（`git.repoRoots`，`rev-parse --git-common-dir` 的上一级），所以链接工作树、仓库子目录里的对话都在主仓库项目下；目录已不存在的会话不归任何项目（进「最近」），目录已不存在的项目不在列表里显示（配置里仍保留）。
   - 「添加项目」：选目录；若曾关闭就重新打开；没有会话就在那里新建一个（MCode 的项目靠会话存在）。
   - 「移除项目」：确认后加入 `closedProjects`，会话保留。
   - 「+」配置：返回按钮、本地环境卡片、名称输入框，保存到 `projectNames`（和侧栏重命名是同一个字段）。
@@ -391,6 +402,7 @@ npm run wiringcheck  # 配置字段要在设置之外被读到、事件要有监
   - ContextMenu 当前选中项是 `.item.ticked`；侧栏底部「设置」行现在先打开菜单，再点菜单里的「设置」。
 - 开发版重启：先停旧的 `npm run dev` 任务，再结束残留 electron 进程，否则两个实例抢同一份配置（会报缓存无法创建）。
 - 版本号只在打包时递增，不要手改。WSL 永久不在范围内。
+- 对用户仓库跑 git 一律用 `server/git-process.ts` 的 `runGit`（固定环境、路径不加引号、超时、隐藏窗口）；解析路径用 `-z` 输出和 `parsePorcelain`。只有影子快照仓库（`session/snapshot.ts`）自己起进程。smoke-round10-git 会扫描 `src/server`、`src/main` 里没带 `windowsHide` 的 git 进程。
 
 ## 待办：用户截图逐项对照（2026-09-13，优先于下方审计清单）
 
