@@ -266,6 +266,33 @@ export function reminder(body: string): string {
 }
 
 /**
+ * MiMo's recall hint, in this app's own words: where a conversation that has
+ * memory or tasks can look for what has dropped out of view, and a word not
+ * to ask the user for what is written down already.
+ */
+export function recallHint(memoryFolder: string, actor: boolean): string {
+  return reminder(
+    [
+      `This conversation keeps memory in ${memoryFolder}. To bring back something that is no longer in view:`,
+      '- memory({ operation: "search", query: "<words>" })',
+      `- read the files under ${memoryFolder}`,
+      '- task({ operation: "list" })',
+      ...(actor ? ['- actor({ operation: "status", actor_id: "<id>" })'] : []),
+      "",
+      "Look there before asking the user about something it may already record.",
+    ].join("\n"),
+  )
+}
+
+/** The hint, carried after the latest user message's own text for this request only, as MiMo carries it. */
+export function withRecallHint<T extends { role: string; reminders?: string[] }>(history: T[], hint: string | undefined): T[] {
+  if (!hint) return history
+  const at = history.map((message) => message.role).lastIndexOf("user")
+  if (at < 0) return history
+  return history.map((message, index) => (index === at ? { ...message, reminders: [...(message.reminders ?? []), hint] } : message))
+}
+
+/**
  * MiMo's framing of messages sent while a turn is working: from the second
  * step of a turn on, every user message newer than the last finished reply
  * reaches the model inside a note saying the user sent it mid-task and that it

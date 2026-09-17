@@ -28,6 +28,7 @@ import { AutomationService } from "../src/server/automation/service"
 import { nextOccurrence, parseRRule, scheduleLabel } from "../src/server/automation/rrule"
 import { ToolError } from "../src/server/tool/types"
 import { planApprovedRefusal } from "../src/server/session/plan"
+import { recallHint } from "../src/server/session/reminders"
 import { QuestionTool } from "../src/server/tool/question"
 import { confirmQueue } from "../src/renderer/src/lib/confirm-queue"
 import type { QuestionRequest } from "../src/shared/protocol"
@@ -370,6 +371,39 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
         [actorAction(drawn.input), actorTarget(drawn.input), stepTitle(started)],
       )
       check("a wrapped task call is not mistaken for a saved subagent call", !isLegacySubagentCall({ type: "tool", name: "task", input: { operation: { action: "create", summary: "x" } } }))
+    }
+
+    section("Round 10 (T10-42): a conversation with memory or tasks is told each step where to look")
+    {
+      const memoryRoot = path.join(root, "memory")
+      bindHistory({ memoryRoot } as unknown as HistoryService)
+      try {
+        const hinted = (seen: Seen) => {
+          const users = seen.messages.filter((message) => message.role === "user")
+          return JSON.stringify(users.at(-1)?.content ?? "").includes("keeps memory in")
+        }
+        h.parentRequests.length = 0
+        const tasked = await conversation([createTask("Remember me"), { text: "noted" }])
+        const [before, after] = h.parentRequests
+        check("no hint before the conversation has memory or tasks", Boolean(before) && !hinted(before!))
+        const folder = path.join(memoryRoot, "sessions", tasked.id)
+        check("once it has a task, the next step's latest user message carries it, naming its memory folder", Boolean(after) && hinted(after!) && JSON.stringify(after!.messages).includes(JSON.stringify(folder).slice(1, -1)), after?.messages.at(-2))
+        check("only in the request: the stored message is unchanged", (await store.messages(tasked.id)).every((message) => message.role !== "user" || !JSON.stringify(message).includes("keeps memory in")))
+        h.parentRequests.length = 0
+        await conversation([{ text: "nothing kept" }])
+        check("a conversation with neither gets no hint", h.parentRequests.length === 1 && !hinted(h.parentRequests[0]!))
+        const kept = await store.create({ directory: h.project, model: h.model })
+        await fs.mkdir(path.join(memoryRoot, "sessions", kept.id), { recursive: true })
+        await fs.writeFile(path.join(memoryRoot, "sessions", kept.id, "notes.md"), "# notes\n")
+        h.parentRequests.length = 0
+        h.script([{ text: "remembered" }])
+        await runner.prompt({ sessionID: kept.id, text: "what did we say" })
+        await h.settled(kept.id)
+        check("a conversation whose memory folder holds a file gets it from the first step", h.parentRequests.length === 1 && hinted(h.parentRequests[0]!))
+        check("and is pointed at actor status, which a subagent is not", JSON.stringify(h.parentRequests[0]!.messages).includes("- actor({ operation:") &&!recallHint("x", false).includes("actor("))
+      } finally {
+        bindHistory(undefined)
+      }
     }
 
     section("Round 10 (T10-44): what the actor tool hands back, in MiMo's shapes")

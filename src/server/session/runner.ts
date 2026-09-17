@@ -15,7 +15,7 @@ import type {
   ToolPart,
   UserMessage,
 } from "@shared/protocol"
-import { access, mkdir, rm, writeFile } from "node:fs/promises"
+import { access, mkdir, readdir, rm, writeFile } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Identifier } from "@shared/id"
 import { effortToSend, menuEfforts } from "@shared/effort-menu"
@@ -70,7 +70,7 @@ import { costOf } from "./usage"
 import { BackgroundUsage, type BackgroundUse } from "./background-usage"
 import type { Usage as TurnUsage } from "@shared/protocol"
 import { ABORTED_TOOL } from "../provider/history"
-import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, repeatNoteFor, repeatsCall, withNotes, withSameStepsNote } from "./reminders"
+import { LOOP_ANSWERS, LOOP_ENDED, LOOP_ENDED_CODE, LOOP_FINISH, continuationFor, createLoopMonitor, frameSteered, recallHint, repeatNoteFor, repeatsCall, withNotes, withRecallHint, withSameStepsNote } from "./reminders"
 import { interruptedTurn } from "@shared/resume"
 // session chat
 import { CHAT_WAIT_MS, SessionChat, withChatHeaders } from "./chat"
@@ -634,6 +634,21 @@ export class SessionRunner {
     // The folder is made now, so the model's first write lands rather than failing on a missing parent.
     await mkdir(dirname(file), { recursive: true }).catch(() => undefined)
     return firstPlanNote(display, exists)
+  }
+
+  /**
+   * The recall hint for a step, when the conversation has any: its memory
+   * folder holds something, or its task list has ever had a task. A
+   * subagent's are its parent's, as its tasks are.
+   */
+  private async recallFor(session: SessionInfo): Promise<string | undefined> {
+    const rootID = session.parentID ?? session.id
+    const notes = memoryFilesFor(session.directory, rootID)?.notes
+    if (!notes) return undefined
+    const folder = dirname(notes)
+    const remembered = (await readdir(folder).catch((): string[] => [])).length > 0
+    const tasked = remembered || ((await this.store.get(rootID))?.tasks ?? []).length > 0
+    return tasked ? recallHint(folder, !session.parentID) : undefined
   }
 
   isRunning(sessionID: string): boolean {
@@ -2164,7 +2179,8 @@ export class SessionRunner {
       this.markDelivered(sessionID, stored)
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
-      const chatted = withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel)))
+      // MiMo's recall hint: a conversation with memory or tasks is told, each step, where to look before asking.
+      const chatted = withRecallHint(withAutomationNotes(withChatHeaders(prunedHistory(this.contextFor(session, stored), pruneLevel))), await this.recallFor(session))
       // MiMo: from a turn's second step on, what the user sent meanwhile is framed as sent mid-task;
       // skills: what a message loaded follows it, after the framing so it is never taken for typed words;
       // this turn's continuation notes follow the replies they answer; and three identical steps
