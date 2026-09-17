@@ -31,7 +31,9 @@ import { discoverSkills, skillReminders, withSkillReminders, type SkillInfo } fr
 import { findTool, reachOf, repairableNames, toolsForTurn } from "../tool/registry"
 import { normalizeToolInput, resolveToolName } from "../tool/repair"
 import { Questions } from "../tool/question"
-import type { PlanControl, SubagentControl, SubagentSpec, ToolDefinition, ToolResult } from "../tool/types"
+import type { PlanControl, SubagentControl, SubagentSpec, ToolContext, ToolDefinition, ToolResult } from "../tool/types"
+import { instructionsIn } from "../tool/read"
+import { keepReadCopy } from "../tool/read-media"
 import { ToolError } from "../tool/types"
 import { argumentProblems, refusedArgumentsNote } from "../tool/validate"
 import { ToolOutputs } from "../tool/truncate"
@@ -267,7 +269,7 @@ const MAX_STEPS_PROMPT = [
 const SUBAGENT_WITHHELD = new Set(["actor", "contacts", "talk_to_session", "create_session", "update_session", "automation_update", "plan_exit", "question"])
 
 /** plan: the tools whose behaviour depends on whether the conversation is planning. */
-const PLAN_AWARE = new Set(["write", "edit", "multiedit", "notebook_edit", "plan_exit"])
+const PLAN_AWARE = new Set(["write", "edit", "notebook_edit", "plan_exit"])
 
 export class SessionRunner {
   private readonly running = new Map<string, AbortController>()
@@ -284,6 +286,8 @@ export class SessionRunner {
   private readonly background = new Map<string, Set<AbortController>>()
   /** Which conversations are close enough to their compaction line to halve tool output. */
   private readonly pressured = new Map<string, boolean>()
+  /** read: how much the running turn trims off older output, so read knows which instructions its request still carries. */
+  private readonly turnPrune = new Map<string, PruneLevel>()
   /** Calls whose arguments arrived as text that could not be read, and why. */
   private readonly inputErrors = new WeakMap<ToolPart, string>()
   /**
@@ -415,7 +419,7 @@ export class SessionRunner {
         prompt: (input) => this.prompt(input),
         create: async ({ directory, title }) => {
           const settings = config.get()
-          await config.adoptProjects([directory])
+          await config.adoptProjects([directory], { byRepository: true })
           return store.create({ directory, title, model: settings.model, agent: settings.agent, staged: settings.staged, ...(settings.smart ? { smart: true } : {}) })
         },
       },
@@ -533,6 +537,13 @@ export class SessionRunner {
     const own = toolsForTurn(agent, { voiceFeedback: this.config.get().voiceFeedback !== false })
     if (agent === "explore") return own
     return [...own, ...(this.mcp?.tools(directory) ?? [])]
+  }
+
+  /** The tools a conversation's request carries: its agent's, less what a subagent never gets. */
+  private offeredTools(session: SessionInfo): ToolDefinition[] {
+    return this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter(
+      (tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name),
+    )
   }
 
   /**
@@ -877,15 +888,10 @@ export class SessionRunner {
    * since; a file the turn did change is put back even if the user has edited
    * it since, which is what "undo my last turn" has to mean to be useful.
    *
-   * Since a turn can now be steered, "the last turn" may answer more than one
-   * message: everything from the prompt that set the model working until it
-   * stopped is one turn and one entry here. That keeps the promise the interface
-   * makes - the files go back to how the turn found them - because the recording
-   * still opens at the moment the model started and closes when it stopped. It
-   * does mean an undo after steering takes back work the model did in answer to
-   * several things the user said, which is the only coherent reading: the later
-   * messages were answered on top of the earlier ones, so there is no state in
-   * between to return to.
+   * A steered message the model has taken starts a turn of its own, as MiMo
+   * 26.914 shows it: the recording up to that step is filed as the turn before,
+   * and a new one opens for the steer. So "the last turn" is what the model did
+   * after the last thing the user said, and an undo takes back only that.
    */
   async undo(sessionID: string): Promise<number> {
     /*
@@ -1347,7 +1353,7 @@ export class SessionRunner {
           model: session.model,
           ...(await this.systemFor(session)),
           history: [...replay, instruction],
-          tools: this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+          tools: this.offeredTools(session),
           // Out of band: a summary is not worth a reasoning budget either, so MiMo's cheap profile rather than the app-wide level.
           ...smallRequest(session.model.provider, session.model.model),
           variants: this.config.variants(session.model),
@@ -1544,12 +1550,12 @@ export class SessionRunner {
     }
     steering.waiting.push(user.id)
     /*
-     * Counted as part of the turn that is running, because that is the turn
-     * whose recording will cover whatever it causes. A rollback aimed at this
-     * message therefore takes the whole turn back, which is the only state on
-     * disk that ever existed either side of it.
+     * News of subagents stays inside the turn it reached, so the running turn's
+     * recording covers it. Anything the user typed opens a turn of its own once
+     * the model takes it (see `openSteeredTurn`); until then it belongs to no
+     * recording, since nothing has been done in answer to it.
      */
-    this.turn(input.sessionID).messages.push(user.id)
+    if (extra.notices?.length) this.turn(input.sessionID).messages.push(user.id)
 
     const written = steering.written.then(async () => {
       // Settled in the same chain, so messages still reach the transcript in the order they were typed.
@@ -1605,11 +1611,39 @@ export class SessionRunner {
    * Comparing ids answers that exactly, so nothing is marked delivered before
    * the model has actually been given it.
    */
-  private markDelivered(sessionID: string, history: Message[]): void {
+  private markDelivered(sessionID: string, history: Message[]): string[] {
     const steering = this.steering.get(sessionID)
-    if (!steering || steering.waiting.length === 0) return
+    if (!steering || steering.waiting.length === 0) return []
     const carried = new Set(history.map((message) => message.id))
+    const delivered = steering.waiting.filter((id) => carried.has(id))
     steering.waiting = steering.waiting.filter((id) => !carried.has(id))
+    return delivered
+  }
+
+  /**
+   * MiMo 26.914's steer: once the model takes what the user typed mid-turn, the
+   * work so far is settled as a turn of its own - filed for undo and rollback -
+   * and the steered messages open the next one, photographed afresh. News of
+   * subagents does not split a turn; it was already counted in the running one.
+   */
+  private async openSteeredTurn(sessionID: string, directory: string, delivered: string[], history: Message[]): Promise<void> {
+    const byID = new Map(history.map((message) => [message.id, message]))
+    const typed = delivered.filter((id) => {
+      const message = byID.get(id)
+      return message?.role === "user" && !message.notices?.length
+    })
+    // A turn started for these very messages (the release's resume) is already theirs.
+    const running = this.pending.get(sessionID)
+    if (!typed.length || (running && typed.every((id) => running.messages.includes(id)))) return
+    try {
+      await this.commitSnapshot(sessionID)
+    } catch (cause) {
+      this.bus.publish({ type: "session.error", sessionID, error: `Could not record this turn for undo: ${(cause as Error).message}` })
+    }
+    const next = this.turn(sessionID)
+    next.messages = typed
+    next.directory = directory
+    next.watching = this.snapshots.begin(directory)
   }
 
   /** The setup a claimed session goes through before its turn is launched. */
@@ -2146,6 +2180,7 @@ export class SessionRunner {
      * back and undo the saving. One decision per turn keeps the request stable.
      */
     const pruneLevel = await this.pruneLevelFor(session)
+    this.turnPrune.set(sessionID, pruneLevel)
 
     /*
      * The step that was last rescued by a compaction. A request the provider
@@ -2196,7 +2231,8 @@ export class SessionRunner {
         }
       }
       const stored = await this.store.messages(sessionID)
-      this.markDelivered(sessionID, stored)
+      const delivered = this.markDelivered(sessionID, stored)
+      if (delivered.length) await this.openSteeredTurn(sessionID, session.directory, delivered, stored)
       // session chat: a message from another conversation says so, in the request only; automation: a scheduled task's run says so too.
       // MiMo's pruning comes first, so the older tool output is already trimmed before anything is framed around it.
       // MiMo's recall hint: a conversation with memory or tasks is told, each step, where to look before asking.
@@ -2300,7 +2336,7 @@ export class SessionRunner {
         tools: lastStep
           ? []
           : [
-              ...this.tools(session.subagent?.type === "explore" ? "explore" : session.agent, session.directory).filter((tool) => !session.parentID || !SUBAGENT_WITHHELD.has(tool.name)),
+              ...this.offeredTools(session),
               ...(outputSchema ? [structuredOutputTool(outputSchema)] : []),
             ],
         effort: effort ?? "",
@@ -2760,9 +2796,12 @@ export class SessionRunner {
         tool = repaired
       } else {
         tool = findTool("invalid")
+        // As MiMo's model library words it: the names this request did offer, so the model can pick one.
+        const info = await this.store.get(input.session.id)
+        const available = info ? [...this.offeredTools(info).map((entry) => entry.name), ...(info.subagent?.outputSchema ? [STRUCTURED_OUTPUT] : [])] : []
         part.input = {
           tool: part.name,
-          error: `Model tried to call unavailable tool '${part.name}'.`,
+          error: `Model tried to call unavailable tool '${part.name}'. ${available.length ? `Available tools: ${available.join(", ")}.` : "No tools are available."}`,
         }
         part.name = "invalid"
       }
@@ -2888,6 +2927,8 @@ export class SessionRunner {
           ? undefined
           : this.subagentControl({ parentID: input.session.id, messageID: assistant.id, callID: part.callID, signal: input.signal }),
         progress: (text) => {
+          // As MiMo's metadata updates: only while the call runs, so a late write never replaces a finished result.
+          if (part.status !== "running") return
           part.output = text
           publish()
         },
@@ -2895,13 +2936,20 @@ export class SessionRunner {
         tasks: tool.name === "task" ? await this.taskControl(input.session.id) : undefined,
         // plan: the write tools read it before they change anything; plan_exit ends planning through it.
         plan: planControl,
+        // read: the model's inputs, a copy of what it attaches, and the instructions already given.
+        ...(tool.name === "read" ? this.readSupport(input.session.id) : {}),
       })
-      // MiMo's shared cap, for every tool that did not cap its own output; a subagent is told to grep, not delegate.
+      /*
+       * MiMo's shared cap, for every tool that did not cap its own output. The
+       * note suggests handing the file to an explore subagent only where this
+       * conversation is offered the actor tool; a subagent is told to grep.
+       */
+      const offered = result.metadata?.truncated === undefined ? await this.store.get(input.session.id) : undefined
       const capped =
         result.metadata?.truncated === undefined
           ? await this.toolOutputs
               .cap(result.output, {
-                delegate: !this.workers.has(input.session.id),
+                delegate: offered ? this.offeredTools(offered).some((entry) => entry.name === "actor") : false,
                 pressure: this.pressured.get(owner) ?? false,
                 // The call reached here, so it did not throw: MiMo's "succeeded but was cut".
                 outcome: "success",
@@ -2927,10 +2975,14 @@ export class SessionRunner {
         part.errorParams = err.params
       }
       /*
-       * Cut off by Stop rather than failing on its own. The model still reads
-       * the error; the transcript settles the step quietly, as MiMo does.
+       * Cut off by Stop rather than failing on its own; the transcript settles
+       * the step quietly, as MiMo does. Marked interrupted too, as MiMo marks
+       * it: a call that had already printed something (a command's output on
+       * its card) is then handed to the model as that output, so it knows how
+       * far the command got; one that had printed nothing keeps its own
+       * account of the stop.
        */
-      if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true }
+      if (input.signal.aborted) part.metadata = { ...(part.metadata ?? {}), aborted: true, interrupted: true }
       if (err instanceof PermissionDenied && err.byUser) refusedByUser = true
     } finally {
       stopListening()
@@ -2978,7 +3030,7 @@ export class SessionRunner {
    * that failed changed nothing worth a notice.
    */
   private async changedMainWorktree(part: ToolPart, directory: string): Promise<string | undefined> {
-    if (["write", "edit", "multiedit", "notebook_edit"].includes(part.name)) {
+    if (["write", "edit", "notebook_edit"].includes(part.name)) {
       const named = part.input?.file_path ?? part.input?.notebook_path
       if (typeof named !== "string") return undefined
       const top = await worktreeTop(path.dirname(path.resolve(directory, named)))
@@ -3594,6 +3646,33 @@ export class SessionRunner {
     return queued(child, message.id)
   }
 
+  /**
+   * read: what a read in this conversation is told and given - the model's
+   * inputs and a connected model that sees pictures, where attached media is
+   * kept, and which instruction files the request it will join still carries
+   * (the history as this turn sends it: after compaction, with what pruning
+   * cleared taken out).
+   */
+  private readSupport(sessionID: string): Pick<ToolContext, "model" | "keepCopy" | "instructionsGiven"> {
+    return {
+      model: async () => {
+        const session = await this.store.require(sessionID)
+        const vision = this.config
+          .providers()
+          .filter((provider) => provider.configured)
+          .flatMap((provider) => provider.models.filter((model) => model.inputs.image).map((model) => `${provider.id}/${model.id}`))
+          .sort()[0]
+        return { inputs: modelInputs(this.config.modelEntry(session.model)), ...(vision ? { vision } : {}) }
+      },
+      keepCopy: (source, bytes) => keepReadCopy(path.join(this.dataRoot, "read-media"), source, bytes),
+      instructionsGiven: async () => {
+        const session = await this.store.require(sessionID)
+        const sent = prunedHistory(this.contextFor(session, await this.store.messages(sessionID)), this.turnPrune.get(sessionID) ?? 0)
+        return instructionsIn(sent)
+      },
+    }
+  }
+
   /** subagents: models - what a subagent can be given, from the providers that are connected. */
   private subagentModels(options: { vision: boolean; limit?: number }): ToolResult {
     const all = this.config
@@ -3801,9 +3880,10 @@ interface Turn {
   /**
    * The user messages this turn is answering, in the order they were sent.
    *
-   * More than one when the turn was steered. Recorded so that rolling the
-   * conversation back to a message can find the turn that message belongs to,
-   * and know how much of the transcript that turn's recording accounts for.
+   * More than one when several were steered in at once, or when news of
+   * subagents reached the turn. Recorded so that rolling the conversation back
+   * to a message can find the turn that message belongs to, and know how much
+   * of the transcript that turn's recording accounts for.
    */
   messages: string[]
 }

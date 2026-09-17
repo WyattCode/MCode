@@ -358,7 +358,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
        * as MiMo derives one. Listed before the session exists, so the window
        * never sees the conversation without its project.
        */
-      if (!request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory])
+      if (!request.scratch && !request.sideOf) await runtime.config.adoptProjects([directory], { byRepository: true })
       // MiMo's rule for saved MCP changes: a new conversation is when they take effect, for every conversation.
       // Not waited for: the conversation's first turn waits for its project's servers itself.
       void runtime.mcp.commitIfDirty()
@@ -1112,10 +1112,7 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
     }
 
     case "git.status":
-      return (await git.status(request.directory, request.scope)) satisfies Handled<"git.status">
-
-    case "git.init":
-      return (await git.init(request.directory)) satisfies Handled<"git.init">
+      return (await git.status(request.directory)) satisfies Handled<"git.status">
 
     case "git.branches":
       return (await git.branchState(request.directory)) satisfies Handled<"git.branches">
@@ -1134,6 +1131,11 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "git.pullRequest":
       return (await pullRequestState(request.directory)) satisfies Handled<"git.pullRequest">
+
+    case "git.repoRoots":
+      return (await runtime.config.repoRoots.resolve(
+        Array.isArray(request.directories) ? request.directories.filter((entry) => typeof entry === "string").slice(0, 5000) : [],
+      )) satisfies Handled<"git.repoRoots">
 
     case "git.commitMessage": {
       const paths = request.paths.filter((entry) => typeof entry === "string")
@@ -1215,16 +1217,12 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "git.diff":
       return {
-        patch: await git.diff(request.directory, request.file, request.context, request.scope),
+        patch: await git.diff(request.directory, request.file),
       } satisfies Handled<"git.diff">
 
     case "git.diffFiles":
       return (await turnFileDiffs(request.directory, request.files)) satisfies Handled<"git.diffFiles">
 
-    case "git.revert": {
-      await git.revert(request.directory, request.file)
-      return (await git.status(request.directory)) satisfies Handled<"git.revert">
-    }
 
     case "workspace.info":
       return (await workspaceInfo(request.directory)) satisfies Handled<"workspace.info">
@@ -1363,13 +1361,6 @@ export async function handle(runtime: Runtime, request: Request, owner?: ShellOw
 
     case "workspace.list":
       return { worktrees: await git.worktrees(request.directory) } satisfies Handled<"workspace.list">
-
-    case "workspace.create":
-      return (await git.addWorktree(request.directory, request.name)) satisfies Handled<"workspace.create">
-
-    case "workspace.remove":
-      await git.removeWorktree(request.directory, request.target)
-      return {} satisfies Handled<"workspace.remove">
 
     case "mcp.list":
       return { servers: runtime.mcp.list() } satisfies Handled<"mcp.list">

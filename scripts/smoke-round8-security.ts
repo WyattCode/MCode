@@ -19,7 +19,7 @@ import { refusalOf, rendererOrigins, sameSecret } from "../src/server/socket-gua
 import { SOCKET_PROTOCOL, socketProtocols } from "../src/shared/socket-auth"
 import type { ToolContext } from "../src/server/tool/types"
 import type { SessionInfo } from "../src/shared/protocol"
-import { EditTool, MultiEditTool, WriteTool } from "../src/server/tool/edit"
+import { EditTool, WriteTool } from "../src/server/tool/edit"
 import { ReadTool } from "../src/server/tool/read"
 import { BashTool } from "../src/server/tool/bash"
 import { NotebookEditTool } from "../src/server/tool/notebook"
@@ -241,8 +241,6 @@ async function appDataChecks(check: Check, section: Section, root: string): Prom
   check("a differently cased spelling is refused too", shouted.code === "tool.err.appData", shouted)
   const notebook = await failure(() => NotebookEditTool.execute({ notebook_path: path.join(data, "x.ipynb"), new_source: "x", cell_id: "a" }, context))
   check("the notebook tool is refused there", notebook.code === "tool.err.appData", notebook)
-  const multi = await failure(() => MultiEditTool.execute({ file_path: configFile, edits: [{ old_string: "{", new_string: "{ " }] }, context))
-  check("so is multiedit", multi.code === "tool.err.appData", multi)
 
   // A link inside the project that leads into the data folder.
   const link = path.join(project, "linked")

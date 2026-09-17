@@ -49,6 +49,14 @@ import type { SnapshotFile } from "./store"
 const MAX_FILES = 1000
 const MAX_BYTES = 16 * 1024 * 1024
 
+/**
+ * An untracked file larger than this is left out of the photographs, as MiMo
+ * leaves it out: a disk image or a dataset dropped into the project would
+ * otherwise be copied into the store on the first turn and make every later
+ * turn's scan slow, for a change nobody asks to have undone.
+ */
+export const LARGE_UNTRACKED_BYTES = 2 * 1024 * 1024
+
 /** The conversation whose turn last left a file as it stands, and when. */
 interface Writer {
   session: string
@@ -232,8 +240,69 @@ class Repo {
     return exec(["--git-dir", this.gitDir, ...args], this.directory, stdin)
   }
 
+  /** What the store's own exclude file last held, so an unchanged one is not written again. */
+  private excludes: string | undefined
+
+  private async writeExcludes(text: string): Promise<void> {
+    if (text === this.excludes) return
+    await fs.mkdir(path.join(this.gitDir, "info"), { recursive: true })
+    await fs.writeFile(path.join(this.gitDir, "info", "exclude"), text, "utf8")
+    this.excludes = text
+  }
+
+  /**
+   * Keeps the store's view of what to ignore in step with the project's, as
+   * MiMo's snapshot does before every scan.
+   *
+   * The project's own `info/exclude` - the ignore list that lives in its git
+   * directory rather than in a `.gitignore` - is copied in, so a local build
+   * folder the user excluded there is not photographed either. Untracked files
+   * over `LARGE_UNTRACKED_BYTES` are added to it, and anything the store
+   * already holds that is now ignored is dropped from its index.
+   */
+  private async syncExcludes(): Promise<void> {
+    const where = await exec(["rev-parse", "--path-format=absolute", "--git-path", "info/exclude"], this.directory)
+    const own = where.code === 0 ? where.stdout.toString("utf8").trim() : ""
+    const base = own ? (await fs.readFile(own, "utf8").catch(() => "")).trimEnd() : ""
+    const compose = (large: string[]) => {
+      const text = [base, ...large.map((file) => `/${file.replaceAll("\\", "/")}`)].filter(Boolean).join("\n")
+      return text ? `${text}\n` : ""
+    }
+    await this.writeExcludes(compose([]))
+
+    const others = await this.git(["-c", "core.quotepath=false", "ls-files", "--others", "--exclude-standard", "-z"])
+    if (others.code === 0) {
+      const untracked = others.stdout.toString("utf8").split("\0").filter(Boolean)
+      const large: string[] = []
+      for (let at = 0; at < untracked.length; at += 8) {
+        const sizes = await Promise.all(
+          untracked.slice(at, at + 8).map((file) =>
+            fs.stat(path.join(this.directory, file)).then(
+              (stat) => (stat.isFile() ? stat.size : 0),
+              () => 0,
+            ),
+          ),
+        )
+        sizes.forEach((size, index) => {
+          if (size > LARGE_UNTRACKED_BYTES) large.push(untracked[at + index]!)
+        })
+      }
+      if (large.length) await this.writeExcludes(compose(large))
+    }
+
+    const ignored = await this.git(["-c", "core.quotepath=false", "ls-files", "--cached", "--ignored", "--exclude-standard", "-z"])
+    const dropped = ignored.code === 0 ? ignored.stdout.toString("utf8").split("\0").filter(Boolean) : []
+    if (dropped.length) {
+      await this.git(
+        ["rm", "--cached", "-q", "-f", "--ignore-unmatch", "--pathspec-from-file=-", "--pathspec-file-nul"],
+        `${dropped.join("\0")}\0`,
+      )
+    }
+  }
+
   /** The project as it stands, as a tree object. Runs under the lock already held. */
   private async treeNow(): Promise<string> {
+    await this.syncExcludes()
     const staged = await this.git(["add", "-A"])
     if (staged.code !== 0) throw new Error(staged.stderr.trim() || "git add failed")
     const written = await this.git(["write-tree"])

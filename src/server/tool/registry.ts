@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "./types"
 import { ReadTool } from "./read"
-import { EditTool, MultiEditTool, WriteTool } from "./edit"
-import { GlobTool, GrepTool, ListTool } from "./search"
+import { EditTool, WriteTool } from "./edit"
+import { GlobTool, GrepTool } from "./search"
 import { BashTool } from "./bash"
 import { TaskTool } from "./task"
 import { WebFetchTool } from "./webfetch"
@@ -41,7 +41,6 @@ export const TOOLS: ToolDefinition[] = [
   ReadTool,
   WriteTool,
   EditTool,
-  ListTool,
   GlobTool,
   GrepTool,
   BashTool,
@@ -74,14 +73,12 @@ export const TOOLS: ToolDefinition[] = [
   AutomationUpdateTool,
   // plan: appended after those for the same reason; offered in both modes, and effective only while planning.
   PlanExitTool,
-  // multiedit: MiMo's batched edit, which it offers every agent; appended after those for the same reason.
-  MultiEditTool,
   // speak: appended last, and only in the turns where voice feedback is on (runner `tools`).
   SpeakTool,
 ]
 
 /** MiMo's explore subagent: everything is denied but these, the shell among them. */
-const EXPLORE = new Set(["read", "glob", "grep", "list", "bash", "webfetch"])
+const EXPLORE = new Set(["read", "glob", "grep", "bash", "webfetch"])
 
 /**
  * The tools an agent is allowed to call.
@@ -140,7 +137,6 @@ export function repairableNames(): string[] {
  */
 const READS = new Set([
   "read",
-  "list",
   "glob",
   "grep",
   "task",
@@ -192,8 +188,8 @@ const READS = new Set([
 export type ToolReach = "reads" | "reports" | "opaque"
 
 export function reachOf(name: string): ToolReach {
-  // notebook_edit and multiedit record their file before writing, as edit does.
-  if (name === "write" || name === "edit" || name === "multiedit" || name === "notebook_edit") return "reports"
+  // notebook_edit records its file before writing, as edit does.
+  if (name === "write" || name === "edit" || name === "notebook_edit") return "reports"
   if (READS.has(name)) return "reads"
   return "opaque"
 }

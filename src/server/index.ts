@@ -95,6 +95,7 @@ export async function startBackend(dataDirectory: string, options: BackendOption
   })
   // Before the socket opens, so the first window already reads a filled project list.
   await config.migrateProjects(projectDirectoriesOf(await sessions.list()))
+  await config.migrateRepositoryProjects()
   const runner = new SessionRunner(sessions, bus, config, permissions, auth, storage)
   /*
    * Undo's own housekeeping, in the background so the window is not held up by

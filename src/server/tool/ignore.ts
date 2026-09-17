@@ -131,16 +131,32 @@ async function repositoryOf(start: string): Promise<string | undefined> {
   }
 }
 
+/** What a walk stopped by the reader throws, so a half-finished search is never reported as a whole one. */
+export class SearchStopped extends Error {
+  constructor() {
+    super("The search was stopped before it finished, so what it found so far is not reported.")
+    this.name = "SearchStopped"
+  }
+}
+
 /**
  * Every file under `root` a search should look at, in walk order.
  *
  * `onFile` may return true to stop the walk early. Links are not followed,
  * as ripgrep does not follow them by default.
+ *
+ * `override` is ripgrep's `--glob`, which outranks the ignore files: a file it
+ * matches is searched even when .gitignore leaves it out, and a folder it
+ * matches is entered. A folder it does not match is still left alone when an
+ * ignore file says so, so `*.log` finds an ignored `debug.log` but nothing
+ * inside an ignored `node_modules`. Anything the override does not match is
+ * not a file of the search at all. `.git` is never walked, at any depth.
  */
 export async function walkFiles(
   root: string,
   onFile: (absolute: string) => boolean | void | Promise<boolean | void>,
   signal: AbortSignal,
+  override?: Override,
 ): Promise<void> {
   const repo = await repositoryOf(root)
   const inherited: IgnoreRule[] = []
@@ -155,9 +171,11 @@ export async function walkFiles(
     for (const dir of between) inherited.push(...(await rulesIn(dir, true)))
   }
 
-  const queue: { dir: string; rules: IgnoreRule[] }[] = [{ dir: path.resolve(root), rules: inherited }]
+  const start = path.resolve(root)
+  const below = (absolute: string) => path.relative(start, absolute).split(path.sep).join("/")
+  const queue: { dir: string; rules: IgnoreRule[] }[] = [{ dir: start, rules: inherited }]
   while (queue.length) {
-    if (signal.aborted) return
+    if (signal.aborted) throw new SearchStopped()
     const { dir, rules: parentRules } = queue.shift()!
     const rules = [...parentRules, ...(await rulesIn(dir, repo !== undefined))]
     let entries
@@ -171,26 +189,36 @@ export async function walkFiles(
       if (entry.name === ".git") continue
       const absolute = path.join(dir, entry.name)
       if (entry.isDirectory()) {
-        if (!isIgnored(rules, absolute, true)) queue.push({ dir: absolute, rules })
+        const said = override?.(below(absolute), true)
+        if (said === "include" || (said === undefined && !isIgnored(rules, absolute, true))) queue.push({ dir: absolute, rules })
       } else if (entry.isFile()) {
-        if (isIgnored(rules, absolute, false)) continue
+        const said = override?.(below(absolute), false)
+        if (said === "exclude" || (said === undefined && isIgnored(rules, absolute, false))) continue
         if (await onFile(absolute)) return
       }
     }
   }
+  if (signal.aborted) throw new SearchStopped()
 }
 
+/** What an override says of one path: searched whatever the ignore files say, left out, or nothing either way. */
+export type Override = (relative: string, isDir: boolean) => "include" | "exclude" | undefined
+
 /**
- * A `--glob` pattern as ripgrep applies it to files under the search root: one
+ * A `--glob` pattern as ripgrep applies it to paths under the search root: one
  * with a slash is matched against the path from the root, one without against
- * the file's name at any depth - so `*.ts` finds `src/deep/x.ts`.
+ * the name at any depth - so `*.ts` finds `src/deep/x.ts`. A plain pattern
+ * names what is searched, so a file it does not match is left out; a `!`
+ * pattern names what is left out, and says nothing of anything else.
  */
-export function globMatcher(pattern: string): (relative: string) => boolean {
+export function overrideMatcher(pattern: string): Override {
   const rule = compileRule(pattern, "/")
-  if (!rule) return () => false
-  return (relative) => {
+  if (!rule) return () => undefined
+  return (relative, isDir) => {
     const rel = relative.split("\\").join("/")
-    const hit = rule.regex.test(rule.anchored ? rel : rel.slice(rel.lastIndexOf("/") + 1))
-    return rule.negate ? !hit : hit
+    const hit = (!rule.dirOnly || isDir) && rule.regex.test(rule.anchored ? rel : rel.slice(rel.lastIndexOf("/") + 1))
+    if (rule.negate) return hit ? "exclude" : undefined
+    if (hit) return "include"
+    return isDir ? undefined : "exclude"
   }
 }

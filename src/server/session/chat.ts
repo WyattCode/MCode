@@ -66,19 +66,20 @@ export type TalkResult =
 export type ChatChange = { ok: true; session: SessionInfo } | { ok: false; error: string }
 
 /*
- * What the model reads from these tools is in Chinese, as MiMo's session chat
- * speaks to its model (the user's 2026-09-17 decision), in this app's own words.
+ * What the model reads when a message cannot go or comes back empty: Chinese,
+ * as MiMo's session-chat tools answer (the user's T10-55 decision), in this
+ * app's own words.
  */
-const SELF = "不能给当前会话自己发消息。"
-const HOPS = `会话之间的连续调用已达到 ${CHAT_HOPS} 跳上限，为避免循环已拒绝。请根据已有结果直接作答，不要再调用其他会话。`
-const GONE = "目标会话已不存在，可能已被删除。"
+const SELF = "会话不能给自己发消息。"
+const HOPS = `会话之间的连续调用已达到 ${CHAT_HOPS} 跳的上限，为避免循环没有发出。请用手头已有的信息作答，不要再调用其他会话。`
+const GONE = "目标会话已经不存在，可能已被删除。"
 /** What the caller is told about a message whose turn the app outlived. */
-const INTERRUPTED = "对方会话处理这条消息时应用被关闭了，所以没有收到回复。如果仍然需要，请重新发送。"
+const INTERRUPTED = "对方处理这条消息时应用关闭了，所以没有收到回复。如果仍然需要，请重新发送。"
 /** Where the queue is kept between runs. */
 const QUEUE_KEY = "chat-queue"
 /** Older than this and a message is not delivered on a later start: it is no longer what anyone asked for. */
 const RESTORE_MAX_AGE_MS = 24 * 60 * 60 * 1000
-const TIMEOUT = `对方在 ${CHAT_WAIT_MS / 1000} 秒内没能开始处理这条消息。请稍后再试，或改用 mode "async" 发送。`
+const TIMEOUT = `对方正忙：等了 ${CHAT_WAIT_MS / 1000} 秒仍没能开始处理这条消息。请稍后再试，或改用 mode "async" 发送。`
 
 interface Entry {
   target: string
@@ -126,6 +127,7 @@ function listed(session: SessionInfo): boolean {
  * request only: the transcript keeps the words as they were sent.
  */
 export function chatHeader(source: MessageSource): string {
+  // In Chinese, as MiMo introduces a message from another conversation (T10-55), in this app's own words.
   return source.direction === "reply"
     ? `【跨会话消息｜会话「${source.from}」（contact_id ${source.sessionID}）对本会话所发消息的回复】`
     : `【跨会话消息｜来自会话「${source.from}」（contact_id ${source.sessionID}）】本回合的最终回复会作为答复发回给它。`
@@ -152,9 +154,9 @@ export function replyIn(messages: Message[], messageID?: string): ChatOutcome {
     .join("\n")
     .trim()
   if (text) return { ok: true, reply: text }
-  if (last?.error) return { ok: false, error: `对方回合出错：${last.error}` }
-  if (last?.finish === "aborted") return { ok: false, error: "对方回合在回复之前被停止了。" }
-  return { ok: false, error: "对方回合已结束，但没有可以带回的文字回复。" }
+  if (last?.error) return { ok: false, error: `对方这一轮出错了：${last.error}` }
+  if (last?.finish === "aborted") return { ok: false, error: "对方这一轮在回复之前被停止了。" }
+  return { ok: false, error: "对方这一轮结束了，但没有文字回复。" }
 }
 
 function describe(failure: unknown): string {
@@ -212,7 +214,7 @@ export class SessionChat {
     signal?: AbortSignal
   }): Promise<TalkResult> {
     const message = input.message.trim()
-    if (!message) return { status: "refused", error: "消息不能为空。" }
+    if (!message) return { status: "refused", error: "消息是空的。" }
     const caller = await this.store.get(input.from)
     if (!caller || !listed(caller)) return { status: "refused", error: "只有侧栏里的会话才能给其他会话发消息。" }
 
@@ -224,18 +226,18 @@ export class SessionChat {
     if (id) {
       if (id === caller.id) return { status: "refused", error: SELF }
       target = others.find((session) => session.id === id)
-      if (!target) return { status: "refused", error: `没有 contact_id 为 ${id} 的联系人。可以先用 contacts 查看通讯录。`, candidates: offered() }
+      if (!target) return { status: "refused", error: `没有 id 为 ${id} 的联系人。可以先打开通讯录看看有哪些会话。`, candidates: offered() }
     } else {
       const name = input.contact?.trim() ?? ""
-      if (!name) return { status: "refused", error: "请用联系人的完整标题或 contact_id 指明对方。" }
+      if (!name) return { status: "refused", error: "请用联系人的完整标题指明对象，或给出 contact_id。" }
       const named = everyone.filter((session) => session.title.trim() === name)
       const matches = named.filter((session) => session.id !== caller.id)
-      if (!named.length) return { status: "refused", error: `没有标题为「${name}」的联系人。可以先用 contacts 查看通讯录。`, candidates: offered() }
+      if (!named.length) return { status: "refused", error: `没有标题为「${name}」的联系人。可以先打开通讯录看看有哪些会话。`, candidates: offered() }
       if (!matches.length) return { status: "refused", error: SELF }
       if (matches.length > 1) {
         return {
           status: "refused",
-          error: `有多个会话的标题都是「${name}」。请从候选中选出要找的那个，用它的 contact_id 重试。`,
+          error: `有多个会话的标题都是「${name}」。请用你要找的那个的 contact_id 重试。`,
           candidates: matches.map((session) => this.contactOf(session)),
         }
       }
@@ -281,15 +283,13 @@ export class SessionChat {
         this.settle(entry, { status: "switched" })
       }, this.waitMs)
       /*
-       * The caller was stopped. A message not yet started is taken back; one
-       * already running finishes there, with nobody waiting on its reply.
+       * The caller was stopped. As MiMo's does (the user's 2026-09-17 decision,
+       * T10-50), the message is not taken back: one still queued is delivered
+       * and runs in its turn, and one already running finishes there - either
+       * way with nobody waiting on its reply, which is dropped.
        */
       const stop = () => {
         if (entry.settled) return
-        if (entry.state === "waiting") {
-          this.remove(entry)
-          this.pump(entry.target)
-        }
         this.settle(entry, { status: "stopped" })
       }
       input.signal?.addEventListener("abort", stop, { once: true })
@@ -493,7 +493,7 @@ export class SessionChat {
         if (this.queues.get(target)?.[0] !== head) return
         this.hops.delete(target)
         this.remove(head)
-        this.finish(head, { ok: false, error: exists ? `消息没能送到对方会话：${describe(failure)}` : GONE })
+        this.finish(head, { ok: false, error: exists ? `消息没能送达：${describe(failure)}` : GONE })
         this.pump(target)
       })
   }
@@ -523,7 +523,7 @@ export class SessionChat {
       targetTitle: caller.title,
       from: peer.id,
       fromTitle: peer.title,
-      text: outcome.ok ? outcome.reply : `（没能取回回复）${outcome.error}`,
+      text: outcome.ok ? outcome.reply : `（没能取到回复）${outcome.error}`,
       hop: next,
       kind: "reply",
       state: "waiting",

@@ -82,6 +82,13 @@ export function setImageShrinker(fn: ImageShrinker | undefined): void {
   shrinker = fn
 }
 
+/** A picture made to fit the given limits, or nothing when this app cannot make it smaller (read's oversized pictures). */
+export async function shrunkImage(file: { mime: string; data: string }, fit: ImageFit): Promise<{ mime: string; data: string } | undefined> {
+  if (!shrinker) return undefined
+  const out = await shrinker({ data: file.data, mime: file.mime, fit }).catch(() => undefined)
+  return out && Math.floor((out.data.length * 3) / 4) <= fit.maxBytes ? out : undefined
+}
+
 /** The picture as it should be sent: smaller when it has to be and can be, and nothing when it is already fine. */
 export async function fittedImage(file: { mime: string; data: string }): Promise<{ mime: string; data: string } | undefined> {
   const fit = imageFit(file.mime, file.data)

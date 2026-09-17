@@ -1,8 +1,5 @@
-import { execFile } from "node:child_process"
-import { promisify } from "node:util"
 import type { PullRequestState } from "@shared/protocol"
-
-const run = promisify(execFile)
+import { runGit } from "./git-process"
 
 /**
  * The info card's pull-request row, as MiMo finds it: the current branch's
@@ -128,10 +125,7 @@ export async function askGithub(remote: string, branch: string, fetchImpl: Fetch
 
 export type GitRunner = (directory: string, args: string[]) => Promise<string>
 
-const localGit: GitRunner = async (directory, args) => {
-  const { stdout } = await run("git", args, { cwd: directory, windowsHide: true, maxBuffer: 1024 * 1024 })
-  return stdout
-}
+const localGit: GitRunner = (directory, args) => runGit(directory, args, { maxBuffer: 1024 * 1024 })
 
 /** `git remote -v` as name to fetch address. */
 export function remotesOf(listing: string): Map<string, string> {

@@ -87,8 +87,9 @@ export interface Snapshot {
   /**
    * The user messages this turn answered, in the order they were sent.
    *
-   * A turn usually answers one, but a turn that was steered answers several,
-   * and there is no state on disk in between them. Rolling the conversation
+   * A turn usually answers one; several steered in at once share a turn, and
+   * records written before steers opened turns of their own (MiMo 26.914) can
+   * hold a question and its steers. Rolling the conversation
    * back to a message has to know which turn that message belongs to, and how
    * far that turn's own recording reaches, or the transcript would be cut at a
    * point the files were never returned to.

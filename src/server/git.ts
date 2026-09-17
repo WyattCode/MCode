@@ -2,39 +2,41 @@ import { execFile } from "node:child_process"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { promisify } from "node:util"
-import type { BranchState, CheckoutResult, CommitResult, CommitState, GitFileLines, GitSummary, PushResult } from "@shared/protocol"
+import type {
+  BranchState,
+  CheckoutResult,
+  CommitResult,
+  CommitState,
+  GitChange,
+  GitChangeKind,
+  GitFileLines,
+  GitStatus,
+  GitSummary,
+  PushResult,
+  Worktree,
+} from "@shared/protocol"
+import {
+  PUSH_TIMEOUT_MS,
+  WORKTREE_LIST_TIMEOUT_MS,
+  displayLetter,
+  nulFields,
+  parsePorcelain,
+  runGit,
+  timedOut,
+  type PorcelainEntry,
+} from "./git-process"
 import { hasGithubRemote } from "./pull-request"
-
-const run = promisify(execFile)
 
 /**
  * Just enough git to review what a turn did.
  *
  * Shelling out rather than linking a library: the user's git is the one that
  * knows about their config, hooks and worktrees, and this only ever asks it
- * questions the CLI answers plainly.
+ * questions the CLI answers plainly. Every call goes through `runGit`, which
+ * fixes the environment, the path quoting and the timeout.
  */
 
-/** How one file differs from HEAD, in the vocabulary the review speaks. */
-export type GitChangeKind = "added" | "deleted" | "modified" | "renamed"
-
-export interface GitChange {
-  path: string
-  kind: GitChangeKind
-}
-
-export interface GitStatus {
-  /** Whether git itself is available on this machine. */
-  installed: boolean
-  /** Whether the project directory is inside a repository. */
-  repo: boolean
-  branch?: string
-  /** Paths changed in the working tree, relative to the project directory. */
-  changed: string[]
-  /** The same files, carrying the letter git already reported for each. */
-  entries: GitChange[]
-}
+const git = runGit
 
 /**
  * A git command that is allowed to fail, for the places that ask a question
@@ -114,56 +116,6 @@ async function toplevel(directory: string): Promise<string> {
   return out.trim()
 }
 
-async function git(directory: string, args: string[]): Promise<string> {
-  const { stdout } = await run("git", args, {
-    cwd: directory,
-    windowsHide: true,
-    maxBuffer: 8 * 1024 * 1024,
-  })
-  return stdout
-}
-
-/**
- * Where this branch left the one it grew from.
- *
- * Reviewing a branch means reviewing everything on it, not only what is still
- * uncommitted - so the comparison point is the merge base with whichever
- * branch the repository treats as its trunk, not that branch's current tip.
- */
-async function branchBase(root: string): Promise<string | undefined> {
-  const remote = (await git(root, ["rev-parse", "--abbrev-ref", "origin/HEAD"]).catch(() => "")).trim()
-  const candidates = remote && remote !== "origin/HEAD" ? [remote] : []
-  for (const name of ["main", "master", "develop", "trunk"]) {
-    const found = (await git(root, ["rev-parse", "--verify", "--quiet", name]).catch(() => "")).trim()
-    if (found) candidates.push(name)
-  }
-  for (const candidate of candidates) {
-    const base = (await git(root, ["merge-base", "HEAD", candidate]).catch(() => "")).trim()
-    // A branch is not its own base; that would report no changes at all.
-    const head = (await git(root, ["rev-parse", "HEAD"]).catch(() => "")).trim()
-    if (base && base !== head) return base
-  }
-  return undefined
-}
-
-/** `git diff --name-status`, in the shape the review already speaks. */
-async function committed(root: string, directory: string, base: string): Promise<GitChange[]> {
-  const out = await git(root, ["diff", "--name-status", base]).catch(() => "")
-  const entries: GitChange[] = []
-  for (const line of out.split("\n")) {
-    if (!line.trim()) continue
-    const columns = line.split("\t")
-    const code = columns[0] ?? ""
-    // A rename carries both paths; the new one is what there is to look at.
-    const raw = columns.length > 2 ? columns[2] : columns[1]
-    if (!raw) continue
-    const relative = path.relative(directory, path.resolve(root, raw)).split(path.sep).join("/")
-    if (!relative || relative.startsWith("..")) continue
-    entries.push({ path: relative, kind: classify(code.slice(0, 2)) })
-  }
-  return entries
-}
-
 /**
  * The last few commits, subject line only.
  *
@@ -183,21 +135,44 @@ export async function recentCommits(directory: string, count = 5): Promise<strin
     .filter(Boolean)
 }
 
+function lines(out: string): string[] {
+  return out
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
 /**
- * The branch a pull request would usually target, by name.
+ * The branch a pull request would usually target, by name, found the way
+ * MiMo's engine finds it.
  *
- * `branchBase` answers with a merge-base commit, which is what a diff needs;
- * this answers with the trunk's own name, which is what the model needs to be
- * told before it opens a pull request against the wrong branch. The remote's
- * HEAD wins where it is set, that being what the host itself calls default;
- * failing that, the first conventional name the repository actually has.
+ * The main remote is origin, else the only remote, else upstream, else the
+ * first listed. Its HEAD wins where it is set, that being what the host itself
+ * calls default. Failing that, the branch `init.defaultBranch` names if the
+ * repository has it, then main, then master.
  */
 export async function defaultBranch(directory: string): Promise<string | undefined> {
-  const remote = (await tryGit(directory, ["rev-parse", "--abbrev-ref", "origin/HEAD"])).out.trim()
-  if (remote && remote !== "origin/HEAD") return remote.replace(/^origin\//, "")
-  for (const name of ["main", "master", "develop", "trunk"]) {
-    if ((await tryGit(directory, ["rev-parse", "--verify", "--quiet", name])).out.trim()) return name
+  const remotes = lines((await tryGit(directory, ["remote"])).out)
+  const primary = remotes.includes("origin")
+    ? "origin"
+    : remotes.length === 1
+      ? remotes[0]
+      : remotes.includes("upstream")
+        ? "upstream"
+        : remotes[0]
+  if (primary) {
+    const head = await tryGit(directory, ["symbolic-ref", `refs/remotes/${primary}/HEAD`])
+    if (head.ok) {
+      const ref = head.out.trim().replace(/^refs\/remotes\//, "")
+      const name = ref.startsWith(`${primary}/`) ? ref.slice(primary.length + 1) : ""
+      if (name) return name
+    }
   }
+  const local = lines((await tryGit(directory, ["for-each-ref", "--format=%(refname:short)", "refs/heads"])).out)
+  const configured = (await tryGit(directory, ["config", "init.defaultBranch"])).out.trim()
+  if (configured && local.includes(configured)) return configured
+  if (local.includes("main")) return "main"
+  if (local.includes("master")) return "master"
   return undefined
 }
 
@@ -212,87 +187,105 @@ export async function gitUser(directory: string): Promise<string | undefined> {
   return (await tryGit(directory, ["config", "user.name"])).out.trim() || undefined
 }
 
-export type StatusScope = "worktree" | "branch"
+/**
+ * Whether git runs at all, asked once per process: every status used to start
+ * with a `git --version` of its own.
+ */
+let installed: Promise<boolean> | undefined
 
-export async function status(directory: string, scope: StatusScope = "worktree"): Promise<GitStatus> {
-  try {
-    await run("git", ["--version"], { windowsHide: true })
-  } catch {
-    return { installed: false, repo: false, changed: [], entries: [] }
-  }
+function gitInstalled(): Promise<boolean> {
+  installed ??= new Promise((resolve) => {
+    execFile("git", ["--version"], { windowsHide: true, timeout: 15_000 }, (error) => resolve(!error))
+  }).then((found) => {
+    // Not found is asked again next time: git may be installed while the app runs.
+    if (!found) installed = undefined
+    return found as boolean
+  })
+  return installed
+}
+
+/** A status entry's path relative to the project, keeping the slash that marks an untracked folder. */
+function projectPath(root: string, directory: string, raw: string): string {
+  const relative = path.relative(directory, path.resolve(root, raw)).split(path.sep).join("/")
+  return relative && raw.endsWith("/") ? `${relative}/` : relative
+}
+
+function insideProject(relative: string): boolean {
+  return Boolean(relative) && relative !== ".." && !relative.startsWith("../") && !path.isAbsolute(relative)
+}
+
+/**
+ * The project's changes against HEAD, as MiMo's review lists them.
+ *
+ * `status --porcelain=v1 -z` without `-uall`: an untracked folder is one row,
+ * as MiMo has it, rather than every file under it - a `node_modules` nobody
+ * ignored used to fill the list with thousands of rows and have each read.
+ * The one exception is a project that sits inside an untracked folder, which
+ * would otherwise report nothing at all; there the files are listed.
+ *
+ * A status git could not produce is said to be one, in `error`, rather than
+ * read as a clean tree.
+ */
+export async function status(directory: string): Promise<GitStatus> {
+  if (!(await gitInstalled())) return { installed: false, repo: false, changed: [], entries: [] }
 
   const inside = await git(directory, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")
   if (inside.trim() !== "true") return { installed: true, repo: false, changed: [], entries: [] }
 
   // A fresh repository has no HEAD yet, so the branch lookup is allowed to fail.
   const branch = (await git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim()
+  const base: GitStatus = { installed: true, repo: true, ...(branch ? { branch } : {}), changed: [], entries: [] }
 
-  const root = await toplevel(directory).catch(() => directory)
-
-  const porcelain = await git(directory, ["status", "--porcelain=v1", "-uall"]).catch(() => "")
-  const entries = porcelain
-    .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => {
-      /*
-       * The first two columns are the index and worktree letters. They used to
-       * be sliced off and thrown away, which is why the review could list a
-       * file but never say whether it had been added, deleted or edited.
-       */
-      const codes = line.slice(0, 2)
-      const rest = line.slice(3).trim()
-      // A rename reads as "old -> new"; the new path is the one to show.
-      const raw = (rest.includes(" -> ") ? rest.split(" -> ")[1] : rest).replace(/^"|"$/g, "")
-      // Reported relative to the root; the rest of the app speaks in paths
-      // relative to the project, and so does the tool metadata it is matched to.
-      const relative = path.relative(directory, path.resolve(root, raw)).split(path.sep).join("/")
-      return { path: relative, kind: classify(codes) }
-    })
-    .filter((entry) => entry.path && !entry.path.startsWith(".."))
-
-  /*
-   * Branch scope adds what is already committed on this branch. The working
-   * tree wins on any file in both, because how a file stands right now is
-   * what someone about to revert it needs to be told.
-   */
-  let all = entries
-  if (scope === "branch") {
-    const base = await branchBase(root)
-    if (base) {
-      const seen = new Set(entries.map((entry) => entry.path))
-      all = [
-        ...entries,
-        ...(await committed(root, directory, base)).filter((entry) => !seen.has(entry.path)),
-      ].sort((a, b) => a.path.localeCompare(b.path))
+  try {
+    const root = await toplevel(directory)
+    let found = await changesUnder(root, directory, ["status", "--porcelain=v1", "-z"])
+    if (found.swallowed) {
+      found = await changesUnder(root, directory, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."])
     }
+    return { ...base, changed: found.entries.map((entry) => entry.path), entries: found.entries }
+  } catch (err) {
+    return { ...base, error: errorText(err) }
   }
+}
 
-  return {
-    installed: true,
-    repo: true,
-    branch: branch || undefined,
-    changed: all.map((entry) => entry.path),
-    entries: all,
+/** Status rows under the project, and whether an untracked folder swallowed the project whole. */
+async function changesUnder(
+  root: string,
+  directory: string,
+  args: string[],
+): Promise<{ entries: GitChange[]; swallowed: boolean }> {
+  const out = await git(directory, args)
+  const entries: GitChange[] = []
+  let swallowed = false
+  for (const entry of parsePorcelain(out)) {
+    const relative = projectPath(root, directory, entry.path)
+    if (!insideProject(relative)) {
+      if (entry.untracked && entry.path.endsWith("/") && isWithin(path.resolve(root, entry.path), directory)) swallowed = true
+      continue
+    }
+    entries.push({ path: relative, kind: classify(entry), code: displayLetter(entry) })
   }
+  return { entries, swallowed }
+}
+
+/** Whether `inner` is `outer` or somewhere below it. */
+function isWithin(outer: string, inner: string): boolean {
+  const relative = path.relative(path.resolve(outer), path.resolve(inner))
+  return !relative.startsWith("..") && !path.isAbsolute(relative)
 }
 
 /**
- * The two status columns, reduced to the one word the review shows.
+ * The two status columns, reduced to the one word the agent's context uses.
  *
- * "??" is an untracked file, which to someone reading a turn is an addition
- * however git files it. Anything with a D in either column is a deletion. A
- * rename or copy is its own word, as MiMo draws it: a purple R.
+ * An untracked path is an addition however git files it. Anything with a D in
+ * either column is a deletion. A rename or copy is its own word.
  */
-export function classify(codes: string): GitChangeKind {
-  if (codes === "??" || codes.includes("A")) return "added"
+export function classify(entry: Pick<PorcelainEntry, "staged" | "work" | "untracked">): GitChangeKind {
+  const codes = entry.staged + entry.work
+  if (entry.untracked || codes.includes("A")) return "added"
   if (codes.includes("D")) return "deleted"
   if (codes.includes("R") || codes.includes("C")) return "renamed"
   return "modified"
-}
-
-export async function init(directory: string): Promise<GitStatus> {
-  await git(directory, ["init"])
-  return status(directory)
 }
 
 /**
@@ -300,15 +293,7 @@ export async function init(directory: string): Promise<GitStatus> {
  * without --no-index a new file shows as nothing at all, which is exactly the
  * case someone reviewing a turn cares about most.
  */
-export async function diff(
-  directory: string,
-  file: string,
-  context?: number,
-  scope: StatusScope = "worktree",
-): Promise<string> {
-  // Clamped rather than trusted: this number reaches a command line.
-  const lines = Math.max(0, Math.min(100_000, Math.round(context ?? 3)))
-  const unified = `-U${lines}`
+export async function diff(directory: string, file: string): Promise<string> {
   const absolute = path.resolve(directory, file)
   const root = await toplevel(directory).catch(() => directory)
   const inRepo = path.relative(root, absolute).split(path.sep).join("/")
@@ -317,15 +302,8 @@ export async function diff(
     .then(() => true)
     .catch(() => false)
 
-  /*
-   * In branch scope the comparison runs from where the branch started, so a
-   * file whose change was committed an hour ago still shows what it was -
-   * against the working tree it would look untouched.
-   */
-  const base = scope === "branch" ? await branchBase(root) : undefined
-
   const untracked = () =>
-    git(root, ["diff", "--no-index", unified, "--", "/dev/null", inRepo]).catch(
+    git(root, ["diff", "--no-index", "--", "/dev/null", inRepo]).catch(
       (error: { stdout?: string }) => error.stdout ?? "",
     )
 
@@ -337,10 +315,9 @@ export async function diff(
    */
   let patch: string
   if (!tracked) patch = await untracked()
-  else if (base) patch = await git(root, ["diff", unified, base, "--", inRepo]).catch(() => "")
   else {
-    patch = await git(root, ["diff", unified, "HEAD", "--", inRepo]).catch(() =>
-      git(root, ["diff", unified, "--", inRepo]).catch(() => ""),
+    patch = await git(root, ["diff", "HEAD", "--", inRepo]).catch(() =>
+      git(root, ["diff", "--", inRepo]).catch(() => ""),
     )
     if (!patch.trim()) {
       const hasHead = await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]).then(() => true, () => false)
@@ -382,98 +359,41 @@ export async function diff(
   return patch
 }
 
-/** Throws away every uncommitted change to one file. */
-export async function revert(directory: string, file: string): Promise<void> {
-  const absolute = path.resolve(directory, file)
-  const root = await toplevel(directory).catch(() => directory)
-  const inRepo = path.relative(root, absolute).split(path.sep).join("/")
-
-  // Refuse to touch anything outside the project, however the path was spelled.
-  const inProject = path.relative(path.resolve(directory), absolute)
-  if (inProject.startsWith("..") || path.isAbsolute(inProject)) {
-    throw new Error(`Refusing to revert outside the project: ${file}`)
-  }
-
-  const tracked = await git(root, ["ls-files", "--error-unmatch", "--", inRepo])
-    .then(() => true)
-    .catch(() => false)
-  if (tracked) await git(root, ["checkout", "--", inRepo])
-  else await git(root, ["clean", "-f", "--", inRepo])
-}
-
-/** One checkout of a repository, as `git worktree list` reports it. */
-export interface Worktree {
-  /** Absolute path of the checkout. */
-  directory: string
-  /** Branch name, or a short SHA when the checkout is detached. */
-  branch?: string
-  /** The repository's own checkout, which cannot be removed. */
-  main: boolean
-}
-
 /**
- * The checkouts this repository has.
+ * The checkouts this repository has, as MiMo reads `git worktree list`.
  *
- * A workspace in this app is a git worktree: a second directory on its own
- * branch, sharing the repository's history. That is what lets two sessions
- * work on the same project without treading on each other's files.
+ * The first entry is the repository's own checkout. A bare repository is not a
+ * checkout anyone works in and is left out, and a detached checkout has no
+ * branch to name.
  */
 export async function worktrees(directory: string): Promise<Worktree[]> {
   let stdout: string
   try {
-    ;({ stdout } = await run("git", ["worktree", "list", "--porcelain"], { cwd: directory }))
+    stdout = await git(directory, ["worktree", "list", "--porcelain"], { timeout: WORKTREE_LIST_TIMEOUT_MS })
   } catch {
     return []
   }
 
   const out: Worktree[] = []
-  let current: Partial<Worktree> = {}
-  const flush = () => {
-    if (current.directory) out.push({ ...current, main: out.length === 0 } as Worktree)
-    current = {}
-  }
-  for (const line of stdout.split("\n")) {
-    if (line.startsWith("worktree ")) {
-      flush()
-      current.directory = line.slice(9).trim()
-    } else if (line.startsWith("branch ")) {
-      current.branch = line.slice(7).trim().replace(/^refs\/heads\//, "")
-    } else if (line.startsWith("HEAD ")) {
-      current.branch = current.branch ?? line.slice(5).trim().slice(0, 7)
+  let first = true
+  for (const block of stdout.split(/\r?\n\r?\n/)) {
+    let directory = ""
+    let branch = ""
+    let detached = false
+    let bare = false
+    for (const line of block.split(/\r?\n/)) {
+      if (line.startsWith("worktree ")) directory = line.slice(9).trim()
+      else if (line.startsWith("branch ")) branch = line.slice(7).trim().replace(/^refs\/heads\//, "")
+      else if (line === "detached") detached = true
+      else if (line === "bare") bare = true
     }
+    if (!directory) continue
+    const main = first
+    first = false
+    if (bare) continue
+    out.push({ directory, main, ...(branch && !detached ? { branch } : {}) })
   }
-  flush()
   return out
-}
-
-/**
- * Adds a checkout beside the repository, on a branch of its own.
- *
- * The directory is a sibling rather than a child: a worktree inside the
- * repository would show up in its own file listings and searches, which is
- * confusing at best and gets committed at worst.
- */
-export async function addWorktree(
-  directory: string,
-  name: string,
-): Promise<{ directory: string; branch: string }> {
-  const safe = name.trim().replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "")
-  if (!safe) throw new Error("a workspace needs a name")
-
-  const root = (await run("git", ["rev-parse", "--show-toplevel"], { cwd: directory })).stdout.trim()
-  const target = path.join(path.dirname(root), `${path.basename(root)}-${safe}`)
-
-  // A branch that already exists is checked out rather than recreated, which
-  // is what makes this safe to run twice.
-  const exists = await run("git", ["rev-parse", "--verify", safe], { cwd: root }).then(
-    () => true,
-    () => false,
-  )
-  const args = exists
-    ? ["worktree", "add", target, safe]
-    : ["worktree", "add", "-b", safe, target]
-  await run("git", args, { cwd: root })
-  return { directory: target, branch: safe }
 }
 
 /**
@@ -485,10 +405,7 @@ export async function branchState(directory: string): Promise<BranchState> {
   const inside = (await git(directory, ["rev-parse", "--is-inside-work-tree"]).catch(() => "")).trim()
   if (inside !== "true") return { repo: false, detached: false, branches: [] }
   const head = (await git(directory, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "")).trim()
-  const branches = (await git(directory, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]).catch(() => ""))
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
+  const branches = lines(await git(directory, ["for-each-ref", "--format=%(refname:short)", "refs/heads"]).catch(() => ""))
   const detached = !head || head === "HEAD"
   return { repo: true, detached, ...(detached ? {} : { branch: head }), branches }
 }
@@ -527,19 +444,29 @@ function stderrOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
+/** What git said, as MiMo passes it on: trimmed and cut at 300 characters, every line kept. */
+function errorText(err: unknown): string {
+  return stderrOf(err).trim().slice(0, 300)
+}
+
 function checkoutFailure(err: unknown): CheckoutResult {
   const text = stderrOf(err)
   if (/untracked working tree file/i.test(text) && /would be overwritten/i.test(text)) {
     return { ok: false, code: "untracked-overwrite" }
   }
   if (/local changes to the following files would be overwritten/i.test(text)) return { ok: false, code: "local-overwrite" }
-  const line = text.split("\n").map((entry) => entry.trim()).find(Boolean) ?? ""
-  return { ok: false, error: line.replace(/^(error|fatal):\s*/i, "") }
+  return { ok: false, error: firstLine(text) }
+}
+
+const CONFLICT = new Set(["DD", "AU", "UD", "UA", "DU", "AA", "UU"])
+
+async function porcelain(directory: string): Promise<PorcelainEntry[]> {
+  return parsePorcelain(await git(directory, ["status", "--porcelain=v1", "-z"]))
 }
 
 async function hasConflicts(directory: string): Promise<boolean> {
-  const porcelain = await git(directory, ["status", "--porcelain"]).catch(() => "")
-  return porcelain.split("\n").some((line) => /^(DD|AU|UD|UA|DU|AA|UU) /.test(line))
+  const entries = await porcelain(directory).catch((): PorcelainEntry[] => [])
+  return entries.some((entry) => CONFLICT.has(entry.staged + entry.work))
 }
 
 /**
@@ -587,8 +514,8 @@ export async function checkout(
   }
 
   if (!options.force) {
-    const porcelain = await git(directory, ["status", "--porcelain"]).catch(() => "")
-    if (porcelain.split("\n").some((line) => line.trim())) return { ok: false, dirty: true }
+    const entries = await porcelain(directory).catch((): PorcelainEntry[] => [])
+    if (entries.length) return { ok: false, dirty: true }
   }
 
   try {
@@ -603,23 +530,21 @@ export async function checkout(
   return { ok: true, branch: name, ...(options.force && (await hasConflicts(directory)) ? { conflicts: true } : {}) }
 }
 
-/** Removes a checkout, leaving its branch behind. */
-export async function removeWorktree(directory: string, target: string): Promise<void> {
-  await run("git", ["worktree", "remove", target, "--force"], { cwd: directory })
-}
-
 // ------------------------------------------------------------ the info card
 
-/** `git diff --numstat` rows; a binary file reports "-" and counts as no lines. */
+/** `git diff --numstat -z --no-renames` rows; a binary file reports "-" and counts as no lines. */
 function numstat(out: string): GitFileLines[] {
   const rows: GitFileLines[] = []
-  for (const line of out.split("\n")) {
-    const columns = line.split("\t")
-    if (columns.length < 3) continue
+  for (const field of nulFields(out)) {
+    const first = field.indexOf("\t")
+    const second = field.indexOf("\t", first + 1)
+    if (first < 0 || second < 0) continue
+    const file = field.slice(second + 1)
+    if (!file) continue
     rows.push({
-      path: columns.slice(2).join("\t").trim(),
-      additions: Number(columns[0]) || 0,
-      deletions: Number(columns[1]) || 0,
+      path: file,
+      additions: Number(field.slice(0, first)) || 0,
+      deletions: Number(field.slice(first + 1, second)) || 0,
     })
   }
   return rows
@@ -635,9 +560,9 @@ async function untrackedLines(file: string): Promise<number> {
   const bytes = await fs.readFile(file)
   // A NUL early on is how git itself decides a file is binary.
   if (bytes.subarray(0, 8000).includes(0)) return 0
-  let lines = 0
-  for (const byte of bytes) if (byte === 10) lines += 1
-  return bytes[bytes.length - 1] === 10 ? lines : lines + 1
+  let count = 0
+  for (const byte of bytes) if (byte === 10) count += 1
+  return bytes[bytes.length - 1] === 10 ? count : count + 1
 }
 
 /** The tree git compares against when a repository has no commit yet. */
@@ -647,8 +572,9 @@ const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
  * What the info card's 变更 row says: how many files differ from HEAD under the
  * project, and by how many lines each.
  *
- * Scoped to the project directory, as the review is, so the count here and the
- * list the row opens agree. Untracked files count as wholly added.
+ * Counted from the review's own list, as MiMo counts it from its status rows,
+ * so the count here and the list the row opens agree: an untracked folder is
+ * one file and no lines, an untracked file is wholly added.
  */
 export async function summary(directory: string): Promise<GitSummary> {
   const none: GitSummary = { repo: false, ok: false, detached: false, fileCount: 0, additions: 0, deletions: 0, files: [] }
@@ -661,18 +587,24 @@ export async function summary(directory: string): Promise<GitSummary> {
   const base: GitSummary = { ...none, repo: true, detached, github, ...(detached ? {} : { branch: head }) }
   try {
     const changed = await status(directory)
+    if (changed.error !== undefined) return base
     const hasHead = await git(directory, ["rev-parse", "--verify", "--quiet", "HEAD"]).then(
       () => true,
       () => false,
     )
     // --relative keeps both the paths and the comparison inside the project directory.
-    const tracked = numstat(await git(directory, ["diff", "--numstat", "--relative", hasHead ? "HEAD" : EMPTY_TREE]))
-    const others = (await git(directory, ["ls-files", "--others", "--exclude-standard"]))
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
+    const tracked = numstat(
+      await git(directory, ["diff", "--numstat", "-z", "--no-renames", "--relative", hasHead ? "HEAD" : EMPTY_TREE]),
+    )
+    const counted = new Set(tracked.map((file) => file.path))
     const fresh = await Promise.all(
-      others.map(async (file) => ({ path: file, additions: await untrackedLines(path.join(directory, file)), deletions: 0 })),
+      changed.entries
+        .filter((entry) => entry.kind === "added" && !counted.has(entry.path))
+        .map(async (entry) => ({
+          path: entry.path,
+          additions: entry.path.endsWith("/") ? 0 : await untrackedLines(path.join(directory, entry.path)),
+          deletions: 0,
+        })),
     )
     const files = [...tracked, ...fresh]
     return {
@@ -688,29 +620,17 @@ export async function summary(directory: string): Promise<GitSummary> {
   }
 }
 
-/** Every path `git status` reports, relative to the repository root. */
-function porcelainPaths(porcelain: string): { staged: boolean; path: string }[] {
-  return porcelain
-    .split("\n")
-    .filter((line) => line.trim())
-    .map((line) => {
-      const rest = line.slice(3)
-      const raw = rest.includes(" -> ") ? (rest.split(" -> ")[1] ?? rest) : rest
-      return { staged: line[0] !== " " && line[0] !== "?", path: raw.replace(/^"|"$/g, "") }
-    })
-}
-
 async function remotes(root: string): Promise<string[]> {
-  return (await git(root, ["remote"]).catch(() => ""))
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
+  return lines(await git(root, ["remote"]).catch(() => ""))
 }
 
 /**
  * What the commit or push card needs to decide which of its buttons may be
  * pressed: the whole repository's state, since a commit takes in the whole
  * index whichever folder the project was opened on.
+ *
+ * Ahead and behind are counted against origin's branch of the same name and
+ * nothing else, because that is the only place a push from the card goes.
  */
 export async function commitState(directory: string): Promise<CommitState> {
   const blank: CommitState = {
@@ -730,30 +650,27 @@ export async function commitState(directory: string): Promise<CommitState> {
   }
   try {
     const root = await toplevel(directory)
-    const entries = porcelainPaths(await git(root, ["status", "--porcelain=v1", "-uall"]))
-    const staged = numstat(await git(root, ["diff", "--cached", "--numstat"]).catch(() => ""))
+    const entries = await porcelain(root)
+    const staged = numstat(await git(root, ["diff", "--cached", "--numstat", "-z", "--no-renames"]).catch(() => ""))
     // symbolic-ref names the branch even before its first commit, and fails only when detached.
     const branch = (await git(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]).catch(() => "")).trim()
     const hasHead = await git(root, ["rev-parse", "--verify", "--quiet", "HEAD"]).then(
       () => true,
       () => false,
     )
-    const upstream = branch
-      ? (await git(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).catch(() => "")).trim()
-      : ""
+    const upstream = branch ? (await git(root, ["rev-parse", "--abbrev-ref", "@{u}"]).catch(() => "")).trim() : ""
     const hasOrigin = (await remotes(root)).includes("origin")
+    const target = branch ? `refs/remotes/origin/${branch}` : ""
     const hasOriginBranch =
-      Boolean(branch && hasOrigin) &&
-      (await git(root, ["show-ref", "--verify", "--quiet", `refs/remotes/origin/${branch}`]).then(
+      Boolean(target && hasOrigin) &&
+      (await git(root, ["show-ref", "--verify", "--quiet", target]).then(
         () => true,
         () => false,
       ))
-    // Measured against what a push would update: the upstream when one is set, else origin's branch of that name.
-    const against = upstream || (hasOriginBranch ? `origin/${branch}` : "")
     let ahead = 0
     let behind = 0
-    if (against && hasHead) {
-      const counts = (await git(root, ["rev-list", "--left-right", "--count", `${against}...HEAD`]).catch(() => ""))
+    if (hasOriginBranch && hasHead) {
+      const counts = (await git(root, ["rev-list", "--left-right", "--count", `${target}...HEAD`]).catch(() => ""))
         .trim()
         .split(/\s+/)
       behind = Number(counts[0]) || 0
@@ -765,11 +682,10 @@ export async function commitState(directory: string): Promise<CommitState> {
       isDetached: !branch,
       hasHead,
       hasChanges: entries.length > 0,
-      hasStaged: entries.some((entry) => entry.staged),
+      hasStaged: entries.some((entry) => !entry.untracked && entry.staged !== " " && entry.staged !== "?"),
       stagedAdditions: staged.reduce((sum, file) => sum + file.additions, 0),
       stagedDeletions: staged.reduce((sum, file) => sum + file.deletions, 0),
       hasUpstream: Boolean(upstream),
-      ...(upstream ? { upstream } : {}),
       ahead,
       behind,
       hasOrigin,
@@ -777,7 +693,7 @@ export async function commitState(directory: string): Promise<CommitState> {
       changedPaths: entries.map((entry) => entry.path),
     }
   } catch (err) {
-    return { ...blank, error: stderrOf(err) }
+    return { ...blank, error: errorText(err) }
   }
 }
 
@@ -793,6 +709,7 @@ function firstLine(text: string): string {
 }
 
 export function commitFailure(err: unknown): CommitResult {
+  if (timedOut(err)) return { ok: false, error: errorText(err) }
   const text = outputOf(err)
   if (/nothing (added )?to commit|no changes added to commit/i.test(text)) return { ok: false, code: "nothing-to-commit" }
   if (/please tell me who you are|author identity unknown|user\.name|user\.email/i.test(text)) {
@@ -801,21 +718,39 @@ export function commitFailure(err: unknown): CommitResult {
   if (/(pre-commit|commit-msg|prepare-commit-msg) hook|hook (failed|declined|exited)/i.test(text)) {
     return { ok: false, code: "hook-rejected" }
   }
-  return { ok: false, error: firstLine(stderrOf(err)) }
+  // A hook or signing failure usually gives its reason on the second line, so all of it is kept.
+  const stderr = (err as { stderr?: unknown })?.stderr
+  const stdout = (err as { stdout?: unknown })?.stdout
+  const said = typeof stderr === "string" && stderr.trim() ? stderr : typeof stdout === "string" && stdout.trim() ? stdout : stderrOf(err)
+  return { ok: false, error: said.trim().slice(0, 300) }
 }
 
 /**
  * Commits, with everything in the working tree first when asked.
  *
- * The user's hooks and signing settings run as they would in a terminal; nothing
- * here skips them.
+ * The user's hooks and signing settings run as they would in a terminal;
+ * nothing here skips them. Like every git call here the commit has 15 seconds,
+ * as MiMo's does, so a hook that waits for input is stopped rather than left
+ * spinning.
  */
 export async function commit(directory: string, message: string, includeUnstaged: boolean): Promise<CommitResult> {
   const text = message.trim()
   if (!text) return { ok: false, error: "empty commit message" }
+  let root: string
   try {
-    const root = await toplevel(directory)
-    if (includeUnstaged) await git(root, ["add", "-A"])
+    root = await toplevel(directory)
+  } catch (err) {
+    return { ok: false, error: errorText(err) }
+  }
+  if (includeUnstaged) {
+    try {
+      await git(root, ["add", "-A"])
+    } catch (err) {
+      // What add said, as it said it: none of the commit's own codes apply.
+      return { ok: false, error: errorText(err) }
+    }
+  }
+  try {
     await git(root, ["commit", "-m", text])
     const hash = (await git(root, ["rev-parse", "--short", "HEAD"])).trim()
     return { ok: true, hash }
@@ -825,6 +760,7 @@ export async function commit(directory: string, message: string, includeUnstaged
 }
 
 export function pushFailure(err: unknown): PushResult {
+  if (timedOut(err)) return { ok: false, error: errorText(err) }
   const text = outputOf(err)
   if (
     /authentication failed|permission denied \(publickey|could not read (username|password)|terminal prompts disabled|host key verification failed|returned error: 40[13]|HTTP 40[13]/i.test(
@@ -835,20 +771,19 @@ export function pushFailure(err: unknown): PushResult {
   }
   if (/non-fast-forward|fetch first|\[rejected\]|failed to push some refs/i.test(text)) return { ok: false, code: "rejected" }
   if (/no configured push destination|does not appear to be a git repository/i.test(text)) return { ok: false, code: "no-remote" }
-  if ((err as { killed?: boolean })?.killed) return { ok: false, error: "timed out" }
-  return { ok: false, error: firstLine(stderrOf(err)) }
+  return { ok: false, error: errorText(err) }
 }
 
-const PUSH_TIMEOUT_MS = 60_000
-
 /**
- * Pushes the checked-out branch, and only it, never forced.
+ * Pushes the checked-out branch, and only it, never forced, to the branch of
+ * the same name on origin - whatever upstream the branch has configured.
  *
- * With an upstream configured the branch goes exactly there. Without one it is
- * published to origin under its own name and that becomes its upstream, which
- * is what MiMo's button does for a new branch. Git is told not to stop and ask
- * for a password: there is no terminal for it to ask in, so a push that needs
- * one fails and says so instead of hanging.
+ * That is MiMo's rule, and the one that cannot surprise anyone: a branch made
+ * from `origin/main` carries `main` as its upstream, and honouring that would
+ * have written this branch's commits straight into the remote's main. Without
+ * an upstream the push also sets origin's branch as one. Git is told not to
+ * stop and ask for a password: there is no terminal for it to ask in, so a
+ * push that needs one fails and says so instead of hanging.
  */
 export async function push(directory: string): Promise<PushResult> {
   try {
@@ -861,21 +796,15 @@ export async function push(directory: string): Promise<PushResult> {
      * detached HEAD was the one push failure a Chinese reader got in English.
      */
     if (!branch) return { ok: false, code: "detached" }
-    const known = await remotes(root)
-    const remote = (await git(root, ["config", "--get", `branch.${branch}.remote`]).catch(() => "")).trim()
-    const merge = (await git(root, ["config", "--get", `branch.${branch}.merge`]).catch(() => "")).trim()
-    let args: string[]
-    if (remote && known.includes(remote) && merge.startsWith("refs/heads/")) {
-      args = ["push", remote, `refs/heads/${branch}:${merge}`]
-    } else {
-      if (!known.includes("origin")) return { ok: false, code: "no-remote" }
-      args = ["push", "-u", "origin", `refs/heads/${branch}:refs/heads/${branch}`]
-    }
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" }
+    if (!(await remotes(root)).includes("origin")) return { ok: false, code: "no-remote" }
+    const upstream = (await git(root, ["rev-parse", "--abbrev-ref", "@{u}"]).catch(() => "")).trim()
+    const refspec = `refs/heads/${branch}:refs/heads/${branch}`
+    const args = upstream ? ["push", "origin", refspec] : ["push", "-u", "origin", refspec]
+    const env: NodeJS.ProcessEnv = { GIT_TERMINAL_PROMPT: "0" }
     // Batch mode for ssh, unless the user already chose how git reaches ssh.
     const sshCommand = (await git(root, ["config", "--get", "core.sshCommand"]).catch(() => "")).trim()
-    if (!env.GIT_SSH_COMMAND && !env.GIT_SSH && !sshCommand) env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes"
-    await run("git", args, { cwd: root, windowsHide: true, maxBuffer: 8 * 1024 * 1024, timeout: PUSH_TIMEOUT_MS, env })
+    if (!process.env.GIT_SSH_COMMAND && !process.env.GIT_SSH && !sshCommand) env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes"
+    await git(root, args, { timeout: PUSH_TIMEOUT_MS, env })
     return { ok: true }
   } catch (err) {
     return pushFailure(err)

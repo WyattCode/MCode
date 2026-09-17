@@ -3,6 +3,7 @@ import fs from "node:fs/promises"
 import { ToolError, type ToolContext } from "./types"
 import { isMemoryPath } from "../history/service"
 import { guardAppData } from "./app-data"
+import { worktreeTop } from "../session/worktree"
 
 /**
  * Resolves a model-supplied path against the session directory and refuses
@@ -110,6 +111,18 @@ export async function resolveInsideReal(directory: string, target: string): Prom
   return resolved
 }
 
+/**
+ * The top of the git worktree a folder is in, as MiMo's `Instance.worktree`:
+ * a path anywhere under it is inside the project, so a conversation opened on
+ * a package of a repository reads and edits its siblings without asking. A
+ * drive's or the file system's root never counts, as MiMo leaves out `/`.
+ */
+export async function repositoryRoot(directory: string): Promise<string | undefined> {
+  const top = await worktreeTop(directory)
+  if (!top) return undefined
+  return path.parse(top.root).root === top.root ? undefined : top.root
+}
+
 export async function resolvePath(context: ToolContext, target: string, access: "read" | "write" = "read"): Promise<string> {
   const resolved = path.isAbsolute(target)
     ? path.resolve(target)
@@ -133,9 +146,14 @@ export async function resolvePath(context: ToolContext, target: string, access: 
    * walk straight out through it.
    */
   const real = await truePath(resolved)
-  const root = await truePath(path.resolve(context.directory))
-  const relative = path.relative(root, real)
-  if (!relative.startsWith("..") && !path.isAbsolute(relative)) return resolved
+  const within = (root: string) => {
+    const relative = path.relative(root, real)
+    return !relative.startsWith("..") && !path.isAbsolute(relative)
+  }
+  if (within(await truePath(path.resolve(context.directory)))) return resolved
+  // MiMo's project is the whole repository the conversation works in, not only its folder (T10-12).
+  const repository = await repositoryRoot(context.directory)
+  if (repository && within(await truePath(repository))) return resolved
 
   // memory: the memory folder is reached without asking, as MiMo does.
   if (isMemoryPath(real)) return resolved

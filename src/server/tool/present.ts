@@ -1,6 +1,8 @@
 import path from "node:path"
 import fs from "node:fs/promises"
+import type { Stats } from "node:fs"
 import type { ToolDefinition } from "./types"
+import { addressName, normalizedAddress } from "@shared/session-files"
 
 /*
  * Two tools that act on the window rather than the project, as MiMo's baseline
@@ -48,27 +50,32 @@ export const PdfLocateTool: ToolDefinition = {
 /** One entry the model named, as the card draws it. */
 export type PresentedFile = { path: string; name: string; size: number } | { url: string; name: string }
 
-export type PresentSkip = { entry: string; reason: "missing" | "outside" | "directory" }
+export type PresentSkip = { entry: string; reason: "missing" | "directory" }
 
-async function realOr(target: string): Promise<string | undefined> {
-  return fs.realpath(target).catch(() => undefined)
+/**
+ * The folders a relative entry is looked for in, in MiMo's order: `cwd` (taken
+ * from the project when it is itself relative), then the project.
+ */
+function bases(directory: string, cwd?: string): string[] {
+  const root = path.resolve(directory)
+  const first = cwd ? (path.isAbsolute(cwd) ? path.resolve(cwd) : path.resolve(root, cwd)) : root
+  return first === root ? [root] : [first, root]
 }
 
 /**
  * The entries a present_files call can show, in the order given.
  *
- * A web address is kept as it is. A local path is taken from `cwd` (itself taken
- * from the project folder when relative) and has to be an existing file inside
- * the project, judged by where it really is so a link cannot lead out; anything
- * else is skipped with its reason. The same file named twice is shown once.
+ * A web address is kept once, however it was written. A local path is taken as
+ * it is when absolute - wherever it is, as MiMo hands over a file the user asked
+ * to have written to the desktop - and otherwise from `cwd` and then from the
+ * project, whichever holds it. It has to be an existing file; anything else is
+ * skipped with its reason. The same file named twice is shown once.
  */
 export async function presentable(
   files: readonly string[],
   directory: string,
   cwd?: string,
 ): Promise<{ files: PresentedFile[]; skipped: PresentSkip[] }> {
-  const base = cwd ? (path.isAbsolute(cwd) ? path.resolve(cwd) : path.resolve(directory, cwd)) : path.resolve(directory)
-  const root = (await realOr(path.resolve(directory))) ?? path.resolve(directory)
   const shown: PresentedFile[] = []
   const skipped: PresentSkip[] = []
   const seen = new Set<string>()
@@ -76,25 +83,32 @@ export async function presentable(
     const entry = String(raw ?? "").trim()
     if (!entry) continue
     if (/^https?:\/\//i.test(entry)) {
-      if (seen.has(entry)) continue
-      seen.add(entry)
-      shown.push({ url: entry, name: entry })
+      const address = normalizedAddress(entry)
+      if (!address) {
+        skipped.push({ entry, reason: "missing" })
+        continue
+      }
+      if (seen.has(address)) continue
+      seen.add(address)
+      shown.push({ url: address, name: addressName(address) })
       continue
     }
-    const target = path.isAbsolute(entry) ? path.resolve(entry) : path.resolve(base, entry)
-    const real = await realOr(target)
-    if (!real) {
+    const candidates = path.isAbsolute(entry) ? [path.resolve(entry)] : bases(directory, cwd).map((base) => path.resolve(base, entry))
+    let target: string | undefined
+    let stat: Stats | undefined
+    for (const candidate of candidates) {
+      stat = await fs.stat(candidate).catch(() => undefined)
+      if (stat) {
+        target = candidate
+        break
+      }
+    }
+    if (!target || !stat) {
       skipped.push({ entry, reason: "missing" })
       continue
     }
-    const relative = path.relative(root, real)
-    if (relative.startsWith("..") || path.isAbsolute(relative)) {
-      skipped.push({ entry, reason: "outside" })
-      continue
-    }
-    const stat = await fs.stat(real).catch(() => undefined)
-    if (!stat?.isFile()) {
-      skipped.push({ entry, reason: stat ? "directory" : "missing" })
+    if (!stat.isFile()) {
+      skipped.push({ entry, reason: "directory" })
       continue
     }
     const key = process.platform === "win32" ? target.toLowerCase() : target
@@ -107,7 +121,6 @@ export async function presentable(
 
 const SKIP_WORDS: Record<PresentSkip["reason"], string> = {
   missing: "does not exist",
-  outside: "is outside the project folder",
   directory: "is a folder, not a file",
 }
 
@@ -117,7 +130,7 @@ export const PresentFilesTool: ToolDefinition = {
     "Hand the finished deliverables of this turn to the user in MCode: each file appears as a card under your reply, and the FIRST one opens in the preview panel by itself.",
     "Call it once, near the end of the turn, after the deliverables are done - a generated document, sheet, deck or PDF, a picture, a built web page, a report. Leave out scratch and intermediate files, dependencies, and files you only read.",
     "Only what the user will keep, open or pass on belongs here. When the user asks for an explanation, a demonstration or a walkthrough, answer in the reply itself instead of writing a file for it.",
-    "Files must exist and be inside the project folder; entries that are not are skipped and named in the result.",
+    "Files must exist; an absolute path may be anywhere, a relative one is looked for in cwd and then in the project folder. Entries that are not found are skipped and named in the result.",
   ].join("\n"),
   parameters: {
     type: "object",

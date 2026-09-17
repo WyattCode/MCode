@@ -230,7 +230,7 @@ import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStat
 // round 4: MiMo's built-in window tools and the pieces the window uses.
 import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
 import { LANGUAGE_IDS, bindDesktopSettings } from "../src/server/tool/desktop-settings"
-import { deliveredCard, deliveredFiles, projectPath, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { deliveredCard, deliveredFiles, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
 import { prRowState } from "../src/renderer/src/lib/pr-row"
 import { addFileNotice, fileNoticesBlock } from "../src/shared/file-notices"
 import { withAnnotations } from "../src/shared/annotations"
@@ -294,6 +294,15 @@ import { roundNineProviderChecks } from "./smoke-round9-providers"
 import { roundNineWindowsChecks } from "./smoke-round9-windows"
 import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
+// Round 10, part B: bash, webfetch and the shell around a tool call.
+import { roundTenBashChecks } from "./smoke-round10-bash"
+// round 10: the file tools as MiMo's engine runs them.
+import { roundTenFileChecks } from "./smoke-round10-files"
+// round 10: MiMo's desktop toolkit as its engine and window run it.
+import { roundTenDesktopChecks } from "./smoke-round10-desktop"
+// Round 10: git end to end - paths, push target, time limits, grouping, undo.
+import { roundTenGitChecks } from "./smoke-round10-git"
+import { roundTenStepsChecks } from "./smoke-round10-steps"
 // round 10: the agent-type tools (subagents, tasks, questions, plans, automations, cross-chat, history, skills).
 import { roundTenAgentChecks } from "./smoke-round10-agents"
 // The round-six audit of failures and edge cases (F1 onwards).
@@ -971,15 +980,15 @@ async function main() {
   }
 
   let stop = answer("reject")
-  const denied = await findTool("list")!
-    .execute({ path: outsideRoot }, context("c-esc1"))
+  const denied = await findTool("read")!
+    .execute({ file_path: outsideRoot }, context("c-esc1"))
     .then(() => undefined, (error: unknown) => error)
   stop()
   check("an outside path asks, and a refusal is honoured", denied instanceof PermissionDenied, denied)
 
   stop = answer("always")
-  const granted = await findTool("list")!
-    .execute({ path: outsideRoot }, context("c-esc2"))
+  const granted = await findTool("read")!
+    .execute({ file_path: outsideRoot }, context("c-esc2"))
     .then((result) => result, (error: unknown) => error)
   stop()
   check("approving lets the tool through", typeof (granted as { output?: string })?.output === "string", granted)
@@ -1003,8 +1012,8 @@ async function main() {
   // A directory nothing has approved: `outsideRoot` carries the "always" from
   // above, and would answer for itself whatever the setting said.
   const unseen = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-outside1-"))
-  const running = findTool("list")!
-    .execute({ path: unseen }, context("c-esc4"))
+  const running = findTool("read")!
+    .execute({ file_path: unseen }, context("c-esc4"))
     .then((result) => result, (error: unknown) => error)
   /*
    * If a prompt goes up, this answers it so the tool settles and the run moves
@@ -1052,8 +1061,8 @@ async function main() {
   await backend.runtime.config.set({ autoApprove: [] })
   const untouched = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-outside2-"))
   const asksAgain = answer("reject")
-  const blocked = await findTool("list")!
-    .execute({ path: untouched }, context("c-esc5"))
+  const blocked = await findTool("read")!
+    .execute({ file_path: untouched }, context("c-esc5"))
     .then(() => undefined, (error: unknown) => error)
   asksAgain()
   check("turning it off restores the prompt", blocked instanceof PermissionDenied, blocked)
@@ -1071,7 +1080,7 @@ async function main() {
     grep.output,
   )
 
-  // E2: matched as ripgrep matches for MiMo - a name glob at any depth, hidden files searched, .git and ignored files not.
+  // E2: matched as ripgrep matches for MiMo - a name glob at any depth, hidden files searched, .git and ignored folders not.
   {
     const tree = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-glob-"))
     const put = async (rel: string, text: string) => {
@@ -1099,7 +1108,8 @@ async function main() {
     const anchored = posix((await findTool("glob")!.execute({ pattern: "src/*.ts" }, inTree("g-e2-3"))).output)
     check("a glob with a slash is anchored to the folder searched", anchored.includes("src/app.ts") && !anchored.includes("inner.ts"), anchored)
     const logs = posix((await findTool("glob")!.execute({ pattern: "*.log" }, inTree("g-e2-4"))).output)
-    check("an ignore rule can be negated", logs.includes("keep.log") && !logs.includes("debug.log"), logs)
+    // T10-10: ripgrep's --glob outranks .gitignore, so a pattern naming an ignored file finds it.
+    check("a pattern that names ignored files finds them, as ripgrep's --glob does", logs.includes("keep.log") && logs.includes("debug.log"), logs)
     const found = posix((await findTool("grep")!.execute({ pattern: "needle", include: "*.ts" }, inTree("g-e2-5"))).output)
     check(
       "grep's include matches at any depth and skips ignored files",
@@ -1309,7 +1319,8 @@ async function main() {
       markdown.includes("# Title") &&
         markdown.includes("**bold**") &&
         markdown.includes("[a link](http://example.com/)") &&
-        markdown.includes("- one") &&
+        // turndown pads a list marker as MiMo's output has it: "-   one".
+        /^-\s+one$/m.test(markdown) &&
         markdown.includes("```\nlet x = 1 < 2\n```") &&
         !markdown.includes("secret()") &&
         !markdown.includes("<p>"),
@@ -1391,8 +1402,8 @@ async function main() {
     await fs.rm(outputsDir, { recursive: true, force: true })
   }
 
-  const list = await findTool("list")!.execute({}, context("c4"))
-  check("list renders a tree", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
+  const list = await findTool("read")!.execute({ file_path: "." }, context("c4"))
+  check("read of the project folder lists what is in it", list.output.includes("src/") && list.output.includes("hello.ts"), list.output)
 
   const taskless = await findTool("task")!
     .execute({ action: "create", summary: "Write the thing" }, context("c5"))
@@ -1413,12 +1424,6 @@ async function main() {
   check("the prompt names the directory being reached into", traversalPrompt[0]?.subject.endsWith("*") ?? false, traversalPrompt[0]?.subject)
   permissions.respond(traversalPrompt[0]!.id, "reject")
   check("refusing traversal stops the read", (await traversal) === "denied")
-
-  let refused = false
-  await findTool("bash")!
-    .execute({ command: "rm -rf /", description: "destroy" }, context("c7"))
-    .catch((err: Error) => (refused = err.message.includes("Refused")))
-  check("bash refuses recursive force delete", refused)
 
   // E22: MiMo's bash - workdir, max_output_tokens with the middle left out and the whole saved, a timeout that returns what ran, the exit code kept out of the output.
   {
@@ -1649,7 +1654,7 @@ async function main() {
     const foreground = command("s-child", "c-bg-5", { subject: "rm y", patterns: ["rm y"], always: [], forced: true })
     check("a subagent running in the foreground asks as a conversation does", (await outcome(bg, foreground, "c-bg-5")) === "asked")
 
-    check("E38: an explore subagent gets read, glob, grep, list, bash and webfetch only", toolsFor("explore").map((tool) => tool.name).sort().join() === "bash,glob,grep,list,read,webfetch", toolsFor("explore").map((tool) => tool.name))
+    check("E38: an explore subagent gets read, glob, grep, bash and webfetch only", toolsFor("explore").map((tool) => tool.name).sort().join() === "bash,glob,grep,read,webfetch", toolsFor("explore").map((tool) => tool.name))
 
     const stallTimes = { ...STALL }
     Object.assign(STALL, { headerMs: 300, chunkMs: 300 })
@@ -2180,16 +2185,17 @@ async function main() {
       time: { created: 0 },
     }
     /*
-     * Taking a turn back goes through git, as MiMo's does. Outside a
-     * repository it refuses and writes nothing; inside one it reverse-applies
-     * the turn's patches, recomputes a patch whose hunk later edits have
-     * moved, and falls back to `git checkout --` for a tracked file whose
-     * lines are gone altogether.
+     * Taking a turn back goes through git, as MiMo's does. With no repository
+     * an edited file cannot be put back and is left, while a file the turn
+     * created is simply deleted; inside one the turn's patches are
+     * reverse-applied, a patch whose hunk later edits have moved is
+     * recomputed, and a tracked file whose lines are gone altogether falls
+     * back to `git checkout --`.
      */
-    const refused = await revertTurnFiles(root, [turnMessage])
-    check("outside a repository a revert refuses and touches nothing", refused.noRepo === true && refused.restored === 0 && refused.removed === 0, refused)
-    check("the file the refusal did not touch is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
-    check("the file the refusal did not touch is still there", await exists(path.join(root, "made.txt")))
+    const plainRevert = await revertTurnFiles(root, [turnMessage])
+    check("with no repository, edited files are left and counted", plainRevert.restored === 0 && plainRevert.outside === 2 && plainRevert.removed === 1, plainRevert)
+    check("the edited file is as the turn left it", (await fs.readFile(path.join(root, "kept.txt"), "utf8")) === "one\ntwo\nthree\n")
+    check("the file the turn made is gone", !(await exists(path.join(root, "made.txt"))))
 
     const repo = path.join(project, "turn-revert-repo")
     await fs.mkdir(repo, { recursive: true })
@@ -2223,7 +2229,7 @@ async function main() {
     const throughGit = await revertTurnFiles(repo, [repoTurn])
     check(
       "inside a repository the turn's edits go back and the file it made is deleted",
-      throughGit.noRepo === undefined && throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
+      throughGit.restored === 3 && throughGit.removed === 1 && throughGit.failed === 0 && throughGit.outside === 1,
       throughGit,
     )
     const back = async (name: string) => (await fs.readFile(path.join(repo, name), "utf8")).replace(/\r\n/g, "\n")
@@ -4801,9 +4807,12 @@ async function main() {
     const question = (id: string, steered = false) =>
       ({ id, sessionID: "s", role: "user", text: id, attachments: [], time: { created: 1 }, ...(steered ? { steered: true } : {}) }) as Message
     const thread = [question("q1"), reply("a1", "x"), question("q2"), reply("a2", "y"), question("s1", true), reply("a3", "z")]
-    const latest = latestTurnParts(thread).map((part) => part.id)
-    check("the pill counts the latest turn only, steers included", latest.join() === "y,z", latest)
-    check("and a new question empties it", latestTurnParts([...thread, question("q3")]).length === 0)
+    const latest = latestTurnParts(thread, false).map((part) => part.id)
+    check("a steer the model took opens the turn the pill counts (26.914)", latest.join() === "z", latest)
+    const waiting = latestTurnParts([question("q2"), reply("a2", "y"), question("s2", true)], false).map((part) => part.id)
+    check("a steer still waiting stays inside the running turn", waiting.join() === "y", waiting)
+    check("with nothing running it is a question of its own", latestTurnParts([question("q2"), reply("a2", "y"), question("s2", true)], true).length === 0)
+    check("and a new question empties it", latestTurnParts([...thread, question("q3")], false).length === 0)
   }
 
   section("Steering")
@@ -5133,8 +5142,9 @@ async function main() {
   const before = await gitOps.status(repoRoot)
   check("a plain folder is not reported as a repository", before.installed && !before.repo, before)
 
-  const after = await gitOps.init(repoRoot)
-  check("creating a repository takes effect", after.repo, after)
+  await promisify(execFile)("git", ["init", "-q"], { cwd: repoRoot, windowsHide: true })
+  const after = await gitOps.status(repoRoot)
+  check("a new repository is reported as one", after.repo, after)
 
   await fs.writeFile(path.join(repoRoot, "note.txt"), "hello world")
   const dirty = await gitOps.status(repoRoot)
@@ -5176,10 +5186,13 @@ async function main() {
   await inRepo(["reset", "-q", "--", "note.txt"])
   check(
     "git's rename and copy letters read as renamed",
-    gitOps.classify("R ") === "renamed" && gitOps.classify("C ") === "renamed" && gitOps.classify("??") === "added" && gitOps.classify(" M") === "modified",
+    gitOps.classify({ staged: "R", work: " ", untracked: false }) === "renamed" &&
+      gitOps.classify({ staged: "C", work: " ", untracked: false }) === "renamed" &&
+      gitOps.classify({ staged: "?", work: "?", untracked: true }) === "added" &&
+      gitOps.classify({ staged: " ", work: "M", untracked: false }) === "modified",
   )
   const freshRepo = await fs.mkdtemp(path.join(os.tmpdir(), "mcode-fresh-"))
-  await gitOps.init(freshRepo)
+  await runGit("git", ["init", "-q"], { cwd: freshRepo, windowsHide: true })
   await fs.writeFile(path.join(freshRepo, "first.txt"), "first line\n")
   await runGit("git", ["add", "first.txt"], { cwd: freshRepo, windowsHide: true })
   check("a file staged before any commit diffs as new", (await gitOps.diff(freshRepo, "first.txt")).includes("+first line"))
@@ -5244,42 +5257,11 @@ async function main() {
   check("and no build section it cannot support", !bare.includes("## Building and testing"), bare.slice(-200))
   await fs.rm(noRepo, { recursive: true, force: true })
 
-  const branchScope = await gitOps.status(repoRoot, "branch")
-  check("branch scope sees it", branchScope.changed.includes("feature.txt"), branchScope.changed)
   check(
-    "and calls it an addition",
-    branchScope.entries.find((entry) => entry.path === "feature.txt")?.kind === "added",
-    branchScope.entries,
-  )
-  check(
-    "a committed file still diffs against the branch point",
-    (await gitOps.diff(repoRoot, "feature.txt", 3, "branch")).includes("+on the branch"),
-  )
-  check(
-    "and shows nothing against the working tree",
+    "a committed file shows nothing against the working tree",
     (await gitOps.diff(repoRoot, "feature.txt")).trim() === "",
   )
-
-  // Context is what "show all lines" asks for, and it reaches a command line.
-  await fs.writeFile(path.join(repoRoot, "wide.txt"), Array.from({ length: 40 }, (_, i) => `line ${i}`).join("\n"))
-  await inRepo(["add", "-A"])
-  await inRepo(["-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-m", "three"])
-  await fs.writeFile(
-    path.join(repoRoot, "wide.txt"),
-    Array.from({ length: 40 }, (_, i) => (i === 20 ? "changed" : `line ${i}`)).join("\n"),
-  )
-  const tight = await gitOps.diff(repoRoot, "wide.txt")
-  const whole = await gitOps.diff(repoRoot, "wide.txt", 100_000)
-  check(
-    "a wider context really shows more of the file",
-    whole.split("\n").length > tight.split("\n").length,
-    { tight: tight.split("\n").length, whole: whole.split("\n").length },
-  )
-  await inRepo(["checkout", "--", "."])
   await inRepo(["checkout", "master"]).catch(() => inRepo(["checkout", "main"]))
-
-  await gitOps.revert(repoRoot, "note.txt")
-  check("reverting removes the change", !(await gitOps.status(repoRoot)).changed.includes("note.txt"))
 
   // Opening a subdirectory of a repository is ordinary, and git answers in
   // paths relative to the root - so the review listed files it could not diff,
@@ -5293,16 +5275,6 @@ async function main() {
     "a file in a subdirectory still diffs",
     (await gitOps.diff(subProject, "main.ts")).includes("+export const a = 1"),
   )
-  await gitOps.revert(subProject, "main.ts")
-  check("reverting from a subdirectory really removes it", !(await exists(path.join(subProject, "main.ts"))))
-
-  await fs.writeFile(path.join(repoRoot, "sibling.txt"), "untouched")
-  const escaped = await gitOps
-    .revert(subProject, "../sibling.txt")
-    .then(() => "allowed", (error: Error) => error.message)
-  check("reverting outside the project is refused", escaped.startsWith("Refusing"), escaped)
-  check("and the file outside is left alone", await exists(path.join(repoRoot, "sibling.txt")))
-
   await fs.rm(repoRoot, { recursive: true, force: true })
 
   // ------------------------------------------------ info card: git ------
@@ -5366,6 +5338,7 @@ async function main() {
   await gitIn(cardRepo, ["remote", "add", "origin", cardOrigin])
   const unpublished = await gitOps.commitState(cardRepo)
   check("a new remote has no branch yet", unpublished.hasOrigin && !unpublished.hasOriginBranch && !unpublished.hasUpstream, unpublished)
+  check("with no branch on origin the card counts nothing ahead", unpublished.ahead === 0 && unpublished.behind === 0, unpublished)
   const published = await gitOps.push(cardRepo)
   check("the first push publishes the branch", published.ok, published)
   const tracking = await gitOps.commitState(cardRepo)
@@ -5728,6 +5701,9 @@ async function main() {
 
   const repoInfo = await workspaceInfo(repo)
   check("a repository reports its actual branch", repoInfo.branch === "feature/x", repoInfo.branch)
+  await fs.mkdir(path.join(repo, "packages", "web"), { recursive: true })
+  const subInfo = await workspaceInfo(path.join(repo, "packages", "web"))
+  check("a project opened on a subdirectory reports the repository's branch (G10-14)", subInfo.branch === "feature/x", subInfo)
 
   const plainInfo = await workspaceInfo(plain)
   check("a plain directory claims no branch", plainInfo.exists && plainInfo.branch === undefined, plainInfo)
@@ -5737,7 +5713,7 @@ async function main() {
 
   await fs.writeFile(path.join(repo, ".git", "HEAD"), "9f1c2ab3d4e5f60718293a4b5c6d7e8f90123456\n")
   const detached = await workspaceInfo(repo)
-  check("a detached HEAD shows a short sha", detached.branch === "9f1c2ab", detached.branch)
+  check("a detached HEAD shows HEAD, as MiMo's side column does (G10-14)", detached.branch === "HEAD", detached.branch)
 
   await fs.rm(wsRoot, { recursive: true, force: true })
 
@@ -6942,6 +6918,11 @@ async function main() {
   await roundNineWindowsChecks(check, section)
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
+  await roundTenBashChecks(check, section)
+  await roundTenFileChecks(check, section)
+  await roundTenDesktopChecks(check, section)
+  await roundTenGitChecks(check, section)
+  await roundTenStepsChecks(check, section)
   await roundTenAgentChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
@@ -7058,7 +7039,8 @@ async function roundSevenTimingChecks() {
   )
   check(
     "a live answer is drawn from the text the store holds, as the reference appends each delta as it lands",
-    /renderReply\(props\.part\.text,/.test(textPart),
+    // Round 10 (K10-6): the text is cleaned of leaked markup on the way, nothing more.
+    /cleanLiveReply\(props\.part\.text\) : cleanReply\(props\.part\.text\)\s+const list = renderReply\(text,/.test(textPart),
   )
   check("a turn's end no longer waits for a reveal to drain", !/playingOut|revealing/.test(stream))
   check(
@@ -7487,8 +7469,8 @@ async function skillChecks(root: string) {
     "skill and skill_search are offered, appended, and change nothing",
     TOOLS[skillAt - 1]?.name === "update_session" &&
       TOOLS[skillAt + 1]?.name === "skill" &&
-      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit, multiedit and speak) come after them.
-      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit", "multiedit", "speak"].includes(tool.name)) &&
+      // Only tools added since (history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+      TOOLS.slice(skillAt + 2).every((tool) => ["history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name)) &&
       reachOf("skill") === "reads" &&
       reachOf("skill_search") === "reads",
     TOOLS.map((tool) => tool.name),
@@ -7797,7 +7779,7 @@ async function deliveredToolChecks(root: string) {
   check("pdf_locate without a snippet is refused before it runs", argumentProblems(locateTool.parameters, { file: "a.pdf" }).some((problem) => problem.includes("snippet")))
   check("a page that is not a number is refused", argumentProblems(locateTool.parameters, { file: "a.pdf", snippet: "b", page: "3" }).length === 1)
 
-  // present_files: existing files inside the project, in order, each once; the rest skipped with a reason.
+  // present_files: existing files, in order, each once - outside the project too (T10-24); the rest skipped with a reason.
   const presentTool = findTool("present_files")!
   const presented = await presentTool.execute(
     {
@@ -7810,13 +7792,13 @@ async function deliveredToolChecks(root: string) {
   const shown = (presented.metadata?.files ?? []) as PresentedFile[]
   const skipped = (presented.metadata?.skipped ?? []) as PresentSkip[]
   check(
-    "present_files keeps the existing files and addresses, in the order given, each once",
-    shown.map((file) => ("path" in file ? path.basename(file.path) : file.url)).join(",") === "report.pdf,page.html,https://example.com/a",
+    "present_files keeps the existing files, wherever they are, and addresses, in the order given, each once",
+    shown.map((file) => ("path" in file ? path.basename(file.path) : file.url)).join(",") === "report.pdf,page.html,elsewhere.pdf,https://example.com/a",
     shown,
   )
   check("it records each file's absolute path and size", "path" in shown[0] && shown[0].path === path.join(project, "out", "report.pdf") && shown[0].size === 9, shown[0])
-  check("a missing file, one outside the project and a folder are skipped, each with its reason", skipped.map((skip) => skip.reason).join(",") === "missing,outside,directory", skipped)
-  check("the model reads what was shown and what was skipped", presented.output.startsWith("Showed 3 files") && presented.output.includes('Skipped "missing.docx"'), presented.output)
+  check("a missing file and a folder are skipped, each with its reason", skipped.map((skip) => skip.reason).join(",") === "missing,directory", skipped)
+  check("the model reads what was shown and what was skipped", presented.output.startsWith("Showed 4 files") && presented.output.includes('Skipped "missing.docx"'), presented.output)
   const relative = await presentTool.execute({ files: ["report.pdf"], cwd: "out", explanation: "x" }, context("p2"))
   check("a relative cwd is taken from the project folder", ((relative.metadata?.files ?? []) as PresentedFile[]).length === 1, relative.metadata)
   const empty = await presentTool.execute({ files: [], cwd: project, explanation: "x" }, context("p3"))
@@ -7828,7 +7810,7 @@ async function deliveredToolChecks(root: string) {
   if (madeLink) {
     try {
       const through = await presentTool.execute({ files: ["link/elsewhere.pdf"], cwd: project, explanation: "x" }, context("p4"))
-      check("a link inside the project that leads out is judged by where it leads", ((through.metadata?.skipped ?? []) as PresentSkip[])[0]?.reason === "outside", through.metadata)
+      check("a link inside the project that leads out is handed over like any file (T10-24)", ((through.metadata?.files ?? []) as PresentedFile[]).length === 1, through.metadata)
     } finally {
       /*
        * Only the link entry is removed, never what it points at: unlink, or a
@@ -7846,34 +7828,17 @@ async function deliveredToolChecks(root: string) {
   // The window's side: the cards' entries, sizes, kinds, the relative path the main process opens, the step row.
   const part = (status: string, files: unknown, callID = "c") => ({ type: "tool", id: callID, callID, name: "present_files", status, input: {}, metadata: { files }, time: { created: 1, completed: 2 } })
   const items = deliveredFiles([part("completed", shown, "a"), part("running", shown, "b"), part("completed", [shown[0]], "d")] as never)
-  check("the cards list a turn's completed present_files entries once each", items.map((item) => item.name).join(",") === "report.pdf,page.html,https://example.com/a", items)
-  check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,url", items.map(deliveredCard))
+  check("the cards list a turn's completed present_files entries once each", items.map((item) => item.name).join(",") === "report.pdf,page.html,elsewhere.pdf,a", items)
+  check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,office,url", items.map(deliveredCard))
   check("sizes read as MiMo writes them", sizeLabel(512) === "512 B" && sizeLabel(1536) === "1.5 KB" && sizeLabel(5 * 1024 * 1024) === "5.0 MB")
   check("a delivered file opens with an app by its path under the project", relativeInside("C:\\p\\", "C:/P/out/a.pdf") === "out/a.pdf" && relativeInside("C:\\p", "D:/q/a.pdf") === "")
 
-  section("round 5: media previews keep to the project, the pull request row, document change notices (D1, D10, D11)")
+  section("round 5: delivered media previews, the pull request row, document change notices (D1, D10, D11)")
   check(
     "a delivered picture, video or sound is previewed, anything else keeps its card",
     deliveredCard({ kind: "file", path: "C:/p/shot.png", name: "shot.png", size: 1 }) === "media" &&
       deliveredCard({ kind: "file", path: "C:/p/clip.MP4", name: "clip.MP4", size: 1 }) === "media" &&
       deliveredCard({ kind: "file", path: "C:/p/notes.txt", name: "notes.txt", size: 1 }) === "file",
-  )
-  check(
-    "a path in the project is read, as the absolute path under it",
-    projectPath("C:\\p\\out\\a.png", "C:\\p") === "C:/p/out/a.png" && projectPath("out/a.png", "C:\\p\\") === "C:/p/out/a.png" && projectPath("./a.mp3", "/home/me/p") === "/home/me/p/a.mp3",
-    [projectPath("C:\\p\\out\\a.png", "C:\\p"), projectPath("out/a.png", "C:\\p\\"), projectPath("./a.mp3", "/home/me/p")],
-  )
-  check(
-    "a path outside it, climbing out of it, from home or with a scheme is not",
-    [
-      projectPath("D:/q/a.png", "C:/p"),
-      projectPath("C:/p2/a.png", "C:/p"),
-      projectPath("../a.png", "C:/p"),
-      projectPath("C:/p/../secret.png", "C:/p"),
-      projectPath("~/a.png", "/home/me/p"),
-      projectPath("file:///C:/p/a.png", "C:/p"),
-      projectPath("a.png", undefined),
-    ].every((value) => value === undefined),
   )
   check(
     "the pull request row: hidden off GitHub, then loading, none, unavailable or found",
@@ -7908,7 +7873,8 @@ async function deliveredToolChecks(root: string) {
       deliveredStepTitle({ name: "present_files", input: { files: ["C:\\p\\a.pdf", "b/c.html"] } } as never) === "a.pdf, c.html" &&
       deliveredStepTitle({ name: "set_desktop_setting", input: { key: "theme", value: "dark" } } as never) === "theme → dark",
   )
-  check("a locate step wears the read icon", deliveredToolIcon("pdf_locate") === "read")
+  // Round 10 (K10-9): MiMo gives a locate the search mark.
+  check("a locate step wears the search icon", deliveredToolIcon("pdf_locate") === "search")
   const artifacts = sessionArtifacts(
     [{ id: "m1", role: "assistant", sessionID: "s", parts: [part("completed", [{ path: path.join(project, "notes.txt"), name: "notes.txt", size: 1 }])], time: { created: 1 } }] as never,
     project,
@@ -7937,23 +7903,24 @@ async function deliveredToolChecks(root: string) {
   const getTool = findTool("get_desktop_settings")!
   const setTool = findTool("set_desktop_setting")!
   bindDesktopSettings(undefined)
-  const unavailable = await getTool.execute({}, context("s0")).then(() => "ran", (error: Error) => error.name)
-  check("before the backend binds a config the tools say they are unavailable", unavailable === "ToolError", unavailable)
+  const unavailable = await getTool.execute({}, context("s0")).then((result) => result.output, (error: Error) => error.name)
+  check("before the backend binds a config the tools say they are unavailable, as a result rather than a failed call (T10-54)", unavailable.includes("暂时还不能"), unavailable)
   bindDesktopSettings(settings)
-  const snapshot = JSON.parse((await getTool.execute({}, context("s1"))).output)
+  const wrapped = JSON.parse((await getTool.execute({}, context("s1"))).output)
+  const snapshot = wrapped.settings
   check(
-    "get_desktop_settings answers MiMo's keys, with what each accepts",
-    snapshot.language === "system" && snapshot.ui_font_size === 14 && snapshot.code_font_size === 12 && snapshot.diff_style === "colored" && typeof snapshot.adjustable_keys?.theme === "string",
+    "get_desktop_settings answers MiMo's keys inside { ok, settings }, with what each accepts",
+    wrapped.ok === true && snapshot.language === "system" && snapshot.ui_font_size === 14 && snapshot.code_font_size === 12 && snapshot.diff_style === "colored" && typeof snapshot.adjustable_keys?.theme === "string",
     snapshot,
   )
   const set = (key: string, value: string) => setTool.execute({ key, value }, context(`s-${key}-${value}`))
   const dark = await set("theme", "Dark")
-  check("set_desktop_setting changes the theme through the config patch", settings.get().theme === "dark" && dark.output.startsWith("Changed theme to dark") && dark.metadata?.applied === true, dark)
+  check("set_desktop_setting changes the theme through the config patch", settings.get().theme === "dark" && dark.output.startsWith("桌面设置已修改：theme → dark") && dark.metadata?.applied === true, dark)
   const big = await set("ui_font_size", "30")
   const small = await set("code_font_size", "7.6")
   check("font sizes past a bound take the bound", settings.get().uiFontSize === 24 && settings.get().codeFontSize === 9, { big: big.output, small: small.output })
   const word = await set("ui_font_size", "large")
-  check("a font size that is not a number is rejected and nothing changes", word.output.startsWith("Not changed") && settings.get().uiFontSize === 24 && word.metadata?.applied === false, word.output)
+  check("a font size that is not a number is rejected and nothing changes", word.output.startsWith("没有修改") && settings.get().uiFontSize === 24 && word.metadata?.applied === false, word.output)
   await set("diff_style", "plus-minus")
   const signs = settings.get().diffMarks
   await set("diff_style", "colored")
@@ -7962,11 +7929,19 @@ async function deliveredToolChecks(root: string) {
   const english = settings.get().language
   const ambiguous = await set("language", "zh")
   await set("language", "system")
-  check("a regional tag reaches its language, an ambiguous one is refused, system follows the machine", english === "en" && ambiguous.output.startsWith("Not changed") && settings.get().language === "", { english, ambiguous: ambiguous.output })
+  check("a regional tag reaches its language, an ambiguous one is refused, system follows the machine", english === "en" && ambiguous.output.startsWith("没有修改") && settings.get().language === "", { english, ambiguous: ambiguous.output })
   const blue = await set("theme", "blue")
   const model = await set("model", "gpt")
   check("a bad theme is rejected with the values it accepts", blue.output.includes("light | dark | system") && settings.get().theme === "dark", blue.output)
-  check("a key the tool does not cover is rejected and points to Settings", model.output.startsWith("Not changed") && model.output.includes("Settings"), model.output)
+  check("a key the tool does not cover is rejected and points to Settings", model.output.startsWith("没有修改") && model.output.includes("设置"), model.output)
+  // T10-54: MiMo's Chinese names for the values.
+  await set("theme", "浅色")
+  const light = settings.get().theme
+  await set("diff_style", "+/-")
+  const plusMinus = settings.get().diffMarks
+  await set("diff_style", "颜色")
+  await set("theme", "深色")
+  check("the Chinese names for a theme and a diff style are taken too", light === "light" && plusMinus === "signs" && settings.get().diffMarks === "color" && settings.get().theme === "dark", { light, plusMinus })
   const reread = new SubagentConfig(new SubagentStorage(path.join(data, "storage")), new Bus(), path.join(data, "credentials.json"))
   await reread.load()
   check("a change is saved, as the settings page saves it", reread.get().theme === "dark" && reread.get().uiFontSize === 24)
@@ -8623,7 +8598,6 @@ async function sessionChatChecks(root: string, project: string) {
   })())
   check("a stopped turn with nothing written says it was stopped", (() => {
     const outcome = replyIn([asked("u1", "q"), replied("a1", { finish: "aborted" })], "u1")
-    // Round 10 (T10-55): said in Chinese.
     return !outcome.ok && outcome.error.includes("被停止")
   })())
   check("chains stop at MiMo's five hops", CHAT_HOPS === 5)
@@ -8652,8 +8626,8 @@ async function sessionChatChecks(root: string, project: string) {
         // notebook_edit sits between the window tools and them.
         TOOLS[at - 1]?.name === "notebook_edit" &&
         TOOLS[at - 2]?.name === "set_desktop_setting" &&
-        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit, multiedit and speak) come after them.
-        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "multiedit", "speak"].includes(tool.name))
+        // Only tools added since (the skill tools, then history, memory, cron, scheduled tasks, plan_exit and speak) come after them.
+        TOOLS.slice(at + 4).every((tool) => ["skill_search", "skill", "history", "memory", "cron", "automation_update", "plan_exit", "speak"].includes(tool.name))
       )
     })(),
     TOOLS.map((tool) => tool.name),
@@ -8828,8 +8802,8 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "SELF:Alpha" })
   await quiet()
   const selfPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
-  // Round 10 (T10-49): a refusal is the call's result, as MiMo returns it, and in Chinese (T10-55).
-  check("calling yourself is refused", selfPart?.status === "completed" && (selfPart.output ?? "").startsWith("未送达：不能给当前会话自己发消息"), selfPart)
+  // T10-49: a refusal is a result the model reads, as MiMo's is, not a failed call.
+  check("calling yourself is refused", selfPart?.status === "completed" && (selfPart.output ?? "").startsWith("未送达：会话不能给自己发消息"), selfPart)
 
   // create_session and update_session.
   await runner.prompt({ sessionID: alpha.id, text: "CREATE" })
@@ -8844,7 +8818,7 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "CREATE-BAD" })
   await quiet()
   const badCreate = (await partsOf(alpha.id, "create_session")).at(-1)
-  check("a workspace that is not an absolute folder is refused", badCreate?.status === "completed" && (badCreate.output ?? "").includes("绝对路径") && badCreate.metadata?.refused === true, badCreate)
+  check("a workspace that is not an absolute folder is refused", badCreate?.status === "completed" && (badCreate.output ?? "").startsWith("会话没有创建") && (badCreate.output ?? "").includes("绝对路径"), badCreate)
   if (gamma) {
     await runner.prompt({ sessionID: alpha.id, text: `UPDATE:${gamma.id}` })
     await quiet()
@@ -8858,7 +8832,7 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: chain[0]!, text: "CHAIN:1" })
   await quiet()
   const refusedHop = (await partsOf(chain[5]!, "talk_to_session"))[0]
-  check("a chain of calls is refused at the sixth hop", refusedHop?.status === "completed" && (refusedHop.output ?? "").includes("5 跳上限"), refusedHop)
+  check("a chain of calls is refused at the sixth hop", refusedHop?.status === "completed" && (refusedHop.output ?? "").includes("5 跳的上限"), refusedHop)
   check("the session past the limit was never messaged", (await store.messages(chain[6]!)).length === 0)
   check("the replies unwind back to the start", (await texts(chain[0]!)).includes("chain 1 done"))
 
@@ -8870,7 +8844,7 @@ async function sessionChatChecks(root: string, project: string) {
   runner.abort(alpha.id)
   await quiet()
   const stoppedPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
-  check("Stop settles a waiting call cleanly", stoppedPart?.status === "error" && stoppedPart.error === "在收到回复之前已停止。" && stoppedPart.metadata?.aborted === true, stoppedPart)
+  check("Stop settles a waiting call cleanly", stoppedPart?.status === "error" && stoppedPart.error === "回复到达之前，这次调用已被停止。" && stoppedPart.metadata?.aborted === true, stoppedPart)
   check("the target still finishes its turn", (await texts(delta.id)).includes("slow pong"))
   check("no reply is delivered to a call that was stopped", !(await store.messages(alpha.id)).some((message) => message.role === "user" && message.inbox?.from === "Delta"))
 
@@ -8883,7 +8857,7 @@ async function sessionChatChecks(root: string, project: string) {
   await store.delete(epsilon.id)
   await quiet()
   const gone = (await store.messages(alpha.id)).find((message) => message.role === "user" && message.inbox?.from === "Epsilon")
-  check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("目标会话已不存在"), gone)
+  check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("已经不存在"), gone)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }
@@ -9632,6 +9606,7 @@ async function automationChecks(root: string, project: string) {
     "RRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=29",
     "RRULE:FREQ=HOURLY;BYMINUTE=30",
     "DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2",
+    "DTSTART:20260101T080000\nRRULE:FREQ=DAILY;UNTIL=20260301T0900Z",
   ]
   check("MiMo's subset of rules is accepted", valid.every((rule) => parseRRule(rule) !== undefined), valid.filter((rule) => !parseRRule(rule)))
   const refused = [
@@ -9646,17 +9621,26 @@ async function automationChecks(root: string, project: string) {
     "RRULE:FREQ=DAILY;FREQ=DAILY",
     "RRULE:FREQ=WEEKLY;BYDAY=XX",
     "RRULE:FREQ=DAILY\nRRULE:FREQ=HOURLY",
+    // T10-51: MiMo's DTSTART takes no Z and no seconds but 00; its UNTIL needs a time.
+    "DTSTART:20260101T0800Z\nRRULE:FREQ=DAILY",
+    "DTSTART:20260101T080030\nRRULE:FREQ=DAILY",
+    "RRULE:FREQ=DAILY;UNTIL=20260301",
   ]
   check("and everything outside it is refused", refused.every((rule) => parseRRule(rule) === undefined), refused.filter((rule) => parseRRule(rule)))
   const friday = new Date(2026, 0, 2, 10, 0).getTime()
   const next = (rule: string, after = friday) => nextOccurrence(parseRRule(rule)!, after)
   check("every day at 09:00, after 10:00, is tomorrow at 09:00", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 3, 9, 0).getTime())
   check("weekdays after a Friday morning is Monday", next("RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 5, 9, 0).getTime())
-  // Round 10 (T10-51): without DTSTART an interval counts from 1970, as MiMo counts it. 2026-01-04 is day 20457, the first multiple of three after Friday the 2nd.
-  check("an interval without DTSTART counts from 1970", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === new Date(2026, 0, 4, 9, 0).getTime())
+  // T10-51: with no DTSTART an interval counts from the start of 1970, as MiMo's does, whenever the task was made.
+  const everyThird = (() => {
+    for (let day = 3; ; day++) if (Math.floor(Date.UTC(2026, 0, day) / 86_400_000) % 3 === 0) return new Date(2026, 0, day, 9, 0).getTime()
+  })()
+  check("an interval counts from 1970, whenever the task was made", next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0") === everyThird && next("RRULE:FREQ=DAILY;INTERVAL=3;BYHOUR=9;BYMINUTE=0", friday + 86_400_000) === everyThird)
+  check("a rule that runs once a decade is still found", next("RRULE:FREQ=YEARLY;INTERVAL=10;BYMONTH=3;BYMONTHDAY=1;BYHOUR=9;BYMINUTE=0") === new Date(2030, 2, 1, 9, 0).getTime())
+  check("and one that can never land (every fourth year from 1970 is never a leap year) ends the search with none", next("RRULE:FREQ=YEARLY;INTERVAL=4;BYMONTH=2;BYMONTHDAY=29;BYHOUR=9;BYMINUTE=0") === undefined)
   check("hourly at half past is the next half hour", next("RRULE:FREQ=HOURLY;BYMINUTE=30") === new Date(2026, 0, 2, 10, 30).getTime())
   check("COUNT stops after that many runs", next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=2") === undefined && next("DTSTART:20260101T0800\nRRULE:FREQ=DAILY;COUNT=3") === new Date(2026, 0, 3, 8, 0).getTime())
-  check("UNTIL stops at its date", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102T2359") === undefined)
+  check("UNTIL stops at its time", next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260102T2359") === undefined && next("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL=20260103T0900") === new Date(2026, 0, 3, 9, 0).getTime())
   check(
     "schedules read the way MiMo names them",
     scheduleLabel("RRULE:FREQ=DAILY;BYHOUR=9;BYMINUTE=5") === "Every day 9:05" &&
@@ -9703,8 +9687,8 @@ async function automationChecks(root: string, project: string) {
     },
     busy: (sessionID: string) => busy.has(sessionID),
     models: () => [
-      { provider: "fake", id: "m", name: "Fake M" },
-      { provider: "fake", id: "big", name: "Fake Big" },
+      { provider: "fake", id: "m", name: "Fake M", efforts: ["low", "medium", "high"] },
+      { provider: "fake", id: "big", name: "Fake Big", efforts: ["low", "high", "max"] },
     ],
     agent: () => "build" as const,
     effort: () => "high" as const,
@@ -9734,8 +9718,7 @@ async function automationChecks(root: string, project: string) {
       created.automation.notification === "all-runs" &&
       created.automation.model.id === "fake/m" &&
       created.automation.model.name === "Fake M" &&
-      // Round 10 (T10-53): a model that offers no reasoning level is given none.
-      created.automation.reasoning === undefined &&
+      created.automation.reasoning === "high" &&
       created.automation.project === path.basename(project) &&
       created.automation.schedule === "Every day 9:00",
     created,
@@ -9783,7 +9766,6 @@ async function automationChecks(root: string, project: string) {
     Boolean(opened) && opened?.model.model === "big" && opened?.scratch === true && opened?.directory === path.join(root, "automation-scratch") && prompts.at(-1)?.sessionID === opened?.id,
     opened,
   )
-  // Round 10 (T10-22): the target has to be a conversation in the side column; one deleted later is a skipped run.
   const doomed = await store.create({ directory: project, model, title: "Soon gone" })
   await call({ mode: "update", id: "auto-1", runMode: "existing-task", targetThreadId: doomed.id })
   await store.delete(doomed.id)
@@ -9791,6 +9773,7 @@ async function automationChecks(root: string, project: string) {
   clock = new Date(2026, 0, 5, 9, 0, 1).getTime()
   await service.tick()
   check("a run whose conversation is gone is skipped and the schedule moves on", prompts.length === before && service.dueAt("auto-1") === new Date(2026, 0, 6, 9, 0).getTime())
+  check("and the skip is on the task's record (T10-22)", service.list()[0]?.runHistory?.at(-1)?.status === "skipped" && Boolean(service.list()[0]?.runHistory?.at(-1)?.error), service.list()[0]?.runHistory?.at(-1))
 
   // Kept in the data folder; a run missed while closed happens once at start.
   await service.stop()

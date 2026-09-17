@@ -4,11 +4,12 @@ import { language, t } from "./i18n"
  * A counted string in the reader's language.
  *
  * `t` has no plural selection, so a counted key is stored once per form -
- * `_one`, `_few`, `_many`, `_other`, the forms MiMo's own tables carry - and
- * this picks the one the language's rules ask for. A form no table keeps
- * (zero, two) reads as `_other`.
+ * `_one`, `_few`, `_many`, `_other`, the forms MiMo's own tables carry, and
+ * `_two`, `_zero` for Arabic's dual and zero (every table carries them; the
+ * others repeat their `_other`) - and this picks the one the language's rules
+ * ask for.
  */
-const KEPT = new Set(["one", "few", "many"])
+const KEPT = new Set(["zero", "one", "two", "few", "many"])
 
 export function tn(key: string, count: number): string {
   let form = "other"
@@ -18,5 +19,7 @@ export function tn(key: string, count: number): string {
   } catch {
     // A language tag the runtime does not know keeps `_other`.
   }
-  return t(`${key}_${form}`, { count })
+  const said = t(`${key}_${form}`, { count })
+  // A table without that form says `_other`, rather than the key itself.
+  return said === `${key}_${form}` ? t(`${key}_other`, { count }) : said
 }

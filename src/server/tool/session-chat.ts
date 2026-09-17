@@ -7,15 +7,13 @@ import { ToolError } from "./types"
  * session chat: the four tools a conversation uses to reach the others, as
  * MiMo's session-chat set offers them. The work is done by the runner's
  * `SessionChat`; these only read arguments and word the results.
+ *
+ * As MiMo's, a message that could not go, a session that could not be made and
+ * the like come back as results the model reads, not as failed calls (T10-49),
+ * and what the model reads is Chinese where MiMo's is (T10-55). The note for a
+ * busy target that turned the call into an async one stays English, as MiMo's does.
  */
 
-/*
- * What these tools return is in Chinese, as MiMo's session-chat tools answer
- * their model (the user's 2026-09-17 decision), in this app's own words; the
- * one English line is the busy target's, which MiMo also gives in English. A
- * refusal or failure comes back as the call's result, not as a failed call,
- * as MiMo's does.
- */
 function chatOf(context: ToolContext) {
   if (!context.chat) throw new ToolError("子智能体不能给其他会话发消息。")
   return context.chat
@@ -46,8 +44,8 @@ export const ContactsTool: ToolDefinition = {
   },
   async execute(_input, context) {
     const contacts = await chatOf(context).contacts(context.sessionID)
-    if (!contacts.length) return { output: "通讯录里还没有别的会话，目前只有本会话。" }
-    return { output: `通讯录（${contacts.length} 个联系人，最近活跃的在前）：\n${contacts.map(contactLine).join("\n")}` }
+    if (!contacts.length) return { output: "通讯录里还没有别的会话，目前只有这一个。" }
+    return { output: `通讯录（${contacts.length} 个会话，最近活跃的在前）：\n${contacts.map(contactLine).join("\n")}` }
   },
 }
 
@@ -88,19 +86,20 @@ export const TalkToSessionTool: ToolDefinition = {
       return {
         output: result.busy
           ? "The session is busy, so the message was queued and this call switched to async. Do not send it again; the reply will arrive in this conversation as a marked message."
-          : "已发出，没有等待回复。对方的回复稍后会作为标明来源的消息出现在本会话，届时再接着处理。",
+          : "消息已发出，没有等待回复。对方的回复稍后会以标明来源的消息出现在本会话里，在那之前请继续手上的工作。",
       }
     }
     if (result.status === "switched") {
       return {
-        output: "120 秒内没有等到回复，但对方仍在处理，本次调用已转为异步。不要重复发送；回复稍后会作为标明来源的消息出现在本会话。",
+        output:
+          "No reply within 120 seconds, but the session is still working on it, so this call switched to async. Do not send it again; the reply will arrive in this conversation as a marked message.",
       }
     }
-    // Cut off by Stop: the call ends with the turn, as any stopped call does.
-    if (result.status === "stopped") throw new ToolError("在收到回复之前已停止。")
-    if (result.status === "failed") return { output: `没有收到回复：${result.error}`, metadata: { failed: true } }
+    // Stop ends the call the way it ends any other, so the step settles as stopped.
+    if (result.status === "stopped") throw new ToolError("回复到达之前，这次调用已被停止。")
+    if (result.status === "failed") return { output: `没有收到回复：${result.error}`, metadata: { delivered: false } }
     const candidates = result.candidates?.length ? `\n候选：\n${result.candidates.map(contactLine).join("\n")}` : ""
-    return { output: `未送达：${result.error}${candidates}`, metadata: { refused: true } }
+    return { output: `未送达：${result.error}${candidates}`, metadata: { delivered: false } }
   },
 }
 
@@ -130,8 +129,8 @@ export const CreateSessionTool: ToolDefinition = {
       workspace: text(input.workspace) ?? "",
       task: text(input.task),
     })
-    if (!made.ok) return { output: `会话没有创建：${made.error}`, metadata: { refused: true } }
-    return { output: `已创建会话「${made.session.title}」 id=${made.session.id}`, metadata: { sessionID: made.session.id } }
+    if (!made.ok) return { output: `会话没有创建：${made.error}`, metadata: { created: false } }
+    return { output: `会话已创建：「${made.session.title}」 id=${made.session.id}`, metadata: { sessionID: made.session.id } }
   },
 }
 
@@ -156,7 +155,7 @@ export const UpdateSessionTool: ToolDefinition = {
   async execute(input, context) {
     const status = text(input.task_status)
     if (status !== undefined && !(CHAT_TASK_STATUSES as readonly string[]).includes(status)) {
-      return { output: `会话资料没有更新：task_status 只能是 ${CHAT_TASK_STATUSES.join("、")} 之一。`, metadata: { refused: true } }
+      return { output: `会话资料没有更新：task_status 只能是 ${CHAT_TASK_STATUSES.join("、")} 之一。`, metadata: { updated: false } }
     }
     const changed = await chatOf(context).update({
       contactID: text(input.contact_id) ?? "",
@@ -165,7 +164,7 @@ export const UpdateSessionTool: ToolDefinition = {
       task: text(input.task),
       taskStatus: status as ChatTaskStatus | undefined,
     })
-    if (!changed.ok) return { output: `会话资料没有更新：${changed.error}`, metadata: { refused: true } }
-    return { output: `已更新会话「${changed.session.title}」的资料 id=${changed.session.id}` }
+    if (!changed.ok) return { output: `会话资料没有更新：${changed.error}`, metadata: { updated: false } }
+    return { output: `会话资料已更新：「${changed.session.title}」 id=${changed.session.id}` }
   },
 }

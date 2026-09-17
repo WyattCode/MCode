@@ -36,8 +36,10 @@ async function load() {
   if (!root) return
   loading.value = true
   try {
-    status.value = await app.gitStatus(root, "worktree")
-    failure.value = undefined
+    const next = await app.gitStatus(root)
+    // A status git could not produce is a failure to show, never a clean tree.
+    status.value = next.error === undefined ? next : undefined
+    failure.value = next.error
   } catch (err) {
     failure.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -56,7 +58,7 @@ async function loadPatch(file: string | undefined) {
   }
   patchLoading.value = true
   try {
-    const text = await app.gitDiff(root, file, undefined, "worktree")
+    const text = await app.gitDiff(root, file)
     if (selected.value === file) patch.value = text
   } catch {
     if (selected.value === file) patch.value = ""
@@ -88,7 +90,8 @@ watch(
 )
 onBeforeUnmount(() => clearTimeout(restTimer))
 
-const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", modified: "M", renamed: "R" }
+/* MiMo's colour table: M, A, D, R and C have their own colours; any other letter git reports keeps the plain one. */
+const TONE: Record<string, string> = { M: "modified", A: "added", D: "deleted", R: "renamed", C: "renamed" }
 </script>
 
 <template>
@@ -152,7 +155,7 @@ const LETTER: Record<GitChange["kind"], string> = { added: "A", deleted: "D", mo
           :data-review-file="entry.path"
           @click="selected = entry.path"
         >
-          <span class="rv-letter" :class="entry.kind">{{ LETTER[entry.kind] }}</span>
+          <span class="rv-letter" :class="TONE[entry.code]" data-rv-letter>{{ entry.code }}</span>
           <span class="rv-path">{{ entry.path }}</span>
         </button>
       </div>

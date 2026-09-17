@@ -5,7 +5,7 @@ import { applyPatch, checkoutFile, isTracked, repositoryRoot } from "../git"
 import { createsFile, parseUnifiedDiff, recountedSection, sectionPatch, type DiffSection } from "@shared/unified-diff"
 
 /** The tools whose calls change files and record the diff of what they did. */
-const EDITING = new Set(["edit", "multiedit", "write", "patch"])
+const EDITING = new Set(["edit", "write", "patch"])
 
 interface FileHistory {
   /** Where the file is on disk. */
@@ -17,33 +17,35 @@ interface FileHistory {
 }
 
 /**
- * Takes one turn's file changes back out of the project, through git, as
- * MiMo's 撤销 on the "edited N files" card does.
+ * Takes one turn's file changes back, through git, as MiMo's 撤销 on the
+ * "edited N files" card does.
  *
- * MiMo's `gitRestore` is the shape this follows. Only what that turn did is
- * undone: a file the turn edited has its patches handed to `git apply
- * --reverse`, newest first, so the rounds before it and any change made since
- * elsewhere in the file are kept; a file the turn created is deleted; and a
- * path outside the project is never touched.
+ * MiMo's `gitRestore` is the shape this follows, file by file:
  *
- * Two fallbacks, both MiMo's, in this order:
+ * - each file is taken back through the repository it is in, found from its
+ *   own folder, so a repository nested in the project - or a project that is
+ *   not a repository but holds some - is handled like any other;
+ * - a file the turn edited has its patches handed to `git apply --reverse`,
+ *   newest first, so the rounds before it and any change made since elsewhere
+ *   in the file are kept;
+ * - a file the turn created that git does not track is deleted;
+ * - a path outside the project is treated the same way when it can be: an
+ *   edited one in some repository has its patches reversed, a created one git
+ *   does not track is deleted. Only what cannot be put back - an edited file in
+ *   no repository, a created one git tracks - is counted as outside and left.
+ *
+ * Two fallbacks, in this order:
  *
  *   1. a patch that will not apply is recomputed against the file as it stands
  *      now - which rescues a hunk later edits have moved - and tried again;
  *   2. for a file git tracks, `git checkout --` puts it back to the index,
  *      which is as close to "before the turn" as git can get.
  *
- * Reverting through git rather than by hand is also what makes the refusal
- * possible: outside a repository nothing here can be put back, so nothing is
- * written. That is MiMo's answer too, and it replaces the old behaviour of
- * rewriting files in a folder with no history to undo them from.
- *
- * MCode keeps no fallback MiMo lacks. In particular there is no plain-Node
- * reverse-apply any more: a project with no repository is refused outright.
+ * An edited file with no repository to take it back through is never
+ * rewritten by hand: there is no history to undo it from.
  */
 export async function revertTurnFiles(directory: string, messages: Message[]): Promise<TurnRevertResult> {
   const files = new Map<string, FileHistory>()
-  let outside = 0
   const root = path.resolve(directory)
 
   for (const message of messages) {
@@ -57,11 +59,6 @@ export async function revertTurnFiles(directory: string, messages: Message[]): P
       for (const section of parseUnifiedDiff(diff)) {
         if (!section.file) continue
         const target = path.resolve(root, section.file)
-        const relative = path.relative(root, target)
-        if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-          outside++
-          continue
-        }
         const known = files.get(target)
         if (known) {
           known.sections.push(section)
@@ -73,28 +70,61 @@ export async function revertTurnFiles(directory: string, messages: Message[]): P
     }
   }
 
-  const repository = await repositoryRoot(root)
-  // MiMo refuses rather than writing to files it has no way of putting back.
-  if (!repository) return { restored: 0, removed: 0, failed: 0, outside: 0, noRepo: true }
+  /* Each folder asks git once, as MiMo caches `rev-parse --show-cdup` per folder. */
+  const roots = new Map<string, Promise<string | undefined>>()
+  const repositoryOf = (target: string) => {
+    const folder = path.dirname(target)
+    let found = roots.get(folder)
+    if (!found) {
+      found = repositoryRoot(folder)
+      roots.set(folder, found)
+    }
+    return found
+  }
 
-  const result: TurnRevertResult = { restored: 0, removed: 0, failed: 0, outside }
+  const result: TurnRevertResult = { restored: 0, removed: 0, failed: 0, outside: 0 }
   for (const file of files.values()) {
-    if (file.created) {
-      // MiMo removes a folder the turn made along with a file, and asks the disk whether it worked.
-      await fs.rm(file.target, { recursive: true, force: true }).catch(() => {})
-      const left = await fs
-        .stat(file.target)
-        .then(() => true)
-        .catch(() => false)
-      if (left) result.failed++
-      else result.removed++
+    const repository = await repositoryOf(file.target)
+    const inProject = isWithin(root, file.target)
+    if (repository && (inProject || !file.created)) {
+      if (await isTracked(repository, file.target)) {
+        if (await reverseThroughGit(repository, file)) result.restored++
+        else if (await checkoutFile(repository, file.target)) result.restored++
+        else result.failed++
+        continue
+      }
+      if (!file.created) {
+        if (await reverseThroughGit(repository, file)) result.restored++
+        else result.failed++
+        continue
+      }
+      await remove(file, result)
       continue
     }
-    if (await reverseThroughGit(repository, file)) result.restored++
-    else if ((await isTracked(repository, file.target)) && (await checkoutFile(repository, file.target))) result.restored++
-    else result.failed++
+    // In no repository, or created outside the project: only an untracked new file can be taken back, by deleting it.
+    if (!file.created || (repository && (await isTracked(repository, file.target)))) {
+      result.outside++
+      continue
+    }
+    await remove(file, result)
   }
   return result
+}
+
+function isWithin(outer: string, inner: string): boolean {
+  const relative = path.relative(outer, inner)
+  return !relative.startsWith("..") && !path.isAbsolute(relative)
+}
+
+/* MiMo removes a folder the turn made along with a file, and asks the disk whether it worked. */
+async function remove(file: FileHistory, result: TurnRevertResult): Promise<void> {
+  await fs.rm(file.target, { recursive: true, force: true }).catch(() => {})
+  const left = await fs
+    .stat(file.target)
+    .then(() => true)
+    .catch(() => false)
+  if (left) result.failed++
+  else result.removed++
 }
 
 /**

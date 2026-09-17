@@ -1,7 +1,7 @@
 import type { ChatLink } from "@shared/protocol"
 import { language, sessionTitle, t } from "./i18n"
 import { projectName } from "./project"
-import { sessionGroup } from "@shared/session-group"
+import { sessionGroup, type GroupContext } from "@shared/session-group"
 import type { TipLine } from "./tip"
 
 /**
@@ -56,9 +56,10 @@ export function convoCard(
   names?: Record<string, string>,
   links: readonly ChatLink[] = [],
   jump?: (sessionID: string) => void,
+  context?: GroupContext,
 ): { title: string; lines: (string | TipLine | undefined)[] } {
   // The project it is filed under, which 移动至项目 may have moved; the folder line below still says where it works.
-  const group = sessionGroup(session)
+  const group = sessionGroup(session, context)
   return {
     title: sessionTitle(session.title),
     lines: [

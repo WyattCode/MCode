@@ -3,7 +3,7 @@ import { computed, ref } from "vue"
 import type { AssistantPart } from "@shared/protocol"
 import { FILE_MANAGER_ID, fileManagerLabel, openApps } from "@shared/open-app"
 import { useApp } from "../stores/app"
-import { deliveredCard, deliveredFiles, projectPath, relativeInside, sizeLabel, type Delivered } from "../lib/delivered"
+import { deliveredCard, deliveredFiles, mediaPath, relativeInside, sizeLabel, type Delivered } from "../lib/delivered"
 import { mediaOf } from "../lib/markdown"
 import LocalMedia from "./parts/LocalMedia.vue"
 import { openDocument, officeTypeOf } from "../lib/office-open"
@@ -37,11 +37,15 @@ const OFFICE_TONE = {
 const WEB_TONE = { fg: "#2f6fed", bg: "rgba(47, 111, 237, 0.14)" }
 const FILE_TONE = { fg: "#6b7280", bg: "rgba(120, 120, 128, 0.14)" }
 
-/* A delivered picture, video or sound inside the project is previewed; anywhere else it keeps the plain card. */
+/*
+ * A delivered picture, video or sound is previewed wherever it is: present_files
+ * may hand over a file outside the project (T10-24), and the card reads it
+ * through the main process as a path in a reply is read.
+ */
 function mediaPreview(item: Delivered): { kind: "image" | "video" | "audio"; path: string } | undefined {
   if (item.kind !== "file" || deliveredCard(item) !== "media") return undefined
   const kind = mediaOf(item.path)
-  const path = projectPath(item.path, props.directory)
+  const path = mediaPath(item.path, props.directory)
   return kind && path ? { kind, path } : undefined
 }
 
@@ -134,12 +138,16 @@ async function pick(key: string) {
   } else if (key.startsWith("app.")) {
     const id = key.slice("app.".length)
     const entry = openApps(app.platform).find((candidate) => candidate.id === id)
-    const relative = props.directory ? relativeInside(props.directory, target.path) : ""
-    if (!entry || !props.directory || !relative) {
+    // A file outside the project is opened from its own folder.
+    const inside = props.directory ? relativeInside(props.directory, target.path) : ""
+    const cut = Math.max(target.path.lastIndexOf("/"), target.path.lastIndexOf("\\"))
+    const folder = inside ? props.directory : cut > 0 ? target.path.slice(0, cut) : undefined
+    const relative = inside || target.path.slice(cut + 1)
+    if (!entry || !folder || !relative) {
       notifyFailure(t("officeCard.openFailed", { error: t("harnessRow.pathNotExist") }))
       return
     }
-    const reason = await window.mcode.openFile(props.directory, relative, entry.openWith).catch((error: unknown) => String(error))
+    const reason = await window.mcode.openFile(folder, relative, entry.openWith).catch((error: unknown) => String(error))
     if (reason) notifyFailure(t("officeCard.openFailed", { error: reason }))
     else notify(t("officeCard.openedWith", { name: t(entry.label) }))
   }

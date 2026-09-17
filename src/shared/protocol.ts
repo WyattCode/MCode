@@ -270,7 +270,11 @@ export interface UserMessage {
   /** Files pinned into the prompt by the user. */
   attachments: Attachment[]
   time: { created: number }
-  /** Sent into a turn that was already running (MiMo's 插话), so the transcript keeps it inside that turn. */
+  /**
+   * Sent into a turn that was already running (MiMo's 插话). Until the model
+   * takes it the transcript shows it waiting at the end of that turn; once
+   * taken it is a question like any other and opens the next turn (26.914).
+   */
   steered?: boolean
   /**
    * plan: written by the app rather than typed - the word that the user
@@ -465,6 +469,13 @@ export interface Attachment {
    * mention; the server fills in `mime` when the message is sent.
    */
   byPath?: boolean
+  /**
+   * A copy of the file taken when a tool read it, which requests read instead
+   * of `path`: MiMo puts the bytes into the tool result there and then, so what
+   * the model was shown stays what it was shown, whatever happens to the file
+   * afterwards. `path` still names the file the model asked for.
+   */
+  copy?: string
 }
 
 export interface AssistantMessage {
@@ -579,8 +590,7 @@ export interface CommitState {
   stagedAdditions: number
   stagedDeletions: number
   hasUpstream: boolean
-  upstream?: string
-  /** Commits HEAD has that the push target does not, and the other way round. */
+  /** Commits HEAD has that origin's branch of the same name does not, and the other way round. */
   ahead: number
   behind: number
   hasOrigin: boolean
@@ -612,15 +622,12 @@ export interface TurnRevertResult {
   removed: number
   /** Files whose changed lines were no longer there, left alone. */
   failed: number
-  /** Paths outside the project, skipped. */
-  outside: number
   /**
-   * The project is not in a repository, so nothing was touched.
-   *
-   * Taking a turn back goes through git, as MiMo's does, and MiMo refuses
-   * outright rather than writing to files it cannot put back.
+   * Files nothing could take back, left as they are: an edited file in no
+   * repository, or a file created outside the project that git tracks. MiMo
+   * calls these outside, and so does the card.
    */
-  noRepo?: boolean
+  outside: number
 }
 
 export type Message = UserMessage | AssistantMessage
@@ -646,6 +653,12 @@ export interface ShellSummary {
 export interface GitChange {
   path: string
   kind: GitChangeKind
+  /**
+   * The letter MiMo's review draws: git's working-tree column, else its index
+   * column, "A" for an untracked path. Anything besides M, A, D, R and C (a
+   * conflict's U, a type change's T) is shown as it is.
+   */
+  code: string
 }
 
 export interface GitStatus {
@@ -661,6 +674,8 @@ export interface GitStatus {
    * files"; the review is the one place that also has to say how each moved.
    */
   entries: GitChange[]
+  /** git could not report the changes; what it said instead. The lists are then empty and mean nothing. */
+  error?: string
 }
 
 export interface PermissionRequest {
@@ -1911,26 +1926,13 @@ export type Request =
       /** The composer's text and selection; with it, 智能编辑 can carry out edit and caret instructions. */
       draft?: VoiceDraft
     }
-  | { type: "git.status"; directory: string; scope?: "worktree" | "branch" }
-  | { type: "git.init"; directory: string }
+  | { type: "git.status"; directory: string }
   /* The home screen's branch chip: the local branches, and switching or creating one. */
   | { type: "git.branches"; directory: string }
   | { type: "git.checkout"; directory: string; branch: string; force?: boolean; create?: boolean }
-  /*
-   * `context` is how many unchanged lines to keep either side of a change.
-   * A very large number is how "show the whole file" is asked for, which is
-   * the same request git already answers - there is no second endpoint.
-   */
-  | {
-      type: "git.diff"
-      directory: string
-      file: string
-      context?: number
-      scope?: "worktree" | "branch"
-    }
+  | { type: "git.diff"; directory: string; file: string }
   /* The edited-files card: each of a turn's files diffed as it stands now, one patch per file. */
   | { type: "git.diffFiles"; directory: string; files: string[] }
-  | { type: "git.revert"; directory: string; file: string }
   /* The info card's 环境信息 and its commit or push card. */
   | { type: "git.summary"; directory: string }
   | { type: "git.commitState"; directory: string }
@@ -1938,6 +1940,8 @@ export type Request =
   | { type: "git.push"; directory: string }
   /* The current branch's pull request, asked of GitHub's public API; only for GitHub remotes. */
   | { type: "git.pullRequest"; directory: string }
+  /* Which main repository each conversation folder belongs to, and which folders are gone: MiMo's repoRoots. */
+  | { type: "git.repoRoots"; directories: string[] }
   /* A subject line for the pending changes, from the conversation's model; `update …` when it does not answer. */
   | { type: "git.commitMessage"; directory: string; sessionID?: string; paths: string[] }
   | { type: "file.list"; directory: string; query?: string }
@@ -1978,8 +1982,6 @@ export type Request =
   /** Everything a shell has printed so far, to redraw a pane that went away. */
   | { type: "shell.attach"; shellID: string }
   | { type: "workspace.list"; directory: string }
-  | { type: "workspace.create"; directory: string; name: string }
-  | { type: "workspace.remove"; directory: string; target: string }
   | { type: "mcp.list" }
   | { type: "mcp.toggle"; name: string }
   | { type: "mcp.tools"; name: string }
@@ -2124,18 +2126,17 @@ export interface ResponseMap {
   /** Facts about a session's directory; absent fields are simply unknown. */
   "workspace.info": { exists: boolean; branch?: string; modified?: number }
   "git.status": GitStatus
-  "git.init": GitStatus
   "git.branches": BranchState
   "git.checkout": CheckoutResult
   "git.diff": { patch: string }
   /* `repo` false means the project is not in a repository and there is nothing to compare with. */
   "git.diffFiles": { repo: boolean; files: { path: string; patch: string }[] }
-  "git.revert": GitStatus
   "git.summary": GitSummary
   "git.commitState": CommitState
   "git.commit": CommitResult
   "git.push": PushResult
   "git.pullRequest": PullRequestState
+  "git.repoRoots": { roots: Record<string, string>; missing: string[] }
   "git.commitMessage": { message: string; generated: boolean }
   "file.list": { files: FileEntry[] }
   /* Folders first, then files, each by name; dot entries and the ignored folders left out. */
@@ -2182,8 +2183,6 @@ export interface ResponseMap {
   /* `edit` is 智能编辑's validated answer when a draft was sent; without it the window types `text` in. */
   "voice.transcribe": { text: string; heard: string; edit?: VoiceEdit }
   "workspace.list": { worktrees: Worktree[] }
-  "workspace.create": { directory: string; branch: string }
-  "workspace.remove": Record<string, never>
   "mcp.list": { servers: McpServerState[] }
   "mcp.toggle": { servers: McpServerState[] }
   /** A connected server's tools, or why there are none to list (a status name or the server's error). */

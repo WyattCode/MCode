@@ -91,6 +91,21 @@ withDefaults(defineProps<{ name: StepIconName; size?: number }>(), { size: 14 })
       <path d="M7.5 12.8a6.5 6.5 0 0 1 9 0" />
       <path d="M12 16.5h.01" stroke-width="3" />
     </template>
+    <template v-else-if="name === 'skill'">
+      <path d="M19.5 4.5c-5.8.4-10.4 4.4-12 10.6L6 20" />
+      <path d="M19.5 4.5c.3 5.6-3.4 10-9.9 10.9" />
+      <path d="M10.2 11.2 13 8.4" />
+    </template>
+    <template v-else-if="name === 'memory'">
+      <path d="M12 5.5a3.5 3.5 0 0 0-6.6 1.6A3.3 3.3 0 0 0 4 13a3.4 3.4 0 0 0 3 5 3 3 0 0 0 5 .5z" />
+      <path d="M12 5.5a3.5 3.5 0 0 1 6.6 1.6A3.3 3.3 0 0 1 20 13a3.4 3.4 0 0 1-3 5 3 3 0 0 1-5 .5z" />
+      <path d="M12 5.5v13" />
+    </template>
+    <template v-else-if="name === 'actor'">
+      <rect x="5" y="8" width="14" height="11" rx="3.5" />
+      <path d="M12 4.5V8" />
+      <path d="M9.5 13h.01M14.5 13h.01" stroke-width="2.6" />
+    </template>
     <template v-else-if="name === 'speaker'">
       <path d="M11.5 5 7 8.8H3.8v6.4H7l4.5 3.8z" />
       <path d="M15.4 9.6a3.4 3.4 0 0 1 0 4.8" />

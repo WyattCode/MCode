@@ -1,4 +1,4 @@
-import { execFileSync, spawn, type ChildProcess } from "node:child_process"
+import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process"
 import fs from "node:fs/promises"
 import path from "node:path"
 import type { ToolDefinition } from "./types"
@@ -8,6 +8,10 @@ import { guardAppData } from "./app-data"
 import { namesAskingFile } from "../permission"
 import { collectMutationTargets, scanCommand } from "./bash-scan"
 import { mainWorktreeRoots } from "../session/worktree"
+import { ABORTED_TOOL } from "../provider/history"
+import { repositoryRoot, tryGit } from "../git"
+import { gitBash, which, windowsPath } from "../shell-path"
+import { mergeConflictNotice } from "./merge-conflict"
 
 const DEFAULT_TIMEOUT = 120_000
 
@@ -19,7 +23,11 @@ export const INTERACTIVE_REFUSAL = [
 /** How much output comes back inline when the call does not say, in MiMo's approximate tokens of four bytes. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 30_000
 /** How much of the latest output the card shows while the command works. */
-const PREVIEW_CHARS = 30_000
+export const PREVIEW_CHARS = 30_000
+/** How often the card's live output is refreshed at most, so a chatty command does not keep the main process busy. */
+export const PROGRESS_EVERY_MS = 100
+/** How long a stopped command is given to close its pipes before the result is put together without them. */
+const CLOSE_GRACE_MS = 3_000
 /** The longest delay a timer takes; anything larger would fire at once. */
 const LONGEST_TIMER = 2 ** 31 - 1
 
@@ -54,7 +62,11 @@ const consoleEncoding = (() => {
     try {
       const answer = execFileSync("chcp.com", { windowsHide: true }).toString("latin1")
       const page = /(\d{3,5})/.exec(answer)?.[1]
-      resolved = page ? CODEPAGES[page] : undefined
+      const encoding = page ? CODEPAGES[page] : undefined
+      if (encoding) {
+        new TextDecoder(encoding)
+        resolved = encoding
+      }
     } catch {
       resolved = undefined
     }
@@ -62,31 +74,58 @@ const consoleEncoding = (() => {
   }
 })()
 
-/**
- * The encoding a command's bytes are in: UTF-8 when they are UTF-8, and the
- * console's own encoding when they are not. The question is put strictly - a
- * fatal decoder that throws - because asking loosely and looking for
- * replacement characters cannot tell a stream that is not UTF-8 from one that
- * is and legitimately contains U+FFFD.
- */
-function encodingOf(bytes: Buffer): string {
-  try {
-    new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-    return "utf-8"
-  } catch {
-    const encoding = consoleEncoding()
-    if (!encoding) return "utf-8"
-    try {
-      new TextDecoder(encoding)
-      return encoding
-    } catch {
-      return "utf-8"
-    }
-  }
+/** What one command's output is decoded as, decided once and shared by its two pipes. */
+export interface OutputEncoding {
+  encoding?: string
 }
 
-function decode(bytes: Buffer): string {
-  return new TextDecoder(encodingOf(bytes)).decode(bytes)
+/**
+ * One pipe's bytes as text, decoded as a stream.
+ *
+ * The encoding is decided once per command, at the first character that is
+ * not ASCII: UTF-8 when the bytes read as UTF-8, and the console's own
+ * encoding when they do not - every native tool on a Chinese Windows writes
+ * GBK. Until then nothing has been seen that the two would decode differently.
+ * After that the decoder carries a character split across two chunks over to
+ * the next one, so a chunk that ends half way through a character never flips
+ * the decision, and nothing decoded is ever decoded again.
+ */
+export class OutputDecoder {
+  private decoder: InstanceType<typeof TextDecoder> | undefined
+  private held = Buffer.alloc(0)
+
+  constructor(private readonly choice: OutputEncoding) {}
+
+  write(chunk: Buffer): string {
+    if (this.decoder) return this.decoder.decode(chunk, { stream: true })
+    const bytes = this.held.length ? Buffer.concat([this.held, chunk]) : chunk
+    if (this.choice.encoding) return this.settle(this.choice.encoding, bytes)
+    let probe: string
+    try {
+      // Strict, and streaming: an incomplete character at the end is not an error, an invalid byte is.
+      probe = new TextDecoder("utf-8", { fatal: true }).decode(bytes, { stream: true })
+    } catch {
+      return this.settle((this.choice.encoding = consoleEncoding() ?? "utf-8"), bytes)
+    }
+    if (/[^\x00-\x7f]/.test(probe)) return this.settle((this.choice.encoding = "utf-8"), bytes)
+    // All ASCII so far: one byte a character, and whatever is left is the start of one not yet complete.
+    this.held = Buffer.from(bytes.subarray(probe.length))
+    return probe
+  }
+
+  /** What is left once the pipe has closed. */
+  end(): string {
+    if (this.decoder) return this.decoder.decode()
+    const rest = this.held
+    this.held = Buffer.alloc(0)
+    return rest.length ? new TextDecoder().decode(rest) : ""
+  }
+
+  private settle(encoding: string, bytes: Buffer): string {
+    this.decoder = new TextDecoder(encoding)
+    this.held = Buffer.alloc(0)
+    return this.decoder.decode(bytes, { stream: true })
+  }
 }
 
 const byteLength = (text: string) => Buffer.byteLength(text, "utf8")
@@ -123,82 +162,153 @@ function tailWithin(text: string, maxBytes: number): { text: string; cut: boolea
   return { text: kept.join("\n"), cut: true }
 }
 
-/**
- * Commands whose whole purpose is to be hard to undo. These are refused
- * outright rather than merely prompted for: an approval dialog trains people
- * to click through, and there is no good reason for the agent to reach for
- * these shapes on its own.
+/*
+ * Makes PowerShell speak UTF-8 in both directions.
+ *
+ * Windows PowerShell emits its own messages in the console's codepage - 936 on
+ * a Chinese install - and this app reads the pipe as UTF-8, so every error it
+ * raised arrived as replacement characters, and the model reading the output
+ * could not see what went wrong. The other direction matters as much:
+ * `$OutputEncoding` is what PowerShell 5.1 pipes text to a native program in,
+ * and it defaults to ASCII, so `"说明" | git commit -F -` committed question
+ * marks. Both are set to UTF-8 without a byte order mark, as MiMo sets them.
  */
-const REFUSED: { pattern: RegExp; reason: string }[] = [
-  { pattern: /\brm\s+(-[a-z]*\s+)*-[a-z]*[rR][a-z]*f|\brm\s+-fr\b/, reason: "recursive force delete" },
-  { pattern: /:\(\)\s*\{.*\}\s*;\s*:/, reason: "fork bomb" },
-  { pattern: /\bmkfs(\.[a-z0-9]+)?\b/, reason: "filesystem format" },
-  { pattern: /\bdd\b[^|]*\bof=\/dev\/(sd|nvme|hd|disk)/, reason: "raw disk write" },
-  { pattern: />\s*\/dev\/(sd|nvme|hd|disk)[a-z0-9]*/, reason: "raw disk write" },
-  { pattern: /\bshutdown\b|\breboot\b|\bhalt\b/, reason: "host power control" },
-]
+const POWERSHELL_UTF8 = "$OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; "
+/** cmd's equivalent: switch the console to the UTF-8 code page, quietly. */
+const CMD_UTF8 = "chcp 65001>nul 2>nul & "
+
+/** How a script is handed to one shell. */
+export interface ShellCall {
+  command: string
+  args: (script: string) => string[]
+  powershell: boolean
+  /** A shell that reads POSIX paths, whose `/tmp` has to be asked of cygpath. */
+  posix: boolean
+  /** cmd takes its command line exactly as written, as Node's own `shell` option passes it. */
+  verbatim: boolean
+}
+
+/** The name a shell is known by: no folder, no extension, lower case. */
+function shellName(file: string): string {
+  if (process.platform === "win32") return path.win32.parse(windowsPath(file)).name.toLowerCase()
+  return path.basename(file).toLowerCase()
+}
+
+const POSIX_SHELLS = new Set(["bash", "dash", "ksh", "sh", "zsh"])
+/** Shells MiMo will not take from `SHELL` for running commands. */
+const NOT_FROM_ENV = new Set(["fish", "nu"])
+
+function callFor(file: string): ShellCall {
+  const name = shellName(file)
+  if (name === "powershell" || name === "pwsh") {
+    return {
+      command: file,
+      args: (script) => ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
+      powershell: true,
+      posix: false,
+      verbatim: false,
+    }
+  }
+  if (process.platform === "win32" && name === "cmd") {
+    return { command: file, args: (script) => ["/d", "/s", "/c", `"${CMD_UTF8}${script}"`], powershell: false, posix: false, verbatim: true }
+  }
+  // Every other shell is handed the script with -c, as Node's `shell` option hands it: no login profile to read first.
+  return { command: file, args: (script) => ["-c", script], powershell: false, posix: POSIX_SHELLS.has(name), verbatim: false }
+}
+
+/** A named shell made into something that can be started: a bare name looked up on PATH, a POSIX bash path made git's bash. */
+function located(file: string): string {
+  if (process.platform !== "win32") return file
+  const shell = windowsPath(file)
+  if (path.win32.dirname(shell) !== ".") {
+    if (shell.startsWith("/") && shellName(shell) === "bash") return gitBash() ?? shell
+    return shell
+  }
+  return which(shell) ?? shell
+}
+
+/** The shell used when nothing names one: MiMo's order, the newer PowerShell first on Windows. */
+function platformShell(): string {
+  if (process.platform === "win32") return which("pwsh.exe") ?? which("powershell.exe") ?? gitBash() ?? process.env.COMSPEC ?? "cmd.exe"
+  if (process.platform === "darwin") return "/bin/zsh"
+  return which("bash") ?? "/bin/sh"
+}
+
+let defaultShell: { key: string; file: string } | undefined
 
 /**
  * The shell a command runs in, and how a script is handed to it.
  *
- * A chosen shell is honoured where the flags are known; anything else falls
- * back to the platform default rather than guessing at an argument form, since
- * getting that wrong runs the script as a filename.
+ * The app's own setting wins; then `SHELL` from the environment, unless it
+ * names fish or nu; then the platform's preference - pwsh, Windows
+ * PowerShell, git's bash, COMSPEC on Windows. The PATH lookup is remembered
+ * until PATH or SHELL changes.
  */
-/*
- * Makes PowerShell write UTF-8.
- *
- * Windows PowerShell emits its own messages in the console's codepage - 936 on
- * a Chinese install - and this app reads the pipe as UTF-8, so every error it
- * raised arrived as replacement characters. That is worse than ugly: the model
- * reading the output cannot see what went wrong, so it does not fix the script,
- * it flails. Measured on the real failure: as bytes it is GBK, and the same
- * command with this prefix comes back as UTF-8 the first time.
- */
-const POWERSHELL_UTF8 = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; "
-
-export function shell(chosen?: string): { command: string; args: (script: string) => string[]; powershell: boolean } {
-  const name = (chosen ?? "").trim()
-  const base = name.split(/[\\/]/).pop()?.toLowerCase() ?? ""
-
-  if (base === "cmd.exe" || base === "cmd") {
-    return { command: name, args: (script) => ["/d", "/s", "/c", script], powershell: false }
+export function shell(chosen?: string): ShellCall {
+  const configured = (chosen ?? "").trim()
+  if (configured) return callFor(located(configured))
+  const fromEnv = process.env.SHELL?.trim() ?? ""
+  const key = `${fromEnv}\0${process.env.PATH ?? process.env.Path ?? ""}`
+  if (defaultShell?.key !== key) {
+    const file = fromEnv && !NOT_FROM_ENV.has(shellName(fromEnv)) ? located(fromEnv) : platformShell()
+    defaultShell = { key, file }
   }
-  if (base === "powershell.exe" || base === "pwsh.exe" || base === "pwsh" || base === "powershell") {
-    return {
-      command: name,
-      args: (script) => ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
-      powershell: true,
-    }
-  }
-  if (base && base !== "") {
-    // bash, zsh, sh, fish and git-bash all take -lc.
-    if (/^(bash|zsh|sh|fish|dash|ksh)(\.exe)?$/.test(base)) {
-      return { command: name, args: (script) => ["-lc", script], powershell: false }
-    }
-  }
-
-  if (process.platform === "win32") {
-    return {
-      command: "powershell.exe",
-      args: (script) => ["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_UTF8 + script],
-      powershell: true,
-    }
-  }
-  return { command: process.env.SHELL || "/bin/bash", args: (script) => ["-lc", script], powershell: false }
+  return callFor(defaultShell.file)
 }
 
 /**
- * Ends a command and everything it started.
+ * The folder a command asked to run in.
  *
- * A shell that has launched a server is the ordinary case for a command that
- * has to be interrupted, and signalling the shell alone leaves that server
- * running. Windows offers no process groups, so its tree is walked by taskkill;
- * elsewhere the child leads a group that can be signalled as a whole.
- *
- * Failures are swallowed on purpose: by the time this runs the process may have
- * exited on its own, and there is nothing useful to say about that.
+ * On Windows a POSIX spelling is turned into a drive path first - `/c/Users`
+ * had resolved to `D:\c\Users` - and a POSIX shell is asked where the rest,
+ * such as `/tmp`, really is.
  */
+async function workdirOf(text: string, call: ShellCall, resolve: (target: string) => Promise<string>): Promise<string> {
+  if (process.platform === "win32" && call.posix && text.startsWith("/") && windowsPath(text) === text) {
+    const answer = await new Promise<string>((done) =>
+      execFile(call.command, ["-c", 'cygpath -w -- "$1"', "_", text], { windowsHide: true, timeout: 5_000 }, (_err, stdout) => done(String(stdout ?? ""))),
+    )
+    const file = answer.split(/\r?\n/)[0]?.trim()
+    if (file) return resolve(file)
+  }
+  return resolve(windowsPath(text))
+}
+
+/**
+ * Who a commit made by a command is by, as the project's repository says.
+ *
+ * MiMo sets git's author and committer from the project's own config, so a
+ * command that commits in another repository still commits as the person this
+ * project knows. Asked once per project folder.
+ */
+const identities = new Map<string, Promise<{ name?: string; email?: string }>>()
+
+function gitIdentity(directory: string): Promise<{ name?: string; email?: string }> {
+  let known = identities.get(directory)
+  if (!known) {
+    known = repositoryRoot(directory)
+      .then(async (root) => {
+        if (!root) return {}
+        const [name, email] = await Promise.all([tryGit(root, ["config", "user.name"]), tryGit(root, ["config", "user.email"])])
+        return { name: name.out.trim() || undefined, email: email.out.trim() || undefined }
+      })
+      .catch(() => ({}))
+    identities.set(directory, known)
+  }
+  return known
+}
+
+/** The identity as environment variables, only where the environment does not already set them. */
+export async function gitIdentityEnv(directory: string): Promise<Record<string, string>> {
+  const { name, email } = await gitIdentity(directory)
+  const env: Record<string, string> = {}
+  if (name && !process.env.GIT_AUTHOR_NAME) env.GIT_AUTHOR_NAME = name
+  if (email && !process.env.GIT_AUTHOR_EMAIL) env.GIT_AUTHOR_EMAIL = email
+  if (name && !process.env.GIT_COMMITTER_NAME) env.GIT_COMMITTER_NAME = name
+  if (email && !process.env.GIT_COMMITTER_EMAIL) env.GIT_COMMITTER_EMAIL = email
+  return env
+}
+
 /**
  * The commands running right now, so quitting can end them.
  *
@@ -224,11 +334,22 @@ export function liveBashCommands(): number {
   return live.size
 }
 
+/**
+ * Ends a command and everything it started.
+ *
+ * A shell that has launched a server is the ordinary case for a command that
+ * has to be interrupted, and signalling the shell alone leaves that server
+ * running. Windows offers no process groups, so its tree is walked by taskkill;
+ * elsewhere the child leads a group that can be signalled as a whole.
+ *
+ * Failures are swallowed on purpose: by the time this runs the process may have
+ * exited on its own, and there is nothing useful to say about that.
+ */
 function stop(child: ChildProcess): void {
   if (!child.pid) return
   if (process.platform === "win32") {
     try {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true })
+      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true }).on("error", () => child.kill("SIGKILL"))
     } catch {
       child.kill("SIGKILL")
     }
@@ -284,20 +405,12 @@ export const BashTool: ToolDefinition = {
       },
       description: { type: "string", description: "What the command does, in five to ten words, e.g. 'Run unit tests'" },
     },
-    required: ["command"],
+    required: ["command", "description"],
     additionalProperties: false,
   },
   async execute(input, context) {
     const command = String(input.command).trim()
     if (!command) throw new ToolError("command is empty")
-
-    for (const rule of REFUSED) {
-      if (rule.pattern.test(command)) {
-        throw new ToolError(
-          `Refused: this command looks like a ${rule.reason}, which this tool will not run. If you genuinely need it, ask the user to run it themselves.`,
-        )
-      }
-    }
 
     const timeout = input.timeout === undefined ? DEFAULT_TIMEOUT : Number(input.timeout)
     if (!Number.isFinite(timeout) || timeout < 0) throw new ToolError(`timeout has to be a number of milliseconds, zero or more: ${String(input.timeout)}`)
@@ -323,8 +436,11 @@ export const BashTool: ToolDefinition = {
       }
     }
 
-    const cwd = input.workdir ? await resolvePath(context, String(input.workdir)) : context.directory
-    const { command: bin, args, powershell } = shell(context.shell)
+    const call = shell(context.shell)
+    const { command: bin, args, powershell } = call
+    const cwd = input.workdir ? await workdirOf(String(input.workdir), call, (target) => resolvePath(context, target)) : context.directory
+    // A folder that is not there would otherwise surface as "spawn powershell.exe ENOENT", which reads as a missing shell.
+    if (!(await fs.stat(cwd).catch(() => undefined))?.isDirectory()) throw new ToolError(`workdir does not exist or is not a folder: ${cwd}`)
 
     /*
      * MiMo's order: folders outside the project that the command's file
@@ -332,7 +448,8 @@ export const BashTool: ToolDefinition = {
      * question of its own, listing what it deletes, asked every time and never
      * remembered - unless everything it deletes is in the temp folder; anything
      * else is one question whose "always" keeps each command's prefix. A bare
-     * `cd` asks nothing.
+     * `cd` asks nothing. There is no list of commands refused outright, as
+     * MiMo has none: a delete is what its own question is for.
      */
     const scan = await scanCommand(command, cwd, context.directory, powershell)
     /*
@@ -372,6 +489,8 @@ export const BashTool: ToolDefinition = {
       await context.permissions.ask({ ...question, patterns: scan.patterns, always: scan.always, forced: false })
     }
 
+    const identity = await gitIdentityEnv(context.directory)
+
     return await new Promise((resolve, reject) => {
       /*
        * No stdin, as the reference spawns it (`stdin: "ignore"`). The command
@@ -396,9 +515,11 @@ export const BashTool: ToolDefinition = {
           NO_COLOR: "1",
           // As MiMo sets it: Python on Windows otherwise writes the console codepage, or fails on a character it cannot encode.
           ...(process.platform === "win32" ? { PYTHONIOENCODING: "utf-8" } : {}),
+          ...identity,
         },
         stdio: ["ignore", "pipe", "pipe"],
         windowsHide: true,
+        windowsVerbatimArguments: call.verbatim,
         /*
          * Its own process group, so stopping the command can signal everything
          * the command started rather than only the shell. Windows has no groups
@@ -411,90 +532,121 @@ export const BashTool: ToolDefinition = {
       // Held only while it runs: quitting ends what is still in here.
       live.add(child)
       child.once("exit", () => live.delete(child))
+      const closed = new Promise<void>((done) => {
+        child.once("close", () => done())
+        child.once("error", () => done())
+      })
 
       /*
-       * MiMo's accounting, in bytes. The result shows `budget` bytes: the first
-       * half of it from the very start of the output and the rest from the end.
-       * Twice that much of the latest output is held, and once the output passes
-       * the budget the whole of it goes to a file instead of memory.
-       *
-       * Bytes are held rather than text because a character can be split across
-       * two chunks, and a command that does not write UTF-8 - every native tool
-       * on a Chinese Windows writes the console codepage - has to be decoded as
-       * a whole to be decoded at all.
+       * MiMo's accounting, over the decoded text and measured in its UTF-8
+       * bytes. The result shows `budget` bytes: the first half of it from the
+       * very start of the output and the rest from the end. Twice that much of
+       * the latest output is held, and once the output passes the budget the
+       * whole of it goes to a file instead of memory.
        */
       const budget = maxTokens * 4
       const keep = budget * 2
-      const head: Buffer[] = []
-      let headBytes = 0
-      const recent: Buffer[] = []
+      const half = Math.floor(budget / 2)
+      let first = ""
+      let firstFull = false
+      const recent: { text: string; size: number }[] = []
       let recentBytes = 0
       let total = 0
       let dropped = false
-      let spill: Buffer[] | undefined = []
-      let decoder: InstanceType<typeof TextDecoder> | undefined
+      let unsaved: string[] | undefined = context.toolOutputs ? [] : undefined
+      let unsavedBytes = 0
       let saved: Promise<string | undefined> | undefined
+      let queued = ""
+      let flushing: Promise<void> | undefined
+      let latest = ""
+      let latestCut = false
+      let progressTimer: ReturnType<typeof setTimeout> | undefined
       let settled = false
+      // Once the result is being put together nothing more is taken in, so a late write cannot overwrite it.
+      let sealed = false
+      const encoding: OutputEncoding = {}
+      const pipes = [new OutputDecoder(encoding), new OutputDecoder(encoding)]
 
-      const append = (chunk: Buffer) => {
-        total += chunk.byteLength
-        const room = Math.floor(budget / 2) - headBytes
-        if (room > 0) {
-          const part = chunk.subarray(0, room)
-          head.push(part)
-          headBytes += part.byteLength
+      const flush = async () => {
+        const file = await saved
+        while (queued) {
+          const text = queued
+          queued = ""
+          if (file) await fs.appendFile(file, text, "utf8").catch(() => {})
         }
-        recent.push(chunk)
-        recentBytes += chunk.byteLength
-        while (recentBytes > keep && recent.length > 1) {
-          recentBytes -= recent.shift()!.byteLength
-          dropped = true
-        }
-        if (spill) {
-          spill.push(chunk)
-          if (total > budget) {
-            const all = Buffer.concat(spill)
-            spill = undefined
-            const outputs = context.toolOutputs
-            if (outputs) {
-              decoder = new TextDecoder(encodingOf(all))
-              saved = outputs.save(decoder.decode(all, { stream: true })).catch(() => undefined)
-            }
-          }
-        } else if (saved && decoder) {
-          const text = decoder.decode(chunk, { stream: true })
-          saved = saved.then(async (file) => {
-            if (file) await fs.appendFile(file, text, "utf8").catch(() => {})
-            return file
-          })
-        }
-        const latest = decode(Buffer.concat(recent))
-        context.progress(latest.length > PREVIEW_CHARS ? `...\n\n${latest.slice(-PREVIEW_CHARS)}` : latest)
+        flushing = undefined
       }
 
-      child.stdout.on("data", append)
-      child.stderr.on("data", append)
+      const report = () => {
+        progressTimer = undefined
+        if (!sealed) context.progress(latestCut ? `...\n\n${latest}` : latest)
+      }
+
+      const take = (text: string) => {
+        if (!text) return
+        const size = byteLength(text)
+        total += size
+        if (!firstFull) {
+          const joined = first + text
+          first = headWithin(joined, half)
+          firstFull = first.length < joined.length
+        }
+        recent.push({ text, size })
+        recentBytes += size
+        while (recentBytes > keep && recent.length > 1) {
+          recentBytes -= recent.shift()!.size
+          dropped = true
+        }
+        latest += text
+        if (latest.length > PREVIEW_CHARS) {
+          latest = latest.slice(-PREVIEW_CHARS)
+          // A pair split at the cut would draw as a stray half character.
+          if (/^[\udc00-\udfff]/.test(latest)) latest = latest.slice(1)
+          latestCut = true
+        }
+        if (unsaved) {
+          unsaved.push(text)
+          unsavedBytes += size
+          if (unsavedBytes > budget) {
+            const all = unsaved.join("")
+            unsaved = undefined
+            saved = context.toolOutputs!.save(all).catch(() => undefined)
+          }
+        } else if (saved) {
+          queued += text
+          flushing ??= flush()
+        }
+        progressTimer ??= setTimeout(report, PROGRESS_EVERY_MS)
+      }
+
+      child.stdout.on("data", (chunk: Buffer) => {
+        if (!sealed) take(pipes[0].write(chunk))
+      })
+      child.stderr.on("data", (chunk: Buffer) => {
+        if (!sealed) take(pipes[1].write(chunk))
+      })
+
+      /** Takes in what the pipes still held and stops taking anything more. */
+      const seal = () => {
+        if (sealed) return
+        for (const pipe of pipes) take(pipe.end())
+        sealed = true
+        if (progressTimer) clearTimeout(progressTimer)
+        progressTimer = undefined
+      }
 
       const finish = async (code: number | null, expired: boolean) => {
-        if (saved && decoder) {
-          const rest = decoder.decode()
-          if (rest) {
-            saved = saved.then(async (file) => {
-              if (file) await fs.appendFile(file, rest, "utf8").catch(() => {})
-              return file
-            })
-          }
-        }
+        seal()
         const file = saved ? await saved : undefined
-        const raw = decode(Buffer.concat(recent))
+        while (flushing) await flushing
+        const raw = recent.map((item) => item.text).join("")
         const end = tailWithin(raw, budget)
         const cut = dropped || end.cut
         let output = end.text
         if (cut && file) {
-          const start = headWithin(decode(Buffer.concat(head)).replace(/�+$/, ""), Math.floor(budget / 2))
-          const suffix = tailWithin(raw, Math.max(0, budget - byteLength(start))).text
-          const shown = byteLength(start) + byteLength(suffix)
-          output = `The output was cut: about ${Math.ceil(total / 4)} tokens in all.\n\n${start}\n… about ${Math.ceil(Math.max(0, total - shown) / 4)} tokens left out …\n${suffix}`
+          const suffix = tailWithin(raw, Math.max(0, budget - byteLength(first))).text
+          const shown = byteLength(first) + byteLength(suffix)
+          output = `The output was cut: about ${Math.ceil(total / 4)} tokens in all.\n\n${first}\n… about ${Math.ceil(Math.max(0, total - shown) / 4)} tokens left out …\n${suffix}`
         }
         if (!output) output = "(no output)"
         /*
@@ -505,6 +657,8 @@ export const BashTool: ToolDefinition = {
         if (expired) {
           output += `\n\n(The command was stopped when it ran past its ${timeout} ms timeout. If it needs longer and is not waiting for input, run it again with a larger timeout.)`
         }
+        // A merge or rebase this left stopped on conflicts: the note says to back out and hand the conflict over.
+        output += await mergeConflictNotice(cwd, command, output)
         if (cut && file) output += `\n\nThe whole output is saved at ${file}`
         resolve({
           output,
@@ -521,26 +675,43 @@ export const BashTool: ToolDefinition = {
         })
       }
 
+      /** Stops the command and waits a little for its pipes to close, so what it printed on the way out is kept. */
+      const halt = async () => {
+        stop(child)
+        let grace: ReturnType<typeof setTimeout> | undefined
+        await Promise.race([closed, new Promise<void>((done) => (grace = setTimeout(done, CLOSE_GRACE_MS)))])
+        clearTimeout(grace)
+      }
+
       const timer = setTimeout(() => {
         if (settled) return
         settled = true
         context.signal.removeEventListener("abort", onAbort)
-        stop(child)
-        void finish(null, true)
+        void halt().then(() => finish(null, true))
       }, Math.min(LONGEST_TIMER, timeout + 100))
 
+      /*
+       * Stopped by the user. What the command printed so far stays on the card,
+       * brought up to date first; the runner marks the call interrupted, and
+       * that output is what the model is then handed, as MiMo hands it.
+       */
       const onAbort = () => {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        stop(child)
-        reject(new ToolError("Command was aborted"))
+        void halt().then(() => {
+          seal()
+          context.progress(latestCut ? `...\n\n${latest}` : latest)
+          reject(new ToolError(ABORTED_TOOL))
+        })
       }
       context.signal.addEventListener("abort", onAbort, { once: true })
 
       child.on("error", (err) => {
         if (settled) return
         settled = true
+        sealed = true
+        if (progressTimer) clearTimeout(progressTimer)
         clearTimeout(timer)
         context.signal.removeEventListener("abort", onAbort)
         reject(new ToolError(`Failed to start command: ${err.message}`))

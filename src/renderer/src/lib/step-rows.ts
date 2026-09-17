@@ -1,4 +1,5 @@
 import type { AssistantPart, PermissionRecord, ReasoningPart, TextPart, ToolPart } from "@shared/protocol"
+import { saysSomething } from "@shared/reply-clean"
 import { bucketOf, permissionsOf, stepState, stepTitle, type Bucket } from "./tool-meta"
 
 /**
@@ -7,8 +8,11 @@ import { bucketOf, permissionsOf, stepState, stepTitle, type Bucket } from "./to
  * Every consecutive tool call - reads, commands, edits, MCP tools, running or
  * failed - shares one group until the model says something; a decided
  * permission sits right after the call it gated, inside the same group; a
- * question always stands on its own. Pure, so the grouping can be reasoned
- * about apart from the components that draw it.
+ * question always stands on its own, and one still waiting for its answer is
+ * not a row at all (it is in the dock). Subagent calls keep a group of their
+ * own, as MiMo's do, so a run of them is never folded out of sight inside a
+ * group of reads. Pure, so the grouping can be reasoned about apart from the
+ * components that draw it.
  */
 
 /** An error the turn carried on past, placed where it happened among the turn's parts. */
@@ -25,11 +29,14 @@ export type StepItem =
   | { kind: "tool"; id: string; part: ToolPart }
   | { kind: "permission"; id: string; part: ToolPart; record: PermissionRecord }
   | { kind: "error"; id: string; error: InlineError }
+  /** MiMo's "i" row: a word from the app about the step before it, under that step's group. */
+  | { kind: "notice"; id: string; key: string }
 
 export type StepRow =
   | { kind: "part"; id: string; part: TextPart | ReasoningPart }
   | { kind: "question"; id: string; part: ToolPart }
-  | { kind: "group"; id: string; items: StepItem[] }
+  /** `actor`: a run of subagent calls, drawn flat or as one pill row rather than under a summary. */
+  | { kind: "group"; id: string; items: StepItem[]; actor?: boolean }
   | { kind: "error"; id: string; error: InlineError }
 
 /**
@@ -55,9 +62,17 @@ export function permissionShown(record: PermissionRecord): boolean {
 export function buildRows(parts: AssistantPart[], errors: InlineError[] = []): StepRow[] {
   const out: StepRow[] = []
   let group: Extract<StepRow, { kind: "group" }> | undefined
+  let actors: Extract<StepRow, { kind: "group" }> | undefined
   const waiting = [...errors].sort((a, b) => a.at - b.at)
+  // MiMo says a command was skipped for wanting input once per turn, the first time.
+  let toldInteractive = false
+  const close = () => {
+    group = undefined
+    actors = undefined
+  }
 
   const join = (item: StepItem) => {
+    actors = undefined
     if (!group) {
       group = { kind: "group", id: `g:${item.id}`, items: [] }
       out.push(group)
@@ -65,21 +80,41 @@ export function buildRows(parts: AssistantPart[], errors: InlineError[] = []): S
     group.items.push(item)
   }
 
-  // An error joins the group that is open when it happened, and stands alone otherwise.
+  // subagents: MiMo's actor group - a subagent call closes the group of other calls, and they close it.
+  const joinActors = (item: StepItem) => {
+    group = undefined
+    if (!actors) {
+      actors = { kind: "group", id: `a:${item.id}`, items: [], actor: true }
+      out.push(actors)
+    }
+    actors.items.push(item)
+  }
+
+  // An error joins the group of other calls that is open when it happened, and stands alone otherwise.
   const placeErrors = (before: number) => {
     while (waiting.length && waiting[0]!.at <= before) {
       const error = waiting.shift()!
       if (group) join({ kind: "error", id: error.id, error })
-      else out.push({ kind: "error", id: error.id, error })
+      else {
+        close()
+        out.push({ kind: "error", id: error.id, error })
+      }
     }
   }
 
   parts.forEach((part, index) => {
     placeErrors(index)
-    if (part.type === "text" || part.type === "reasoning") {
+    if (part.type === "reasoning") {
       // Nothing said is no break: the model often opens an empty block between calls.
       if (!part.text.trim()) return
-      group = undefined
+      close()
+      out.push({ kind: "part", id: part.id, part })
+      return
+    }
+    if (part.type === "text") {
+      // Nor is text that is only leaked markup or a lone ellipsis, as MiMo skips both.
+      if (!saysSomething(part.text)) return
+      close()
       out.push({ kind: "part", id: part.id, part })
       return
     }
@@ -87,16 +122,61 @@ export function buildRows(parts: AssistantPart[], errors: InlineError[] = []): S
     if (part.name === "task") return
     // plan: plan_exit's approval card is drawn as the question it is, on its own row.
     if (part.name === "question" || part.name === "plan_exit") {
-      group = undefined
+      // Still waiting: it lives in the dock, and leaves neither a row nor a break behind.
+      if (part.status === "pending" || part.status === "running") return
+      close()
       out.push({ kind: "question", id: part.id, part })
       return
     }
-    join({ kind: "tool", id: part.id, part })
+    const add = part.name === "actor" ? joinActors : join
+    add({ kind: "tool", id: part.id, part })
     for (const record of permissionsOf(part)) {
-      if (permissionShown(record)) join({ kind: "permission", id: `${part.id}:${record.requestID}`, part, record })
+      if (permissionShown(record)) add({ kind: "permission", id: `${part.id}:${record.requestID}`, part, record })
+    }
+    if (!toldInteractive && part.metadata?.interactive === true) {
+      toldInteractive = true
+      add({ kind: "notice", id: `${part.id}:interactive`, key: "stepList.interactiveSkipped" })
     }
   })
   placeErrors(Number.POSITIVE_INFINITY)
+  return out
+}
+
+/**
+ * MiMo's stages: a run of work (calls, permissions, errors) followed by a run
+ * of what the turn said to the reader (its words, a question, subagents). The
+ * next piece of work after something said starts a new stage.
+ *
+ * `progressEnd` is where the stage's work ends and its words begin; it equals
+ * `end` for a stage that said nothing.
+ */
+export interface Stage {
+  start: number
+  progressEnd: number
+  end: number
+}
+
+export function stagesOf<T>(rows: readonly T[], answers: (row: T) => boolean): Stage[] {
+  const out: Stage[] = []
+  let start = -1
+  let progressEnd = -1
+  let speaking = false
+  rows.forEach((row, index) => {
+    if (answers(row)) {
+      if (start < 0) start = index
+      if (progressEnd < 0) progressEnd = index
+      speaking = true
+      return
+    }
+    if (speaking) {
+      out.push({ start, progressEnd, end: index })
+      start = -1
+      progressEnd = -1
+      speaking = false
+    }
+    if (start < 0) start = index
+  })
+  if (start >= 0) out.push({ start, progressEnd: progressEnd < 0 ? rows.length : progressEnd, end: rows.length })
   return out
 }
 
