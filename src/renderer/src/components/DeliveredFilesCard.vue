@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from "vue"
 import type { AssistantPart } from "@shared/protocol"
-import { FILE_MANAGER_ID, fileManagerLabel, openApps } from "@shared/open-app"
+import { fileManagerLabel } from "@shared/open-app"
 import { useApp } from "../stores/app"
 import { deliveredCard, deliveredFiles, mediaPath, relativeInside, sizeLabel, type Delivered } from "../lib/delivered"
 import { mediaOf } from "../lib/markdown"
 import LocalMedia from "./parts/LocalMedia.vue"
 import { openDocument, officeTypeOf } from "../lib/office-open"
-import { useOpenWith } from "../lib/open-with"
 import type { MenuItem } from "../lib/menu"
 import { notify, notifyFailure } from "../lib/toast"
 import { t } from "../lib/i18n"
@@ -17,7 +16,8 @@ import LucideIcon from "./LucideIcon.vue"
 /*
  * MiMo's delivered-file cards under a finished reply: one per file a
  * present_files call handed over. A document gets the Office card - its kind's
- * tile, "表格 · XLSX · 12 KB" and 打开方式 (the installed apps, the file manager,
+ * tile, "表格 · XLSX · 12 KB" and 打开方式 (that kind's installed document apps -
+ * macOS only, as MiMo looks for app bundles - then the file manager and
  * 下载副本); a web page gets the web card; anything else the plain file card.
  * A click previews it in the right panel, as the automatic open did.
  */
@@ -25,7 +25,6 @@ const props = defineProps<{ parts: AssistantPart[]; directory?: string }>()
 
 const app = useApp()
 const items = computed(() => deliveredFiles(props.parts))
-const { options } = useOpenWith(() => app.platform)
 
 /* MiMo's tiles: each document kind's own colour on a 14% ground. */
 const OFFICE_TONE = {
@@ -87,8 +86,15 @@ const DOWNLOAD_ICON = "M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"
 
 const menu = ref<{ x: number; y: number; item: Delivered & { kind: "file" }; kind: "openWith" | "context" }>()
 
-/* The installed apps MCode can open with; the file manager is its own row below them. */
-const apps = computed(() => options.value.filter((option) => option.value !== FILE_MANAGER_ID))
+/*
+ * The installed apps for the open document's kind (Keynote, Pages, Numbers,
+ * Preview and the like), asked when the menu opens; the file manager is its own
+ * row below them. MiMo finds none of them away from a Mac.
+ */
+type DocApp = Awaited<ReturnType<typeof window.mcode.docApps>>[number]
+const apps = ref<DocApp[]>([])
+/* Only the latest menu takes its answer. */
+let appsAsked = 0
 
 const menuItems = computed<MenuItem[]>(() => {
   if (!menu.value) return []
@@ -100,7 +106,11 @@ const menuItems = computed<MenuItem[]>(() => {
     ]
   }
   return [
-    ...apps.value.map((option) => ({ key: `app.${option.value}`, label: option.label })),
+    ...apps.value.map((entry) => ({
+      key: `app.${entry.id}`,
+      label: entry.name,
+      ...(entry.icon ? { image: entry.icon } : { letter: entry.name.slice(0, 1) }),
+    })),
     { key: "reveal", label: t(fileManagerLabel(app.platform)), icon: FOLDER_ICON, divided: apps.value.length > 0 },
     { key: "saveCopy", label: t("officeCard.saveCopy"), icon: DOWNLOAD_ICON },
   ]
@@ -110,7 +120,17 @@ const menuItems = computed<MenuItem[]>(() => {
 function openWith(event: MouseEvent, item: Delivered) {
   if (item.kind !== "file") return
   const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const kind = officeType(item)
+  const asked = ++appsAsked
+  apps.value = []
   menu.value = { x: rect.right, y: rect.bottom + 4, item, kind: "openWith" }
+  if (!kind) return
+  void window.mcode
+    .docApps(kind)
+    .then((found) => {
+      if (asked === appsAsked) apps.value = found
+    })
+    .catch(() => undefined)
 }
 
 function contextMenu(event: MouseEvent, item: Delivered) {
@@ -137,7 +157,7 @@ async function pick(key: string) {
     else notifyFailure(t("officeCard.saveFailed", { error: result.error }))
   } else if (key.startsWith("app.")) {
     const id = key.slice("app.".length)
-    const entry = openApps(app.platform).find((candidate) => candidate.id === id)
+    const entry = apps.value.find((candidate) => candidate.id === id)
     // A file outside the project is opened from its own folder.
     const inside = props.directory ? relativeInside(props.directory, target.path) : ""
     const cut = Math.max(target.path.lastIndexOf("/"), target.path.lastIndexOf("\\"))
@@ -149,7 +169,7 @@ async function pick(key: string) {
     }
     const reason = await window.mcode.openFile(folder, relative, entry.openWith).catch((error: unknown) => String(error))
     if (reason) notifyFailure(t("officeCard.openFailed", { error: reason }))
-    else notify(t("officeCard.openedWith", { name: t(entry.label) }))
+    else notify(t("officeCard.openedWith", { name: entry.name }))
   }
 }
 </script>

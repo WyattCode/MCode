@@ -35,7 +35,7 @@ import {
   wireRecovery,
 } from "./recovery"
 import { isKnownOpenWith } from "@shared/open-app"
-import { installedOpenAppIcons, installedOpenApps } from "./installed-apps"
+import { installedDocApps, installedOpenAppIcons, installedOpenApps, launchTarget } from "./installed-apps"
 import { DEFAULT_APP_ICON } from "@shared/app-icons"
 import { SOUNDFONT } from "@shared/soundfont"
 import { readSoundfont } from "./soundfont"
@@ -1211,6 +1211,12 @@ app.whenReady().then(async () => {
   ipcMain.handle("mcode:installed-app-icons", () =>
     installedOpenAppIcons(async (file) => (await app.getFileIcon(file, { size: "small" })).toDataURL(), process.platform),
   )
+  // MiMo's 打开方式 on a delivered document: that kind's installed apps (macOS only), with their icons.
+  ipcMain.handle("mcode:doc-apps", (_event, kind: unknown) =>
+    typeof kind === "string"
+      ? installedDocApps(kind, async (file) => (await app.getFileIcon(file, { size: "small" })).toDataURL(), process.platform)
+      : [],
+  )
 
   // MiMo's 下载副本 on a delivered file: a copy in Downloads, no dialog.
   ipcMain.handle("mcode:save-copy", (_event, file: unknown) => saveCopy(file, app.getPath("downloads")))
@@ -1235,8 +1241,10 @@ app.whenReady().then(async () => {
      * channel checks the scheme instead of believing the caller checked it.
      */
     if (!isKnownOpenWith(openWith, process.platform)) return "unknown application"
+    // The bundle or program that was found for that name (MiMo opens the bundle it found).
+    const launched = await launchTarget(openWith, process.platform)
     const [command, args] =
-      process.platform === "darwin" ? ["open", ["-a", openWith, target]] : [openWith, [target]]
+      process.platform === "darwin" ? ["open", ["-a", launched, target]] : [launched, [target]]
     return await new Promise<string>((resolve) => {
       execFile(command, args, { windowsHide: true }, (error) => resolve(error ? error.message : ""))
     })

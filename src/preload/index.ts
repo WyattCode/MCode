@@ -192,6 +192,8 @@ const api = {
   installedApps: (): Promise<string[]> => ipcRenderer.invoke("mcode:installed-apps"),
   /** The installed open-with apps' own icons as data URLs, keyed by app id. */
   installedAppIcons: (): Promise<Record<string, string>> => ipcRenderer.invoke("mcode:installed-app-icons"),
+  /** A delivered document's installed apps for its kind (macOS only), in MiMo's order. */
+  docApps: (kind: string): Promise<{ id: string; name: string; openWith: string; icon: string }[]> => ipcRenderer.invoke("mcode:doc-apps", kind),
 
   /** Shows a file the save dialog wrote; other paths are refused by the main process. */
   revealSaved: (target: string): Promise<void> => ipcRenderer.invoke("mcode:reveal-saved", target),

@@ -17,6 +17,8 @@ import { platformShell } from "../src/server/shell-path"
 import { shell as commandShell } from "../src/server/tool/bash"
 import { systemPrompt } from "../src/server/session/prompt"
 import { fcitxEnvironment, fromXinputrc } from "../src/main/linux-ime"
+import { WINDOWS_APPS, docApps, isKnownOpenWith, openApps } from "../src/shared/open-app"
+import { findBundle, installedDocApps, launchTarget, macApplicationFolders } from "../src/main/installed-apps"
 import { chordOf, controlChord, controlHeld, formatChord, modHeld } from "../src/renderer/src/lib/keys"
 
 /** Every .ts and .vue file under a folder, as text keyed by its path. */
@@ -240,5 +242,44 @@ export async function roundTenPlatformChecks(check: Check, section: (name: strin
     const linuxBlock = main.slice(main.indexOf('if (process.platform === "linux") {'), imeAt)
     check("M10-12: Linux asks Chromium to keep shared memory out of /dev/shm", /appendSwitch\("disable-dev-shm-usage"\)/.test(linuxBlock))
     check("M10-12: no-zygote is not passed while the sandbox is on", !/appendSwitch\("no-zygote"\)/.test(main))
+  }
+
+  section("Round 10 (platforms): M10-16 / M10-17 / M10-19 what a folder and a document open with")
+  {
+    const mac = openApps("darwin")
+    check(
+      "M10-16: macOS lists Terminal and MiMo's nineteen, in MiMo's order",
+      mac.map((entry) => entry.id).join(",") ===
+        "terminal,vscode,cursor,sublime-text,zed,xcode,android-studio,pycharm,intellij-idea,webstorm,goland,clion,rustrover,fleet,nova,iterm2,ghostty,warp,kitty,alacritty",
+      mac.map((entry) => entry.id),
+    )
+    check("M10-16: MiMo's five application folders", macApplicationFolders("/Users/me").map((folder) => folder.replace(/\\/g, "/")).join(",") === "/Users/me/Applications,/Applications,/Applications/Utilities,/System/Applications,/System/Applications/Utilities")
+    const terminal = mac.find((entry) => entry.id === "terminal")!
+    const onDisk = (files: string[]) => (file: string) => files.includes(file)
+    check("M10-16: the system Terminal is found where macOS keeps it", findBundle(terminal, onDisk(["/System/Applications/Utilities/Terminal.app"]), "/Users/me") === "/System/Applications/Utilities/Terminal.app")
+    const pycharm = mac.find((entry) => entry.id === "pycharm")!
+    check("M10-16: a PyCharm CE install counts as PyCharm", findBundle(pycharm, onDisk(["/Applications/PyCharm CE.app"]), "/Users/me") === "/Applications/PyCharm CE.app")
+    check("M10-16: the user's own Applications folder is looked in first", findBundle(pycharm, onDisk(["/Applications/PyCharm.app", "/Users/me/Applications/PyCharm.app"]), "/Users/me") === "/Users/me/Applications/PyCharm.app")
+    check("M10-16: TextMate and Antigravity are gone", !mac.some((entry) => entry.id === "textmate" || entry.id === "antigravity"))
+
+    check("M10-17: Windows offers no document apps, as MiMo finds none there", ["pptx", "docx", "xlsx", "pdf"].every((kind) => docApps(kind, "win32").length === 0 && docApps(kind, "linux").length === 0))
+    check("M10-17: a Word file on a Mac offers Pages, Word, WPS and LibreOffice", docApps("docx", "darwin").map((entry) => entry.label).join(",") === "Pages,Microsoft Word,WPS Office,LibreOffice")
+    check("M10-17: a PDF offers Preview, Acrobat and WPS", docApps("pdf", "darwin").map((entry) => entry.label).join(",") === "Preview,Adobe Acrobat,WPS Office")
+    check("M10-17: a slide deck offers Keynote first", docApps("pptx", "darwin")[0]?.label === "Keynote" && docApps("xlsx", "darwin")[0]?.label === "Numbers")
+    check("M10-17: an unknown kind offers nothing", docApps("toString", "darwin").length === 0 && docApps("txt", "darwin").length === 0)
+    check("M10-17: document apps may be started only on a Mac", isKnownOpenWith("Numbers", "darwin") && !isKnownOpenWith("Numbers", "win32"))
+    let icons = 0
+    const onWindows = await installedDocApps("docx", async () => {
+      icons++
+      return ""
+    }, "win32")
+    check("M10-17: nothing is looked for on Windows", onWindows.length === 0 && icons === 0)
+    const card = await fs.readFile(path.join(root, "src/renderer/src/components/DeliveredFilesCard.vue"), "utf8")
+    check("M10-17: the file card lists document apps, not the folder targets", /window\.mcode\s*\.docApps\(kind\)/.test(card) && !/useOpenWith/.test(card))
+
+    const sublime = WINDOWS_APPS.find((entry) => entry.id === "sublime-text")!
+    check("M10-19: Sublime Text is looked for as subl and sublime_text on Windows", sublime.openWith === "subl" && sublime.find?.join(",") === "subl,sublime_text")
+    check("M10-19: Linux lists nothing, as MiMo does", openApps("linux").length === 0)
+    check("M10-19: a plain Windows command is still started by its name", (await launchTarget("code", "win32")) === "code")
   }
 }
