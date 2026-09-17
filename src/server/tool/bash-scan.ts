@@ -2,6 +2,7 @@ import os from "node:os"
 import path from "node:path"
 import fs from "node:fs/promises"
 import { realpathSync } from "node:fs"
+import { windowsPath } from "../shell-path"
 
 /**
  * What a shell command touches, read the way MiMo's bash tool reads it before
@@ -333,12 +334,8 @@ function argPath(arg: string, cwd: string, powershell: boolean): string | undefi
   if (text.startsWith("(") || text.startsWith("@(") || text.includes("$(") || text.includes("${") || text.includes("`")) return undefined
   if (text.includes("$")) return undefined
   if (!text) return undefined
-  // A git-bash path on Windows: /c/Users/... is C:\Users\...
-  if (!powershell && process.platform === "win32") {
-    const drive = /^\/([a-zA-Z])(\/|$)/.exec(text)
-    if (drive) text = `${drive[1].toUpperCase()}:\\${text.slice(3)}`
-  }
-  return path.resolve(cwd, text)
+  // A POSIX spelling of a Windows drive (/c/Users, /mnt/c/Users) is that drive, in any shell, as MiMo reads it.
+  return path.resolve(cwd, windowsPath(text))
 }
 
 function inside(root: string, target: string): boolean {
