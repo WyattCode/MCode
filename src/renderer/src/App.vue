@@ -60,7 +60,7 @@ import { ZOOM_TOAST, dismiss, notify, notifyFailure, zoomNotice } from "./lib/to
 import { openDocument } from "./lib/office-open"
 import { sessionLink, type SessionLinkTarget } from "@shared/session-link"
 import { folderName, projectName } from "./lib/project"
-import { bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
+import { addDraftSkill, bindDraftSources, drafts, flushDrafts, homeFilled, loadDrafts, scheduleDraftSave } from "./lib/composer-drafts"
 import { renderMarkdown } from "./lib/markdown"
 import { chordOf } from "./lib/keys"
 import { normalizeChord } from "@shared/chord"
@@ -2128,6 +2128,30 @@ function goHome() {
   push({ view: "home" })
 }
 
+/*
+ * The skill card's 在对话中试用, as MiMo's: the skill goes as a chip into the
+ * open conversation's box when there is one, otherwise into a new task's, and
+ * a note says so.
+ */
+async function trySkill(name: string, title: string) {
+  const current = app.current
+  if (current && !current.archived && !current.parentID && !current.sideOf) {
+    addDraftSkill(`main:${current.id}`, name)
+    await openFromSide(current.id)
+    push({ view: "session", sessionID: current.id })
+  } else {
+    addDraftSkill("home", name)
+    goHome()
+  }
+  notify(t("skillDetail.tryInChatToast", { name: title }))
+}
+
+/* MiMo's 让 Agent 配置: a new task with the skill-writing skill as its only chip and a request already written. */
+function configureSkill(name: string, title: string) {
+  addDraftSkill("home", "skill-creator", { only: true, text: t("skillDetail.configureDraft", { name: title, id: name }) })
+  goHome()
+}
+
 /**
  * Steps to the next conversation with something waiting, along the side
  * column's visible order.
@@ -3737,7 +3761,7 @@ onBeforeUnmount(() => {
 
         <ArtifactsView v-else-if="isArtifacts" @open="openFromArtifacts" />
 
-        <PluginsView v-else-if="isPlugins" @manage="openSettings('mcp')" />
+        <PluginsView v-else-if="isPlugins" @manage="openSettings('mcp')" @try-skill="trySkill" @configure-skill="configureSkill" />
 
         <HomeHero
           v-else-if="isHome"

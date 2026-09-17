@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue"
-import type { McpServerState } from "@shared/protocol"
+import type { McpServerState, SkillSummary } from "@shared/protocol"
 import ContextMenu from "./ContextMenu.vue"
+import SkillDetailDialog from "./SkillDetailDialog.vue"
 import type { MenuItem } from "../lib/menu"
 import { useApp } from "../stores/app"
-import { t } from "../lib/i18n"
-import { notify, notifyFailure } from "../lib/toast"
+import { language, t } from "../lib/i18n"
+import { notice, notify, notifyFailure } from "../lib/toast"
+import { skillTitle, type SkillContentState } from "../lib/skill-display"
 
 /**
  * The plugins page, laid out from MiMo's: a 900 column with a 24/500 title, a
@@ -20,26 +22,43 @@ import { notify, notifyFailure } from "../lib/toast"
  * are actually added.
  */
 const app = useApp()
-const emit = defineEmits<{ manage: [] }>()
+const emit = defineEmits<{
+  manage: []
+  /* The skill card's 在对话中试用 and 让智能体配置: the window decides which box the chip goes into. */
+  "try-skill": [name: string, title: string]
+  "configure-skill": [name: string, title: string]
+}>()
 
 const servers = ref<McpServerState[]>([])
+/* Every skill the open project reaches, switched off ones too: the page is where they are switched. */
+const skills = ref<SkillSummary[]>([])
 const loaded = ref(false)
 const query = ref("")
 
-/**
- * One row of the installed list: a server, or a skill the open project offers.
- * A skill has no switch - it is on wherever its file is - so it only ever
- * counts as enabled.
- */
+/** One row of the installed list: a server, or a skill the open project offers. */
 interface Entry {
   key: string
   kind: "plugin" | "skill"
   name: string
   enabled: boolean
   server?: McpServerState
+  skill?: SkillSummary
   description?: string
   /** A skill shipped with the app. */
   builtin?: boolean
+}
+
+/* The folder whose skills are listed: the open conversation's, or the default one on the home screen. */
+const where = computed(() => app.current?.directory ?? app.config?.directory)
+
+async function loadSkills(): Promise<void> {
+  const directory = where.value
+  if (!directory) {
+    skills.value = []
+    return
+  }
+  const listed = await app.client?.request({ type: "skill.list", directory }).catch(() => undefined)
+  skills.value = listed?.skills ?? []
 }
 
 /* MiMo's filter: by state, then by type, each with its own "all". */
@@ -57,16 +76,15 @@ const entries = computed<Entry[]>(() => [
     enabled: server.status !== "disabled",
     server,
   })),
-  ...app.commands
-    .filter((command) => command.source === "skill")
-    .map((command) => ({
-      key: `skill:${command.name}`,
-      kind: "skill" as const,
-      name: command.name,
-      enabled: true,
-      description: command.description,
-      builtin: command.builtin === true,
-    })),
+  ...skills.value.map((skill) => ({
+    key: `skill:${skill.name}`,
+    kind: "skill" as const,
+    name: skillTitle(skill, language.value),
+    enabled: skill.enabled,
+    skill,
+    description: skill.description,
+    builtin: skill.builtin,
+  })),
 ])
 
 const shown = computed(() => {
@@ -78,6 +96,7 @@ const shown = computed(() => {
     if (!needle) return true
     return (
       entry.name.toLocaleLowerCase().includes(needle) ||
+      (entry.skill?.name ?? "").toLocaleLowerCase().includes(needle) ||
       (entry.description ?? "").toLocaleLowerCase().includes(needle)
     )
   })
@@ -97,7 +116,7 @@ onMounted(async () => {
   })
   const result = await app.client?.request({ type: "mcp.list" }).catch(() => undefined)
   servers.value = result?.servers ?? []
-  await app.refreshCommands()
+  await loadSkills()
   loaded.value = true
 })
 
@@ -135,7 +154,7 @@ async function refresh() {
   if (refreshing.value) return
   refreshing.value = true
   try {
-    const [listed] = await Promise.all([app.client?.request({ type: "mcp.list" }), app.refreshCommands()])
+    const [listed] = await Promise.all([app.client?.request({ type: "mcp.list" }), loadSkills(), app.refreshCommands()])
     if (listed) servers.value = listed.servers
     notify(t("plugins.refreshed"))
   } catch (err) {
@@ -143,6 +162,107 @@ async function refresh() {
   } finally {
     refreshing.value = false
   }
+}
+
+/*
+ * A skill's switch, as MiMo's: the page moves at once, the name is written to
+ * (or taken from) `disabledSkills`, the slash menu's list is asked for again,
+ * and a note says which way it went. A write that fails puts the switch back.
+ */
+async function setSkillEnabled(name: string, enabled: boolean) {
+  const skill = skills.value.find((entry) => entry.name === name)
+  if (!skill || skill.enabled === enabled) return
+  const title = skillTitle(skill, language.value)
+  skills.value = skills.value.map((entry) => (entry.name === name ? { ...entry, enabled } : entry))
+  const before = app.config?.disabledSkills ?? []
+  const next = enabled ? before.filter((entry) => entry !== name) : [...before.filter((entry) => entry !== name), name]
+  try {
+    await app.patchConfig({ disabledSkills: next }, { quiet: true })
+    void app.refreshCommands()
+    notice.info(t(enabled ? "skills.enabledToast" : "skills.disabledToast", { name: title }))
+  } catch (err) {
+    skills.value = skills.value.map((entry) => (entry.name === name ? { ...entry, enabled: !enabled } : entry))
+    notifyFailure(t("skills.toggleFailed", { error: err instanceof Error ? err.message : String(err) }))
+  }
+}
+
+/* The row's "…" menu: 停用 or 启用, as MiMo's holds. */
+const skillMenu = ref<{ x: number; y: number; name: string }>()
+const skillMenuItems = computed<MenuItem[]>(() => {
+  const skill = skills.value.find((entry) => entry.name === skillMenu.value?.name)
+  return skill ? [{ key: "toggle", label: skill.enabled ? t("plugins.disable") : t("plugins.enable") }] : []
+})
+
+function openSkillMenu(event: MouseEvent, name: string) {
+  const from = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  skillMenu.value = { x: Math.round(from.right), y: Math.round(from.bottom + 4), name }
+}
+
+function pickSkillMenu() {
+  const name = skillMenu.value?.name
+  skillMenu.value = undefined
+  const skill = skills.value.find((entry) => entry.name === name)
+  if (skill) void setSkillEnabled(skill.name, !skill.enabled)
+}
+
+/* The skill card: which skill, what its SKILL.md read gave, and whether an uninstall is under way. */
+const detailName = ref<string>()
+const detail = computed(() => skills.value.find((entry) => entry.name === detailName.value))
+const content = ref<SkillContentState>({ status: "idle" })
+const uninstalling = ref(false)
+
+function openDetail(name: string) {
+  detailName.value = name
+  content.value = { status: "idle" }
+}
+
+async function loadContent() {
+  const skill = detail.value
+  const directory = where.value
+  if (!skill || !directory) {
+    content.value = { status: "failed" }
+    return
+  }
+  content.value = { status: "loading" }
+  try {
+    const read = await app.client!.request({ type: "skill.content", directory, name: skill.name })
+    if (detailName.value === skill.name) content.value = { status: "ready", path: read.path, text: read.content, truncated: read.truncated }
+  } catch {
+    if (detailName.value === skill.name) content.value = { status: "failed" }
+  }
+}
+
+async function uninstall() {
+  const skill = detail.value
+  const directory = where.value
+  if (!skill || !directory || uninstalling.value) return
+  uninstalling.value = true
+  const title = skillTitle(skill, language.value)
+  try {
+    await app.client!.request({ type: "skill.uninstall", directory, name: skill.name })
+    detailName.value = undefined
+    skills.value = skills.value.filter((entry) => entry.name !== skill.name)
+    void app.refreshCommands()
+    notice.success(t("skillDetail.uninstalledToast", { name: title }))
+  } catch (err) {
+    notice.danger(t("skillDetail.uninstallFailed", { error: err instanceof Error ? err.message : String(err) }))
+  } finally {
+    uninstalling.value = false
+  }
+}
+
+function trySkill() {
+  const skill = detail.value
+  if (!skill) return
+  detailName.value = undefined
+  emit("try-skill", skill.name, skillTitle(skill, language.value))
+}
+
+function configureSkill() {
+  const skill = detail.value
+  if (!skill) return
+  detailName.value = undefined
+  emit("configure-skill", skill.name, skillTitle(skill, language.value))
 }
 
 /** The filter menu, its right edge on the button's as MiMo aligns it. */
@@ -234,7 +354,20 @@ function pickFilter(key: string) {
       </div>
 
       <div v-if="shown.length" class="cards">
-        <div v-for="entry in shown" :key="entry.key" class="card" :data-kind="entry.kind">
+        <div
+          v-for="entry in shown"
+          :key="entry.key"
+          class="card"
+          :class="{ opens: entry.skill }"
+          :data-kind="entry.kind"
+          :data-skill="entry.skill?.name"
+          :data-skill-enabled="entry.skill ? String(entry.enabled) : undefined"
+          :role="entry.skill ? 'button' : undefined"
+          :tabindex="entry.skill ? 0 : undefined"
+          @click="entry.skill && openDetail(entry.skill.name)"
+          @keydown.enter.self="entry.skill && openDetail(entry.skill.name)"
+          @keydown.space.self.prevent="entry.skill && openDetail(entry.skill.name)"
+        >
           <div class="card-text">
             <span class="card-name">{{ entry.name }}</span>
             <span class="card-note">
@@ -259,7 +392,34 @@ function pickFilter(key: string) {
               <span class="knob" />
             </button>
           </template>
-          <span v-else class="card-state" :data-builtin="entry.builtin ? '' : undefined">{{ entry.builtin ? t("plugins.builtinSkill") : t("plugins.skill") }}</span>
+          <template v-else-if="entry.skill">
+            <span class="card-state" :data-builtin="entry.builtin ? '' : undefined">{{ entry.builtin ? t("plugins.builtinSkill") : t("plugins.skill") }}</span>
+            <!-- MiMo's row action: a switched-off skill offers its install button, which switches it back on; otherwise the "…" menu. -->
+            <button
+              v-if="!entry.enabled"
+              class="enable"
+              :data-skill-enable-row="entry.skill.name"
+              @click.stop="setSkillEnabled(entry.skill.name, true)"
+            >
+              {{ t("plugins.install") }}
+            </button>
+            <button
+              v-else
+              class="icon-btn more"
+              :data-skill-more="entry.skill.name"
+              :aria-label="t('plugins.moreActions')"
+              aria-haspopup="menu"
+              :aria-expanded="skillMenu?.name === entry.skill.name"
+              v-tip="{ label: t('plugins.moreActions'), placement: 'bottom' }"
+              @click.stop="openSkillMenu($event, entry.skill.name)"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <circle cx="3.5" cy="8" r="1.2" />
+                <circle cx="8" cy="8" r="1.2" />
+                <circle cx="12.5" cy="8" r="1.2" />
+              </svg>
+            </button>
+          </template>
         </div>
       </div>
 
@@ -274,6 +434,28 @@ function pickFilter(key: string) {
       @pick="pickFilter"
       @close="filterMenu = undefined"
     />
+    <ContextMenu
+      v-if="skillMenu"
+      :x="skillMenu.x"
+      :y="skillMenu.y"
+      :items="skillMenuItems"
+      :min-width="72"
+      end
+      @pick="pickSkillMenu"
+      @close="skillMenu = undefined"
+    />
+    <SkillDetailDialog
+      v-if="detail"
+      :skill="detail"
+      :busy="uninstalling"
+      :content="content"
+      @close="detailName = undefined"
+      @toggle="(enabled: boolean) => detail && setSkillEnabled(detail.name, enabled)"
+      @uninstall="uninstall"
+      @configure="configureSkill"
+      @try-skill="trySkill"
+      @load-content="loadContent"
+    />
   </div>
 </template>
 
@@ -283,7 +465,8 @@ function pickFilter(key: string) {
  * 55 from the top of the pane, the line under it 13/400/20, the search field
  * a row below, and the section head 14/500/22.4 with its quiet link at the
  * far end. The cards are this app's own: a server is a name, a state and a
- * switch, not a thing to be installed.
+ * switch, not a thing to be installed; a skill is a name, its kind and MiMo's
+ * row action, and opens MiMo's skill card.
  */
 .plugins {
   position: relative;
@@ -465,6 +648,37 @@ function pickFilter(key: string) {
   background: color-mix(in srgb, var(--text-strong) 4%, var(--surface-raised));
   border: 1px solid color-mix(in srgb, var(--text-strong) 10%, var(--surface-raised));
   border-radius: 14px;
+}
+
+/* A skill's card opens its detail card. */
+.card.opens {
+  cursor: pointer;
+}
+
+.card.opens:hover {
+  background: color-mix(in srgb, var(--text-strong) 7%, var(--surface-raised));
+}
+
+/* MiMo's row actions: a small outlined button, or a bare "…" square. */
+.enable {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  color: var(--text-strong);
+  font-size: calc(13px * var(--ui-font-scale, 1));
+  background: transparent;
+  border: 1px solid var(--border-weak);
+  border-radius: 8px;
+}
+
+.enable:hover {
+  background: color-mix(in srgb, var(--text-strong) 6%, transparent);
+}
+
+.more {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
 }
 
 .card-text {

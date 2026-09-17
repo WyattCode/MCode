@@ -3,13 +3,14 @@ import { existsSync } from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
-import type { AgentName, CommandDefinition, CommandInfo, Effort, ModelRef } from "@shared/protocol"
-import { AGENT_NAMES, EFFORTS } from "@shared/protocol"
+import type { CommandDefinition, CommandInfo, Effort, ModelRef, TurnAgent } from "@shared/protocol"
+import { COMMAND_AGENTS, EFFORTS } from "@shared/protocol"
 import { MODEL_TIERS, expandTemplate, fileReferences, hints, shellPlaceholders, substituteShell } from "@shared/command"
 import type { McpServers } from "./mcp"
 import { parseFrontmatter } from "./frontmatter"
-import { MAX_DEPTH, PROJECT_CONFIG_DIR, discoverSkills, scan } from "./skill"
+import { MAX_DEPTH, PROJECT_CONFIG_DIR, discoverSkills, enabledSkills, scan } from "./skill"
 import { shell } from "./tool/bash"
+import { builtinCommands } from "./command-builtin"
 
 /**
  * Everything a slash can reach, from the three places the reference looks.
@@ -27,14 +28,12 @@ import { shell } from "./tool/bash"
  *   3. skills, which are SKIPPED when the name is taken (`if (commands[item.name])
  *      continue`) - the one source that yields rather than overwrites.
  *
- * Two deliberate departures from it, both because this app is not that one:
+ * Before all three, the engine's own commands, as MiMo's engine seeds them
+ * (`command-builtin.ts`): /init, /review, /dream, /distill and /rebuild,
+ * in that order, each in this app's own words.
  *
- * - The reference seeds two built-in commands, `init` and `review`, whose
- *   templates are bundled prompt files. They are not copied. `initialize_default`
- *   is a prompt about writing `AGENTS.md` for "future OpenCode sessions" and
- *   naming `opencode.json`, so transcribing it would put the other product's
- *   name and config format into this app's prompts, and `review` duplicates a
- *   panel this app already has. Their absence is reported rather than hidden.
+ * One deliberate departure from it, because this app is not that one:
+ *
  * - Templates are resolved EAGERLY here. The reference holds each one behind a
  *   getter and only touches it when the command runs on its server; this app
  *   shows the list in the window, so the text has to be on the wire when the
@@ -46,7 +45,7 @@ import { shell } from "./tool/bash"
 
 interface Deps {
   /** Only these fields are read, so a check can hand this a plain object. */
-  config: { get(): { commands?: Record<string, CommandDefinition>; model?: ModelRef; shell?: string } }
+  config: { get(): { commands?: Record<string, CommandDefinition>; model?: ModelRef; shell?: string; disabledSkills?: string[] } }
   /** Only the prompt half of the MCP surface is used. */
   mcp: Pick<McpServers, "prompts" | "getPrompt">
   /** The app's data directory, whose `command(s)` and `skill(s)` folders hold the user's global ones. */
@@ -61,15 +60,17 @@ type Folders = Pick<Deps, "config" | "storage" | "home">
 export async function listCommands(deps: Deps, directory: string): Promise<CommandInfo[]> {
   const commands: Record<string, CommandInfo> = {}
 
-  for (const [name, entry] of Object.entries(await ownCommands(deps, directory))) {
-    commands[name] = fromDefinition(name, entry)
+  // The app's own come first, as MiMo's engine seeds them; a project or global command of the same name replaces one in place.
+  const builtin = builtinCommands(directory)
+  for (const [name, entry] of Object.entries(await ownCommands(deps, directory, builtin))) {
+    commands[name] = { ...fromDefinition(name, entry), ...(builtin[name] === entry ? { own: true } : {}) }
   }
 
   for (const [name, prompt] of Object.entries(await promptCommands(deps.mcp, directory))) {
     commands[name] = prompt
   }
 
-  for (const skill of await skillCommands(directory, deps.storage?.directory)) {
+  for (const skill of await skillCommands(directory, deps.storage?.directory, deps.config.get().disabledSkills)) {
     // The one source that yields: a skill never displaces a command.
     if (commands[skill.name]) continue
     commands[skill.name] = skill
@@ -78,10 +79,13 @@ export async function listCommands(deps: Deps, directory: string): Promise<Comma
   return Object.values(commands)
 }
 
-/** The config document's commands with the markdown files over them: the commands whose placeholders may run. */
-async function ownCommands(deps: Folders, directory: string): Promise<Record<string, CommandDefinition>> {
+/**
+ * The app's own commands over which the config document's and then the
+ * markdown files' are laid: the commands whose placeholders may run.
+ */
+async function ownCommands(deps: Folders, directory: string, builtin = builtinCommands(directory)): Promise<Record<string, CommandDefinition>> {
   const config = deps.config.get()
-  return { ...(config.commands ?? {}), ...(await fileCommands(deps, directory, config.model)) }
+  return { ...builtin, ...(config.commands ?? {}), ...(await fileCommands(deps, directory, config.model)) }
 }
 
 function fromDefinition(name: string, entry: CommandDefinition): CommandInfo {
@@ -344,9 +348,10 @@ async function promptCommands(mcp: Deps["mcp"], directory: string): Promise<Reco
  * - no base-directory lines after it, those belong to the skill tool's output -
  * and marks the shipped ones `bundled`, which is `builtin` here.
  */
-async function skillCommands(directory: string, storageDirectory?: string): Promise<CommandInfo[]> {
+async function skillCommands(directory: string, storageDirectory?: string, disabled?: readonly string[]): Promise<CommandInfo[]> {
   const { skills } = await discoverSkills({ directory, storageDirectory })
-  return skills.map((skill) => ({
+  // A switched-off skill is not offered after a slash, as MiMo's list leaves out a denied one.
+  return enabledSkills(skills, disabled).map((skill) => ({
     name: skill.name,
     description: skill.description || undefined,
     source: "skill" as const,
@@ -387,9 +392,9 @@ function boolean(value: unknown): boolean | undefined {
   return undefined
 }
 
-function agent(value: unknown): AgentName | undefined {
+function agent(value: unknown): TurnAgent | undefined {
   const name = text(value)
-  return name && (AGENT_NAMES as readonly string[]).includes(name) ? (name as AgentName) : undefined
+  return name && (COMMAND_AGENTS as readonly string[]).includes(name) ? (name as TurnAgent) : undefined
 }
 
 function variant(value: unknown): Effort | undefined {

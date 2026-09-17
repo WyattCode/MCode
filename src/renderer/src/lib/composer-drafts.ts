@@ -58,6 +58,28 @@ export function loadDrafts(): DraftFile {
   return restored
 }
 
+/**
+ * A skill chip put into a box's draft from outside it - MiMo's 在对话中试用
+ * and 让 Agent 配置 on the skill card. `only` replaces the chips already
+ * there; `text` replaces the words. A box showing that draft picks the change
+ * up through `draftTouched`; one mounted later reads it when it opens.
+ */
+export const draftTouched = ref<{ key: string; at: number }>({ key: "", at: 0 })
+
+export function addDraftSkill(key: string, name: string, options: { only?: boolean; text?: string } = {}): void {
+  const kept = drafts.get(key)
+  const skills = options.only ? [name] : [...(kept?.skills ?? []).filter((entry) => entry !== name), name]
+  drafts.set(key, {
+    text: options.text ?? kept?.text ?? "",
+    attachments: kept?.attachments ?? [],
+    mentioned: kept?.mentioned ?? [],
+    skills,
+  })
+  if (key === "home") homeFilled.value = true
+  draftTouched.value = { key, at: Date.now() }
+  scheduleDraftSave()
+}
+
 /** What else is saved with the drafts: the annotations waiting, and the box on screen. */
 export function bindDraftSources(next: DraftSources): void {
   sources = next

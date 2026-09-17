@@ -37,11 +37,17 @@ export interface SkillInfo {
   disableModelInvocation: boolean
   /** Shipped with the app. */
   builtin: boolean
+  /** The frontmatter's `icon`: an emoji or a short mark the skill card shows. */
+  icon?: string
+  /** Per language, from `locales/<language>.json` beside SKILL.md: the name and one-line summary to show. */
+  localizations?: Record<string, { displayName?: string; brief?: string }>
 }
 
 export interface SkillProblem {
   path: string
   message: string
+  /** `syntax` when the frontmatter could not be read at all - the one kind the user is told about, as MiMo tells them. */
+  kind: "syntax" | "invalid"
 }
 
 export interface SkillScan {
@@ -126,12 +132,91 @@ export async function discoverSkills(input: { directory: string; storageDirector
 
   const skills = [...byName.values()].sort((a, b) => a.name.localeCompare(b.name))
   for (const skill of skills) knownDirectories.add(skill.directory)
+  reportProblems(problems)
   return { skills, problems }
 }
 
 /** The skills the model may see and load itself. */
 export function modelInvocable(skills: readonly SkillInfo[]): SkillInfo[] {
   return skills.filter((skill) => !skill.disableModelInvocation)
+}
+
+/**
+ * The skills that are switched on: every one but those the config names in
+ * `disabledSkills`. What every consumer reads - the prompt's list, the skill
+ * tools, the slash menu and `/name` loading - so a switched-off skill is gone
+ * from all of them at once, as MiMo's `permission.skill` deny takes it.
+ */
+export function enabledSkills(skills: readonly SkillInfo[], disabled: readonly string[] | undefined): SkillInfo[] {
+  if (!disabled?.length) return [...skills]
+  const off = new Set(disabled)
+  return skills.filter((skill) => !off.has(skill.name))
+}
+
+/* ------------------------------------------- telling the user about a broken file */
+
+const SYNTAX_PREFIX = "Frontmatter could not be read: "
+
+type ProblemListener = (problem: SkillProblem) => void
+let listener: ProblemListener | undefined
+/** Each broken file is reported once per change: the same text again is the same problem. */
+const reported = new Set<string>()
+
+/**
+ * Where a SKILL.md whose frontmatter cannot be read is reported. MiMo shows an
+ * error for such a file and logs it; a file that reads but lacks a name or a
+ * description is skipped without a word, and so it is here (it is logged).
+ */
+export function watchSkillProblems(report: ProblemListener | undefined): void {
+  listener = report
+}
+
+function reportProblems(problems: readonly SkillProblem[]): void {
+  for (const problem of problems) {
+    const key = `${problem.path}\n${problem.message}`
+    if (reported.has(key)) continue
+    reported.add(key)
+    if (problem.kind === "syntax") listener?.(problem)
+    else console.warn(`[skills] ${problem.path}: ${problem.message}`)
+  }
+}
+
+/* ------------------------------------------------------ the skill detail card */
+
+/** A SKILL.md as the detail card shows it: the whole file, frontmatter included, up to the body limit. */
+export async function readSkillFile(location: string): Promise<{ path: string; content: string; truncated: boolean } | undefined> {
+  const raw = await fs.readFile(location, "utf8").catch(() => undefined)
+  if (raw === undefined) return undefined
+  const truncated = raw.length > SKILL_BODY_MAX
+  return { path: location, content: truncated ? raw.slice(0, SKILL_BODY_MAX) : raw, truncated }
+}
+
+/** The folder of the user's own global skills, the only ones the card can uninstall. */
+export function userSkillRoots(storageDirectory: string): string[] {
+  return ["skill", "skills"].map((folder) => path.join(storageDirectory, folder))
+}
+
+/** Whether a skill lives in the user's global skills folder, and so can be uninstalled. */
+export function removableSkill(skill: SkillInfo, storageDirectory: string): boolean {
+  if (skill.builtin) return false
+  return userSkillRoots(storageDirectory).some((root) => {
+    const relative = path.relative(root, skill.directory)
+    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)
+  })
+}
+
+/**
+ * MiMo's uninstall: no question first, and the folder is not deleted but moved
+ * into a trash folder beside the app's data (`skill-trash/<time>-<name>`),
+ * where it stays.
+ */
+export async function uninstallSkill(skill: SkillInfo, storageDirectory: string, now = Date.now()): Promise<string> {
+  if (!removableSkill(skill, storageDirectory)) throw new Error(`The skill ${skill.name} is not one of your own global skills, so it cannot be uninstalled here`)
+  const trash = path.join(storageDirectory, "skill-trash", `${now}-${skill.name.replace(/[\\/:]/g, "_")}`)
+  await fs.mkdir(path.dirname(trash), { recursive: true })
+  await fs.rename(skill.directory, trash)
+  knownDirectories.delete(skill.directory)
+  return trash
 }
 
 /* ------------------------------------------------ what a message brings in */
@@ -268,12 +353,14 @@ async function add(byName: Map<string, SkillInfo>, problems: SkillProblem[], fil
   if (raw === undefined) return
   const parsed = parseFrontmatter(raw)
   if (parsed.error) {
-    problems.push({ path: file, message: `Frontmatter could not be read: ${parsed.error}` })
+    problems.push({ path: file, message: `${SYNTAX_PREFIX}${parsed.error}`, kind: "syntax" })
     return
   }
+  // A file that reads again is reported again should it break later.
+  for (const key of reported) if (key.startsWith(`${file}\n${SYNTAX_PREFIX}`)) reported.delete(key)
   const data = parsed.data
   const invalid = (message: string): void => {
-    problems.push({ path: file, message })
+    problems.push({ path: file, message, kind: "invalid" })
   }
   if (typeof data.name !== "string" || !data.name.trim()) return invalid("Frontmatter needs a name.")
   if (typeof data.description !== "string") return invalid("Frontmatter needs a description.")
@@ -292,6 +379,8 @@ async function add(byName: Map<string, SkillInfo>, problems: SkillProblem[], fil
   const existing = byName.get(name)
   if (existing && builtin && !existing.builtin) return
   const overlong = parsed.body.length > SKILL_BODY_MAX
+  const icon = typeof data.icon === "string" && data.icon.trim() ? data.icon.trim().slice(0, 16) : undefined
+  const localizations = await localizationsOf(directory)
   byName.set(name, {
     name,
     description: data.description.trim(),
@@ -302,7 +391,35 @@ async function add(byName: Map<string, SkillInfo>, problems: SkillProblem[], fil
     ...(overlong ? { truncated: true } : {}),
     disableModelInvocation: disabled === true,
     builtin,
+    ...(icon ? { icon } : {}),
+    ...(localizations ? { localizations } : {}),
   })
+}
+
+/** MiMo's limits on a translated name and summary. */
+const DISPLAY_NAME_MAX = 60
+const BRIEF_MAX = 200
+
+/** A skill's `locales/<language>.json` files: `displayName` and `brief`, each only when it is short text. */
+async function localizationsOf(directory: string): Promise<SkillInfo["localizations"]> {
+  const folder = path.join(directory, "locales")
+  const entries = await fs.readdir(folder).catch((): string[] => [])
+  const out: NonNullable<SkillInfo["localizations"]> = {}
+  for (const entry of entries.filter((name) => /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})?\.json$/.test(name)).slice(0, 40)) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(await fs.readFile(path.join(folder, entry), "utf8"))
+    } catch {
+      continue
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue
+    const record = parsed as Record<string, unknown>
+    const short = (value: unknown, max: number) => (typeof value === "string" && value.trim() && value.trim().length <= max ? value.trim() : undefined)
+    const displayName = short(record.displayName, DISPLAY_NAME_MAX)
+    const brief = short(record.brief, BRIEF_MAX)
+    if (displayName || brief) out[entry.slice(0, -".json".length)] = { ...(displayName ? { displayName } : {}), ...(brief ? { brief } : {}) }
+  }
+  return Object.keys(out).length ? out : undefined
 }
 
 /**

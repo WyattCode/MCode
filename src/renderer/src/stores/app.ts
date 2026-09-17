@@ -726,7 +726,9 @@ export const useApp = defineStore("app", () => {
         if (
           before &&
           commandsFor &&
-          JSON.stringify(before.commands) !== JSON.stringify(event.config.commands)
+          (JSON.stringify(before.commands) !== JSON.stringify(event.config.commands) ||
+            // skills: a skill switched on or off, here or by hand in config.json, joins or leaves the slash menu.
+            JSON.stringify(before.disabledSkills ?? []) !== JSON.stringify(event.config.disabledSkills ?? []))
         ) {
           void refreshCommands(commandsFor)
         }
@@ -750,6 +752,10 @@ export const useApp = defineStore("app", () => {
         break
       case "auth.failed":
         authState.value = { provider: event.provider, stage: "failed", message: event.message }
+        break
+      // skills: MiMo says so when a SKILL.md cannot be parsed; the backend sends each broken file once.
+      case "skill.problem":
+        notifyFailure(t("skills.malformed", { path: event.path }), { body: event.message, id: `skill.problem:${event.path}` })
         break
     }
   }
@@ -1360,7 +1366,7 @@ export const useApp = defineStore("app", () => {
     to?: string,
     annotations: import("@shared/protocol").Annotation[] = [],
     /* What a slash command named, for the turn this starts only. */
-    command?: { agent?: import("@shared/protocol").AgentName; model?: import("@shared/protocol").ModelRef },
+    command?: { agent?: import("@shared/protocol").TurnAgent; model?: import("@shared/protocol").ModelRef },
   ): Promise<boolean> {
     const target = to ?? currentID.value
     // An attachment, or a place pointed at, with no words is still something to answer.
