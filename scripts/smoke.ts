@@ -230,7 +230,7 @@ import type { SessionInfo as SubagentSession, SubagentNotice, SubagentNoticeStat
 // round 4: MiMo's built-in window tools and the pieces the window uses.
 import type { PresentSkip, PresentedFile } from "../src/server/tool/present"
 import { LANGUAGE_IDS, bindDesktopSettings } from "../src/server/tool/desktop-settings"
-import { deliveredCard, deliveredFiles, projectPath, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
+import { deliveredCard, deliveredFiles, relativeInside, sizeLabel } from "../src/renderer/src/lib/delivered"
 import { prRowState } from "../src/renderer/src/lib/pr-row"
 import { addFileNotice, fileNoticesBlock } from "../src/shared/file-notices"
 import { withAnnotations } from "../src/shared/annotations"
@@ -296,6 +296,8 @@ import { roundNineMcpChecks } from "./smoke-round9-mcp"
 import { roundNineSettingsChecks } from "./smoke-round9-settings"
 // round 10: the file tools as MiMo's engine runs them.
 import { roundTenFileChecks } from "./smoke-round10-files"
+// round 10: MiMo's desktop toolkit as its engine and window run it.
+import { roundTenDesktopChecks } from "./smoke-round10-desktop"
 // The round-six audit of failures and edge cases (F1 onwards).
 import { failureChecks } from "./smoke-failures"
 // Round 7: the rest of that audit - F14-F42 - closed in this pass.
@@ -6944,6 +6946,7 @@ async function main() {
   await roundNineMcpChecks(check, section)
   await roundNineSettingsChecks(check, section)
   await roundTenFileChecks(check, section)
+  await roundTenDesktopChecks(check, section)
   await failureChecks(check, section)
   await roundSevenTimingChecks()
   await storageChecks(check, section)
@@ -7798,7 +7801,7 @@ async function deliveredToolChecks(root: string) {
   check("pdf_locate without a snippet is refused before it runs", argumentProblems(locateTool.parameters, { file: "a.pdf" }).some((problem) => problem.includes("snippet")))
   check("a page that is not a number is refused", argumentProblems(locateTool.parameters, { file: "a.pdf", snippet: "b", page: "3" }).length === 1)
 
-  // present_files: existing files inside the project, in order, each once; the rest skipped with a reason.
+  // present_files: existing files, in order, each once - outside the project too (T10-24); the rest skipped with a reason.
   const presentTool = findTool("present_files")!
   const presented = await presentTool.execute(
     {
@@ -7811,13 +7814,13 @@ async function deliveredToolChecks(root: string) {
   const shown = (presented.metadata?.files ?? []) as PresentedFile[]
   const skipped = (presented.metadata?.skipped ?? []) as PresentSkip[]
   check(
-    "present_files keeps the existing files and addresses, in the order given, each once",
-    shown.map((file) => ("path" in file ? path.basename(file.path) : file.url)).join(",") === "report.pdf,page.html,https://example.com/a",
+    "present_files keeps the existing files, wherever they are, and addresses, in the order given, each once",
+    shown.map((file) => ("path" in file ? path.basename(file.path) : file.url)).join(",") === "report.pdf,page.html,elsewhere.pdf,https://example.com/a",
     shown,
   )
   check("it records each file's absolute path and size", "path" in shown[0] && shown[0].path === path.join(project, "out", "report.pdf") && shown[0].size === 9, shown[0])
-  check("a missing file, one outside the project and a folder are skipped, each with its reason", skipped.map((skip) => skip.reason).join(",") === "missing,outside,directory", skipped)
-  check("the model reads what was shown and what was skipped", presented.output.startsWith("Showed 3 files") && presented.output.includes('Skipped "missing.docx"'), presented.output)
+  check("a missing file and a folder are skipped, each with its reason", skipped.map((skip) => skip.reason).join(",") === "missing,directory", skipped)
+  check("the model reads what was shown and what was skipped", presented.output.startsWith("Showed 4 files") && presented.output.includes('Skipped "missing.docx"'), presented.output)
   const relative = await presentTool.execute({ files: ["report.pdf"], cwd: "out", explanation: "x" }, context("p2"))
   check("a relative cwd is taken from the project folder", ((relative.metadata?.files ?? []) as PresentedFile[]).length === 1, relative.metadata)
   const empty = await presentTool.execute({ files: [], cwd: project, explanation: "x" }, context("p3"))
@@ -7829,7 +7832,7 @@ async function deliveredToolChecks(root: string) {
   if (madeLink) {
     try {
       const through = await presentTool.execute({ files: ["link/elsewhere.pdf"], cwd: project, explanation: "x" }, context("p4"))
-      check("a link inside the project that leads out is judged by where it leads", ((through.metadata?.skipped ?? []) as PresentSkip[])[0]?.reason === "outside", through.metadata)
+      check("a link inside the project that leads out is handed over like any file (T10-24)", ((through.metadata?.files ?? []) as PresentedFile[]).length === 1, through.metadata)
     } finally {
       /*
        * Only the link entry is removed, never what it points at: unlink, or a
@@ -7847,34 +7850,17 @@ async function deliveredToolChecks(root: string) {
   // The window's side: the cards' entries, sizes, kinds, the relative path the main process opens, the step row.
   const part = (status: string, files: unknown, callID = "c") => ({ type: "tool", id: callID, callID, name: "present_files", status, input: {}, metadata: { files }, time: { created: 1, completed: 2 } })
   const items = deliveredFiles([part("completed", shown, "a"), part("running", shown, "b"), part("completed", [shown[0]], "d")] as never)
-  check("the cards list a turn's completed present_files entries once each", items.map((item) => item.name).join(",") === "report.pdf,page.html,https://example.com/a", items)
-  check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,url", items.map(deliveredCard))
+  check("the cards list a turn's completed present_files entries once each", items.map((item) => item.name).join(",") === "report.pdf,page.html,elsewhere.pdf,a", items)
+  check("the cards are MiMo's office, web and plain cards", items.map(deliveredCard).join(",") === "office,html,office,url", items.map(deliveredCard))
   check("sizes read as MiMo writes them", sizeLabel(512) === "512 B" && sizeLabel(1536) === "1.5 KB" && sizeLabel(5 * 1024 * 1024) === "5.0 MB")
   check("a delivered file opens with an app by its path under the project", relativeInside("C:\\p\\", "C:/P/out/a.pdf") === "out/a.pdf" && relativeInside("C:\\p", "D:/q/a.pdf") === "")
 
-  section("round 5: media previews keep to the project, the pull request row, document change notices (D1, D10, D11)")
+  section("round 5: delivered media previews, the pull request row, document change notices (D1, D10, D11)")
   check(
     "a delivered picture, video or sound is previewed, anything else keeps its card",
     deliveredCard({ kind: "file", path: "C:/p/shot.png", name: "shot.png", size: 1 }) === "media" &&
       deliveredCard({ kind: "file", path: "C:/p/clip.MP4", name: "clip.MP4", size: 1 }) === "media" &&
       deliveredCard({ kind: "file", path: "C:/p/notes.txt", name: "notes.txt", size: 1 }) === "file",
-  )
-  check(
-    "a path in the project is read, as the absolute path under it",
-    projectPath("C:\\p\\out\\a.png", "C:\\p") === "C:/p/out/a.png" && projectPath("out/a.png", "C:\\p\\") === "C:/p/out/a.png" && projectPath("./a.mp3", "/home/me/p") === "/home/me/p/a.mp3",
-    [projectPath("C:\\p\\out\\a.png", "C:\\p"), projectPath("out/a.png", "C:\\p\\"), projectPath("./a.mp3", "/home/me/p")],
-  )
-  check(
-    "a path outside it, climbing out of it, from home or with a scheme is not",
-    [
-      projectPath("D:/q/a.png", "C:/p"),
-      projectPath("C:/p2/a.png", "C:/p"),
-      projectPath("../a.png", "C:/p"),
-      projectPath("C:/p/../secret.png", "C:/p"),
-      projectPath("~/a.png", "/home/me/p"),
-      projectPath("file:///C:/p/a.png", "C:/p"),
-      projectPath("a.png", undefined),
-    ].every((value) => value === undefined),
   )
   check(
     "the pull request row: hidden off GitHub, then loading, none, unavailable or found",
@@ -7938,23 +7924,24 @@ async function deliveredToolChecks(root: string) {
   const getTool = findTool("get_desktop_settings")!
   const setTool = findTool("set_desktop_setting")!
   bindDesktopSettings(undefined)
-  const unavailable = await getTool.execute({}, context("s0")).then(() => "ran", (error: Error) => error.name)
-  check("before the backend binds a config the tools say they are unavailable", unavailable === "ToolError", unavailable)
+  const unavailable = await getTool.execute({}, context("s0")).then((result) => result.output, (error: Error) => error.name)
+  check("before the backend binds a config the tools say they are unavailable, as a result rather than a failed call (T10-54)", unavailable.includes("暂时还不能"), unavailable)
   bindDesktopSettings(settings)
-  const snapshot = JSON.parse((await getTool.execute({}, context("s1"))).output)
+  const wrapped = JSON.parse((await getTool.execute({}, context("s1"))).output)
+  const snapshot = wrapped.settings
   check(
-    "get_desktop_settings answers MiMo's keys, with what each accepts",
-    snapshot.language === "system" && snapshot.ui_font_size === 14 && snapshot.code_font_size === 12 && snapshot.diff_style === "colored" && typeof snapshot.adjustable_keys?.theme === "string",
+    "get_desktop_settings answers MiMo's keys inside { ok, settings }, with what each accepts",
+    wrapped.ok === true && snapshot.language === "system" && snapshot.ui_font_size === 14 && snapshot.code_font_size === 12 && snapshot.diff_style === "colored" && typeof snapshot.adjustable_keys?.theme === "string",
     snapshot,
   )
   const set = (key: string, value: string) => setTool.execute({ key, value }, context(`s-${key}-${value}`))
   const dark = await set("theme", "Dark")
-  check("set_desktop_setting changes the theme through the config patch", settings.get().theme === "dark" && dark.output.startsWith("Changed theme to dark") && dark.metadata?.applied === true, dark)
+  check("set_desktop_setting changes the theme through the config patch", settings.get().theme === "dark" && dark.output.startsWith("桌面设置已修改：theme → dark") && dark.metadata?.applied === true, dark)
   const big = await set("ui_font_size", "30")
   const small = await set("code_font_size", "7.6")
   check("font sizes past a bound take the bound", settings.get().uiFontSize === 24 && settings.get().codeFontSize === 9, { big: big.output, small: small.output })
   const word = await set("ui_font_size", "large")
-  check("a font size that is not a number is rejected and nothing changes", word.output.startsWith("Not changed") && settings.get().uiFontSize === 24 && word.metadata?.applied === false, word.output)
+  check("a font size that is not a number is rejected and nothing changes", word.output.startsWith("没有修改") && settings.get().uiFontSize === 24 && word.metadata?.applied === false, word.output)
   await set("diff_style", "plus-minus")
   const signs = settings.get().diffMarks
   await set("diff_style", "colored")
@@ -7963,11 +7950,19 @@ async function deliveredToolChecks(root: string) {
   const english = settings.get().language
   const ambiguous = await set("language", "zh")
   await set("language", "system")
-  check("a regional tag reaches its language, an ambiguous one is refused, system follows the machine", english === "en" && ambiguous.output.startsWith("Not changed") && settings.get().language === "", { english, ambiguous: ambiguous.output })
+  check("a regional tag reaches its language, an ambiguous one is refused, system follows the machine", english === "en" && ambiguous.output.startsWith("没有修改") && settings.get().language === "", { english, ambiguous: ambiguous.output })
   const blue = await set("theme", "blue")
   const model = await set("model", "gpt")
   check("a bad theme is rejected with the values it accepts", blue.output.includes("light | dark | system") && settings.get().theme === "dark", blue.output)
-  check("a key the tool does not cover is rejected and points to Settings", model.output.startsWith("Not changed") && model.output.includes("Settings"), model.output)
+  check("a key the tool does not cover is rejected and points to Settings", model.output.startsWith("没有修改") && model.output.includes("设置"), model.output)
+  // T10-54: MiMo's Chinese names for the values.
+  await set("theme", "浅色")
+  const light = settings.get().theme
+  await set("diff_style", "+/-")
+  const plusMinus = settings.get().diffMarks
+  await set("diff_style", "颜色")
+  await set("theme", "深色")
+  check("the Chinese names for a theme and a diff style are taken too", light === "light" && plusMinus === "signs" && settings.get().diffMarks === "color" && settings.get().theme === "dark", { light, plusMinus })
   const reread = new SubagentConfig(new SubagentStorage(path.join(data, "storage")), new Bus(), path.join(data, "credentials.json"))
   await reread.load()
   check("a change is saved, as the settings page saves it", reread.get().theme === "dark" && reread.get().uiFontSize === 24)
@@ -8623,7 +8618,7 @@ async function sessionChatChecks(root: string, project: string) {
   })())
   check("a stopped turn with nothing written says it was stopped", (() => {
     const outcome = replyIn([asked("u1", "q"), replied("a1", { finish: "aborted" })], "u1")
-    return !outcome.ok && outcome.error.includes("stopped")
+    return !outcome.ok && outcome.error.includes("被停止")
   })())
   check("chains stop at MiMo's five hops", CHAT_HOPS === 5)
 
@@ -8788,13 +8783,13 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "CONTACTS" })
   await quiet()
   const [contacts] = await partsOf(alpha.id, "contacts")
-  check("contacts lists the other sessions and leaves the caller out", contacts?.status === "completed" && (contacts.output ?? "").includes(`"Beta" id=${beta.id} idle`) && !(contacts.output ?? "").includes(`id=${alpha.id}`), contacts?.output)
+  check("contacts lists the other sessions and leaves the caller out", contacts?.status === "completed" && (contacts.output ?? "").includes(`「Beta」 id=${beta.id} 空闲`) && !(contacts.output ?? "").includes(`id=${alpha.id}`), contacts?.output)
 
   // A waiting call: a real turn in the target, and its reply as the result.
   await runner.prompt({ sessionID: alpha.id, text: "TALK-SYNC:Beta" })
   await quiet()
   const [talked] = await partsOf(alpha.id, "talk_to_session")
-  check("a waiting call returns the target's reply", talked?.status === "completed" && talked.output === 'Reply from "Beta":\npong:PING', talked?.output)
+  check("a waiting call returns the target's reply", talked?.status === "completed" && talked.output === "「Beta」的回复：\npong:PING", talked?.output)
   const betaAsked = (await store.messages(beta.id)).find((message) => message.role === "user")
   check(
     "the target's transcript has the words, marked as from the caller through the inbox field",
@@ -8827,7 +8822,8 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "SELF:Alpha" })
   await quiet()
   const selfPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
-  check("calling yourself is refused", selfPart?.status === "error" && (selfPart.error ?? "").includes("cannot message itself"), selfPart?.error)
+  // T10-49: a refusal is a result the model reads, as MiMo's is, not a failed call.
+  check("calling yourself is refused", selfPart?.status === "completed" && (selfPart.output ?? "").startsWith("未送达：会话不能给自己发消息"), selfPart)
 
   // create_session and update_session.
   await runner.prompt({ sessionID: alpha.id, text: "CREATE" })
@@ -8842,7 +8838,7 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: alpha.id, text: "CREATE-BAD" })
   await quiet()
   const badCreate = (await partsOf(alpha.id, "create_session")).at(-1)
-  check("a workspace that is not an absolute folder is refused", badCreate?.status === "error" && (badCreate.error ?? "").includes("absolute"), badCreate?.error)
+  check("a workspace that is not an absolute folder is refused", badCreate?.status === "completed" && (badCreate.output ?? "").startsWith("会话没有创建") && (badCreate.output ?? "").includes("绝对路径"), badCreate)
   if (gamma) {
     await runner.prompt({ sessionID: alpha.id, text: `UPDATE:${gamma.id}` })
     await quiet()
@@ -8856,7 +8852,7 @@ async function sessionChatChecks(root: string, project: string) {
   await runner.prompt({ sessionID: chain[0]!, text: "CHAIN:1" })
   await quiet()
   const refusedHop = (await partsOf(chain[5]!, "talk_to_session"))[0]
-  check("a chain of calls is refused at the sixth hop", refusedHop?.status === "error" && (refusedHop.error ?? "").includes("limit of 5 hops"), refusedHop?.error)
+  check("a chain of calls is refused at the sixth hop", refusedHop?.status === "completed" && (refusedHop.output ?? "").includes("5 跳的上限"), refusedHop)
   check("the session past the limit was never messaged", (await store.messages(chain[6]!)).length === 0)
   check("the replies unwind back to the start", (await texts(chain[0]!)).includes("chain 1 done"))
 
@@ -8868,7 +8864,7 @@ async function sessionChatChecks(root: string, project: string) {
   runner.abort(alpha.id)
   await quiet()
   const stoppedPart = (await partsOf(alpha.id, "talk_to_session")).at(-1)
-  check("Stop settles a waiting call cleanly", stoppedPart?.status === "error" && stoppedPart.error === "Stopped before the reply arrived." && stoppedPart.metadata?.aborted === true, stoppedPart)
+  check("Stop settles a waiting call cleanly", stoppedPart?.status === "error" && stoppedPart.error === "回复到达之前，这次调用已被停止。" && stoppedPart.metadata?.aborted === true, stoppedPart)
   check("the target still finishes its turn", (await texts(delta.id)).includes("slow pong"))
   check("no reply is delivered to a call that was stopped", !(await store.messages(alpha.id)).some((message) => message.role === "user" && message.inbox?.from === "Delta"))
 
@@ -8881,7 +8877,7 @@ async function sessionChatChecks(root: string, project: string) {
   await store.delete(epsilon.id)
   await quiet()
   const gone = (await store.messages(alpha.id)).find((message) => message.role === "user" && message.inbox?.from === "Epsilon")
-  check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("no longer exists"), gone)
+  check("deleting a target tells the caller it is gone", gone?.role === "user" && gone.text.includes("已经不存在"), gone)
 
   await new Promise<void>((resolve) => provider.close(() => resolve()))
 }
