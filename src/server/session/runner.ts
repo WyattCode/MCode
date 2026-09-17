@@ -1934,6 +1934,8 @@ export class SessionRunner {
     const controller = new AbortController()
     const stop = () => controller.abort()
     stopped.addEventListener("abort", stop, { once: true })
+    // Stop may have come while the sign-in token was fetched; that abort has already fired.
+    if (stopped.aborted) stop()
     const timer = setTimeout(stop, TITLE_TIMEOUT_MS)
     const sessionID = session.id
     let answer = ""
@@ -2581,7 +2583,13 @@ export class SessionRunner {
      */
     const inner = new AbortController()
     const follow = () => inner.abort()
-    request.signal.addEventListener("abort", follow, { once: true })
+    /*
+     * A signal that fell before this point never fires again: a cancel that
+     * lands while the step is still being prepared (a subagent cancelled just
+     * after it was spawned) would otherwise leave the request running to its end.
+     */
+    if (request.signal.aborted) inner.abort()
+    else request.signal.addEventListener("abort", follow, { once: true })
     let cut = false
     // Text and reasoning blocks are keyed by the index the adapter reports;
     // tools are keyed by call id, since only the provider knows how those

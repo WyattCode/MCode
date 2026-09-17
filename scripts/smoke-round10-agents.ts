@@ -542,6 +542,42 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
       check("a failure notice carries what was said before it", failedNotice.includes("Error: boom\nPartial result:\nhalfway"), failedNotice)
       check("the summary attribute is flattened and its quotes swapped", subagentOutput("x", "a", "partial", 'said "hi"\n  there').includes('summary="said \'hi\' there"'))
     }
+
+    section("Round 10 triage: a subagent cancelled while its first step is being prepared stops at once")
+    {
+      /*
+       * The cancel lands after the step loop last looked at the signal and
+       * before the request is sent: here, as the step's empty reply is saved,
+       * the last thing before the request. The request must not go out.
+       */
+      h.childRequests.length = 0
+      const origSave = store.saveMessage.bind(store)
+      let cancelledAt = 0
+      let cancelledID = ""
+      store.saveMessage = (async (message: Message, silent?: boolean) => {
+        await origSave(message, silent)
+        if (cancelledAt || message.role !== "assistant" || message.parts.length) return
+        const owner = await store.get(message.sessionID)
+        if (owner?.parentID && owner.title === "Early cancel") {
+          cancelledAt = Date.now()
+          cancelledID = owner.id
+          runner.abort(owner.id)
+        }
+      }) as typeof store.saveMessage
+      try {
+        const early = await conversation([actor({ action: "run", description: "Early cancel", prompt: "SLOW", subagent_type: "general" })])
+        const [earlyRun] = await toolParts(early.id, "actor")
+        // The slow subagent's provider takes 1500 ms; a request that went out anyway ends no sooner.
+        const settledIn = cancelledAt && earlyRun?.time.completed ? earlyRun.time.completed - cancelledAt : -1
+        const sent = h.childRequests.filter((seen) => orders(seen).includes("SLOW")).length
+        check("the subagent was cancelled before its request", cancelledID !== "", cancelledID)
+        check("no request is sent for the cancelled step", sent === 0, sent)
+        check("the run answers cancelled without waiting for the provider", earlyRun?.metadata?.cancelled === true && settledIn >= 0 && settledIn < 1200, { settledIn, output: earlyRun?.output })
+        check("the subagent is no longer busy", !runner.busySessions().includes(cancelledID), runner.busySessions())
+      } finally {
+        store.saveMessage = origSave
+      }
+    }
   } finally {
     await h.close()
   }
