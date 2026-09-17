@@ -1846,12 +1846,6 @@ export class SessionRunner {
       session.model,
       (ref) => Boolean(this.config.definition(ref.provider)) && this.config.usable(ref.provider) && Boolean(this.config.modelEntry(ref)),
     )
-    const definition = this.config.definition(model.provider)
-    if (!definition || !this.config.usable(model.provider)) return
-    const adapter: ProviderAdapter =
-      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
-    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
-    const entry = this.config.modelEntry(model)
     const controller = new AbortController()
     /*
      * Held where Stop can reach it. This request is launched and forgotten and
@@ -1860,7 +1854,38 @@ export class SessionRunner {
      * seconds after it had been cancelled, and billing for the request.
      */
     const release = this.hold(sessionID, controller)
-    const timer = setTimeout(() => controller.abort(), TITLE_TIMEOUT_MS)
+    let title: string | undefined
+    try {
+      title = await this.titleFrom(session, model, text, controller.signal)
+      // MiMo's fallback: a title model that failed, or answered with nothing usable, is followed by one try on the conversation's own.
+      const own = session.model
+      if (!title && !controller.signal.aborted && (model.provider !== own.provider || model.model !== own.model)) {
+        title = await this.titleFrom(session, own, text, controller.signal)
+      }
+    } finally {
+      release()
+    }
+    // Stopped while it was writing: the conversation keeps the fallback it already has.
+    if (controller.signal.aborted || !title) return
+    const current = await this.store.get(sessionID)
+    if (current?.titleSource !== "fallback") return
+    await this.store.update(sessionID, { title, titleSource: "generated" })
+  }
+
+  /** One title request on one model: the cleaned title, or nothing when it failed, timed out or said nothing usable. */
+  private async titleFrom(session: SessionInfo, model: ModelRef, text: string, stopped: AbortSignal): Promise<string | undefined> {
+    const definition = this.config.definition(model.provider)
+    if (!definition || !this.config.usable(model.provider) || stopped.aborted) return undefined
+    const adapter: ProviderAdapter =
+      definition.kind === "anthropic" ? AnthropicAdapter : definition.kind === "chatgpt" ? ChatGPTSubscription : OpenAICompatible
+    const tokens = definition.kind === "chatgpt" ? await this.auth.accessToken(definition.id) : undefined
+    const entry = this.config.modelEntry(model)
+    // Each try has its own time limit, and Stop ends either.
+    const controller = new AbortController()
+    const stop = () => controller.abort()
+    stopped.addEventListener("abort", stop, { once: true })
+    const timer = setTimeout(stop, TITLE_TIMEOUT_MS)
+    const sessionID = session.id
     let answer = ""
     try {
       // MiMo's request budget for a call that is not a turn: four quick tries, then the fallback stands.
@@ -1903,18 +1928,13 @@ export class SessionRunner {
       }, controller.signal)
       this.noteBackground(sessionID, model, outcome.usage, "title")
     } catch {
-      return
+      return undefined
     } finally {
       clearTimeout(timer)
-      release()
+      stopped.removeEventListener("abort", stop)
     }
-    // Stopped while it was writing: the conversation keeps the fallback it already has.
-    if (controller.signal.aborted) return
-    const title = cleanTitle(answer)
-    if (!title) return
-    const current = await this.store.get(sessionID)
-    if (current?.titleSource !== "fallback") return
-    await this.store.update(sessionID, { title, titleSource: "generated" })
+    if (controller.signal.aborted) return undefined
+    return cleanTitle(answer) || undefined
   }
 
   /**
@@ -3234,8 +3254,6 @@ export class SessionRunner {
       if (!this.owners.has(child.id)) await this.commitSnapshot(child.id).catch(() => undefined)
       this.running.delete(child.id)
       this.owners.delete(child.id)
-      if (this.workers.get(child.id) === worker) this.workers.delete(child.id)
-      this.unwatch()
       this.bus.publish({ type: "session.idle", sessionID: child.id })
     }
 
@@ -3255,6 +3273,9 @@ export class SessionRunner {
         })
         .catch(() => undefined)
     }
+    // Let go only once its outcome is on record, so a wait that finds no worker reads how it ended.
+    if (this.workers.get(child.id) === worker) this.workers.delete(child.id)
+    this.unwatch()
     if (worker.notify && current) await this.notifyParent(worker.parentID, this.noticeOf(current, outcome)).catch(() => undefined)
     return outcome
   }

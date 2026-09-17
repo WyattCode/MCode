@@ -65,6 +65,8 @@ async function harness(root: string, child: (seen: Seen) => Reply | Promise<Repl
   const parentSteps: Reply[] = []
   const childRequests: Seen[] = []
   const parentRequests: Seen[] = []
+  const titleRequests: Seen[] = []
+  const titleReply = { text: "A generated title" }
   let calls = 0
   const provider = createServer((request, response) => {
     let body = ""
@@ -77,8 +79,11 @@ async function harness(root: string, child: (seen: Seen) => Reply | Promise<Repl
         messages: asked.messages ?? [],
       }
       const subagent = seen.system.includes("Working as a subagent")
-      ;(subagent ? childRequests : parentRequests).push(seen)
-      const reply: Reply = subagent ? await child(seen) : (parentSteps.shift() ?? { text: "parent done" })
+      // A title request is answered on its own, so it never takes a scripted step.
+      const titling = seen.system.includes("You write the title of a conversation")
+      if (titling) titleRequests.push(seen)
+      else (subagent ? childRequests : parentRequests).push(seen)
+      const reply: Reply = titling ? { text: titleReply.text } : subagent ? await child(seen) : (parentSteps.shift() ?? { text: "parent done" })
       if ("status" in reply) {
         response.writeHead(reply.status, { "content-type": "application/json" })
         response.end(JSON.stringify({ error: { message: "refused by the fake provider", type: "invalid_request_error" } }))
@@ -146,6 +151,9 @@ async function harness(root: string, child: (seen: Seen) => Reply | Promise<Repl
     model,
     childRequests,
     parentRequests,
+    titleRequests,
+    titleReply,
+    port,
     conversation,
     script: (steps: Reply[]) => void parentSteps.splice(0, parentSteps.length, ...steps),
     settled,
@@ -403,6 +411,49 @@ async function agentChecks(check: Check, section: Section, root: string): Promis
         check("and is pointed at actor status, which a subagent is not", JSON.stringify(h.parentRequests[0]!.messages).includes("- actor({ operation:") &&!recallHint("x", false).includes("actor("))
       } finally {
         bindHistory(undefined)
+      }
+    }
+
+    section("Round 10 (T10-43): a title model that fails is followed by one try on the conversation's own model")
+    {
+      let refused = 0
+      const broken = createServer((request, response) => {
+        request.resume()
+        request.on("end", () => {
+          refused++
+          response.writeHead(400, { "content-type": "application/json" })
+          response.end(JSON.stringify({ error: { message: "no such model", type: "invalid_request_error" } }))
+        })
+      })
+      await new Promise<void>((resolve) => broken.listen(0, "127.0.0.1", () => resolve()))
+      const brokenPort = (broken.address() as { port: number }).port
+      const fake = { id: "fake", name: "Fake", baseURL: `http://127.0.0.1:${h.port}/v1`, models: [{ id: "m", name: "M" }] }
+      await h.config.set({ customProviders: [fake, { id: "broken", name: "Broken", baseURL: `http://127.0.0.1:${brokenPort}/v1`, models: [{ id: "x", name: "X" }] }], titleModel: { provider: "broken", model: "x" } })
+      await h.config.setApiKey("broken", "k")
+      delete process.env.MCODE_GENERATE_TITLES
+      try {
+        const titled = async (reply: string) => {
+          h.titleRequests.length = 0
+          h.titleReply.text = reply
+          h.script([{ text: "answered" }])
+          const session = await store.create({ directory: h.project, model: h.model })
+          await runner.prompt({ sessionID: session.id, text: "Fix the flaky upload test" })
+          const deadline = Date.now() + 10_000
+          while (Date.now() < deadline && ((await store.get(session.id))?.titleSource === "fallback" || runner.busySessions().includes(session.id))) await new Promise((resolve) => setTimeout(resolve, 50))
+          await new Promise((resolve) => setTimeout(resolve, 200))
+          return store.get(session.id)
+        }
+        const before = refused
+        const rescued = await titled("Flaky upload test")
+        check("the title model was asked first and refused", refused > before, refused - before)
+        check("the conversation's own model then named the conversation", rescued?.title === "Flaky upload test" && rescued.titleSource === "generated" && h.titleRequests.length === 1, rescued)
+        await h.config.set({ titleModel: { provider: "fake", model: "m" } })
+        const plain = await titled("")
+        check("when the title model is the conversation's own, an empty answer is not asked twice", h.titleRequests.length === 1 && plain?.titleSource === "fallback", { asked: h.titleRequests.length, plain })
+      } finally {
+        process.env.MCODE_GENERATE_TITLES = "0"
+        await h.config.set({ customProviders: [fake], titleModel: undefined })
+        await new Promise<void>((resolve) => broken.close(() => resolve()))
       }
     }
 
